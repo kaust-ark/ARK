@@ -1,0 +1,1471 @@
+#!/usr/bin/env python3
+"""
+ARK (Automatic Research Kit) - Automated Research Orchestrator
+
+Usage:
+    # Research mode (experiments + analysis)
+    python -m ark.orchestrator --project myproject --mode research --max-days 3
+
+    # Paper mode (review + improve iterations)
+    python -m ark.orchestrator --project myproject --mode paper --iterations 10
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import yaml
+from datetime import datetime, timedelta
+import importlib.util
+from pathlib import Path
+from typing import Optional, List
+import re
+import threading
+
+# ARK package root (where projects/ lives)
+ARK_ROOT = Path(__file__).parent.parent.absolute()
+
+# PROJECT_DIR: legacy global, kept for backward compatibility
+PROJECT_DIR = None
+
+from ark.memory import get_memory, SimpleMemory
+from ark.agents import AgentMixin
+from ark.compiler import CompilerMixin
+from ark.execution import ExecutionMixin
+from ark.pipeline import PipelineMixin
+from ark.development import DevMixin
+
+
+class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, DevMixin):
+    """Main orchestrator class composing all mixins."""
+
+    def __init__(self, project: str, max_days: float = 3, max_iterations: int = 100,
+                 mode: str = "research", model: str = "claude", code_dir: str = None,
+                 project_dir: str = None):
+        global PROJECT_DIR
+
+        self.max_end_time = datetime.now() + timedelta(days=max_days)
+        self.max_iterations = max_iterations
+        self.iteration = 0
+        self.mode = mode
+        self.model = model
+        self.project_name = project
+
+        # Project paths and config
+        if project_dir:
+            self.project_path = Path(project_dir).absolute()
+        else:
+            self.project_path = ARK_ROOT / "projects" / self.project_name
+        if not self.project_path.exists():
+            raise FileNotFoundError(f"Project directory not found: {self.project_path}")
+
+        config_file = self.project_path / "config.yaml"
+        if config_file.exists():
+            with open(config_file) as f:
+                self.config = yaml.safe_load(f)
+        else:
+            self.config = {}
+
+        # Set code_dir and legacy global PROJECT_DIR
+        if code_dir:
+            PROJECT_DIR = Path(code_dir).absolute()
+        else:
+            PROJECT_DIR = Path(self.config.get("code_dir", str(ARK_ROOT.parent))).absolute()
+        self.code_dir = PROJECT_DIR
+        os.chdir(PROJECT_DIR)
+
+        # Load project hooks
+        hooks_file = self.project_path / "hooks.py"
+        if hooks_file.exists():
+            spec = importlib.util.spec_from_file_location("hooks", hooks_file)
+            self.hooks = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(self.hooks)
+        else:
+            self.hooks = None
+
+        # Paths
+        self.state_dir = self.code_dir / "auto_research" / "state"
+        self.log_dir = self.code_dir / "auto_research" / "logs"
+        self.agents_dir = self.project_path / "agents"
+
+        # Config-driven paths
+        self.latex_dir = self.code_dir / self.config.get("latex_dir", "Latex")
+        self.figures_dir = self.code_dir / self.config.get("figures_dir", "Latex/figures")
+
+        # State file paths
+        self.state_file = self.state_dir / "research_state.yaml"
+        self.findings_file = self.state_dir / "findings.yaml"
+        self.paper_state_file = self.state_dir / "paper_state.yaml"
+        self.paper_requirements_file = self.state_dir / "paper_requirements.yaml"
+        self.checkpoint_file = self.state_dir / "checkpoint.yaml"
+        self.action_plan_file = self.state_dir / "action_plan.yaml"
+        self.latest_review_file = self.state_dir / "latest_review.md"
+        self.literature_file = self.state_dir / "literature.yaml"
+        self.dev_state_file = self.state_dir / "dev_state.yaml"
+
+        # Ensure directories exist
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.figures_dir.mkdir(parents=True, exist_ok=True)
+
+        # Project symlinks (skip if project_path IS code_dir)
+        from ark.cli import ensure_project_symlinks
+        if self.project_path.resolve() != self.code_dir.resolve():
+            ensure_project_symlinks(self.project_path, str(self.code_dir))
+
+        # Paper acceptance threshold
+        self.paper_accept_threshold = self.config.get("paper_accept_threshold", 8)
+
+        # Dev mode threshold
+        self.code_review_threshold = self.config.get("code_review_threshold", 7)
+
+        # Logging setup
+        self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.log_file = self.log_dir / f"{self.project_name}_{mode}_{self.run_id}.log"
+        self._cleanup_old_logs(keep=5)
+
+        # Token stats
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+
+        # Rate limit state
+        self._rate_limit_notified = False
+
+        # Agent empty-run counter (initialized here, not dynamically)
+        self._agent_empty_count = 0
+        self._quota_exhausted = False
+        self._asked_this_iteration = False
+
+        # Cost tracking
+        self._agent_stats = []
+
+        # Last successfully compiled PDF (set by compile_latex)
+        self._latest_pdf = None
+
+        # Deep research background thread
+        self._deep_research_thread = None
+
+        # Memory
+        self.memory = get_memory(state_dir=self.state_dir)
+        self._last_score = 0.0
+
+        # Goal Anchor
+        if hasattr(self.memory, 'set_goal_anchor'):
+            self.memory.set_goal_anchor(self.config.get("goal_anchor", ""))
+
+        # Seed language preference from config if not already set
+        prefs_file = self.state_dir / "user_prefs.yaml"
+        if not prefs_file.exists():
+            config_lang = self.config.get("language", "en")
+            self.state_dir.mkdir(parents=True, exist_ok=True)
+            with open(prefs_file, "w") as _pf:
+                yaml.dump({"language": config_lang}, _pf, default_flow_style=False)
+
+        # Compute backend
+        from ark.compute import ComputeBackend
+        self._compute_backend = ComputeBackend.from_config(
+            self.config, self.project_name, self.code_dir, self.log
+        )
+
+        # Telegram dispatcher (dedicated per-project bot)
+        from ark.telegram import TelegramDispatcher, TelegramConfig
+        tg_config = TelegramConfig.from_project_config(self.config)
+        self.telegram = TelegramDispatcher(self.project_name, tg_config)
+
+        # Telegram conversation history (in-memory, thread-safe)
+        self._tg_chat_history: list[dict] = []
+        self._tg_chat_lock = threading.Lock()
+        self._tg_history_file = self.state_dir / "tg_history.jsonl"
+
+    # ========== Deep Research (background) ==========
+
+    def _start_deep_research_background(self):
+        """Start Gemini Deep Research in background thread if needed."""
+        deep_research_file = self.state_dir / "deep_research.md"
+
+        if deep_research_file.exists():
+            self.log("Deep Research report already exists, skipping.", "INFO")
+            return
+
+        if self.config.get("skip_deep_research", False):
+            self.log("Deep Research disabled in config.", "INFO")
+            return
+
+        from ark.deep_research import run_deep_research_async, get_gemini_api_key
+        api_key = get_gemini_api_key()
+        if not api_key:
+            self.log("No Gemini API key found, skipping Deep Research.", "WARN")
+            return
+
+        def _on_complete(report_path):
+            self.log(f"Deep Research completed: {report_path}", "INFO")
+            self._send_deep_research_telegram(report_path)
+
+        def _on_error(error_msg):
+            self.log(f"Deep Research failed: {error_msg}", "WARN")
+            if self.telegram.is_configured:
+                self.telegram.send(f"Deep Research failed: {error_msg[:200]}")
+
+        self.log("Starting Deep Research in background...", "INFO")
+        if self.telegram.is_configured:
+            self.telegram.send("Deep Research started in background (5-20 min)...")
+
+        self._deep_research_thread = run_deep_research_async(
+            config=self.config,
+            output_dir=self.state_dir,
+            api_key=api_key,
+            on_complete=_on_complete,
+            on_error=_on_error,
+        )
+
+    def _send_deep_research_telegram(self, report_path: str):
+        """Send deep research completion notification and summary to Telegram."""
+        if not self.telegram.is_configured:
+            return
+        try:
+            content = Path(report_path).read_text()
+            # Send a summary (first 2000 chars)
+            summary = content[:2000]
+            if len(content) > 2000:
+                summary += "\n\n... (truncated, full report saved)"
+            self.telegram.send("Deep Research completed!")
+            self.telegram.send_raw(summary)
+        except Exception as e:
+            self.log(f"Failed to send deep research to Telegram: {e}", "WARN")
+
+    # ========== Telegram ==========
+
+    def _tg_history_append(self, role: str, text: str):
+        """Append to chat history, keep last 50 in memory. Persist to JSONL."""
+        entry = {
+            "role": role,
+            "text": text[:500],
+            "ts": datetime.now().strftime("%H:%M"),
+            "date": datetime.now().strftime("%Y-%m-%d"),
+        }
+        with self._tg_chat_lock:
+            self._tg_chat_history.append(entry)
+            if len(self._tg_chat_history) > 50:
+                self._tg_chat_history = self._tg_chat_history[-50:]
+        # Persist outside lock (best-effort)
+        try:
+            with open(self._tg_history_file, "a") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _tg_history_load(self, max_entries: int = 50):
+        """Load last N entries from tg_history.jsonl into _tg_chat_history."""
+        if not self._tg_history_file.exists():
+            return
+        try:
+            lines = self._tg_history_file.read_text().splitlines()
+            entries = []
+            for line in lines:
+                line = line.strip()
+                if line:
+                    try:
+                        entries.append(json.loads(line))
+                    except Exception:
+                        pass
+            with self._tg_chat_lock:
+                self._tg_chat_history = entries[-max_entries:]
+        except Exception:
+            pass
+
+    def _tg_history_format(self) -> str:
+        """Format chat history for prompt. Shows last 20 in full; older as compact header."""
+        FULL_WINDOW = 20
+        with self._tg_chat_lock:
+            history = list(self._tg_chat_history)
+        lines = []
+        if len(history) > FULL_WINDOW:
+            older = history[:-FULL_WINDOW]
+            dates = sorted({m.get("date", "") for m in older if m.get("date")})
+            lines.append(f"[Earlier: {len(older)} more message(s) on {dates[0]}...]")
+            history = history[-FULL_WINDOW:]
+        for msg in history:
+            prefix = "User" if msg["role"] == "user" else "You"
+            lines.append(f"[{msg.get('date', '')} {msg['ts']}] {prefix}: {msg['text']}")
+        return "\n".join(lines)
+
+    def start_telegram_listener(self):
+        """Start the Telegram dispatcher for bidirectional communication."""
+        self._tg_history_load(max_entries=50)
+        self.telegram.start(on_message=self._handle_telegram_message)
+        if self.telegram.is_configured:
+            self.log("Telegram dispatcher started", "INFO")
+
+    def stop_telegram_listener(self):
+        """Stop the Telegram dispatcher."""
+        self.telegram.stop()
+
+    def _get_bot_model(self) -> str:
+        """Read bot model preference from daemon state."""
+        state_file = Path.home() / ".ark" / "telegram_state.yaml"
+        try:
+            if state_file.exists():
+                with open(state_file) as f:
+                    state = yaml.safe_load(f) or {}
+                return state.get("models", {}).get("bot", "claude-sonnet-4-6")
+        except Exception:
+            pass
+        return "claude-sonnet-4-6"
+
+    def _handle_telegram_message(self, text: str):
+        """Handle incoming Telegram message via Claude agent."""
+        import threading as _threading
+
+        # All messages go through Claude agent (it decides actions like sending PDF)
+        _threading.Thread(target=self._agent_respond_telegram, args=(text,), daemon=True).start()
+
+    def _build_tg_system_prompt(self) -> str:
+        """Stable identity block: project name/title/venue/goal + language + style + capabilities."""
+        lang = self.get_language_pref()
+        lang_instruction = "Reply in Chinese." if lang == "zh" else "Reply in English."
+
+        title = self.config.get("title", self.project_name)
+        venue = self.config.get("venue", "")
+        goal = self.config.get("goal_anchor", "")
+
+        identity = f'You are ARK Bot, the assistant for project "{self.project_name}"'
+        if title and title != self.project_name:
+            identity += f' ("{title}")'
+        if venue:
+            identity += f', targeting {venue}'
+        identity += ". You are a Telegram chatbot that monitors and manages this research pipeline. You know the project inside out."
+
+        lines = [
+            identity,
+            lang_instruction,
+            "",
+            "STYLE (critical):",
+            '- Talk like a person, NOT like a report. No section headers, no "**Project**:", no "Current status summary".',
+            '- For casual questions ("how\'s it going", "what\'s up"): 2-4 sentences max. Just the key point.',
+            "- Only use bullet points if there are 3+ genuinely distinct items. Never nest them.",
+            "- **bold** only for the single most important thing in a reply.",
+            '- No tables. No headers. No "---" dividers.',
+            "- Use standard Markdown: **bold**, *italic*, `code`. Keep it simple.",
+            "- Use the conversation history to understand follow-up questions. If the user refers to something from a previous message, use context to answer coherently.",
+            "",
+            "CAPABILITIES:",
+            "- If the user wants the paper PDF, add on a new line at the end: [SEND_PDF]",
+            "- If you need to inject an actionable update into the research pipeline, add on a new line at the end: [ACTION: specific instruction]",
+            "- Only add [ACTION: ...] if the user explicitly asks you to change something or give the pipeline a new direction.",
+            "- NEVER add [ACTION: ...] for: status queries, simple acknowledgments (ok, proceed, continue, 好的, 继续, 收到), or confirmations of what's already happening.",
+        ]
+
+        if goal:
+            lines.append(f"\nProject Goal:\n{goal[:400]}")
+
+        return "\n".join(lines)
+
+    def _agent_respond_telegram(self, text: str):
+        """Run Claude agent on user message, reply via Telegram."""
+        from ark.telegram import TelegramDispatcher
+
+        # Record user message in history
+        self._tg_history_append("user", text)
+
+        context = self._gather_telegram_agent_context()
+        history = self._tg_history_format()
+
+        # Show typing indicator
+        self.telegram.send_typing()
+
+        system_prompt = self._build_tg_system_prompt()
+        history_block = history if history else "(no prior conversation)"
+
+        prompt = f"""{system_prompt}
+
+=== Current State ===
+{context}
+
+=== Conversation History ===
+{history_block}
+
+=== User says ===
+{text}"""
+
+        try:
+            env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+            result = subprocess.run(
+                ["claude", "--print", "--model", self._get_bot_model(), "-p", prompt],
+                capture_output=True, text=True, timeout=90, env=env,
+            )
+            response = result.stdout.strip()
+            if not response:
+                response = result.stderr.strip()[:500] or "Sorry, unable to respond right now."
+        except subprocess.TimeoutExpired:
+            response = "Sorry, response timed out."
+        except Exception as e:
+            response = f"Error: {e}"
+
+        # Extract [SEND_PDF] if present
+        send_pdf = False
+        if "[SEND_PDF]" in response:
+            send_pdf = True
+            response = response.replace("[SEND_PDF]", "").strip()
+
+        # Extract [ACTION: ...] if present
+        action = None
+        if "[ACTION:" in response:
+            try:
+                action_start = response.index("[ACTION:") + 8
+                action_end = response.index("]", action_start)
+                action = response[action_start:action_end].strip()
+                response = response[:response.index("[ACTION:")].strip()
+            except ValueError:
+                pass
+
+        # Record bot response in history
+        if response:
+            self._tg_history_append("bot", response)
+
+        # Send response
+        if response:
+            self.telegram.send_raw(
+                TelegramDispatcher.to_html(response), parse_mode="HTML"
+            )
+
+        if send_pdf:
+            self._send_pdf_via_telegram()
+
+        if action:
+            self.inject_user_update(action)
+            self.telegram.send_raw(f"✅ Action injected: {action[:100]}")
+
+        self.log(f"Telegram agent responded ({len(response)} chars)" + (f" + ACTION: {action[:50]}" if action else ""), "INFO")
+
+    def _gather_telegram_agent_context(self) -> str:
+        """Collect project state for the Telegram agent's system prompt."""
+        lines = []
+        lines.append(f"Project: {self.project_name}")
+        lines.append(f"Mode: {self.mode} | Iteration: {self.iteration}/{self.max_iterations}")
+
+        try:
+            score = getattr(self, '_last_score', 0)
+            lines.append(f"Current score: {score}/10 (target: {self.paper_accept_threshold}/10)")
+            if hasattr(self.memory, 'stagnation_count'):
+                lines.append(f"Stagnation count: {self.memory.stagnation_count}")
+            recent_scores = getattr(self.memory, 'scores', [])[-8:]
+            if recent_scores:
+                lines.append(f"Score history: {[f'{s:.1f}' for s in recent_scores]}")
+        except Exception:
+            pass
+
+        goal = self.config.get("goal_anchor", "")
+        if goal:
+            lines.append(f"\nGoal Anchor:\n{goal[:600]}")
+
+        review_file = self.state_dir / "latest_review.md"
+        if review_file.exists():
+            lines.append(f"\nLatest Review (excerpt):\n{review_file.read_text()[:800]}")
+
+        plan_file = self.state_dir / "action_plan.yaml"
+        if plan_file.exists():
+            lines.append(f"\nCurrent Action Plan:\n{plan_file.read_text()[:400]}")
+
+        try:
+            log_lines = [l for l in self.log_file.read_text().splitlines() if l.strip()][-20:]
+            lines.append(f"\nRecent Log:\n" + "\n".join(log_lines))
+        except Exception:
+            pass
+
+        return "\n".join(lines)
+
+    # ========== Language Preference ==========
+
+    def get_language_pref(self) -> str:
+        """Return 'en' or 'zh'. Defaults to 'en'."""
+        prefs_file = self.state_dir / "user_prefs.yaml"
+        try:
+            if prefs_file.exists():
+                with open(prefs_file) as f:
+                    return yaml.safe_load(f).get("language", "en")
+        except Exception:
+            pass
+        return "en"
+
+    def set_language_pref(self, lang: str):
+        """Persist language preference ('en' or 'zh')."""
+        prefs_file = self.state_dir / "user_prefs.yaml"
+        try:
+            data = {}
+            if prefs_file.exists():
+                with open(prefs_file) as f:
+                    data = yaml.safe_load(f) or {}
+            data["language"] = lang
+            with open(prefs_file, "w") as f:
+                yaml.dump(data, f, default_flow_style=False)
+            self.log(f"Language preference set to: {lang}", "INFO")
+        except Exception as e:
+            self.log(f"Failed to save language pref: {e}", "WARN")
+
+    # ========== Iteration Summary ==========
+
+    def _send_pdf_via_telegram(self):
+        """Send the last compiled PDF via Telegram.
+
+        Uses self._latest_pdf (set by compile_latex) as the single source
+        of truth — no path guessing, no post-hoc validation needed.
+        """
+        pdf = getattr(self, '_latest_pdf', None)
+        if pdf is None or not pdf.exists():
+            self.telegram.send_raw("No compiled PDF available yet.")
+            return
+
+        caption = f"📄 iter {self.iteration}, score {self._last_score:.1f}/10"
+        ok = self.telegram.send_document(pdf, caption=caption)
+        if ok:
+            self.log(f"PDF sent via Telegram: {pdf} ({pdf.stat().st_size} bytes)", "INFO")
+        else:
+            self.log(f"PDF upload failed: {pdf}", "WARN")
+
+    def send_iteration_summary(self, score: float, prev_score: float, review_text: str = ""):
+        """Send compact iteration summary + PDF to Telegram."""
+        if not self.telegram.is_configured:
+            return
+
+        gap = self.paper_accept_threshold - score
+
+        # Score line
+        if prev_score == 0 and self.iteration == 1:
+            score_line = f"First review: <b>{score:.1f}/10</b>"
+        else:
+            trend = score - prev_score
+            trend_str = f"+{trend:.1f}" if trend > 0 else f"{trend:.1f}" if trend < 0 else "±0"
+            trend_emoji = "📈" if trend > 0 else "📉" if trend < 0 else "➡️"
+            score_line = f"{trend_emoji} {prev_score:.1f} → <b>{score:.1f}/10</b> ({trend_str})"
+
+        gap_line = "🎉 Target reached!" if gap <= 0 else f"Gap: {gap:.1f}"
+
+        # Major/minor issue counts from review
+        review_src = review_text
+        if not review_src and (self.state_dir / "latest_review.md").exists():
+            review_src = (self.state_dir / "latest_review.md").read_text()
+
+        issue_summary = ""
+        if review_src:
+            major_issues = self._extract_issue_summaries(review_src, "major") if hasattr(self, '_extract_issue_summaries') else []
+            minor_issues = self._extract_issue_summaries(review_src, "minor") if hasattr(self, '_extract_issue_summaries') else []
+            parts = []
+            if major_issues:
+                parts.append(f"Major: {len(major_issues)}")
+            if minor_issues:
+                parts.append(f"Minor: {len(minor_issues)}")
+            if parts:
+                issue_summary = " | ".join(parts)
+
+        # Build compact message
+        lines = [
+            f"━━━ #{self.iteration}  {score_line} ━━━",
+            f"Target: {self.paper_accept_threshold}/10 | {gap_line}",
+        ]
+        if issue_summary:
+            lines.append(issue_summary)
+
+        self.telegram.send("\n".join(lines), parse_mode="HTML")
+
+        # Send PDF
+        self._send_pdf_via_telegram()
+
+    # ========== User Updates ==========
+
+    def check_user_updates(self) -> str:
+        """Check for user updates from 'ark update' and consume them."""
+        updates_file = self.state_dir / "user_updates.yaml"
+        if not updates_file.exists():
+            return ""
+
+        try:
+            with open(updates_file) as f:
+                data = yaml.safe_load(f) or {}
+            updates = data.get("updates", [])
+            pending = [u for u in updates if not u.get("consumed")]
+            if not pending:
+                return ""
+
+            messages = []
+            for u in pending:
+                messages.append(u.get("message", ""))
+                u["consumed"] = True
+
+            with open(updates_file, "w") as f:
+                yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+
+            combined = "\n".join(messages)
+            self.log(f"User updates received ({len(messages)} messages)", "INFO")
+            return combined
+        except Exception as e:
+            self.log(f"Error reading user updates: {e}", "WARN")
+            return ""
+
+    # ========== Checkpoint ==========
+
+    def save_checkpoint(self):
+        """Save run state checkpoint (clears phase progress — iteration complete)."""
+        checkpoint = {
+            "run_id": self.run_id,
+            "iteration": self.iteration,
+            "mode": self.mode,
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "timestamp": datetime.now().isoformat(),
+            "completed_phase": 0,  # Reset — full iteration done
+        }
+        with open(self.checkpoint_file, "w") as f:
+            yaml.dump(checkpoint, f, default_flow_style=False)
+        self.log(f"Checkpoint saved: iteration={self.iteration}", "INFO")
+
+    def save_step_checkpoint(self, step_num: int, step_name: str):
+        """Save checkpoint after a step completes within a phase iteration."""
+        checkpoint = {
+            "run_id": self.run_id,
+            "iteration": self.iteration,
+            "mode": self.mode,
+            "total_input_tokens": self.total_input_tokens,
+            "total_output_tokens": self.total_output_tokens,
+            "timestamp": datetime.now().isoformat(),
+            "completed_step": step_num,
+            "completed_step_name": step_name,
+            # Backward compat keys
+            "completed_phase": step_num,
+            "completed_phase_name": step_name,
+        }
+        with open(self.checkpoint_file, "w") as f:
+            yaml.dump(checkpoint, f, default_flow_style=False)
+
+    # Backward compat alias
+    save_phase_checkpoint = save_step_checkpoint
+
+    def get_resume_step(self) -> int:
+        """Get the last completed step for the current iteration. Returns 0 if none."""
+        checkpoint = self.load_checkpoint()
+        if checkpoint.get("iteration") == self.iteration:
+            return checkpoint.get("completed_step", checkpoint.get("completed_phase", 0))
+        return 0
+
+    # Backward compat alias
+    get_resume_phase = get_resume_step
+
+    def load_checkpoint(self) -> dict:
+        """Load checkpoint."""
+        if self.checkpoint_file.exists():
+            with open(self.checkpoint_file) as f:
+                return yaml.safe_load(f) or {}
+        return {}
+
+    def resume_from_checkpoint(self):
+        """Resume from checkpoint."""
+        checkpoint = self.load_checkpoint()
+        if checkpoint:
+            self.iteration = checkpoint.get("iteration", 0)
+            self.total_input_tokens = checkpoint.get("total_input_tokens", 0)
+            self.total_output_tokens = checkpoint.get("total_output_tokens", 0)
+            self.log(f"Resumed from checkpoint: iteration={self.iteration}", "INFO")
+            return True
+
+        try:
+            if self.mode == "paper" and self.paper_state_file.exists():
+                state = self.load_paper_state()
+                reviews = state.get("reviews", [])
+                if reviews:
+                    last_iter = max((r.get("iteration", 0) for r in reviews), default=0)
+                    if last_iter > 0:
+                        self.iteration = last_iter
+                        self.log(f"Resumed from paper_state: iteration={self.iteration}", "INFO")
+                        return True
+            elif self.mode == "research" and self.state_file.exists():
+                with open(self.state_file) as f:
+                    state = yaml.safe_load(f) or {}
+                last_iter = state.get("current_iteration", {}).get("number", 0)
+                if last_iter > 0:
+                    self.iteration = last_iter
+                    self.log(f"Resumed from research_state: iteration={self.iteration}", "INFO")
+                    return True
+        except Exception as e:
+            self.log(f"Error resuming from state files: {e}", "WARN")
+
+        return False
+
+    # ========== Logging ==========
+
+    def _cleanup_old_logs(self, keep: int = 5):
+        """Clean up old log files, keep the most recent N."""
+        project_logs = sorted(self.log_dir.glob(f"{self.project_name}_*.log"), key=lambda f: f.stat().st_mtime, reverse=True)
+        for old_log in project_logs[keep:]:
+            old_log.unlink()
+
+        for pattern in ["agent_*.log", "orchestrator_*.log"]:
+            old_logs = sorted(self.log_dir.glob(pattern), key=lambda f: f.stat().st_mtime, reverse=True)
+            for old_log in old_logs[keep:]:
+                old_log.unlink()
+
+    def cleanup_workspace(self):
+        """Clean up workspace (LaTeX temp files, old logs, etc.)."""
+        self.log("Cleaning up workspace...", "INFO")
+        cleaned = 0
+
+        latex_temp_exts = [".aux", ".log", ".out", ".toc", ".bbl", ".blg", ".fls", ".fdb_latexmk", ".synctex.gz"]
+        for ext in latex_temp_exts:
+            for f in self.latex_dir.glob(f"*{ext}"):
+                try:
+                    f.unlink()
+                    cleaned += 1
+                except Exception:
+                    pass
+
+        page_images = sorted(self.latex_dir.glob("page_*.png"), key=lambda f: f.stat().st_mtime, reverse=True)
+        for img in page_images[10:]:
+            try:
+                img.unlink()
+                cleaned += 1
+            except Exception:
+                pass
+
+        for cache_dir in self.code_dir.rglob("__pycache__"):
+            if cache_dir.is_dir():
+                try:
+                    import shutil
+                    shutil.rmtree(cache_dir)
+                    cleaned += 1
+                except Exception:
+                    pass
+
+        self.log(f"Cleanup done: deleted {cleaned} temp files", "INFO")
+
+    def log(self, message: str, level: str = "INFO"):
+        """Log a message with timestamp. ANSI codes stripped for file output."""
+        from ark.ui import strip_ansi
+
+        timestamp = datetime.now().strftime("%H:%M:%S")
+
+        if level == "RAW":
+            log_message = message
+        else:
+            log_message = f"[{timestamp}] {message}"
+
+        print(log_message, flush=True)
+        with open(self.log_file, "a") as f:
+            f.write(strip_ansi(log_message) + "\n")
+            f.flush()
+
+    def log_section(self, title: str, char: str = "═"):
+        """Print major section header."""
+        from ark.ui import styled, Style
+        line = char * 70
+        self.log(styled(line, Style.DIM), "RAW")
+        self.log(styled(f"  {title}", Style.BOLD), "RAW")
+        self.log(styled(line, Style.DIM), "RAW")
+
+    def log_step_header(self, step_num: int, total_steps: int, name: str, status: str = "start"):
+        """Print step header within a phase iteration (e.g., Step 1/5: Compile LaTeX)."""
+        from ark.ui import styled, Style, Icons
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        step_icon = Icons.for_step_header(name)
+        if status == "skipped":
+            self.log(f"[{timestamp}] {styled(f'⏭ Step {step_num}/{total_steps}: {name} (resumed, skipping)', Style.DIM)}", "RAW")
+        elif status == "start":
+            self.log("", "RAW")
+            header = f"┌─ {step_icon} STEP {step_num}/{total_steps}: {name} " + "─" * max(0, 48 - len(name))
+            self.log(styled(header, Style.BOLD, Style.CYAN), "RAW")
+            self.log(f"│ [{timestamp}] Starting...", "RAW")
+        else:
+            self.log(f"│ [{timestamp}] {styled('✓ Completed', Style.GREEN)}", "RAW")
+            self.log(styled("└" + "─" * 69, Style.DIM), "RAW")
+
+    # Backward compat alias
+    log_phase = log_step_header
+
+    def log_step(self, message: str, status: str = "info"):
+        """Print step detail within a step header block."""
+        from ark.ui import styled, Style, Icons
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        icon = Icons.for_step(status)
+        color_map = {
+            "success": Style.GREEN,
+            "warning": Style.YELLOW,
+            "error": Style.RED,
+            "progress": Style.CYAN,
+        }
+        color = color_map.get(status, "")
+        if color:
+            self.log(f"│ [{timestamp}] {styled(f'{icon} {message}', color)}", "RAW")
+        else:
+            self.log(f"│ [{timestamp}] {icon} {message}", "RAW")
+
+    def log_summary_box(self, title: str, items: list, inside_phase: bool = True):
+        """Print a summary box."""
+        from ark.ui import styled, Style
+        prefix = "│   " if inside_phase else ""
+        if inside_phase:
+            self.log("│", "RAW")
+        self.log(f"{prefix}┌─ {styled(title, Style.BOLD)} " + "─" * max(0, 50 - len(title)) + "┐", "RAW")
+        for item in items:
+            lines = item.split("\n") if "\n" in item else [item]
+            for line in lines:
+                if len(line) > 52:
+                    line = line[:49] + "..."
+                self.log(f"{prefix}│ {line:<52} │", "RAW")
+        self.log(f"{prefix}└" + "─" * 54 + "┘", "RAW")
+
+    # ========== State I/O ==========
+
+    def load_state(self) -> dict:
+        """Load research state."""
+        if not self.state_file.exists():
+            self.log("Initializing new research state...", "INFO")
+            default_state = {
+                "phases": {
+                    "C1_quantify": {"status": "pending"},
+                    "C2_probe": {"status": "pending", "sub_tasks": []},
+                    "C3_formulate": {"status": "pending"},
+                    "C4_solver": {"status": "pending"},
+                    "C5_validation": {"status": "pending"},
+                },
+                "current_iteration": {"number": 0},
+                "history": []
+            }
+            self.save_state(default_state)
+            return default_state
+
+        with open(self.state_file) as f:
+            return yaml.safe_load(f) or {}
+
+    def save_state(self, state: dict):
+        """Save research state."""
+        with open(self.state_file, "w") as f:
+            yaml.dump(state, f, default_flow_style=False, allow_unicode=True)
+
+    def get_current_phase(self, state: dict) -> str:
+        """Get current research phase."""
+        phases = state.get("phases", {})
+        for phase_name in ["C1_quantify", "C2_probe", "C3_formulate", "C4_solver", "C5_validation"]:
+            phase = phases.get(phase_name, {})
+            if phase.get("status") in ["pending", "in_progress"]:
+                return phase_name
+        return "completed"
+
+    # ========== Memory ==========
+
+    def record_score_to_memory(self, score: float):
+        """Record score to Memory."""
+        self.memory.record_score(score)
+        self._last_score = score
+        self.log(f"Memory: recorded score {score}/10", "MEMORY")
+
+    def get_memory_context(self) -> str:
+        """Get Memory context."""
+        return self.memory.get_context()
+
+    # ========== Paper State ==========
+
+    def load_paper_state(self) -> dict:
+        """Load paper review state."""
+        if self.paper_state_file.exists():
+            with open(self.paper_state_file) as f:
+                return yaml.safe_load(f) or {}
+        return {
+            "reviews": [],
+            "current_score": 0,
+            "status": "in_progress",
+        }
+
+    def save_paper_state(self, state: dict):
+        """Save paper review state."""
+        with open(self.paper_state_file, "w") as f:
+            yaml.dump(state, f, default_flow_style=False, allow_unicode=True)
+
+    def load_paper_requirements(self) -> dict:
+        """Load paper requirements config."""
+        if self.paper_requirements_file.exists():
+            with open(self.paper_requirements_file) as f:
+                return yaml.safe_load(f) or {}
+        return {}
+
+    def _paper_has_substantial_content(self) -> bool:
+        """Check if main.tex has substantial content."""
+        main_tex = self.latex_dir / "main.tex"
+        if not main_tex.exists():
+            return False
+
+        try:
+            content = main_tex.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return False
+
+        if len(content.strip()) < 2000:
+            return False
+
+        section_count = len(re.findall(r"\\section\{", content))
+        if section_count < 2:
+            return False
+
+        abstract_match = re.search(
+            r"\\begin\{abstract\}(.*?)\\end\{abstract\}",
+            content,
+            re.DOTALL,
+        )
+        if not abstract_match:
+            return False
+
+        abstract_text = re.sub(r"\\[a-zA-Z]+\*?(?:\[[^\]]*\])?(?:\{[^{}]*\})?", " ", abstract_match.group(1))
+        abstract_text = re.sub(r"\s+", " ", abstract_text).strip()
+        return len(abstract_text) >= 200
+
+    def _should_run_paper_initialize(self, paper_state: dict) -> bool:
+        """Whether to run first-run initialization."""
+        if self.iteration != 1:
+            return False
+        if paper_state.get("reviews"):
+            return False
+        if self._paper_has_substantial_content():
+            self.log("Detected existing substantial main.tex content; skip first-run initialization.", "INFO")
+            return False
+        return True
+
+    # ========== Action Plan ==========
+
+    def _load_action_plan(self) -> dict:
+        """Load Planner-generated action plan with error recovery for LaTeX escapes."""
+        if self.action_plan_file.exists():
+            try:
+                with open(self.action_plan_file) as f:
+                    return yaml.safe_load(f) or {}
+            except yaml.YAMLError as e:
+                self.log(f"YAML parse error, attempting to fix LaTeX escape: {e}", "WARN")
+                try:
+                    raw = self.action_plan_file.read_text()  # Fixed: was ACTION_PLAN_FILE
+                    def fix_dquoted(match):
+                        content = match.group(1)
+                        if '\\' in content:
+                            content = content.replace("'", "''")
+                            return "'" + content + "'"
+                        return match.group(0)
+
+                    fixed = re.sub(r'"([^"\n]*)"', fix_dquoted, raw)
+                    self.action_plan_file.write_text(fixed)
+                    result = yaml.safe_load(fixed) or {}
+                    self.log("YAML fix succeeded (LaTeX escape -> single quotes)", "INFO")
+                    return result
+                except Exception as e2:
+                    self.log(f"YAML fix failed: {e2}, returning empty plan", "ERROR")
+                    return {"issues": []}
+        return {"issues": []}
+
+    def _save_action_plan(self, action_plan: dict):
+        """Save action plan."""
+        with open(self.action_plan_file, "w") as f:
+            yaml.dump(action_plan, f, default_flow_style=False, allow_unicode=True)
+
+    def _load_findings_summary(self) -> str:
+        """Load findings.yaml summary."""
+        if self.findings_file.exists():
+            with open(self.findings_file) as f:
+                findings = yaml.safe_load(f) or {}
+            return yaml.dump(findings, allow_unicode=True)[:500]
+        return "No findings yet"
+
+    # ========== Review Parsing ==========
+
+    def parse_review_score(self, review_output: str) -> float:
+        """Parse overall score from review output."""
+        patterns = [
+            r"总体评分[：:]\s*(\d+\.?\d*)/10",
+            r"Overall Score[：:]\s*(\d+\.?\d*)/10",
+            r"总分[：:]\s*(\d+\.?\d*)/10",
+            r"\*\*Total\*\*.*?\*\*(\d+\.?\d*)/10\*\*",
+            r"\|\s*Total\s*\|.*?(\d+\.?\d*)/10",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, review_output, re.IGNORECASE | re.DOTALL)
+            if match:
+                score = float(match.group(1))
+                self.log(f"Parsed score: {score}/10")
+                return score
+
+        if self.latest_review_file.exists():
+            content = self.latest_review_file.read_text()
+            for pattern in patterns:
+                match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+                if match:
+                    score = float(match.group(1))
+                    self.log(f"Parsed score from latest_review.md: {score}/10")
+                    return score
+
+        self.log("Warning: could not parse score, returning 0")
+        return 0.0
+
+    def extract_issue_ids(self) -> List[str]:
+        """Extract all issue IDs from latest_review.md."""
+        if not self.latest_review_file.exists():
+            return []
+
+        content = self.latest_review_file.read_text()
+        issue_pattern = r'\b([Mm]\d+)\b'
+        matches = re.findall(issue_pattern, content)
+        unique_issues = list(set(matches))
+        self.log(f"Extracted {len(unique_issues)} issues: {unique_issues}")
+        return unique_issues
+
+    def _check_needs_experiment(self, review_output: str) -> bool:
+        """Analyze review to determine if experiments are needed."""
+        content = review_output
+        if self.latest_review_file.exists():
+            content += "\n" + self.latest_review_file.read_text()
+
+        experiment_keywords = [
+            r"需要.*实验", r"补充.*实验", r"缺少.*数据", r"验证不足",
+            r"建议.*增加.*实验", r"add.*experiment", r"missing.*data",
+            r"insufficient.*validation", r"suggest.*adding.*experiment",
+            r"need.*more.*evidence", r"require.*additional.*test",
+        ]
+
+        for pattern in experiment_keywords:
+            if re.search(pattern, content, re.IGNORECASE):
+                self.log(f"Detected experiment-needed keyword: {pattern}", "INFO")
+                return True
+        return False
+
+    def _check_needs_literature_search(self, review_output: str) -> tuple:
+        """Check if literature search is needed."""
+        content = review_output
+        if self.latest_review_file.exists():
+            content += "\n" + self.latest_review_file.read_text()
+
+        search_topics = []
+
+        related_work_keywords = [
+            r"related work.*insufficient", r"related work.*missing",
+            r"缺少.*相关工作", r"should cite", r"compare with.*other",
+            r"missing.*comparison", r"prior work", r"existing.*method",
+        ]
+        for pattern in related_work_keywords:
+            if re.search(pattern, content, re.IGNORECASE):
+                search_topics.append("related_work")
+                break
+
+        tech_keywords = [
+            r"verify.*claim", r"documentation.*support",
+            r"FlashAttention.*behavior", r"Tensor Core.*requirement",
+            r"技术.*验证",
+        ]
+        for pattern in tech_keywords:
+            if re.search(pattern, content, re.IGNORECASE):
+                search_topics.append("technical_verification")
+                break
+
+        comparison_keywords = [
+            r"compare.*baseline", r"other.*compression",
+            r"alternative.*method", r"state.of.the.art", r"SOTA",
+        ]
+        for pattern in comparison_keywords:
+            if re.search(pattern, content, re.IGNORECASE):
+                search_topics.append("competitive_analysis")
+                break
+
+        return len(search_topics) > 0, search_topics
+
+    # ========== Validation ==========
+
+    def _validate_action_plan(self, plan: dict) -> tuple:
+        """Validate action plan has required structure.
+
+        Returns:
+            (is_valid: bool, error_message: str)
+        """
+        if not isinstance(plan, dict):
+            return False, "Plan is not a dictionary"
+
+        issues = plan.get("issues")
+        if issues is None:
+            return False, "Missing 'issues' key"
+
+        if not isinstance(issues, list):
+            return False, "'issues' is not a list"
+
+        for i, issue in enumerate(issues):
+            if not isinstance(issue, dict):
+                return False, f"Issue {i} is not a dictionary"
+            if not issue.get("id"):
+                return False, f"Issue {i} missing 'id'"
+            if not issue.get("type"):
+                return False, f"Issue {i} (id={issue.get('id')}) missing 'type'"
+            if not issue.get("title"):
+                return False, f"Issue {i} (id={issue.get('id')}) missing 'title'"
+
+        return True, ""
+
+    # ========== Git ==========
+
+    def _ensure_git_repo(self):
+        """Ensure code_dir is a git repo with a GitHub remote. Idempotent."""
+        code_dir = self.code_dir
+        # Already a git repo?
+        check = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True, text=True, cwd=code_dir, timeout=10,
+        )
+        if check.returncode != 0:
+            # git init
+            subprocess.run(["git", "init"], cwd=code_dir, capture_output=True, timeout=30)
+            # Create .gitignore if missing
+            gitignore = Path(code_dir) / ".gitignore"
+            if not gitignore.exists():
+                gitignore.write_text(
+                    "__pycache__/\n*.pyc\n.env\n*.log\nslurm_*.out\n"
+                    "auto_research/logs/\n*.pdf\n"
+                )
+                subprocess.run(["git", "add", ".gitignore"], cwd=code_dir, capture_output=True, timeout=10)
+            self.log("Git: initialized repository", "INFO")
+
+        # Check for remote
+        remote = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, cwd=code_dir, timeout=10,
+        )
+        if remote.returncode != 0:
+            # Create GitHub repo via gh CLI
+            try:
+                result = subprocess.run(
+                    ["gh", "repo", "create", self.project_name,
+                     "--private", "--source", str(code_dir), "--push"],
+                    capture_output=True, text=True, cwd=code_dir, timeout=60,
+                )
+                if result.returncode == 0:
+                    self.log(f"Git: created GitHub repo '{self.project_name}' and pushed", "INFO")
+                else:
+                    # Repo might already exist — try adding remote
+                    gh_user = subprocess.run(
+                        ["gh", "api", "user", "--jq", ".login"],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    username = gh_user.stdout.strip()
+                    if username:
+                        subprocess.run(
+                            ["git", "remote", "add", "origin",
+                             f"git@github.com:{username}/{self.project_name}.git"],
+                            cwd=code_dir, capture_output=True, timeout=10,
+                        )
+                        self.log(f"Git: added remote origin for {username}/{self.project_name}", "INFO")
+                    else:
+                        self.log(f"Git: could not create GitHub repo: {result.stderr[:200]}", "WARN")
+            except FileNotFoundError:
+                self.log("Git: gh CLI not found, skipping GitHub repo creation", "WARN")
+            except Exception as e:
+                self.log(f"Git: GitHub repo creation failed: {e}", "WARN")
+
+    def git_commit(self, message: str, files: list = None):
+        """Auto git commit and push at key checkpoints."""
+        try:
+            self._ensure_git_repo()
+
+            status_result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True, text=True, cwd=self.code_dir, timeout=30
+            )
+
+            if not status_result.stdout.strip():
+                self.log("Git: no changes to commit", "INFO")
+                return False
+
+            if files:
+                for f in files:
+                    subprocess.run(["git", "add", f], cwd=self.code_dir, timeout=30)
+            else:
+                latex_dir_name = self.config.get("latex_dir", "Latex")
+                key_files = [
+                    f"{latex_dir_name}/main.tex",
+                    f"{latex_dir_name}/*.bib",
+                    "report.md",
+                    "auto_research/state/*.yaml",
+                    "auto_research/state/*.md",
+                    "experiments/",
+                    "code/",
+                ]
+                for pattern in key_files:
+                    subprocess.run(
+                        ["git", "add", pattern],
+                        cwd=self.code_dir, timeout=30,
+                        capture_output=True
+                    )
+
+            commit_msg = f"[{self.project_name.upper()}] {message}\n\nIteration: {self.iteration}\nScore: {getattr(self, '_last_score', 'N/A')}"
+            result = subprocess.run(
+                ["git", "commit", "-m", commit_msg],
+                capture_output=True, text=True, cwd=self.code_dir, timeout=60
+            )
+
+            if result.returncode == 0:
+                self.log(f"Git commit: {message}", "INFO")
+                # Auto push
+                push = subprocess.run(
+                    ["git", "push", "-u", "origin", "HEAD"],
+                    capture_output=True, text=True, cwd=self.code_dir, timeout=60,
+                )
+                if push.returncode == 0:
+                    self.log("Git: pushed to GitHub", "INFO")
+                else:
+                    self.log(f"Git: push failed: {push.stderr[:200]}", "WARN")
+                return True
+            else:
+                self.log(f"Git commit failed: {result.stderr[:200]}", "WARN")
+                return False
+
+        except Exception as e:
+            self.log(f"Git commit error: {e}", "ERROR")
+            return False
+
+    # ========== Notifications ==========
+
+    def inject_user_update(self, message: str):
+        """Write a message into user_updates.yaml, as if the user had run 'ark update'."""
+        updates_file = self.state_dir / "user_updates.yaml"
+        try:
+            data = {}
+            if updates_file.exists():
+                with open(updates_file) as f:
+                    data = yaml.safe_load(f) or {}
+            updates = data.get("updates", [])
+            updates.append({
+                "message": message,
+                "consumed": False,
+                "timestamp": datetime.now().isoformat(),
+                "source": "telegram_reply",
+            })
+            data["updates"] = updates
+            with open(updates_file, "w") as f:
+                yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+            self.log(f"Telegram reply injected as user update: {message[:80]}", "INFO")
+        except Exception as e:
+            self.log(f"Failed to inject user update: {e}", "WARN")
+
+    def ask_telegram_user(self, question: str, timeout: int = 1800) -> str | None:
+        """Send a question via Telegram and block until the user replies (or timeout).
+
+        Returns the reply text, or None if not configured / timed out.
+        The reply is also injected into user_updates.yaml.
+        """
+        if not self.telegram.is_configured:
+            self.log("ask_telegram_user: Telegram not configured, skipping.", "WARN")
+            return None
+
+        self.log(f"Waiting for Telegram reply (timeout {timeout}s)...", "INFO")
+        reply = self.telegram.ask(question, timeout=timeout)
+
+        if reply:
+            self.log(f"Telegram reply received: {reply[:80]}", "INFO")
+            self.inject_user_update(reply)
+            return reply
+
+        self.log(f"ask_telegram_user: timed out after {timeout}s, continuing.", "WARN")
+        return None
+
+    def _send_session_banner(self):
+        """Send a rich session start banner to Telegram."""
+        if not self.telegram.is_configured:
+            return
+
+        # Gather resume context
+        resume_info = "From scratch"
+        score_info = ""
+
+        if self.mode == "paper":
+            paper_state = self.load_paper_state()
+            current_score = paper_state.get("current_score", 0)
+            reviews = paper_state.get("reviews", [])
+            status = paper_state.get("status", "running")
+
+            if self.iteration > 0:
+                # Resuming
+                checkpoint = self.load_checkpoint()
+                completed_step = checkpoint.get("completed_step", 0)
+                step_name = checkpoint.get("completed_step_name", "")
+                if completed_step > 0 and completed_step < 5:
+                    resume_info = f"Resume iter {self.iteration + 1}, step {completed_step + 1}/5 ({step_name} done)"
+                else:
+                    resume_info = f"Resume from iter {self.iteration + 1}"
+
+                if current_score > 0:
+                    gap = self.paper_accept_threshold - current_score
+                    recent = [r.get("score", 0) for r in reviews[-5:]]
+                    trend = " → ".join(f"{s:.1f}" for s in recent) if recent else ""
+                    score_info = f"Score: {current_score}/10 | Gap: {gap:.1f}\n"
+                    if trend:
+                        score_info += f"History: {trend}\n"
+
+                    # Stagnation warning
+                    stag = getattr(self.memory, 'stagnation_count', 0)
+                    if stag >= 2:
+                        score_info += f"⚠️ Stagnation: {stag} rounds\n"
+            else:
+                resume_info = "Starting fresh"
+        elif self.mode == "dev":
+            if self.iteration > 0:
+                resume_info = f"Resume from iter {self.iteration + 1}"
+            else:
+                resume_info = "Starting fresh"
+
+        lines = [
+            f"━━━━━━━━━━━━━━━━━━━━━",
+            f"🚀  {self.project_name}  |  {self.mode} mode",
+            f"{resume_info}",
+        ]
+        if score_info:
+            lines.append(score_info.rstrip())
+        lines.append(f"Target: {self.paper_accept_threshold}/10  |  Max {self.max_iterations} iter")
+        lines.append(f"━━━━━━━━━━━━━━━━━━━━━")
+
+        self.telegram.send_raw("\n".join(lines))
+
+    def send_notification(self, subject: str, message: str, priority: str = "normal"):
+        """Send notification via Telegram (primary) and email (fallback).
+
+        Notifications are formatted with distinctive banners based on type
+        so they're easy to scan at a glance in Telegram.
+        """
+        critical_keywords = ["error", "failed", "token", "accepted", "completed", "timeout", "started", "finished"]
+        should_send = priority == "critical" or any(kw in subject.lower() for kw in critical_keywords)
+
+        if not should_send:
+            self.log(f"Notification skipped (non-critical): {subject}", "INFO")
+            return
+
+        # Pick a distinctive banner based on notification type
+        subj_lower = subject.lower()
+        if "accepted" in subj_lower:
+            banner = "🎉 ══ ACCEPTED ══"
+        elif "error" in subj_lower or "failed" in subj_lower:
+            banner = "❌ ══ ERROR ══"
+        elif "started" in subj_lower:
+            banner = "🚀 ══ STARTED ══"
+        elif "finished" in subj_lower or "completed" in subj_lower:
+            banner = "🏁 ══ FINISHED ══"
+        elif "stagnation" in subj_lower:
+            banner = "⚠️ ══ STAGNATION ══"
+        elif "rate limit" in subj_lower or "quota" in subj_lower:
+            banner = "⏳ ══ RATE LIMIT ══"
+        else:
+            banner = f"📢 {subject}"
+
+        full_message = f"<b>{banner}</b>\n{message}"
+
+        if self.telegram.is_configured:
+            try:
+                self.telegram.send(full_message, parse_mode="HTML")
+                self.log(f"Telegram notification sent: {subject}", "INFO")
+                return
+            except Exception as e:
+                self.log(f"Telegram notification failed: {e}, falling back to email", "WARN")
+
+        # Fallback: email
+        try:
+            email = self.config.get("notification_email", "jihao.xin@kaust.edu.sa")
+            subprocess.run(
+                ["mail", "-s", f"[{self.project_name.upper()}] {subject}", email],
+                input=full_message,
+                text=True,
+                timeout=30,
+            )
+            self.log(f"Email notification sent: {subject}", "INFO")
+        except Exception as e:
+            self.log(f"Failed to send notification: {e}", "WARN")
+
+    # ========== Telegram Enhancements ==========
+
+    def ask_user_decision(self, question: str, options: list = None,
+                          timeout: int = 900, default: int = 0) -> tuple:
+        """Send compact multiple-choice decision request via Telegram."""
+        if not self.telegram.is_configured:
+            self.log(f"No Telegram configured, using default option {default}", "WARN")
+            return default, ""
+
+        timeout = self.config.get("telegram_decision_timeout", timeout)
+        timeout_min = timeout // 60
+
+        msg = f"⚠️ {question}\n"
+        if options:
+            for i, opt in enumerate(options, 1):
+                default_marker = f" ← auto {timeout_min}min" if i - 1 == default else ""
+                msg += f"\n{i}. {opt}{default_marker}"
+            msg += f"\n\nReply 1-{len(options)} or type"
+
+        reply = self.ask_telegram_user(msg, timeout=timeout)
+
+        if reply is None:
+            default_label = options[default] if options else 'N/A'
+            self.log(f"Decision timed out, using default: {default_label}", "WARN")
+            self.telegram.send(f"⏰ *{self.project_name}*: timeout — auto-selected: {default_label}")
+            return default, ""
+
+        if options:
+            try:
+                idx = int(reply.strip()) - 1
+                if 0 <= idx < len(options):
+                    return idx, reply
+            except ValueError:
+                pass
+
+        return default, reply
+
+    def send_error_alert(self, error: str, phase: str, blocking: bool = False,
+                         options: list = None) -> str:
+        """Send error alert. If blocking=True, waits for user reply."""
+        msg = f"*Error*\n\nPhase: {phase}\nError: {error}"
+
+        if blocking and options:
+            idx, reply = self.ask_user_decision(
+                f"Error in {phase}: {error}\n\nHow to proceed?",
+                options=options, timeout=3600, default=0,
+            )
+            return reply or (options[idx] if options else "")
+        elif blocking:
+            return self.ask_telegram_user(msg, timeout=3600)
+        else:
+            self.send_notification("Error Alert", msg, priority="critical")
+            return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description="ARK Automated Research Orchestrator")
+    parser.add_argument("--mode", type=str, default="research", choices=["research", "paper", "dev"],
+                        help="Mode: 'research' for experiments, 'paper' for review iterations, 'dev' for development iterations")
+    parser.add_argument("--project", type=str, required=True, help="Project name (e.g., prouter)")
+    parser.add_argument("--model", type=str, default="claude", choices=["claude", "gemini", "codex"],
+                        help="Model backend: 'claude', 'gemini', or 'codex'")
+    parser.add_argument("--max-days", type=float, default=3, help="Maximum runtime in days")
+    parser.add_argument("--iterations", type=int, default=100, help="Number of iterations to run")
+    parser.add_argument("--code-dir", type=str, default=None,
+                        help="Override code directory (default: from project config)")
+    parser.add_argument("--project-dir", type=str, default=None,
+                        help="Override project directory (default: ARK_ROOT/projects/<project>)")
+    args = parser.parse_args()
+
+    # Load project config to resolve code_dir if not specified
+    project_dir = args.project_dir
+    config_file = (Path(project_dir) if project_dir else ARK_ROOT / "projects" / args.project) / "config.yaml"
+    code_dir = args.code_dir
+    if code_dir is None and config_file.exists():
+        import yaml as _yaml
+        with open(config_file) as f:
+            cfg = _yaml.safe_load(f) or {}
+        code_dir = cfg.get("code_dir")
+
+    orchestrator = Orchestrator(
+        max_days=args.max_days,
+        max_iterations=args.iterations,
+        mode=args.mode,
+        project=args.project,
+        model=args.model,
+        code_dir=code_dir,
+        project_dir=project_dir,
+    )
+    orchestrator.run()
+
+
+if __name__ == "__main__":
+    main()

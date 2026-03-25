@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARK Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        slate: { 850: '#172033' }
+      }
+    }
+  }
+}
+</script>
+<style>
+  body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  .log-viewer { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; line-height: 1.5; }
+  .log-viewer .log-error { color: #f87171; }
+  .log-viewer .log-warn { color: #fbbf24; }
+  .log-viewer .log-info { color: #60a5fa; }
+  .log-viewer .log-agent { color: #a78bfa; }
+  .log-viewer .log-phase { color: #34d399; font-weight: bold; }
+  .fade-in { animation: fadeIn 0.2s ease-in; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+  .review-content h1, .review-content h2, .review-content h3 { color: #e2e8f0; margin-top: 1em; margin-bottom: 0.5em; }
+  .review-content h1 { font-size: 1.25rem; font-weight: 700; }
+  .review-content h2 { font-size: 1.1rem; font-weight: 600; }
+  .review-content h3 { font-size: 1rem; font-weight: 600; }
+  .review-content p { margin-bottom: 0.5em; }
+  .review-content ul, .review-content ol { margin-left: 1.5em; margin-bottom: 0.5em; }
+  .review-content li { margin-bottom: 0.25em; }
+  .review-content strong { color: #fbbf24; }
+  .review-content code { background: #1e293b; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+  .review-content table { width: 100%; border-collapse: collapse; margin: 0.5em 0; }
+  .review-content th, .review-content td { border: 1px solid #334155; padding: 0.4em 0.8em; text-align: left; }
+  .review-content th { background: #1e293b; font-weight: 600; }
+</style>
+</head>
+<body class="bg-slate-900 text-slate-200 min-h-screen">
+
+<!-- Header -->
+<header class="border-b border-slate-700 bg-slate-800/80 backdrop-blur sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3 cursor-pointer" onclick="showOverview()">
+      <div class="text-xl font-bold tracking-tight">
+        <span class="text-emerald-400">ARK</span>
+        <span class="text-slate-400 font-normal ml-2">Dashboard</span>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <div id="conn-status" class="flex items-center gap-1.5 text-xs">
+        <span id="conn-dot" class="w-2 h-2 rounded-full bg-amber-400 pulse-dot"></span>
+        <span id="conn-text" class="text-slate-400">Connecting...</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- Overview Page -->
+<main id="page-overview" class="max-w-7xl mx-auto px-4 py-6">
+  <div id="no-projects" class="hidden text-center py-20">
+    <div class="text-slate-500 text-lg">No projects found</div>
+    <div class="text-slate-600 text-sm mt-2">Create a project with <code class="bg-slate-800 px-2 py-1 rounded">ark new &lt;name&gt;</code></div>
+  </div>
+  <div id="project-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+</main>
+
+<!-- Detail Page -->
+<main id="page-detail" class="max-w-7xl mx-auto px-4 py-6 hidden">
+  <!-- Breadcrumb -->
+  <div class="flex items-center gap-2 mb-4 text-sm">
+    <button onclick="showOverview()" class="text-slate-400 hover:text-emerald-400 transition">Projects</button>
+    <span class="text-slate-600">/</span>
+    <span id="detail-name" class="text-slate-200 font-medium"></span>
+  </div>
+
+  <!-- Project Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 id="detail-title" class="text-xl font-semibold"></h1>
+      <div class="flex items-center gap-3 mt-1">
+        <span id="detail-venue" class="text-xs px-2 py-0.5 rounded-full bg-slate-700 text-slate-300"></span>
+        <span id="detail-model" class="text-xs text-slate-500"></span>
+        <span id="detail-status-badge"></span>
+      </div>
+    </div>
+    <div class="flex items-center gap-4 text-right">
+      <div>
+        <div class="text-2xl font-bold" id="detail-score">--</div>
+        <div class="text-xs text-slate-500">Current Score</div>
+      </div>
+      <div>
+        <div class="text-lg font-semibold text-emerald-400" id="detail-best">--</div>
+        <div class="text-xs text-slate-500">Best</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="border-b border-slate-700 mb-4">
+    <nav class="flex gap-1" id="tab-nav">
+      <button data-tab="overview" class="tab-btn active px-4 py-2 text-sm font-medium rounded-t border-b-2 border-emerald-400 text-emerald-400">Overview</button>
+      <button data-tab="issues" class="tab-btn px-4 py-2 text-sm font-medium rounded-t border-b-2 border-transparent text-slate-400 hover:text-slate-200">Issues</button>
+      <button data-tab="review" class="tab-btn px-4 py-2 text-sm font-medium rounded-t border-b-2 border-transparent text-slate-400 hover:text-slate-200">Review</button>
+      <button data-tab="cost" class="tab-btn px-4 py-2 text-sm font-medium rounded-t border-b-2 border-transparent text-slate-400 hover:text-slate-200">Cost</button>
+      <button data-tab="logs" class="tab-btn px-4 py-2 text-sm font-medium rounded-t border-b-2 border-transparent text-slate-400 hover:text-slate-200">Logs</button>
+    </nav>
+  </div>
+
+  <!-- Tab: Overview -->
+  <div id="tab-overview" class="tab-panel">
+    <!-- Metrics Row -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div class="bg-slate-800 rounded-lg p-3">
+        <div class="text-xs text-slate-500 mb-1">Iteration</div>
+        <div class="text-lg font-semibold" id="metric-iteration">--</div>
+      </div>
+      <div class="bg-slate-800 rounded-lg p-3">
+        <div class="text-xs text-slate-500 mb-1">Phase</div>
+        <div class="text-sm font-medium" id="metric-phase">--</div>
+      </div>
+      <div class="bg-slate-800 rounded-lg p-3">
+        <div class="text-xs text-slate-500 mb-1">Active Agent</div>
+        <div class="text-sm font-medium" id="metric-agent">--</div>
+      </div>
+      <div class="bg-slate-800 rounded-lg p-3">
+        <div class="text-xs text-slate-500 mb-1">Stagnation</div>
+        <div class="text-lg font-semibold" id="metric-stagnation">0</div>
+      </div>
+    </div>
+
+    <!-- Score Chart -->
+    <div class="bg-slate-800 rounded-lg p-4 mb-6">
+      <h3 class="text-sm font-medium text-slate-400 mb-3">Score Progression</h3>
+      <div style="height: 260px;">
+        <canvas id="score-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- Phase Stepper -->
+    <div class="bg-slate-800 rounded-lg p-4">
+      <h3 class="text-sm font-medium text-slate-400 mb-3">Pipeline Phase</h3>
+      <div id="phase-stepper" class="flex items-center justify-between gap-1 overflow-x-auto"></div>
+    </div>
+  </div>
+
+  <!-- Tab: Issues -->
+  <div id="tab-issues" class="tab-panel hidden">
+    <div id="issues-list" class="space-y-2"></div>
+    <div id="no-issues" class="hidden text-center py-10 text-slate-500">No issues found in action plan</div>
+  </div>
+
+  <!-- Tab: Review -->
+  <div id="tab-review" class="tab-panel hidden">
+    <div id="review-empty" class="hidden text-center py-10 text-slate-500">No review available yet</div>
+    <div id="review-content" class="review-content bg-slate-800 rounded-lg p-6 text-sm text-slate-300 leading-relaxed"></div>
+  </div>
+
+  <!-- Tab: Cost -->
+  <div id="tab-cost" class="tab-panel hidden">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+      <div class="bg-slate-800 rounded-lg p-4">
+        <h3 class="text-sm font-medium text-slate-400 mb-3">Agent Time Distribution</h3>
+        <div style="height: 260px;">
+          <canvas id="cost-donut"></canvas>
+        </div>
+      </div>
+      <div class="bg-slate-800 rounded-lg p-4">
+        <h3 class="text-sm font-medium text-slate-400 mb-3">Agent Calls</h3>
+        <div style="height: 260px;">
+          <canvas id="cost-bar"></canvas>
+        </div>
+      </div>
+    </div>
+    <div class="bg-slate-800 rounded-lg p-4">
+      <h3 class="text-sm font-medium text-slate-400 mb-3">Cost Summary</h3>
+      <div id="cost-table-wrap"></div>
+    </div>
+  </div>
+
+  <!-- Tab: Logs -->
+  <div id="tab-logs" class="tab-panel hidden">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-3">
+        <input id="log-search" type="text" placeholder="Filter logs..." class="bg-slate-800 border border-slate-700 rounded px-3 py-1.5 text-sm w-60 focus:outline-none focus:border-emerald-500">
+        <select id="log-level-filter" class="bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-sm focus:outline-none">
+          <option value="">All levels</option>
+          <option value="error">Errors</option>
+          <option value="warn">Warnings</option>
+          <option value="agent">Agents</option>
+          <option value="phase">Phases</option>
+        </select>
+      </div>
+      <label class="flex items-center gap-2 text-sm text-slate-400 cursor-pointer">
+        <input id="log-follow" type="checkbox" checked class="rounded">
+        <span>Follow</span>
+      </label>
+    </div>
+    <div id="log-viewer" class="log-viewer bg-slate-950 rounded-lg p-4 h-[500px] overflow-y-auto scrollbar-thin"></div>
+  </div>
+</main>
+
+<script>
+// ============================================================
+// State
+// ============================================================
+let projects = {};       // name -> summary
+let currentProject = null;
+let currentDetail = null;
+let scoreChart = null;
+let costDonut = null;
+let costBar = null;
+let activeTab = 'overview';
+let logFollow = true;
+let evtSource = null;
+
+const AGENT_COLORS = {
+  reviewer: '#60a5fa', planner: '#22d3ee', writer: '#34d399',
+  experimenter: '#a78bfa', researcher: '#a78bfa', visualizer: '#fbbf24',
+  meta_debugger: '#f87171', coder: '#34d399',
+};
+
+const PHASES = ['Compile', 'Review', 'Plan', 'Execute', 'Validate'];
+
+// ============================================================
+// SSE Connection
+// ============================================================
+function connectSSE() {
+  if (evtSource) evtSource.close();
+  evtSource = new EventSource('/api/events');
+
+  evtSource.onopen = () => {
+    document.getElementById('conn-dot').className = 'w-2 h-2 rounded-full bg-emerald-400';
+    document.getElementById('conn-text').textContent = 'Connected';
+  };
+
+  evtSource.addEventListener('project_update', (e) => {
+    const data = JSON.parse(e.data);
+    projects[data.project] = data.summary;
+    if (document.getElementById('page-overview').classList.contains('hidden')) {
+      if (currentProject === data.project) {
+        updateDetailHeader(data.summary);
+      }
+    } else {
+      renderOverview();
+    }
+  });
+
+  evtSource.addEventListener('project_removed', (e) => {
+    const data = JSON.parse(e.data);
+    delete projects[data.project];
+    if (currentProject === data.project) showOverview();
+    else renderOverview();
+  });
+
+  evtSource.addEventListener('heartbeat', () => {});
+
+  evtSource.onerror = () => {
+    document.getElementById('conn-dot').className = 'w-2 h-2 rounded-full bg-amber-400 pulse-dot';
+    document.getElementById('conn-text').textContent = 'Reconnecting...';
+  };
+}
+
+// ============================================================
+// Overview Page
+// ============================================================
+function renderOverview() {
+  const grid = document.getElementById('project-grid');
+  const noProjects = document.getElementById('no-projects');
+  const names = Object.keys(projects).sort();
+
+  if (names.length === 0) {
+    grid.innerHTML = '';
+    noProjects.classList.remove('hidden');
+    return;
+  }
+  noProjects.classList.add('hidden');
+
+  grid.innerHTML = names.map(name => {
+    const p = projects[name];
+    const score = p.current_score != null ? p.current_score.toFixed(1) : '--';
+    const best = p.best_score != null ? p.best_score.toFixed(1) : '--';
+    const scoreColor = getScoreColor(p.current_score);
+    const sparkline = renderSparklineSVG(p.scores || [], p.acceptance_threshold);
+    const runBadge = p.running
+      ? '<span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-medium">Running</span>'
+      : '<span class="px-2 py-0.5 rounded-full bg-slate-600/50 text-slate-400 text-xs">Stopped</span>';
+    const agentBadge = p.active_agent
+      ? `<span class="px-2 py-0.5 rounded-full text-xs font-medium" style="background:${AGENT_COLORS[p.active_agent] || '#94a3b8'}22; color:${AGENT_COLORS[p.active_agent] || '#94a3b8'}">${p.active_agent}</span>`
+      : '';
+
+    return `
+      <div class="bg-slate-800 hover:bg-slate-750 border border-slate-700 hover:border-slate-600 rounded-xl p-5 cursor-pointer transition fade-in" onclick="showDetail('${name}')">
+        <div class="flex items-start justify-between mb-3">
+          <div>
+            <div class="font-semibold text-slate-100 text-sm">${escHtml(p.title || name)}</div>
+            <div class="flex items-center gap-2 mt-1">
+              ${p.venue ? `<span class="text-xs px-1.5 py-0.5 rounded bg-slate-700 text-slate-400">${escHtml(p.venue)}</span>` : ''}
+              ${runBadge}
+            </div>
+          </div>
+          <div class="text-right">
+            <div class="text-2xl font-bold" style="color:${scoreColor}">${score}</div>
+            <div class="text-xs text-slate-500">best ${best}</div>
+          </div>
+        </div>
+        <div class="mb-3">${sparkline}</div>
+        <div class="flex items-center justify-between text-xs text-slate-500">
+          <div class="flex items-center gap-2">
+            ${p.iteration ? `<span>Iter ${escHtml(p.iteration)}</span>` : ''}
+            ${p.phase ? `<span class="text-slate-400">${escHtml(p.phase.replace(/Phase \d+\/\d+: /, ''))}</span>` : ''}
+          </div>
+          ${agentBadge}
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderSparklineSVG(scores, threshold) {
+  if (!scores || scores.length < 2) return '<div class="h-10"></div>';
+  const w = 280, h = 40, pad = 2;
+  const min = Math.min(...scores, threshold || 10) - 0.5;
+  const max = Math.max(...scores, threshold || 0) + 0.5;
+  const range = max - min || 1;
+  const pts = scores.map((s, i) => {
+    const x = pad + (i / (scores.length - 1)) * (w - pad * 2);
+    const y = h - pad - ((s - min) / range) * (h - pad * 2);
+    return `${x},${y}`;
+  });
+  let threshLine = '';
+  if (threshold) {
+    const ty = h - pad - ((threshold - min) / range) * (h - pad * 2);
+    threshLine = `<line x1="${pad}" y1="${ty}" x2="${w - pad}" y2="${ty}" stroke="#fbbf2466" stroke-width="1" stroke-dasharray="4,3"/>`;
+  }
+  return `<svg viewBox="0 0 ${w} ${h}" class="w-full h-10">
+    ${threshLine}
+    <polyline points="${pts.join(' ')}" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${pts[pts.length-1].split(',')[0]}" cy="${pts[pts.length-1].split(',')[1]}" r="3" fill="#34d399"/>
+  </svg>`;
+}
+
+function getScoreColor(score) {
+  if (score == null) return '#94a3b8';
+  if (score >= 7) return '#34d399';
+  if (score >= 5) return '#fbbf24';
+  return '#f87171';
+}
+
+// ============================================================
+// Detail Page
+// ============================================================
+async function showDetail(name) {
+  currentProject = name;
+  document.getElementById('page-overview').classList.add('hidden');
+  document.getElementById('page-detail').classList.remove('hidden');
+  document.getElementById('detail-name').textContent = name;
+
+  // Load full detail
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error('Failed to load project');
+    currentDetail = await res.json();
+    renderDetail();
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function showOverview() {
+  currentProject = null;
+  currentDetail = null;
+  document.getElementById('page-overview').classList.remove('hidden');
+  document.getElementById('page-detail').classList.add('hidden');
+  renderOverview();
+}
+
+function renderDetail() {
+  if (!currentDetail) return;
+  const s = currentDetail.summary;
+  updateDetailHeader(s);
+  renderOverviewTab();
+  renderIssuesTab();
+  renderReviewTab();
+  renderCostTab();
+  renderLogsTab();
+}
+
+function updateDetailHeader(s) {
+  document.getElementById('detail-title').textContent = s.title || s.name;
+  document.getElementById('detail-venue').textContent = s.venue || '';
+  document.getElementById('detail-model').textContent = s.model ? `Model: ${s.model}` : '';
+  document.getElementById('detail-score').textContent = s.current_score != null ? s.current_score.toFixed(1) : '--';
+  document.getElementById('detail-score').style.color = getScoreColor(s.current_score);
+  document.getElementById('detail-best').textContent = s.best_score != null ? s.best_score.toFixed(1) : '--';
+  document.getElementById('detail-status-badge').innerHTML = s.running
+    ? '<span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-medium">Running</span>'
+    : '<span class="px-2 py-0.5 rounded-full bg-slate-600/50 text-slate-400 text-xs">Stopped</span>';
+}
+
+// ---- Overview Tab ----
+function renderOverviewTab() {
+  const s = currentDetail.summary;
+  const live = currentDetail.live;
+  document.getElementById('metric-iteration').textContent = live.iteration || s.iteration || '--';
+  document.getElementById('metric-phase').textContent = live.phase || s.phase || '--';
+  document.getElementById('metric-stagnation').textContent = s.stagnation_count || '0';
+
+  if (live.agent) {
+    const ac = AGENT_COLORS[live.agent.type] || '#94a3b8';
+    document.getElementById('metric-agent').innerHTML =
+      `<span style="color:${ac}">${live.agent.type}</span> <span class="text-slate-500 text-xs">${live.agent.elapsed_str || ''}</span>`;
+  } else {
+    document.getElementById('metric-agent').textContent = s.active_agent || '--';
+  }
+
+  renderScoreChart(s.scores, s.acceptance_threshold);
+  renderPhaseStepper(live.phase || s.phase);
+}
+
+function renderScoreChart(scores, threshold) {
+  const ctx = document.getElementById('score-chart').getContext('2d');
+  const labels = scores.map((_, i) => `Iter ${i + 1}`);
+
+  if (scoreChart) scoreChart.destroy();
+  scoreChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Score',
+          data: scores,
+          borderColor: '#34d399',
+          backgroundColor: '#34d39920',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 4,
+          pointBackgroundColor: '#34d399',
+        },
+        ...(threshold ? [{
+          label: 'Acceptance',
+          data: Array(scores.length).fill(threshold),
+          borderColor: '#fbbf24',
+          borderDash: [6, 4],
+          pointRadius: 0,
+          fill: false,
+        }] : [])
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } },
+        y: { min: 0, max: 10, ticks: { color: '#64748b', stepSize: 1 }, grid: { color: '#1e293b' } }
+      },
+      plugins: {
+        legend: { labels: { color: '#94a3b8' } }
+      }
+    }
+  });
+}
+
+function renderPhaseStepper(currentPhase) {
+  const el = document.getElementById('phase-stepper');
+  const currentIdx = PHASES.findIndex(p => currentPhase && currentPhase.toLowerCase().includes(p.toLowerCase()));
+  el.innerHTML = PHASES.map((p, i) => {
+    let cls = 'bg-slate-700 text-slate-500';
+    if (i < currentIdx) cls = 'bg-emerald-500/20 text-emerald-400';
+    else if (i === currentIdx) cls = 'bg-emerald-500/30 text-emerald-300 ring-1 ring-emerald-500/50';
+    return `<div class="flex items-center gap-1 flex-shrink-0">
+      ${i > 0 ? '<div class="w-4 h-px bg-slate-600"></div>' : ''}
+      <div class="px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap ${cls}">${p}</div>
+    </div>`;
+  }).join('');
+}
+
+// ---- Issues Tab ----
+function renderIssuesTab() {
+  const issues = currentDetail.issues || [];
+  const memory = currentDetail.memory || {};
+  const issueHistory = memory.issue_history || {};
+  const list = document.getElementById('issues-list');
+  const noIssues = document.getElementById('no-issues');
+
+  if (issues.length === 0) {
+    list.innerHTML = '';
+    noIssues.classList.remove('hidden');
+    return;
+  }
+  noIssues.classList.add('hidden');
+
+  const typeColors = {
+    EXPERIMENT_REQUIRED: { bg: 'bg-purple-500/15', text: 'text-purple-400', label: 'Experiment' },
+    WRITING_ONLY: { bg: 'bg-blue-500/15', text: 'text-blue-400', label: 'Writing' },
+    FIGURE_CODE_REQUIRED: { bg: 'bg-amber-500/15', text: 'text-amber-400', label: 'Figure' },
+    LITERATURE_REQUIRED: { bg: 'bg-teal-500/15', text: 'text-teal-400', label: 'Literature' },
+  };
+  const statusColors = {
+    pending: 'bg-amber-500/15 text-amber-400',
+    in_progress: 'bg-blue-500/15 text-blue-400',
+    completed: 'bg-emerald-500/15 text-emerald-400',
+  };
+
+  list.innerHTML = issues.map(issue => {
+    const tc = typeColors[issue.type] || { bg: 'bg-slate-700', text: 'text-slate-400', label: issue.type || 'Unknown' };
+    const sc = statusColors[issue.status] || 'bg-slate-700 text-slate-400';
+    const count = issueHistory[issue.id] || 0;
+    const chronic = count >= 3 ? `<span class="px-1.5 py-0.5 rounded text-xs bg-red-500/15 text-red-400" title="Seen ${count} times">Chronic (${count}x)</span>` : '';
+
+    return `<div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
+      <div class="flex items-start justify-between mb-2">
+        <div class="flex items-center gap-2">
+          <span class="font-mono text-xs text-slate-500">${escHtml(issue.id)}</span>
+          <span class="px-2 py-0.5 rounded text-xs ${tc.bg} ${tc.text}">${tc.label}</span>
+          <span class="px-2 py-0.5 rounded text-xs ${sc}">${issue.status}</span>
+          ${chronic}
+        </div>
+      </div>
+      <div class="font-medium text-sm text-slate-200 mb-1">${escHtml(issue.title)}</div>
+      <div class="text-xs text-slate-400 line-clamp-2">${escHtml(issue.description)}</div>
+      ${issue.actions && issue.actions.length ? `
+        <div class="mt-2 border-t border-slate-700 pt-2">
+          <div class="text-xs text-slate-500 mb-1">Actions:</div>
+          ${issue.actions.map(a => `<div class="text-xs text-slate-400 ml-2">- <span class="text-slate-300">${escHtml(a.agent || '')}</span>: ${escHtml(a.task || '')}</div>`).join('')}
+        </div>
+      ` : ''}
+    </div>`;
+  }).join('');
+}
+
+// ---- Review Tab ----
+function renderReviewTab() {
+  const md = currentDetail.latest_review_md || '';
+  const content = document.getElementById('review-content');
+  const empty = document.getElementById('review-empty');
+  if (!md) {
+    content.classList.add('hidden');
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  content.classList.remove('hidden');
+  content.innerHTML = marked.parse(md);
+}
+
+// ---- Cost Tab ----
+function renderCostTab() {
+  const cost = currentDetail.cost_report || {};
+  const agents = cost.per_agent || {};
+  const names = Object.keys(agents).sort();
+
+  if (names.length === 0) {
+    document.getElementById('cost-table-wrap').innerHTML = '<div class="text-slate-500 text-sm text-center py-4">No cost data yet</div>';
+    // Destroy old charts
+    if (costDonut) { costDonut.destroy(); costDonut = null; }
+    if (costBar) { costBar.destroy(); costBar = null; }
+    return;
+  }
+
+  const colors = names.map(n => AGENT_COLORS[n] || '#94a3b8');
+
+  // Donut
+  const donutCtx = document.getElementById('cost-donut').getContext('2d');
+  if (costDonut) costDonut.destroy();
+  costDonut = new Chart(donutCtx, {
+    type: 'doughnut',
+    data: {
+      labels: names,
+      datasets: [{
+        data: names.map(n => agents[n].seconds || 0),
+        backgroundColor: colors.map(c => c + '40'),
+        borderColor: colors,
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: 'right', labels: { color: '#94a3b8', boxWidth: 12, padding: 8 } } }
+    }
+  });
+
+  // Bar
+  const barCtx = document.getElementById('cost-bar').getContext('2d');
+  if (costBar) costBar.destroy();
+  costBar = new Chart(barCtx, {
+    type: 'bar',
+    data: {
+      labels: names,
+      datasets: [{
+        label: 'Calls',
+        data: names.map(n => agents[n].calls || 0),
+        backgroundColor: colors.map(c => c + '60'),
+        borderColor: colors,
+        borderWidth: 1,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } },
+        y: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } }
+      },
+      plugins: { legend: { display: false } }
+    }
+  });
+
+  // Table
+  const totalSec = names.reduce((a, n) => a + (agents[n].seconds || 0), 0);
+  const totalCalls = names.reduce((a, n) => a + (agents[n].calls || 0), 0);
+  const totalTokens = names.reduce((a, n) => a + (agents[n].tokens || 0), 0);
+
+  document.getElementById('cost-table-wrap').innerHTML = `
+    <table class="w-full text-sm">
+      <thead><tr class="text-slate-500 text-xs">
+        <th class="text-left py-2">Agent</th><th class="text-right py-2">Calls</th><th class="text-right py-2">Time</th><th class="text-right py-2">Tokens</th>
+      </tr></thead>
+      <tbody>
+        ${names.map(n => `<tr class="border-t border-slate-700">
+          <td class="py-2"><span class="inline-block w-2 h-2 rounded-full mr-2" style="background:${AGENT_COLORS[n] || '#94a3b8'}"></span>${n}</td>
+          <td class="text-right text-slate-400">${agents[n].calls || 0}</td>
+          <td class="text-right text-slate-400">${formatSeconds(agents[n].seconds || 0)}</td>
+          <td class="text-right text-slate-400">${(agents[n].tokens || 0).toLocaleString()}</td>
+        </tr>`).join('')}
+        <tr class="border-t-2 border-slate-600 font-semibold">
+          <td class="py-2">Total</td>
+          <td class="text-right">${totalCalls}</td>
+          <td class="text-right">${formatSeconds(totalSec)}</td>
+          <td class="text-right">${totalTokens.toLocaleString()}</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+}
+
+function formatSeconds(s) {
+  if (s < 60) return `${Math.round(s)}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+// ---- Logs Tab ----
+async function renderLogsTab() {
+  if (!currentProject) return;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(currentProject)}/log?lines=500`);
+    const data = await res.json();
+    renderLogLines(data.lines || []);
+  } catch (err) {
+    console.error('Failed to load logs:', err);
+  }
+}
+
+function renderLogLines(lines) {
+  const viewer = document.getElementById('log-viewer');
+  const search = document.getElementById('log-search').value.toLowerCase();
+  const levelFilter = document.getElementById('log-level-filter').value;
+
+  let filtered = lines;
+  if (search) filtered = filtered.filter(l => l.toLowerCase().includes(search));
+  if (levelFilter) {
+    filtered = filtered.filter(l => {
+      const ll = l.toLowerCase();
+      switch(levelFilter) {
+        case 'error': return /error|exception|traceback|failed/i.test(l);
+        case 'warn': return /warn|warning|rate.?limit/i.test(l);
+        case 'agent': return /agent\s*\[/i.test(l);
+        case 'phase': return /phase\s+\d/i.test(l);
+        default: return true;
+      }
+    });
+  }
+
+  viewer.innerHTML = filtered.map(line => {
+    let cls = '';
+    if (/error|exception|traceback|failed/i.test(line)) cls = 'log-error';
+    else if (/warn|warning|rate.?limit/i.test(line)) cls = 'log-warn';
+    else if (/phase\s+\d/i.test(line)) cls = 'log-phase';
+    else if (/agent\s*\[/i.test(line)) cls = 'log-agent';
+    return `<div class="${cls}">${escHtml(line)}</div>`;
+  }).join('');
+
+  if (logFollow) viewer.scrollTop = viewer.scrollHeight;
+}
+
+// Log filter listeners
+document.getElementById('log-search').addEventListener('input', () => { if (activeTab === 'logs') renderLogsTab(); });
+document.getElementById('log-level-filter').addEventListener('change', () => { if (activeTab === 'logs') renderLogsTab(); });
+document.getElementById('log-follow').addEventListener('change', (e) => { logFollow = e.target.checked; });
+
+// ============================================================
+// Tabs
+// ============================================================
+document.getElementById('tab-nav').addEventListener('click', (e) => {
+  const btn = e.target.closest('.tab-btn');
+  if (!btn) return;
+  const tab = btn.dataset.tab;
+  activeTab = tab;
+
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.remove('border-emerald-400', 'text-emerald-400');
+    b.classList.add('border-transparent', 'text-slate-400');
+  });
+  btn.classList.add('border-emerald-400', 'text-emerald-400');
+  btn.classList.remove('border-transparent', 'text-slate-400');
+
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
+  document.getElementById(`tab-${tab}`).classList.remove('hidden');
+
+  if (tab === 'logs') renderLogsTab();
+});
+
+// ============================================================
+// Helpers
+// ============================================================
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ============================================================
+// Auto-refresh detail page
+// ============================================================
+setInterval(async () => {
+  if (!currentProject) return;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(currentProject)}`);
+    if (res.ok) {
+      currentDetail = await res.json();
+      renderDetail();
+    }
+  } catch {}
+}, 10000);
+
+// ============================================================
+// Init
+// ============================================================
+async function init() {
+  try {
+    const res = await fetch('/api/projects');
+    const list = await res.json();
+    list.forEach(p => { projects[p.name] = p; });
+    renderOverview();
+  } catch (err) {
+    console.error('Failed to load projects:', err);
+  }
+  connectSSE();
+}
+
+init();
+</script>
+</body>
+</html>

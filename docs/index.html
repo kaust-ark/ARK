@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARK — Research Harness</title>
+  <meta name="description" content="Offload the labor. Steer the science. ARK is a research harness — 8 AI agents handle experiments, writing, and iteration while you keep control of the direction.">
+  <meta property="og:title" content="ARK — Research Harness">
+  <meta property="og:description" content="Offload the labor. Steer the science.">
+  <meta property="og:image" content="https://kaust-ark.github.io/ARK/assets/social-preview.png">
+  <meta property="og:url" content="https://kaust-ark.github.io/ARK/">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/logo_ark_transparent.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- Scroll Progress Bar -->
+<div class="scroll-progress" id="scrollProgress"></div>
+
+<!-- ===== Navbar ===== -->
+<nav class="navbar" id="navbar">
+  <div class="container">
+    <a href="#" class="nav-brand">
+      <img src="assets/logo_ark_transparent.png" alt="ARK logo">
+      ARK
+    </a>
+    <div class="nav-links" id="navLinks">
+      <a href="#harness">Why ARK</a>
+      <a href="#features">Features</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#agents">Agents</a>
+      <a href="#papers">Papers</a>
+      <a href="#quickstart">Quick Start</a>
+      <a href="doc.html">Docs</a>
+      <a href="about.html">About</a>
+      <a href="zh/index.html" class="lang-toggle" title="切换到中文">🌐 中文</a>
+      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener" class="gh-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 00-3.8 23.38c.6.11.82-.26.82-.58v-2.16c-3.34.73-4.04-1.61-4.04-1.61a3.18 3.18 0 00-1.33-1.76c-1.09-.74.08-.73.08-.73a2.52 2.52 0 011.84 1.24 2.56 2.56 0 003.5 1 2.56 2.56 0 01.76-1.61c-2.67-.3-5.47-1.33-5.47-5.93a4.64 4.64 0 011.24-3.22 4.3 4.3 0 01.12-3.18s1-.33 3.3 1.23a11.4 11.4 0 016 0c2.3-1.56 3.3-1.23 3.3-1.23a4.3 4.3 0 01.12 3.18 4.64 4.64 0 011.24 3.22c0 4.61-2.81 5.63-5.48 5.93a2.86 2.86 0 01.82 2.22v3.29c0 .32.21.7.82.58A12 12 0 0012 .3"/></svg>
+        GitHub
+      </a>
+    </div>
+    <button class="hamburger" id="hamburger" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- ===== Hero ===== -->
+<section class="hero" id="hero">
+  <div class="hero-bg"><div class="hero-bg-layer"></div></div>
+  <div class="hero-particles" id="heroParticles"></div>
+  <div class="container">
+    <div class="hero-content">
+      <div class="hero-brand">
+        <img src="assets/logo_ark_transparent.png" alt="ARK Logo" class="hero-logo">
+        <span class="hero-brand-name">ARK</span>
+      </div>
+      <h1 class="gradient-text">Automatic Research Kit</h1>
+      <p class="hero-accent">From research idea to submission-ready paper</p>
+      <p class="hero-tagline">Automatic research with human-in-the-loop harness</p>
+      <div class="hero-cta">
+        <div class="hero-cta-row">
+          <a href="http://mcmgt01:8422" target="_blank" rel="noopener" class="btn btn-primary">
+            🔬 SANDS Portal
+            <span style="display:block;font-size:.7em;font-weight:400;opacity:.8;margin-top:2px">Internal only &mdash; VPN required</span>
+          </a>
+        </div>
+        <div class="hero-cta-row">
+          <a href="#quickstart" class="btn btn-outline">Get Started</a>
+          <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener" class="btn btn-outline">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 00-3.8 23.38c.6.11.82-.26.82-.58v-2.16c-3.34.73-4.04-1.61-4.04-1.61a3.18 3.18 0 00-1.33-1.76c-1.09-.74.08-.73.08-.73a2.52 2.52 0 011.84 1.24 2.56 2.56 0 003.5 1 2.56 2.56 0 01.76-1.61c-2.67-.3-5.47-1.33-5.47-5.93a4.64 4.64 0 011.24-3.22 4.3 4.3 0 01.12-3.18s1-.33 3.3 1.23a11.4 11.4 0 016 0c2.3-1.56 3.3-1.23 3.3-1.23a4.3 4.3 0 01.12 3.18 4.64 4.64 0 011.24 3.22c0 4.61-2.81 5.63-5.48 5.93a2.86 2.86 0 01.82 2.22v3.29c0 .32.21.7.82.58A12 12 0 0012 .3"/></svg>
+            GitHub
+          </a>
+        </div>
+      </div>
+    </div>
+    <div class="hero-terminal-wrap">
+      <div class="hero-terminal">
+        <div class="terminal-bar">
+          <div style="display:flex;gap:6px"><span class="terminal-dot red"></span><span class="terminal-dot yellow"></span><span class="terminal-dot green"></span></div>
+          <span>bash</span>
+        </div>
+        <div class="terminal-body" id="terminalBody">
+          <span class="cursor"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Research Harness ===== -->
+<section id="harness">
+  <div class="container">
+
+    <!-- Part A: Why full automation fails -->
+    <div style="text-align:center">
+      <h2 class="section-title reveal" style="font-size:clamp(1rem,2vw,1.4rem);font-weight:700;color:var(--teal);letter-spacing:.5px;margin-bottom:.75rem">Why ARK</h2>
+      <h2 class="section-title reveal">Research should not be fully automated</h2>
+      <p class="section-subtitle reveal">Existing systems treat research like a task with a fixed problem. It isn&rsquo;t.</p>
+    </div>
+    <div class="harness-problems">
+      <div class="problem-card reveal stagger-1">
+        <div class="problem-number">01</div>
+        <h3>Goals are ambiguous</h3>
+        <p>A research idea rarely comes fully formed. Discoveries mid-way change everything &mdash; the question, the method, the scope.</p>
+      </div>
+      <div class="problem-card reveal stagger-2">
+        <div class="problem-number">02</div>
+        <h3>Path matters</h3>
+        <p>Two paths to the same result make very different papers. An approximate algorithm and a GPU-accelerated one both &ldquo;solve&rdquo; matrix penalty &mdash; but they&rsquo;re not the same science.</p>
+      </div>
+      <div class="problem-card reveal stagger-3">
+        <div class="problem-number">03</div>
+        <h3>Researchers evolve</h3>
+        <p>A conversation with your advisor, a new paper, a fresh morning &mdash; research direction changes. Your system needs to change with you.</p>
+      </div>
+    </div>
+
+    <!-- Divider -->
+    <div class="harness-divider"></div>
+
+    <!-- Part B: Offload · Observe · Steer -->
+    <div style="text-align:center">
+      <p class="section-label reveal">Our Approach</p>
+      <h3 class="harness-answer-title reveal">A harness, not a replacement</h3>
+      <p class="section-subtitle reveal">You hold the reins. Agents do the running.</p>
+    </div>
+    <div class="harness-pillars">
+      <div class="pillar-card reveal stagger-1">
+        <div class="pillar-icon">&#10024;</div>
+        <h3>Offload</h3>
+        <p>Delegate experiments, LaTeX iterations, literature review, and figure generation to specialized agents.</p>
+      </div>
+      <div class="pillar-card reveal stagger-2">
+        <div class="pillar-icon">&#128065;</div>
+        <h3>Observe</h3>
+        <p>Real-time visibility into every agent action, score history, and decision. Never a black box.</p>
+      </div>
+      <div class="pillar-card reveal stagger-3">
+        <div class="pillar-icon">&#9784;</div>
+        <h3>Steer</h3>
+        <p>Inject new directions mid-run via Telegram or web. At critical forks, ARK pauses and asks. Anytime override, always.</p>
+      </div>
+    </div>
+
+    <!-- Steering Mechanisms -->
+    <div class="harness-divider"></div>
+    <div style="text-align:center">
+      <p class="section-label reveal">How Steering Works</p>
+    </div>
+    <div class="steer-mechanisms">
+      <div class="steer-card reveal stagger-1">
+        <div class="steer-index">1</div>
+        <div class="steer-body">
+          <h4>Progress Awareness</h4>
+          <p>Every iteration is logged in real time — agent actions, reviewer scores, and decisions are visible in the web portal and streamed via Telegram. You always know where the run is.</p>
+        </div>
+      </div>
+      <div class="steer-card reveal stagger-2">
+        <div class="steer-index">2</div>
+        <div class="steer-body">
+          <h4>Key-Decision Notification</h4>
+          <p>At critical forks — a stalled score, a major experiment branch, an ambiguous plan — ARK pauses and sends you a notification before proceeding. No silent decisions.</p>
+        </div>
+      </div>
+      <div class="steer-card reveal stagger-3">
+        <div class="steer-index">3</div>
+        <div class="steer-body">
+          <h4>Anytime Intervention</h4>
+          <p>Send a new instruction at any point via Telegram or the web portal. ARK incorporates your direction into the next iteration without restarting the run.</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ===== Features ===== -->
+<section id="features">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">Capabilities</p>
+      <h2 class="section-title reveal">Powerful Agents. You Stay in Control.</h2>
+      <p class="section-subtitle reveal">ARK handles experiments, writing, and iteration &mdash; you handle the science.</p>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card reveal stagger-1">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 10-16 0"/><path d="M15 11l4 1m-14-1l-4 1"/></svg>
+        </div>
+        <h3>8 Specialized Agents</h3>
+        <p>Reviewer, planner, writer, experimenter, researcher, visualizer, meta-debugger, and coder work in concert.</p>
+      </div>
+      <div class="feature-card reveal stagger-2">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="1.5" fill="var(--teal)"/><circle cx="14" cy="12" r="1.5" fill="var(--teal)"/><circle cx="10" cy="18" r="1.5" fill="var(--teal)"/></svg>
+        </div>
+        <h3>3-Phase Pipeline</h3>
+        <p>Research, development, and review phases iterate until your paper meets quality thresholds.</p>
+      </div>
+      <div class="feature-card reveal stagger-3">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        </div>
+        <h3>Powered by Claude Code</h3>
+        <p>Built on <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank" rel="noopener">Claude Code</a>. Max subscription recommended &mdash; very token-intensive agents.</p>
+      </div>
+      <div class="feature-card reveal stagger-4">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        </div>
+        <h3>Deep Research</h3>
+        <p>Deep Research integration for literature survey. AI figure generation via Nano Banana.</p>
+      </div>
+      <div class="feature-card reveal stagger-5">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
+        </div>
+        <h3>11+ Venue Presets</h3>
+        <p>NeurIPS, ICML, ICLR, AAAI, ACL, IEEE, ACM SIGPLAN, LNCS, USENIX, and more &mdash; exact LaTeX geometry.</p>
+      </div>
+      <div class="feature-card reveal stagger-6">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </div>
+        <h3>Telegram Integration</h3>
+        <p>Real-time notifications, send instructions mid-run, request PDFs, and proactive confirmations at key decisions.</p>
+      </div>
+      <div class="feature-card reveal stagger-7">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M22 12H2"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/><circle cx="12" cy="12" r="10"/></svg>
+        </div>
+        <h3>Multi-Cloud Compute</h3>
+        <p>Slurm, local, AWS, GCP, Azure &mdash; run experiments anywhere on any SSH-accessible server.</p>
+      </div>
+      <div class="feature-card reveal stagger-8">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M12 8v4l3 3"/></svg>
+        </div>
+        <h3>Smart Recovery &amp; Cost Tracking</h3>
+        <p>Checkpoint/resume, meta-debug, self-repair. Per-iteration cost reports so you know exactly what each run costs.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ===== Pipeline ===== -->
+<section id="pipeline">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">How It Works</p>
+      <h2 class="section-title reveal">Three-Phase Pipeline</h2>
+      <p class="section-subtitle reveal">ARK iterates through research, development, and review until the paper meets quality targets.</p>
+    </div>
+
+    <div class="pipeline-phases" id="pipelinePhases">
+      <!-- Phase 1 -->
+      <div class="phase-card" data-phase="1">
+        <div class="phase-number">1</div>
+        <h3>Research Phase</h3>
+        <p>Deep Research gathers background knowledge and literature survey.</p>
+      </div>
+
+      <!-- Arrow 1→2 -->
+      <div class="phase-connector" data-connector="1">
+        <svg viewBox="0 0 60 24">
+          <line class="arrow-line" x1="0" y1="12" x2="52" y2="12" />
+          <polygon points="48,6 60,12 48,18" fill="var(--teal)" opacity="0.7"/>
+          <circle class="arrow-dot" cx="0" cy="12" r="3"/>
+        </svg>
+      </div>
+
+      <!-- Phase 2 -->
+      <div class="phase-card" data-phase="2">
+        <div class="phase-number">2</div>
+        <h3>Development Phase</h3>
+        <p>Plan experiments, run on compute, analyze results, evaluate completeness, write initial draft.</p>
+      </div>
+
+      <!-- Arrow 2→3 -->
+      <div class="phase-connector" data-connector="2">
+        <svg viewBox="0 0 60 24">
+          <line class="arrow-line" x1="0" y1="12" x2="52" y2="12" />
+          <polygon points="48,6 60,12 48,18" fill="var(--teal)" opacity="0.7"/>
+          <circle class="arrow-dot" cx="0" cy="12" r="3"/>
+        </svg>
+      </div>
+
+      <!-- Phase 3 -->
+      <div class="phase-card" data-phase="3">
+        <div class="phase-number">3</div>
+        <h3>Review Phase</h3>
+        <p>Iterative paper improvement loop until the reviewer score hits the acceptance threshold.</p>
+      </div>
+    </div>
+
+    <div class="review-loop" id="reviewLoop">
+      <div class="review-loop-header reveal">
+        <p class="section-label" style="margin-bottom:.3rem">Review Phase</p>
+        <h3 class="review-loop-title">Each iteration runs 5 steps</h3>
+      </div>
+      <div class="loop-steps reveal">
+        <div class="loop-step" data-loop-step="1">
+          <div class="loop-step-icon">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <div class="loop-step-text">
+            <strong>Compile</strong>
+            <span>LaTeX &rarr; PDF, page images</span>
+          </div>
+        </div>
+        <span class="loop-arrow">&rarr;</span>
+        <div class="loop-step" data-loop-step="2">
+          <div class="loop-step-icon">
+            <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <div class="loop-step-text">
+            <strong>Review</strong>
+            <span>Score &amp; identify issues</span>
+          </div>
+        </div>
+        <span class="loop-arrow">&rarr;</span>
+        <div class="loop-step" data-loop-step="3">
+          <div class="loop-step-icon">
+            <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+          </div>
+          <div class="loop-step-text">
+            <strong>Plan</strong>
+            <span>Prioritize action items</span>
+          </div>
+        </div>
+        <span class="loop-arrow">&rarr;</span>
+        <div class="loop-step" data-loop-step="4">
+          <div class="loop-step-icon">
+            <svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+          </div>
+          <div class="loop-step-text">
+            <strong>Execute</strong>
+            <span>Research, experiment, write</span>
+          </div>
+        </div>
+        <span class="loop-arrow">&rarr;</span>
+        <div class="loop-step" data-loop-step="5">
+          <div class="loop-step-icon">
+            <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          </div>
+          <div class="loop-step-text">
+            <strong>Visualize</strong>
+            <span>Fix figures &amp; recompile</span>
+          </div>
+        </div>
+        <span class="loop-arrow loop-repeat">&circlearrowleft;</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Agents ===== -->
+<section id="agents">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">Meet the Team</p>
+      <h2 class="section-title reveal">8 Specialized AI Agents</h2>
+      <p class="section-subtitle reveal">Each agent is an expert in its domain, collaborating through shared state and structured handoffs.</p>
+    </div>
+    <div class="agents-grid">
+      <div class="agent-card agent-reviewer reveal stagger-1">
+        <div class="agent-icon">
+          <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+        </div>
+        <div class="agent-info"><h3>Reviewer</h3><p>Scores the paper and generates actionable improvement tasks.</p></div>
+      </div>
+      <div class="agent-card agent-planner reveal stagger-2">
+        <div class="agent-icon">
+          <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        </div>
+        <div class="agent-info"><h3>Planner</h3><p>Converts review feedback into a prioritized action plan.</p></div>
+      </div>
+      <div class="agent-card agent-writer reveal stagger-3">
+        <div class="agent-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </div>
+        <div class="agent-info"><h3>Writer</h3><p>Drafts and refines LaTeX sections based on plan tasks.</p></div>
+      </div>
+      <div class="agent-card agent-experimenter reveal stagger-4">
+        <div class="agent-icon">
+          <svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+        </div>
+        <div class="agent-info"><h3>Experimenter</h3><p>Runs experiments on remote compute and collects results.</p></div>
+      </div>
+      <div class="agent-card agent-researcher reveal stagger-5">
+        <div class="agent-icon">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
+        <div class="agent-info"><h3>Researcher</h3><p>Surveys literature, identifies gaps, and gathers evidence.</p></div>
+      </div>
+      <div class="agent-card agent-visualizer reveal stagger-6">
+        <div class="agent-icon">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        </div>
+        <div class="agent-info"><h3>Visualizer</h3><p>Generates publication-quality figures with exact venue geometry.</p></div>
+      </div>
+      <div class="agent-card agent-debugger reveal stagger-7">
+        <div class="agent-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <div class="agent-info"><h3>Meta-Debugger</h3><p>Detects stalls, diagnoses failures, and triggers self-repair.</p></div>
+      </div>
+      <div class="agent-card agent-coder reveal stagger-8">
+        <div class="agent-icon">
+          <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        </div>
+        <div class="agent-info"><h3>Coder</h3><p>Writes and debugs experiment code, scripts, and tooling.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Papers ===== -->
+<section id="papers">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">Results</p>
+      <h2 class="section-title reveal">Example Papers</h2>
+      <p class="section-subtitle reveal">Real papers generated end-to-end by ARK.</p>
+    </div>
+    <div class="papers-grid">
+      <div class="paper-card reveal stagger-1" data-tilt>
+        <a href="assets/papers/gac.pdf" target="_blank" rel="noopener" class="paper-card-img">
+          <img src="assets/paper-gac.png" alt="GAC Paper">
+          <span class="paper-badge">Template: EuroMLSys</span>
+        </a>
+        <div class="paper-card-body">
+          <h3>When Smaller Is Slower: Dimensional Collapse in Compressed LLMs</h3>
+          <p class="paper-meta">EuroMLSys 2026 &middot; ARK-generated</p>
+          <a href="assets/papers/gac.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">Read Paper</a>
+          <a href="https://github.com/sands-lab/GAC" target="_blank" rel="noopener" class="btn btn-outline" style="font-size:.85rem;padding:.5rem 1rem">View Code</a>
+        </div>
+      </div>
+      <div class="paper-card reveal stagger-2" data-tilt>
+        <a href="assets/papers/mma.pdf" target="_blank" rel="noopener" class="paper-card-img">
+          <img src="assets/paper-example.png" alt="MMA Paper">
+          <span class="paper-badge">Template: NeurIPS</span>
+        </a>
+        <div class="paper-card-body">
+          <h3>A Practical Guide to CPU Matrix Multiplication: From Naive to Efficient</h3>
+          <p class="paper-meta">NeurIPS 2025 &middot; 14 iterations &middot; human-steered</p>
+          <a href="assets/papers/mma.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">Read Paper</a>
+          <a href="https://github.com/JihaoXin/mma" target="_blank" rel="noopener" class="btn btn-outline" style="font-size:.85rem;padding:.5rem 1rem">View Code</a>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ===== Quick Start ===== -->
+<section class="quickstart" id="quickstart">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">Get Started</p>
+      <h2 class="section-title reveal">Up and Running in 3 Commands</h2>
+      <p class="section-subtitle reveal">Clone, install, create a project, and hand the labor off to ARK.</p>
+    </div>
+    <div class="quickstart-terminal reveal">
+      <div class="terminal-bar">
+        <div style="display:flex;gap:6px"><span class="terminal-dot red"></span><span class="terminal-dot yellow"></span><span class="terminal-dot green"></span></div>
+        <button class="copy-btn" id="copyBtn" aria-label="Copy commands">
+          <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          Copy
+        </button>
+      </div>
+      <pre><span class="comment"># Clone &amp; install</span>
+<span class="cmd" data-line="1">git clone https://github.com/kaust-ark/ARK.git &amp;&amp; cd ARK</span>
+<span class="cmd" data-line="2">pip install -e .</span>
+
+<span class="comment"># Create a project (interactive wizard)</span>
+<span class="cmd" data-line="3">ark new mma</span>
+
+<span class="comment"># Run &mdash; ARK takes it from here</span>
+<span class="cmd" data-line="4">ark run mma</span>
+
+<span class="comment"># Watch it work</span>
+<span class="cmd" data-line="5">ark monitor mma</span></pre>
+    </div>
+    <div class="option-badges reveal">
+      <span class="option-badge">ark new mma --from-pdf proposal.pdf</span>
+      <span class="option-badge">ark status mma</span>
+      <span class="option-badge">ark setup-bot</span>
+      <span class="option-badge">pip install -e ".[research]"</span>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Venues ===== -->
+<section class="venues" id="venues">
+  <div class="container" style="text-align:center;margin-bottom:1.5rem">
+    <p class="section-label reveal">Venue Intelligence</p>
+    <h2 class="section-title reveal">11+ Supported Venues</h2>
+  </div>
+  <div class="venues-scroll">
+    <div class="venues-track" id="venuesTrack1">
+      <span class="venue-badge">NeurIPS</span>
+      <span class="venue-badge">ICML</span>
+      <span class="venue-badge">ICLR</span>
+      <span class="venue-badge">AAAI</span>
+      <span class="venue-badge">ACL</span>
+      <span class="venue-badge">IEEE</span>
+      <span class="venue-badge">ACM SIGPLAN</span>
+      <span class="venue-badge">LNCS</span>
+      <span class="venue-badge">USENIX</span>
+      <span class="venue-badge">CVPR</span>
+      <span class="venue-badge">ECCV</span>
+      <!-- duplicated for seamless loop -->
+      <span class="venue-badge">NeurIPS</span>
+      <span class="venue-badge">ICML</span>
+      <span class="venue-badge">ICLR</span>
+      <span class="venue-badge">AAAI</span>
+      <span class="venue-badge">ACL</span>
+      <span class="venue-badge">IEEE</span>
+      <span class="venue-badge">ACM SIGPLAN</span>
+      <span class="venue-badge">LNCS</span>
+      <span class="venue-badge">USENIX</span>
+      <span class="venue-badge">CVPR</span>
+      <span class="venue-badge">ECCV</span>
+    </div>
+    <div class="venues-track-reverse" id="venuesTrack2">
+      <span class="venue-badge">ECCV</span>
+      <span class="venue-badge">CVPR</span>
+      <span class="venue-badge">USENIX</span>
+      <span class="venue-badge">LNCS</span>
+      <span class="venue-badge">ACM SIGPLAN</span>
+      <span class="venue-badge">IEEE</span>
+      <span class="venue-badge">ACL</span>
+      <span class="venue-badge">AAAI</span>
+      <span class="venue-badge">ICLR</span>
+      <span class="venue-badge">ICML</span>
+      <span class="venue-badge">NeurIPS</span>
+      <!-- duplicated for seamless loop -->
+      <span class="venue-badge">ECCV</span>
+      <span class="venue-badge">CVPR</span>
+      <span class="venue-badge">USENIX</span>
+      <span class="venue-badge">LNCS</span>
+      <span class="venue-badge">ACM SIGPLAN</span>
+      <span class="venue-badge">IEEE</span>
+      <span class="venue-badge">ACL</span>
+      <span class="venue-badge">AAAI</span>
+      <span class="venue-badge">ICLR</span>
+      <span class="venue-badge">ICML</span>
+      <span class="venue-badge">NeurIPS</span>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Team ===== -->
+<section id="team">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">Who We Are</p>
+      <h2 class="section-title reveal">Built by SANDS Lab, KAUST</h2>
+    </div>
+    <div class="team-content reveal">
+      <p>ARK is developed by <strong style="color:var(--text-primary)">SANDS Lab, KAUST, Saudi Arabia</strong>.</p>
+      <a href="https://sands.kaust.edu.sa/" target="_blank" rel="noopener" class="btn btn-outline">Visit SANDS Lab, KAUST</a>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Footer ===== -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-brand">
+      <img src="assets/logo_ark_transparent.png" alt="ARK">
+      ARK
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/kaust-ark/ARK/blob/main/README.md" target="_blank" rel="noopener">Docs</a>
+      <a href="https://github.com/kaust-ark/ARK/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0 License</a>
+    </div>
+    <p class="footer-note">Built with <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">Claude Code</a></p>
+  </div>
+</footer>
+
+<!-- Back to top -->
+<button class="back-to-top" id="backToTop" aria-label="Back to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<script src="js/main.js"></script>
+</body>
+</html>

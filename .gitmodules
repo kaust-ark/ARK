@@ -1,0 +1,3 @@
+[submodule "materials/references/openclaw"]
+	path = materials/references/openclaw
+	url = https://github.com/openclaw/openclaw.git

@@ -1,0 +1,2346 @@
+<!DOCTYPE html>
+<html lang="en" id="html-root">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ARK · Research Harness</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --teal:         #0d9488;
+      --teal-light:   #14b8a6;
+      --teal-dark:    #0f766e;
+      --bg:           #f8fafc;
+      --card:         #f1f5f9;
+      --card-border:  #e2e8f0;
+      --text-primary: #0f172a;
+      --text-second:  #475569;
+      --text-muted:   #94a3b8;
+      --red:          #ef4444;
+      --amber:        #f59e0b;
+      --green:        #22c55e;
+      --radius:       12px;
+      --shadow:       0 1px 3px rgba(0,0,0,.08), 0 4px 16px rgba(0,0,0,.06);
+      --shadow-lg:    0 8px 32px rgba(0,0,0,.12);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      min-height: 100vh;
+    }
+
+    /* ── nav ── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(248,250,252,.88);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--card-border);
+      padding: 0 24px;
+      height: 60px;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .nav-brand {
+      font-weight: 700; font-size: 1.1rem; color: var(--teal);
+      text-decoration: none; letter-spacing: -.02em;
+    }
+    .nav-brand span { color: var(--text-primary); }
+    nav .spacer { flex: 1; }
+    .nav-user { display: flex; align-items: center; gap: 10px; }
+    .nav-user img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+    .nav-user .name { font-size: .9rem; font-weight: 500; }
+    .btn-logout {
+      font-size: .8rem; color: var(--text-muted); background: none;
+      border: 1px solid var(--card-border); border-radius: 6px;
+      padding: 4px 10px; cursor: pointer;
+      transition: all .15s;
+    }
+    .btn-logout:hover { background: var(--card); color: var(--text-primary); }
+
+    /* ── gate banner (all users) ── */
+    .gate-banner {
+      background: #fee2e2; border: 1px solid #f87171; border-radius: 10px;
+      padding: 10px 16px; margin-bottom: 14px;
+      display: flex; align-items: center; gap: 10px;
+      font-size: .9rem; color: #991b1b; font-weight: 500;
+    }
+    .gate-banner .gate-dot { font-size: 1rem; }
+
+    /* ── admin panel ── */
+    .admin-panel {
+      background: #fef3c7; border: 1px solid #f59e0b; border-radius: 10px;
+      padding: 12px 18px; margin-bottom: 18px;
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    .admin-panel .admin-label {
+      font-size: .8rem; font-weight: 700; color: #92400e;
+      text-transform: uppercase; letter-spacing: .05em; flex-shrink: 0;
+    }
+    .admin-panel .admin-status {
+      font-size: .9rem; font-weight: 500; flex: 1;
+    }
+    .admin-panel .admin-status.ok { color: #15803d; }
+    .admin-panel .admin-status.off { color: #dc2626; }
+    .btn-admin {
+      font-size: .8rem; font-weight: 600; padding: 5px 14px; border-radius: 6px;
+      border: none; cursor: pointer; transition: all .15s; flex-shrink: 0;
+    }
+    .btn-admin-toggle { background: #1e40af; color: #fff; }
+    .btn-admin-toggle:hover { background: #1e3a8a; }
+    .btn-admin-kill { background: #dc2626; color: #fff; }
+    .btn-admin-kill:hover { background: #b91c1c; }
+
+    /* ── pages ── */
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* ── login page ── */
+    #page-login {
+      min-height: 100vh; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #f0fdfa 0%, #f8fafc 50%, #faf5ff 100%);
+    }
+    #page-login.active { display: flex; }
+    .login-card {
+      background: #fff; border-radius: 20px; padding: 48px 52px;
+      box-shadow: var(--shadow-lg); text-align: center; max-width: 420px; width: 100%;
+      border: 1px solid var(--card-border); position: relative;
+    }
+    .login-logo {
+      width: 64px; height: 64px; margin: 0 auto 20px;
+      background: linear-gradient(135deg, var(--teal) 0%, var(--teal-dark) 100%);
+      border-radius: 16px; display: flex; align-items: center; justify-content: center;
+      font-size: 2rem; color: #fff; font-weight: 700;
+    }
+    .login-card h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 6px; }
+    .login-card > p { color: var(--text-second); font-size: .95rem; margin-bottom: 20px; }
+    .login-features {
+      display: flex; justify-content: center; gap: 0;
+      margin-bottom: 28px;
+      border: 1px solid var(--card-border); border-radius: 10px; overflow: hidden;
+    }
+    .login-feature {
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px;
+      padding: 10px 8px; font-size: .8rem; color: var(--text-second);
+      font-weight: 600; text-align: center;
+      border-right: 1px solid var(--card-border);
+    }
+    .login-feature:last-child { border-right: none; }
+    .login-feature svg { color: var(--teal); flex-shrink: 0; }
+    .login-email-form { width: 100%; }
+    .login-email-form input[type="email"] {
+      width: 100%; padding: 12px 14px; border: 1.5px solid var(--card-border);
+      border-radius: 10px; font-family: inherit; font-size: .95rem;
+      background: var(--bg); outline: none; margin-bottom: 10px;
+      transition: border-color .15s;
+    }
+    .login-email-form input[type="email"]:focus {
+      border-color: var(--teal); box-shadow: 0 0 0 3px rgba(13,148,136,.1);
+    }
+    .btn-send-link {
+      width: 100%; padding: 13px 20px; background: var(--teal); color: #fff;
+      border: none; border-radius: 10px; font-size: 1rem; font-weight: 600;
+      cursor: pointer; transition: all .15s;
+    }
+    .btn-send-link:hover { background: var(--teal-dark); }
+    .btn-send-link:disabled { opacity: .6; cursor: not-allowed; }
+    .login-success { display: none; color: #166534; background: #dcfce7; border-radius: 10px; padding: 14px 18px; font-size: .95rem; margin-top: 10px; }
+    .login-error   { display: none; color: #991b1b; background: #fee2e2; border-radius: 10px; padding: 14px 18px; font-size: .95rem; margin-top: 10px; }
+
+    /* ── dashboard ── */
+    #page-dashboard { padding: 32px 24px; max-width: 1100px; margin: 0 auto; }
+    .dash-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 28px;
+    }
+    .dash-header h2 { font-size: 1.5rem; font-weight: 700; }
+    .btn-primary {
+      background: var(--teal); color: #fff; border: none; border-radius: 10px;
+      padding: 10px 20px; font-size: .95rem; font-weight: 600;
+      cursor: pointer; transition: all .15s; display: flex; align-items: center; gap: 6px;
+    }
+    .btn-primary:hover { background: var(--teal-dark); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(13,148,136,.3); }
+    .btn-secondary {
+      background: var(--card); color: var(--text-primary); border: 1px solid var(--card-border);
+      border-radius: 10px; padding: 8px 16px; font-size: .9rem; font-weight: 500;
+      cursor: pointer; transition: all .15s;
+    }
+    .btn-secondary:hover { background: #e2e8f0; }
+    .btn-danger {
+      background: #fef2f2; color: var(--red); border: 1px solid #fecaca;
+      border-radius: 8px; padding: 6px 12px; font-size: .85rem; font-weight: 500;
+      cursor: pointer; transition: all .15s;
+    }
+    .btn-danger:hover { background: #fee2e2; }
+
+    /* project grid */
+    .project-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 16px;
+    }
+    .project-card {
+      background: #fff; border: 1px solid var(--card-border);
+      border-radius: var(--radius); padding: 20px;
+      box-shadow: var(--shadow); cursor: pointer;
+      transition: all .18s;
+    }
+    .project-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: var(--teal-light); }
+    .project-card-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+    .project-name { font-weight: 600; font-size: 1rem; flex: 1; }
+    .badge {
+      font-size: .72rem; font-weight: 600; padding: 3px 8px; border-radius: 20px;
+      white-space: nowrap;
+    }
+    .badge-queued            { background: #fef9c3; color: #854d0e; }
+    .badge-running           { background: #dcfce7; color: #166534; }
+    .badge-done              { background: #dbeafe; color: #1d4ed8; }
+    .badge-failed            { background: #fee2e2; color: #991b1b; }
+    .badge-stopped           { background: #f1f5f9; color: #64748b; }
+    .badge-waiting_template  { background: #fce7f3; color: #9d174d; }
+    .badge-pending           { background: #e0e7ff; color: #3730a3; }
+    .project-venue { font-size: .82rem; color: var(--text-second); margin-bottom: 10px; }
+    .score-bar { height: 6px; background: var(--card); border-radius: 3px; overflow: hidden; }
+    .score-fill { height: 100%; background: linear-gradient(90deg, var(--teal), var(--teal-light)); border-radius: 3px; transition: width .5s ease; }
+    .score-label { font-size: .8rem; color: var(--text-muted); margin-top: 5px; }
+    .empty-state { text-align: center; color: var(--text-muted); padding: 60px 0; }
+    .empty-state p { font-size: 1.1rem; margin-bottom: 20px; }
+    .field-rule { display:block; font-size:.76rem; font-weight:400; color:var(--text-muted); margin-top:1px; }
+    .tg-section { margin-top:20px; border:1px solid #e2f0ff; border-radius:10px; padding:14px 16px; background:#f8fbff; }
+    .tg-section-title { display:flex; align-items:center; gap:7px; font-weight:600; font-size:.92rem; margin-bottom:10px; color:#0277bd; }
+    .tg-how { font-size:.8rem; color:var(--text-second); line-height:1.6; background:#fff; border-radius:6px; padding:8px 10px; border:1px solid #d0e8ff; }
+    .tg-how a { color:var(--teal); }
+    .tg-how code { background:#eef; border-radius:3px; padding:1px 4px; font-family:'JetBrains Mono',monospace; font-size:.78rem; }
+    .project-idea { font-size:.82rem; color:var(--text-muted); margin:-4px 0 8px; line-height:1.4; }
+    .btn-delete-card { background:none; border:none; color:var(--text-muted); font-size:1.1rem;
+      cursor:pointer; padding:2px 5px; border-radius:4px; line-height:1; }
+    .btn-delete-card:hover { background:var(--red); color:#fff; }
+
+    /* ── modal ── */
+    .modal-backdrop {
+      display: none; position: fixed; inset: 0;
+      background: rgba(15,23,42,.5); z-index: 200;
+      backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: #fff; border-radius: 20px; padding: 36px;
+      max-width: 560px; width: calc(100% - 32px);
+      box-shadow: var(--shadow-lg); max-height: 90vh; overflow-y: auto;
+    }
+    .modal h3 { font-size: 1.3rem; font-weight: 700; margin-bottom: 24px; }
+    .form-group { margin-bottom: 18px; }
+    .form-group label { display: block; font-size: .88rem; font-weight: 500; margin-bottom: 6px; color: var(--text-second); }
+    .form-group input,
+    .form-group textarea,
+    .form-group select {
+      width: 100%; padding: 10px 14px; border: 1.5px solid var(--card-border);
+      border-radius: 8px; font-family: inherit; font-size: .95rem;
+      background: var(--bg); transition: border-color .15s;
+      outline: none;
+    }
+    .form-group input:focus,
+    .form-group textarea:focus,
+    .form-group select:focus { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(13,148,136,.1); }
+    .form-group textarea { resize: vertical; min-height: 90px; }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-hint { font-size: .8rem; color: var(--text-muted); margin-top: 4px; }
+    .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 28px; }
+    .file-drop {
+      border: 2px dashed var(--card-border); border-radius: 10px; padding: 24px;
+      text-align: center; cursor: pointer; transition: all .15s; background: var(--bg);
+    }
+    .file-drop:hover, .file-drop.drag { border-color: var(--teal); background: #f0fdfa; }
+    .file-drop .icon { font-size: 2rem; margin-bottom: 8px; }
+    .file-drop p { font-size: .9rem; color: var(--text-second); }
+    .file-drop small { color: var(--text-muted); font-size: .8rem; }
+    #file-input { display: none; }
+    .or-divider { display: flex; align-items: center; gap: 12px; margin: 14px 0; color: var(--text-muted); font-size: .85rem; }
+    .or-divider::before, .or-divider::after { content: ''; flex: 1; height: 1px; background: var(--card-border); }
+
+    /* ── project detail ── */
+    #page-detail { padding: 32px 24px; max-width: 980px; margin: 0 auto; }
+    .detail-header { margin-bottom: 24px; }
+    .detail-header h2 { font-size: 1.5rem; font-weight: 700; }
+    .detail-meta { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: .9rem; color: var(--text-second); flex-wrap: wrap; }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+    .detail-card { background: #fff; border: 1px solid var(--card-border); border-radius: var(--radius); padding: 20px; }
+    .detail-card h4 { font-size: .85rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 12px; }
+    .score-big { font-size: 2.8rem; font-weight: 700; color: var(--teal); line-height: 1; }
+    .score-big small { font-size: 1rem; font-weight: 400; color: var(--text-muted); }
+    .score-bar-lg { height: 10px; background: var(--card); border-radius: 5px; overflow: hidden; margin-top: 10px; }
+    .score-fill-lg { height: 100%; background: linear-gradient(90deg, var(--teal), var(--teal-light)); border-radius: 5px; transition: width .8s ease; }
+    .detail-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+
+    /* terminal log */
+    .log-terminal {
+      background: #0f172a; border-radius: var(--radius); padding: 20px;
+      font-family: 'JetBrains Mono', monospace; font-size: .82rem;
+      color: #94a3b8; height: 480px;
+      overflow-y: auto; white-space: pre-wrap; word-break: break-all;
+      overscroll-behavior: contain; overflow-anchor: none;
+      line-height: 1.6; border: 1px solid #1e293b;
+    }
+    .log-line { display: block; }
+    .log-line.ark { color: #14b8a6; }
+    .log-line.error { color: #f87171; }
+    .log-line.warn  { color: #fbbf24; }
+
+    /* ── progress widget ── */
+    .progress-widget { background:#fff; border:1px solid var(--card-border); border-radius:var(--radius); padding:16px 20px; margin-bottom:20px; }
+    .prog-row { display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+    .prog-row:last-child { margin-bottom:0; }
+    .prog-label { font-size:.72rem; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.06em; min-width:72px; flex-shrink:0; }
+    .prog-iter-dots { display:flex; gap:6px; align-items:center; }
+    .prog-dot { width:11px; height:11px; border-radius:50%; background:var(--card-border); transition:background .3s; }
+    .prog-dot.done { background:var(--teal); }
+    .prog-dot.active { background:var(--teal-light); box-shadow:0 0 0 3px rgba(20,184,166,.2); }
+    .prog-iter-text { font-size:.85rem; color:var(--text-second); margin-left:4px; }
+    .prog-phases { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+    .prog-phase-chip { font-size:.75rem; padding:3px 9px; border-radius:20px; background:var(--card); color:var(--text-muted); border:1px solid var(--card-border); white-space:nowrap; }
+    .prog-phase-chip.active { background:var(--teal); color:#fff; border-color:var(--teal); font-weight:600; }
+    .prog-phase-chip.done { background:#16a34a; color:#fff; border-color:#16a34a; font-weight:600; }
+    .prog-arrow { color:var(--card-border); font-size:.85rem; margin:0 1px; }
+    .prog-arrow.done   { color:#16a34a; }
+    .prog-arrow.active { color:var(--teal); }
+    .prog-agent-row { display:flex; align-items:center; gap:8px; margin-top:12px; padding-top:12px; border-top:1px solid var(--card-border); font-size:.85rem; color:var(--text-second); }
+    .spinner-sm { width:12px; height:12px; border:2px solid var(--teal-light); border-top-color:var(--teal); border-radius:50%; animation:spin .8s linear infinite; flex-shrink:0; }
+    .btn-disabled { opacity:.4; cursor:not-allowed !important; pointer-events:none; }
+
+    /* ── spinner ── */
+    .spinner {
+      width: 20px; height: 20px; border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff; border-radius: 50%;
+      animation: spin .6s linear infinite; display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── lang toggle ── */
+    .btn-lang {
+      font-size: .78rem; font-weight: 600; color: var(--text-second);
+      background: var(--bg); border: 1px solid var(--card-border);
+      border-radius: 6px; padding: 4px 10px; cursor: pointer;
+      transition: all .15s; letter-spacing: .02em;
+    }
+    .btn-lang:hover { background: var(--card); color: var(--text-primary); }
+
+    /* ── responsive ── */
+    @media (max-width: 600px) {
+      .detail-grid { grid-template-columns: 1fr; }
+      .form-row { grid-template-columns: 1fr; }
+      .modal { padding: 24px; }
+    }
+
+    /* ── hero creation card ── */
+    .hero-card {
+      background: #fff; border-radius: 16px; padding: 32px 36px;
+      box-shadow: var(--shadow-lg); margin-bottom: 28px;
+      position: relative; overflow: hidden;
+      border-top: 4px solid var(--teal);
+    }
+    .hero-card.drag-over { box-shadow: 0 0 0 3px var(--teal), var(--shadow-lg); }
+    .hero-card.gate-disabled { opacity: .65; pointer-events: none; }
+    .hero-drop-overlay {
+      display: none; position: absolute; inset: 0;
+      background: rgba(13,148,136,.08);
+      border: 3px dashed var(--teal);
+      border-radius: 14px;
+      align-items: center; justify-content: center;
+      font-size: 1.5rem; font-weight: 700; color: var(--teal);
+      z-index: 10; pointer-events: none;
+    }
+    .hero-card.drag-over .hero-drop-overlay { display: flex; }
+    .hero-card-header { margin-bottom: 24px; }
+    .hero-card-header h2 { font-size: 1.45rem; font-weight: 700; margin-bottom: 4px; }
+    .hero-card-header p { font-size: .9rem; color: var(--text-second); }
+    .idea-box {
+      border: 1.5px solid var(--card-border); border-radius: 10px;
+      background: #fff; transition: border-color .15s, box-shadow .15s; overflow: hidden;
+    }
+    .idea-box:focus-within { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(13,148,136,.1); }
+    .idea-box.drag-over { border-color: var(--teal); box-shadow: 0 0 0 3px rgba(13,148,136,.15); background: #f0fdfa; }
+    .idea-textarea {
+      width: 100%; min-height: 120px; padding: 14px 16px 10px;
+      border: none; outline: none; resize: none;
+      font-family: inherit; font-size: .95rem; background: transparent;
+      color: var(--text-primary); line-height: 1.6; display: block;
+    }
+    .idea-footer {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 10px 7px 12px; border-top: 1px solid var(--card-border);
+    }
+    .idea-attach-btn {
+      display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+      background: none; border: 1px solid var(--card-border); cursor: pointer;
+      font-size: .8rem; color: var(--text-muted); font-family: inherit;
+      padding: 4px 9px; border-radius: 6px; transition: all .15s;
+    }
+    .idea-attach-btn:hover { border-color: var(--teal); color: var(--teal); background: #f0fdfa; }
+    .idea-chips { display: flex; flex-wrap: wrap; gap: 5px; flex: 1; min-width: 0; }
+    .idea-chip {
+      display: flex; align-items: center; gap: 4px;
+      background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 20px;
+      padding: 2px 4px 2px 9px; font-size: .78rem; color: var(--teal-dark); max-width: 200px;
+    }
+    .idea-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .idea-chip-rm {
+      background: none; border: none; cursor: pointer; color: var(--teal-dark);
+      font-size: .9rem; line-height: 1; padding: 0 3px; flex-shrink: 0; opacity: .6;
+    }
+    .idea-chip-rm:hover { opacity: 1; }
+    .idea-char { font-size: .76rem; color: var(--text-muted); margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+    .hero-secondary-row {
+      display: flex; align-items: flex-end; gap: 12px; margin-top: 16px;
+    }
+    .hero-field { display: flex; flex-direction: column; gap: 5px; }
+    .hero-field label { font-size: .82rem; font-weight: 500; color: var(--text-second); }
+    .hero-field select, .hero-field input {
+      padding: 9px 12px; border: 1.5px solid var(--card-border); border-radius: 8px;
+      font-family: inherit; font-size: .9rem; background: var(--bg);
+      transition: border-color .15s; outline: none;
+    }
+    .hero-field select:focus, .hero-field input:focus {
+      border-color: var(--teal); box-shadow: 0 0 0 3px rgba(13,148,136,.1);
+    }
+    .hero-field-venue { flex: 2; }
+    .hero-field-iter { width: 110px; flex-shrink: 0; }
+    .hero-advanced { margin-top: 18px; }
+    .hero-advanced-toggle {
+      background: none; border: none; cursor: pointer; padding: 0;
+      font-size: .85rem; color: var(--text-second); display: flex; align-items: center; gap: 5px;
+      font-family: inherit; font-weight: 500;
+    }
+    .hero-advanced-toggle:hover { color: var(--teal); }
+    .hero-advanced-toggle .adv-arrow { transition: transform .2s; display: inline-block; }
+    .hero-advanced-toggle[aria-expanded="true"] .adv-arrow { transform: rotate(90deg); }
+    .hero-advanced-body { display: none; margin-top: 14px; }
+    .hero-advanced-body.open { display: block; }
+    .hero-adv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+    .hero-adv-field { display: flex; flex-direction: column; gap: 5px; }
+    .hero-adv-field label { font-size: .82rem; font-weight: 500; color: var(--text-second); }
+    .hero-adv-field input, .hero-adv-field textarea {
+      padding: 9px 12px; border: 1.5px solid var(--card-border); border-radius: 8px;
+      font-family: inherit; font-size: .9rem; background: var(--bg);
+      transition: border-color .15s; outline: none;
+    }
+    .hero-adv-field input:focus, .hero-adv-field textarea:focus {
+      border-color: var(--teal); box-shadow: 0 0 0 3px rgba(13,148,136,.1);
+    }
+    .hero-adv-field textarea { resize: vertical; min-height: 70px; }
+    .model-option { display: inline-flex; align-items: center; cursor: pointer; }
+    .model-option input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
+    .model-chip {
+      display: inline-block; padding: 6px 14px; border-radius: 20px;
+      border: 1.5px solid var(--card-border); background: var(--bg);
+      font-size: .85rem; font-weight: 500; color: var(--text-second);
+      cursor: pointer; transition: all .15s; user-select: none;
+    }
+    .model-option input[type="radio"]:checked + .model-chip {
+      border-color: var(--teal); background: #f0fdfa; color: var(--teal); font-weight: 600;
+    }
+    .model-option:not(.model-option-disabled):hover .model-chip { border-color: var(--teal-light); }
+    .model-option-disabled { cursor: not-allowed; }
+    .model-option-disabled .model-chip {
+      opacity: .45; cursor: not-allowed; color: var(--text-muted);
+    }
+    .hero-submit-row { display: flex; justify-content: flex-end; margin-top: 20px; }
+    .hero-submit-btn {
+      background: var(--teal); color: #fff; border: none; border-radius: 10px;
+      padding: 12px 28px; font-size: 1rem; font-weight: 600;
+      cursor: pointer; transition: all .15s; display: flex; align-items: center; gap: 8px;
+    }
+    .hero-submit-btn:hover { background: var(--teal-dark); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(13,148,136,.3); }
+    .hero-submit-btn:disabled { opacity: .6; cursor: not-allowed; transform: none; box-shadow: none; }
+    .projects-section { margin-top: 0; }
+    .projects-heading {
+      display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+      font-size: 1.05rem; font-weight: 700; color: var(--text-primary);
+    }
+    .projects-count {
+      font-size: .75rem; font-weight: 700; padding: 2px 9px;
+      border-radius: 20px; background: var(--card); color: var(--text-second);
+      border: 1px solid var(--card-border);
+    }
+    @media (max-width: 700px) {
+      .hero-secondary-row { flex-direction: column; }
+      .hero-field-venue, .hero-field-iter { width: 100%; flex: none; }
+      .hero-adv-grid { grid-template-columns: 1fr; }
+      .hero-submit-btn { width: 100%; justify-content: center; }
+      .hero-card { padding: 20px 18px; }
+    }
+
+    /* ── admin page ── */
+    .admin-page { padding: 32px 24px; max-width: 1200px; margin: 0 auto; }
+    .admin-controls { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 10px; padding: 12px 18px; margin-bottom: 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .admin-gate-badge { font-size: .8rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
+    .admin-gate-badge.enabled { background: #dcfce7; color: #166534; }
+    .admin-gate-badge.disabled { background: #fee2e2; color: #991b1b; }
+    .admin-table-wrap { background: #fff; border-radius: 12px; box-shadow: var(--shadow); border: 1px solid var(--card-border); overflow: hidden; }
+    .admin-table-header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--card-border); flex-wrap: wrap; }
+    .admin-table-header h3 { font-size: 1rem; font-weight: 700; flex: 1; min-width: 0; }
+    .admin-filter-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+    .admin-filter-pill { font-size: .78rem; font-weight: 600; padding: 4px 12px; border-radius: 20px; border: 1px solid var(--card-border); background: var(--bg); color: var(--text-second); cursor: pointer; transition: all .15s; }
+    .admin-filter-pill.active { background: var(--teal); color: #fff; border-color: var(--teal); }
+    table.admin-table { width: 100%; border-collapse: collapse; }
+    .admin-table th { position: sticky; top: 0; background: #f0fdfa; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-second); padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--card-border); white-space: nowrap; }
+    .admin-table td { padding: 10px 14px; border-bottom: 1px solid var(--card-border); font-size: .88rem; }
+    .admin-table tr:last-child td { border-bottom: none; }
+    .admin-table tr:hover td { background: #f8fafc; }
+    .admin-status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; flex-shrink: 0; }
+    .admin-actions { display: flex; gap: 6px; }
+    .btn-icon { width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--card-border); background: var(--bg); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: .85rem; transition: all .15s; }
+    .btn-icon:hover { background: var(--card); border-color: var(--text-muted); }
+    .btn-icon.danger:hover { background: #fee2e2; border-color: #fca5a5; }
+    @media (max-width: 800px) { .admin-table .col-idea, .admin-table .col-created { display: none; } }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav id="main-nav" style="display:none">
+  <a class="nav-brand" href="/#" onclick="event.preventDefault();navigate('dashboard')"><span>ARK</span> SANDS Portal</a>
+  <a id="nav-admin-link" href="/#admin" onclick="event.preventDefault();navigate('admin')"
+     style="display:none;font-size:.85rem;font-weight:600;color:var(--teal);text-decoration:none;padding:4px 10px;border-radius:6px;border:1px solid var(--teal-light)">
+    <span data-i18n="nav_admin">Admin</span>
+  </a>
+  <div class="spacer"></div>
+  <button class="btn-lang" id="btn-lang" onclick="toggleLang()">中文</button>
+  <div class="nav-user" id="nav-user"></div>
+</nav>
+
+<!-- LOGIN PAGE -->
+<div id="page-login" class="page">
+  <div class="login-card">
+    <button class="btn-lang" id="btn-lang-login" onclick="toggleLang()" style="position:absolute;top:16px;right:16px">中文</button>
+    <div class="login-logo" style="position:relative">A</div>
+    <h1>ARK</h1>
+    <p data-i18n="login_subtitle">Offload the labor. Steer the science.</p>
+    <div class="login-features">
+      <div class="login-feature">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg>
+        <span data-i18n="login_offload">Offload</span>
+      </div>
+      <div class="login-feature">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span data-i18n="login_observe">Observe</span>
+      </div>
+      <div class="login-feature">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><circle cx="12" cy="12" r="9"/><line x1="12" y1="3" x2="12" y2="7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="3" y1="12" x2="7" y2="12"/><line x1="17" y1="12" x2="21" y2="12"/><line x1="5.6" y1="5.6" x2="8.5" y2="8.5"/><line x1="15.5" y1="15.5" x2="18.4" y2="18.4"/><line x1="18.4" y1="5.6" x2="15.5" y2="8.5"/><line x1="8.5" y1="15.5" x2="5.6" y2="18.4"/></svg>
+        <span data-i18n="login_steer">Steer</span>
+      </div>
+    </div>
+    <form class="login-email-form" id="login-form" onsubmit="sendLoginLink(event)">
+      <input type="email" id="login-email" placeholder="you@institution.edu" required autocomplete="email" />
+      <button type="submit" class="btn-send-link" id="login-btn" data-i18n="login_send_link">Send login link</button>
+    </form>
+    <div class="login-success" id="login-success">
+      <span data-i18n="login_success">✓ Check your inbox — we sent a login link to</span> <strong id="login-success-email"></strong>
+    </div>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<!-- DASHBOARD PAGE -->
+<div id="page-dashboard" class="page">
+  <!-- Gate banner — shown to ALL users when submissions are disabled -->
+  <div id="gate-banner" class="gate-banner" style="display:none">
+    <span class="gate-dot">🔴</span>
+    <span data-i18n="gate_banner_text">Submissions are currently <strong>disabled</strong> by admin. New projects cannot be started.</span>
+  </div>
+
+  <!-- Admin panel — hidden until checkAuth confirms is_admin -->
+  <div id="admin-panel" class="admin-panel" style="display:none">
+    <span class="admin-label" data-i18n="nav_admin">Admin</span>
+    <span class="admin-status" id="admin-status-text">—</span>
+    <button class="btn-admin btn-admin-toggle" id="btn-admin-toggle" onclick="adminToggle()">…</button>
+    <button class="btn-admin btn-admin-kill" onclick="adminKillAll()" data-i18n="kill_all">Kill All Jobs</button>
+  </div>
+
+  <!-- Hero creation card -->
+  <div class="hero-card" id="hero-card"
+       ondragover="heroCardDragOver(event)"
+       ondragleave="heroCardDragLeave(event)"
+       ondrop="heroCardDrop(event)">
+    <div class="hero-drop-overlay" data-i18n="drop_files">📎 Drop files to attach</div>
+    <div class="hero-card-header">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:2px">
+        <img src="/static/logo.png" alt="ARK" style="height:48px;width:auto;flex-shrink:0" />
+        <h2 style="margin:0" data-i18n="hero_title">Build your next paper with ARK</h2>
+      </div>
+    </div>
+    <form id="hero-form" onsubmit="submitNewProject(event)">
+      <div class="idea-box" id="idea-box"
+           ondragover="ideaBoxDragOver(event)"
+           ondragleave="ideaBoxDragLeave(event)"
+           ondrop="ideaBoxDrop(event)">
+        <textarea class="idea-textarea" name="idea"
+          data-i18n-placeholder="placeholder_idea"
+          placeholder="Describe your research idea… or drop files here"
+          oninput="heroIdeaInput(this)"></textarea>
+        <div class="idea-footer">
+          <button type="button" class="idea-attach-btn"
+                  onclick="document.getElementById('hero-file-input').click()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+            <span data-i18n="attach">Attach</span>
+          </button>
+          <div class="idea-chips" id="idea-chips"></div>
+          <span id="hero-char-count" class="idea-char">0 chars</span>
+        </div>
+      </div>
+      <input type="file" id="hero-file-input" multiple
+             onchange="heroFileSelected(this)" style="display:none" />
+
+      <div class="hero-secondary-row">
+        <div class="hero-field hero-field-venue">
+          <label data-i18n="venue">Venue</label>
+          <select name="venue" id="hero-venue-select" onchange="heroVenueChanged(this)">
+            <option value="">Loading…</option>
+          </select>
+        </div>
+        <div class="hero-field hero-field-iter">
+          <label data-i18n="max_iterations">Max iterations</label>
+          <input type="number" name="max_iterations" value="3" min="1" max="3" />
+        </div>
+      </div>
+
+      <input type="hidden" name="mode" value="paper" />
+      <input type="hidden" name="venue_format" id="hero-venue-format" value="neurips" />
+      <input type="hidden" name="venue_pages" id="hero-venue-pages" value="9" />
+
+      <!-- Telegram — always visible -->
+      <div class="tg-section" style="margin-top:16px">
+        <div class="tg-section-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex-shrink:0">
+            <circle cx="12" cy="12" r="12" fill="#29B6F6"/>
+            <path d="M5.5 11.5l10-4.5-1.5 9-3-2.5-2 2v-3l5-4.5-6.5 3.5-2-1z" fill="white"/>
+          </svg>
+          <span data-i18n="telegram_notifications">Telegram Notifications</span>
+        </div>
+        <div class="tg-how" data-i18n-html="tg_how">
+          <b>How to set up:</b>
+          1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp;
+          2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID
+        </div>
+        <div class="form-row" style="margin-top:10px">
+          <div class="form-group" style="margin-bottom:0">
+            <label data-i18n="bot_token">Bot Token</label>
+            <input type="text" name="telegram_token" placeholder="123456789:ABCdef…" autocomplete="off" />
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label data-i18n="chat_id">Chat ID</label>
+            <input type="text" name="telegram_chat_id" placeholder="-100123456789" />
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-advanced">
+        <button type="button" class="hero-advanced-toggle" aria-expanded="false"
+                onclick="toggleHeroAdvanced()">
+          <span class="adv-arrow">▶</span> <span data-i18n="advanced_options">Advanced options</span>
+        </button>
+        <div class="hero-advanced-body" id="hero-advanced-body">
+          <div class="hero-adv-grid">
+            <div class="hero-adv-field">
+              <label data-i18n-html="paper_title_label">Paper title <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+              <input type="text" name="title" data-i18n-placeholder="placeholder_auto_title" placeholder="Auto-generated if blank" />
+            </div>
+            <div class="hero-adv-field">
+              <label data-i18n-html="project_id_label">Project ID <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+              <input type="text" name="name" placeholder="my-project-id" pattern="[a-z0-9\-]*" />
+            </div>
+          </div>
+          <div class="hero-adv-field" style="margin-bottom:14px">
+            <label data-i18n-html="extra_instructions_label">Extra instructions <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+            <textarea name="comment" data-i18n-placeholder="placeholder_extra_instructions" placeholder="Focus on comparing against baseline X…"></textarea>
+          </div>
+          <div class="hero-adv-field">
+            <label data-i18n="model">Model</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <label class="model-option">
+                <input type="radio" name="model" value="claude-sonnet-4-6" checked />
+                <span class="model-chip">Sonnet 4.6</span>
+              </label>
+              <label class="model-option model-option-disabled" title="Coming soon">
+                <input type="radio" name="model" value="claude-opus-4-6" disabled />
+                <span class="model-chip">Opus 4.6</span>
+              </label>
+              <label class="model-option model-option-disabled" title="Coming soon">
+                <input type="radio" name="model" value="claude-haiku-4-5" disabled />
+                <span class="model-chip">Haiku 4.5</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-submit-row">
+        <button type="submit" class="hero-submit-btn" id="hero-submit-btn">
+          <span id="hero-submit-label" data-i18n="launch_research">Launch Research</span>
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Projects list -->
+  <div class="projects-section">
+    <div class="projects-heading">
+      <span data-i18n="your_projects">Your Projects</span>
+      <span class="projects-count" id="projects-count" style="display:none">0</span>
+    </div>
+    <div id="project-grid" class="project-grid"></div>
+    <div id="empty-state" class="empty-state" style="display:none">
+      <p data-i18n="empty_state">No projects yet — start by delegating your first research labor above.</p>
+    </div>
+  </div>
+</div>
+
+<!-- PROJECT DETAIL PAGE -->
+<div id="page-detail" class="page">
+  <div class="detail-header">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+      <button class="btn-secondary" onclick="navigate('dashboard')" style="padding:6px 12px;font-size:.85rem" data-i18n="back">← Back</button>
+      <h2 id="detail-title">Project</h2>
+      <span id="detail-badge" class="badge"></span>
+    </div>
+    <div class="detail-meta" id="detail-meta"></div>
+  </div>
+
+  <div class="detail-actions" id="detail-actions"></div>
+
+  <div id="detail-queue-pos" style="display:none;margin-bottom:12px;padding:10px 14px;
+    background:#e0e7ff;border-radius:8px;color:#3730a3;font-size:.9rem;font-weight:500"></div>
+
+  <!-- Progress widget (visible while running/queued) -->
+  <div id="progress-widget" class="progress-widget" style="display:none">
+    <div class="prog-row">
+      <span class="prog-label" data-i18n="phase">Phase</span>
+      <div class="prog-phases" id="prog-phases"></div>
+    </div>
+    <div class="prog-row" id="prog-iter-row" style="display:none">
+      <span class="prog-label" data-i18n="iteration">Iteration</span>
+      <div class="prog-iter-dots" id="prog-iter-dots"></div>
+      <span class="prog-iter-text" id="prog-iter-text"></span>
+    </div>
+    <div class="prog-row" id="prog-step-row" style="display:none">
+      <span class="prog-label" data-i18n="step">Step</span>
+      <div class="prog-phases" id="prog-steps"></div>
+    </div>
+    <div class="prog-agent-row" id="prog-agent-row" style="display:none">
+      <div class="spinner-sm"></div>
+      <span>Agent: <b id="prog-agent-name"></b></span>
+      <span id="prog-agent-elapsed" style="color:var(--text-muted);font-size:.8rem"></span>
+    </div>
+  </div>
+
+  <div class="detail-grid">
+    <div class="detail-card">
+      <h4 data-i18n="score">Score</h4>
+      <div class="score-big" id="detail-score">—<small>/10</small></div>
+      <div id="detail-zone-bar" style="margin-top:10px"></div>
+      <div id="detail-score-chart" style="margin-top:14px"></div>
+    </div>
+    <div class="detail-card">
+      <h4 data-i18n="project_info">Project Info</h4>
+      <div id="detail-info" style="font-size:.9rem;line-height:1.8;color:var(--text-second)"></div>
+    </div>
+  </div>
+
+  <div class="detail-card" style="margin-bottom:16px">
+    <h4 data-i18n="title">Title</h4>
+    <p id="detail-paper-title" style="font-size:1rem;font-weight:600;line-height:1.5;color:var(--text-primary);margin-bottom:16px"></p>
+    <h4 data-i18n="idea">Idea</h4>
+    <p id="detail-idea" style="font-size:.9rem;line-height:1.7;color:var(--text-second)"></p>
+  </div>
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+    <h4 style="font-size:.85rem;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em" data-i18n="live_log">Live Log</h4>
+    <div style="display:flex;gap:8px">
+      <button class="btn-secondary" style="padding:4px 10px;font-size:.8rem" onclick="scrollLogToBottom()" data-i18n="bottom">↓ Bottom</button>
+    </div>
+  </div>
+  <div class="log-terminal" id="detail-log" data-i18n="waiting_for_logs">Waiting for logs...</div>
+</div>
+
+<!-- ADMIN PAGE -->
+<div id="page-admin" class="page admin-page">
+  <h2 style="margin-bottom:20px;font-size:1.5rem;font-weight:700" data-i18n="admin_console">Admin Console</h2>
+  <div class="admin-controls">
+    <span class="admin-label" data-i18n="submissions">Submissions</span>
+    <span class="admin-gate-badge" id="admin-page-gate-badge">—</span>
+    <button class="btn-admin btn-admin-toggle" id="btn-admin-page-toggle" onclick="adminPageToggle()">…</button>
+    <button class="btn-admin btn-admin-kill" onclick="adminPageKillAll()" data-i18n="kill_all">Kill All Jobs</button>
+  </div>
+  <div class="admin-table-wrap">
+    <div class="admin-table-header">
+      <h3><span data-i18n="all_projects">All Projects</span> <span class="projects-count" id="admin-total-count" style="margin-left:6px">0</span></h3>
+      <div class="admin-filter-pills" id="admin-filter-pills">
+        <button class="admin-filter-pill active" data-filter="all" onclick="adminFilterProjects('all')" data-i18n="filter_all">All</button>
+        <button class="admin-filter-pill" data-filter="queued" onclick="adminFilterProjects('queued')" data-i18n="filter_queued">Queued</button>
+        <button class="admin-filter-pill" data-filter="running" onclick="adminFilterProjects('running')" data-i18n="filter_running">Running</button>
+        <button class="admin-filter-pill" data-filter="done" onclick="adminFilterProjects('done')" data-i18n="filter_done">Done</button>
+        <button class="admin-filter-pill" data-filter="failed" onclick="adminFilterProjects('failed')" data-i18n="filter_failed">Failed</button>
+        <button class="admin-filter-pill" data-filter="stopped" onclick="adminFilterProjects('stopped')" data-i18n="filter_stopped">Stopped</button>
+        <button class="admin-filter-pill" data-filter="pending" onclick="adminFilterProjects('pending')" data-i18n="filter_pending">Pending</button>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="admin-table" id="admin-table">
+        <thead>
+          <tr>
+            <th data-i18n="user">User</th>
+            <th data-i18n="title">Title</th>
+            <th class="col-idea" data-i18n="idea">Idea</th>
+            <th data-i18n="venue">Venue</th>
+            <th data-i18n="status">Status</th>
+            <th data-i18n="score">Score</th>
+            <th data-i18n="max_iter">Max Iter</th>
+            <th class="col-created" data-i18n="created">Created</th>
+            <th data-i18n="actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="admin-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- CONTINUE MODAL -->
+<div class="modal-backdrop" id="modal-continue">
+  <div class="modal">
+    <h3 data-i18n="continue_project">Continue Project</h3>
+    <div class="form-group">
+      <label data-i18n-html="additional_iterations_label">Additional iterations <span style="color:var(--text-muted);font-weight:400">(max 3)</span></label>
+      <input type="number" id="continue-iter" value="3" min="1" max="3" style="width:80px" />
+    </div>
+    <div class="form-group">
+      <label data-i18n-html="instructions_comments_label">Instructions / Comments <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+      <textarea id="continue-comment" rows="4"
+        data-i18n-placeholder="placeholder_continue_comment"
+        placeholder="e.g. Add ablation study for X, improve Figure 3, address reviewer concern about Y…"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal('modal-continue')" data-i18n="cancel">Cancel</button>
+      <button class="btn-primary" id="continue-btn" onclick="submitContinue()" data-i18n="continue_btn">▶ Continue</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADMIN EDIT MODAL -->
+<div class="modal-backdrop" id="modal-admin-edit">
+  <div class="modal" style="max-width:620px">
+    <h3 data-i18n="edit_project">Edit Project</h3>
+    <div class="form-group">
+      <label data-i18n="title">Title</label>
+      <input type="text" id="edit-title" data-i18n-placeholder="placeholder_paper_title" placeholder="Paper title" />
+    </div>
+    <div class="form-row" style="grid-template-columns:2fr 1fr 1fr">
+      <div class="form-group">
+        <label data-i18n="venue">Venue</label>
+        <select id="edit-venue-select" onchange="adminEditVenueChanged()">
+          <option value="">Loading…</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label data-i18n="pages">Pages</label>
+        <input type="number" id="edit-venue-pages" min="1" max="30" />
+      </div>
+      <div class="form-group">
+        <label data-i18n="max_iterations">Max Iterations</label>
+        <input type="number" id="edit-max-iter" min="1" max="20" />
+      </div>
+    </div>
+    <div class="form-group">
+      <label data-i18n="model">Model</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="model-option">
+          <input type="radio" name="edit-model" value="claude-sonnet-4-6" checked />
+          <span class="model-chip">Sonnet 4.6</span>
+        </label>
+        <label class="model-option">
+          <input type="radio" name="edit-model" value="claude-opus-4-6" />
+          <span class="model-chip">Opus 4.6</span>
+        </label>
+        <label class="model-option">
+          <input type="radio" name="edit-model" value="claude-haiku-4-5" />
+          <span class="model-chip">Haiku 4.5</span>
+        </label>
+      </div>
+    </div>
+    <div class="tg-section">
+      <div class="tg-section-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex-shrink:0">
+          <circle cx="12" cy="12" r="12" fill="#29B6F6"/>
+          <path d="M5.5 11.5l10-4.5-1.5 9-3-2.5-2 2v-3l5-4.5-6.5 3.5-2-1z" fill="white"/>
+        </svg>
+        <span data-i18n="telegram">Telegram</span>
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="margin-bottom:0">
+          <label data-i18n="bot_token">Bot Token</label>
+          <input type="text" id="edit-tg-token" placeholder="123456789:ABCdef…" autocomplete="off" />
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label data-i18n="chat_id">Chat ID</label>
+          <input type="text" id="edit-tg-chat" placeholder="-100123456789" />
+        </div>
+      </div>
+    </div>
+    <p class="form-hint" style="margin-top:12px" data-i18n="config_sync_hint">Config syncs to config.yaml immediately on save.</p>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal('modal-admin-edit')" data-i18n="cancel">Cancel</button>
+      <button class="btn-primary" id="admin-save-btn" onclick="adminSaveProject()" data-i18n="save_changes">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+//  i18n
+// ══════════════════════════════════════════════════════
+const TRANSLATIONS = {
+  en: {
+    // nav
+    nav_admin: 'Admin',
+    sign_out: 'Sign out',
+    lang_label: '中文',
+    // login
+    login_subtitle: 'Offload the labor. Steer the science.',
+    login_offload: 'Offload', login_observe: 'Observe', login_steer: 'Steer',
+    login_send_link: 'Send login link',
+    login_sending: 'Sending…',
+    login_success: '✓ Check your inbox — we sent a login link to',
+    login_fail: 'Failed to send login link.',
+    login_network_error: 'Network error. Please try again.',
+    // gate / admin panel
+    gate_banner_text: 'Submissions are currently <strong>disabled</strong> by admin. New projects cannot be started.',
+    submissions_disabled: 'Submissions DISABLED — new jobs will be rejected',
+    submissions_enabled: 'Submissions enabled',
+    enable_submissions: 'Enable Submissions',
+    disable_submissions: 'Disable Submissions',
+    kill_all: 'Kill All Jobs',
+    // hero
+    hero_title: 'Build your next paper with ARK',
+    attach: 'Attach', venue: 'Venue', max_iterations: 'Max iterations',
+    telegram_notifications: 'Telegram Notifications',
+    tg_how: '<b>How to set up:</b> 1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp; 2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID',
+    bot_token: 'Bot Token', chat_id: 'Chat ID',
+    advanced_options: 'Advanced options',
+    paper_title_label: 'Paper title <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
+    project_id_label: 'Project ID <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
+    extra_instructions_label: 'Extra instructions <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
+    model: 'Model',
+    launch_research: 'Launch Research',
+    placeholder_idea: 'Describe your research idea… or drop files here',
+    placeholder_auto_title: 'Auto-generated if blank',
+    placeholder_extra_instructions: 'Focus on comparing against baseline X…',
+    // projects
+    your_projects: 'Your Projects',
+    empty_state: 'No projects yet — start by delegating your first research labor above.',
+    // detail
+    back: '← Back',
+    score: 'Score', project_info: 'Project Info',
+    title: 'Title', idea: 'Idea',
+    live_log: 'Live Log', bottom: '↓ Bottom',
+    waiting_for_logs: 'Waiting for logs...',
+    phase: 'Phase', iteration: 'Iteration', step: 'Step',
+    // actions
+    view_pdf: '👁 View PDF', download_zip: '⬇ Download Zip',
+    stop: '■ Stop', start: '▶ Start', continue_action: '▶ Continue',
+    delete: '🗑 Delete',
+    waiting_template_msg: '📦 Waiting for <b>%s</b> template.<br>Send a <code>.zip</code> download link via Telegram to your project bot.',
+    // status labels
+    status_queued: 'Initializing…', status_running: 'Running', status_done: 'Done',
+    status_failed: 'Failed', status_stopped: 'Stopped',
+    status_waiting_template: '⏳ Awaiting Template', status_pending: '⏳ In Queue',
+    // detail info
+    info_venue: 'Venue', info_user: 'User', info_model: 'Model',
+    info_environment: 'Environment', info_created: 'Created', info_updated: 'Updated',
+    info_status: 'Status',
+    completed_iter: 'Completed (%d iterations)',
+    running_iter: 'Running (%d / %d iterations)',
+    running_plain: 'Running',
+    queued: 'Queued',
+    in_queue_pos: 'In Queue (position %s)',
+    stopped_iter: 'Stopped (%d / %d iterations)',
+    failed: 'Failed',
+    queue_position_msg: '⏳ Position %d in global queue — waiting for current project to finish',
+    // progress
+    phase_research: 'Research', phase_dev: 'Dev', phase_review: 'Review',
+    step_plan: 'Plan', step_run_experiments: 'Run Experiments',
+    step_analyze: 'Analyze', step_evaluate: 'Evaluate',
+    step_compile: 'Compile', step_review: 'Review',
+    step_plan2: 'Plan', step_execute: 'Execute', step_validate: 'Validate',
+    // continue modal
+    continue_project: 'Continue Project',
+    additional_iterations_label: 'Additional iterations <span style="color:var(--text-muted);font-weight:400">(max 3)</span>',
+    instructions_comments_label: 'Instructions / Comments <span style="color:var(--text-muted);font-weight:400">(optional)</span>',
+    placeholder_continue_comment: 'e.g. Add ablation study for X, improve Figure 3, address reviewer concern about Y…',
+    cancel: 'Cancel', continue_btn: '▶ Continue',
+    // admin page
+    admin_console: 'Admin Console',
+    submissions: 'Submissions',
+    all_projects: 'All Projects',
+    user: 'User', status: 'Status', pages: 'Pages',
+    max_iter: 'Max Iter', created: 'Created', actions: 'Actions',
+    no_projects_found: 'No projects found',
+    // admin edit
+    edit_project: 'Edit Project',
+    telegram: 'Telegram',
+    placeholder_paper_title: 'Paper title',
+    config_sync_hint: 'Config syncs to config.yaml immediately on save.',
+    save_changes: 'Save Changes',
+    // confirm dialogs
+    confirm_enable: 'Enable submissions for all users?',
+    confirm_disable: 'Disable submissions for all users?',
+    confirm_kill_all: 'Stop ALL running/queued/pending jobs across ALL users?',
+    confirm_stop: 'Stop this project?',
+    confirm_restart: 'Restart this project?',
+    confirm_delete: 'Delete this project? This cannot be undone.',
+    stopped_count: 'Stopped %d job(s).',
+    alert_idea_required: 'Please describe your research idea or attach files.',
+    // filter pills
+    filter_all: 'All', filter_queued: 'Queued', filter_running: 'Running',
+    filter_done: 'Done', filter_failed: 'Failed', filter_stopped: 'Stopped',
+    filter_pending: 'Pending',
+    // score card label
+    score_label: 'Score: %s/10',
+    // date
+    just_now: 'just now', minutes_ago: '%dm ago', hours_ago: '%dh ago', days_ago: '%dd ago',
+    // drop overlay
+    drop_files: '📎 Drop files to attach',
+    chars: '%d chars',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+  },
+  zh: {
+    nav_admin: '管理',
+    sign_out: '退出',
+    lang_label: 'EN',
+    login_subtitle: '卸载劳动，引领科学。',
+    login_offload: '卸载', login_observe: '观察', login_steer: '引领',
+    login_send_link: '发送登录链接',
+    login_sending: '发送中…',
+    login_success: '✓ 请检查收件箱 — 登录链接已发送至',
+    login_fail: '发送登录链接失败。',
+    login_network_error: '网络错误，请重试。',
+    gate_banner_text: '管理员已<strong>禁用</strong>提交功能。无法启动新项目。',
+    submissions_disabled: '提交已禁用 — 新任务将被拒绝',
+    submissions_enabled: '提交已启用',
+    enable_submissions: '启用提交',
+    disable_submissions: '禁用提交',
+    kill_all: '终止所有任务',
+    hero_title: '用 ARK 构建你的下一篇论文',
+    attach: '附件', venue: '投稿会议', max_iterations: '最大迭代次数',
+    telegram_notifications: 'Telegram 通知',
+    tg_how: '<b>设置方法：</b>1. 向 <a href="https://t.me/BotFather" target="_blank">@BotFather</a> 发送 <code>/newbot</code> 获取 Bot Token &nbsp;·&nbsp; 2. 向 <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> 发送消息获取 Chat ID',
+    bot_token: 'Bot Token', chat_id: 'Chat ID',
+    advanced_options: '高级选项',
+    paper_title_label: '论文标题 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
+    project_id_label: '项目 ID <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
+    extra_instructions_label: '额外说明 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
+    model: '模型',
+    launch_research: '启动研究',
+    placeholder_idea: '描述你的研究想法… 或拖拽文件到这里',
+    placeholder_auto_title: '留空则自动生成',
+    placeholder_extra_instructions: '例如：重点与基线 X 进行比较…',
+    your_projects: '我的项目',
+    empty_state: '暂无项目 — 在上方开始你的第一个研究任务。',
+    back: '← 返回',
+    score: '评分', project_info: '项目信息',
+    title: '标题', idea: '研究想法',
+    live_log: '实时日志', bottom: '↓ 底部',
+    waiting_for_logs: '等待日志...',
+    phase: '阶段', iteration: '迭代', step: '步骤',
+    view_pdf: '👁 查看 PDF', download_zip: '⬇ 下载 Zip',
+    stop: '■ 停止', start: '▶ 启动', continue_action: '▶ 继续',
+    delete: '🗑 删除',
+    waiting_template_msg: '📦 正在等待 <b>%s</b> 模板。<br>请通过 Telegram 向项目机器人发送 <code>.zip</code> 下载链接。',
+    status_queued: '初始化中…', status_running: '运行中', status_done: '已完成',
+    status_failed: '失败', status_stopped: '已停止',
+    status_waiting_template: '⏳ 等待模板', status_pending: '⏳ 排队中',
+    info_venue: '会议', info_user: '用户', info_model: '模型',
+    info_environment: '环境', info_created: '创建时间', info_updated: '更新时间',
+    info_status: '状态',
+    completed_iter: '已完成（%d 次迭代）',
+    running_iter: '运行中（%d / %d 次迭代）',
+    running_plain: '运行中',
+    queued: '排队中',
+    in_queue_pos: '排队中（第 %s 位）',
+    stopped_iter: '已停止（%d / %d 次迭代）',
+    failed: '失败',
+    queue_position_msg: '⏳ 全局队列第 %d 位 — 等待当前项目完成',
+    phase_research: '研究', phase_dev: '开发', phase_review: '审阅',
+    step_plan: '计划', step_run_experiments: '运行实验',
+    step_analyze: '分析', step_evaluate: '评估',
+    step_compile: '编译', step_review: '审阅',
+    step_plan2: '计划', step_execute: '执行', step_validate: '验证',
+    continue_project: '继续项目',
+    additional_iterations_label: '追加迭代次数 <span style="color:var(--text-muted);font-weight:400">（最多 3 次）</span>',
+    instructions_comments_label: '说明 / 备注 <span style="color:var(--text-muted);font-weight:400">（可选）</span>',
+    placeholder_continue_comment: '例如：添加 X 的消融实验，改进图 3，回应审稿人对 Y 的意见…',
+    cancel: '取消', continue_btn: '▶ 继续',
+    admin_console: '管理控制台',
+    submissions: '提交',
+    all_projects: '所有项目',
+    user: '用户', status: '状态', pages: '页数',
+    max_iter: '最大迭代', created: '创建时间', actions: '操作',
+    no_projects_found: '未找到项目',
+    edit_project: '编辑项目',
+    telegram: 'Telegram',
+    placeholder_paper_title: '论文标题',
+    config_sync_hint: '保存后配置将立即同步到 config.yaml。',
+    save_changes: '保存更改',
+    confirm_enable: '为所有用户启用提交？',
+    confirm_disable: '为所有用户禁用提交？',
+    confirm_kill_all: '终止所有用户的全部运行中/排队中/待处理任务？',
+    confirm_stop: '停止此项目？',
+    confirm_restart: '重新启动此项目？',
+    confirm_delete: '删除此项目？此操作不可撤销。',
+    stopped_count: '已停止 %d 个任务。',
+    alert_idea_required: '请描述你的研究想法或附加文件。',
+    filter_all: '全部', filter_queued: '排队中', filter_running: '运行中',
+    filter_done: '已完成', filter_failed: '失败', filter_stopped: '已停止',
+    filter_pending: '待处理',
+    score_label: '评分：%s/10',
+    just_now: '刚刚', minutes_ago: '%d 分钟前', hours_ago: '%d 小时前', days_ago: '%d 天前',
+    drop_files: '📎 拖拽文件到此处',
+    chars: '%d 字符',
+    enabled: '已启用',
+    disabled: '已禁用',
+  }
+};
+
+let currentLang = localStorage.getItem('ark_lang') || 'en';
+
+function t(key, ...args) {
+  let str = (TRANSLATIONS[currentLang] && TRANSLATIONS[currentLang][key]) || TRANSLATIONS.en[key] || key;
+  // Simple %s / %d replacement
+  let i = 0;
+  str = str.replace(/%[sd]/g, () => args[i++] ?? '');
+  return str;
+}
+
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    const val = t(key);
+    if (val !== key) el.textContent = val;
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach(el => {
+    const key = el.getAttribute('data-i18n-html');
+    const val = t(key);
+    if (val !== key) el.innerHTML = val;
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    const val = t(key);
+    if (val !== key) el.placeholder = val;
+  });
+  // Update lang buttons
+  const langLabel = t('lang_label');
+  const b1 = document.getElementById('btn-lang');
+  const b2 = document.getElementById('btn-lang-login');
+  if (b1) b1.textContent = langLabel;
+  if (b2) b2.textContent = langLabel;
+  // Update HTML lang attr
+  document.getElementById('html-root').lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+}
+
+function toggleLang() {
+  currentLang = currentLang === 'en' ? 'zh' : 'en';
+  localStorage.setItem('ark_lang', currentLang);
+  applyI18n();
+  // Re-render dynamic content if on dashboard/admin/detail
+  const dashActive = document.getElementById('page-dashboard').classList.contains('active');
+  const adminActive = document.getElementById('page-admin').classList.contains('active');
+  const detailActive = document.getElementById('page-detail').classList.contains('active');
+  if (dashActive) loadDashboard();
+  if (adminActive) loadAdminPage();
+  if (detailActive && detailProjectId) loadDetail(detailProjectId);
+  if (currentUser) renderNavUser();
+  // Re-render admin filter pills
+  _renderAdminFilterPills();
+}
+
+function _renderAdminFilterPills() {
+  const el = document.getElementById('admin-filter-pills');
+  if (!el) return;
+  const filters = ['all','queued','running','done','failed','stopped','pending'];
+  el.innerHTML = filters.map(f => {
+    const label = t('filter_' + f);
+    const cls = f === _adminFilter ? 'active' : '';
+    return `<button class="admin-filter-pill ${cls}" data-filter="${f}" onclick="adminFilterProjects('${f}')">${label}</button>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════
+//  State
+// ══════════════════════════════════════════════════════
+let currentUser = null;
+let venues = [];
+let detailProjectId = null;
+let detailEventSource = null;
+let logPinned = true;   // true = auto-scroll to bottom; false = user scrolled up
+
+// ══════════════════════════════════════════════════════
+//  Router
+// ══════════════════════════════════════════════════════
+function navigate(page, params = {}) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(`page-${page}`).classList.add('active');
+
+  if (page === 'login') {
+    document.getElementById('main-nav').style.display = 'none';
+  } else {
+    document.getElementById('main-nav').style.display = 'flex';
+  }
+
+  if (page === 'dashboard') {
+    stopDetailStream();
+    loadDashboard();
+    history.pushState({}, '', '/#dashboard');
+  } else if (page === 'detail') {
+    loadDetail(params.id);
+    history.pushState({}, '', `/#project/${params.id}`);
+  } else if (page === 'admin') {
+    stopDetailStream();
+    loadAdminPage();
+    history.pushState({}, '', '/#admin');
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  Magic Link Login
+// ══════════════════════════════════════════════════════
+async function sendLoginLink(e) {
+  e.preventDefault();
+  const email = document.getElementById('login-email').value.trim();
+  const btn = document.getElementById('login-btn');
+  const successEl = document.getElementById('login-success');
+  const errorEl = document.getElementById('login-error');
+  successEl.style.display = 'none';
+  errorEl.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = t('login_sending');
+
+  try {
+    const res = await fetch('/auth/send-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    if (res.ok) {
+      document.getElementById('login-success-email').textContent = email;
+      successEl.style.display = 'block';
+      document.getElementById('login-form').style.display = 'none';
+    } else {
+      const data = await res.json().catch(() => ({}));
+      errorEl.textContent = data.detail || t('login_fail');
+      errorEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = t('login_send_link');
+    }
+  } catch {
+    errorEl.textContent = t('login_network_error');
+    errorEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = t('login_send_link');
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  Auth
+// ══════════════════════════════════════════════════════
+async function checkAuth() {
+  const res = await fetch('/api/me');
+  const data = await res.json();
+  if (!data.authenticated) {
+    navigate('login');
+    return;
+  }
+  currentUser = data;
+  renderNavUser();
+
+  // Route based on hash
+  const hash = location.hash;
+  if (hash.startsWith('#project/')) {
+    const id = hash.slice(9);
+    navigate('detail', { id });
+  } else if (hash === '#admin') {
+    if (currentUser.is_admin) {
+      navigate('admin');
+    } else {
+      navigate('dashboard');
+    }
+  } else {
+    navigate('dashboard');
+  }
+}
+
+function renderNavUser() {
+  const el = document.getElementById('nav-user');
+  el.innerHTML = `
+    <span class="name">${esc(currentUser.email || currentUser.name)}</span>
+    <button class="btn-logout" onclick="location.href='/auth/logout'">${t('sign_out')}</button>
+  `;
+  const adminLink = document.getElementById('nav-admin-link');
+  if (adminLink) adminLink.style.display = currentUser.is_admin ? '' : 'none';
+}
+
+// ══════════════════════════════════════════════════════
+//  Admin panel
+// ══════════════════════════════════════════════════════
+let _adminDisabled = false;
+
+async function loadGateBanner() {
+  const res = await fetch('/api/system/status');
+  if (!res.ok) return;
+  const data = await res.json();
+  _adminDisabled = data.disabled;
+  document.getElementById('gate-banner').style.display = data.disabled ? 'flex' : 'none';
+  const heroCard = document.getElementById('hero-card');
+  if (heroCard) heroCard.classList.toggle('gate-disabled', data.disabled);
+}
+
+async function loadAdminPanel() {
+  await loadGateBanner();
+  if (!currentUser || !currentUser.is_admin) return;
+  document.getElementById('admin-panel').style.display = 'flex';
+  _renderAdminStatus();
+}
+
+function _renderAdminStatus() {
+  const txt = document.getElementById('admin-status-text');
+  const btn = document.getElementById('btn-admin-toggle');
+  if (_adminDisabled) {
+    txt.textContent = t('submissions_disabled');
+    txt.className = 'admin-status off';
+    btn.textContent = t('enable_submissions');
+    btn.style.background = '#15803d';
+    btn.onmouseover = () => btn.style.background = '#166534';
+    btn.onmouseout  = () => btn.style.background = '#15803d';
+  } else {
+    txt.textContent = t('submissions_enabled');
+    txt.className = 'admin-status ok';
+    btn.textContent = t('disable_submissions');
+    btn.style.background = '#1e40af';
+    btn.onmouseover = () => btn.style.background = '#1e3a8a';
+    btn.onmouseout  = () => btn.style.background = '#1e40af';
+  }
+}
+
+async function adminToggle() {
+  const endpoint = _adminDisabled ? '/api/admin/enable' : '/api/admin/disable';
+  if (!confirm(_adminDisabled ? t('confirm_enable') : t('confirm_disable'))) return;
+  const res = await fetch(endpoint, {method: 'POST'});
+  if (!res.ok) { alert('Failed: ' + (await res.text())); return; }
+  const data = await res.json();
+  _adminDisabled = data.disabled;
+  _renderAdminStatus();
+  document.getElementById('gate-banner').style.display = data.disabled ? 'flex' : 'none';
+  const heroCard = document.getElementById('hero-card');
+  if (heroCard) heroCard.classList.toggle('gate-disabled', data.disabled);
+}
+
+async function adminKillAll() {
+  if (!confirm(t('confirm_kill_all'))) return;
+  const res = await fetch('/api/admin/killall', {method: 'POST'});
+  if (!res.ok) { alert('Failed: ' + (await res.text())); return; }
+  const data = await res.json();
+  alert(t('stopped_count', data.count));
+  loadDashboard();
+}
+
+// ══════════════════════════════════════════════════════
+//  Dashboard
+// ══════════════════════════════════════════════════════
+async function loadDashboard() {
+  loadAdminPanel();
+  loadVenues();
+  const res = await fetch('/api/projects');
+  const projects = await res.json();
+  const grid = document.getElementById('project-grid');
+  const empty = document.getElementById('empty-state');
+  const countEl = document.getElementById('projects-count');
+
+  if (!projects.length) {
+    grid.innerHTML = '';
+    empty.style.display = 'block';
+    if (countEl) { countEl.style.display = 'none'; }
+    return;
+  }
+  empty.style.display = 'none';
+  grid.innerHTML = projects.map(renderProjectCard).join('');
+  if (countEl) { countEl.textContent = projects.length; countEl.style.display = 'inline'; }
+}
+
+function renderProjectCard(p) {
+  const score = (p.score || 0).toFixed(1);
+  const pct = Math.round((p.score || 0) / 10 * 100);
+  const statusLabel = t('status_' + p.status) || p.status;
+  const idea = p.idea ? esc(p.idea.substring(0,90)) + (p.idea.length>90?'…':'') : '';
+  return `
+    <div class="project-card" onclick="navigate('detail', {id:'${p.id}'})">
+      <div class="project-card-header">
+        <div class="project-name">${esc(p.title || p.name)}</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <span class="badge badge-${p.status}">${statusLabel}</span>
+          <button class="btn-delete-card" title="Delete"
+            onclick="event.stopPropagation();deleteProject('${p.id}')">×</button>
+        </div>
+      </div>
+      ${idea ? `<div class="project-idea">${idea}</div>` : ''}
+      <div class="project-venue">${esc(p.venue)}</div>
+      <div class="score-bar"><div class="score-fill" style="width:${pct}%"></div></div>
+      <div class="score-label">${t('score_label', score)}</div>
+    </div>`;
+}
+
+// ══════════════════════════════════════════════════════
+//  Project Detail
+// ══════════════════════════════════════════════════════
+async function loadDetail(id) {
+  detailProjectId = id;
+  stopDetailStream();
+
+  const res = await fetch(`/api/projects/${id}`);
+  if (!res.ok) { navigate('dashboard'); return; }
+  const p = await res.json();
+
+  resetProgress(p.max_iterations);
+  setProgressWidgetVisible(p.status === 'running' || p.status === 'queued');
+
+  document.getElementById('detail-title').textContent = p.title || p.name;
+  const badge = document.getElementById('detail-badge');
+  badge.className = `badge badge-${p.status}`;
+  badge.textContent = t('status_' + p.status) || p.status;
+
+  document.getElementById('detail-meta').innerHTML =
+    `<span>${esc(p.venue)}</span><span>·</span><span>${t('info_created')}: ${fmtDate(p.created_at)}</span>`;
+
+  document.getElementById('detail-paper-title').textContent = p.paper_title || p.title || p.name || '—';
+  document.getElementById('detail-idea').textContent = p.idea || '—';
+
+  let statusLine;
+  if (p.status === 'done') {
+    statusLine = t('completed_iter', p.current_iteration || p.max_iterations);
+  } else if (p.status === 'running') {
+    statusLine = (p.current_iteration || 0) > 0
+      ? t('running_iter', p.current_iteration, p.max_iterations)
+      : t('running_plain');
+  } else if (p.status === 'queued') {
+    statusLine = t('queued');
+  } else if (p.status === 'pending') {
+    statusLine = t('in_queue_pos', p.queue_position || '?');
+  } else if (p.status === 'stopped') {
+    statusLine = t('stopped_iter', p.current_iteration || 0, p.max_iterations);
+  } else if (p.status === 'failed') {
+    statusLine = t('failed');
+  } else {
+    statusLine = p.status;
+  }
+  document.getElementById('detail-info').innerHTML = `
+    <div><b>${t('info_venue')}:</b> ${esc(p.venue)}</div>
+    <div><b>${t('info_user')}:</b> ${esc(p.user_email || '')}</div>
+    <div><b>${t('info_model')}:</b> ${esc(p.model || 'claude-sonnet-4-6')}</div>
+    <div><b>${t('info_environment')}:</b> ${esc(p.environment || 'ROCS Testbed')}</div>
+    <div><b>${t('info_created')}:</b> ${fmtDate(p.created_at)}</div>
+    <div><b>${t('info_updated')}:</b> ${fmtDate(p.updated_at)}</div>
+    <div><b>${t('info_status')}:</b> ${esc(statusLine)}</div>
+  `;
+
+  setScore(p.score || 0);
+  renderScoreChart(p.score_history || []);
+  renderDetailActions(p);
+
+  const qp = document.getElementById('detail-queue-pos');
+  if (qp) {
+    if ((p.queue_position || 0) > 0) {
+      qp.style.display = 'block';
+      qp.textContent = t('queue_position_msg', p.queue_position);
+    } else {
+      qp.style.display = 'none';
+    }
+  }
+
+  loadLog(id);
+  if (p.status === 'running' || p.status === 'queued' || p.status === 'pending') {
+    startDetailStream(id);
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  Progress widget
+// ══════════════════════════════════════════════════════
+let progressState = {
+  phase: '', researchDone: false, devDone: false, reviewDone: false,
+  devIter: 0, devMaxIter: 0,
+  reviewIter: 0, reviewMaxIter: 0,
+  stepNum: 0, stepTotal: 5,
+  agent: '', agentSince: null,
+};
+let _lastProgressKey = '';
+let agentElapsedTimer = null;
+
+function resetProgress() {
+  progressState = {
+    phase: '', researchDone: false, devDone: false, reviewDone: false,
+    devIter: 0, devMaxIter: 0,
+    reviewIter: 0, reviewMaxIter: 0,
+    stepNum: 0, stepTotal: 5,
+    agent: '', agentSince: null,
+  };
+  _lastProgressKey = '';
+  if (agentElapsedTimer) { clearInterval(agentElapsedTimer); agentElapsedTimer = null; }
+}
+
+function parseProgressLine(line) {
+  let m;
+  if (/Deep Research|Research Phase/i.test(line) && !/failed/i.test(line))
+    progressState.phase = 'research';
+  if (/Dev Phase.*(?:Building|max \d+ iter)/i.test(line))
+    progressState.phase = 'dev';
+  m = line.match(/Dev Phase.*Iteration\s+(\d+)\/(\d+)/i);
+  if (m) { progressState.devIter = +m[1]; progressState.devMaxIter = +m[2]; progressState.phase = 'dev'; }
+  if (/Dev Phase Complete/i.test(line))
+    progressState.devDone = true;
+  m = line.match(/Review Phase.*Iteration\s+(\d+)\/(\d+)/i);
+  if (m) { progressState.reviewIter = +m[1]; progressState.reviewMaxIter = +m[2]; progressState.phase = 'review'; }
+  if (/Paper iteration \d+ complete|Review Phase Complete/i.test(line))
+    progressState.reviewDone = true;
+  // Entering a new Research phase means previous iteration's review is done
+  if (/Deep Research|Research Phase/i.test(line) && !/failed/i.test(line) && progressState.phase === 'review')
+    progressState.reviewDone = true;
+  if (progressState.phase === 'dev' || progressState.phase === 'review')
+    progressState.researchDone = true;
+  if (progressState.phase === 'review')
+    progressState.devDone = true;
+  m = line.match(/STEP\s+(\d+)\/(\d+)[^:]*:/i);
+  if (m && !line.includes('✓') && !line.includes('└'))
+    { progressState.stepNum = +m[1]; progressState.stepTotal = +m[2]; }
+  m = line.match(/Agent\s+\[(\w+)\]\s*[→>]/);
+  if (m) {
+    progressState.agent = m[1];
+    progressState.agentSince = Date.now();
+    if (!agentElapsedTimer) agentElapsedTimer = setInterval(updateAgentElapsed, 5000);
+  }
+  m = line.match(/Agent\s+\[(\w+)\]\s+(?:completed|done)/i);
+  if (m && progressState.agent === m[1]) {
+    progressState.agent = '';
+    progressState.agentSince = null;
+    if (agentElapsedTimer) { clearInterval(agentElapsedTimer); agentElapsedTimer = null; }
+  }
+  updateProgressWidget();
+}
+
+function updateAgentElapsed() {
+  if (!progressState.agentSince) return;
+  const sec = Math.floor((Date.now() - progressState.agentSince) / 1000);
+  const m = Math.floor(sec / 60), s = sec % 60;
+  const el = document.getElementById('prog-agent-elapsed');
+  if (el) el.textContent = m ? `${m}m ${s}s` : `${s}s`;
+}
+
+function updateProgressWidget() {
+  const key = JSON.stringify(progressState);
+  if (key === _lastProgressKey) return;
+  _lastProgressKey = key;
+
+  // Phase chips
+  const phasesEl = document.getElementById('prog-phases');
+  if (phasesEl) {
+    const defs = [
+      { label: t('phase_research'), done: progressState.researchDone, active: progressState.phase === 'research' },
+      { label: t('phase_dev'),      done: progressState.devDone,      active: progressState.phase === 'dev' },
+      { label: t('phase_review'),   done: progressState.reviewDone,   active: progressState.phase === 'review' },
+    ];
+    phasesEl.innerHTML = defs.map((d, i) => {
+      const cls = d.done ? 'done' : d.active ? 'active' : '';
+      const lbl = d.done ? `✓ ${d.label}` : d.label;
+      const chip = `<span class="prog-phase-chip ${cls}">${lbl}</span>`;
+      if (i < defs.length - 1) {
+        const arrowCls = d.done ? 'done' : d.active ? 'active' : '';
+        return chip + `<span class="prog-arrow ${arrowCls}">→</span>`;
+      }
+      return chip;
+    }).join('');
+  }
+
+  // Iteration dots
+  let curIter = 0, maxIter = 0;
+  if (progressState.phase === 'dev')    { curIter = progressState.devIter;    maxIter = progressState.devMaxIter; }
+  if (progressState.phase === 'review') { curIter = progressState.reviewIter; maxIter = progressState.reviewMaxIter; }
+  const iterRow = document.getElementById('prog-iter-row');
+  if (iterRow) {
+    iterRow.style.display = maxIter > 0 ? 'flex' : 'none';
+    const dotsEl = document.getElementById('prog-iter-dots');
+    if (dotsEl) dotsEl.innerHTML = Array.from({ length: maxIter }, (_, i) => {
+      const n = i + 1, cls = n < curIter ? 'done' : n === curIter ? 'active' : '';
+      return `<div class="prog-dot ${cls}"></div>`;
+    }).join('');
+    const iterText = document.getElementById('prog-iter-text');
+    if (iterText) iterText.textContent = maxIter > 0 ? `${curIter} / ${maxIter}` : '';
+  }
+
+  // Step chips
+  const STEP_NAMES = {
+    dev:    [t('step_plan'), t('step_run_experiments'), t('step_analyze'), t('step_evaluate')],
+    review: [t('step_compile'), t('step_review'), t('step_plan2'), t('step_execute'), t('step_validate')],
+  };
+  const stepRow = document.getElementById('prog-step-row');
+  if (stepRow) {
+    const names = STEP_NAMES[progressState.phase] || [];
+    const total = progressState.stepTotal || 5;
+    stepRow.style.display = progressState.stepNum > 0 ? 'flex' : 'none';
+    const stepsEl = document.getElementById('prog-steps');
+    if (stepsEl) stepsEl.innerHTML = Array.from({ length: total }, (_, i) => {
+      const n = i + 1, name = names[i] || `Step ${n}`;
+      const isDone = n < progressState.stepNum;
+      const isActive = n === progressState.stepNum;
+      const cls = isDone ? 'done' : isActive ? 'active' : '';
+      const lbl = isDone ? `✓ ${name}` : name;
+      const chip = `<span class="prog-phase-chip ${cls}" style="font-size:.7rem;padding:2px 7px">${lbl}</span>`;
+      if (i < total - 1) {
+        const arrowCls = isDone ? 'done' : isActive ? 'active' : '';
+        return chip + `<span class="prog-arrow ${arrowCls}" style="font-size:.75rem">→</span>`;
+      }
+      return chip;
+    }).join('');
+  }
+
+  // Agent row
+  const agentRow = document.getElementById('prog-agent-row');
+  if (agentRow) {
+    agentRow.style.display = progressState.agent ? 'flex' : 'none';
+    const nameEl = document.getElementById('prog-agent-name');
+    if (nameEl) nameEl.textContent = progressState.agent;
+    updateAgentElapsed();
+  }
+}
+
+function setProgressWidgetVisible(show) {
+  const w = document.getElementById('progress-widget');
+  if (w) w.style.display = show ? 'block' : 'none';
+}
+
+function setScore(score) {
+  const s = score || 0;
+  const zone = s >= 8 ? 'AC' : s >= 6 ? 'WA' : s >= 4 ? 'WR' : 'RJ';
+  const zoneStyle = {
+    AC: 'background:#dcfce7;color:#166534',
+    WA: 'background:#fef9c3;color:#92400e',
+    WR: 'background:#ffedd5;color:#9a3412',
+    RJ: 'background:#fee2e2;color:#b91c1c',
+  }[zone];
+  document.getElementById('detail-score').innerHTML =
+    `${s.toFixed(1)}<small>/10</small><span style="font-size:.8rem;font-weight:700;padding:2px 8px;border-radius:5px;${zoneStyle};vertical-align:middle;margin-left:8px">${zone}</span>`;
+  renderZoneBar(s);
+}
+
+function renderZoneBar(score) {
+  const el = document.getElementById('detail-zone-bar');
+  if (!el) return;
+  // viewBox width 280, bar height 14, total height 42 (bar + ticks + labels)
+  const W = 280, BH = 14, BY = 8;
+  const x = v => (v / 10 * W).toFixed(1);
+  const zones = [
+    [0, 4,  '#fca5a5', 'RJ', '#b91c1c'],
+    [4, 6,  '#fdba74', 'WR', '#9a3412'],
+    [6, 8,  '#fde68a', 'WA', '#92400e'],
+    [8, 10, '#86efac', 'AC', '#166534'],
+  ];
+  const segs = zones.map(([s, e, bg, lbl, tc]) => {
+    const rx = x(s), rw = (x(e) - x(s));
+    const mx = ((+x(s) + +x(e)) / 2).toFixed(1);
+    return `<rect x="${rx}" y="${BY}" width="${rw}" height="${BH}" fill="${bg}"/>
+      <text x="${mx}" y="${BY + BH/2 + 4}" text-anchor="middle" font-size="9" font-weight="700" fill="${tc}">${lbl}</text>`;
+  }).join('');
+  const ticks = [0, 4, 6, 8, 10].map(v => `
+    <line x1="${x(v)}" y1="${BY + BH}" x2="${x(v)}" y2="${BY + BH + 4}" stroke="#94a3b8" stroke-width="1"/>
+    <text x="${x(v)}" y="${BY + BH + 13}" text-anchor="middle" font-size="8" fill="#94a3b8">${v}</text>`
+  ).join('');
+  const sx = Math.max(4, Math.min(W - 4, score / 10 * W));
+  const ptr = `<polygon points="${sx.toFixed(1)},${BY} ${(sx-5).toFixed(1)},${BY-8} ${(sx+5).toFixed(1)},${BY-8}" fill="#0d9488"/>`;
+  el.innerHTML = `<svg width="100%" viewBox="0 0 ${W} 42" style="overflow:visible;display:block">${segs}${ptr}${ticks}</svg>`;
+}
+
+function renderDetailActions(p) {
+  const el = document.getElementById('detail-actions');
+  const zipReady = (p.score || 0) > 0;
+  const zipTitle = zipReady ? '' : 'title="Available after first review completes"';
+  let html = '';
+  if (p.status !== 'waiting_template') {
+    const pdfReady = p.has_pdf;
+    const pdfTitle = pdfReady ? '' : 'title="Available after first iteration completes"';
+    html += `<a href="/api/projects/${p.id}/pdf" target="_blank"
+      class="btn-secondary ${pdfReady ? '' : 'btn-disabled'}" style="text-decoration:none"
+      ${pdfTitle}>${t('view_pdf')}</a>`;
+    html += `<a href="/api/projects/${p.id}/zip"
+      class="btn-secondary ${zipReady ? '' : 'btn-disabled'}" style="text-decoration:none"
+      ${zipTitle}>${t('download_zip')}</a>`;
+  }
+  if (p.status === 'running' || p.status === 'queued') {
+    html += `<button class="btn-secondary" onclick="stopProject('${p.id}')">${t('stop')}</button>`;
+  }
+  if (p.status === 'stopped' || p.status === 'failed') {
+    html += `<button class="btn-primary" onclick="startProject('${p.id}')">${t('start')}</button>`;
+  }
+  if (p.status === 'done') {
+    html += `<button class="btn-primary" onclick="openContinueModal('${p.id}')">${t('continue_action')}</button>`;
+  }
+  if (p.status === 'waiting_template') {
+    html += `<div style="font-size:.85rem;color:var(--text-second);padding:8px 0">
+      ${t('waiting_template_msg', esc(p.venue))}
+    </div>`;
+  }
+  html += `<button class="btn-danger" onclick="deleteProject('${p.id}')">${t('delete')}</button>`;
+  el.innerHTML = html;
+}
+
+async function stopProject(id) {
+  if (!confirm(t('confirm_stop'))) return;
+  await fetch(`/api/projects/${id}/stop`, { method: 'POST' });
+  loadDetail(id);
+}
+
+async function startProject(id) {
+  if (!confirm(t('confirm_restart'))) return;
+  const res = await fetch(`/api/projects/${id}/restart`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`Failed to restart: ${err.detail || res.statusText}`);
+    return;
+  }
+  loadDetail(id);
+}
+
+async function deleteProject(id) {
+  if (!confirm(t('confirm_delete'))) return;
+  const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    alert(`Delete failed: ${res.status} ${res.statusText}`);
+    return;
+  }
+  navigate('dashboard');
+}
+
+async function loadLog(id) {
+  const logEl = document.getElementById('detail-log');
+  const res = await fetch(`/api/projects/${id}/log?lines=300`);
+  const data = await res.json();
+  if (data.lines && data.lines.length) {
+    renderLogLines(data.lines, false);
+  } else {
+    logEl.textContent = t('waiting_for_logs');
+  }
+}
+
+function renderLogLines(lines, append = true) {
+  const logEl = document.getElementById('detail-log');
+  if (!append) { logEl.innerHTML = ''; logPinned = true; }
+  lines.forEach(line => {
+    parseProgressLine(line);
+    const span = document.createElement('span');
+    span.className = 'log-line' +
+      (line.includes('[ARK]') || line.includes('ark.') ? ' ark' : '') +
+      (line.toLowerCase().includes('error') ? ' error' : '') +
+      (line.toLowerCase().includes('warn') ? ' warn' : '');
+    span.textContent = line + '\n';
+    logEl.appendChild(span);
+  });
+  if (logPinned) logEl.scrollTop = logEl.scrollHeight;
+}
+
+function scrollLogToBottom() {
+  const el = document.getElementById('detail-log');
+  logPinned = true;
+  el.scrollTop = el.scrollHeight;
+}
+
+function startDetailStream(id) {
+  if (detailEventSource) detailEventSource.close();
+  const es = new EventSource(`/api/projects/${id}/stream`);
+  detailEventSource = es;
+
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.line !== undefined) renderLogLines([data.line]);
+  };
+
+  es.addEventListener('status', (e) => {
+    const data = JSON.parse(e.data);
+    const badge = document.getElementById('detail-badge');
+    if (badge) {
+      badge.className = `badge badge-${data.status}`;
+      badge.textContent = t('status_' + data.status) || data.status;
+    }
+    if (data.score !== undefined) setScore(data.score);
+    if (data.status === 'done' || data.status === 'failed' || data.status === 'stopped') {
+      // Stop SSE — do NOT call loadDetail (would restart SSE → infinite loop)
+      stopDetailStream();
+      setProgressWidgetVisible(false);
+      // One-shot fetch to refresh actions (PDF button, etc.)
+      fetch(`/api/projects/${id}`)
+        .then(r => r.json())
+        .then(p => {
+          renderDetailActions(p);
+          renderScoreChart(p.score_history || []);
+        });
+    }
+  });
+
+  es.onerror = () => {
+    setTimeout(() => {
+      if (detailProjectId === id) startDetailStream(id);
+    }, 5000);
+  };
+}
+
+function stopDetailStream() {
+  if (detailEventSource) {
+    detailEventSource.close();
+    detailEventSource = null;
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  Hero form — venues
+// ══════════════════════════════════════════════════════
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+async function loadVenues() {
+  if (venues.length) return;
+  const res = await fetch('/api/venues');
+  venues = await res.json();
+  const sel = document.getElementById('hero-venue-select');
+  if (!sel) return;
+  sel.innerHTML = venues.map(v =>
+    `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.pages ? ' (' + v.pages + ' pages)' : ''}</option>`
+  ).join('');
+  heroVenueChanged(sel);
+}
+
+function heroVenueChanged(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt) return;
+  document.getElementById('hero-venue-format').value = opt.dataset.format || 'article';
+  document.getElementById('hero-venue-pages').value = opt.dataset.pages || '9';
+}
+
+// ══════════════════════════════════════════════════════
+//  Hero form — file handling
+// ══════════════════════════════════════════════════════
+let selectedFiles = [];
+
+function heroCardDragOver(e) {
+  e.preventDefault();
+  document.getElementById('hero-card').classList.add('drag-over');
+}
+function heroCardDragLeave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    document.getElementById('hero-card').classList.remove('drag-over');
+  }
+}
+function heroCardDrop(e) {
+  e.preventDefault();
+  document.getElementById('hero-card').classList.remove('drag-over');
+  heroAddFiles(e.dataTransfer.files);
+}
+
+function ideaBoxDragOver(e) {
+  e.preventDefault(); e.stopPropagation();
+  document.getElementById('idea-box').classList.add('drag-over');
+  document.getElementById('hero-card').classList.remove('drag-over'); // suppress card overlay
+}
+function ideaBoxDragLeave(e) {
+  if (!e.currentTarget.contains(e.relatedTarget)) {
+    document.getElementById('idea-box').classList.remove('drag-over');
+  }
+}
+function ideaBoxDrop(e) {
+  e.preventDefault(); e.stopPropagation();
+  document.getElementById('idea-box').classList.remove('drag-over');
+  heroAddFiles(e.dataTransfer.files);
+}
+
+function heroFileSelected(input) {
+  heroAddFiles(input.files);
+  input.value = '';
+}
+
+function heroAddFiles(fileList) {
+  Array.from(fileList).forEach(f => {
+    if (!selectedFiles.find(x => x.name === f.name && x.size === f.size)) {
+      selectedFiles.push(f);
+    }
+  });
+  renderFileChips();
+}
+
+function heroRemoveFile(i) {
+  selectedFiles.splice(i, 1);
+  renderFileChips();
+}
+
+function renderFileChips() {
+  const el = document.getElementById('idea-chips');
+  el.innerHTML = selectedFiles.map((f, i) => `
+    <span class="idea-chip" title="${esc(f.name)}">
+      <span class="idea-chip-name">${esc(f.name)}</span>
+      <button type="button" class="idea-chip-rm" onclick="heroRemoveFile(${i})">×</button>
+    </span>`).join('');
+}
+
+function heroClearFiles() {
+  selectedFiles = [];
+  renderFileChips();
+  document.getElementById('hero-file-input').value = '';
+}
+
+function heroIdeaInput(el) {
+  const n = el.value.length;
+  document.getElementById('hero-char-count').textContent = t('chars', n);
+}
+
+function toggleHeroAdvanced() {
+  const btn = document.querySelector('.hero-advanced-toggle');
+  const body = document.getElementById('hero-advanced-body');
+  const expanded = btn.getAttribute('aria-expanded') === 'true';
+  btn.setAttribute('aria-expanded', String(!expanded));
+  body.classList.toggle('open', !expanded);
+}
+
+// ══════════════════════════════════════════════════════
+//  Hero form — submit
+// ══════════════════════════════════════════════════════
+async function submitNewProject(e) {
+  e.preventDefault();
+  const form = e.target;
+  const btn = document.getElementById('hero-submit-btn');
+  const label = document.getElementById('hero-submit-label');
+  btn.disabled = true;
+  label.innerHTML = '<span class="spinner"></span>';
+
+  const fd = new FormData(form);
+  // Remove the hidden name="idea" textarea value (already in fd), append files
+  selectedFiles.forEach(f => fd.append('attachments', f));
+
+  const idea = (fd.get('idea') || '').trim();
+  if (!idea && !selectedFiles.length) {
+    alert(t('alert_idea_required'));
+    btn.disabled = false;
+    label.textContent = t('launch_research');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/projects', { method: 'POST', body: fd });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+      alert(`Error: ${err.detail}`);
+      return;
+    }
+    const proj = await res.json();
+    form.reset();
+    heroClearFiles();
+    document.getElementById('hero-char-count').textContent = t('chars', 0);
+    navigate('detail', { id: proj.id });
+  } finally {
+    btn.disabled = false;
+    label.textContent = t('launch_research');
+  }
+}
+
+function renderScoreChart(history) {
+  const el = document.getElementById('detail-score-chart');
+  if (!el) return;
+  if (!history || history.length === 0) { el.innerHTML = ''; return; }
+  // Layout
+  const VW = 300, VH = 130;
+  const PL = 14, PR = 16, PT = 22, PB = 28;
+  const cW = VW - PL - PR, cH = VH - PT - PB;
+  const n = history.length;
+  const cx = i => PL + (n > 1 ? i * cW / (n - 1) : cW / 2);
+  const cy = v => PT + cH * (1 - Math.max(0, Math.min(10, v)) / 10);
+
+  // Zone dashed reference lines at 4 (RJ/WR), 6 (WR/WA), 8 (WA/AC)
+  const zoneLines = [
+    [4, '#fca5a5', 'WR'],
+    [6, '#fdba74', 'WA'],
+    [8, '#86efac', 'AC'],
+  ].map(([v, clr, lbl]) => {
+    const vy = cy(v).toFixed(1);
+    return `<line x1="${PL}" y1="${vy}" x2="${VW - PR}" y2="${vy}" stroke="${clr}" stroke-width="1" stroke-dasharray="3,2"/>
+      <text x="${PL - 2}" y="${(+vy + 3).toFixed(1)}" text-anchor="end" font-size="7.5" fill="#94a3b8">${v}</text>`;
+  }).join('');
+
+  // Baseline
+  const baseline = `<line x1="${PL}" y1="${(PT + cH).toFixed(1)}" x2="${VW - PR}" y2="${(PT + cH).toFixed(1)}" stroke="var(--card-border)" stroke-width="1"/>`;
+
+  // Polyline
+  const pts = history.map((d, i) => `${cx(i).toFixed(1)},${cy(d.score).toFixed(1)}`).join(' ');
+
+  // Dots + score labels (alternate above/below to avoid overlap)
+  const dots = history.map((d, i) => {
+    const px = cx(i), py = cy(d.score);
+    const above = i % 2 === 0 || py > PT + 18;
+    const labelY = above ? Math.max(PT + 10, py - 7) : py + 16;
+    return `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.5" fill="var(--teal)" stroke="#fff" stroke-width="1.5"/>
+      <text x="${px.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="middle" font-size="9" font-weight="600" fill="var(--teal-dark)">${d.score.toFixed(1)}</text>`;
+  }).join('');
+
+  // Iter labels on x-axis
+  const xLabels = history.map((d, i) => {
+    const px = cx(i);
+    return `<text x="${px.toFixed(1)}" y="${VH - 6}" text-anchor="middle" font-size="8.5" fill="#64748b">Iter ${d.iteration}</text>`;
+  }).join('');
+
+  el.innerHTML = `<svg width="100%" viewBox="0 0 ${VW} ${VH}" style="overflow:visible;display:block">
+    ${zoneLines}${baseline}
+    <polyline points="${pts}" fill="none" stroke="var(--teal-light)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${dots}${xLabels}
+  </svg>`;
+}
+
+// ══════════════════════════════════════════════════════
+//  Continue Modal
+// ══════════════════════════════════════════════════════
+let continueProjectId = null;
+
+function openContinueModal(id) {
+  continueProjectId = id;
+  document.getElementById('continue-comment').value = '';
+  document.getElementById('continue-iter').value = '3';
+  document.getElementById('modal-continue').classList.add('open');
+}
+
+async function submitContinue() {
+  const iter = Math.max(1, Math.min(3, parseInt(document.getElementById('continue-iter').value) || 3));
+  const comment = document.getElementById('continue-comment').value.trim();
+  const btn = document.getElementById('continue-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/projects/${continueProjectId}/continue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ additional_iterations: iter, comment }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      alert(e.detail || 'Failed to continue project.');
+      return;
+    }
+    closeModal('modal-continue');
+    loadDetail(continueProjectId);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  Utils
+// ══════════════════════════════════════════════════════
+function esc(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const locale = currentLang === 'zh' ? 'zh-CN' : 'en-US';
+  const date = d.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${date}, ${hh}:${mm}:${ss}`;
+}
+
+// Log scroll: detect when user scrolls up → stop auto-following
+document.getElementById('detail-log').addEventListener('scroll', function() {
+  const atBottom = this.scrollHeight - this.scrollTop <= this.clientHeight + 4;
+  logPinned = atBottom;
+}, { passive: true });
+
+// ══════════════════════════════════════════════════════
+//  Admin Page
+// ══════════════════════════════════════════════════════
+let _adminAllProjects = [];
+let _adminFilter = 'all';
+let _editingProjectId = null;
+let _adminPageDisabled = false;
+
+async function loadAdminPage() {
+  const [projectsRes, statusRes] = await Promise.all([
+    fetch('/api/projects'),
+    fetch('/api/admin/status'),
+  ]);
+  _adminAllProjects = await projectsRes.json();
+  const status = await statusRes.json();
+  _adminPageDisabled = status.disabled;
+
+  const badge = document.getElementById('admin-page-gate-badge');
+  const toggleBtn = document.getElementById('btn-admin-page-toggle');
+  if (_adminPageDisabled) {
+    badge.className = 'admin-gate-badge disabled'; badge.textContent = t('disabled');
+    toggleBtn.textContent = t('enable_submissions'); toggleBtn.style.background = '#15803d';
+  } else {
+    badge.className = 'admin-gate-badge enabled'; badge.textContent = t('enabled');
+    toggleBtn.textContent = t('disable_submissions'); toggleBtn.style.background = '#1e40af';
+  }
+
+  const totalEl = document.getElementById('admin-total-count');
+  if (totalEl) { totalEl.textContent = _adminAllProjects.length; totalEl.style.display = 'inline'; }
+
+  // Populate venue options for edit modal if needed
+  if (venues.length) {
+    const sel = document.getElementById('edit-venue-select');
+    if (sel && sel.options.length <= 1) {
+      sel.innerHTML = venues.map(v =>
+        `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.pages ? ' (' + v.pages + ' pages)' : ''}</option>`
+      ).join('');
+    }
+  } else {
+    await loadVenues();
+    const sel = document.getElementById('edit-venue-select');
+    if (sel && sel.options.length <= 1) {
+      sel.innerHTML = venues.map(v =>
+        `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.pages ? ' (' + v.pages + ' pages)' : ''}</option>`
+      ).join('');
+    }
+  }
+
+  renderAdminTable(_adminFilter);
+}
+
+function renderAdminTable(filter) {
+  _adminFilter = filter;
+  document.querySelectorAll('.admin-filter-pill').forEach(btn => {
+    const f = btn.getAttribute('data-filter') || btn.textContent.trim().toLowerCase();
+    btn.classList.toggle('active', f === filter);
+  });
+
+  const list = filter === 'all' ? _adminAllProjects : _adminAllProjects.filter(p => p.status === filter);
+  const statusColors = {
+    queued: '#f59e0b', running: '#22c55e', done: '#3b82f6',
+    failed: '#ef4444', stopped: '#94a3b8', pending: '#6366f1',
+    waiting_template: '#ec4899',
+  };
+  const statusLabels = {
+    queued: t('status_queued'), running: t('status_running'), done: t('status_done'),
+    failed: t('status_failed'), stopped: t('status_stopped'),
+    pending: t('status_pending'), waiting_template: t('status_waiting_template'),
+  };
+
+  const tbody = document.getElementById('admin-tbody');
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:32px;color:var(--text-muted)">${t('no_projects_found')}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = list.map(p => {
+    const email = (p.user_email || '').replace(/@.*/, '') || p.user_email || '—';
+    const titleStr = p.title || p.name || '';
+    const title = titleStr.substring(0, 40);
+    const ideaStr = p.idea || '';
+    const idea = ideaStr.substring(0, 50);
+    const color = statusColors[p.status] || '#94a3b8';
+    const label = statusLabels[p.status] || p.status;
+    const score = (p.score || 0).toFixed(1);
+    const isActive = p.status === 'running' || p.status === 'queued' || p.status === 'pending';
+    const canRestart = p.status === 'stopped' || p.status === 'failed';
+    const canContinue = p.status === 'done';
+    const toggleIcon = isActive ? '■' : ((canRestart || canContinue) ? '▶' : '·');
+    const toggleTitle = isActive ? 'Stop' : (canContinue ? 'Continue' : (canRestart ? 'Restart' : 'N/A'));
+    return `<tr>
+      <td title="${esc(p.user_email || '')}">${esc(email)}</td>
+      <td title="${esc(titleStr)}">${esc(title)}${titleStr.length > 40 ? '…' : ''}</td>
+      <td class="col-idea" title="${esc(ideaStr)}" style="color:var(--text-muted)">${esc(idea)}${ideaStr.length > 50 ? '…' : ''}</td>
+      <td>${esc(p.venue || '—')}</td>
+      <td><span class="admin-status-dot" style="background:${color}"></span>${esc(label)}</td>
+      <td>${score}</td>
+      <td>${p.max_iterations || '—'}</td>
+      <td class="col-created" style="color:var(--text-muted);font-size:.8rem">${fmtRelDate(p.created_at)}</td>
+      <td><div class="admin-actions">
+        <button class="btn-icon" title="View" onclick="navigate('detail',{id:'${p.id}'})">👁</button>
+        <button class="btn-icon" title="Edit" onclick="adminEditProject('${p.id}')">✏️</button>
+        <button class="btn-icon" title="${toggleTitle}" onclick="adminToggleProject('${p.id}','${p.status}')">${toggleIcon}</button>
+        <button class="btn-icon danger" title="Delete" onclick="adminForceDelete('${p.id}')">🗑</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function adminFilterProjects(status) {
+  renderAdminTable(status);
+}
+
+async function adminEditProject(id) {
+  const res = await fetch(`/api/projects/${id}`);
+  if (!res.ok) { alert('Failed to load project'); return; }
+  const p = await res.json();
+  _editingProjectId = id;
+
+  document.getElementById('edit-title').value = p.title || '';
+  document.getElementById('edit-venue-pages').value = p.venue_pages || 9;
+  document.getElementById('edit-max-iter').value = p.max_iterations || 3;
+  document.getElementById('edit-tg-token').value = p.telegram_token || '';
+  document.getElementById('edit-tg-chat').value = p.telegram_chat_id || '';
+
+  const sel = document.getElementById('edit-venue-select');
+  for (let i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === p.venue) { sel.selectedIndex = i; break; }
+  }
+
+  const model = p.model || 'claude-sonnet-4-6';
+  document.querySelectorAll('input[name="edit-model"]').forEach(r => { r.checked = r.value === model; });
+
+  document.getElementById('modal-admin-edit').classList.add('open');
+}
+
+function adminEditVenueChanged() {
+  const sel = document.getElementById('edit-venue-select');
+  const opt = sel.options[sel.selectedIndex];
+  if (opt && opt.dataset.pages) {
+    document.getElementById('edit-venue-pages').value = opt.dataset.pages;
+  }
+}
+
+async function adminSaveProject() {
+  if (!_editingProjectId) return;
+  const sel = document.getElementById('edit-venue-select');
+  const opt = sel.options[sel.selectedIndex];
+  const model = [...document.querySelectorAll('input[name="edit-model"]')].find(r => r.checked)?.value || 'claude-sonnet-4-6';
+
+  const payload = {
+    title: document.getElementById('edit-title').value.trim(),
+    venue: sel.value,
+    venue_format: opt ? opt.dataset.format : '',
+    venue_pages: parseInt(document.getElementById('edit-venue-pages').value) || 9,
+    max_iterations: parseInt(document.getElementById('edit-max-iter').value) || 3,
+    telegram_token: document.getElementById('edit-tg-token').value.trim(),
+    telegram_chat_id: document.getElementById('edit-tg-chat').value.trim(),
+    model,
+  };
+
+  const btn = document.getElementById('admin-save-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/api/admin/projects/${_editingProjectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      alert(e.detail || 'Failed to save');
+      return;
+    }
+    closeModal('modal-admin-edit');
+    await loadAdminPage();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function adminToggleProject(id, status) {
+  if (status === 'running' || status === 'queued' || status === 'pending') {
+    if (!confirm(t('confirm_stop'))) return;
+    await fetch(`/api/projects/${id}/stop`, { method: 'POST' });
+  } else if (status === 'stopped' || status === 'failed') {
+    if (!confirm(t('confirm_restart'))) return;
+    const res = await fetch(`/api/projects/${id}/restart`, { method: 'POST' });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.detail || 'Failed to restart'); return; }
+  } else if (status === 'done') {
+    const iter = prompt('Add how many iterations? (1–10)', '3');
+    if (iter === null) return;
+    const n = Math.max(1, Math.min(10, parseInt(iter) || 3));
+    const res = await fetch(`/api/projects/${id}/continue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ additional_iterations: n, comment: '' }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.detail || 'Failed to continue'); return; }
+  }
+  await loadAdminPage();
+}
+
+async function adminForceDelete(id) {
+  if (!confirm(t('confirm_delete'))) return;
+  const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+  if (!res.ok) { alert(`Delete failed: ${res.status}`); return; }
+  _adminAllProjects = _adminAllProjects.filter(p => p.id !== id);
+  const total = document.getElementById('admin-total-count');
+  if (total) total.textContent = _adminAllProjects.length;
+  renderAdminTable(_adminFilter);
+}
+
+async function adminPageToggle() {
+  const endpoint = _adminPageDisabled ? '/api/admin/enable' : '/api/admin/disable';
+  if (!confirm(_adminPageDisabled ? t('confirm_enable') : t('confirm_disable'))) return;
+  const res = await fetch(endpoint, { method: 'POST' });
+  if (!res.ok) { alert('Failed: ' + (await res.text())); return; }
+  const data = await res.json();
+  _adminPageDisabled = data.disabled;
+  const badge = document.getElementById('admin-page-gate-badge');
+  const toggleBtn = document.getElementById('btn-admin-page-toggle');
+  if (_adminPageDisabled) {
+    badge.className = 'admin-gate-badge disabled'; badge.textContent = t('disabled');
+    toggleBtn.textContent = t('enable_submissions'); toggleBtn.style.background = '#15803d';
+  } else {
+    badge.className = 'admin-gate-badge enabled'; badge.textContent = t('enabled');
+    toggleBtn.textContent = t('disable_submissions'); toggleBtn.style.background = '#1e40af';
+  }
+}
+
+async function adminPageKillAll() {
+  if (!confirm(t('confirm_kill_all'))) return;
+  const res = await fetch('/api/admin/killall', { method: 'POST' });
+  if (!res.ok) { alert('Failed: ' + (await res.text())); return; }
+  const data = await res.json();
+  alert(t('stopped_count', data.count));
+  await loadAdminPage();
+}
+
+function fmtRelDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const diff = Date.now() - d;
+  if (diff < 60000) return t('just_now');
+  if (diff < 3600000) return t('minutes_ago', Math.floor(diff / 60000));
+  if (diff < 86400000) return t('hours_ago', Math.floor(diff / 3600000));
+  return t('days_ago', Math.floor(diff / 86400000));
+}
+
+// Close modal on backdrop click
+document.getElementById('modal-continue').addEventListener('click', function(e) {
+  if (e.target === this) closeModal('modal-continue');
+});
+document.getElementById('modal-admin-edit').addEventListener('click', function(e) {
+  if (e.target === this) closeModal('modal-admin-edit');
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    closeModal('modal-continue');
+    closeModal('modal-admin-edit');
+  }
+});
+
+// ══════════════════════════════════════════════════════
+//  Boot
+// ══════════════════════════════════════════════════════
+applyI18n();
+checkAuth();
+</script>
+</body>
+</html>

@@ -1,0 +1,44 @@
+# State files (project-specific, generated at runtime)
+state/*.yaml
+state/*.md
+state/*.json
+
+# Logs
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# PID files
+projects/*/.pid
+
+# Project configs contain secrets (telegram tokens, paths)
+projects/*/config.yaml
+
+# Local environment / database
+.env
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+
+# OS
+.DS_Store
+.nfs*
+
+# Temp
+*.tmp
+*.pptx

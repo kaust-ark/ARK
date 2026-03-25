@@ -1,0 +1,57 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill out the sections below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the bug.
+      placeholder: What happened? What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps to reproduce the behavior.
+      placeholder: |
+        1. ark new my-project
+        2. ark run my-project
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Error Output
+      description: Paste relevant logs or error messages.
+      render: shell
+
+  - type: dropdown
+    id: model
+    attributes:
+      label: LLM Backend
+      options:
+        - Claude
+        - Gemini
+        - Codex
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      placeholder: "3.10"
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: "Ubuntu 22.04"
