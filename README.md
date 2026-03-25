@@ -114,6 +114,8 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 
 ## Quick Start
 
+First, create and activate a Python virtual environment using your preferred tool (conda, uv, venv, etc.).
+
 ```bash
 # 1. Install
 pip install -e .

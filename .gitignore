@@ -24,6 +24,7 @@ htmlcov/
 
 # PID files
 projects/*/.pid
+projects/
 
 # Project configs contain secrets (telegram tokens, paths)
 projects/*/config.yaml

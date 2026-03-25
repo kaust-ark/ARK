@@ -1160,7 +1160,7 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
     # ── Step 1: Code Directory ────────────────────────────────
     _wizard_step_header(1, "Code Directory")
     print("  Where is your research code located?")
-    default_code_dir = str(Path.home() / name)
+    default_code_dir = str((Path.cwd() / "projects" / name).resolve())
     code_dir = prompt_input("Code directory", default_code_dir)
     code_dir = os.path.expanduser(code_dir)
 
