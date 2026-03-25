@@ -14,7 +14,7 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# Projects (configs contain secrets: telegram tokens, API keys, paths)
+# Projects
 projects/
 
 # Local environment / database
