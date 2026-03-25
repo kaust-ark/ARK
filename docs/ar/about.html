@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>حول ARK</title>
+  <meta name="description" content="ARK مشروع بحثي طوره فريق SANDS Lab في KAUST.">
+  <link rel="icon" href="../assets/logo_ark_transparent.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    body { font-family: "Tajawal", sans-serif; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 7rem 1.5rem 4rem; }
+    .wrap h1 { margin-bottom: 1rem; }
+    .wrap h2 { margin-top: 2rem; margin-bottom: .75rem; border-bottom: 1px solid var(--border); padding-bottom: .5rem; }
+    .wrap p { line-height: 1.8; margin-bottom: 1rem; }
+    .team { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 1rem; }
+    .card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); padding: 1rem; }
+  </style>
+</head>
+<body>
+<nav class="navbar" id="navbar" style="background:rgba(248,250,252,.95);backdrop-filter:blur(12px)">
+  <div class="container">
+    <a href="index.html" class="nav-brand"><img src="../assets/logo_ark_transparent.png" alt="ARK logo"> ARK</a>
+    <div class="nav-links" id="navLinks">
+      <a href="index.html">الرئيسية</a>
+      <a href="doc.html">التوثيق</a>
+      <a href="about.html" style="color:var(--teal);font-weight:600">حول</a>
+      <a href="../about.html" class="lang-toggle" title="Switch to English">EN</a>
+      <a href="../zh/about.html" class="lang-toggle" title="切换到中文">中文</a>
+      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener" class="gh-link">GitHub</a>
+    </div>
+    <button class="hamburger" id="hamburger" aria-label="Menu"><span></span><span></span><span></span></button>
+  </div>
+</nav>
+
+<main class="wrap">
+  <h1 class="gradient-text">حول ARK</h1>
+  <p>ARK هو إطار عمل بحثي يساعد فرق البحث على تشغيل التجارب وكتابة الأوراق بشكل منهجي باستخدام Agent متعددة، مع إبقاء القرار العلمي بيد الباحث.</p>
+  <p>يُطوَّر المشروع داخل <a href="https://sands.kaust.edu.sa/" target="_blank" rel="noopener">SANDS Lab</a> في KAUST.</p>
+
+  <h2>الفريق</h2>
+  <div class="team">
+    <div class="card"><strong>Jihao Xin</strong><br>Lead Developer</div>
+    <div class="card"><strong>Yangzhixin Luo</strong><br>Developer</div>
+    <div class="card"><strong>Marco Canini</strong><br>Advisor</div>
+  </div>
+
+  <h2>التواصل</h2>
+  <p>للملاحظات أو طلبات الميزات أو الإبلاغ عن المشاكل، استخدم صفحة <a href="https://github.com/kaust-ark/ARK/issues" target="_blank" rel="noopener">GitHub Issues</a>.</p>
+</main>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-brand"><img src="../assets/logo_ark_transparent.png" alt="ARK"> ARK</div>
+    <div class="footer-links">
+      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener">GitHub</a>
+      <a href="doc.html">التوثيق</a>
+      <a href="index.html">الرئيسية</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+const hamburger = document.getElementById('hamburger');
+const navLinks = document.getElementById('navLinks');
+hamburger?.addEventListener('click', () => {
+  hamburger.classList.toggle('open');
+  navLinks.classList.toggle('open');
+});
+</script>
+</body>
+</html>
