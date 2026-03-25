@@ -1,11 +1,3 @@
-# State files (project-specific, generated at runtime)
-state/*.yaml
-state/*.md
-state/*.json
-
-# Logs
-logs/
-
 # Python
 __pycache__/
 *.pyc
@@ -22,12 +14,8 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# PID files
-projects/*/.pid
+# Projects (configs contain secrets: telegram tokens, API keys, paths)
 projects/
-
-# Project configs contain secrets (telegram tokens, paths)
-projects/*/config.yaml
 
 # Local environment / database
 .env
@@ -39,6 +27,10 @@ projects/*/config.yaml
 # OS
 .DS_Store
 .nfs*
+
+# ARK config & runtime data
+.ark/
+ark_webapp/
 
 # Temp
 *.tmp

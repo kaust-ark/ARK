@@ -18,6 +18,8 @@ import yaml
 from pathlib import Path
 from typing import Callable, Optional
 
+from ark.paths import get_config_dir
+
 
 # ══════════════════════════════════════════════════════════════
 #  Config
@@ -32,7 +34,9 @@ class TelegramConfig:
     3. environment variables  (ARK_TELEGRAM_BOT_TOKEN, ARK_TELEGRAM_CHAT_ID)
     """
 
-    GLOBAL_CONFIG_PATH = Path.home() / ".ark" / "telegram.yaml"
+    @staticmethod
+    def _global_config_path():
+        return get_config_dir() / "telegram.yaml"
 
     def __init__(self, project_config: dict = None):
         self._project_config = project_config or {}
@@ -40,9 +44,9 @@ class TelegramConfig:
 
     def _load_global(self) -> dict:
         if self._global is None:
-            if self.GLOBAL_CONFIG_PATH.exists():
+            if self._global_config_path().exists():
                 try:
-                    with open(self.GLOBAL_CONFIG_PATH) as f:
+                    with open(self._global_config_path()) as f:
                         self._global = yaml.safe_load(f) or {}
                 except Exception:
                     self._global = {}
@@ -81,9 +85,9 @@ class TelegramConfig:
 
     def save(self, bot_token: str, chat_id: str):
         """Write credentials to ~/.ark/telegram.yaml."""
-        self.GLOBAL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self._global_config_path().parent.mkdir(parents=True, exist_ok=True)
         data = {"bot_token": bot_token, "chat_id": str(chat_id)}
-        with open(self.GLOBAL_CONFIG_PATH, "w") as f:
+        with open(self._global_config_path(), "w") as f:
             yaml.dump(data, f, default_flow_style=False)
         self._global = data
 

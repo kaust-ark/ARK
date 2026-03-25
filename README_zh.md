@@ -114,6 +114,8 @@ ARK 按三个阶段依次执行：
 
 ## 快速开始
 
+首先，使用你偏好的工具（conda、uv、venv 等）创建并激活一个 Python 虚拟环境。
+
 ```bash
 # 1. 安装
 pip install -e .

@@ -18,14 +18,24 @@ logger = logging.getLogger("ark.webapp.notify")
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 
-_TELEGRAM_CONFIG = Path.home() / ".ark" / "telegram.yaml"
+from ark.paths import get_config_dir
+
+_TELEGRAM_CONFIG = None  # lazy
+
+
+def _tg_config_path() -> Path:
+    global _TELEGRAM_CONFIG
+    if _TELEGRAM_CONFIG is None:
+        _TELEGRAM_CONFIG = get_config_dir() / "telegram.yaml"
+    return _TELEGRAM_CONFIG
 
 
 def _telegram_creds():
-    if not _TELEGRAM_CONFIG.exists():
+    cfg_path = _tg_config_path()
+    if not cfg_path.exists():
         return None, None
     import yaml
-    cfg = yaml.safe_load(_TELEGRAM_CONFIG.read_text()) or {}
+    cfg = yaml.safe_load(cfg_path.read_text()) or {}
     return cfg.get("bot_token"), cfg.get("chat_id")
 
 

@@ -362,4 +362,10 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(router)
+
+    from starlette.staticfiles import StaticFiles
+    from pathlib import Path
+    static_dir = Path(__file__).parent / "static"
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
     return app

@@ -1,4 +1,4 @@
-"""Load ARK webapp configuration from ~/.ark_webapp.env."""
+"""Load ARK webapp configuration from .ark/webapp.env."""
 
 from __future__ import annotations
 
@@ -7,10 +7,14 @@ import secrets
 import socket
 from pathlib import Path
 
-_ENV_FILE = Path.home() / ".ark_webapp.env"
+from ark.paths import get_ark_root, get_config_dir
+
+
+def _env_file() -> Path:
+    return get_config_dir() / "webapp.env"
 
 _DEFAULTS = {
-    "BASE_URL": f"http://{socket.gethostname()}:8422",
+    "BASE_URL": f"http://{socket.gethostname()}:8423",
     "EMAIL_DOMAINS": "",
     "SMTP_HOST": "smtp.gmail.com",
     "SMTP_PORT": "587",
@@ -18,9 +22,9 @@ _DEFAULTS = {
     "SMTP_PASSWORD": "",
     "SMTP_RELAY": "",
     "SMTP_FROM": "ark@localhost",
-    "PROJECTS_ROOT": str(Path.home() / "ark_web_projects"),
+    "PROJECTS_ROOT": "",  # resolved lazily
     "SECRET_KEY": secrets.token_hex(32),
-    "DB_PATH": str(Path.home() / ".ark_webapp.db"),
+    "DB_PATH": "",  # resolved lazily
     "SLURM_PARTITION": "",
     "SLURM_ACCOUNT": "",
     "SLURM_CONDA_ENV": "ark",
@@ -29,8 +33,8 @@ _DEFAULTS = {
 
 def _load_env_file() -> dict[str, str]:
     env: dict[str, str] = {}
-    if _ENV_FILE.exists():
-        for line in _ENV_FILE.read_text().splitlines():
+    if _env_file().exists():
+        for line in _env_file().read_text().splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -40,13 +44,14 @@ def _load_env_file() -> dict[str, str]:
 
 
 def _write_default_env():
-    """Create ~/.ark_webapp.env with placeholder values on first run."""
+    """Create .ark/webapp.env with placeholder values on first run."""
     hostname = socket.gethostname()
+    _root = get_ark_root()
     content = f"""\
 # ARK Web App configuration
 # Edit this file, then restart: ark webapp
 
-BASE_URL=http://{hostname}:8422
+BASE_URL=http://{hostname}:8423
 
 # SMTP — required for magic link login
 SMTP_HOST=smtp.gmail.com
@@ -65,17 +70,17 @@ EMAIL_DOMAINS=
 # Admin emails (comma-separated). Admins can disable/enable the webapp and kill all jobs.
 ADMIN_EMAILS=
 
-PROJECTS_ROOT={Path.home() / 'ark_web_projects'}
+PROJECTS_ROOT={_root / 'ark_webapp' / 'projects'}
 SECRET_KEY={secrets.token_hex(32)}
-DB_PATH={Path.home() / '.ark_webapp.db'}
+DB_PATH={_root / 'ark_webapp' / 'webapp.db'}
 
 # Optional SLURM settings (auto-detected if blank)
 SLURM_PARTITION=
 SLURM_ACCOUNT=
 SLURM_CONDA_ENV=ark
 """
-    _ENV_FILE.write_text(content)
-    print(f"Created config: {_ENV_FILE}")
+    _env_file().write_text(content)
+    print(f"Created config: {_env_file()}")
     print("Edit it to set SMTP credentials, then re-run `ark webapp`.")
 
 
@@ -91,9 +96,10 @@ class Settings:
         self.smtp_password: str = merged.get("SMTP_PASSWORD", "")
         self.smtp_relay: str = merged.get("SMTP_RELAY", "")
         self.smtp_from: str = merged.get("SMTP_FROM", "ark@localhost")
-        self.projects_root: Path = Path(merged.get("PROJECTS_ROOT", _DEFAULTS["PROJECTS_ROOT"]))
+        _root = get_ark_root()
+        self.projects_root: Path = Path(merged.get("PROJECTS_ROOT") or str(_root / "ark_webapp" / "projects"))
         self.secret_key: str = merged.get("SECRET_KEY", _DEFAULTS["SECRET_KEY"])
-        self.db_path: str = merged.get("DB_PATH", _DEFAULTS["DB_PATH"])
+        self.db_path: str = merged.get("DB_PATH") or str(_root / "ark_webapp" / "webapp.db")
         self.slurm_partition: str = merged.get("SLURM_PARTITION", "")
         self.slurm_account: str = merged.get("SLURM_ACCOUNT", "")
         self.slurm_conda_env: str = merged.get("SLURM_CONDA_ENV", "ark")
@@ -116,7 +122,7 @@ _settings: Settings | None = None
 def get_settings() -> Settings:
     global _settings
     if _settings is None:
-        if not _ENV_FILE.exists():
+        if not _env_file().exists():
             _write_default_env()
         _settings = Settings()
     return _settings

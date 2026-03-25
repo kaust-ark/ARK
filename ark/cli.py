@@ -32,25 +32,14 @@ from pathlib import Path
 #  Path discovery
 # ============================================================
 
-def get_ark_root() -> Path:
-    """Find the ARK installation root (where projects/ lives)."""
-    # Editable install: relative to this file
-    pkg_root = Path(__file__).parent.parent.absolute()
-    if (pkg_root / "projects").exists():
-        return pkg_root
-    # First run: create projects/ dir
-    if (pkg_root / "pyproject.toml").exists():
-        (pkg_root / "projects").mkdir(exist_ok=True)
-        return pkg_root
-    # Fallback: ~/.ark/
-    home_ark = Path.home() / ".ark"
-    home_ark.mkdir(exist_ok=True)
-    (home_ark / "projects").mkdir(exist_ok=True)
-    return home_ark
+from ark.paths import get_ark_root, get_config_dir
 
 
 def get_projects_dir() -> Path:
-    return get_ark_root() / "projects"
+    root = get_ark_root()
+    pdir = root / "projects"
+    pdir.mkdir(exist_ok=True)
+    return pdir
 
 
 def get_project_config(name: str) -> dict:
@@ -1900,8 +1889,8 @@ def cmd_status(args):
             for name in stopped_projects:
                 _show_project_status_brief(name)
 
-        _webapp_db = Path.home() / ".ark_webapp.db"
-        _disabled_flag = Path.home() / ".ark_webapp_disabled"
+        _webapp_db = get_ark_root() / "ark_webapp" / "webapp.db"
+        _disabled_flag = get_ark_root() / "ark_webapp" / "disabled"
         if _webapp_db.exists():
             import sqlite3 as _sq
             try:
@@ -2894,38 +2883,6 @@ def cmd_restart(args):
 
 
 # ============================================================
-#  ark dashboard
-# ============================================================
-
-def cmd_dashboard(args):
-    """Start the web dashboard for monitoring projects."""
-    try:
-        import uvicorn
-        from ark.dashboard import create_app
-    except ImportError:
-        print(f"{_c('Error:', Colors.RED)} Dashboard dependencies not installed.")
-        print(f"  Install with: {_c('pip install ark-research[dashboard]', Colors.BOLD)}")
-        print(f"  Or: {_c('pip install fastapi uvicorn[standard]', Colors.BOLD)}")
-        sys.exit(1)
-
-    host, port = args.host, args.port
-
-    if args.daemon:
-        pid = os.fork()
-        if pid > 0:
-            print(f"Dashboard started in background (PID {pid})")
-            print(f"  {_c(f'http://{host}:{port}', Colors.CYAN)}")
-            return
-        # Child process
-        os.setsid()
-        sys.stdin.close()
-
-    print(f"\n  {_c('ARK Dashboard', Colors.BOLD)} — http://{host}:{port}\n")
-    app = create_app()
-    uvicorn.run(app, host=host, port=port, log_level="warning")
-
-
-# ============================================================
 #  ark webapp
 # ============================================================
 
@@ -2942,7 +2899,7 @@ def cmd_webapp(args):
     try:
         import uvicorn
         from ark.webapp import create_app
-        from ark.webapp.config import get_settings, _ENV_FILE
+        from ark.webapp.config import get_settings, _env_file
     except ImportError:
         print(f"{_c('Error:', Colors.RED)} Webapp dependencies not installed.")
         print(f"  Install with: {_c('pip install ark-research[webapp]', Colors.BOLD)}")
@@ -2955,11 +2912,14 @@ def cmd_webapp(args):
     settings = get_settings()
     if not (settings.smtp_user and settings.smtp_password):
         print(f"\n  {_c('Warning:', Colors.YELLOW)} SMTP not configured — magic link emails won't be sent.")
-        print(f"  Edit {_c(str(_ENV_FILE), Colors.CYAN)} and set SMTP_USER / SMTP_PASSWORD.\n")
+        print(f"  Edit {_c(str(_env_file()), Colors.CYAN)} and set SMTP_USER / SMTP_PASSWORD.\n")
 
     if args.daemon:
-        pid_file = Path.home() / ".ark_webapp.pid"
-        log_file = Path.home() / ".ark_webapp.log"
+        _root = get_ark_root()
+        _webapp_dir = _root / "ark_webapp"
+        _webapp_dir.mkdir(exist_ok=True)
+        pid_file = _webapp_dir / "webapp.pid"
+        log_file = _webapp_dir / "webapp.log"
         pid = os.fork()
         if pid > 0:
             pid_file.write_text(str(pid))
@@ -2967,11 +2927,13 @@ def cmd_webapp(args):
             print(f"  URL: {_c(f'http://{host}:{port}', Colors.CYAN)}")
             print(f"  Log: {_c(str(log_file), Colors.DIM)}")
             return
-        # Child process
+        # Child process — detach and redirect file descriptors
         os.setsid()
-        with open(log_file, "a") as lf:
-            sys.stdout = lf
-            sys.stderr = lf
+        sys.stdin.close()
+        fd = os.open(str(log_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        os.dup2(fd, 1)  # stdout
+        os.dup2(fd, 2)  # stderr
+        os.close(fd)
 
     print(f"\n  {_c('ARK Research Portal', Colors.BOLD)} — http://{host}:{port}\n")
     app = create_app()
@@ -2991,8 +2953,8 @@ def cmd_web(args):
     subcmd = args.web_cmd
     project_filter = getattr(args, 'project', None) or None
 
-    _DISABLED_FLAG = Path.home() / ".ark_webapp_disabled"
-    _DB = Path.home() / ".ark_webapp.db"
+    _DISABLED_FLAG = get_ark_root() / "ark_webapp" / "disabled"
+    _DB = get_ark_root() / "ark_webapp" / "webapp.db"
 
     if not _DB.exists():
         print(f"{_c('Error:', Colors.RED)} No webapp DB found. Start the webapp first.")
@@ -3434,19 +3396,12 @@ def main():
     p_restart.add_argument("project", help="Project name")
     p_restart.set_defaults(func=cmd_restart)
 
-    # ark dashboard
-    p_dash = subparsers.add_parser("dashboard", help="Start web dashboard for monitoring projects")
-    p_dash.add_argument("--port", type=int, default=8420, help="Port (default: 8420)")
-    p_dash.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
-    p_dash.add_argument("--daemon", action="store_true", help="Run in background")
-    p_dash.set_defaults(func=cmd_dashboard)
-
     # ark webapp
     p_webapp = subparsers.add_parser("webapp", help="Start or manage lab-facing research portal")
     webapp_sub = p_webapp.add_subparsers(dest="webapp_cmd")
     webapp_sub.add_parser("disable", help="Block new project submissions")
     webapp_sub.add_parser("enable", help="Allow new project submissions")
-    p_webapp.add_argument("--port", type=int, default=8422, help="Port (default: 8422)")
+    p_webapp.add_argument("--port", type=int, default=8423, help="Port (default: 8423)")
     p_webapp.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
     p_webapp.add_argument("--daemon", action="store_true", help="Run in background")
     p_webapp.set_defaults(func=cmd_webapp)

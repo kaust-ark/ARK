@@ -14,8 +14,11 @@ from datetime import datetime
 from pathlib import Path
 
 
-# Global config path
-GLOBAL_CONFIG = Path.home() / ".ark" / "config.yaml"
+from ark.paths import get_config_dir
+
+
+def _global_config() -> Path:
+    return get_config_dir() / "config.yaml"
 
 
 def get_gemini_api_key() -> str:
@@ -26,9 +29,9 @@ def get_gemini_api_key() -> str:
         return key
 
     # 2. Global config
-    if GLOBAL_CONFIG.exists():
+    if _global_config().exists():
         try:
-            with open(GLOBAL_CONFIG) as f:
+            with open(_global_config()) as f:
                 cfg = yaml.safe_load(f) or {}
             key = cfg.get("gemini_api_key")
             if key:
@@ -41,23 +44,23 @@ def get_gemini_api_key() -> str:
 
 def save_gemini_api_key(key: str):
     """Save Gemini API key to global config."""
-    GLOBAL_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    _global_config().parent.mkdir(parents=True, exist_ok=True)
 
     cfg = {}
-    if GLOBAL_CONFIG.exists():
+    if _global_config().exists():
         try:
-            with open(GLOBAL_CONFIG) as f:
+            with open(_global_config()) as f:
                 cfg = yaml.safe_load(f) or {}
         except Exception:
             pass
 
     cfg["gemini_api_key"] = key
-    with open(GLOBAL_CONFIG, "w") as f:
+    with open(_global_config(), "w") as f:
         yaml.dump(cfg, f, default_flow_style=False)
 
     # Restrict permissions
     try:
-        os.chmod(GLOBAL_CONFIG, 0o600)
+        os.chmod(_global_config(), 0o600)
     except Exception:
         pass
 

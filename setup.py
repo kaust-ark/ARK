@@ -9,10 +9,6 @@ setup(
     },
     install_requires=["pyyaml>=6.0"],
     extras_require={
-        "dashboard": [
-            "fastapi>=0.100",
-            "uvicorn[standard]>=0.20",
-        ],
         "webapp": [
             "fastapi>=0.100",
             "uvicorn[standard]>=0.20",

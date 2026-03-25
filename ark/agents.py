@@ -11,6 +11,7 @@ import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ark.paths import get_config_dir
 from ark.ui import (
     ElapsedTimer, RateLimitCountdown, agent_styled, styled, Style, Icons,
 )
@@ -137,7 +138,7 @@ class AgentMixin:
 
     def _get_ark_model(self) -> str | None:
         """Read ARK model preference from daemon state. Returns None to use CLI default."""
-        state_file = Path.home() / ".ark" / "telegram_state.yaml"
+        state_file = get_config_dir() / "telegram_state.yaml"
         try:
             if state_file.exists():
                 with open(state_file) as f:

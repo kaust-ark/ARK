@@ -29,6 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from ark.paths import get_config_dir
 from ark.telegram import TelegramConfig
 
 
@@ -40,7 +41,7 @@ class TelegramDaemon:
     """Standalone Telegram polling daemon with multi-project routing."""
 
     def __init__(self):
-        self._ark_dir = Path.home() / ".ark"
+        self._ark_dir = get_config_dir()
         self._pid_file = self._ark_dir / "telegram_daemon.pid"
         self._state_file = self._ark_dir / "telegram_state.yaml"
         self._lock_file = self._ark_dir / "telegram.lock"
@@ -680,14 +681,15 @@ If the user wants the PDF, add [SEND_PDF] on a new line at the end."""
 #  Lifecycle helpers (imported by cli.py)
 # ══════════════════════════════════════════════════════════════
 
-_PID_FILE = Path.home() / ".ark" / "telegram_daemon.pid"
+def _pid_file() -> Path:
+    return get_config_dir() / "telegram_daemon.pid"
 
 
 def _read_pid() -> Optional[int]:
     """Read daemon PID from file, return None if missing or invalid."""
     try:
-        if _PID_FILE.exists():
-            return int(_PID_FILE.read_text().strip())
+        if _pid_file().exists():
+            return int(_pid_file().read_text().strip())
     except (ValueError, OSError):
         pass
     return None
@@ -719,10 +721,9 @@ def ensure_daemon():
         return  # Already running
 
     # Clean stale PID file
-    _PID_FILE.unlink(missing_ok=True)
+    _pid_file().unlink(missing_ok=True)
 
-    log_file = Path.home() / ".ark" / "telegram_daemon.log"
-    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file = get_config_dir() / "telegram_daemon.log"
 
     # Strip CLAUDECODE env var so daemon can call claude CLI
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
@@ -754,7 +755,7 @@ def stop_daemon():
                 os.kill(pid, signal.SIGKILL)
             except OSError:
                 pass
-    _PID_FILE.unlink(missing_ok=True)
+    _pid_file().unlink(missing_ok=True)
 
     # Also kill any orphaned daemon processes
     try:
@@ -782,12 +783,11 @@ def stop_daemon():
 
 def register_project(project_name: str):
     """Add project to registered_projects list (persists across stop/start)."""
-    ark_dir = Path.home() / ".ark"
+    ark_dir = get_config_dir()
     state_file = ark_dir / "telegram_state.yaml"
     lock_file = ark_dir / ".telegram_state.lock"
 
     try:
-        lock_file.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_file, "a+") as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
             try:
@@ -808,12 +808,11 @@ def register_project(project_name: str):
 
 def deregister_project(project_name: str) -> list:
     """Remove project from registered_projects. Returns remaining registered projects."""
-    ark_dir = Path.home() / ".ark"
+    ark_dir = get_config_dir()
     state_file = ark_dir / "telegram_state.yaml"
     lock_file = ark_dir / ".telegram_state.lock"
 
     try:
-        lock_file.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_file, "a+") as lf:
             fcntl.flock(lf, fcntl.LOCK_EX)
             try:

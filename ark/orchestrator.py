@@ -32,6 +32,7 @@ ARK_ROOT = Path(__file__).parent.parent.absolute()
 PROJECT_DIR = None
 
 from ark.memory import get_memory, SimpleMemory
+from ark.paths import get_config_dir
 from ark.agents import AgentMixin
 from ark.compiler import CompilerMixin
 from ark.execution import ExecutionMixin
@@ -305,7 +306,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
 
     def _get_bot_model(self) -> str:
         """Read bot model preference from daemon state."""
-        state_file = Path.home() / ".ark" / "telegram_state.yaml"
+        state_file = get_config_dir() / "telegram_state.yaml"
         try:
             if state_file.exists():
                 with open(state_file) as f:

@@ -18,7 +18,15 @@ logger = logging.getLogger("ark.webapp.routes")
 
 MAX_PROJECTS_PER_USER = 10
 MAX_ITER_PER_START = 3
-_DISABLED_FLAG = _Path.home() / ".ark_webapp_disabled"
+from ark.paths import get_ark_root as _get_ark_root
+_DISABLED_FLAG = None  # lazy
+
+
+def _disabled_flag() -> _Path:
+    global _DISABLED_FLAG
+    if _DISABLED_FLAG is None:
+        _DISABLED_FLAG = _get_ark_root() / "ark_webapp" / "disabled"
+    return _DISABLED_FLAG
 
 import yaml
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -217,7 +225,7 @@ def _find_pdf(project_dir: Path) -> Optional[Path]:
 
 
 def _check_webapp_enabled():
-    if _DISABLED_FLAG.exists():
+    if _disabled_flag().exists():
         raise HTTPException(503, "Webapp submissions are currently disabled by admin.")
 
 
@@ -637,26 +645,26 @@ async def api_continue_project(project_id: str, request: Request):
 @router.get("/api/system/status")
 async def api_system_status():
     """Public endpoint — returns webapp gate state (no auth required)."""
-    return JSONResponse({"disabled": _DISABLED_FLAG.exists()})
+    return JSONResponse({"disabled": _disabled_flag().exists()})
 
 
 @router.get("/api/admin/status")
 async def api_admin_status(request: Request):
     _require_admin(request)
-    return JSONResponse({"disabled": _DISABLED_FLAG.exists()})
+    return JSONResponse({"disabled": _disabled_flag().exists()})
 
 
 @router.post("/api/admin/disable")
 async def api_admin_disable(request: Request):
     _require_admin(request)
-    _DISABLED_FLAG.touch()
+    _disabled_flag().touch()
     return JSONResponse({"disabled": True})
 
 
 @router.post("/api/admin/enable")
 async def api_admin_enable(request: Request):
     _require_admin(request)
-    _DISABLED_FLAG.unlink(missing_ok=True)
+    _disabled_flag().unlink(missing_ok=True)
     return JSONResponse({"disabled": False})
 
 
