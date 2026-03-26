@@ -161,6 +161,10 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and can ki
 | `ark delete <name>` | Remove project entirely |
 | `ark setup-bot` | Configure Telegram bot (one-time) |
 | `ark list` | List all projects with status |
+| `ark webapp install` | Install web portal as systemd user service |
+| `ark webapp uninstall` | Stop and remove the web portal service |
+
+> **Note:** `ark webapp --daemon` is deprecated and will be removed in a future release. Use `ark webapp install` instead.
 
 <details>
 <summary><strong>Direct orchestrator invocation</strong></summary>

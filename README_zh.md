@@ -161,6 +161,10 @@ ARK 使用 PyMuPDF + Claude Haiku 解析 PDF，预填向导内容，可从提取
 | `ark delete <name>` | 完全删除项目 |
 | `ark setup-bot` | 配置 Telegram 机器人（一次性） |
 | `ark list` | 列出所有项目及状态 |
+| `ark webapp install` | 将 Web 门户安装为 systemd 用户服务 |
+| `ark webapp uninstall` | 停止并移除 Web 门户服务 |
+
+> **注意：** `ark webapp --daemon` 已废弃，将在未来版本中移除。请使用 `ark webapp install` 代替。
 
 <details>
 <summary><strong>直接调用 orchestrator</strong></summary>

@@ -161,6 +161,10 @@ ark new mma --from-pdf proposal.pdf
 | `ark delete <name>` | حذف المشروع بالكامل |
 | `ark setup-bot` | إعداد بوت تيليغرام (مرة واحدة) |
 | `ark list` | سرد جميع المشاريع وحالتها |
+| `ark webapp install` | تثبيت بوابة الويب كخدمة systemd للمستخدم |
+| `ark webapp uninstall` | إيقاف وإزالة خدمة بوابة الويب |
+
+> **ملاحظة:** `ark webapp --daemon` مهمل وسيتم إزالته في إصدار مستقبلي. استخدم `ark webapp install` بدلاً منه.
 
 <details>
 <summary><strong>استدعاء المُنسق مباشرة</strong></summary>

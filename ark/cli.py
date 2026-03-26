@@ -2886,6 +2886,92 @@ def cmd_restart(args):
 #  ark webapp
 # ============================================================
 
+_SYSTEMD_SERVICE_NAME = "ark-webapp"
+
+
+def _service_file_path() -> Path:
+    return Path.home() / ".config" / "systemd" / "user" / f"{_SYSTEMD_SERVICE_NAME}.service"
+
+
+def _generate_service_unit(host: str, port: int) -> str:
+    """Generate a systemd user service unit file for the ARK webapp."""
+    python_bin = sys.executable
+    ark_root = get_ark_root()
+    return f"""\
+[Unit]
+Description=ARK Research Portal
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory={ark_root}
+ExecStart={python_bin} -m ark.cli webapp --host {host} --port {port}
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def _cmd_webapp_install(host: str, port: int):
+    """Install and start ARK webapp as a systemd user service."""
+    import subprocess as _sp
+
+    svc_path = _service_file_path()
+    svc_path.parent.mkdir(parents=True, exist_ok=True)
+
+    unit = _generate_service_unit(host, port)
+    svc_path.write_text(unit)
+    print(f"  Service file written to {_c(str(svc_path), Colors.CYAN)}")
+
+    # Reload, enable, and start
+    _sp.run(["systemctl", "--user", "daemon-reload"], check=True)
+    _sp.run(["systemctl", "--user", "enable", _SYSTEMD_SERVICE_NAME], check=True)
+    _sp.run(["systemctl", "--user", "start", _SYSTEMD_SERVICE_NAME], check=True)
+
+    print(f"\n  {_c('ARK Webapp', Colors.BOLD)} installed and started as systemd user service.")
+    print(f"  URL: {_c(f'http://{host}:{port}', Colors.CYAN)}")
+    print()
+    print(f"  Manage with:")
+    print(f"    {_c(f'systemctl --user status {_SYSTEMD_SERVICE_NAME}', Colors.DIM)}")
+    print(f"    {_c(f'systemctl --user restart {_SYSTEMD_SERVICE_NAME}', Colors.DIM)}")
+    print(f"    {_c(f'journalctl --user -u {_SYSTEMD_SERVICE_NAME} -f', Colors.DIM)}")
+    print()
+
+    # Check linger
+    try:
+        r = _sp.run(["loginctl", "show-user", os.environ.get("USER", "")],
+                     capture_output=True, text=True)
+        if "Linger=no" in r.stdout:
+            print(f"  {_c('Note:', Colors.YELLOW)} Linger is not enabled for your user.")
+            print(f"  The service will stop when you log out. To keep it running:")
+            user = os.environ.get("USER", "")
+            print(f"    {_c(f'sudo loginctl enable-linger {user}', Colors.BOLD)}")
+            print()
+    except FileNotFoundError:
+        pass
+
+
+def _cmd_webapp_uninstall():
+    """Stop and remove the ARK webapp systemd user service."""
+    import subprocess as _sp
+
+    svc_path = _service_file_path()
+    if not svc_path.exists():
+        print(f"  {_c('Not installed:', Colors.YELLOW)} No systemd service found at {svc_path}")
+        return
+
+    _sp.run(["systemctl", "--user", "stop", _SYSTEMD_SERVICE_NAME], capture_output=True)
+    _sp.run(["systemctl", "--user", "disable", _SYSTEMD_SERVICE_NAME], capture_output=True)
+    svc_path.unlink(missing_ok=True)
+    _sp.run(["systemctl", "--user", "daemon-reload"], check=True)
+
+    print(f"  {_c('ARK Webapp', Colors.BOLD)} service stopped and removed.")
+
+
 def cmd_webapp(args):
     """Start the ARK web app (lab-facing project submission portal)."""
     subcmd = getattr(args, 'webapp_cmd', None)
@@ -2894,6 +2980,13 @@ def cmd_webapp(args):
         args.web_cmd = subcmd
         args.project = None
         cmd_web(args)
+        return
+
+    if subcmd == 'install':
+        _cmd_webapp_install(args.host, args.port)
+        return
+    if subcmd == 'uninstall':
+        _cmd_webapp_uninstall()
         return
 
     try:
@@ -2915,6 +3008,8 @@ def cmd_webapp(args):
         print(f"  Edit {_c(str(_env_file()), Colors.CYAN)} and set SMTP_USER / SMTP_PASSWORD.\n")
 
     if args.daemon:
+        print(f"\n  {_c('Deprecation:', Colors.YELLOW)} --daemon uses os.fork() and will be removed in a future release.")
+        print(f"  Use {_c('ark webapp install', Colors.BOLD)} instead for a systemd user service.\n")
         _root = get_ark_root()
         _webapp_dir = _root / "ark_webapp"
         _webapp_dir.mkdir(exist_ok=True)
@@ -3401,9 +3496,11 @@ def main():
     webapp_sub = p_webapp.add_subparsers(dest="webapp_cmd")
     webapp_sub.add_parser("disable", help="Block new project submissions")
     webapp_sub.add_parser("enable", help="Allow new project submissions")
+    webapp_sub.add_parser("install", help="Install as systemd user service (auto-start on boot)")
+    webapp_sub.add_parser("uninstall", help="Stop and remove systemd user service")
     p_webapp.add_argument("--port", type=int, default=8423, help="Port (default: 8423)")
     p_webapp.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
-    p_webapp.add_argument("--daemon", action="store_true", help="Run in background")
+    p_webapp.add_argument("--daemon", action="store_true", help="Run in background (deprecated, use 'install')")
     p_webapp.set_defaults(func=cmd_webapp)
 
     # ark web disable/enable [project]
