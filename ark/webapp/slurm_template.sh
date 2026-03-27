@@ -15,6 +15,7 @@ echo "[ARK] Project: {{ project_id }}"
 echo "[ARK] Project dir: {{ project_dir }}"
 
 source ~/.bashrc
+export PATH="$HOME/.local/bin:$HOME/texlive/2025/bin/x86_64-linux:$PATH"
 conda activate {{ conda_env }}
 
 cd {{ project_dir }}
