@@ -2986,7 +2986,7 @@ def cmd_restart(args):
 #  ark webapp
 # ============================================================
 
-_PROD_WORKTREE_DIR = Path.home() / ".ark" / "prod"
+_PROD_WORKTREE_DIR = get_ark_root() / ".ark" / "prod"
 
 _DEV_SERVICE = "ark-webapp-dev"
 _PROD_SERVICE = "ark-webapp"
