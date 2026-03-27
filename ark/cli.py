@@ -2986,7 +2986,22 @@ def cmd_restart(args):
 #  ark webapp
 # ============================================================
 
-_PROD_WORKTREE_DIR = get_ark_root() / ".ark" / "prod"
+def _get_prod_worktree_dir() -> Path:
+    """Get prod worktree path, always relative to the real repo root (not a worktree)."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            capture_output=True, text=True,
+            cwd=Path(__file__).parent.parent,
+        )
+        if r.returncode == 0:
+            # git-common-dir points to the real repo's .git/
+            repo_root = Path(r.stdout.strip()).parent
+            return repo_root / ".ark" / "prod"
+    except Exception:
+        pass
+    return Path(__file__).parent.parent.resolve() / ".ark" / "prod"
 
 _DEV_SERVICE = "ark-webapp-dev"
 _PROD_SERVICE = "ark-webapp"
@@ -3060,7 +3075,7 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
             print(f"  Created {_c(str(dev_env_file), Colors.CYAN)} — edit to set dev-only config.")
     else:
         svc_name = _PROD_SERVICE
-        work_dir = _PROD_WORKTREE_DIR
+        work_dir = _get_prod_worktree_dir()
         desc = "ARK Research Portal"
         db_name = "webapp.db"
 
@@ -3181,7 +3196,7 @@ def _cmd_webapp_release(args):
         print(f"  {_c('Tagged:', Colors.GREEN)} {tag}")
 
     # 4. Create or update prod worktree
-    prod_dir = _PROD_WORKTREE_DIR
+    prod_dir = _get_prod_worktree_dir()
     if not prod_dir.exists():
         print(f"  Creating prod worktree at {_c(str(prod_dir), Colors.CYAN)}...")
         r = _sp.run(
