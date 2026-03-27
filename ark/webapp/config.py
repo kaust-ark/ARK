@@ -99,7 +99,12 @@ class Settings:
         _root = get_ark_root()
         self.projects_root: Path = Path(merged.get("PROJECTS_ROOT") or str(_root / "ark_webapp" / "projects"))
         self.secret_key: str = merged.get("SECRET_KEY", _DEFAULTS["SECRET_KEY"])
-        self.db_path: str = merged.get("DB_PATH") or str(_root / "ark_webapp" / "webapp.db")
+        # ARK_WEBAPP_DB_PATH env var takes priority (used for dev/prod separation)
+        self.db_path: str = (
+            os.environ.get("ARK_WEBAPP_DB_PATH")
+            or merged.get("DB_PATH")
+            or str(_root / "ark_webapp" / "webapp.db")
+        )
         self.slurm_partition: str = merged.get("SLURM_PARTITION", "")
         self.slurm_account: str = merged.get("SLURM_ACCOUNT", "")
         self.slurm_conda_env: str = merged.get("SLURM_CONDA_ENV", "ark")

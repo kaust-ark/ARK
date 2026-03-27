@@ -161,10 +161,41 @@ ark new mma --from-pdf proposal.pdf
 | `ark delete <name>` | حذف المشروع بالكامل |
 | `ark setup-bot` | إعداد بوت تيليغرام (مرة واحدة) |
 | `ark list` | سرد جميع المشاريع وحالتها |
-| `ark webapp install` | تثبيت بوابة الويب كخدمة systemd للمستخدم |
-| `ark webapp uninstall` | إيقاف وإزالة خدمة بوابة الويب |
+| `ark webapp install` | تثبيت خدمة بوابة الويب للإنتاج (المنفذ 8423) |
+| `ark webapp install --dev` | تثبيت خدمة بوابة الويب للتطوير (المنفذ 8424) |
+| `ark webapp uninstall` | إيقاف وإزالة خدمة الإنتاج |
+| `ark webapp release` | وسم ونشر الكود الحالي إلى بيئة الإنتاج |
 
 > **ملاحظة:** `ark webapp --daemon` مهمل وسيتم إزالته في إصدار مستقبلي. استخدم `ark webapp install` بدلاً منه.
+
+<details>
+<summary><strong>بوابة الويب (تطوير/إنتاج)</strong></summary>
+
+يوفر ARK بيئتين ويب بقواعد بيانات منفصلة:
+
+| | الإنتاج | التطوير |
+|--|---------|---------|
+| URL | `http://mcmgt01:8423` | `http://mcmgt01:8424` |
+| الخدمة | `ark-webapp` | `ark-webapp-dev` |
+| قاعدة البيانات | `ark_webapp/webapp.db` | `ark_webapp/webapp-dev.db` |
+| الكود | `~/.ark/prod/` (مقفل على وسم git) | المستودع الحالي (مباشر) |
+
+```bash
+# النشر الأول
+ark webapp release              # إنشاء بيئة الإنتاج من الكود الحالي (وسم v0.1.0)
+ark webapp install              # بدء خدمة الإنتاج (المنفذ 8423)
+ark webapp install --dev        # بدء خدمة التطوير (المنفذ 8424)
+
+# نشر تغييرات جديدة للإنتاج
+ark webapp release              # وسم، تحديث worktree الإنتاج، إعادة تشغيل الخدمة
+
+# وسم إصدار مخصص
+ark webapp release --tag v1.0.0
+```
+
+بيئة التطوير تعكس تغييرات الكود فوراً. بيئة الإنتاج تُحدّث فقط عند تنفيذ `ark webapp release`.
+
+</details>
 
 <details>
 <summary><strong>استدعاء المُنسق مباشرة</strong></summary>

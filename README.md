@@ -161,10 +161,41 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and can ki
 | `ark delete <name>` | Remove project entirely |
 | `ark setup-bot` | Configure Telegram bot (one-time) |
 | `ark list` | List all projects with status |
-| `ark webapp install` | Install web portal as systemd user service |
-| `ark webapp uninstall` | Stop and remove the web portal service |
+| `ark webapp install` | Install prod web portal service (port 8423) |
+| `ark webapp install --dev` | Install dev web portal service (port 8424) |
+| `ark webapp uninstall` | Stop and remove prod service |
+| `ark webapp release` | Tag and deploy current code to prod |
 
 > **Note:** `ark webapp --daemon` is deprecated and will be removed in a future release. Use `ark webapp install` instead.
+
+<details>
+<summary><strong>Web Portal (dev/prod)</strong></summary>
+
+ARK has two webapp environments with separate databases:
+
+| | Prod | Dev |
+|--|------|-----|
+| URL | `http://mcmgt01:8423` | `http://mcmgt01:8424` |
+| Service | `ark-webapp` | `ark-webapp-dev` |
+| DB | `ark_webapp/webapp.db` | `ark_webapp/webapp-dev.db` |
+| Code | `~/.ark/prod/` (pinned to git tag) | Current repo (live) |
+
+```bash
+# First-time setup
+ark webapp release              # create prod from current code (tags v0.1.0)
+ark webapp install              # start prod service (port 8423)
+ark webapp install --dev        # start dev service (port 8424)
+
+# Deploy new changes to prod
+ark webapp release              # tag, update prod worktree, restart service
+
+# Custom version tag
+ark webapp release --tag v1.0.0
+```
+
+Dev reflects code changes immediately. Prod only updates on `ark webapp release`.
+
+</details>
 
 <details>
 <summary><strong>Direct orchestrator invocation</strong></summary>

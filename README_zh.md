@@ -161,10 +161,41 @@ ARK 使用 PyMuPDF + Claude Haiku 解析 PDF，预填向导内容，可从提取
 | `ark delete <name>` | 完全删除项目 |
 | `ark setup-bot` | 配置 Telegram 机器人（一次性） |
 | `ark list` | 列出所有项目及状态 |
-| `ark webapp install` | 将 Web 门户安装为 systemd 用户服务 |
-| `ark webapp uninstall` | 停止并移除 Web 门户服务 |
+| `ark webapp install` | 安装生产环境 Web 门户服务（端口 8423） |
+| `ark webapp install --dev` | 安装开发环境 Web 门户服务（端口 8424） |
+| `ark webapp uninstall` | 停止并移除生产环境服务 |
+| `ark webapp release` | 打 tag 并部署当前代码到生产环境 |
 
 > **注意：** `ark webapp --daemon` 已废弃，将在未来版本中移除。请使用 `ark webapp install` 代替。
+
+<details>
+<summary><strong>Web 门户（开发/生产环境）</strong></summary>
+
+ARK 提供两个独立数据库的 Web 环境：
+
+| | 生产环境 | 开发环境 |
+|--|---------|---------|
+| URL | `http://mcmgt01:8423` | `http://mcmgt01:8424` |
+| 服务名 | `ark-webapp` | `ark-webapp-dev` |
+| 数据库 | `ark_webapp/webapp.db` | `ark_webapp/webapp-dev.db` |
+| 代码 | `~/.ark/prod/`（锁定 git tag） | 当前 repo（实时生效） |
+
+```bash
+# 首次部署
+ark webapp release              # 从当前代码创建生产环境（自动 tag v0.1.0）
+ark webapp install              # 启动生产服务（端口 8423）
+ark webapp install --dev        # 启动开发服务（端口 8424）
+
+# 发布新版本到生产环境
+ark webapp release              # 打 tag、更新生产 worktree、重启服务
+
+# 自定义版本号
+ark webapp release --tag v1.0.0
+```
+
+开发环境代码修改立即生效，生产环境仅在 `ark webapp release` 后更新。
+
+</details>
 
 <details>
 <summary><strong>直接调用 orchestrator</strong></summary>

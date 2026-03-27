@@ -817,33 +817,36 @@ def _setup_latex_template(code_dir: str, config: dict):
     print()
     print(f"{_c('LaTeX Template Setup', Colors.BOLD)}")
 
-    source = TEMPLATE_SOURCES.get(venue_format, {})
+    # Try bundled venue_templates/ first (same as webapp)
+    from ark.webapp.templates import has_venue_template, copy_venue_template
     downloaded = False
 
     _, required = _resolve_template_urls(venue_format)
     if _validate_template_files(latex_path, required):
-        # Style files already present locally — skip download
-        print(f"  {_c('Template files already present, skipping download.', Colors.DIM)}")
+        print(f"  {_c('Template files already present, skipping.', Colors.DIM)}")
         downloaded = True
-    elif source.get("in_texlive") and not source.get("urls"):
-        # Built into TeX Live, no download needed
-        print(f"  {_c('Note:', Colors.DIM)} {venue_format} uses TeX Live built-in class.")
+    elif has_venue_template(venue_format):
+        copy_venue_template(venue_format, latex_path)
+        print(f"  {_c('Copied bundled template:', Colors.GREEN)} venue_templates/{venue_format}/")
         downloaded = True
     else:
-        downloaded = _download_template(venue_format, latex_path)
-        if not downloaded:
-            # Ask via Telegram if configured
-            downloaded = _telegram_ask_for_template(venue_format, latex_path, config)
+        source = TEMPLATE_SOURCES.get(venue_format, {})
+        if source.get("in_texlive") and not source.get("urls"):
+            print(f"  {_c('Note:', Colors.DIM)} {venue_format} uses TeX Live built-in class.")
+            downloaded = True
+        else:
+            # Fallback: try downloading from the internet
+            downloaded = _download_template(venue_format, latex_path)
             if not downloaded:
-                print(f"  {_c('Using article fallback template (replace style files later).', Colors.YELLOW)}")
-                # Write a TEMPLATE_MISSING marker so user knows
-                (latex_path / "TEMPLATE_MISSING.txt").write_text(
-                    f"Auto-download of {venue_format} template failed.\n"
-                    f"Please place the venue's .sty/.cls files in this directory.\n"
-                    f"Then delete this file.\n"
-                )
-                # Use article as fallback format for main.tex
-                venue_format = "article"
+                downloaded = _telegram_ask_for_template(venue_format, latex_path, config)
+                if not downloaded:
+                    print(f"  {_c('Using article fallback template (replace style files later).', Colors.YELLOW)}")
+                    (latex_path / "TEMPLATE_MISSING.txt").write_text(
+                        f"Auto-download of {venue_format} template failed.\n"
+                        f"Please place the venue's .sty/.cls files in this directory.\n"
+                        f"Then delete this file.\n"
+                    )
+                    venue_format = "article"
 
     # Generate main.tex: prefer committed venue_templates/<format>/main.tex if available
     venue_template_src = Path(__file__).parent.parent / "venue_templates" / venue_format / "main.tex"
@@ -2983,29 +2986,38 @@ def cmd_restart(args):
 #  ark webapp
 # ============================================================
 
-_SYSTEMD_SERVICE_NAME = "ark-webapp"
+_PROD_WORKTREE_DIR = Path.home() / ".ark" / "prod"
+
+_DEV_SERVICE = "ark-webapp-dev"
+_PROD_SERVICE = "ark-webapp"
+_DEV_PORT = 8424
+_PROD_PORT = 8423
 
 
-def _service_file_path() -> Path:
-    return Path.home() / ".config" / "systemd" / "user" / f"{_SYSTEMD_SERVICE_NAME}.service"
+def _service_file_path(service_name: str) -> Path:
+    return Path.home() / ".config" / "systemd" / "user" / f"{service_name}.service"
 
 
-def _generate_service_unit(host: str, port: int) -> str:
+def _generate_service_unit(host: str, port: int, work_dir: Path, description: str,
+                           env_vars: dict[str, str] | None = None) -> str:
     """Generate a systemd user service unit file for the ARK webapp."""
     python_bin = sys.executable
-    ark_root = get_ark_root()
+    env_lines = ""
+    if env_vars:
+        for k, v in env_vars.items():
+            env_lines += f"Environment={k}={v}\n"
     return f"""\
 [Unit]
-Description=ARK Research Portal
+Description={description}
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory={ark_root}
+WorkingDirectory={work_dir}
 ExecStart={python_bin} -m ark.cli webapp --host {host} --port {port}
 Restart=on-failure
 RestartSec=5
-StandardOutput=journal
+{env_lines}StandardOutput=journal
 StandardError=journal
 
 [Install]
@@ -3013,60 +3025,184 @@ WantedBy=default.target
 """
 
 
-def _cmd_webapp_install(host: str, port: int):
-    """Install and start ARK webapp as a systemd user service."""
+def _check_linger():
+    """Print a warning if linger is not enabled."""
     import subprocess as _sp
-
-    svc_path = _service_file_path()
-    svc_path.parent.mkdir(parents=True, exist_ok=True)
-
-    unit = _generate_service_unit(host, port)
-    svc_path.write_text(unit)
-    print(f"  Service file written to {_c(str(svc_path), Colors.CYAN)}")
-
-    # Reload, enable, and start
-    _sp.run(["systemctl", "--user", "daemon-reload"], check=True)
-    _sp.run(["systemctl", "--user", "enable", _SYSTEMD_SERVICE_NAME], check=True)
-    _sp.run(["systemctl", "--user", "start", _SYSTEMD_SERVICE_NAME], check=True)
-
-    print(f"\n  {_c('ARK Webapp', Colors.BOLD)} installed and started as systemd user service.")
-    print(f"  URL: {_c(f'http://{host}:{port}', Colors.CYAN)}")
-    print()
-    print(f"  Manage with:")
-    print(f"    {_c(f'systemctl --user status {_SYSTEMD_SERVICE_NAME}', Colors.DIM)}")
-    print(f"    {_c(f'systemctl --user restart {_SYSTEMD_SERVICE_NAME}', Colors.DIM)}")
-    print(f"    {_c(f'journalctl --user -u {_SYSTEMD_SERVICE_NAME} -f', Colors.DIM)}")
-    print()
-
-    # Check linger
     try:
         r = _sp.run(["loginctl", "show-user", os.environ.get("USER", "")],
                      capture_output=True, text=True)
         if "Linger=no" in r.stdout:
-            print(f"  {_c('Note:', Colors.YELLOW)} Linger is not enabled for your user.")
-            print(f"  The service will stop when you log out. To keep it running:")
             user = os.environ.get("USER", "")
-            print(f"    {_c(f'sudo loginctl enable-linger {user}', Colors.BOLD)}")
+            print(f"  {_c('Note:', Colors.YELLOW)} Linger is not enabled. Service stops on logout.")
+            print(f"    {_c(f'loginctl enable-linger {user}', Colors.BOLD)}")
             print()
     except FileNotFoundError:
         pass
 
 
-def _cmd_webapp_uninstall():
+def _cmd_webapp_install(host: str, port: int, dev: bool = False):
+    """Install and start ARK webapp as a systemd user service."""
+    import subprocess as _sp
+
+    if dev:
+        svc_name = _DEV_SERVICE
+        port = port if port != _PROD_PORT else _DEV_PORT
+        work_dir = get_ark_root()
+        desc = "ARK Research Portal (dev)"
+        db_name = "webapp-dev.db"
+    else:
+        svc_name = _PROD_SERVICE
+        work_dir = _PROD_WORKTREE_DIR
+        desc = "ARK Research Portal"
+        db_name = "webapp.db"
+
+        # Ensure prod worktree exists
+        if not work_dir.exists():
+            print(f"  {_c('Error:', Colors.RED)} Prod worktree not found at {work_dir}")
+            print(f"  Run {_c('ark webapp release', Colors.BOLD)} first to create it.")
+            return
+
+    # Override DB_PATH via environment variable so dev/prod use separate DBs
+    db_path = get_ark_root() / "ark_webapp" / db_name
+    env_vars = {"ARK_WEBAPP_DB_PATH": str(db_path)}
+
+    svc_path = _service_file_path(svc_name)
+    svc_path.parent.mkdir(parents=True, exist_ok=True)
+
+    unit = _generate_service_unit(host, port, work_dir, desc, env_vars)
+    svc_path.write_text(unit)
+    print(f"  Service file written to {_c(str(svc_path), Colors.CYAN)}")
+
+    _sp.run(["systemctl", "--user", "daemon-reload"], check=True)
+    _sp.run(["systemctl", "--user", "enable", svc_name], check=True)
+    _sp.run(["systemctl", "--user", "start", svc_name], check=True)
+
+    label = "Dev" if dev else "Prod"
+    print(f"\n  {_c(f'ARK Webapp ({label})', Colors.BOLD)} installed and started.")
+    print(f"  URL: {_c(f'http://{host}:{port}', Colors.CYAN)}")
+    print(f"  DB:  {_c(str(db_path), Colors.DIM)}")
+    print()
+    print(f"  Manage with:")
+    print(f"    {_c(f'systemctl --user status {svc_name}', Colors.DIM)}")
+    print(f"    {_c(f'systemctl --user restart {svc_name}', Colors.DIM)}")
+    print(f"    {_c(f'journalctl --user -u {svc_name} -f', Colors.DIM)}")
+    print()
+    _check_linger()
+
+
+def _cmd_webapp_uninstall(dev: bool = False):
     """Stop and remove the ARK webapp systemd user service."""
     import subprocess as _sp
 
-    svc_path = _service_file_path()
+    svc_name = _DEV_SERVICE if dev else _PROD_SERVICE
+    svc_path = _service_file_path(svc_name)
     if not svc_path.exists():
-        print(f"  {_c('Not installed:', Colors.YELLOW)} No systemd service found at {svc_path}")
+        label = "dev" if dev else "prod"
+        print(f"  {_c('Not installed:', Colors.YELLOW)} No {label} service found at {svc_path}")
         return
 
-    _sp.run(["systemctl", "--user", "stop", _SYSTEMD_SERVICE_NAME], capture_output=True)
-    _sp.run(["systemctl", "--user", "disable", _SYSTEMD_SERVICE_NAME], capture_output=True)
+    _sp.run(["systemctl", "--user", "stop", svc_name], capture_output=True)
+    _sp.run(["systemctl", "--user", "disable", svc_name], capture_output=True)
     svc_path.unlink(missing_ok=True)
     _sp.run(["systemctl", "--user", "daemon-reload"], check=True)
 
-    print(f"  {_c('ARK Webapp', Colors.BOLD)} service stopped and removed.")
+    label = "Dev" if dev else "Prod"
+    print(f"  {_c(f'ARK Webapp ({label})', Colors.BOLD)} service stopped and removed.")
+
+
+def _cmd_webapp_release(args):
+    """Tag current commit, create/update prod worktree, restart prod service."""
+    import subprocess as _sp
+
+    ark_root = get_ark_root()
+
+    # 1. Determine version tag
+    # Find latest vX.Y.Z tag and bump patch
+    try:
+        result = _sp.run(
+            ["git", "tag", "--list", "v*", "--sort=-v:refname"],
+            capture_output=True, text=True, cwd=ark_root,
+        )
+        tags = [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
+    except Exception:
+        tags = []
+
+    if tags:
+        latest = tags[0]  # e.g. v0.1.2
+        parts = latest.lstrip("v").split(".")
+        try:
+            parts[-1] = str(int(parts[-1]) + 1)
+            next_tag = "v" + ".".join(parts)
+        except (ValueError, IndexError):
+            next_tag = "v0.1.0"
+    else:
+        next_tag = "v0.1.0"
+
+    tag = getattr(args, 'tag', None) or next_tag
+    print(f"  {_c('Release version:', Colors.BOLD)} {tag}")
+
+    # 2. Check for uncommitted changes
+    status = _sp.run(["git", "status", "--porcelain"], capture_output=True, text=True, cwd=ark_root)
+    if status.stdout.strip():
+        print(f"  {_c('Warning:', Colors.YELLOW)} You have uncommitted changes. Commit first or they won't be in the release.")
+        if not prompt_yn("  Continue anyway?", default=False):
+            return
+
+    # 3. Create git tag
+    r = _sp.run(["git", "tag", tag], capture_output=True, text=True, cwd=ark_root)
+    if r.returncode != 0:
+        if "already exists" in r.stderr:
+            print(f"  Tag {tag} already exists, using it.")
+        else:
+            print(f"  {_c(f'Error creating tag: {r.stderr.strip()}', Colors.RED)}")
+            return
+    else:
+        print(f"  {_c('Tagged:', Colors.GREEN)} {tag}")
+
+    # 4. Create or update prod worktree
+    prod_dir = _PROD_WORKTREE_DIR
+    if not prod_dir.exists():
+        print(f"  Creating prod worktree at {_c(str(prod_dir), Colors.CYAN)}...")
+        r = _sp.run(
+            ["git", "worktree", "add", "--detach", str(prod_dir), tag],
+            capture_output=True, text=True, cwd=ark_root,
+        )
+        if r.returncode != 0:
+            print(f"  {_c(f'Error: {r.stderr.strip()}', Colors.RED)}")
+            return
+    else:
+        print(f"  Updating prod worktree to {_c(tag, Colors.BOLD)}...")
+        r = _sp.run(
+            ["git", "checkout", tag],
+            capture_output=True, text=True, cwd=prod_dir,
+        )
+        if r.returncode != 0:
+            print(f"  {_c(f'Error: {r.stderr.strip()}', Colors.RED)}")
+            return
+
+    print(f"  {_c('Prod worktree:', Colors.GREEN)} {prod_dir} → {tag}")
+
+    # 5. Install in prod worktree
+    print(f"  Installing dependencies in prod...")
+    r = _sp.run(
+        [sys.executable, "-m", "pip", "install", "-e", ".[webapp]", "-q"],
+        capture_output=True, text=True, cwd=prod_dir,
+    )
+    if r.returncode != 0:
+        print(f"  {_c(f'pip install warning: {r.stderr.strip()[:200]}', Colors.YELLOW)}")
+
+    # 6. Restart prod service if running
+    svc_path = _service_file_path(_PROD_SERVICE)
+    if svc_path.exists():
+        print(f"  Restarting prod service...")
+        _sp.run(["systemctl", "--user", "restart", _PROD_SERVICE], check=True)
+        print(f"  {_c('Prod service restarted.', Colors.GREEN)}")
+    else:
+        print(f"\n  Prod worktree ready. Install the service with:")
+        print(f"    {_c('ark webapp install', Colors.BOLD)}")
+
+    print(f"\n  {_c('Release complete!', Colors.GREEN + Colors.BOLD)} {tag}")
+    print(f"  Prod: {_c(f'http://0.0.0.0:{_PROD_PORT}', Colors.CYAN)}")
 
 
 def cmd_webapp(args):
@@ -3079,11 +3215,16 @@ def cmd_webapp(args):
         cmd_web(args)
         return
 
+    dev = getattr(args, 'dev', False)
+
     if subcmd == 'install':
-        _cmd_webapp_install(args.host, args.port)
+        _cmd_webapp_install(args.host, args.port, dev=dev)
         return
     if subcmd == 'uninstall':
-        _cmd_webapp_uninstall()
+        _cmd_webapp_uninstall(dev=dev)
+        return
+    if subcmd == 'release':
+        _cmd_webapp_release(args)
         return
 
     try:
@@ -3595,8 +3736,11 @@ def main():
     webapp_sub.add_parser("enable", help="Allow new project submissions")
     webapp_sub.add_parser("install", help="Install as systemd user service (auto-start on boot)")
     webapp_sub.add_parser("uninstall", help="Stop and remove systemd user service")
+    p_release = webapp_sub.add_parser("release", help="Tag and deploy to prod environment")
+    p_release.add_argument("--tag", type=str, default=None, help="Version tag (default: auto-increment)")
     p_webapp.add_argument("--port", type=int, default=8423, help="Port (default: 8423)")
     p_webapp.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
+    p_webapp.add_argument("--dev", action="store_true", help="Use dev environment (port 8424, separate DB)")
     p_webapp.add_argument("--daemon", action="store_true", help="Run in background (deprecated, use 'install')")
     p_webapp.set_defaults(func=cmd_webapp)
 
