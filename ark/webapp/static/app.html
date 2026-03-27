@@ -396,6 +396,20 @@
     }
     .idea-chip-rm:hover { opacity: 1; }
     .idea-char { font-size: .76rem; color: var(--text-muted); margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+    .hero-instructions-wrap {
+      margin-top: 14px; display: flex; flex-direction: column; gap: 5px;
+    }
+    .hero-instructions-wrap label { font-size: .82rem; font-weight: 500; color: var(--text-second); }
+    .hero-instructions-textarea {
+      width: 100%; min-height: 60px; padding: 10px 14px;
+      border: 1.5px solid var(--card-border); border-radius: 8px;
+      font-family: inherit; font-size: .9rem; background: var(--bg);
+      color: var(--text-primary); line-height: 1.5; resize: vertical;
+      outline: none; transition: border-color .15s, box-shadow .15s;
+    }
+    .hero-instructions-textarea:focus {
+      border-color: var(--teal); box-shadow: 0 0 0 3px rgba(13,148,136,.1);
+    }
     .hero-secondary-row {
       display: flex; align-items: flex-end; gap: 12px; margin-top: 16px;
     }
@@ -599,6 +613,13 @@
       <input type="file" id="hero-file-input" multiple
              onchange="heroFileSelected(this)" style="display:none" />
 
+      <div id="hero-instructions-wrap" class="hero-instructions-wrap">
+        <label data-i18n-html="instructions_label">Instructions for ARK <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+        <textarea name="comment" class="hero-instructions-textarea"
+          data-i18n-placeholder="placeholder_instructions"
+          placeholder="e.g. Focus on comparing against baseline X, use PyTorch, run on 2 GPUs, write in a formal style…"></textarea>
+      </div>
+
       <div class="hero-secondary-row">
         <div class="hero-field hero-field-venue">
           <label data-i18n="venue">Venue</label>
@@ -657,10 +678,6 @@
               <label data-i18n-html="project_id_label">Project ID <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
               <input type="text" name="name" placeholder="my-project-id" pattern="[a-z0-9\-]*" />
             </div>
-          </div>
-          <div class="hero-adv-field" style="margin-bottom:14px">
-            <label data-i18n-html="extra_instructions_label">Extra instructions <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
-            <textarea name="comment" data-i18n-placeholder="placeholder_extra_instructions" placeholder="Focus on comparing against baseline X…"></textarea>
           </div>
           <div class="hero-adv-field">
             <label data-i18n="model">Model</label>
@@ -936,12 +953,12 @@ const TRANSLATIONS = {
     advanced_options: 'Advanced options',
     paper_title_label: 'Paper title <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
     project_id_label: 'Project ID <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
-    extra_instructions_label: 'Extra instructions <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
+    instructions_label: 'Instructions for ARK <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
     model: 'Model',
     launch_research: 'Launch Research',
     placeholder_idea: 'Describe your research idea… or drop files here',
     placeholder_auto_title: 'Auto-generated if blank',
-    placeholder_extra_instructions: 'Focus on comparing against baseline X…',
+    placeholder_instructions: 'e.g. Focus on comparing against baseline X, use PyTorch, run on 2 GPUs, write in a formal style…',
     // projects
     your_projects: 'Your Projects',
     empty_state: 'No projects yet — start by delegating your first research labor above.',
@@ -1046,12 +1063,12 @@ const TRANSLATIONS = {
     advanced_options: '高级选项',
     paper_title_label: '论文标题 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
     project_id_label: '项目 ID <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
-    extra_instructions_label: '额外说明 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
+    instructions_label: '给 ARK 的指令 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
     model: '模型',
     launch_research: '启动研究',
     placeholder_idea: '描述你的研究想法… 或拖拽文件到这里',
     placeholder_auto_title: '留空则自动生成',
-    placeholder_extra_instructions: '例如：重点与基线 X 进行比较…',
+    placeholder_instructions: '例如：重点与基线 X 进行比较，使用 PyTorch，用 2 张 GPU 跑实验…',
     your_projects: '我的项目',
     empty_state: '暂无项目 — 在上方开始你的第一个研究任务。',
     back: '← 返回',

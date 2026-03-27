@@ -86,6 +86,15 @@ class DevMixin:
         self.iteration += 1
         self._iteration_start = datetime.now()
 
+        # Load persistent user instructions (always active, never consumed)
+        persistent_instructions = self.load_user_instructions()
+        if persistent_instructions:
+            base_anchor = self.config.get("goal_anchor", "")
+            self.memory.set_goal_anchor(
+                (base_anchor + "\n\n" if base_anchor else "")
+                + f"## User Instructions (MUST follow throughout all iterations)\n\n{persistent_instructions}"
+            )
+
         # Check user updates
         user_updates = self.check_user_updates()
         if user_updates:

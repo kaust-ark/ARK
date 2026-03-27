@@ -354,9 +354,11 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
             "",
             "CAPABILITIES:",
             "- If the user wants the paper PDF, add on a new line at the end: [SEND_PDF]",
-            "- If you need to inject an actionable update into the research pipeline, add on a new line at the end: [ACTION: specific instruction]",
-            "- Only add [ACTION: ...] if the user explicitly asks you to change something or give the pipeline a new direction.",
-            "- NEVER add [ACTION: ...] for: status queries, simple acknowledgments (ok, proceed, continue, 好的, 继续, 收到), or confirmations of what's already happening.",
+            "- Two ways to inject directives into the pipeline (add on a new line at the end):",
+            "  [ACTION: ...] — one-time directive for the current/next iteration only (e.g. 'skip experiments this round', 'rerun figure 3')",
+            "  [INSTRUCTION: ...] — persistent rule that must be followed in ALL future iterations (e.g. 'always use PyTorch', 'crawl real data from website X', 'use 2 GPUs')",
+            "- Choose [ACTION] for temporary/situational requests, [INSTRUCTION] for lasting rules about how to do the research.",
+            "- NEVER add either tag for: status queries, simple acknowledgments (ok, proceed, continue, 好的, 继续, 收到), or confirmations of what's already happening.",
         ]
 
         if goal:
@@ -411,14 +413,23 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
             send_pdf = True
             response = response.replace("[SEND_PDF]", "").strip()
 
-        # Extract [ACTION: ...] if present
+        # Extract [ACTION: ...] (one-time) and [INSTRUCTION: ...] (persistent)
         action = None
+        instruction = None
         if "[ACTION:" in response:
             try:
                 action_start = response.index("[ACTION:") + 8
                 action_end = response.index("]", action_start)
                 action = response[action_start:action_end].strip()
                 response = response[:response.index("[ACTION:")].strip()
+            except ValueError:
+                pass
+        if "[INSTRUCTION:" in response:
+            try:
+                instr_start = response.index("[INSTRUCTION:") + 13
+                instr_end = response.index("]", instr_start)
+                instruction = response[instr_start:instr_end].strip()
+                response = response[:response.index("[INSTRUCTION:")].strip()
             except ValueError:
                 pass
 
@@ -437,9 +448,19 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
 
         if action:
             self.inject_user_update(action)
-            self.telegram.send_raw(f"✅ Action injected: {action[:100]}")
+            self.telegram.send_raw(f"✅ Action queued: {action[:100]}")
 
-        self.log(f"Telegram agent responded ({len(response)} chars)" + (f" + ACTION: {action[:50]}" if action else ""), "INFO")
+        if instruction:
+            self.add_user_instruction(instruction, source="telegram")
+            self.inject_user_update(instruction)  # also apply immediately
+            self.telegram.send_raw(f"✅ Instruction saved (persistent): {instruction[:100]}")
+
+        tag_info = ""
+        if action:
+            tag_info += f" + ACTION: {action[:50]}"
+        if instruction:
+            tag_info += f" + INSTRUCTION: {instruction[:50]}"
+        self.log(f"Telegram agent responded ({len(response)} chars){tag_info}", "INFO")
 
     def _gather_telegram_agent_context(self) -> str:
         """Collect project state for the Telegram agent's system prompt."""
@@ -461,6 +482,10 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         goal = self.config.get("goal_anchor", "")
         if goal:
             lines.append(f"\nGoal Anchor:\n{goal[:600]}")
+
+        persistent_instructions = self.load_user_instructions()
+        if persistent_instructions:
+            lines.append(f"\nUser Instructions (MUST follow):\n{persistent_instructions}")
 
         review_file = self.state_dir / "latest_review.md"
         if review_file.exists():
@@ -575,6 +600,48 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         self._send_pdf_via_telegram()
 
     # ========== User Updates ==========
+
+    # ========== Persistent User Instructions ==========
+
+    def load_user_instructions(self) -> str:
+        """Load all persistent user instructions (never consumed, always active)."""
+        instructions_file = self.state_dir / "user_instructions.yaml"
+        if not instructions_file.exists():
+            return ""
+        try:
+            with open(instructions_file) as f:
+                data = yaml.safe_load(f) or {}
+            entries = data.get("instructions", [])
+            if not entries:
+                return ""
+            messages = [e.get("message", "") for e in entries if e.get("message")]
+            if not messages:
+                return ""
+            return "\n".join(f"- {m}" for m in messages)
+        except Exception as e:
+            self.log(f"Error reading user instructions: {e}", "WARN")
+            return ""
+
+    def add_user_instruction(self, message: str, source: str = "telegram"):
+        """Append a persistent instruction that agents must conform to every iteration."""
+        instructions_file = self.state_dir / "user_instructions.yaml"
+        try:
+            data = {}
+            if instructions_file.exists():
+                with open(instructions_file) as f:
+                    data = yaml.safe_load(f) or {}
+            entries = data.get("instructions", [])
+            entries.append({
+                "message": message,
+                "source": source,
+                "timestamp": datetime.now().isoformat(),
+            })
+            data["instructions"] = entries
+            with open(instructions_file, "w") as f:
+                yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+            self.log(f"Persistent instruction added ({source}): {message[:80]}", "INFO")
+        except Exception as e:
+            self.log(f"Failed to add user instruction: {e}", "WARN")
 
     def check_user_updates(self) -> str:
         """Check for user updates from 'ark update' and consume them."""

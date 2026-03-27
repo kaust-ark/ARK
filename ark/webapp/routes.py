@@ -10,6 +10,7 @@ import re
 import shutil
 import uuid
 import zipfile
+from datetime import datetime
 from pathlib import Path as _Path
 from pathlib import Path
 from typing import Optional
@@ -124,8 +125,35 @@ def _write_config_yaml(project_dir: Path, project: Project):
     uploaded_pdf = project_dir / "uploaded.pdf"
     if uploaded_pdf.exists():
         config["uploaded_pdf"] = str(uploaded_pdf)
+    # Build goal_anchor from title + venue + idea
+    title = project.title or project.name
+    venue_name = project.venue or project.venue_format or "NeurIPS"
+    anchor_parts = ["## Goal Anchor\n"]
+    anchor_parts.append(f"**Paper Title**: {title}")
+    anchor_parts.append(f"**Target Venue**: {venue_name} ({project.venue_format}, {project.venue_pages} pages)\n")
+    if project.idea:
+        anchor_parts.append(f"**Research Idea**:\n{project.idea}")
+    config["goal_anchor"] = "\n".join(anchor_parts)
     config_path = project_dir / "config.yaml"
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
+
+
+def _write_user_instructions(project_dir: Path, message: str, source: str = "webapp_create"):
+    """Write a persistent instruction to user_instructions.yaml."""
+    state_dir = project_dir / "auto_research" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    instructions_file = state_dir / "user_instructions.yaml"
+    data = {}
+    if instructions_file.exists():
+        data = yaml.safe_load(instructions_file.read_text()) or {}
+    entries = data.get("instructions", [])
+    entries.append({
+        "message": message,
+        "source": source,
+        "timestamp": datetime.now().isoformat(),
+    })
+    data["instructions"] = entries
+    instructions_file.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
 
 
 def _read_project_score(project_dir: Path) -> float:
@@ -489,6 +517,7 @@ async def api_create_project(
 
         if comment.strip():
             _write_user_update(pdir, comment.strip(), source="webapp_create")
+            _write_user_instructions(pdir, comment.strip(), source="webapp_create")
 
         if not template_available:
             # Ask user to send template via Telegram, don't submit job yet
@@ -638,6 +667,7 @@ async def api_continue_project(project_id: str, request: Request):
         _write_config_yaml(pdir, project)
         if comment:
             _write_user_update(pdir, comment, source="webapp_continue")
+            _write_user_instructions(pdir, comment, source="webapp_continue")
         final_status = _try_submit_or_pending(project, pdir, session, settings)
         return JSONResponse({"ok": True, "status": final_status, "max_iterations": new_max})
 

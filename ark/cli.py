@@ -874,7 +874,7 @@ def _setup_latex_template(code_dir: str, config: dict):
 #  PDF Spec Extraction (for ark new --from-pdf)
 # ============================================================
 
-def _extract_spec_from_pdf(pdf_path: str) -> dict:
+def _extract_spec_from_pdf(pdf_path: str, instructions: str = "") -> dict:
     """Extract research spec from a PDF file using PyMuPDF + Claude Haiku."""
     try:
         import fitz  # PyMuPDF
@@ -912,6 +912,12 @@ def _extract_spec_from_pdf(pdf_path: str) -> dict:
         "CODING_TASKS:\n- task1\n- task2\n"
         f"\nDocument text:\n{text[:8000]}"
     )
+    if instructions:
+        prompt += (
+            "\n\nAdditional user instructions and caveats "
+            "(follow these while extracting):\n"
+            f"{instructions}"
+        )
 
     try:
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
@@ -1065,10 +1071,10 @@ def cmd_new(args):
     return _cmd_new_wizard(args, name, project_dir, pdf_spec)
 
 
-def _load_and_show_pdf(pdf_path: str) -> dict:
+def _load_and_show_pdf(pdf_path: str, instructions: str = "") -> dict:
     """Extract spec from PDF and display results."""
     print(f"  {_c('Analyzing PDF...', Colors.DIM)} {pdf_path}")
-    pdf_spec = _extract_spec_from_pdf(pdf_path)
+    pdf_spec = _extract_spec_from_pdf(pdf_path, instructions=instructions)
     if pdf_spec.get("title"):
         print(f"  {_c('Title:', Colors.BOLD)}   {pdf_spec['title']}")
     if pdf_spec.get("authors"):
@@ -1232,6 +1238,8 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
     # ── Step 3: Research Idea ─────────────────────────────
     _wizard_step_header(3, "Research Idea")
 
+    pdf_instructions = ""
+
     # If no PDF loaded yet via --from-pdf, offer a choice
     if not pdf_spec:
         print(f"  How would you like to provide the research idea?")
@@ -1243,7 +1251,8 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
             pdf_path = prompt_input("  PDF path").strip()
             pdf_path = os.path.expanduser(pdf_path)
             if os.path.isfile(pdf_path):
-                pdf_spec = _load_and_show_pdf(pdf_path)
+                pdf_instructions = prompt_input("  Instructions / notes (optional)").strip()
+                pdf_spec = _load_and_show_pdf(pdf_path, instructions=pdf_instructions)
             else:
                 print(f"  {_c('File not found, falling back to manual input.', Colors.YELLOW)}")
         print()
@@ -1573,6 +1582,8 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
         config["code_review_threshold"] = 7
     if hasattr(args, 'from_pdf') and args.from_pdf:
         config["spec_pdf"] = os.path.abspath(args.from_pdf)
+    if pdf_instructions:
+        config["spec_pdf_instructions"] = pdf_instructions
 
     if tg_config_dict:
         config.update(tg_config_dict)   # adds telegram_bot_token + telegram_chat_id
@@ -2583,6 +2594,33 @@ def cmd_monitor(args):
 #  ark update
 # ============================================================
 
+def _classify_update_type(message: str) -> bool:
+    """Classify whether a user update is a persistent instruction (True) or one-time action (False).
+    Uses a quick Claude call for classification."""
+    prompt = (
+        "Classify this user message for a research automation pipeline.\n"
+        "Is it a PERSISTENT instruction (a lasting rule about how to do the research, e.g. "
+        "'use PyTorch', 'crawl real data from website X', 'always compare against baseline Y', "
+        "'use 2 GPUs', 'write in formal style') "
+        "or a ONE-TIME action (a temporary directive for the current iteration only, e.g. "
+        "'skip experiments this round', 'rerun figure 3', 'fix the bug in section 2', "
+        "'regenerate the abstract')?\n\n"
+        f"Message: {message}\n\n"
+        "Reply with exactly one word: PERSISTENT or ONETIME"
+    )
+    try:
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        result = subprocess.run(
+            ["claude", "--print", "--model", "claude-haiku-4-5", "-p", prompt],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+        answer = result.stdout.strip().upper()
+        return "PERSISTENT" in answer
+    except Exception:
+        # Default to persistent (safer — won't lose instructions)
+        return True
+
+
 def cmd_update(args):
     name = args.project
     config = get_project_config(name)
@@ -2633,20 +2671,43 @@ def cmd_update(args):
             print("No update provided.")
             return
 
-    # Append update
+    # Classify: one-time action or persistent instruction?
+    is_persistent = _classify_update_type(message)
+
+    # Always write to user_updates (immediate effect next iteration)
     existing["updates"].append({
         "message": message,
         "timestamp": datetime.now().isoformat(),
         "consumed": False,
     })
-
     with open(updates_file, "w") as f:
         yaml.dump(existing, f, default_flow_style=False, allow_unicode=True)
+
+    # If persistent, also save to user_instructions
+    if is_persistent:
+        instructions_file = Path(code_dir) / "auto_research" / "state" / "user_instructions.yaml"
+        instr_data = {}
+        if instructions_file.exists():
+            try:
+                with open(instructions_file) as f:
+                    instr_data = yaml.safe_load(f) or {}
+            except Exception:
+                pass
+        entries = instr_data.get("instructions", [])
+        entries.append({
+            "message": message,
+            "source": "cli_update",
+            "timestamp": datetime.now().isoformat(),
+        })
+        instr_data["instructions"] = entries
+        with open(instructions_file, "w") as f:
+            yaml.dump(instr_data, f, default_flow_style=False, allow_unicode=True)
 
     project_dir = get_projects_dir() / name
     running, _ = _is_running(project_dir)
 
-    print(f"{_c('Update saved!', Colors.GREEN)}")
+    update_type = "persistent instruction" if is_persistent else "one-time action"
+    print(f"{_c('Update saved!', Colors.GREEN)} (classified as {_c(update_type, Colors.CYAN)})")
     if running:
         print("The running orchestrator will pick it up at the next iteration.")
     else:
