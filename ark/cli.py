@@ -2999,7 +2999,7 @@ def _service_file_path(service_name: str) -> Path:
 
 
 def _generate_service_unit(host: str, port: int, work_dir: Path, description: str,
-                           env_vars: dict[str, str] | None = None) -> str:
+                           env_vars=None) -> str:
     """Generate a systemd user service unit file for the ARK webapp."""
     python_bin = sys.executable
     env_lines = ""
@@ -3734,13 +3734,14 @@ def main():
     webapp_sub = p_webapp.add_subparsers(dest="webapp_cmd")
     webapp_sub.add_parser("disable", help="Block new project submissions")
     webapp_sub.add_parser("enable", help="Allow new project submissions")
-    webapp_sub.add_parser("install", help="Install as systemd user service (auto-start on boot)")
-    webapp_sub.add_parser("uninstall", help="Stop and remove systemd user service")
+    p_install = webapp_sub.add_parser("install", help="Install as systemd user service (auto-start on boot)")
+    p_install.add_argument("--dev", action="store_true", help="Use dev environment (port 8424, separate DB)")
+    p_uninstall = webapp_sub.add_parser("uninstall", help="Stop and remove systemd user service")
+    p_uninstall.add_argument("--dev", action="store_true", help="Uninstall dev service")
     p_release = webapp_sub.add_parser("release", help="Tag and deploy to prod environment")
     p_release.add_argument("--tag", type=str, default=None, help="Version tag (default: auto-increment)")
     p_webapp.add_argument("--port", type=int, default=8423, help="Port (default: 8423)")
     p_webapp.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
-    p_webapp.add_argument("--dev", action="store_true", help="Use dev environment (port 8424, separate DB)")
     p_webapp.add_argument("--daemon", action="store_true", help="Run in background (deprecated, use 'install')")
     p_webapp.set_defaults(func=cmd_webapp)
 
