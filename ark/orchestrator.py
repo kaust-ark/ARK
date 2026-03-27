@@ -305,13 +305,13 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         self.telegram.stop()
 
     def _get_bot_model(self) -> str:
-        """Read bot model preference from daemon state."""
-        state_file = get_config_dir() / "telegram_state.yaml"
+        """Read bot model preference from .ark/config.yaml."""
+        config_file = get_config_dir() / "config.yaml"
         try:
-            if state_file.exists():
-                with open(state_file) as f:
-                    state = yaml.safe_load(f) or {}
-                return state.get("models", {}).get("bot", "claude-sonnet-4-6")
+            if config_file.exists():
+                with open(config_file) as f:
+                    cfg = yaml.safe_load(f) or {}
+                return cfg.get("bot_model", "claude-sonnet-4-6")
         except Exception:
             pass
         return "claude-sonnet-4-6"

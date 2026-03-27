@@ -42,6 +42,19 @@ def get_projects_dir() -> Path:
     return pdir
 
 
+def _get_configured_model(default: str = "claude-sonnet-4-6") -> str:
+    """Read model from .ark/config.yaml, falling back to default."""
+    config_file = get_config_dir() / "config.yaml"
+    try:
+        if config_file.exists():
+            with open(config_file) as f:
+                cfg = yaml.safe_load(f) or {}
+            return cfg.get("model", default)
+    except Exception:
+        pass
+    return default
+
+
 def get_project_config(name: str) -> dict:
     """Load a project's config.yaml."""
     config_file = get_projects_dir() / name / "config.yaml"
@@ -227,7 +240,7 @@ def _analyze_research_idea(idea: str) -> dict:
     try:
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         result = subprocess.run(
-            ["claude", "--print", "--model", "claude-sonnet-4-6", "-p", prompt],
+            ["claude", "--print", "--model", _get_configured_model(), "-p", prompt],
             capture_output=True, text=True, timeout=60, env=env,
         )
         response = result.stdout.strip()
@@ -903,7 +916,7 @@ def _extract_spec_from_pdf(pdf_path: str) -> dict:
     try:
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         result = subprocess.run(
-            ["claude", "--print", "--model", "claude-sonnet-4-6", "-p", prompt],
+            ["claude", "--print", "--model", _get_configured_model(), "-p", prompt],
             capture_output=True, text=True, timeout=90, env=env,
         )
         response = result.stdout.strip()
@@ -1039,27 +1052,33 @@ def cmd_new(args):
     print(f"  {_c(f'Creating project: {name}', Colors.BOLD + Colors.CYAN)}")
     print()
 
-    # ── PDF Spec Extraction (optional) ────────────────────────
+    # ── PDF pre-load from --from-pdf flag (optional shortcut) ─
     pdf_spec = {}
     if hasattr(args, 'from_pdf') and args.from_pdf:
         pdf_path = os.path.expanduser(args.from_pdf)
         if not os.path.isfile(pdf_path):
             print(f"{_c('Error:', Colors.RED)} PDF not found: {pdf_path}")
             sys.exit(1)
-        print(f"  {_c('Analyzing PDF...', Colors.DIM)} {pdf_path}")
-        pdf_spec = _extract_spec_from_pdf(pdf_path)
-        if pdf_spec.get("title"):
-            print(f"  {_c('Title:', Colors.BOLD)}   {pdf_spec['title']}")
-        if pdf_spec.get("authors"):
-            print(f"  {_c('Authors:', Colors.BOLD)} {', '.join(pdf_spec['authors'])}")
-        if pdf_spec.get("summary"):
-            print(f"  {_c('Summary:', Colors.BOLD)} {pdf_spec['summary'][:150]}...")
-        if pdf_spec.get("coding_tasks"):
-            print(f"  {_c('Tasks:', Colors.BOLD)}   {len(pdf_spec['coding_tasks'])} coding tasks → {_c('dev mode suggested', Colors.CYAN)}")
-        print()
+        pdf_spec = _load_and_show_pdf(pdf_path)
 
     # ── Interactive wizard (PDF values used as defaults) ──────
     return _cmd_new_wizard(args, name, project_dir, pdf_spec)
+
+
+def _load_and_show_pdf(pdf_path: str) -> dict:
+    """Extract spec from PDF and display results."""
+    print(f"  {_c('Analyzing PDF...', Colors.DIM)} {pdf_path}")
+    pdf_spec = _extract_spec_from_pdf(pdf_path)
+    if pdf_spec.get("title"):
+        print(f"  {_c('Title:', Colors.BOLD)}   {pdf_spec['title']}")
+    if pdf_spec.get("authors"):
+        print(f"  {_c('Authors:', Colors.BOLD)} {', '.join(pdf_spec['authors'])}")
+    if pdf_spec.get("summary"):
+        print(f"  {_c('Summary:', Colors.BOLD)} {pdf_spec['summary'][:150]}...")
+    if pdf_spec.get("coding_tasks"):
+        print(f"  {_c('Tasks:', Colors.BOLD)}   {len(pdf_spec['coding_tasks'])} coding tasks → {_c('dev mode suggested', Colors.CYAN)}")
+    print()
+    return pdf_spec
 
 
 def _wizard_step_header(step_num: int, title: str):
@@ -1212,6 +1231,23 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
 
     # ── Step 3: Research Idea ─────────────────────────────
     _wizard_step_header(3, "Research Idea")
+
+    # If no PDF loaded yet via --from-pdf, offer a choice
+    if not pdf_spec:
+        print(f"  How would you like to provide the research idea?")
+        print(f"  {_c('1.', Colors.BOLD)} Enter manually")
+        print(f"  {_c('2.', Colors.BOLD)} Read from PDF (idea / proposal / draft)")
+        idea_choice = prompt_input("  Choice", "1").strip()
+
+        if idea_choice == "2":
+            pdf_path = prompt_input("  PDF path").strip()
+            pdf_path = os.path.expanduser(pdf_path)
+            if os.path.isfile(pdf_path):
+                pdf_spec = _load_and_show_pdf(pdf_path)
+            else:
+                print(f"  {_c('File not found, falling back to manual input.', Colors.YELLOW)}")
+        print()
+
     pdf_summary = pdf_spec.get("summary", "")
     if pdf_summary:
         print(f"  {_c('From PDF:', Colors.DIM)} {pdf_summary[:150]}...")
@@ -1768,7 +1804,7 @@ def cmd_run(args):
     code_dir = config.get("code_dir", str(get_ark_root().parent))
     model = args.model or config.get("model", "claude")
     mode = args.mode or config.get("mode", "paper")
-    max_iterations = args.iterations or 2
+    max_iterations = args.iterations or 3
     max_days = args.max_days or 3
 
     # ── Deep Research (runs in background inside orchestrator) ─
@@ -2225,7 +2261,7 @@ Be direct and specific. No greetings, no markdown headers. Just the summary text
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         result = subprocess.run(
             ["claude", "-p", prompt,
-             "--model", "claude-sonnet-4-6",
+             "--model", _get_configured_model(),
              "--no-session-persistence",
              "--output-format", "text"],
             capture_output=True, text=True, timeout=30,

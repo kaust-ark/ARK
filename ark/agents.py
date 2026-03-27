@@ -137,13 +137,13 @@ class AgentMixin:
         )
 
     def _get_ark_model(self) -> str | None:
-        """Read ARK model preference from daemon state. Returns None to use CLI default."""
-        state_file = get_config_dir() / "telegram_state.yaml"
+        """Read ARK model preference from .ark/config.yaml. Returns None to use CLI default."""
+        config_file = get_config_dir() / "config.yaml"
         try:
-            if state_file.exists():
-                with open(state_file) as f:
-                    state = yaml.safe_load(f) or {}
-                return state.get("models", {}).get("ark")
+            if config_file.exists():
+                with open(config_file) as f:
+                    cfg = yaml.safe_load(f) or {}
+                return cfg.get("model")
         except Exception:
             pass
         return None

@@ -14,6 +14,9 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# PDF
+pdfs/
+
 # Projects
 projects/
 
