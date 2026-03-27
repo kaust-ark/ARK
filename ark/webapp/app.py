@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 
@@ -354,9 +355,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    cookie_name = os.environ.get("ARK_SESSION_COOKIE", "session")
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.secret_key,
+        session_cookie=cookie_name,
         max_age=86400 * 7,   # 7 days
         https_only=False,    # Set True if behind HTTPS proxy
     )

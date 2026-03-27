@@ -3050,6 +3050,14 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
         work_dir = get_ark_root()
         desc = "ARK Research Portal (dev)"
         db_name = "webapp-dev.db"
+        # Load dev overrides from .ark/webapp-dev.env
+        dev_env_file = get_config_dir() / "webapp-dev.env"
+        if not dev_env_file.exists():
+            dev_env_file.write_text(
+                "# Dev-only overrides (takes priority over webapp.env)\n"
+                "# ALLOWED_EMAILS=user1@example.com,user2@example.com\n"
+            )
+            print(f"  Created {_c(str(dev_env_file), Colors.CYAN)} — edit to set dev-only config.")
     else:
         svc_name = _PROD_SERVICE
         work_dir = _PROD_WORKTREE_DIR
@@ -3065,6 +3073,19 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
     # Override DB_PATH via environment variable so dev/prod use separate DBs
     db_path = get_ark_root() / "ark_webapp" / db_name
     env_vars = {"ARK_WEBAPP_DB_PATH": str(db_path)}
+    if dev:
+        env_vars["ARK_SESSION_COOKIE"] = "session_dev"
+
+    # Load dev-only env overrides
+    if dev:
+        dev_env_file = get_config_dir() / "webapp-dev.env"
+        if dev_env_file.exists():
+            for line in dev_env_file.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                env_vars[k.strip()] = v.strip()
 
     svc_path = _service_file_path(svc_name)
     svc_path.parent.mkdir(parents=True, exist_ok=True)
