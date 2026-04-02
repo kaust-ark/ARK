@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <a href="https://kaust-ark.github.io/ARK/"><strong>Website</strong></a> &bull;
+  <a href="https://kaust-ark.github.io/"><strong>Website</strong></a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#how-it-works">How It Works</a> &bull;
   <a href="#cli-reference">CLI</a> &bull;

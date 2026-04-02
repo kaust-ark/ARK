@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <a href="https://kaust-ark.github.io/ARK/"><strong>网站</strong></a> &bull;
+  <a href="https://kaust-ark.github.io/"><strong>网站</strong></a> &bull;
   <a href="#快速开始">快速开始</a> &bull;
   <a href="#工作原理">工作原理</a> &bull;
   <a href="#命令行参考">命令行</a> &bull;

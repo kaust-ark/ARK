@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <a href="https://kaust-ark.github.io/ARK/"><strong>الموقع</strong></a> &bull;
+  <a href="https://kaust-ark.github.io/"><strong>الموقع</strong></a> &bull;
   <a href="#البداية-السريعة">البداية السريعة</a> &bull;
   <a href="#كيف-يعمل">كيف يعمل</a> &bull;
   <a href="#مرجع-الأوامر">الأوامر</a> &bull;
