@@ -554,7 +554,7 @@ section { padding: 5rem 0; }
 
 /* ===== Papers ===== */
 .papers-grid {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 400px)); gap: 2rem; justify-content: center;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 400px)); gap: 2rem; justify-content: center;
 }
 .paper-card {
   background: #fff; border: 1px solid var(--border); border-radius: var(--radius);
@@ -917,7 +917,6 @@ a.paper-card-img, .paper-card-img {
 @media (max-width: 1024px) {
   .features-grid { grid-template-columns: repeat(2, 1fr); }
   .agents-grid { grid-template-columns: repeat(2, 1fr); }
-  .papers-grid { grid-template-columns: repeat(2, 1fr); }
   .stat-item { padding: 1.5rem 2rem; }
   .harness-problems { grid-template-columns: repeat(2, 1fr); }
   .harness-pillars { grid-template-columns: repeat(2, 1fr); }
