@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/logo_ark.png" alt="ARK" width="280">
+  <img src="https://kaust-ark.github.io/assets/logo.png" alt="ARK" width="280">
 </p>
 
 <h1 align="center">ARK：智能体研究工具包</h1>
