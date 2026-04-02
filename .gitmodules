@@ -1,3 +1,6 @@
 [submodule "materials/references/openclaw"]
 	path = materials/references/openclaw
 	url = https://github.com/openclaw/openclaw.git
+[submodule "docs"]
+	path = docs
+	url = git@github.com:kaust-ark/kaust-ark.github.io.git
