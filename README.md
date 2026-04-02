@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/logo_ark.png" alt="ARK" width="280">
+  <img src="https://kaust-ark.github.io/assets/logo_ark.png" alt="ARK" width="280">
 </p>
 
 <h1 align="center">ARK: Automatic Research Kit</h1>
@@ -25,8 +25,8 @@
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#how-it-works">How It Works</a> &bull;
   <a href="#cli-reference">CLI</a> &bull;
-  <a href="docs/architecture.md">Architecture</a> &bull;
-  <a href="docs/configuration.md">Configuration</a>
+  <a href="https://kaust-ark.github.io/architecture.md">Architecture</a> &bull;
+  <a href="https://kaust-ark.github.io/configuration.md">Configuration</a>
 </p>
 
 ---
@@ -37,24 +37,13 @@ Give it a research idea and a target venue. ARK handles the rest.
 
 ## Papers Written by ARK
 
-<table>
-<tr>
-<td align="center" width="50%">
-<img src="docs/assets/paper-example.png" alt="MMA Paper" width="380">
+<p align="center">
+<img src="https://kaust-ark.github.io/assets/paper-example.png" alt="MMA Paper" width="480">
 <br>
 <a href="https://github.com/JihaoXin/mma"><em>CPU Matrix Multiplication: From Naive to Efficient</em></a>
 <br>
 <sub>NeurIPS format &bull; 6 pages &bull; 14 iterations</sub>
-</td>
-<td align="center" width="50%">
-<img src="docs/assets/paper-safeclaw.png" alt="SafeClaw Paper" width="380">
-<br>
-<a href="https://github.com/JihaoXin/safeclaw"><em>Defenses Against Malicious Agents on OpenClaw</em></a>
-<br>
-<sub>NeurIPS format &bull; 10 pages &bull; autonomous from proposal PDF</sub>
-</td>
-</tr>
-</table>
+</p>
 
 ## Key Features
 
@@ -76,7 +65,7 @@ Give it a research idea and a target venue. ARK handles the rest.
 ARK runs three phases in sequence:
 
 <p align="center">
-  <img src="docs/assets/phases_overview.png" alt="ARK Three Phases" width="800">
+  <img src="https://kaust-ark.github.io/assets/phases_overview.png" alt="ARK Three Phases" width="800">
 </p>
 
 | Phase | What happens |
@@ -90,7 +79,7 @@ ARK runs three phases in sequence:
 Each Review Phase iteration runs through 4 steps:
 
 <p align="center">
-  <img src="docs/assets/review_phase_steps.png" alt="Review Phase Steps" width="700">
+  <img src="https://kaust-ark.github.io/assets/review_phase_steps.png" alt="Review Phase Steps" width="700">
 </p>
 
 | Step | What happens |
@@ -105,11 +94,11 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 ### Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture.png" alt="ARK Architecture" width="700">
+  <img src="https://kaust-ark.github.io/assets/architecture.png" alt="ARK Architecture" width="700">
 </p>
 
 <p align="center">
-  <a href="docs/architecture.md">Full architecture docs &rarr;</a>
+  <a href="https://kaust-ark.github.io/architecture.md">Full architecture docs &rarr;</a>
 </p>
 
 ## Quick Start

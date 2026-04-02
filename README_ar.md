@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/logo_ark.png" alt="ARK" width="280">
+  <img src="https://kaust-ark.github.io/assets/logo_ark.png" alt="ARK" width="280">
 </p>
 
 <h1 align="center">ARK: مجموعة أدوات البحث الذكي</h1>
@@ -25,8 +25,8 @@
   <a href="#البداية-السريعة">البداية السريعة</a> &bull;
   <a href="#كيف-يعمل">كيف يعمل</a> &bull;
   <a href="#مرجع-الأوامر">الأوامر</a> &bull;
-  <a href="docs/architecture.md">البنية</a> &bull;
-  <a href="docs/configuration.md">الإعدادات</a>
+  <a href="https://kaust-ark.github.io/architecture.md">البنية</a> &bull;
+  <a href="https://kaust-ark.github.io/configuration.md">الإعدادات</a>
 </p>
 
 ---
@@ -37,24 +37,13 @@
 
 ## أوراق بحثية كتبها ARK
 
-<table>
-<tr>
-<td align="center" width="50%">
-<img src="docs/assets/paper-example.png" alt="ورقة MMA" width="380">
+<p align="center">
+<img src="https://kaust-ark.github.io/assets/paper-example.png" alt="ورقة MMA" width="480">
 <br>
 <a href="https://github.com/JihaoXin/mma"><em>ضرب المصفوفات على المعالج: من البسيط إلى الفعّال</em></a>
 <br>
 <sub>تنسيق NeurIPS &bull; ٦ صفحات &bull; ١٤ تكرارًا</sub>
-</td>
-<td align="center" width="50%">
-<img src="docs/assets/paper-safeclaw.png" alt="ورقة SafeClaw" width="380">
-<br>
-<a href="https://github.com/JihaoXin/safeclaw"><em>الدفاع ضد الوكلاء الخبيثين في OpenClaw</em></a>
-<br>
-<sub>تنسيق NeurIPS &bull; ١٠ صفحات &bull; تلقائي بالكامل من ملف PDF</sub>
-</td>
-</tr>
-</table>
+</p>
 
 ## الميزات الرئيسية
 
@@ -76,7 +65,7 @@
 يمر ARK بثلاث مراحل متتابعة:
 
 <p align="center">
-  <img src="docs/assets/phases_overview.png" alt="مراحل ARK" width="800">
+  <img src="https://kaust-ark.github.io/assets/phases_overview.png" alt="مراحل ARK" width="800">
 </p>
 
 | المرحلة | ما يحدث |
@@ -90,7 +79,7 @@
 كل تكرار في مرحلة المراجعة يمر بـ ٤ خطوات:
 
 <p align="center">
-  <img src="docs/assets/review_phase_steps.png" alt="خطوات مرحلة المراجعة" width="700">
+  <img src="https://kaust-ark.github.io/assets/review_phase_steps.png" alt="خطوات مرحلة المراجعة" width="700">
 </p>
 
 | الخطوة | ما يحدث |
@@ -105,11 +94,11 @@
 ### البنية
 
 <p align="center">
-  <img src="docs/assets/architecture.png" alt="بنية ARK" width="700">
+  <img src="https://kaust-ark.github.io/assets/architecture.png" alt="بنية ARK" width="700">
 </p>
 
 <p align="center">
-  <a href="docs/architecture.md">وثائق البنية الكاملة &rarr;</a>
+  <a href="https://kaust-ark.github.io/architecture.md">وثائق البنية الكاملة &rarr;</a>
 </p>
 
 ## البداية السريعة
@@ -251,8 +240,8 @@ pip install -e ".[research]"       # + Gemini Deep Research و Nano Banana
 
 ## المزيد
 
-- [البنية ومرجع الوحدات](docs/architecture.md)
-- [الإعدادات والمؤتمرات وبيئات الحوسبة](docs/configuration.md)
+- [البنية ومرجع الوحدات](https://kaust-ark.github.io/architecture.md)
+- [الإعدادات والمؤتمرات وبيئات الحوسبة](https://kaust-ark.github.io/configuration.md)
 - [الاختبارات (٨٤ اختبارًا)](docs/testing.md)
 
 ## خارطة الطريق والمشكلات المعروفة
