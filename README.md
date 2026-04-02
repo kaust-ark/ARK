@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/logo.png" alt="ARK" width="280">
+  <img src="https://kaust-ark.github.io/assets/logo_ark_transparent.png" alt="ARK" width="280">
 </p>
 
 <h1 align="center">ARK: Automatic Research Kit</h1>
