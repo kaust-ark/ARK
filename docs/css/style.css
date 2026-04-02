@@ -554,7 +554,7 @@ section { padding: 5rem 0; }
 
 /* ===== Papers ===== */
 .papers-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 400px)); gap: 2rem; justify-content: center;
 }
 .paper-card {
   background: #fff; border: 1px solid var(--border); border-radius: var(--radius);
