@@ -28,4 +28,4 @@ jobs:
           pip install pytest
 
       - name: Run tests
-        run: python -m pytest tests/ -x -q
+        run: python -m pytest tests/ -x -q -m "not network"
