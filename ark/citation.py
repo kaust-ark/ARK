@@ -758,9 +758,6 @@ def cleanup_unused(bib_path: str, tex_dir: str) -> list[str]:
     content = bib_file.read_text(errors="replace")
     removed = []
     for entry in entries:
-        # Never remove [NEEDS-CHECK] entries — they must stay visible for human review
-        if "[NEEDS-CHECK]" in entry.get("preceding_comments", ""):
-            continue
         if entry["key"] not in cited_keys:
             # Remove this entry (and its preceding comments) from content
             # Remove preceding [ARK:...] or [NEEDS-CHECK] comments too
@@ -1203,7 +1200,7 @@ def update_literature_yaml(literature_path: str, papers: list[Paper],
     for paper, key in zip(papers, cite_keys):
         if paper.title.lower() in existing_titles:
             continue
-        data["references"].append({
+        entry = {
             "title": paper.title,
             "authors": ", ".join(paper.authors[:3]) + (" et al." if len(paper.authors) > 3 else ""),
             "year": paper.year,
@@ -1211,7 +1208,10 @@ def update_literature_yaml(literature_path: str, papers: list[Paper],
             "bibtex_key": key,
             "source": f"API ({', '.join(paper.confirmed_by)})",
             "added_date": datetime.now().strftime("%Y-%m-%d"),
-        })
+        }
+        if paper.abstract:
+            entry["abstract"] = paper.abstract[:500]
+        data["references"].append(entry)
 
     lit_file.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False))
 

@@ -156,16 +156,15 @@ Rules:
         Returns:
             (action_plan dict, planner_output str) on success, (None, '') on failure.
         """
-        # Step 0: Check for literature needs (skip already-searched topics)
+        # Step 0: Check for literature needs — re-bootstrap from Deep Research if needed
         needs_lit, lit_topics = self._check_needs_literature_search(review_output)
         if needs_lit:
-            searched = self._get_searched_lit_topics()
-            new_topics = [t for t in lit_topics if t.lower().strip() not in searched]
-            if new_topics:
-                self.log_step(f"Literature search needed: {new_topics} (skipped already-searched: {[t for t in lit_topics if t not in new_topics]})", "progress")
-                self.run_literature_search(new_topics)
+            deep_research_file = self.state_dir / "deep_research.md"
+            if deep_research_file.exists():
+                self.log_step("Re-reading Deep Research report for additional citations...", "progress")
+                self._bootstrap_citations_from_deep_research()
             else:
-                self.log_step(f"Literature topics already searched: {lit_topics}, skipping", "info")
+                self.log_step("No Deep Research report available for literature search", "info")
 
         # Step 1: Planner analyzes review
         self.log_step("Planner analyzing review...", "progress")
@@ -402,106 +401,32 @@ Please read auto_research/state/latest_review.md and regenerate.
             self._action_plan_lock = threading.Lock()
 
         def _run_literature_issue(issue):
-            """Execute a single literature issue using API-first citation flow.
+            """Handle a literature issue by re-reading Deep Research report.
 
-            1. Extract search queries from issue title/description
-            2. Search DBLP/CrossRef/arXiv/S2 for real papers
-            3. Researcher agent selects relevant papers from candidates
-            4. Fetch official BibTeX and write to references.bib
+            Does NOT do independent keyword searches. All citations come from
+            the Deep Research report (bootstrapped in Round 1). If reviewer
+            asks for more literature, we re-extract from the same report and
+            search API for any papers not yet in references.bib.
             """
             from ark.citation import (
-                search_papers, extract_search_queries, format_candidates_for_agent,
-                parse_agent_selection, append_papers_to_bib, update_literature_yaml,
+                bootstrap_citations, append_papers_to_bib,
             )
 
             if self._quota_exhausted:
                 return
-            searched = self._get_searched_lit_topics()
-            issue_topic = (issue.get("title") or "").lower().strip()
-            if issue_topic and any(kw in issue_topic for kw in searched):
-                self.log_step(f"Literature {issue.get('id')} already searched, skipping", "info")
-                issue["status"] = "skipped"
-                with self._action_plan_lock:
-                    self._save_action_plan(action_plan)
-                return
-            self.log_step(f"Literature (API-first): {issue.get('id')} - {issue.get('title', '')[:30]}", "progress")
+
+            self.log_step(f"Literature: {issue.get('id')} - {issue.get('title', '')[:30]}", "progress")
             issue["status"] = "in_progress"
             with self._action_plan_lock:
                 self._save_action_plan(action_plan)
 
-            # Step 1: Extract search queries from issue
-            issue_title = issue.get("title", "")
-            description = issue.get("description", "")
-            queries = extract_search_queries(issue_title, description)
-            self.log_step(f"  Search queries: {queries[:3]}", "progress")
-
-            # Step 2: Search academic databases
-            all_candidates = []
-            for q in queries[:3]:
-                results = search_papers(q, max_results=10)
-                all_candidates.extend(results)
-
-            # Deduplicate
-            seen = set()
-            unique = []
-            for p in all_candidates:
-                key = p.doi or p.title.lower()[:60]
-                if key not in seen:
-                    seen.add(key)
-                    unique.append(p)
-            all_candidates = unique[:15]
-
-            if not all_candidates:
-                self.log_step(f"  No papers found for {issue.get('id')}", "warning")
-                issue["status"] = "completed"
-                with self._action_plan_lock:
-                    self._save_action_plan(action_plan)
-                return
-
-            self.log_step(f"  Found {len(all_candidates)} candidate papers", "progress")
-
-            # Step 3: Researcher agent selects relevant papers
-            paper_title = self.config.get("title", self.project_name)
-            research_idea = self.config.get("research_idea", "")
-            candidates_text = format_candidates_for_agent(all_candidates)
-
-            selection_prompt = f"""
-## Paper Background
-Title: {paper_title}
-Research idea: {research_idea}
-Reviewer request: {issue_title} — {description}
-
-## Candidate Papers (from academic databases — all are real, verified papers)
-
-{candidates_text}
-
-## Your Task
-
-Select the papers most relevant to addressing the reviewer's request.
-
-Output format:
-SELECTED: 1, 5, 11
-[1] Reason: ... | Section: Related Work
-[5] Reason: ... | Section: Method
-
-Rules:
-- ONLY select from the numbered list above
-- Do NOT suggest any papers not in the list
-- For each selected paper, explain why it is relevant and where to cite it
-"""
-            agent_output = self.run_agent("researcher", selection_prompt, timeout=900)
-
-            # Step 4: Parse selection, fetch BibTeX, write to bib
-            selected = parse_agent_selection(agent_output, all_candidates)
-            if selected:
-                bib_path = str(self.latex_dir / "references.bib")
-                added_keys = append_papers_to_bib(bib_path, selected)
-                self.log_step(f"  Added {len(added_keys)} citations: {added_keys}", "success")
-                update_literature_yaml(
-                    str(self.literature_file), selected, added_keys, agent_output
-                )
+            # Re-read Deep Research report and re-bootstrap any missing citations
+            deep_research_file = self.state_dir / "deep_research.md"
+            if deep_research_file.exists():
+                self.log_step("  Re-reading Deep Research report for additional citations...", "progress")
+                self._bootstrap_citations_from_deep_research()
             else:
-                self.log_step(f"  Researcher selected no papers for {issue.get('id')}", "warning")
+                self.log_step("  No Deep Research report available, skipping", "warning")
 
             issue["status"] = "completed"
             with self._action_plan_lock:
@@ -1047,12 +972,15 @@ After each round of changes:
                 if isinstance(entry, dict):
                     title = entry.get("title", "")
                     bibtex_key = entry.get("bibtex_key", entry.get("key", entry.get("cite_key", "")))
-                    summary = entry.get("summary", entry.get("abstract", ""))
+                    abstract = entry.get("abstract", entry.get("summary", ""))
+                    venue = entry.get("venue", "")
+                    year = entry.get("year", "")
                     if title:
                         cite_str = f" (cite: \\cite{{{bibtex_key}}})" if bibtex_key else ""
-                        lines.append(f"- **{title}**{cite_str}")
-                        if summary:
-                            lines.append(f"  {summary[:200]}")
+                        venue_str = f" [{venue} {year}]" if venue else ""
+                        lines.append(f"- **{title}**{cite_str}{venue_str}")
+                        if abstract:
+                            lines.append(f"  Abstract: {abstract[:400]}")
                 elif isinstance(entry, str):
                     lines.append(f"- {entry}")
 
@@ -1070,9 +998,8 @@ After each round of changes:
             if len(lines) > 1:
                 lines.append(f"\nPlease cite these references in Related Work and other appropriate sections.")
                 lines.append(f"BibTeX entries are in {self.config.get('latex_dir', 'Latex')}/references.bib, please use \\cite{{}} to cite.")
-                lines.append(f"\nIMPORTANT: [NEEDS-CHECK] papers could not be automatically verified in academic databases. "
-                             f"Use your judgment based on the Deep Research report context — cite them if they are important to the paper. "
-                             f"For each [NEEDS-CHECK] citation you use, add \\textcolor{{red}}{{[NEEDS-CHECK]}} right after the \\cite{{}} command in the LaTeX source.")
+                lines.append(f"\nDo NOT remove existing \\cite{{}} commands. When revising, only add or modify — never delete existing citations.")
+                lines.append(f"\n[NEEDS-CHECK] papers are treated as normal citations. Use them where appropriate based on content relevance.")
                 return "\n".join(lines)
             return ""
         except Exception:

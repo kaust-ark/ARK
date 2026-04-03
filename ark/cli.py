@@ -4044,40 +4044,71 @@ Generate action_plan.yaml. Classify issues — use LITERATURE_REQUIRED for citat
             pass
 
     if lit_issues:
-        print(f"  Planner requested {len(lit_issues)} literature tasks\n")
-        for issue in lit_issues:
-            queries = extract_search_queries(
-                issue.get("title", ""), issue.get("description", "")
-            )
-            candidates = []
-            for q in queries[:3]:
-                candidates.extend(search_papers(q, max_results=10))
-            # Dedup
-            seen2 = set()
-            unique2 = []
-            for p in candidates:
-                key = p.doi or p.title.lower()[:60]
-                if key not in seen2:
-                    seen2.add(key)
-                    unique2.append(p)
-            candidates = unique2[:15]
+        print(f"  Planner requested {len(lit_issues)} literature tasks")
+        print("  Re-reading Deep Research report for additional citations...\n")
+        # Re-bootstrap from Deep Research (same as Round 1, skips already-added papers)
+        if deep_research_file.exists():
+            report_text = deep_research_file.read_text()
+            if len(report_text) > 15000:
+                report_text = report_text[:15000] + "\n\n... (truncated)"
 
-            if candidates:
-                ctext = format_candidates_for_agent(candidates)
-                out = run_agent("researcher", f"""
-## Reviewer request: {issue.get('title')}
-{issue.get('description', '')}
+            extract_prompt2 = f"""Read the following research report and extract ALL academic papers mentioned in it.
 
-## Candidate Papers
-{ctext}
+For each paper, return a JSON object with these fields:
+- "title": the paper's actual full title
+- "authors": first author surname (e.g. "Vaswani")
+- "year": publication year as integer (e.g. 2017)
+- "query": a search query to find it (title + author + year)
 
-SELECTED: (pick relevant ones)
-""")
-                sel = parse_agent_selection(out, candidates)
-                if sel:
-                    added = append_papers_to_bib(bib_path, sel)
-                    update_literature_yaml(literature_path, sel, added, out)
-                    print(f"  Added {len(added)} more citations: {added}")
+Return a JSON array. Example:
+[
+  {{"title": "Attention Is All You Need", "authors": "Vaswani", "year": 2017, "query": "Attention Is All You Need Vaswani 2017"}}
+]
+
+Rules:
+- "title" must be the paper's actual full title
+- Do NOT include book titles, dataset names, or tool names
+- Do NOT invent papers not mentioned in the report
+- If no papers are mentioned, return []
+
+## Research Report
+
+{report_text}
+"""
+            agent_out2 = run_agent("researcher", extract_prompt2, timeout=300)
+
+            import json as _json2
+            papers_info2 = []
+            text2 = agent_out2.strip()
+            if "```" in text2:
+                _m2 = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text2, re.DOTALL)
+                if _m2:
+                    text2 = _m2.group(1).strip()
+            start2 = text2.find("[")
+            end2 = text2.rfind("]")
+            if start2 != -1 and end2 != -1 and end2 > start2:
+                try:
+                    parsed2 = _json2.loads(text2[start2:end2 + 1])
+                    if isinstance(parsed2, list) and parsed2 and isinstance(parsed2[0], dict):
+                        papers_info2 = [
+                            {"title": p.get("title", ""), "query": p.get("query", p.get("title", "")),
+                             "authors": p.get("authors", ""), "year": p.get("year", 0)}
+                            for p in parsed2 if isinstance(p, dict) and p.get("title")
+                        ]
+                except _json2.JSONDecodeError:
+                    pass
+
+            if papers_info2:
+                titles2 = [p["title"] for p in papers_info2]
+                queries2 = [p["query"] for p in papers_info2]
+                authors2 = [p.get("authors", "") for p in papers_info2]
+                years2 = [p.get("year", 0) for p in papers_info2]
+                result2 = bootstrap_citations(titles2, bib_path, literature_path,
+                                              search_queries=queries2, authors=authors2, years=years2)
+                if result2.found_keys:
+                    print(f"  Added {len(result2.found_keys)} more citations: {result2.found_keys}")
+        else:
+            print("  No Deep Research report available")
 
     # Writer fixes based on review
     print("\n  Writer revising based on review...")
@@ -4085,6 +4116,7 @@ SELECTED: (pick relevant ones)
 Read auto_research/state/latest_review.md and revise the paper.
 Focus on citation-related issues. Use \\cite{{key}} with keys in references.bib.
 Do NOT modify references.bib.
+Do NOT remove existing \\cite{{}} commands — only add or modify, never delete existing citations.
 """, timeout=1200)
 
     # Final verify
