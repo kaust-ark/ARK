@@ -114,7 +114,9 @@ def build_research_query(config: dict) -> str:
 
     query_parts.append(
         "\nProvide the output as a well-structured research report in Markdown. "
-        "For every paper you reference, always include: full paper title, first author surname, year, and venue. "
+        "For every paper you reference, always include: the EXACT paper title as it appears on the publication, "
+        "first author surname, year, and venue. "
+        "Do NOT paraphrase or reconstruct paper titles from memory — use the exact title. "
         "Do NOT use only abbreviations (e.g. write 'Time-series Generative Adversarial Networks (TimeGAN) by Yoon et al., 2019, NeurIPS' "
         "instead of just 'TimeGAN'). This is critical for automated citation retrieval. "
         "Do NOT include BibTeX entries — they will be fetched separately."
