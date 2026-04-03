@@ -701,15 +701,17 @@ For each paper, return a JSON object with these fields:
 - "authors": first author surname (e.g. "Vaswani")
 - "year": publication year as integer (e.g. 2017)
 - "query": a search query to find it (title + author + year)
+- "context": a 1-2 sentence summary of what the report says about this paper (what it does, why it matters)
 
 Return a JSON array. Example:
 [
-  {{"title": "Attention Is All You Need", "authors": "Vaswani", "year": 2017, "query": "Attention Is All You Need Vaswani 2017"}},
-  {{"title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding", "authors": "Devlin", "year": 2019, "query": "BERT Pre-training Deep Bidirectional Transformers Devlin 2019"}}
+  {{"title": "Attention Is All You Need", "authors": "Vaswani", "year": 2017, "query": "Attention Is All You Need Vaswani 2017", "context": "Introduces the Transformer architecture based solely on attention mechanisms, replacing recurrence and convolutions."}},
+  {{"title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding", "authors": "Devlin", "year": 2019, "query": "BERT Pre-training Deep Bidirectional Transformers Devlin 2019", "context": "Proposes bidirectional pre-training for language representations, achieving SOTA on multiple NLP benchmarks."}}
 ]
 
 Rules:
 - "title" must be the paper's actual full title as it would appear on the paper itself
+- "context" should summarize what the report says about this paper, NOT what you think the paper is about
 - "query" should include the title plus first author surname and year to help search
 - If only an abbreviation is given (e.g. "TimeGAN by Yoon et al., 2019"), infer the full title for "title" and construct a rich "query"
 - Do NOT include book titles, dataset names, or tool names
@@ -732,12 +734,14 @@ Rules:
         queries = [p["query"] for p in papers_info]
         authors_list = [p.get("authors", "") for p in papers_info]
         years_list = [p.get("year", 0) for p in papers_info]
+        contexts_list = [p.get("context", "") for p in papers_info]
         self.log_step(f"Extracted {len(titles)} paper titles, searching APIs...", "progress")
 
         # Step 2: Search APIs and fetch BibTeX (use queries for search, titles for display)
         result = bootstrap_citations(
             titles, bib_path, literature_path,
             search_queries=queries, authors=authors_list, years=years_list,
+            contexts=contexts_list,
         )
 
         # Step 3: Log results
@@ -835,6 +839,7 @@ Rules:
                                 "query": p.get("query", p.get("title", "")),
                                 "authors": p.get("authors", ""),
                                 "year": p.get("year", 0),
+                                "context": p.get("context", ""),
                             }
                             for p in parsed
                             if isinstance(p, dict) and p.get("title")

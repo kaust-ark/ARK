@@ -973,27 +973,37 @@ After each round of changes:
                     title = entry.get("title", "")
                     bibtex_key = entry.get("bibtex_key", entry.get("key", entry.get("cite_key", "")))
                     abstract = entry.get("abstract", entry.get("summary", ""))
+                    context = entry.get("context", "")
                     venue = entry.get("venue", "")
                     year = entry.get("year", "")
+                    importance = entry.get("importance", "")
                     if title:
                         cite_str = f" (cite: \\cite{{{bibtex_key}}})" if bibtex_key else ""
                         venue_str = f" [{venue} {year}]" if venue else ""
-                        lines.append(f"- **{title}**{cite_str}{venue_str}")
+                        imp_str = " **[MUST CITE]**" if importance == "critical" else ""
+                        lines.append(f"- **{title}**{cite_str}{venue_str}{imp_str}")
                         if abstract:
                             lines.append(f"  Abstract: {abstract[:400]}")
+                        elif context:
+                            lines.append(f"  Context: {context[:400]}")
                 elif isinstance(entry, str):
                     lines.append(f"- {entry}")
 
             # Add [NEEDS-CHECK] citations
             needs_check = lit_data.get("needs_check", [])
             if needs_check:
-                lines.append("\n## [NEEDS-CHECK] Citations (unverified — mark in text)")
+                lines.append("\n## [NEEDS-CHECK] Citations (unverified)")
                 for nc in needs_check:
                     if isinstance(nc, dict):
                         nc_title = nc.get("title", "")
                         nc_key = nc.get("bibtex_key", "")
+                        nc_importance = nc.get("importance", "")
+                        nc_context = nc.get("context", "")
                         if nc_title and nc_key:
-                            lines.append(f"- **{nc_title}** (cite: \\cite{{{nc_key}}}) — **[NEEDS-CHECK]**")
+                            imp_str = " **[MUST CITE]**" if nc_importance == "critical" else ""
+                            lines.append(f"- **{nc_title}** (cite: \\cite{{{nc_key}}}) [NEEDS-CHECK]{imp_str}")
+                            if nc_context:
+                                lines.append(f"  Context: {nc_context[:400]}")
 
             if len(lines) > 1:
                 lines.append(f"\nPlease cite these references in Related Work and other appropriate sections.")

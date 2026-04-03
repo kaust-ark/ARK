@@ -1177,7 +1177,8 @@ def parse_agent_selection(agent_output: str, candidates: list[Paper]) -> list[Pa
 # ═══════════════════════════════════════════════════════════
 
 def update_literature_yaml(literature_path: str, papers: list[Paper],
-                           cite_keys: list[str], agent_output: str) -> None:
+                           cite_keys: list[str], agent_output: str,
+                           contexts: list[str] = None) -> None:
     """Update literature.yaml with newly added citations for the writer agent."""
     import yaml
     from datetime import datetime
@@ -1197,9 +1198,10 @@ def update_literature_yaml(literature_path: str, papers: list[Paper],
 
     existing_titles = {r.get("title", "").lower() for r in data["references"] if isinstance(r, dict)}
 
-    for paper, key in zip(papers, cite_keys):
+    for idx, (paper, key) in enumerate(zip(papers, cite_keys)):
         if paper.title.lower() in existing_titles:
             continue
+        ctx = (contexts[idx] if contexts and idx < len(contexts) else "") or ""
         entry = {
             "title": paper.title,
             "authors": ", ".join(paper.authors[:3]) + (" et al." if len(paper.authors) > 3 else ""),
@@ -1211,13 +1213,20 @@ def update_literature_yaml(literature_path: str, papers: list[Paper],
         }
         if paper.abstract:
             entry["abstract"] = paper.abstract[:500]
+        # Mark importance based on Deep Research context
+        if ctx:
+            entry["context"] = ctx
+            ctx_lower = ctx.lower()
+            if "must cite" in ctx_lower or "essential" in ctx_lower or "critical" in ctx_lower or "closest prior work" in ctx_lower:
+                entry["importance"] = "critical"
         data["references"].append(entry)
 
     lit_file.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False))
 
 
 def _write_needs_check_to_literature(literature_path: str, titles: list[str],
-                                     cite_keys: list[str] = None) -> None:
+                                     cite_keys: list[str] = None,
+                                     contexts: list[str] = None) -> None:
     """Append [NEEDS-CHECK] entries to literature.yaml for papers not found in any API."""
     import yaml
     from datetime import datetime
@@ -1247,6 +1256,12 @@ def _write_needs_check_to_literature(literature_path: str, titles: list[str],
             }
             if cite_keys and i < len(cite_keys):
                 entry["bibtex_key"] = cite_keys[i]
+            ctx = (contexts[i] if contexts and i < len(contexts) else "") or ""
+            if ctx:
+                entry["context"] = ctx
+                ctx_lower = ctx.lower()
+                if "must cite" in ctx_lower or "essential" in ctx_lower or "critical" in ctx_lower or "closest prior work" in ctx_lower:
+                    entry["importance"] = "critical"
             data["needs_check"].append(entry)
 
     lit_file.write_text(yaml.dump(data, allow_unicode=True, default_flow_style=False))
@@ -1271,6 +1286,7 @@ def bootstrap_citations(
     search_queries: list[str] = None,
     authors: list[str] = None,
     years: list = None,
+    contexts: list[str] = None,
 ) -> BootstrapResult:
     """Given a list of paper titles, search APIs, fetch BibTeX, write to bib.
 
@@ -1290,9 +1306,11 @@ def bootstrap_citations(
     """
     found_papers = []
     found_keys = []
+    found_contexts = []
     needs_check_titles = []
     needs_check_authors = []
     needs_check_years = []
+    needs_check_contexts = []
 
     for i, title in enumerate(titles):
         title = title.strip()
@@ -1315,13 +1333,20 @@ def bootstrap_citations(
                 paper = _search_by_title(keywords)
 
         if paper:
+            # Use Deep Research context as fallback abstract if API didn't provide one
+            ctx = (contexts[i] if contexts and i < len(contexts) else "") or ""
+            if not paper.abstract and ctx:
+                paper.abstract = ctx
             found_papers.append(paper)
+            found_contexts.append(ctx)
         else:
             needs_check_titles.append(title)
             nc_author = (authors[i] if authors and i < len(authors) else "") or ""
             nc_year = (years[i] if years and i < len(years) else 0) or 0
+            nc_ctx = (contexts[i] if contexts and i < len(contexts) else "") or ""
             needs_check_authors.append(nc_author)
             needs_check_years.append(nc_year)
+            needs_check_contexts.append(nc_ctx)
 
     # Fetch BibTeX and write to references.bib
     if found_papers:
@@ -1336,9 +1361,11 @@ def bootstrap_citations(
 
     # Update literature.yaml (found papers + needs-check)
     if found_papers and found_keys:
-        update_literature_yaml(literature_path, found_papers, found_keys, "")
+        update_literature_yaml(literature_path, found_papers, found_keys, "",
+                               contexts=found_contexts)
     if needs_check_titles:
-        _write_needs_check_to_literature(literature_path, needs_check_titles, needs_check_keys)
+        _write_needs_check_to_literature(literature_path, needs_check_titles, needs_check_keys,
+                                         needs_check_contexts)
 
     return BootstrapResult(
         found=found_papers,
@@ -1358,27 +1385,44 @@ def _search_by_title(title: str) -> Paper | None:
     def _matches(paper: Paper) -> bool:
         return title_similarity(title, paper.title) >= _SIMILARITY_THRESHOLD
 
-    # Try DBLP first
+    # Try DBLP first — prefer published over preprint if both match
     dblp_results = _search_dblp(title, max_results=5)
     time.sleep(_DBLP_DELAY)
-    for p in dblp_results:
-        if _matches(p):
-            return p
+    dblp_matches = [p for p in dblp_results if _matches(p)]
+    if dblp_matches:
+        # Prefer published version
+        published = [p for p in dblp_matches if _is_published(p)]
+        best = published[0] if published else dblp_matches[0]
+        if not best.abstract:
+            _supplement_abstract(best)
+        return best
 
     # Try CrossRef
     cr_results = _search_crossref(title, max_results=3)
     time.sleep(_CROSSREF_DELAY)
     for p in cr_results:
         if _matches(p):
+            if not p.abstract:
+                _supplement_abstract(p)
             return p
 
-    # Try Semantic Scholar (has good title matching)
+    # Try Semantic Scholar (has good title matching + abstract)
     s2_results = _search_semantic_scholar(title, max_results=3)
     for p in s2_results:
         if _matches(p):
             return p
 
     return None
+
+
+def _supplement_abstract(paper: Paper) -> None:
+    """Try to get abstract from Semantic Scholar for a paper that lacks one."""
+    s2_results = _search_semantic_scholar(paper.title, max_results=1)
+    if s2_results and title_similarity(paper.title, s2_results[0].title) >= _SIMILARITY_THRESHOLD:
+        if s2_results[0].abstract:
+            paper.abstract = s2_results[0].abstract
+        if s2_results[0].citation_count and not paper.citation_count:
+            paper.citation_count = s2_results[0].citation_count
 
 
 def _extract_keywords_from_title(title: str) -> str:
@@ -1428,17 +1472,13 @@ def mark_needs_check_in_tex(bib_path: str, tex_dir: str) -> int:
 
         for key in needs_check_keys:
             # Match \cite{key}, \citep{key}, \citet{key} not already followed by marker
-            for pattern in [
-                rf"(\\cite\{{{key}\}})(?!\s*\\textcolor)",
-                rf"(\\citep\{{{key}\}})(?!\s*\\textcolor)",
-                rf"(\\citet\{{{key}\}})(?!\s*\\textcolor)",
-            ]:
-                replacement = rf"\1{marker}"
-                new_content, count = re.subn(pattern, replacement, new_content)
+            for cite_cmd in ["cite", "citep", "citet"]:
+                pattern = rf"(\\{cite_cmd}\{{{key}\}})(?!\s*\\textcolor)"
+                # Use a function replacement to avoid \t interpretation issues
+                def _add_marker(m, _marker=marker):
+                    return m.group(1) + _marker
+                new_content, count = re.subn(pattern, _add_marker, new_content)
                 marked += count
-
-            # Also handle \cite{a,key,b} — key inside multi-cite
-            # This is harder; for now just handle the simple cases above
 
         if new_content != content:
             tex_file.write_text(new_content)
