@@ -53,15 +53,16 @@
 - Need: stricter post-compilation visual checks — compare rendered PDF region against template spec
 - Consider: pixel-level overlap detection for text/figure collisions
 
-### [ ] Citation authenticity & hallucination
-- LLM-generated references are frequently hallucinated (wrong author, wrong year, non-existent papers)
-- Current pipeline has no citation verification step
-- Need: post-write citation verification phase
-  - Cross-check each `\cite{}` entry against Semantic Scholar / CrossRef / Google Scholar API
-  - Verify: title exists, authors match, year matches, DOI resolves
-  - Flag or remove unverifiable citations
-- Need: researcher agent should provide real BibTeX entries from actual database queries, not LLM memory
-- Consider: mandatory `references.bib` sourced exclusively from API-fetched entries
+### [x] Citation authenticity & hallucination
+- Implemented API-first citation system (`ark/citation.py`)
+- LLM never writes BibTeX — all entries fetched from DBLP / CrossRef official APIs
+- Search cascade: DBLP → CrossRef → arXiv → Semantic Scholar
+- Researcher agent selects papers from API-verified candidate list only
+- Per-iteration verification: every review cycle re-verifies `references.bib`
+- Dual-source cross-confirmation (DBLP + CrossRef)
+- Preprint → published version auto-upgrade
+- Unused citation cleanup (removes uncited entries from `.bib`)
+- CLI tools: `ark cite-check`, `ark cite-search`, `ark cite-debug`
 
 ### [ ] Table formatting
 - Tables can overflow column/page width in two-column venues

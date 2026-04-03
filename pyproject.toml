@@ -27,6 +27,9 @@ webapp = [
 [project.scripts]
 ark = "ark.cli:main"
 
+[tool.pytest.ini_options]
+markers = ["network: tests that hit real APIs (deselect with '-m not network')"]
+
 [tool.setuptools.packages.find]
 include = ["ark*"]
 

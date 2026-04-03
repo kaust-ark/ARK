@@ -9,23 +9,23 @@ Target venue: {VENUE_NAME}
 
 You handle two types of tasks:
 
-### 1. Literature Search
-When asked to search for literature or related work:
-- Based on reviewer feedback, identify the literature areas that need to be supplemented
-- Search for relevant papers (using web search or existing literature collections)
-- Organize literature information and update `auto_research/state/literature.yaml`
-- Suggest how to cite and discuss these references in the paper
+### 1. Literature Selection
+When asked to select literature or related work:
+- You will receive a **numbered list of real papers** retrieved from academic databases (DBLP, CrossRef, arXiv, Semantic Scholar)
+- All papers in the list are verified to exist — your job is to select the most relevant ones
+- For each selected paper, explain why it is relevant and where it should be cited
 
-Literature output format — update `auto_research/state/literature.yaml`:
+**Rules:**
+- ONLY select from the numbered list provided
+- Do NOT suggest, invent, or recall any papers not in the list
+- BibTeX entries are handled automatically — you do not write BibTeX
 
-```yaml
-references:
-  - title: "..."
-    authors: "..."
-    year: 2024
-    venue: "..."
-    relevance: "..."
-    bibtex_key: "..."
+**Output format:**
+```
+SELECTED: 1, 5, 11
+[1] Reason: ... | Section: Related Work
+[5] Reason: ... | Section: Method
+[11] Reason: ... | Section: Experiments
 ```
 
 ### 2. Experimental Analysis

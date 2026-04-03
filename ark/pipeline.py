@@ -153,6 +153,9 @@ class PipelineMixin:
             self.log_step_header(step_num, total_steps, "Compile LaTeX", "end")
             self.save_step_checkpoint(step_num, "Compile LaTeX")
 
+        # Citation Verification & Cleanup (runs every iteration)
+        self._run_citation_verification()
+
         # Convert PDF to images for visual review
         page_images = self._maybe_generate_page_images()
         visual_review_section = ""
@@ -658,7 +661,193 @@ Notes:
                 self.telegram.send(f"Deep Research failed: {str(e)[:200]} — continuing without it.")
 
         self.log("", "RAW")
+
+        # Step 2: Extract citations from Deep Research report
+        self._bootstrap_citations_from_deep_research()
+
         self.log_section("Research Phase Complete")
+
+    # ==================== Citation Bootstrapping ====================
+
+    def _bootstrap_citations_from_deep_research(self):
+        """Extract paper titles from Deep Research report via LLM, then fetch BibTeX via API.
+
+        1. LLM reads the report and extracts paper titles as JSON list
+        2. Each title is searched via DBLP/CrossRef/arXiv/S2
+        3. Found papers get official BibTeX written to references.bib
+        4. Not-found titles get a keyword retry, then [NEEDS-CHECK] + Telegram notification
+        """
+        from ark.citation import bootstrap_citations
+
+        deep_research_file = self.state_dir / "deep_research.md"
+        if not deep_research_file.exists():
+            return
+
+        bib_path = str(self.latex_dir / "references.bib")
+        literature_path = str(self.state_dir / "literature.yaml")
+
+        self.log_step("Extracting citations from Deep Research report...", "progress")
+
+        # Step 1: LLM extracts paper titles from the report
+        report_text = deep_research_file.read_text()
+        # Truncate if very long to stay within context limits
+        if len(report_text) > 15000:
+            report_text = report_text[:15000] + "\n\n... (truncated)"
+
+        extract_prompt = f"""Read the following research report and extract ALL academic papers mentioned in it.
+
+For each paper, return a JSON object with these fields:
+- "title": the paper's actual full title
+- "authors": first author surname (e.g. "Vaswani")
+- "year": publication year as integer (e.g. 2017)
+- "query": a search query to find it (title + author + year)
+
+Return a JSON array. Example:
+[
+  {{"title": "Attention Is All You Need", "authors": "Vaswani", "year": 2017, "query": "Attention Is All You Need Vaswani 2017"}},
+  {{"title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding", "authors": "Devlin", "year": 2019, "query": "BERT Pre-training Deep Bidirectional Transformers Devlin 2019"}}
+]
+
+Rules:
+- "title" must be the paper's actual full title as it would appear on the paper itself
+- "query" should include the title plus first author surname and year to help search
+- If only an abbreviation is given (e.g. "TimeGAN by Yoon et al., 2019"), infer the full title for "title" and construct a rich "query"
+- Do NOT include book titles, dataset names, or tool names
+- Do NOT invent papers not mentioned in the report
+- If no papers are mentioned, return []
+
+## Research Report
+
+{report_text}
+"""
+        agent_output = self.run_agent("researcher", extract_prompt, timeout=300)
+
+        # Parse the JSON array from agent output
+        papers_info = self._parse_paper_info_list(agent_output)
+        if not papers_info:
+            self.log_step("No paper titles extracted from Deep Research report", "warning")
+            return
+
+        titles = [p["title"] for p in papers_info]
+        queries = [p["query"] for p in papers_info]
+        authors_list = [p.get("authors", "") for p in papers_info]
+        years_list = [p.get("year", 0) for p in papers_info]
+        self.log_step(f"Extracted {len(titles)} paper titles, searching APIs...", "progress")
+
+        # Step 2: Search APIs and fetch BibTeX (use queries for search, titles for display)
+        result = bootstrap_citations(
+            titles, bib_path, literature_path,
+            search_queries=queries, authors=authors_list, years=years_list,
+        )
+
+        # Step 3: Log results
+        if result.found_keys:
+            self.log_step(f"Added {len(result.found_keys)} citations to references.bib", "success")
+
+        if result.needs_check:
+            self.log_step(f"{len(result.needs_check)} papers not found in any database", "warning")
+            # Telegram notification
+            self.send_notification(
+                "Citation Check",
+                f"Deep Research mentioned {len(result.needs_check)} paper(s) not found in academic databases:\n"
+                + "\n".join(f"- {t}" for t in result.needs_check[:10]),
+                priority="warning",
+            )
+
+        # Summary
+        total = len(titles)
+        found = len(result.found_keys)
+        missing = len(result.needs_check)
+        self.log_step(f"Citation bootstrap: {found}/{total} found, {missing} needs-check", "success")
+
+    def _parse_title_list(self, agent_output: str) -> list:
+        """Parse a JSON array of paper titles from LLM output.
+
+        Handles cases where the LLM wraps JSON in markdown code blocks.
+        """
+        import json
+
+        if not agent_output:
+            return []
+
+        text = agent_output.strip()
+
+        # Strip markdown code block if present
+        if "```" in text:
+            # Extract content between ``` markers
+            import re
+            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+            if match:
+                text = match.group(1).strip()
+
+        # Try to find a JSON array in the text
+        # Look for the first [ ... ] block
+        start = text.find("[")
+        end = text.rfind("]")
+        if start != -1 and end != -1 and end > start:
+            try:
+                titles = json.loads(text[start:end + 1])
+                if isinstance(titles, list):
+                    return [t for t in titles if isinstance(t, str) and len(t) > 5]
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: try line-by-line parsing (one title per line)
+        titles = []
+        for line in text.split("\n"):
+            line = line.strip().strip("-").strip("*").strip('"').strip("'").strip()
+            if len(line) > 10 and not line.startswith(("{", "[", "#", "//")):
+                titles.append(line)
+
+        return titles
+
+    def _parse_paper_info_list(self, agent_output: str) -> list:
+        """Parse a JSON array of {title, query} objects from LLM output.
+
+        Falls back to _parse_title_list if the output is a flat string array.
+        """
+        import json
+
+        if not agent_output:
+            return []
+
+        text = agent_output.strip()
+
+        # Strip markdown code block if present
+        if "```" in text:
+            import re
+            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+            if match:
+                text = match.group(1).strip()
+
+        # Try to find a JSON array
+        start = text.find("[")
+        end = text.rfind("]")
+        if start != -1 and end != -1 and end > start:
+            try:
+                parsed = json.loads(text[start:end + 1])
+                if isinstance(parsed, list):
+                    # Check if it's [{title, query}, ...] or ["string", ...]
+                    if parsed and isinstance(parsed[0], dict):
+                        return [
+                            {
+                                "title": p.get("title", ""),
+                                "query": p.get("query", p.get("title", "")),
+                                "authors": p.get("authors", ""),
+                                "year": p.get("year", 0),
+                            }
+                            for p in parsed
+                            if isinstance(p, dict) and p.get("title")
+                        ]
+                    elif parsed and isinstance(parsed[0], str):
+                        # Fallback: flat string list, use as both title and query
+                        return [{"title": s, "query": s} for s in parsed if isinstance(s, str) and len(s) > 5]
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: use _parse_title_list
+        titles = self._parse_title_list(agent_output)
+        return [{"title": t, "query": t} for t in titles]
 
     # ==================== Dev Phase (Experiment-First) ====================
 
@@ -1373,3 +1562,75 @@ Produce the complete paper. Do not stop until all sections are written and it co
                 priority="critical",
             )
         self.log(f"Total iterations: {self.iteration}", "RAW")
+
+    # ═══════════════════════════════════════════════════════════
+    #  Citation Verification (runs every iteration)
+    # ═══════════════════════════════════════════════════════════
+
+    def _run_citation_verification(self):
+        """Verify references.bib entries against DBLP/CrossRef, fix errors, clean unused."""
+        from ark.citation import verify_bib, fix_bib, cleanup_unused, mark_needs_check_in_tex
+
+        bib_path = self.latex_dir / "references.bib"
+        if not bib_path.exists():
+            return
+
+        bib_str = str(bib_path)
+        self.log_step("Citation verification...", "progress")
+
+        try:
+            # 1. Verify each entry
+            results = verify_bib(bib_str)
+            if not results:
+                return
+
+            needs_check = [r for r in results if r.status == "NEEDS-CHECK"]
+            corrected = [r for r in results if r.status == "CORRECTED"]
+            single_src = [r for r in results if r.status == "SINGLE_SOURCE"]
+            verified = [r for r in results if r.status == "VERIFIED"]
+
+            # 2. Apply fixes (overwrite corrected, tag needs-check)
+            if corrected or needs_check:
+                fix_bib(bib_str, results)
+
+            # 3. Clean up unused entries
+            tex_dir = str(self.latex_dir)
+            removed = cleanup_unused(bib_str, tex_dir)
+
+            # 4. Log summary
+            summary = []
+            if verified:
+                summary.append(f"{len(verified)} verified")
+            if single_src:
+                summary.append(f"{len(single_src)} single-source")
+            if corrected:
+                summary.append(f"{len(corrected)} corrected")
+            if needs_check:
+                summary.append(f"{len(needs_check)} needs-check")
+            if removed:
+                summary.append(f"{len(removed)} unused removed")
+
+            if summary:
+                self.log_step(f"Citations: {', '.join(summary)}", "success")
+
+            # 5. Notify user about needs-check entries
+            if needs_check:
+                self.send_notification(
+                    "Citation Check",
+                    f"{len(needs_check)} citation(s) not confirmed:\n"
+                    + "\n".join(f"- {r.entry_key}: {r.details}" for r in needs_check[:5]),
+                    priority="warning",
+                )
+
+            # 6. Mark [NEEDS-CHECK] citations in tex source
+            marked = mark_needs_check_in_tex(bib_str, tex_dir)
+            if marked:
+                self.log_step(f"Marked {marked} [NEEDS-CHECK] citation(s) in tex", "success")
+
+            # 7. Recompile if anything changed
+            if corrected or removed or marked:
+                self.log_step("Recompiling after citation fixes...", "progress")
+                self.compile_latex()
+
+        except Exception as e:
+            self.log(f"Citation verification error: {e}", "WARN")

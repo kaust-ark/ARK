@@ -57,6 +57,7 @@ Give it a research idea and a target venue. ARK handles the rest.
 | **Compute** | Slurm &bull; Local &bull; AWS &bull; GCP &bull; Azure | Run experiments anywhere |
 | **Deep Research** | Gemini Deep Research integration | Literature survey before writing starts |
 | **Nano Banana** | AI figure generation | Concept diagrams via Gemini image models |
+| **Citation Integrity** | API-first citations &bull; dual-source verification | DBLP/CrossRef — LLM never writes BibTeX |
 | **Smart Recovery** | Checkpoint/resume &bull; meta-debug &bull; self-repair | Handles LaTeX errors, experiment failures |
 | **Cost Tracking** | Per-iteration and cumulative reports | Know exactly what each iteration costs |
 
@@ -253,7 +254,7 @@ See [TODO.md](TODO.md) for the full list. Highlights:
 - **Cloud compute verification** — AWS/GCP/Azure compute backends exist but are not yet end-to-end validated
 - **Edge & custom environments** — support air-gapped HPC, Jetson, limited-connectivity labs
 - **Figure layout quality** — column overflow, font size mismatch, subplot alignment issues
-- **Citation authenticity** — LLM-generated references can be hallucinated; need post-write verification against Semantic Scholar / CrossRef
+- **Citation integrity** — API-first citation system (DBLP/CrossRef), LLM never writes BibTeX, per-iteration verification
 - **Integration testing** — no end-to-end pipeline test yet
 
 ## License

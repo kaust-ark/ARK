@@ -48,34 +48,96 @@ class ExecutionMixin:
         return set()
 
     def run_literature_search(self, topics: list) -> str:
-        """Run literature search on given topics."""
-        self.log_step(f"Literature search: {topics}", "progress")
+        """Run API-first literature search on given topics.
 
-        topic_prompts = self.config.get("literature_search_prompts", {})
+        1. Extract search queries from topics
+        2. Search academic databases (DBLP/CrossRef/arXiv/S2)
+        3. Have researcher agent select relevant papers from candidates
+        4. Fetch official BibTeX and write to references.bib
+        5. Update literature.yaml for writer reference
+        """
+        from ark.citation import (
+            search_papers, extract_search_queries, format_candidates_for_agent,
+            parse_agent_selection, fetch_bibtex, append_papers_to_bib,
+            update_literature_yaml,
+        )
 
-        combined_prompt = "Please conduct the following literature survey:\n\n"
+        self.log_step(f"Literature search (API-first): {topics}", "progress")
+
+        bib_path = str(self.latex_dir / "references.bib")
+        literature_path = str(self.literature_file)
+        paper_title = self.config.get("title", self.project_name)
+        research_idea = self.config.get("research_idea", "")
+
+        # Gather candidates from all topics
+        all_candidates = []
         for topic in topics:
-            if topic in topic_prompts:
-                combined_prompt += f"## {topic}\n{topic_prompts[topic]}\n\n"
+            topic_prompts = self.config.get("literature_search_prompts", {})
+            description = topic_prompts.get(topic, topic)
+            queries = extract_search_queries(topic, description)
+            self.log_step(f"  Searching: {queries[:3]}", "progress")
+            for q in queries[:3]:
+                results = search_papers(q, max_results=10)
+                all_candidates.extend(results)
 
-        combined_prompt += """
-When done, save important findings to auto_research/state/literature.yaml
-Format:
-```yaml
-searches:
-  - date: "YYYY-MM-DD"
-    topic: "topic_name"
-    findings:
-      - title: "Paper/document title"
-        source: "URL or citation"
-        relevance: "Relation to our work"
-        key_points: ["Key point 1", "Key point 2"]
-    action_items:
-      - "Papers to cite"
-      - "Methods to compare"
-```
+        if not all_candidates:
+            self.log_step("No papers found from academic databases", "warning")
+            return ""
+
+        # Deduplicate
+        seen = set()
+        unique = []
+        for p in all_candidates:
+            key = p.doi or p.title.lower()[:60]
+            if key not in seen:
+                seen.add(key)
+                unique.append(p)
+        all_candidates = unique[:15]
+
+        self.log_step(f"  Found {len(all_candidates)} candidate papers", "progress")
+
+        # Researcher agent selects relevant papers
+        candidates_text = format_candidates_for_agent(all_candidates)
+        selection_prompt = f"""
+## Paper Background
+Title: {paper_title}
+Research idea: {research_idea}
+
+## Candidate Papers (from academic databases — all are real, verified papers)
+
+{candidates_text}
+
+## Your Task
+
+Select the papers most relevant to our research from the list above.
+
+Output format:
+SELECTED: 1, 5, 11
+[1] Reason: ... | Section: Related Work
+[5] Reason: ... | Section: Method
+[11] Reason: ... | Section: Experiments
+
+Rules:
+- ONLY select from the numbered list above
+- Do NOT suggest any papers not in the list
+- For each selected paper, explain why it is relevant and where to cite it
 """
-        return self.run_agent("researcher", combined_prompt, timeout=1800)
+        agent_output = self.run_agent("researcher", selection_prompt, timeout=900)
+
+        # Parse selection and write BibTeX
+        selected = parse_agent_selection(agent_output, all_candidates)
+        if not selected:
+            self.log_step("Researcher selected no papers", "warning")
+            return agent_output
+
+        self.log_step(f"  Researcher selected {len(selected)} papers, fetching BibTeX...", "progress")
+        added_keys = append_papers_to_bib(bib_path, selected)
+        self.log_step(f"  Added {len(added_keys)} citations to references.bib: {added_keys}", "success")
+
+        # Update literature.yaml
+        update_literature_yaml(literature_path, selected, added_keys, agent_output)
+
+        return agent_output
 
     def run_planner_cycle(self, review_output: str) -> bool:
         """Planner-driven iteration cycle (planning + execution).
@@ -340,7 +402,18 @@ Please read auto_research/state/latest_review.md and regenerate.
             self._action_plan_lock = threading.Lock()
 
         def _run_literature_issue(issue):
-            """Execute a single literature issue."""
+            """Execute a single literature issue using API-first citation flow.
+
+            1. Extract search queries from issue title/description
+            2. Search DBLP/CrossRef/arXiv/S2 for real papers
+            3. Researcher agent selects relevant papers from candidates
+            4. Fetch official BibTeX and write to references.bib
+            """
+            from ark.citation import (
+                search_papers, extract_search_queries, format_candidates_for_agent,
+                parse_agent_selection, append_papers_to_bib, update_literature_yaml,
+            )
+
             if self._quota_exhausted:
                 return
             searched = self._get_searched_lit_topics()
@@ -351,24 +424,85 @@ Please read auto_research/state/latest_review.md and regenerate.
                 with self._action_plan_lock:
                     self._save_action_plan(action_plan)
                 return
-            self.log_step(f"Literature: {issue.get('id')} - {issue.get('title', '')[:30]}", "progress")
+            self.log_step(f"Literature (API-first): {issue.get('id')} - {issue.get('title', '')[:30]}", "progress")
             issue["status"] = "in_progress"
             with self._action_plan_lock:
                 self._save_action_plan(action_plan)
 
+            # Step 1: Extract search queries from issue
+            issue_title = issue.get("title", "")
             description = issue.get("description", "")
-            search_task = f"""
-Literature survey task: {issue.get('title')}
+            queries = extract_search_queries(issue_title, description)
+            self.log_step(f"  Search queries: {queries[:3]}", "progress")
 
-Description: {description}
+            # Step 2: Search academic databases
+            all_candidates = []
+            for q in queries[:3]:
+                results = search_papers(q, max_results=10)
+                all_candidates.extend(results)
 
-Please:
-1. Use WebSearch to search for relevant papers and documents
-2. Use WebFetch to retrieve specific content
-3. Extract key information
-4. Update auto_research/state/literature.yaml
+            # Deduplicate
+            seen = set()
+            unique = []
+            for p in all_candidates:
+                key = p.doi or p.title.lower()[:60]
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(p)
+            all_candidates = unique[:15]
+
+            if not all_candidates:
+                self.log_step(f"  No papers found for {issue.get('id')}", "warning")
+                issue["status"] = "completed"
+                with self._action_plan_lock:
+                    self._save_action_plan(action_plan)
+                return
+
+            self.log_step(f"  Found {len(all_candidates)} candidate papers", "progress")
+
+            # Step 3: Researcher agent selects relevant papers
+            paper_title = self.config.get("title", self.project_name)
+            research_idea = self.config.get("research_idea", "")
+            candidates_text = format_candidates_for_agent(all_candidates)
+
+            selection_prompt = f"""
+## Paper Background
+Title: {paper_title}
+Research idea: {research_idea}
+Reviewer request: {issue_title} — {description}
+
+## Candidate Papers (from academic databases — all are real, verified papers)
+
+{candidates_text}
+
+## Your Task
+
+Select the papers most relevant to addressing the reviewer's request.
+
+Output format:
+SELECTED: 1, 5, 11
+[1] Reason: ... | Section: Related Work
+[5] Reason: ... | Section: Method
+
+Rules:
+- ONLY select from the numbered list above
+- Do NOT suggest any papers not in the list
+- For each selected paper, explain why it is relevant and where to cite it
 """
-            self.run_agent("researcher", search_task, timeout=1800)
+            agent_output = self.run_agent("researcher", selection_prompt, timeout=900)
+
+            # Step 4: Parse selection, fetch BibTeX, write to bib
+            selected = parse_agent_selection(agent_output, all_candidates)
+            if selected:
+                bib_path = str(self.latex_dir / "references.bib")
+                added_keys = append_papers_to_bib(bib_path, selected)
+                self.log_step(f"  Added {len(added_keys)} citations: {added_keys}", "success")
+                update_literature_yaml(
+                    str(self.literature_file), selected, added_keys, agent_output
+                )
+            else:
+                self.log_step(f"  Researcher selected no papers for {issue.get('id')}", "warning")
+
             issue["status"] = "completed"
             with self._action_plan_lock:
                 self._save_action_plan(action_plan)
@@ -922,9 +1056,23 @@ After each round of changes:
                 elif isinstance(entry, str):
                     lines.append(f"- {entry}")
 
+            # Add [NEEDS-CHECK] citations
+            needs_check = lit_data.get("needs_check", [])
+            if needs_check:
+                lines.append("\n## [NEEDS-CHECK] Citations (unverified — mark in text)")
+                for nc in needs_check:
+                    if isinstance(nc, dict):
+                        nc_title = nc.get("title", "")
+                        nc_key = nc.get("bibtex_key", "")
+                        if nc_title and nc_key:
+                            lines.append(f"- **{nc_title}** (cite: \\cite{{{nc_key}}}) — **[NEEDS-CHECK]**")
+
             if len(lines) > 1:
                 lines.append(f"\nPlease cite these references in Related Work and other appropriate sections.")
                 lines.append(f"BibTeX entries are in {self.config.get('latex_dir', 'Latex')}/references.bib, please use \\cite{{}} to cite.")
+                lines.append(f"\nIMPORTANT: [NEEDS-CHECK] papers could not be automatically verified in academic databases. "
+                             f"Use your judgment based on the Deep Research report context — cite them if they are important to the paper. "
+                             f"For each [NEEDS-CHECK] citation you use, add \\textcolor{{red}}{{[NEEDS-CHECK]}} right after the \\cite{{}} command in the LaTeX source.")
                 return "\n".join(lines)
             return ""
         except Exception:

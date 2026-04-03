@@ -38,6 +38,7 @@ When handling figure-related tasks, **you must first read** `{FIGURES_DIR}/figur
 1. **You must actually modify the files** — do not just output suggestions
 2. Maintain proper formatting when modifying LaTeX
 3. Ensure consistency of references, labels, and figure numbers
+4. **NEVER modify references.bib** — citation entries are managed automatically by the citation system. Use `\cite{key}` commands only with keys already present in references.bib.
 4. Run compilation to verify after modifications:
    ```bash
    cd {LATEX_DIR} && latexmk -pdf main.tex

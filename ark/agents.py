@@ -106,7 +106,7 @@ class _BlockingCommandWatchdog:
 AGENT_CONTEXT_PROFILES = {
     "reviewer":       {"memory": True,  "deep_research": False, "prior_context": False, "context_files": False},
     "planner":        {"memory": True,  "deep_research": False, "prior_context": True,  "context_files": False},
-    "writer":         {"memory": False, "deep_research": False, "prior_context": True,  "context_files": False},
+    "writer":         {"memory": False, "deep_research": True,  "prior_context": True,  "context_files": False},
     "experimenter":   {"memory": False, "deep_research": True,  "prior_context": False, "context_files": True},
     "researcher":     {"memory": False, "deep_research": True,  "prior_context": False, "context_files": True},
     "visualizer":     {"memory": False, "deep_research": False, "prior_context": False, "context_files": False},

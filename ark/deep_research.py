@@ -113,9 +113,11 @@ def build_research_query(config: dict) -> str:
         )
 
     query_parts.append(
-        "\nProvide the output as a well-structured research report in Markdown, "
-        "with proper citations (author, year, venue) for all referenced papers. "
-        "Include BibTeX entries for the most important references."
+        "\nProvide the output as a well-structured research report in Markdown. "
+        "For every paper you reference, always include: full paper title, first author surname, year, and venue. "
+        "Do NOT use only abbreviations (e.g. write 'Time-series Generative Adversarial Networks (TimeGAN) by Yoon et al., 2019, NeurIPS' "
+        "instead of just 'TimeGAN'). This is critical for automated citation retrieval. "
+        "Do NOT include BibTeX entries — they will be fetched separately."
     )
 
     return "\n".join(query_parts)
