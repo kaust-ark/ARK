@@ -1,10 +1,14 @@
-"""SLURM job submission, polling, and cancellation."""
+"""SLURM job submission, polling, and cancellation; local subprocess fallback."""
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 from jinja2 import Template
@@ -123,3 +127,86 @@ def slurm_state_to_status(slurm_state: str) -> str:
         return "stopped"
     # FAILED, NODE_FAIL, OUT_OF_MEMORY, etc.
     return "failed"
+
+
+# ── Local subprocess runner ────────────────────────────────────────────────────
+
+def launch_local_job(
+    project_id: str,
+    mode: str,
+    max_iterations: int,
+    project_dir: Path,
+    log_dir: Path,
+    settings,
+) -> str:
+    """Launch orchestrator as a local subprocess. Returns 'local:{pid}'."""
+    log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    log_file = log_dir / f"local_{int(time.time())}.out"
+    exit_file = log_dir / "local_exit.txt"
+    exit_file.unlink(missing_ok=True)
+
+    # Build the orchestrator command, preferring the configured conda env.
+    conda_env = getattr(settings, "slurm_conda_env", "") or ""
+    conda_bin = shutil.which("conda") if conda_env else None
+    if conda_bin and conda_env:
+        python_prefix = [conda_bin, "run", "--no-capture-output", "-n", conda_env, "python"]
+    else:
+        python_prefix = [sys.executable]
+
+    cmd = python_prefix + [
+        "-m", "ark.orchestrator",
+        "--project", project_id,
+        "--project-dir", str(project_dir),
+        "--code-dir", str(project_dir),
+        "--mode", mode,
+        "--iterations", str(max_iterations),
+    ]
+
+    # Inline wrapper (uses webapp's Python — only needs subprocess + pathlib).
+    # Runs orchestrator in the correct env, then writes exit code to sentinel.
+    wrapper = (
+        "import subprocess as _s\n"
+        f"_r = _s.run({cmd!r})\n"
+        f"open({str(exit_file)!r}, 'w').write(str(_r.returncode))\n"
+    )
+
+    with open(log_file, "w") as lf:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", wrapper],
+            stdout=lf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            cwd=str(project_dir),
+        )
+
+    return f"local:{proc.pid}"
+
+
+def poll_local_job(pid: int, log_dir: Path) -> str:
+    """Return RUNNING, COMPLETED, or FAILED for a local subprocess job."""
+    try:
+        os.kill(pid, 0)
+        return "RUNNING"
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        return "RUNNING"
+
+    # Process has exited — check sentinel
+    exit_file = Path(log_dir) / "local_exit.txt"
+    if exit_file.exists():
+        code = exit_file.read_text().strip()
+        return "COMPLETED" if code == "0" else "FAILED"
+    return "FAILED"
+
+
+def cancel_local_job(pid: int) -> bool:
+    """Send SIGTERM to the process group of a local job."""
+    try:
+        pgid = os.getpgid(pid)
+        os.killpg(pgid, signal.SIGTERM)
+        return True
+    except Exception:
+        return False

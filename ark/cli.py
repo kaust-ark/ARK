@@ -3119,11 +3119,19 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
     print(f"  DB:  {_c(str(db_path), Colors.DIM)}")
     print()
     print(f"  Manage with:")
-    print(f"    {_c(f'systemctl --user status {svc_name}', Colors.DIM)}")
-    print(f"    {_c(f'systemctl --user restart {svc_name}', Colors.DIM)}")
-    print(f"    {_c(f'journalctl --user -u {svc_name} -f', Colors.DIM)}")
+    print(f"    {_c(f'ark webapp status', Colors.DIM)}")
+    print(f"    {_c(f'ark webapp restart', Colors.DIM)}")
+    print(f"    {_c(f'ark webapp logs -f', Colors.DIM)}")
     print()
-    _check_linger()
+
+    # Auto-enable linger so service persists after logout
+    import pwd as _pwd
+    _user = _pwd.getpwuid(os.getuid()).pw_name
+    _lr = _sp.run(["loginctl", "enable-linger", _user], capture_output=True)
+    if _lr.returncode == 0:
+        print(f"  {_c('Linger enabled', Colors.GREEN)} — service will persist after logout.")
+    else:
+        _check_linger()
 
 
 def _cmd_webapp_uninstall(dev: bool = False):
@@ -3144,6 +3152,36 @@ def _cmd_webapp_uninstall(dev: bool = False):
 
     label = "Dev" if dev else "Prod"
     print(f"  {_c(f'ARK Webapp ({label})', Colors.BOLD)} service stopped and removed.")
+
+
+def _cmd_webapp_status(dev: bool = False):
+    """Show systemd service status for the ARK webapp."""
+    import subprocess as _sp
+    svc = _DEV_SERVICE if dev else _PROD_SERVICE
+    _sp.run(["systemctl", "--user", "status", svc])
+
+
+def _cmd_webapp_logs(dev: bool = False, follow: bool = False, lines: int = 50):
+    """Show service logs via journalctl."""
+    import subprocess as _sp
+    svc = _DEV_SERVICE if dev else _PROD_SERVICE
+    cmd = ["journalctl", "--user", "-u", svc, f"-n{lines}"]
+    if follow:
+        cmd.append("-f")
+    _sp.run(cmd)
+
+
+def _cmd_webapp_restart(dev: bool = False):
+    """Restart the ARK webapp systemd service."""
+    import subprocess as _sp
+    svc = _DEV_SERVICE if dev else _PROD_SERVICE
+    r = _sp.run(["systemctl", "--user", "restart", svc])
+    if r.returncode == 0:
+        label = "Dev" if dev else "Prod"
+        print(f"  {_c(f'ARK Webapp ({label})', Colors.BOLD)} restarted.")
+    else:
+        print(f"  {_c('Error:', Colors.RED)} Failed to restart {svc}. Is it installed?")
+        print(f"  Run: {_c('ark webapp install', Colors.BOLD)}")
 
 
 def _cmd_webapp_release(args):
@@ -3258,6 +3296,16 @@ def cmd_webapp(args):
         return
     if subcmd == 'uninstall':
         _cmd_webapp_uninstall(dev=dev)
+        return
+    if subcmd == 'status':
+        _cmd_webapp_status(dev=dev)
+        return
+    if subcmd == 'logs':
+        _cmd_webapp_logs(dev=dev, follow=getattr(args, 'follow', False),
+                         lines=getattr(args, 'lines', 50))
+        return
+    if subcmd == 'restart':
+        _cmd_webapp_restart(dev=dev)
         return
     if subcmd == 'release':
         _cmd_webapp_release(args)
@@ -3774,6 +3822,14 @@ def main():
     p_install.add_argument("--dev", action="store_true", help="Use dev environment (port 8424, separate DB)")
     p_uninstall = webapp_sub.add_parser("uninstall", help="Stop and remove systemd user service")
     p_uninstall.add_argument("--dev", action="store_true", help="Uninstall dev service")
+    p_svc_status = webapp_sub.add_parser("status", help="Show systemd service status")
+    p_svc_status.add_argument("--dev", action="store_true", help="Show dev service status")
+    p_logs = webapp_sub.add_parser("logs", help="Show/follow service logs (journalctl)")
+    p_logs.add_argument("--dev", action="store_true", help="Show dev service logs")
+    p_logs.add_argument("-f", "--follow", action="store_true", help="Follow log output")
+    p_logs.add_argument("-n", "--lines", type=int, default=50, help="Number of recent lines (default: 50)")
+    p_svc_restart = webapp_sub.add_parser("restart", help="Restart the systemd service")
+    p_svc_restart.add_argument("--dev", action="store_true", help="Restart dev service")
     p_release = webapp_sub.add_parser("release", help="Tag and deploy to prod environment")
     p_release.add_argument("--tag", type=str, default=None, help="Version tag (default: auto-increment)")
     p_webapp.add_argument("--port", type=int, default=8423, help="Port (default: 8423)")

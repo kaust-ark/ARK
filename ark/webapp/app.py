@@ -13,7 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .config import get_settings
 from .db import get_engine
-from .jobs import poll_job, slurm_state_to_status
+from .jobs import poll_job, slurm_state_to_status, launch_local_job, poll_local_job, cancel_local_job
 from .notify import send_completion_email, send_telegram_notify
 from .routes import router
 
@@ -42,10 +42,15 @@ def _advance_pending_queue(session, settings):
     log_dir = pdir / "logs"
     log_dir.mkdir(exist_ok=True)
     try:
-        job_id = submit_job(pending.id, pending.mode, pending.max_iterations,
-                            pdir, log_dir, settings) if slurm_available() else "local"
-        update_project(session, pending, status="queued", slurm_job_id=job_id)
-        logger.info(f"Queue advance: {pending.id} → queued (job {job_id})")
+        if slurm_available():
+            job_id = submit_job(pending.id, pending.mode, pending.max_iterations,
+                                pdir, log_dir, settings)
+            update_project(session, pending, status="queued", slurm_job_id=job_id)
+        else:
+            job_id = launch_local_job(pending.id, pending.mode, pending.max_iterations,
+                                      pdir, log_dir, settings)
+            update_project(session, pending, status="running", slurm_job_id=job_id)
+        logger.info(f"Queue advance: {pending.id} → job {job_id}")
     except Exception as e:
         logger.error(f"Queue advance failed {pending.id}: {e}")
 _stuck_alerted: set[str] = set()     # project_ids already sent stuck alert
@@ -64,12 +69,89 @@ async def _poll_jobs(app: FastAPI):
             with get_session(settings.db_path) as session:
                 projects = get_running_projects(session)
                 for p in projects:
-                    if not p.slurm_job_id or p.slurm_job_id == "local":
+                    if not p.slurm_job_id:
                         continue
-                    slurm_state = poll_job(p.slurm_job_id)
-                    new_status = slurm_state_to_status(slurm_state)
+
                     pdir = settings.projects_root / p.user_id / p.id
                     url = f"{settings.base_url}/#project/{p.id}"
+
+                    # ── Local subprocess job ──────────────────────────────
+                    if p.slurm_job_id.startswith("local:"):
+                        pid_str = p.slurm_job_id[len("local:"):]
+                        if not pid_str.isdigit():
+                            continue
+                        pid = int(pid_str)
+                        local_state = poll_local_job(pid, pdir / "logs")
+                        new_status = slurm_state_to_status(local_state)
+                        if new_status != p.status:
+                            update_project(session, p, status=new_status)
+                            logger.info(f"Local project {p.id}: {p.status} → {new_status}")
+                            if new_status in ("done", "failed", "stopped"):
+                                _advance_pending_queue(session, settings)
+                            if new_status == "done":
+                                score = 0.0
+                                ps = pdir / "auto_research" / "state" / "paper_state.yaml"
+                                if ps.exists():
+                                    import yaml as _yaml
+                                    d = _yaml.safe_load(ps.read_text()) or {}
+                                    score = float(d.get("current_score", 0))
+                                send_telegram_notify(
+                                    f"✅ <b>{p.name}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
+                                    bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                                )
+                                user = get_user(session, p.user_id)
+                                if user:
+                                    pdf_files = sorted(
+                                        (pdir / "paper").glob("*.pdf"),
+                                        key=lambda x: x.stat().st_mtime,
+                                        reverse=True,
+                                    )
+                                    pdf_path = str(pdf_files[0]) if pdf_files else None
+                                    send_completion_email(
+                                        settings,
+                                        to_email=user.email,
+                                        project_name=p.name,
+                                        score=score,
+                                        pdf_path=pdf_path,
+                                        project_url=url,
+                                    )
+                                _log_mtimes.pop(p.id, None)
+                                _stuck_alerted.discard(p.id)
+                            elif new_status in ("failed", "stopped"):
+                                send_telegram_notify(
+                                    f"❌ <b>{p.name}</b> {new_status}\n<a href='{url}'>{url}</a>",
+                                    bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                                )
+                                _log_mtimes.pop(p.id, None)
+                                _stuck_alerted.discard(p.id)
+                        # Stuck watchdog for local jobs
+                        if p.status == "running" or new_status == "running":
+                            log_dir = pdir / "logs"
+                            log_files = sorted(
+                                log_dir.glob("local_*.out"),
+                                key=lambda x: x.stat().st_mtime,
+                                reverse=True,
+                            )
+                            if log_files:
+                                mtime = log_files[0].stat().st_mtime
+                                last = _log_mtimes.get(p.id, mtime)
+                                _log_mtimes[p.id] = mtime
+                                if mtime != last:
+                                    _stuck_alerted.discard(p.id)
+                                elif p.id not in _stuck_alerted:
+                                    idle_min = (time.time() - mtime) / 60
+                                    if idle_min > STUCK_MINUTES:
+                                        send_telegram_notify(
+                                            f"⚠️ <b>{p.name}</b> may be stuck\n"
+                                            f"No log output for {int(idle_min)} min",
+                                            bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                                        )
+                                        _stuck_alerted.add(p.id)
+                        continue
+
+                    # ── SLURM job ─────────────────────────────────────────
+                    slurm_state = poll_job(p.slurm_job_id)
+                    new_status = slurm_state_to_status(slurm_state)
 
                     if new_status != p.status:
                         # Auto-restart if cluster cancelled the job
@@ -288,9 +370,14 @@ async def _poll_template_links(settings):
                             log_dir=log_dir,
                             settings=settings,
                         )
+                        new_proj_status = "queued"
                     else:
-                        slurm_job_id = "local"
-                    update_project(session, proj, status="queued",
+                        slurm_job_id = launch_local_job(
+                            p.id, proj.mode, proj.max_iterations,
+                            pdir, log_dir, settings,
+                        )
+                        new_proj_status = "running"
+                    update_project(session, proj, status=new_proj_status,
                                    slurm_job_id=slurm_job_id)
                     send_telegram_notify(
                         f"✅ Template installed! <b>{proj.name}</b> queued.\nJob: #{slurm_job_id}",

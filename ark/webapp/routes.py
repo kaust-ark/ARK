@@ -48,7 +48,7 @@ from .db import (
     get_session,
     update_project,
 )
-from .jobs import cancel_job, slurm_available, slurm_state_to_status, submit_job
+from .jobs import cancel_job, cancel_local_job, launch_local_job, slurm_available, slurm_state_to_status, submit_job
 from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify
 from .templates import copy_venue_template, has_venue_template
 
@@ -292,10 +292,16 @@ def _try_submit_or_pending(project, pdir, session, settings) -> str:
         return "pending"
     log_dir = pdir / "logs"
     log_dir.mkdir(exist_ok=True)
-    job_id = submit_job(project.id, project.mode, project.max_iterations,
-                        pdir, log_dir, settings) if slurm_available() else "local"
-    update_project(session, project, status="queued", slurm_job_id=job_id)
-    return "queued"
+    if slurm_available():
+        job_id = submit_job(project.id, project.mode, project.max_iterations,
+                            pdir, log_dir, settings)
+        update_project(session, project, status="queued", slurm_job_id=job_id)
+        return "queued"
+    else:
+        job_id = launch_local_job(project.id, project.mode, project.max_iterations,
+                                  pdir, log_dir, settings)
+        update_project(session, project, status="running", slurm_job_id=job_id)
+        return "running"
 
 
 # ── pages ─────────────────────────────────────────────────────────────────────
@@ -596,8 +602,13 @@ async def api_stop_project(project_id: str, request: Request):
         project = get_project(session, project_id)
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
-        if project.slurm_job_id and project.slurm_job_id != "local":
-            cancel_job(project.slurm_job_id)
+        if project.slurm_job_id:
+            if project.slurm_job_id.startswith("local:"):
+                pid_str = project.slurm_job_id[len("local:"):]
+                if pid_str.isdigit():
+                    cancel_local_job(int(pid_str))
+            else:
+                cancel_job(project.slurm_job_id)
         update_project(session, project, status="stopped")
         return JSONResponse({"ok": True})
 
@@ -635,8 +646,13 @@ async def api_delete_project(project_id: str, request: Request):
         project = get_project(session, project_id)
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
-        if project.slurm_job_id and project.slurm_job_id != "local":
-            cancel_job(project.slurm_job_id)
+        if project.slurm_job_id:
+            if project.slurm_job_id.startswith("local:"):
+                pid_str = project.slurm_job_id[len("local:"):]
+                if pid_str.isdigit():
+                    cancel_local_job(int(pid_str))
+            else:
+                cancel_job(project.slurm_job_id)
         pdir = _project_dir(settings, project.user_id, project_id)
         delete_project(session, project_id)
     shutil.rmtree(pdir, ignore_errors=True)
@@ -710,8 +726,13 @@ async def api_admin_killall(request: Request):
             _sel(Project).where(Project.status.in_(["queued", "running", "pending"]))
         ).all()
         for p in active:
-            if p.slurm_job_id and p.slurm_job_id != "local":
-                cancel_job(p.slurm_job_id)
+            if p.slurm_job_id:
+                if p.slurm_job_id.startswith("local:"):
+                    pid_str = p.slurm_job_id[len("local:"):]
+                    if pid_str.isdigit():
+                        cancel_local_job(int(pid_str))
+                else:
+                    cancel_job(p.slurm_job_id)
             update_project(session, p, status="stopped")
             stopped.append(p.id)
     return JSONResponse({"stopped": stopped, "count": len(stopped)})

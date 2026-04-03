@@ -223,17 +223,16 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         )
 
     def _send_deep_research_telegram(self, report_path: str):
-        """Send deep research completion notification and summary to Telegram."""
+        """Send deep research completion notification and full report file to Telegram."""
         if not self.telegram.is_configured:
             return
         try:
-            content = Path(report_path).read_text()
-            # Send a summary (first 2000 chars)
-            summary = content[:2000]
-            if len(content) > 2000:
-                summary += "\n\n... (truncated, full report saved)"
             self.telegram.send("Deep Research completed!")
-            self.telegram.send_raw(summary)
+            ok = self.telegram.send_document(report_path, caption="📄 Full Deep Research report")
+            if not ok:
+                # Fallback: send as text if document upload fails
+                content = Path(report_path).read_text()
+                self.telegram.send_raw(content[:4000])
         except Exception as e:
             self.log(f"Failed to send deep research to Telegram: {e}", "WARN")
 
