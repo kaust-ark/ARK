@@ -28,6 +28,8 @@ _DEFAULTS = {
     "SLURM_PARTITION": "",
     "SLURM_ACCOUNT": "",
     "SLURM_CONDA_ENV": "ark",
+    "GOOGLE_CLIENT_ID": "",
+    "GOOGLE_CLIENT_SECRET": "",
 }
 
 
@@ -69,6 +71,11 @@ EMAIL_DOMAINS=
 
 # Admin emails (comma-separated). Admins can disable/enable the webapp and kill all jobs.
 ADMIN_EMAILS=
+
+# Google OAuth (optional). Get credentials at console.cloud.google.com → APIs & Services → Credentials.
+# Redirect URI to register: {BASE_URL}/auth/google/callback
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
 
 PROJECTS_ROOT={_root / 'ark_webapp' / 'projects'}
 SECRET_KEY={secrets.token_hex(32)}
@@ -116,6 +123,9 @@ class Settings:
         self.allowed_emails: list[str] = [e.strip().lower() for e in raw_allowed.split(",") if e.strip()]
         raw_admins = merged.get("ADMIN_EMAILS", "")
         self.admin_emails: list[str] = [e.strip().lower() for e in raw_admins.split(",") if e.strip()]
+
+        self.google_client_id: str = merged.get("GOOGLE_CLIENT_ID", "")
+        self.google_client_secret: str = merged.get("GOOGLE_CLIENT_SECRET", "")
 
         self.projects_root.mkdir(parents=True, exist_ok=True)
 

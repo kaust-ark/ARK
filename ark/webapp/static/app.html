@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/static/logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     :root {
       --teal:         #0d9488;
@@ -29,6 +29,7 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    [dir="rtl"] { font-family: 'Cairo', sans-serif; }
     body {
       font-family: 'Inter', sans-serif;
       background: var(--bg);
@@ -113,10 +114,7 @@
       border: 1px solid var(--card-border); position: relative;
     }
     .login-logo {
-      width: 64px; height: 64px; margin: 0 auto 20px;
-      background: linear-gradient(135deg, var(--teal) 0%, var(--teal-dark) 100%);
-      border-radius: 16px; display: flex; align-items: center; justify-content: center;
-      font-size: 2rem; color: #fff; font-weight: 700;
+      width: 120px; height: auto; margin: 0 auto 20px; display: block;
     }
     .login-card h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 6px; }
     .login-card > p { color: var(--text-second); font-size: .95rem; margin-bottom: 20px; }
@@ -152,6 +150,21 @@
     .btn-send-link:disabled { opacity: .6; cursor: not-allowed; }
     .login-success { display: none; color: #166534; background: #dcfce7; border-radius: 10px; padding: 14px 18px; font-size: .95rem; margin-top: 10px; }
     .login-error   { display: none; color: #991b1b; background: #fee2e2; border-radius: 10px; padding: 14px 18px; font-size: .95rem; margin-top: 10px; }
+    .login-divider {
+      display: flex; align-items: center; gap: 10px;
+      margin: 16px 0; color: var(--text-second); font-size: .85rem;
+    }
+    .login-divider::before, .login-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--card-border);
+    }
+    .btn-google {
+      width: 100%; padding: 12px 20px; background: #fff; color: #3c4043;
+      border: 1.5px solid #dadce0; border-radius: 10px; font-size: .95rem;
+      font-weight: 600; cursor: pointer; transition: all .15s;
+      display: none; align-items: center; justify-content: center; gap: 10px;
+    }
+    .btn-google:hover { background: #f8f9fa; border-color: #bdc1c6; }
+    .btn-google svg { flex-shrink: 0; }
 
     /* ── dashboard ── */
     #page-dashboard { padding: 32px 24px; max-width: 1100px; margin: 0 auto; }
@@ -322,14 +335,27 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ── lang toggle ── */
-    .btn-lang {
-      font-size: .78rem; font-weight: 600; color: var(--text-second);
-      background: var(--bg); border: 1px solid var(--card-border);
-      border-radius: 6px; padding: 4px 10px; cursor: pointer;
-      transition: all .15s; letter-spacing: .02em;
+    /* ── lang dropdown ── */
+    .lang-select { position: relative; }
+    .btn-lang-globe {
+      font-size: 1rem; background: var(--bg); border: 1px solid var(--card-border);
+      border-radius: 6px; padding: 4px 8px; cursor: pointer; color: var(--text-second);
+      transition: all .15s; line-height: 1;
     }
-    .btn-lang:hover { background: var(--card); color: var(--text-primary); }
+    .btn-lang-globe:hover { background: var(--card); color: var(--text-primary); }
+    .lang-menu {
+      display: none; position: absolute; top: calc(100% + 4px); right: 0;
+      background: #fff; border: 1px solid var(--card-border); border-radius: 8px;
+      box-shadow: var(--shadow-lg); min-width: 120px; z-index: 200; overflow: hidden;
+    }
+    .lang-menu.open { display: block; }
+    .lang-menu button {
+      width: 100%; padding: 9px 14px; background: none; border: none; cursor: pointer;
+      text-align: left; font-size: .88rem; font-family: inherit; color: var(--text-primary);
+      transition: background .1s;
+    }
+    .lang-menu button:hover { background: var(--card); }
+    .lang-menu button.lang-active { color: var(--teal); font-weight: 600; }
 
     /* ── responsive ── */
     @media (max-width: 600px) {
@@ -525,15 +551,29 @@
     <span data-i18n="nav_admin">Admin</span>
   </a>
   <div class="spacer"></div>
-  <button class="btn-lang" id="btn-lang" onclick="toggleLang()">中文</button>
+  <div class="lang-select">
+    <button class="btn-lang-globe" onclick="toggleLangMenu(event,'lang-menu')" title="Language">🌐</button>
+    <div class="lang-menu" id="lang-menu">
+      <button onclick="setLang('en')" id="lang-opt-en">English</button>
+      <button onclick="setLang('zh')" id="lang-opt-zh">中文</button>
+      <button onclick="setLang('ar')" id="lang-opt-ar">العربية</button>
+    </div>
+  </div>
   <div class="nav-user" id="nav-user"></div>
 </nav>
 
 <!-- LOGIN PAGE -->
 <div id="page-login" class="page">
   <div class="login-card">
-    <button class="btn-lang" id="btn-lang-login" onclick="toggleLang()" style="position:absolute;top:16px;right:16px">中文</button>
-    <img src="/static/logo.png" alt="ARK" class="login-logo" style="background:none;border-radius:0;box-shadow:none" />
+    <div class="lang-select" style="position:absolute;top:16px;right:16px">
+      <button class="btn-lang-globe" onclick="toggleLangMenu(event,'lang-menu-login')" title="Language">🌐</button>
+      <div class="lang-menu" id="lang-menu-login">
+        <button onclick="setLang('en')">English</button>
+        <button onclick="setLang('zh')">中文</button>
+        <button onclick="setLang('ar')">العربية</button>
+      </div>
+    </div>
+    <img src="/static/logo_ark_transparent.png" alt="ARK" class="login-logo" />
     <h1>ARK</h1>
     <p data-i18n="login_subtitle">Offload the labor. Steer the science.</p>
     <div class="login-features">
@@ -554,6 +594,18 @@
       <input type="email" id="login-email" placeholder="you@institution.edu" required autocomplete="email" />
       <button type="submit" class="btn-send-link" id="login-btn" data-i18n="login_send_link">Send login link</button>
     </form>
+    <div id="google-login-section" style="display:none">
+      <div class="login-divider"><span data-i18n="login_or">or</span></div>
+      <button class="btn-google" id="btn-google" onclick="location.href='/auth/google'" style="display:flex">
+        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+          <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+          <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+          <path d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+          <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 6.29C4.672 4.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+        </svg>
+        <span data-i18n="login_google">Continue with Google</span>
+      </button>
+    </div>
     <div class="login-success" id="login-success">
       <span data-i18n="login_success">✓ Check your inbox — we sent a login link to</span> <strong id="login-success-email"></strong>
     </div>
@@ -937,6 +989,8 @@ const TRANSLATIONS = {
     login_success: '✓ Check your inbox — we sent a login link to',
     login_fail: 'Failed to send login link.',
     login_network_error: 'Network error. Please try again.',
+    login_or: 'or',
+    login_google: 'Continue with Google',
     // gate / admin panel
     gate_banner_text: 'Submissions are currently <strong>disabled</strong> by admin. New projects cannot be started.',
     submissions_disabled: 'Submissions DISABLED — new jobs will be rejected',
@@ -1038,6 +1092,104 @@ const TRANSLATIONS = {
     enabled: 'Enabled',
     disabled: 'Disabled',
   },
+  ar: {
+    nav_admin: 'الإدارة',
+    sign_out: 'تسجيل الخروج',
+    lang_label: 'EN',
+    login_subtitle: 'أفرغ العمل المتكرر. وجّه البحث.',
+    login_offload: 'إفراغ', login_observe: 'مراقبة', login_steer: 'توجيه',
+    login_send_link: 'إرسال رابط الدخول',
+    login_sending: 'جارٍ الإرسال…',
+    login_success: '✓ تحقق من بريدك — أرسلنا رابط الدخول إلى',
+    login_fail: 'فشل إرسال رابط الدخول.',
+    login_network_error: 'خطأ في الشبكة. حاول مرة أخرى.',
+    login_or: 'أو',
+    login_google: 'المتابعة عبر Google',
+    gate_banner_text: 'تم <strong>تعطيل</strong> التقديم من قِبَل المشرف. لا يمكن بدء مشاريع جديدة.',
+    submissions_disabled: 'التقديم معطّل — سيتم رفض المهام الجديدة',
+    submissions_enabled: 'التقديم مفعّل',
+    enable_submissions: 'تفعيل التقديم',
+    disable_submissions: 'تعطيل التقديم',
+    kill_all: 'إيقاف جميع المهام',
+    hero_title: 'ابنِ ورقتك البحثية القادمة مع ARK',
+    attach: 'إرفاق', venue: 'المؤتمر', max_iterations: 'الحد الأقصى للتكرارات',
+    telegram_notifications: 'إشعارات Telegram',
+    tg_how: '<b>طريقة الإعداد:</b> 1. أرسل <code>/newbot</code> إلى <a href="https://t.me/BotFather" target="_blank">@BotFather</a> للحصول على Bot Token &nbsp;·&nbsp; 2. أرسل رسالة إلى <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> للحصول على Chat ID',
+    bot_token: 'Bot Token', chat_id: 'Chat ID',
+    advanced_options: 'خيارات متقدمة',
+    paper_title_label: 'عنوان الورقة <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
+    project_id_label: 'معرف المشروع <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
+    instructions_label: 'تعليمات لـ ARK <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
+    model: 'النموذج',
+    launch_research: 'إطلاق البحث',
+    placeholder_idea: 'صِف فكرتك البحثية… أو اسحب الملفات هنا',
+    placeholder_auto_title: 'يُولَّد تلقائياً إن تُرك فارغاً',
+    placeholder_instructions: 'مثال: ركّز على المقارنة مع الخط الأساسي X، استخدم PyTorch، شغّل على وحدتَي GPU…',
+    your_projects: 'مشاريعك',
+    empty_state: 'لا مشاريع بعد — ابدأ بتفويض مهمتك البحثية الأولى أعلاه.',
+    back: '← رجوع',
+    score: 'الدرجة', project_info: 'معلومات المشروع',
+    title: 'العنوان', idea: 'الفكرة',
+    live_log: 'السجل المباشر', bottom: '↓ الأسفل',
+    waiting_for_logs: 'في انتظار السجلات...',
+    phase: 'المرحلة', iteration: 'التكرار', step: 'الخطوة',
+    view_pdf: '👁 عرض PDF', download_zip: '⬇ تحميل Zip',
+    stop: '■ إيقاف', start: '▶ بدء', continue_action: '▶ متابعة',
+    delete: '🗑 حذف',
+    waiting_template_msg: '📦 في انتظار قالب <b>%s</b>.<br>أرسل رابط تحميل <code>.zip</code> عبر Telegram إلى بوت مشروعك.',
+    status_queued: 'جارٍ التهيئة…', status_running: 'قيد التشغيل', status_done: 'مكتمل',
+    status_failed: 'فشل', status_stopped: 'موقوف',
+    status_waiting_template: '⏳ في انتظار القالب', status_pending: '⏳ في قائمة الانتظار',
+    info_venue: 'المؤتمر', info_user: 'المستخدم', info_model: 'النموذج',
+    info_environment: 'البيئة', info_created: 'تاريخ الإنشاء', info_updated: 'آخر تحديث',
+    info_status: 'الحالة',
+    completed_iter: 'مكتمل (%d تكرارات)',
+    running_iter: 'قيد التشغيل (%d / %d تكرارات)',
+    running_plain: 'قيد التشغيل',
+    queued: 'في الانتظار',
+    in_queue_pos: 'في الانتظار (الموضع %s)',
+    stopped_iter: 'موقوف (%d / %d تكرارات)',
+    failed: 'فشل',
+    queue_position_msg: '⏳ الموضع %d في قائمة الانتظار — في انتظار انتهاء المشروع الحالي',
+    phase_research: 'بحث', phase_dev: 'تطوير', phase_review: 'مراجعة',
+    step_plan: 'تخطيط', step_run_experiments: 'تشغيل التجارب',
+    step_analyze: 'تحليل', step_evaluate: 'تقييم',
+    step_compile: 'تجميع', step_review: 'مراجعة',
+    step_plan2: 'تخطيط', step_execute: 'تنفيذ', step_validate: 'تحقق',
+    continue_project: 'متابعة المشروع',
+    additional_iterations_label: 'تكرارات إضافية <span style="color:var(--text-muted);font-weight:400">(الحد الأقصى 3)</span>',
+    instructions_comments_label: 'تعليمات / ملاحظات <span style="color:var(--text-muted);font-weight:400">(اختياري)</span>',
+    placeholder_continue_comment: 'مثال: أضف دراسة استئصالية لـ X، حسّن الشكل 3، عالج ملاحظة المراجع حول Y…',
+    cancel: 'إلغاء', continue_btn: '▶ متابعة',
+    admin_console: 'لوحة الإدارة',
+    submissions: 'التقديمات',
+    all_projects: 'جميع المشاريع',
+    user: 'المستخدم', status: 'الحالة', pages: 'الصفحات',
+    max_iter: 'الحد الأقصى للتكرار', created: 'تاريخ الإنشاء', actions: 'الإجراءات',
+    no_projects_found: 'لم يُعثر على مشاريع',
+    edit_project: 'تعديل المشروع',
+    telegram: 'Telegram',
+    placeholder_paper_title: 'عنوان الورقة',
+    config_sync_hint: 'يُزامَن الإعداد مع config.yaml فور الحفظ.',
+    save_changes: 'حفظ التغييرات',
+    confirm_enable: 'تفعيل التقديم لجميع المستخدمين؟',
+    confirm_disable: 'تعطيل التقديم لجميع المستخدمين؟',
+    confirm_kill_all: 'إيقاف جميع المهام الجارية/المنتظرة لجميع المستخدمين؟',
+    confirm_stop: 'إيقاف هذا المشروع؟',
+    confirm_restart: 'إعادة تشغيل هذا المشروع؟',
+    confirm_delete: 'حذف هذا المشروع؟ لا يمكن التراجع عن هذا الإجراء.',
+    stopped_count: 'تم إيقاف %d مهمة.',
+    alert_idea_required: 'يرجى وصف فكرتك البحثية أو إرفاق ملفات.',
+    filter_all: 'الكل', filter_queued: 'في الانتظار', filter_running: 'قيد التشغيل',
+    filter_done: 'مكتمل', filter_failed: 'فشل', filter_stopped: 'موقوف',
+    filter_pending: 'معلّق',
+    score_label: 'الدرجة: %s/10',
+    just_now: 'الآن', minutes_ago: 'منذ %d دقيقة', hours_ago: 'منذ %d ساعة', days_ago: 'منذ %d يوم',
+    drop_files: '📎 اسحب الملفات للإرفاق',
+    chars: '%d حرف',
+    enabled: 'مفعّل',
+    disabled: 'معطّل',
+  },
   zh: {
     nav_admin: '管理',
     sign_out: '退出',
@@ -1049,6 +1201,8 @@ const TRANSLATIONS = {
     login_success: '✓ 请检查收件箱 — 登录链接已发送至',
     login_fail: '发送登录链接失败。',
     login_network_error: '网络错误，请重试。',
+    login_or: '或',
+    login_google: '使用 Google 登录',
     gate_banner_text: '管理员已<strong>禁用</strong>提交功能。无法启动新项目。',
     submissions_disabled: '提交已禁用 — 新任务将被拒绝',
     submissions_enabled: '提交已启用',
@@ -1162,21 +1316,33 @@ function applyI18n() {
     const val = t(key);
     if (val !== key) el.placeholder = val;
   });
-  // Update lang buttons
-  const langLabel = t('lang_label');
-  const b1 = document.getElementById('btn-lang');
-  const b2 = document.getElementById('btn-lang-login');
-  if (b1) b1.textContent = langLabel;
-  if (b2) b2.textContent = langLabel;
-  // Update HTML lang attr
-  document.getElementById('html-root').lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+  // Update active state in lang menus
+  ['en','zh','ar'].forEach(l => {
+    const btn = document.getElementById('lang-opt-' + l);
+    if (btn) btn.classList.toggle('lang-active', l === currentLang);
+  });
+  // RTL for Arabic
+  const root = document.getElementById('html-root');
+  root.lang = currentLang === 'zh' ? 'zh-CN' : currentLang === 'ar' ? 'ar' : 'en';
+  root.dir  = currentLang === 'ar' ? 'rtl' : 'ltr';
 }
 
-function toggleLang() {
-  currentLang = currentLang === 'en' ? 'zh' : 'en';
-  localStorage.setItem('ark_lang', currentLang);
+function toggleLangMenu(e, menuId) {
+  e.stopPropagation();
+  const menu = document.getElementById(menuId);
+  const wasOpen = menu.classList.contains('open');
+  document.querySelectorAll('.lang-menu').forEach(m => m.classList.remove('open'));
+  if (!wasOpen) menu.classList.add('open');
+}
+document.addEventListener('click', () => {
+  document.querySelectorAll('.lang-menu').forEach(m => m.classList.remove('open'));
+});
+
+function setLang(lang) {
+  currentLang = lang;
+  localStorage.setItem('ark_lang', lang);
+  document.querySelectorAll('.lang-menu').forEach(m => m.classList.remove('open'));
   applyI18n();
-  // Re-render dynamic content if on dashboard/admin/detail
   const dashActive = document.getElementById('page-dashboard').classList.contains('active');
   const adminActive = document.getElementById('page-admin').classList.contains('active');
   const detailActive = document.getElementById('page-detail').classList.contains('active');
@@ -1184,7 +1350,6 @@ function toggleLang() {
   if (adminActive) loadAdminPage();
   if (detailActive && detailProjectId) loadDetail(detailProjectId);
   if (currentUser) renderNavUser();
-  // Re-render admin filter pills
   _renderAdminFilterPills();
 }
 
@@ -1217,6 +1382,7 @@ function navigate(page, params = {}) {
 
   if (page === 'login') {
     document.getElementById('main-nav').style.display = 'none';
+    checkGoogleLogin();
   } else {
     document.getElementById('main-nav').style.display = 'flex';
   }
@@ -1233,6 +1399,21 @@ function navigate(page, params = {}) {
     loadAdminPage();
     history.pushState({}, '', '/#admin');
   }
+}
+
+// ══════════════════════════════════════════════════════
+//  Google OAuth
+// ══════════════════════════════════════════════════════
+async function checkGoogleLogin() {
+  try {
+    const res = await fetch('/auth/google/enabled');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.enabled) {
+        document.getElementById('google-login-section').style.display = 'block';
+      }
+    }
+  } catch { /* ignore */ }
 }
 
 // ══════════════════════════════════════════════════════
@@ -2074,7 +2255,7 @@ function esc(str) {
 function fmtDate(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
-  const locale = currentLang === 'zh' ? 'zh-CN' : 'en-US';
+  const locale = currentLang === 'zh' ? 'zh-CN' : currentLang === 'ar' ? 'ar-SA' : 'en-US';
   const date = d.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');

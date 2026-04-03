@@ -34,8 +34,32 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from starlette.requests import Request
 
+from authlib.integrations.starlette_client import OAuth as _OAuth
+
 from .auth import make_token, verify_token
 from .config import get_settings
+
+# Lazy-initialized Google OAuth client
+_google_oauth: _OAuth | None = None
+
+
+def _get_google_oauth() -> _OAuth | None:
+    """Return authlib OAuth client if Google credentials are configured."""
+    global _google_oauth
+    if _google_oauth is not None:
+        return _google_oauth
+    settings = get_settings()
+    if not settings.google_client_id or not settings.google_client_secret:
+        return None
+    _google_oauth = _OAuth()
+    _google_oauth.register(
+        name="google",
+        client_id=settings.google_client_id,
+        client_secret=settings.google_client_secret,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
+    return _google_oauth
 from .db import (
     Project,
     User,
@@ -361,6 +385,86 @@ async def auth_verify(request: Request, token: str = ""):
 async def auth_logout(request: Request):
     request.session.clear()
     return RedirectResponse("/")
+
+
+_GOOGLE_REDIRECT_URI = "https://kaust-ark.github.io/oauth-callback"
+
+
+@router.get("/auth/google")
+async def auth_google(request: Request):
+    oauth = _get_google_oauth()
+    if not oauth:
+        raise HTTPException(400, "Google login is not configured on this server.")
+    return await oauth.google.authorize_redirect(request, _GOOGLE_REDIRECT_URI)
+
+
+@router.get("/auth/google/callback")
+async def auth_google_callback(request: Request):
+    oauth = _get_google_oauth()
+    if not oauth:
+        raise HTTPException(400, "Google login is not configured on this server.")
+    settings = get_settings()
+    try:
+        token = await oauth.google.authorize_access_token(request)
+    except Exception as exc:
+        logger.warning(f"Google OAuth error: {exc}")
+        return RedirectResponse("/?google_error=1")
+
+    userinfo = token.get("userinfo") or {}
+    email = (userinfo.get("email") or "").strip().lower()
+    if not email:
+        return RedirectResponse("/?google_error=1")
+
+    # Apply same allow-list checks as magic link
+    denied = False
+    if settings.allowed_emails:
+        if email not in settings.allowed_emails:
+            denied = True
+    elif settings.email_domains:
+        if email.split("@")[-1] not in settings.email_domains:
+            denied = True
+
+    if denied:
+        return HTMLResponse(
+            f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Access Denied — ARK</title>
+  <style>
+    body {{ font-family: sans-serif; display: flex; align-items: center; justify-content: center;
+           min-height: 100vh; margin: 0; background: #f0fdfa; }}
+    .card {{ background: #fff; border-radius: 16px; padding: 48px 52px; max-width: 420px;
+             box-shadow: 0 4px 24px rgba(0,0,0,.08); text-align: center; }}
+    h2 {{ color: #991b1b; margin-bottom: 12px; }}
+    p {{ color: #555; line-height: 1.6; }}
+    a {{ color: #0d9488; }}
+    .back {{ margin-top: 24px; display: inline-block; color: #0d9488; font-size: .9rem; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Access Denied</h2>
+    <p>Your Google account (<strong>{email}</strong>) is not authorized to access ARK.</p>
+    <p>To request access, contact<br/>
+       <a href="mailto:jihao.xin@kaust.edu.sa">jihao.xin@kaust.edu.sa</a></p>
+    <a class="back" href="/">← Back to login</a>
+  </div>
+</body>
+</html>""",
+            status_code=403,
+        )
+
+    with get_session(settings.db_path) as session:
+        user = get_or_create_user_by_email(session, email)
+        request.session["user_id"] = user.id
+    return RedirectResponse("/")
+
+
+@router.get("/auth/google/enabled")
+async def auth_google_enabled():
+    """Frontend polls this to know whether to show Google button."""
+    return JSONResponse({"enabled": _get_google_oauth() is not None})
 
 
 @router.get("/api/me")
