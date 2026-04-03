@@ -40,7 +40,8 @@ When handling figure-related tasks, **you must first read** `{FIGURES_DIR}/figur
 3. Ensure consistency of references, labels, and figure numbers
 4. **NEVER modify references.bib** — citation entries are managed automatically by the citation system. Use `\cite{key}` commands only with keys already present in references.bib.
 5. **Do NOT remove existing `\cite{}` commands** — when revising, only add or modify text. Never delete existing citations.
-6. Run compilation to verify after modifications:
+6. **Do NOT modify the venue template** — never change `\documentclass`, `\bibliographystyle`, `\usepackage` in the preamble, or any `.sty`/`.bst` files. Only modify the paper content.
+7. Run compilation to verify after modifications:
    ```bash
    cd {LATEX_DIR} && latexmk -pdf main.tex
    ```
