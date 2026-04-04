@@ -712,7 +712,12 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
             async def _run():
                 return await processor.process_single_query(data, do_eval=False)
 
-            result = asyncio.run(_run())
+            try:
+                result = asyncio.run(_run())
+            except RuntimeError:
+                # Already in an event loop (e.g., webapp context)
+                loop = asyncio.get_event_loop()
+                result = loop.run_until_complete(_run())
 
             # Extract best image
             import base64

@@ -733,18 +733,22 @@
           </div>
           <div class="hero-adv-field">
             <label data-i18n="model">Model</label>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <div style="display:flex;gap:8px;flex-wrap:wrap" id="model-options">
               <label class="model-option">
                 <input type="radio" name="model" value="claude-sonnet-4-6" checked />
                 <span class="model-chip">Sonnet 4.6</span>
               </label>
-              <label class="model-option model-option-disabled" title="Coming soon">
-                <input type="radio" name="model" value="claude-opus-4-6" disabled />
+              <label class="model-option model-option-admin" title="Admin only" style="display:none">
+                <input type="radio" name="model" value="claude-opus-4-6" />
                 <span class="model-chip">Opus 4.6</span>
               </label>
-              <label class="model-option model-option-disabled" title="Coming soon">
-                <input type="radio" name="model" value="claude-haiku-4-5" disabled />
+              <label class="model-option model-option-admin" title="Admin only" style="display:none">
+                <input type="radio" name="model" value="claude-haiku-4-5" />
                 <span class="model-chip">Haiku 4.5</span>
+              </label>
+              <label class="model-option model-option-admin" title="Admin only" style="display:none">
+                <input type="radio" name="model" value="gemini" />
+                <span class="model-chip">Gemini</span>
               </label>
             </div>
           </div>
@@ -1467,6 +1471,15 @@ async function checkAuth() {
   }
   currentUser = data;
   renderNavUser();
+
+  // Show admin-only model options if user is admin
+  if (currentUser.is_admin) {
+    document.querySelectorAll('.model-option-admin').forEach(el => {
+      el.style.display = '';
+      const input = el.querySelector('input');
+      if (input) input.disabled = false;
+    });
+  }
 
   // Route based on hash
   const hash = location.hash;

@@ -126,8 +126,17 @@ def _project_dir(settings, user_id: str, project_id: str) -> Path:
     return settings.projects_root / user_id / project_id
 
 
-def _write_config_yaml(project_dir: Path, project: Project):
+def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude-sonnet-4-6"):
     """Write config.yaml that ark orchestrator will read."""
+    # Map webapp model value to orchestrator model backend
+    MODEL_MAP = {
+        "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
+        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
+        "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
+        "gemini": ("gemini", ""),
+    }
+    model_backend, model_variant = MODEL_MAP.get(model, ("claude", "claude-sonnet-4-6"))
+
     config = {
         "project": project.name,
         "title": project.title or project.name,
@@ -136,13 +145,15 @@ def _write_config_yaml(project_dir: Path, project: Project):
         "venue_format": project.venue_format,
         "venue_pages": project.venue_pages,
         "mode": project.mode,
+        "model": model_backend,
+        "model_variant": model_variant,
         "max_iterations": project.max_iterations,
         "language": "en",
         "code_dir": str(project_dir),
         "latex_dir": "paper",
         "figures_dir": "paper/figures",
         "figure_generation": "nano_banana",
-        "nano_banana_model": "flash",
+        "nano_banana_model": "pro",
     }
     if project.telegram_token:
         config["telegram_bot_token"] = project.telegram_token
@@ -258,14 +269,18 @@ def _read_paper_title(project_dir: Path) -> str:
 
 
 def _read_project_model(project_dir: Path) -> str:
-    """Read model name from project config.yaml, fallback to default."""
+    """Read model variant from project config.yaml, fallback to default."""
     cfg = project_dir / "config.yaml"
     if cfg.exists():
         try:
             d = yaml.safe_load(cfg.read_text()) or {}
-            m = d.get("model", "")
-            if m and m not in ("claude", ""):
-                return m
+            # Prefer model_variant (e.g., "claude-sonnet-4-6"), fall back to model backend
+            variant = d.get("model_variant", "")
+            if variant:
+                return variant
+            backend = d.get("model", "")
+            if backend == "gemini":
+                return "gemini"
         except Exception:
             pass
     return "claude-sonnet-4-6"
@@ -542,6 +557,7 @@ async def api_create_project(
     mode: str = Form("paper"),
     max_iterations: int = Form(3),
     pdf_file: Optional[UploadFile] = File(None),
+    model: str = Form("claude-sonnet-4-6"),
     telegram_token: str = Form(""),
     telegram_chat_id: str = Form(""),
     comment: str = Form(""),
@@ -630,7 +646,7 @@ async def api_create_project(
             telegram_token=telegram_token,
             telegram_chat_id=telegram_chat_id,
         )
-        _write_config_yaml(pdir, project)
+        _write_config_yaml(pdir, project, model=model)
 
         if comment.strip():
             _write_user_update(pdir, comment.strip(), source="webapp_create")
@@ -791,7 +807,9 @@ async def api_continue_project(project_id: str, request: Request):
         new_max = project.max_iterations + additional
         update_project(session, project, max_iterations=new_max)
         pdir = _project_dir(settings, project.user_id, project_id)
-        _write_config_yaml(pdir, project)
+        # Read existing model from config, or default
+        existing_model = _read_project_model(pdir) or "claude-sonnet-4-6"
+        _write_config_yaml(pdir, project, model=existing_model)
         if comment:
             _write_user_update(pdir, comment, source="webapp_continue")
             _write_user_instructions(pdir, comment, source="webapp_continue")
