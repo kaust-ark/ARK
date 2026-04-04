@@ -223,18 +223,64 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         )
 
     def _send_deep_research_telegram(self, report_path: str):
-        """Send deep research completion notification and full report file to Telegram."""
+        """Send deep research report as PDF to Telegram (with md fallback)."""
         if not self.telegram.is_configured:
             return
         try:
             self.telegram.send("Deep Research completed!")
-            ok = self.telegram.send_document(report_path, caption="📄 Full Deep Research report")
+            # Convert markdown to PDF for better readability
+            pdf_path = self._convert_md_to_pdf(report_path)
+            if pdf_path:
+                ok = self.telegram.send_document(pdf_path, caption="📄 Deep Research Report (PDF)")
+                if ok:
+                    return
+            # Fallback: send the .md file
+            ok = self.telegram.send_document(report_path, caption="📄 Deep Research report (Markdown)")
             if not ok:
-                # Fallback: send as text if document upload fails
                 content = Path(report_path).read_text()
                 self.telegram.send_raw(content[:4000])
         except Exception as e:
             self.log(f"Failed to send deep research to Telegram: {e}", "WARN")
+
+    def _convert_md_to_pdf(self, md_path: str) -> str:
+        """Convert a markdown file to PDF. Returns PDF path or empty string on failure."""
+        try:
+            import markdown
+            from weasyprint import HTML
+
+            md_content = Path(md_path).read_text()
+            html_body = markdown.markdown(
+                md_content,
+                extensions=["tables", "fenced_code", "codehilite", "toc"],
+            )
+
+            # Wrap in styled HTML
+            html_full = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+body {{ font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 11pt;
+       line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #333; }}
+h1 {{ font-size: 20pt; color: #1a1a2e; border-bottom: 2px solid #0d9488; padding-bottom: 8px; }}
+h2 {{ font-size: 15pt; color: #1a1a2e; margin-top: 24px; }}
+h3 {{ font-size: 12pt; color: #374151; }}
+code {{ background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: 10pt; }}
+pre {{ background: #f3f4f6; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 9pt; }}
+table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
+th, td {{ border: 1px solid #d1d5db; padding: 8px 12px; text-align: left; font-size: 10pt; }}
+th {{ background: #f0fdfa; font-weight: 600; }}
+blockquote {{ border-left: 4px solid #0d9488; margin: 12px 0; padding: 8px 16px; color: #555; background: #f0fdfa; }}
+a {{ color: #0d9488; }}
+</style></head><body>{html_body}</body></html>"""
+
+            pdf_path = str(Path(md_path).with_suffix(".pdf"))
+            HTML(string=html_full).write_pdf(pdf_path)
+            self.log(f"Converted deep research to PDF: {pdf_path}", "INFO")
+            return pdf_path
+        except ImportError:
+            self.log("markdown/weasyprint not installed, skipping PDF conversion", "WARN")
+        except Exception as e:
+            self.log(f"PDF conversion failed: {e}", "WARN")
+        return ""
 
     # ========== Telegram ==========
 
