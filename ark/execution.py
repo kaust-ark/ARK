@@ -880,6 +880,7 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
 1. Ensure LaTeX syntax is correct after each modification
 2. Keep the paper's core contributions unchanged
 3. Reference the high-quality paper style in paper_example/ directory
+4. For multi-column templates: use `\\begin{{figure*}}` (full width) for complex figures, multi-panel plots, and architecture diagrams. Use `\\begin{{figure}}` (single column) only for simple single charts. Match `\\includegraphics[width=]` to the environment (\\textwidth vs \\columnwidth).
 
 ## Reference Files
 - auto_research/state/latest_review.md - Review report

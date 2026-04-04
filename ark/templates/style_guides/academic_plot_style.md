@@ -215,6 +215,24 @@ ax2.set_yticklabels([])  # remove duplicate y labels
 
 ---
 
+## Figure Placement in Multi-Column LaTeX Templates
+
+Choose the correct LaTeX environment based on figure complexity:
+
+| Figure Type | Environment | Width | When |
+|-------------|------------|-------|------|
+| Simple single chart | `\begin{figure}` | `\columnwidth` | One bar/line/scatter plot, few labels |
+| Complex/dense chart | `\begin{figure*}` | `\textwidth` | Many bars, dense annotations, dual-axis |
+| Multi-panel (a)(b) | `\begin{figure*}` | `\textwidth` | Side-by-side subplots |
+| Concept/architecture | `\begin{figure*}` | `\textwidth` | Pipeline, system overview, flowchart |
+
+When generating matplotlib figures:
+- Single-column: `figsize=(columnwidth_in, columnwidth_in * 0.7)`
+- Full-width: `figsize=(textwidth_in, textwidth_in * 0.35)` or taller if needed
+- Read both values from `figure_config.json`
+
+---
+
 ## Anti-Patterns (NEVER do these)
 
 - No 3D effects (no 3D bar charts, no 3D scatter unless truly 3D data)

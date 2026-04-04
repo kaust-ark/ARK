@@ -82,6 +82,31 @@ Flag these issues IMMEDIATELY if found:
    - Re-run the script to generate new figures
 5. **Verify**: Ensure the modified files have correct syntax
 
+## Figure Placement in LaTeX (for multi-column templates)
+
+For templates with 2+ columns, each figure must use the correct LaTeX environment:
+- `\begin{figure}` (single-column) vs `\begin{figure*}` (span all columns)
+
+Determine placement by the figure's content and information density:
+
+**Use `figure*` (full width) when:**
+- The figure is a system overview, architecture, or pipeline diagram
+- The figure has many components that need horizontal space to be readable
+- The figure contains multi-panel subplots (e.g., (a) and (b) side by side)
+- The figure would have illegibly small text if squeezed into one column
+
+**Use `figure` (single column) when:**
+- The figure is a simple bar chart, line chart, or scatter plot with few data points
+- The figure has minimal text labels that remain readable at column width
+- The figure naturally fits a portrait or square aspect ratio
+
+When fixing figures, also verify:
+- `figure*` figures use `figsize=(textwidth_in, ...)` not `columnwidth_in`
+- `figure` figures use `figsize=(columnwidth_in, ...)`
+- The LaTeX `\includegraphics[width=...]` matches the environment
+
+If you find a complex figure squeezed into `\begin{figure}` that should be `\begin{figure*}`, change the LaTeX environment AND regenerate the figure at full width.
+
 ## Important Rules
 
 1. You must actually modify Python scripts and run them (do not just output suggestions)
