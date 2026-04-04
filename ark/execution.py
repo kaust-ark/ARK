@@ -708,22 +708,18 @@ After changes:
             return
         try:
             content = main_tex.read_text()
-            # Check if \clearpage already before \bibliography
-            if r'\clearpage' not in content or \
-               content.index(r'\bibliography') < content.rindex(r'\clearpage') if r'\clearpage' in content else True:
-                # Need to check more carefully
-                pass
-
-            # Find \bibliography and ensure \clearpage is right before it
-            import re as _re
-            pattern = r'(?<!\\clearpage\n)(\\bibliography\{)'
-            if _re.search(pattern, content):
-                new_content = _re.sub(pattern, r'\\clearpage\n\1', content)
-                if new_content != content:
-                    main_tex.write_text(new_content)
-                    self.log("Injected \\clearpage before \\bibliography", "INFO")
-        except Exception:
-            pass  # Non-critical, agent can handle it
+            marker = r'\bibliography{'
+            if marker not in content:
+                return
+            # Check if \clearpage already precedes \bibliography
+            if '\\clearpage\n' + marker in content or '\\clearpage\n\n' + marker in content:
+                return
+            # Insert \clearpage before \bibliography
+            content = content.replace(marker, '\\clearpage\n' + marker)
+            main_tex.write_text(content)
+            self.log("Injected \\clearpage before \\bibliography", "INFO")
+        except Exception as e:
+            self.log(f"Failed to inject \\clearpage: {e}", "WARN")
 
     def _run_writing_phase(self, action_plan: dict, prior_context: str = ""):
         """Execute writing phase for all writing tasks."""
@@ -953,9 +949,13 @@ After modifications, ensure:
             literature_context = self._get_literature_context_for_task(task)
 
             page_warning = self._get_page_constraint_warning()
+            figure_list = self._list_available_figures()
             self.run_agent("writer", f"""
 You have only one task to complete. Please complete it carefully and thoroughly.
 {page_warning}
+## Available Figures (DO NOT recreate AI concept figures)
+{figure_list}
+
 ## Task: {task_id} - {task_title}
 {task_desc}
 {literature_context}
@@ -1002,9 +1002,13 @@ You have only one task to complete. Please complete it carefully and thoroughly.
 """)
 
             page_warning = self._get_page_constraint_warning()
+            figure_list = self._list_available_figures()
             self.run_agent("writer", f"""
 Please update the paper {latex_dir_name}/main.tex according to the following review revision tasks.
 {page_warning}
+## Available Figures (DO NOT recreate AI concept figures)
+{figure_list}
+
 ## Revision Task List
 
 {''.join(task_list)}

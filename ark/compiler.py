@@ -620,10 +620,13 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
             placement = fig.get("placement", "full_width")
             output_path = self.figures_dir / f"{name}.png"
 
-            # Skip if file already exists and is non-empty
-            if output_path.exists() and output_path.stat().st_size > 0:
-                self.log(f"  Skipping {name}: already exists", "INFO")
+            # Skip if a real AI-generated figure already exists (>100KB)
+            # Small files (<100KB) are likely writer-created placeholders — regenerate
+            if output_path.exists() and output_path.stat().st_size > 100_000:
+                self.log(f"  Skipping {name}: AI figure already exists ({output_path.stat().st_size // 1024}KB)", "INFO")
                 continue
+            if output_path.exists() and output_path.stat().st_size > 0:
+                self.log(f"  Replacing small placeholder {name} ({output_path.stat().st_size // 1024}KB) with AI figure", "INFO")
 
             # Determine aspect ratio and width based on agent's placement decision
             if columns == 1:

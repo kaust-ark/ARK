@@ -446,9 +446,10 @@ Notes:
 
         # Recompile after writing phase to get the latest PDF
         self.log_step("Recompiling after improvements...", "progress")
+        self._ensure_clearpage_before_bibliography()
         self.compile_latex()
 
-        # Hard page count enforcement — the ONLY place we enforce before delivery
+        # Hard page count enforcement before delivery
         self._enforce_page_count(context="pre-delivery")
 
         # Send iteration summary + PDF to Telegram
@@ -1128,36 +1129,39 @@ Output your evaluation in JSON format:
         self.log_section("✏️ Writing Initial Paper Draft")
         self._send_dev_phase_telegram("writing", 0, 0)
 
-        # Create plotting script from experiment results (if not already present)
+        # ── FIGURES FIRST, THEN WRITE ──
+        # All figures must be ready before writer starts, so writer can reference them.
+
+        # Step A: Create plotting script from experiment results
         self._create_plotting_script_if_needed()
 
-        # Generate matplotlib figures from results
-        self.log_step("Generating figures from experiment results...", "progress")
+        # Step B: Generate matplotlib figures
+        self.log_step("Generating statistical figures from experiment results...", "progress")
         self.generate_figures()
 
-        # Start AI concept figure generation in background (slow, ~7min/fig)
-        # Writer can proceed in parallel — it writes text first, figures are \includegraphics refs
-        nano_banana_future = None
+        # Step C: Generate AI concept figures (sequential — must complete before writer)
         if self.config.get("figure_generation") == "nano_banana":
-            from concurrent.futures import ThreadPoolExecutor
-            self._nano_banana_executor = ThreadPoolExecutor(max_workers=1)
-            self.log_step("Starting AI concept figure generation (background)...", "progress")
-            nano_banana_future = self._nano_banana_executor.submit(self._generate_nano_banana_figures)
+            self.log_step("Generating AI concept figures (PaperBanana)...", "progress")
+            self._generate_nano_banana_figures()
 
-        # Writer produces complete initial draft
+        # Step D: List all available figures for the writer
+        figure_list = self._list_available_figures()
+
+        # Step E: Writer writes paper with KNOWN figure filenames
         paper_requirements = self.load_paper_requirements()
         req_summary = yaml.dump(paper_requirements, allow_unicode=True) if paper_requirements else "No special requirements"
         findings_summary = self._load_findings_summary()
 
+        venue_pages = self.config.get('venue_pages', 9)
+        latex_dir = self.config.get('latex_dir', 'paper')
+        figures_dir = self.config.get('figures_dir', 'paper/figures')
+
         base_prompt = self.config.get("initial_paper_writing_prompt", "")
         if base_prompt:
             prompt = base_prompt.replace("{req_summary}", req_summary)
-            # Enhance with findings context
             prompt += f"\n\n## Experiment Findings\n{findings_summary}"
+            prompt += f"\n\n## Available Figures (already generated)\n{figure_list}"
         else:
-            venue_pages = self.config.get('venue_pages', 9)
-            latex_dir = self.config.get('latex_dir', 'paper')
-            figures_dir = self.config.get('figures_dir', 'paper/figures')
             prompt = f"""Write a COMPLETE, SUBMISSION-READY research paper draft.
 
 ## Research Idea
@@ -1168,6 +1172,15 @@ Output your evaluation in JSON format:
 
 ## Paper Requirements
 {req_summary}
+
+## Available Figures (already generated — DO NOT recreate these)
+{figure_list}
+
+**CRITICAL**: The figures above are already generated. Use \\includegraphics to include them.
+- AI concept figures (marked as "AI concept") must NOT be recreated as TikZ or matplotlib.
+- Statistical plots (marked as "matplotlib") are already generated from experiment data.
+- Use the EXACT filenames listed above in your \\includegraphics commands.
+- For multi-column templates, use \\begin{{figure*}} for wide concept figures, \\begin{{figure}} for single plots.
 
 ## MANDATORY — every item below is required, NO exceptions:
 
@@ -1180,50 +1193,34 @@ Output your evaluation in JSON format:
 - Analysis/Discussion: explain WHY results are good/bad, failure cases
 - Conclusion: 1 paragraph summary + 1 paragraph future work
 
-### 2. Figures are REQUIRED (paper will fail without them)
-- Minimum 2 figures in the body:
-  a) System/architecture overview (TikZ diagram OR simple block diagram in LaTeX)
-  b) Main results figure (bar chart or line plot from actual results data)
-- Each figure needs: \\caption{{...}} and \\label{{fig:...}}
-- Generate result figures using Python: save to {figures_dir}/ then \\includegraphics
-
-### 3. Data integrity
+### 2. Data integrity
 - Every performance claim must use actual numbers from findings
 - Include at least one \\begin{{table}} comparing against baselines
 - No vague statements like "our method is better" — use exact percentages
 
-### 4. Page target: {venue_pages} pages of body text
-- Every section must be substantively written
-- Related Work and Experiments sections should each be 1.5-2 pages
-- Do NOT leave any section with only 1-2 sentences
+### 3. Page target: {venue_pages} pages of body text
+- The last page must be at least 90% filled
+- Ensure `\\clearpage` before `\\bibliography{{...}}`
 
-### 5. LaTeX mechanics
+### 4. LaTeX mechanics
 - Edit {latex_dir}/main.tex directly
 - Verify compilation: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex
-- All \\ref and \\cite must resolve (no undefined references)
-- If figures don't exist yet, create simple placeholder TikZ diagrams
+- All \\ref and \\cite must resolve
 
 Produce the complete paper. Do not stop until all sections are written and it compiles.
 """
 
         self.run_agent("writer", prompt, timeout=3600)
 
-        # Wait for background AI figure generation to complete (if running)
-        if nano_banana_future is not None:
-            self.log_step("Waiting for AI concept figures to complete...", "progress")
-            try:
-                nano_banana_future.result(timeout=1200)  # 20 min max
-                self.log_step("AI concept figures ready", "success")
-            except Exception as e:
-                self.log(f"AI concept figure generation failed: {e}", "WARN")
-            finally:
-                self._nano_banana_executor.shutdown(wait=False)
-
-        # Compile initial draft (must succeed before moving to review)
+        # Step F: Inject \clearpage before \bibliography + enforce page count
+        self._ensure_clearpage_before_bibliography()
         self.log_step("Compiling initial draft...", "progress")
         draft_compiled = self._compile_until_success(
             context=f"Dev Phase complete ({dev_state['iteration']} iterations)"
         )
+
+        if draft_compiled:
+            self._enforce_page_count(context="dev-phase-delivery")
 
         if draft_compiled and self.telegram.is_configured:
             pdf_path = self.latex_dir / "main.pdf"
@@ -1550,6 +1547,20 @@ The script must be self-contained and runnable with: python {script_rel}
             self.log_step(f"Plotting script created: {script_rel}", "success")
         else:
             self.log(f"Coder agent did not create {script_rel}", "WARN")
+
+    def _list_available_figures(self) -> str:
+        """List all figures in paper/figures/ with their type (AI concept vs matplotlib)."""
+        if not self.figures_dir.exists():
+            return "No figures generated yet."
+        lines = []
+        for f in sorted(self.figures_dir.iterdir()):
+            if f.suffix not in (".png", ".pdf"):
+                continue
+            size_kb = f.stat().st_size // 1024
+            # AI concept figures are typically >150KB (PaperBanana/Gemini output)
+            fig_type = "AI concept diagram — DO NOT recreate" if size_kb > 150 else "matplotlib statistical plot"
+            lines.append(f"- {f.name} ({size_kb}KB, {fig_type})")
+        return "\n".join(lines) if lines else "No figures generated yet."
 
     def _send_dev_phase_telegram(self, event: str, current: int, total: int):
         """Send dev phase notifications to Telegram."""
