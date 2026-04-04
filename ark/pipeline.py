@@ -1128,7 +1128,10 @@ Output your evaluation in JSON format:
         self.log_section("✏️ Writing Initial Paper Draft")
         self._send_dev_phase_telegram("writing", 0, 0)
 
-        # Generate matplotlib figures from results (fast, do first)
+        # Create plotting script from experiment results (if not already present)
+        self._create_plotting_script_if_needed()
+
+        # Generate matplotlib figures from results
         self.log_step("Generating figures from experiment results...", "progress")
         self.generate_figures()
 
@@ -1459,6 +1462,94 @@ Produce the complete paper. Do not stop until all sections are written and it co
         self._asked_this_iteration = True
         if reply:
             self.log(f"User intervention reply: {reply[:200]}", "INFO")
+
+    def _create_plotting_script_if_needed(self):
+        """Create a matplotlib plotting script from experiment results if one doesn't exist.
+
+        Uses the coder agent to read results/ and findings.yaml, then generate
+        a create_paper_figures.py script with publication-quality statistical figures.
+        """
+        from pathlib import Path
+
+        results_dir = self.code_dir / "results"
+        script_rel = self.config.get("create_figures_script", "scripts/create_paper_figures.py")
+        script_path = self.code_dir / script_rel
+        figures_dir = self.config.get("figures_dir", "paper/figures")
+
+        # Skip if script already exists or no results to plot
+        if script_path.exists():
+            self.log(f"Plotting script already exists: {script_rel}", "INFO")
+            return
+        if not results_dir.exists() or not any(results_dir.iterdir()):
+            self.log("No experiment results found, skipping plotting script creation", "INFO")
+            return
+
+        self.log_step("Creating plotting script from experiment results...", "progress")
+
+        # Gather context for the coder agent
+        findings = self._load_findings_summary()
+        result_files = sorted(
+            f.name for f in results_dir.iterdir()
+            if f.suffix in (".json", ".csv", ".txt") and f.stat().st_size > 0
+        )
+        if not result_files:
+            self.log("No data files in results/, skipping", "INFO")
+            return
+
+        # Read a sample of result data for context
+        data_samples = []
+        for fname in result_files[:5]:
+            fpath = results_dir / fname
+            try:
+                content = fpath.read_text()[:1000]
+                data_samples.append(f"### {fname}\n```\n{content}\n```")
+            except Exception:
+                pass
+
+        # Ensure script directory exists
+        script_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self.run_agent("coder", f"""Create a Python plotting script that generates publication-quality
+statistical figures from the experiment results in this project.
+
+## Output
+Save the script to: {script_rel}
+The script must be self-contained and runnable with: python {script_rel}
+
+## Data files in results/ directory:
+{chr(10).join(f'- {f}' for f in result_files)}
+
+## Sample data (first 1000 chars of each):
+{chr(10).join(data_samples)}
+
+## Experiment findings summary:
+{findings[:3000]}
+
+## Requirements:
+1. Read {figures_dir}/figure_config.json for dimensions and matplotlib rcParams
+2. Generate at least 2 statistical figures:
+   a) Main results comparison (bar chart or horizontal bar chart)
+   b) Ablation or analysis chart (grouped bars, line chart, or heatmap)
+3. Save each figure as BOTH PDF and PNG to {figures_dir}/
+4. Name figures descriptively: fig_main_results.pdf, fig_ablation.pdf, etc.
+
+## Style Guide (MUST follow):
+- Load rcParams from figure_config.json
+- Wong colorblind-safe palette: ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9']
+- Add hatching patterns for bar charts (colorblind accessibility)
+- Use horizontal bars when there are 5+ categories (avoids x-label overlap)
+- constrained_layout=True on all figures
+- DPI 300, sans-serif fonts exclusively
+- No figure titles inside plots (LaTeX \\caption handles titles)
+- Light dashed grid lines behind data
+- Error bars with caps where applicable
+- Bold font for "Ours" method labels
+""", timeout=600)
+
+        if script_path.exists():
+            self.log_step(f"Plotting script created: {script_rel}", "success")
+        else:
+            self.log(f"Coder agent did not create {script_rel}", "WARN")
 
     def _send_dev_phase_telegram(self, event: str, current: int, total: int):
         """Send dev phase notifications to Telegram."""

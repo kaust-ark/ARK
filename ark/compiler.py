@@ -295,12 +295,22 @@ class CompilerMixin:
             return False
 
     def generate_figures(self) -> bool:
-        """Run figure generation script."""
+        """Run figure generation script. If script doesn't exist, try to create it first."""
         if hasattr(self.hooks, 'generate_figures'):
             return self.hooks.generate_figures(self)
 
         self.log("Generating paper figures...", "INFO")
         script_path = self.config.get("create_figures_script", "scripts/create_paper_figures.py")
+        full_script = self.code_dir / script_path
+
+        # If script doesn't exist, try to create it from results
+        if not full_script.exists():
+            self._create_plotting_script_if_needed()
+
+        if not full_script.exists():
+            self.log(f"No figure script at {script_path}, skipping", "INFO")
+            return True
+
         env_name = self.config.get("conda_env", "base")
         try:
             self.figures_dir.mkdir(parents=True, exist_ok=True)
