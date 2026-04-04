@@ -314,11 +314,16 @@ Design a PUBLICATION-QUALITY illustration. For each element, be extremely specif
 - Zone labels: italic sans-serif, 8-9pt, top-left corner of zone
 - Zones should have rounded corners and soft edges
 
-### 5. Visual Polish
-- Subtle shadows under main components (2px offset, 8% opacity)
-- Components should feel slightly elevated, not flat on the canvas
-- Overall background: white or very light (#FAFAFA)
-- Clean, minimal — every element should serve a purpose
+### 5. Visual Richness & Density
+- The diagram should feel RICH and INFORMATIVE — not empty or sparse
+- Add small illustrative icons/thumbnails inside key components (2D vector-style, NOT emoji)
+- Use different shapes for different component types (not all rounded rectangles)
+- Add small detail annotations where helpful (e.g., "×N" for repeated blocks, "K pairs" for memory size)
+- Overall background: white or off-white (#FAFAFA)
+- NO drop shadows, NO gradients, NO 3D effects. Flat design with semantic richness.
+- Every visual element should encode meaning — if a color/shape/line doesn't convey information, remove it
+
+IMPORTANT: Do NOT include font sizes (e.g., "12pt"), hex color codes (e.g., "#E6F3FF"), or CSS-like properties in component descriptions. Those are for the style guide only. Just describe WHAT to draw — shapes, labels, connections, zones, icons — in plain language. The image generator will interpret font specs as literal text to render.
 
 Output ONLY the visual specification. No preamble."""
 
@@ -394,11 +399,13 @@ Examine the attached figure critically.
 - Figure title/heading inside image → Aesthetics ≤ 3
 - Text overlap or occlusion → Readability ≤ 2
 - Missing described components → Faithfulness ≤ 3
-- Flat/utilitarian flowchart look (no depth, no shadows, no visual hierarchy) → Publication Readiness ≤ 2
+- Looks like a basic flowchart (generic boxes + arrows, no visual richness) → Publication Readiness ≤ 2
 - Only 1-2 colors / monotone → Publication Readiness ≤ 2
-- PowerPoint-style flat boxes without rounded corners or polish → Publication Readiness ≤ 2
-- No icons or visual metaphors → Publication Readiness ≤ 3
+- Heavy black outlines or PowerPoint defaults → Publication Readiness ≤ 2
+- No semantic color coding (colors are random, don't encode meaning) → Publication Readiness ≤ 3
 - All text same size (no typography hierarchy) → Publication Readiness ≤ 3
+- Sparse/empty layout with too much white space → Publication Readiness ≤ 3
+- Drop shadows or 3D effects (should be FLAT design) → Aesthetics ≤ 3
 
 ## Scoring Criteria (1-5, be VERY strict)
 
@@ -411,12 +418,14 @@ Examine the attached figure critically.
 4. **Aesthetics** (1-5): Professional color palette? Semantic color coding? Consistent styling?
 
 5. **Publication Readiness** (1-5): THE MOST IMPORTANT CRITERION.
-   - Does this look like a **modern tech illustration** from a top conference paper?
-   - Does it have visual depth (shadows, elevation, rounded corners)?
-   - Does it have typography hierarchy (bold titles, regular labels, small annotations)?
-   - Does it use icons/visual metaphors to reinforce meaning?
-   - Does it have semantic color zones (not random colors)?
-   - 1 = looks like matplotlib/PowerPoint. 3 = decent but generic. 5 = NeurIPS best paper quality.
+   - Does this look like a figure from a NeurIPS/ICML best paper?
+   - Is it RICH and INFORMATIVE — densely packed with semantic elements but still clear?
+   - Does it use semantic color coding (colors encode meaning, not decoration)?
+   - Does it use different shapes for different component types?
+   - Does it have typography hierarchy (bold for components, regular for labels, italic for math)?
+   - Does it have small icons/illustrations inside components to reinforce meaning?
+   - Is it flat design (NO shadows, NO 3D, NO gradients)?
+   - 1 = looks like matplotlib/PowerPoint. 3 = clean but generic. 5 = NeurIPS best paper quality.
 
 ## Output (STRICT JSON, nothing else)
 
@@ -539,28 +548,30 @@ def generate_figure_pipeline(
     best_path = None
     for round_idx in range(max_critic_rounds):
         # Build image generation prompt
-        image_prompt = f"""Generate a beautiful, publication-quality scientific illustration based on this detailed visual specification.
+        image_prompt = f"""Generate a publication-quality scientific methodology diagram for a top-tier AI conference paper (NeurIPS/ICML level).
 
 {styled_description}
 
-MANDATORY VISUAL STYLE:
-- This must look like a MODERN TECH ILLUSTRATION designed in Figma — NOT a flowchart, NOT a block diagram, NOT matplotlib output
-- Subtle depth and dimension: light drop shadows under main components, slight elevation effect
-- Rounded corners (12px+) on all rectangular elements — generously rounded, not sharp
-- Soft pastel background zones with gentle edges to group related components
-- Clean sans-serif typography with CLEAR SIZE HIERARCHY (large bold for component names, smaller for labels)
-- Thin, professional connecting lines with clean arrowheads — orthogonal (right-angle) routing preferred
-- Small meaningful icons inside key components (shield, gear, magnifying glass, lock, brain, etc.)
-- Colors must signal semantic meaning (blue=input, green=processing, orange=decisions, purple=output, red=errors)
-- Overall feel: polished, minimal, visually appealing — like a figure from a NeurIPS best paper
+MANDATORY VISUAL STYLE — "Soft Tech & Scientific Pastels":
+- Aesthetic: approachable yet precise. Think NeurIPS 2024-2025 best paper figures.
+- Background zones: use VERY LIGHT desaturated pastels (10-15% opacity) — cream #F5F5DC, pale blue #E6F3FF, mint #E0F2F1, lavender #F3E5F5 — to group related components. NOT solid colored boxes.
+- Component shapes: rounded rectangles (5-10px radius) for processes. Use different shapes for different types: cylinders for databases, diamonds for decisions, parallelograms for I/O.
+- Fill colors: medium saturation pastels. Warm tones (salmon, peach, coral) for active/trainable components. Cool tones (sky blue, mint, lavender) for static/fixed components.
+- Lines: orthogonal (right-angle) routing for architecture flows. Curved Bezier for feedback loops. Solid dark grey for forward flow, dashed lighter grey for auxiliary paths, dashed red for error paths.
+- Typography: sans-serif BOLD for component names, sans-serif regular for connection labels, serif italic for any math notation. Clear size hierarchy.
+- Small illustrative icons or thumbnails inside components to reinforce meaning — these should be simple, clean 2D vector-style icons (NOT emoji).
+- The diagram should feel RICH and INFORMATIVE — densely packed with semantic elements but still organized and clear. Avoid empty space.
+- Every visual element (color, shape, line style) should encode meaning, not just decoration.
 
 ABSOLUTE PROHIBITIONS:
-- NO figure title or heading text at the top
+- NO figure title or heading text at the top of the image
 - NO subtitle or description text — ONLY component labels and connection labels
-- NO flat/utilitarian PowerPoint-style boxes
-- NO harsh borders or solid black outlines
+- NO font specifications rendered as text (do NOT render "9pt", "Bold", "Sans-Serif", hex codes like "#424242" as visible text in the image)
+- NO heavy black outlines or borders. Use thin, subtle strokes.
+- NO 3D effects, gradients, or textures (unless encoding data dimensionality)
+- NO drop shadows (flat design, not material design)
 - Proportions: landscape, aspect ratio ~16:10, width ~{column_width_in:.1f} inches
-- Background: white or very light (#FAFAFA)"""
+- Background: white or off-white (#FAFAFA)"""
 
         # Generate image
         _log(f"[Visualizer] Generating image (round {round_idx + 1}/{max_critic_rounds})...")

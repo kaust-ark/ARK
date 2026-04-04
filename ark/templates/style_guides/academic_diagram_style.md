@@ -133,12 +133,12 @@ Use sparingly and consistently:
 The goal is a **modern tech illustration** — the kind you see in top NeurIPS/ICML papers. NOT a flowchart, NOT a PowerPoint slide, NOT matplotlib output.
 
 ### Required Visual Qualities
-- **Subtle depth**: Light shadows (2px offset, 8-10% opacity) under main component boxes to create gentle elevation
-- **Rounded corners**: 10-14px radius on all rectangular elements (generous rounding)
-- **Soft zone edges**: Background grouping zones should have soft/blurred edges or generous padding, not tight hard rectangles
-- **Professional arrowheads**: Filled, proportional to line width, with clean routing
-- **Breathing room**: At least 20px padding between components and zone borders
-- **Visual polish**: Thin stroke outlines on components (1px, 15-20% opacity darker than fill)
+- **Flat design**: NO drop shadows, NO 3D effects, NO gradients. Sophistication through semantic richness, not decoration.
+- **Rounded corners**: 5-10px radius on process nodes (consistent, not too round)
+- **Soft pastel zones**: Background grouping zones at 10-15% opacity — barely visible, just enough to create visual grouping
+- **Professional arrowheads**: Filled, proportional to line width, with clean orthogonal routing
+- **Dense but organized**: The diagram should be RICH with information — use space efficiently, avoid large empty areas
+- **Visual variety**: Use different shapes for different types (rounded rect for process, cylinder for storage, diamond for decision, parallelogram for I/O)
 
 ### Icons Inside Components (Recommended)
 Add small, simple icons inside key components to reinforce meaning:
