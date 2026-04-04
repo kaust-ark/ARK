@@ -17,21 +17,32 @@ class CompilerMixin:
     def compile_latex_with_errors(self) -> tuple:
         """Compile LaTeX and return (success, error_string).
 
-        On success: returns (True, "").
-        On failure: returns (False, structured_errors) where structured_errors
-        contains up to 5 error blocks parsed from main.log, with stderr fallback.
+        On success with no errors: returns (True, "").
+        On success with errors (PDF exists but has issues): returns (True, error_string).
+        On failure: returns (False, structured_errors).
         """
         success = self.compile_latex()
-        if success:
+        compile_errors = getattr(self, '_last_compile_errors', [])
+
+        if success and not compile_errors:
             return True, ""
 
+        if success and compile_errors:
+            # PDF exists but has issues (undefined refs, bibtex errors, etc.)
+            error_str = "PDF was generated but has the following issues:\n\n"
+            error_str += "\n".join(f"- {e[:150]}" for e in compile_errors[:10])
+            return True, error_str
+
+        # PDF not generated — real failure
         log_path = self.latex_dir / "main.log"
         errors = self._extract_latex_errors(log_path)
 
-        # If log parsing found nothing, use captured stderr as fallback
         stderr = getattr(self, '_last_compile_stderr', '')
         if "no specific errors found" in errors and stderr:
             errors += f"\n\nStderr from last pdflatex run:\n{stderr[:1000]}"
+
+        if compile_errors:
+            errors += "\n\nAdditional issues:\n" + "\n".join(f"- {e[:150]}" for e in compile_errors[:10])
 
         return False, errors
 
@@ -182,12 +193,15 @@ class CompilerMixin:
     def compile_latex(self) -> bool:
         """Compile the LaTeX paper.
 
+        Uses nonstopmode to avoid interactive prompts, but parses log/blg
+        files for actual errors (undefined citations, bibtex syntax errors, etc.).
+
         On success, stores the PDF path in self._latest_pdf.
-        Returns True/False for backward compat; callers that need the
-        path should read self._latest_pdf.
+        Returns True/False for backward compat.
         """
         self.log("Compiling LaTeX...")
         self._last_compile_stderr = ""
+        self._last_compile_errors = []
         try:
             for cmd in [
                 ["pdflatex", "-interaction=nonstopmode", "main.tex"],
@@ -205,7 +219,26 @@ class CompilerMixin:
                 stdout = result.stdout.decode("utf-8", errors="replace") if isinstance(result.stdout, bytes) else (result.stdout or "")
                 if result.returncode != 0 and "main.tex" in cmd:
                     self._last_compile_stderr = stderr[:1000] or stdout[-1000:]
-                    self.log(f"LaTeX compilation warning: {stderr[:500]}")
+
+            # Parse log for real errors (not just warnings)
+            log_path = self.latex_dir / "main.log"
+            blg_path = self.latex_dir / "main.blg"
+
+            if log_path.exists():
+                log_text = log_path.read_text(errors="replace")
+                # LaTeX errors start with "!"
+                latex_errors = [l.strip() for l in log_text.split("\n") if l.startswith("!")]
+                if latex_errors:
+                    self._last_compile_errors.extend(latex_errors[:10])
+
+            if blg_path.exists():
+                blg_text = blg_path.read_text(errors="replace")
+                # BibTeX errors
+                import re as _re
+                bib_errors = _re.findall(r"^.*error message.*$|^I was expecting.*$|^Warning--I didn't find a database entry.*$",
+                                         blg_text, _re.MULTILINE)
+                if bib_errors:
+                    self._last_compile_errors.extend(bib_errors[:10])
 
             pdf_path = self.latex_dir / "main.pdf"
             if pdf_path.exists() and pdf_path.stat().st_size > 0:
@@ -215,10 +248,17 @@ class CompilerMixin:
                 self._overfull_warnings = self._parse_overfull_warnings()
                 page_info = f", {self._body_page_count:.1f} body pages ({self._pdf_page_count} total)" if self._body_page_count else ""
                 overfull_info = f", {len(self._overfull_warnings)} overfull warnings" if self._overfull_warnings else ""
-                self.log(f"LaTeX compiled successfully: {pdf_path} ({pdf_path.stat().st_size} bytes{page_info}{overfull_info})")
+                error_info = f", {len(self._last_compile_errors)} errors" if self._last_compile_errors else ""
+                self.log(f"LaTeX compiled successfully: {pdf_path} ({pdf_path.stat().st_size} bytes{page_info}{overfull_info}{error_info})")
+                if self._last_compile_errors:
+                    for err in self._last_compile_errors[:5]:
+                        self.log(f"  Compile issue: {err[:120]}", "WARN")
                 return True
             else:
                 self.log("LaTeX compilation failed: PDF not generated")
+                if self._last_compile_errors:
+                    for err in self._last_compile_errors[:5]:
+                        self.log(f"  Error: {err[:120]}", "ERROR")
                 return False
         except Exception as e:
             self.log(f"LaTeX compilation error: {e}")
