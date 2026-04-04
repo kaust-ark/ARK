@@ -1025,8 +1025,13 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
             self._save_action_plan(action_plan)
             self.log_step("Writing phase completed", "success")
 
-            # Post-writing page count check: compress if over, expand if too short
-            self._enforce_page_count(context="post-writing")
+            # Page count logged for awareness (hard enforcement is in post-validate)
+            venue_pages = self.config.get("venue_pages")
+            if venue_pages and not self._quota_exhausted:
+                self.compile_latex()
+                page_count = getattr(self, '_body_page_count', 0)
+                if page_count:
+                    self.log(f"Page count after writing: {page_count:.1f}/{venue_pages} body pages", "INFO")
 
             return True
         else:
