@@ -122,6 +122,10 @@ VENUE_ALIASES = {
     "pldi": "acmart-sigplan",
     "asplos": "acmart-large",
     "sosp": "acmart-large",
+    "eurosys": "acmart-large",
+    "osdi": "usenix",
+    "nsdi": "usenix",
+    "atc": "usenix",
     "iclr": "neurips",
     "infocom": "ieee",
 }

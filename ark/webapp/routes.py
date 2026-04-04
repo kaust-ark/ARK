@@ -1049,14 +1049,14 @@ async def api_venues():
         {"name": "EMNLP",      "format": "emnlp",    "pages": 8},
         {"name": "CVPR",       "format": "cvpr",     "pages": 8},
         {"name": "MLSys",      "format": "mlsys",    "pages": 8},
-        {"name": "EuroMLSys",  "format": "sigplan",  "pages": 6},
+        {"name": "EuroMLSys",  "format": "euromlsys",  "pages": 6},
         # Systems
-        {"name": "SOSP",       "format": "acm",      "pages": 14},
-        {"name": "EuroSys",    "format": "acm",      "pages": 12},
-        {"name": "NSDI",       "format": "usenix",   "pages": 14},
-        {"name": "OSDI",       "format": "usenix",   "pages": 14},
-        {"name": "USENIX ATC", "format": "usenix",   "pages": 12},
-        {"name": "IEEE S&P",   "format": "ieee",     "pages": 13},
+        {"name": "SOSP",       "format": "sosp",     "pages": 14},
+        {"name": "EuroSys",    "format": "sosp",     "pages": 12},
+        {"name": "NSDI",       "format": "osdi",     "pages": 14},
+        {"name": "OSDI",       "format": "osdi",     "pages": 14},
+        {"name": "USENIX ATC", "format": "osdi",     "pages": 12},
+        {"name": "IEEE S&P",   "format": "neurips",  "pages": 13},
         # Networking
         {"name": "INFOCOM",    "format": "infocom",  "pages": 9},
     ]
