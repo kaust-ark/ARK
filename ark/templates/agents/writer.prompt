@@ -48,13 +48,19 @@ When handling figure-related tasks, **you must first read** `{FIGURES_DIR}/figur
 
 ## Hard Page Limit — {VENUE_PAGES} pages (MANDATORY)
 
-The paper body (excluding references and appendix) **must not exceed {VENUE_PAGES} pages**. Exceeding this limit means automatic desk rejection.
+The paper body (excluding references and appendix) has a strict page target:
+- **Maximum**: {VENUE_PAGES} pages. Exceeding this means automatic desk rejection.
+- **Minimum**: The last page of body text must be at least 90% filled. A paper that is too short looks incomplete and will be scored lower by reviewers.
+  - For single-column templates: the last page should have no more than 10% whitespace at the bottom.
+  - For double-column templates: the right column on the last body page should be at least 90% filled.
 
-**Before making ANY change**, count the current page usage. Then follow these rules strictly:
+**Before making ANY change**, check current page count. Then:
 
-- **If already over {VENUE_PAGES} pages**: Your primary job is COMPRESSION. Do NOT add any new content until the paper is under the limit. Move non-essential sections to `\appendix`. Merge overlapping sections. Cut redundant prose.
-- **If at or near the limit**: For every paragraph you add, you MUST remove an equal or larger amount of text. Net content must NOT increase.
-- **If well under the limit**: You may add content, but always check page count after changes.
+- **Over {VENUE_PAGES} pages**: COMPRESS first. Do NOT add content until under the limit.
+- **At or near the limit**: For every paragraph added, remove equal or more text.
+- **Well under the limit (last page < 90% filled)**: ADD substantive content — deeper analysis, more related work comparisons, expanded methodology details. Do NOT pad with filler.
+
+**Always ensure `\clearpage` appears before `\bibliography`** so references start on a new page.
 
 **Compression strategies** (in order of priority):
 1. Move detailed ablations, sensitivity analyses, and per-category breakdowns to `\appendix`
@@ -62,3 +68,10 @@ The paper body (excluding references and appendix) **must not exceed {VENUE_PAGE
 3. Replace verbose multi-paragraph explanations with concise text
 4. Compress tables — remove redundant rows/columns, use `\small` or `\footnotesize`
 5. Remove any content that repeats information from another section
+
+**Expansion strategies** (when too short):
+1. Deepen analysis/discussion — explain WHY, not just WHAT
+2. Add more related work with specific comparisons to your approach
+3. Expand experimental setup (hyperparameters, hardware, dataset splits)
+4. Add a Limitations paragraph
+5. Expand figure captions with interpretive context

@@ -628,11 +628,24 @@ After making all changes, you MUST verify the page count:
         # First: ensure \clearpage before \bibliography (programmatic, no agent needed)
         self._ensure_clearpage_before_bibliography()
 
-        min_pages = venue_pages - 1 + 0.9  # e.g., 6 pages → 5.9 minimum
-        max_pages = venue_pages + 0.1      # e.g., 6 pages → 6.1 maximum
+        # 90% fill rule:
+        # Single-column: last page 90% filled → min = N - 0.1 (e.g., 6 → 5.9)
+        # Double-column: right column on last page 90% filled → min = N - 0.05 (stricter,
+        #   because half a page = one column, so 10% of a column ≈ 5% of a page)
+        from ark.latex_geometry import get_geometry
+        venue_format = self.config.get("venue_format", "")
+        geo = get_geometry(venue_format) if venue_format else {}
+        columns = geo.get("columns", 1)
+
+        if columns >= 2:
+            min_pages = venue_pages - 0.05  # double-column: right column 90% filled
+        else:
+            min_pages = venue_pages - 0.1   # single-column: last page 90% filled
+        max_pages = venue_pages + 0.1
         latex_dir = self.config.get("latex_dir", "paper")
 
-        self.log(f"[{context}] Page check: {page_count:.1f} body pages (target: {min_pages:.1f}–{max_pages:.1f})", "INFO")
+        self.log(f"[{context}] Page check: {page_count:.1f} body pages "
+                 f"(target: {min_pages:.2f}–{max_pages:.1f}, {columns}-col)", "INFO")
 
         # Case 1: Over limit → compress
         if page_count > max_pages:
