@@ -406,6 +406,9 @@ Notes:
             self.log_step_header(step_num, total_steps, "Validate", "end")
             self.save_step_checkpoint(step_num, "Validate")
 
+        # Final page count check after figure phase (figures may change layout)
+        self._enforce_page_count(context="post-validate-final")
+
         self.save_paper_state(paper_state)
         self._last_score = score
 
@@ -1183,6 +1186,8 @@ Produce the complete paper. Do not stop until all sections are written and it co
         self.log_step("Compiling initial draft...", "progress")
         if self.compile_latex():
             self.log_step("Initial draft compiled successfully", "success")
+            # Page count check after initial writing
+            self._enforce_page_count(context="dev-phase-initial-draft")
             # Send initial draft PDF via Telegram
             if self.telegram.is_configured:
                 pdf_path = self.latex_dir / "main.pdf"

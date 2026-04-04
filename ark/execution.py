@@ -602,6 +602,116 @@ After making all changes, you MUST verify the page count:
         m = re.search(r'([\d.]+)pt', warning)
         return float(m.group(1)) if m else 0.0
 
+    def _enforce_page_count(self, context: str = "post-writing") -> bool:
+        """Check and enforce page count: not over limit, last page >= 90% filled.
+
+        For a 6-page venue:
+        - Over 6.1 pages → compression pass
+        - Under 5.9 pages (last page < 90%) → expansion pass
+        - Also ensures \\clearpage before \\bibliography
+
+        Args:
+            context: Where this check is called from (for logging)
+
+        Returns:
+            True if page count is acceptable, False if couldn't be fixed.
+        """
+        venue_pages = self.config.get("venue_pages")
+        if not venue_pages or self._quota_exhausted:
+            return True
+
+        self.compile_latex()
+        page_count = getattr(self, '_body_page_count', 0)
+        if not page_count:
+            return True
+
+        # First: ensure \clearpage before \bibliography (programmatic, no agent needed)
+        self._ensure_clearpage_before_bibliography()
+
+        min_pages = venue_pages - 1 + 0.9  # e.g., 6 pages → 5.9 minimum
+        max_pages = venue_pages + 0.1      # e.g., 6 pages → 6.1 maximum
+        latex_dir = self.config.get("latex_dir", "paper")
+
+        self.log(f"[{context}] Page check: {page_count:.1f} body pages (target: {min_pages:.1f}–{max_pages:.1f})", "INFO")
+
+        # Case 1: Over limit → compress
+        if page_count > max_pages:
+            self.log(f"[{context}] Over limit ({page_count:.1f} > {max_pages:.1f}), running compression...", "WARN")
+            self.run_agent("writer", f"""## PAGE COMPRESSION — venue limit is {venue_pages} body pages
+
+The paper body is currently {page_count:.1f} pages, exceeding the {venue_pages}-page limit.
+
+Reduce to exactly {venue_pages} pages or just under. Strategies:
+- Condense verbose paragraphs (aim for ~15% shorter text)
+- Merge overlapping sentences in related work
+- Move less essential subsections to \\appendix
+- Reduce whitespace around figures/tables (use \\vspace{{-Xpt}})
+- Do NOT remove key technical content or results
+
+After changes:
+1. Ensure `\\clearpage` before `\\bibliography` so references start on a new page
+2. Compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex && pdflatex -interaction=nonstopmode main.tex
+3. Body pages must be ≤ {venue_pages}
+""", timeout=1800)
+            self.compile_latex()
+            page_count = getattr(self, '_body_page_count', 0)
+            if page_count and page_count > max_pages:
+                self.log(f"[{context}] Still over limit after compression: {page_count:.1f}", "ERROR")
+                return False
+
+        # Case 2: Under target → expand
+        elif page_count < min_pages:
+            self.log(f"[{context}] Under target ({page_count:.1f} < {min_pages:.1f}), running expansion...", "WARN")
+            self.run_agent("writer", f"""## PAGE EXPANSION — paper is too short
+
+The paper body is currently {page_count:.1f} pages. For a {venue_pages}-page venue, the last page (page {venue_pages}) must be at least 90% filled. Target: {min_pages:.1f}–{venue_pages:.0f} body pages.
+
+Expand the paper by adding substantive content (NOT filler):
+- Deepen the analysis/discussion section with more insights
+- Add more related work comparisons and positioning
+- Expand experimental methodology details (hyperparameters, setup)
+- Add a limitations paragraph or future work discussion
+- Expand figure captions with more context
+- Do NOT add padding text, redundant restatements, or unnecessary whitespace
+
+After changes:
+1. Ensure `\\clearpage` before `\\bibliography` so references start on a new page
+2. Compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex && pdflatex -interaction=nonstopmode main.tex
+3. Body pages should be between {min_pages:.1f} and {venue_pages:.0f}
+""", timeout=1800)
+            self.compile_latex()
+            page_count = getattr(self, '_body_page_count', 0)
+            if page_count and page_count < min_pages:
+                self.log(f"[{context}] Still too short after expansion: {page_count:.1f}", "WARN")
+
+        if page_count:
+            self.log(f"[{context}] Final page count: {page_count:.1f}/{venue_pages} body pages", "INFO")
+        return True
+
+    def _ensure_clearpage_before_bibliography(self):
+        """Programmatically ensure \\clearpage appears before \\bibliography in main.tex."""
+        main_tex = self.latex_dir / "main.tex"
+        if not main_tex.exists():
+            return
+        try:
+            content = main_tex.read_text()
+            # Check if \clearpage already before \bibliography
+            if r'\clearpage' not in content or \
+               content.index(r'\bibliography') < content.rindex(r'\clearpage') if r'\clearpage' in content else True:
+                # Need to check more carefully
+                pass
+
+            # Find \bibliography and ensure \clearpage is right before it
+            import re as _re
+            pattern = r'(?<!\\clearpage\n)(\\bibliography\{)'
+            if _re.search(pattern, content):
+                new_content = _re.sub(pattern, r'\\clearpage\n\1', content)
+                if new_content != content:
+                    main_tex.write_text(new_content)
+                    self.log("Injected \\clearpage before \\bibliography", "INFO")
+        except Exception:
+            pass  # Non-critical, agent can handle it
+
     def _run_writing_phase(self, action_plan: dict, prior_context: str = ""):
         """Execute writing phase for all writing tasks."""
         issues = action_plan.get("issues", [])
@@ -915,37 +1025,8 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
             self._save_action_plan(action_plan)
             self.log_step("Writing phase completed", "success")
 
-            # Post-writing page count check: if still over limit, one compression pass
-            venue_pages = self.config.get("venue_pages")
-            if venue_pages and not self._quota_exhausted:
-                self.compile_latex()
-                page_count = getattr(self, '_body_page_count', 0)
-                if page_count and page_count > venue_pages + 0.10:
-                    self.log(f"Post-writing compression needed: {page_count:.1f} body pages (limit {venue_pages})", "WARN")
-                    self.run_agent("writer", f"""
-## PAGE COMPRESSION — venue limit is {venue_pages} body pages
-
-The paper body currently exceeds the limit. Reduce it to {venue_pages} pages or fewer.
-Move less essential subsections to \\appendix, condense verbose text, merge overlapping sections.
-Do NOT add new content — only compress.
-
-After each round of changes:
-1. Ensure `\\clearpage` appears immediately before `\\bibliography{{...}}` so References starts on a fresh page
-2. Compile with `pdflatex -interaction=nonstopmode main.tex` (run twice)
-3. Count body pages (before References section)
-4. If still over {venue_pages}, compress more
-5. Stop when body pages <= {venue_pages}
-""", timeout=1800)
-
-                    if not self._quota_exhausted:
-                        self.compile_latex()
-                        final_count = getattr(self, '_body_page_count', 0)
-                        if final_count and final_count > venue_pages + 0.10:
-                            self.log(f"WARNING: Paper still at {final_count:.1f} body pages after compression (limit {venue_pages})", "ERROR")
-                        elif final_count:
-                            self.log(f"Page count OK: {final_count:.1f}/{venue_pages} body pages", "INFO")
-                elif page_count:
-                    self.log(f"Page count OK: {page_count:.1f}/{venue_pages} body pages", "INFO")
+            # Post-writing page count check: compress if over, expand if too short
+            self._enforce_page_count(context="post-writing")
 
             return True
         else:
