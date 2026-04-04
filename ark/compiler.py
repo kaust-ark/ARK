@@ -121,7 +121,7 @@ class CompilerMixin:
                 self._pdf_page_count = self._count_pdf_pages(pdf_path)
                 self._body_page_count = self._count_body_pages(pdf_path)
                 self._overfull_warnings = self._parse_overfull_warnings()
-                page_info = f", {self._body_page_count} body pages ({self._pdf_page_count} total)" if self._body_page_count else ""
+                page_info = f", {self._body_page_count:.1f} body pages ({self._pdf_page_count} total)" if self._body_page_count else ""
                 overfull_info = f", {len(self._overfull_warnings)} overfull warnings" if self._overfull_warnings else ""
                 self.log(f"LaTeX compiled successfully: {pdf_path} ({pdf_path.stat().st_size} bytes{page_info}{overfull_info})")
                 return True
@@ -144,26 +144,40 @@ class CompilerMixin:
             self.log(f"Page count check failed: {e}", "WARN")
         return 0
 
-    def _count_body_pages(self, pdf_path: Path) -> int:
-        """Count body pages (before References section) using PyMuPDF."""
+    def _count_body_pages(self, pdf_path: Path) -> float:
+        """Count body pages (before References section) using PyMuPDF.
+
+        Returns a float: integer part = complete pages before References,
+        fractional part = how far down that page References starts (0.0–1.0).
+        E.g. 6.3 means body fills 6 complete pages plus 30% of the next page.
+        """
         try:
             import fitz
             doc = fitz.open(str(pdf_path))
             for i in range(len(doc)):
-                text = doc[i].get_text()
-                for line in text.split('\n'):
-                    stripped = line.strip()
-                    # Match "References" as a section heading (standalone line)
-                    if stripped == 'References':
-                        doc.close()
-                        return i  # 0-indexed page where References starts = body page count
-            # No References found — fall back to total
+                page = doc[i]
+                text = page.get_text()
+                found = any(line.strip() == 'References' for line in text.split('\n'))
+                if not found:
+                    continue
+                # References is on page i — measure its y-position
+                page_height = page.rect.height
+                for block in page.get_text("dict")["blocks"]:
+                    for line_obj in block.get("lines", []):
+                        line_text = "".join(s["text"] for s in line_obj.get("spans", []))
+                        if line_text.strip() == "References":
+                            ref_y = line_obj["bbox"][1]
+                            doc.close()
+                            return i + ref_y / page_height
+                # Fallback: found in plain text but not in dict blocks
+                doc.close()
+                return float(i)
             total = len(doc)
             doc.close()
-            return total
+            return float(total)
         except Exception as e:
             self.log(f"Body page count failed: {e}", "WARN")
-            return 0
+            return 0.0
 
     def _parse_overfull_warnings(self) -> list[str]:
         """Parse main.log for Overfull hbox warnings."""
@@ -287,9 +301,23 @@ class CompilerMixin:
         # Step 2: Run figure generation script
         script_path = self.config.get("create_figures_script", "scripts/create_paper_figures.py")
         full_script = self.code_dir / script_path
+        overlap_report = None
         if full_script.exists():
             self.log_step("Running figure generation script...", "progress")
             self.generate_figures()
+
+            # Step 2.1: Programmatic overlap detection and auto-fix
+            try:
+                from ark.figure_overlap import check_and_fix_figures
+                overlap_report = check_and_fix_figures(
+                    full_script, self.figures_dir, geo, log_fn=self.log,
+                )
+                if overlap_report.get("summary", {}).get("with_overlaps", 0) > 0:
+                    # Re-run figure generation after fixes were applied
+                    self.log_step("Regenerating figures after overlap fixes...", "progress")
+                    self.generate_figures()
+            except Exception as e:
+                self.log(f"Overlap detection error (non-fatal): {e}", "WARN")
         else:
             self.log_step(f"No figure script at {script_path}, skipping generation", "info")
 
@@ -312,6 +340,31 @@ class CompilerMixin:
             figure_files = list(self.figures_dir.glob("*"))
             figures_list = "\n".join(f"- {f.name}" for f in figure_files if f.suffix in (".pdf", ".png", ".jpg"))
 
+            # Include overlap report if available
+            overlap_section = ""
+            overlap_report_path = self.figures_dir / "overlap_report.json"
+            if overlap_report_path.exists():
+                try:
+                    or_data = json.loads(overlap_report_path.read_text())
+                    figs_with_issues = [f for f in or_data.get("figures", []) if f.get("has_overlaps")]
+                    if figs_with_issues:
+                        overlap_lines = []
+                        for f in figs_with_issues:
+                            overlap_lines.append(f"- **{f['name']}**: {f['overlap_count']} overlaps, density={f['density']}")
+                            for o in f.get("overlaps", [])[:5]:
+                                overlap_lines.append(f"  - {o['type1']}({o['text1']}) ↔ {o['type2']}({o['text2']}), severity={o['severity']}")
+                            if f.get("suggestions"):
+                                overlap_lines.append(f"  - Suggestions: {', '.join(f['suggestions'])}")
+                        overlap_section = f"""
+### Programmatic Overlap Report (auto-detected)
+The system detected text overlaps in these figures and attempted auto-fixes.
+Verify the fixes are correct. If issues remain, fix them manually.
+
+{chr(10).join(overlap_lines)}
+"""
+                except Exception:
+                    pass
+
             fixer_prompt = f"""## Figure Quality Check (Loop {loop + 1}/{MAX_FIGURE_LOOPS})
 
 ### Template Geometry Parameters
@@ -322,7 +375,7 @@ class CompilerMixin:
 
 ### Current Figure Files
 {figures_list}
-
+{overlap_section}
 ### PDF Page Images (use Read tool to view each page)
 {images_list}
 
@@ -330,13 +383,15 @@ class CompilerMixin:
 1. Use the Read tool to read each page PNG image and carefully check:
    - Is the text in figures clearly readable (equivalent >= 8pt)?
    - Do figures overflow the column width boundaries?
-   - Are there any overlapping labels?
+   - Are there any overlapping labels? (Check the overlap report above for known issues)
    - Do tables overflow their boundaries?
    - Does the overall visual quality meet academic publication standards?
 2. If issues are found:
    - Locate the corresponding Python plotting script or LaTeX table code
    - Modify figsize to column width {geo['columnwidth_in']}in or full width {geo['textwidth_in']}in
    - Modify font.size to {geo['font_size_pt']}pt
+   - For overlapping x-labels: use `rotation=45, ha='right'` or switch to horizontal bars
+   - For crowded plots: increase figsize height or use `constrained_layout=True`
    - Read {self.figures_dir}/figure_config.json for full configuration
    - Re-run the script to regenerate figures
 3. If no issues or already fixed, output the verdict
@@ -440,7 +495,7 @@ FIGURES_NEED_FIX"""
         4. Generated PNGs saved to figures_dir
         """
         try:
-            from ark.nano_banana import generate_figure, get_api_key, build_figure_prompt
+            from ark.nano_banana import generate_figure, generate_figure_pipeline, get_api_key, build_figure_prompt
         except ImportError:
             self.log("Nano Banana module not available, skipping AI figure generation", "WARN")
             return
@@ -450,7 +505,7 @@ FIGURES_NEED_FIX"""
             self.log("No Gemini API key found, skipping AI figure generation", "WARN")
             return
 
-        model = self.config.get("nano_banana_model", "flash")
+        model = self.config.get("nano_banana_model", "pro")
         venue = self.config.get("venue", "")
         latex_dir = self.config.get("latex_dir", "Latex")
 
@@ -524,16 +579,30 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
                 self.log(f"  Skipping {name}: already exists", "INFO")
                 continue
 
-            prompt = build_figure_prompt(
-                figure_name=name,
-                caption=caption,
-                paper_context=section_ctx or paper_text[:2000],
-                venue=venue,
-                column_width_in=geo.get("columnwidth_in", 3.333),
-            )
-
             self.log(f"  Generating: {name}...", "INFO")
-            ok = generate_figure(prompt, output_path, api_key=api_key, model=model)
+            use_pipeline = self.config.get("nano_banana_pipeline", True)
+            if use_pipeline:
+                ok = generate_figure_pipeline(
+                    figure_name=name,
+                    caption=caption,
+                    paper_context=section_ctx or paper_text[:2000],
+                    output_path=output_path,
+                    api_key=api_key,
+                    model=model,
+                    venue=venue,
+                    column_width_in=geo.get("columnwidth_in", 3.333),
+                    max_critic_rounds=self.config.get("nano_banana_critic_rounds", 3),
+                    log_fn=self.log,
+                )
+            else:
+                prompt = build_figure_prompt(
+                    figure_name=name,
+                    caption=caption,
+                    paper_context=section_ctx or paper_text[:2000],
+                    venue=venue,
+                    column_width_in=geo.get("columnwidth_in", 3.333),
+                )
+                ok = generate_figure(prompt, output_path, api_key=api_key, model=model)
             if ok:
                 generated += 1
                 self.log(f"  Generated: {output_path.name}", "INFO")

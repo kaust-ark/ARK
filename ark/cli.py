@@ -1939,7 +1939,7 @@ def cmd_status(args):
             for name in stopped_projects:
                 _show_project_status_brief(name)
 
-        _webapp_db = get_ark_root() / "ark_webapp" / "webapp.db"
+        _webapp_db = get_config_dir() / "webapp.db"
         _disabled_flag = get_ark_root() / "ark_webapp" / "disabled"
         if _webapp_db.exists():
             import sqlite3 as _sq
@@ -3371,7 +3371,7 @@ def cmd_web(args):
     project_filter = getattr(args, 'project', None) or None
 
     _DISABLED_FLAG = get_ark_root() / "ark_webapp" / "disabled"
-    _DB = get_ark_root() / "ark_webapp" / "webapp.db"
+    _DB = get_config_dir() / "webapp.db"
 
     if not _DB.exists():
         print(f"{_c('Error:', Colors.RED)} No webapp DB found. Start the webapp first.")

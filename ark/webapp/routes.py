@@ -141,6 +141,8 @@ def _write_config_yaml(project_dir: Path, project: Project):
         "code_dir": str(project_dir),
         "latex_dir": "paper",
         "figures_dir": "paper/figures",
+        "figure_generation": "nano_banana",
+        "nano_banana_model": "flash",
     }
     if project.telegram_token:
         config["telegram_bot_token"] = project.telegram_token
@@ -395,7 +397,9 @@ async def auth_google(request: Request):
     oauth = _get_google_oauth()
     if not oauth:
         raise HTTPException(400, "Google login is not configured on this server.")
-    return await oauth.google.authorize_redirect(request, _GOOGLE_REDIRECT_URI)
+    return await oauth.google.authorize_redirect(
+        request, _GOOGLE_REDIRECT_URI, prompt="select_account"
+    )
 
 
 @router.get("/auth/google/callback")
@@ -485,11 +489,14 @@ async def api_me(request: Request):
 # ── projects API ──────────────────────────────────────────────────────────────
 
 @router.get("/api/projects")
-async def api_list_projects(request: Request):
+async def api_list_projects(request: Request, scope: str = "mine"):
     user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
-        projects = get_all_projects(session) if _is_admin(user) else get_projects_for_user(session, user.id)
+        if scope == "all" and _is_admin(user):
+            projects = get_all_projects(session)
+        else:
+            projects = get_projects_for_user(session, user.id)
         # Refresh scores from disk
         # Pre-fetch user emails for admin view
         user_email_cache: dict[str, str] = {}

@@ -49,6 +49,7 @@ def _write_default_env():
     """Create .ark/webapp.env with placeholder values on first run."""
     hostname = socket.gethostname()
     _root = get_ark_root()
+    _config_dir = get_config_dir()
     content = f"""\
 # ARK Web App configuration
 # Edit this file, then restart: ark webapp
@@ -79,7 +80,7 @@ GOOGLE_CLIENT_SECRET=
 
 PROJECTS_ROOT={_root / 'ark_webapp' / 'projects'}
 SECRET_KEY={secrets.token_hex(32)}
-DB_PATH={_root / 'ark_webapp' / 'webapp.db'}
+DB_PATH={_config_dir / 'webapp.db'}
 
 # Optional SLURM settings (auto-detected if blank)
 SLURM_PARTITION=
@@ -104,13 +105,14 @@ class Settings:
         self.smtp_relay: str = merged.get("SMTP_RELAY", "")
         self.smtp_from: str = merged.get("SMTP_FROM", "ark@localhost")
         _root = get_ark_root()
+        _config_dir = get_config_dir()
         self.projects_root: Path = Path(merged.get("PROJECTS_ROOT") or str(_root / "ark_webapp" / "projects"))
         self.secret_key: str = merged.get("SECRET_KEY", _DEFAULTS["SECRET_KEY"])
         # ARK_WEBAPP_DB_PATH env var takes priority (used for dev/prod separation)
         self.db_path: str = (
             os.environ.get("ARK_WEBAPP_DB_PATH")
             or merged.get("DB_PATH")
-            or str(_root / "ark_webapp" / "webapp.db")
+            or str(_config_dir / "webapp.db")
         )
         self.slurm_partition: str = merged.get("SLURM_PARTITION", "")
         self.slurm_account: str = merged.get("SLURM_ACCOUNT", "")

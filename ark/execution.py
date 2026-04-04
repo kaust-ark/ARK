@@ -195,12 +195,13 @@ Rules:
         page_count = getattr(self, '_body_page_count', 0)
         self._page_over_limit = False
         if venue_pages:
-            if page_count and page_count > venue_pages:
+            if page_count and page_count > venue_pages + 0.10:
                 self._page_over_limit = True
+            page_count_display = f"{page_count:.1f}" if page_count else 'unknown'
             page_constraint = f"""
 ## PAGE LIMIT: {venue_pages} pages (body text, excluding references and appendix)
 
-Current body pages: {page_count if page_count else 'unknown'}. {"OVER LIMIT — page reduction is a priority." if self._page_over_limit else "Within limit."}
+Current body pages: {page_count_display}. {"OVER LIMIT — page reduction is a priority." if self._page_over_limit else "Within limit."}
 For every writing task, instruct the writer to compile and verify the body page count stays at or under {venue_pages} pages.
 """
 
@@ -574,11 +575,12 @@ After running the experiment:
 ## PAGE LIMIT: {venue_pages} pages (body text only, excluding references and appendix)
 
 After making all changes, you MUST verify the page count:
-1. Compile with `pdflatex -interaction=nonstopmode main.tex` (run twice for stable layout)
-2. Check the body page count (pages before the References section)
-3. If over {venue_pages} pages: move less essential subsections to `\\appendix`, condense verbose text
-4. If under {venue_pages} pages: you have room — do NOT pad with filler
-5. Repeat compile-and-check until body pages = {venue_pages} or fewer
+1. Ensure `\\clearpage` appears immediately before `\\bibliography{{...}}` so References starts on a fresh page
+2. Compile with `pdflatex -interaction=nonstopmode main.tex` (run twice for stable layout)
+3. Check the body page count (pages before the References section)
+4. If over {venue_pages} pages: move less essential subsections to `\\appendix`, condense verbose text
+5. If under {venue_pages} pages: you have room — do NOT pad with filler
+6. Repeat compile-and-check until body pages = {venue_pages} or fewer
 """
 
         # Append overfull hbox warnings
@@ -722,6 +724,10 @@ After making all changes, you MUST verify the page count:
 5. Do not run the script (the system will run it automatically)
 """)
 
+            # Load plot style guide
+            _style_path = Path(__file__).parent / "templates" / "style_guides" / "academic_plot_style.md"
+            _plot_style = _style_path.read_text() if _style_path.exists() else ""
+
             self.run_agent("writer", f"""
 ## CRITICAL TASK: Modify Python plotting scripts (not LaTeX!)
 
@@ -729,6 +735,10 @@ You received {len(figure_tasks)} FIGURE_CODE_REQUIRED tasks.
 These tasks require modifying **Python code**, not LaTeX files!
 
 {''.join(figure_instructions)}
+
+## Academic Plot Style Guide (MUST FOLLOW when modifying plotting code)
+
+{_plot_style}
 
 ## Tool usage requirements
 - Must use the Read tool to read {target_file}
@@ -909,8 +919,8 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
             if venue_pages and not self._quota_exhausted:
                 self.compile_latex()
                 page_count = getattr(self, '_body_page_count', 0)
-                if page_count and page_count > venue_pages:
-                    self.log(f"Post-writing compression needed: {page_count} body pages (limit {venue_pages})", "WARN")
+                if page_count and page_count > venue_pages + 0.10:
+                    self.log(f"Post-writing compression needed: {page_count:.1f} body pages (limit {venue_pages})", "WARN")
                     self.run_agent("writer", f"""
 ## PAGE COMPRESSION — venue limit is {venue_pages} body pages
 
@@ -919,21 +929,22 @@ Move less essential subsections to \\appendix, condense verbose text, merge over
 Do NOT add new content — only compress.
 
 After each round of changes:
-1. Compile with `pdflatex -interaction=nonstopmode main.tex` (run twice)
-2. Count body pages (before References section)
-3. If still over {venue_pages}, compress more
-4. Stop when body pages <= {venue_pages}
+1. Ensure `\\clearpage` appears immediately before `\\bibliography{{...}}` so References starts on a fresh page
+2. Compile with `pdflatex -interaction=nonstopmode main.tex` (run twice)
+3. Count body pages (before References section)
+4. If still over {venue_pages}, compress more
+5. Stop when body pages <= {venue_pages}
 """, timeout=1800)
 
                     if not self._quota_exhausted:
                         self.compile_latex()
                         final_count = getattr(self, '_body_page_count', 0)
-                        if final_count and final_count > venue_pages:
-                            self.log(f"WARNING: Paper still at {final_count} body pages after compression (limit {venue_pages})", "ERROR")
+                        if final_count and final_count > venue_pages + 0.10:
+                            self.log(f"WARNING: Paper still at {final_count:.1f} body pages after compression (limit {venue_pages})", "ERROR")
                         elif final_count:
-                            self.log(f"Page count OK: {final_count}/{venue_pages} body pages", "INFO")
+                            self.log(f"Page count OK: {final_count:.1f}/{venue_pages} body pages", "INFO")
                 elif page_count:
-                    self.log(f"Page count OK: {page_count}/{venue_pages} body pages", "INFO")
+                    self.log(f"Page count OK: {page_count:.1f}/{venue_pages} body pages", "INFO")
 
             return True
         else:

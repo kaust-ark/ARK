@@ -2279,7 +2279,7 @@ let _adminPageDisabled = false;
 
 async function loadAdminPage() {
   const [projectsRes, statusRes] = await Promise.all([
-    fetch('/api/projects'),
+    fetch('/api/projects?scope=all'),
     fetch('/api/admin/status'),
   ]);
   _adminAllProjects = await projectsRes.json();
