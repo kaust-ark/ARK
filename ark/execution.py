@@ -647,8 +647,8 @@ After making all changes, you MUST verify the page count:
         self.log(f"[{context}] Page check: {page_count:.1f} body pages "
                  f"(target: {min_pages:.2f}–{max_pages:.1f}, {columns}-col)", "INFO")
 
-        # Loop until page count is in range or max attempts exhausted
-        MAX_ATTEMPTS = 3
+        # Loop until page count is in range (safety limit to avoid infinite loop)
+        MAX_ATTEMPTS = 5
         for attempt in range(MAX_ATTEMPTS):
             in_range = min_pages <= page_count <= max_pages
             if in_range:
@@ -700,10 +700,17 @@ Ensure `\\clearpage` before `\\bibliography`.
                 self.log(f"[{context}] Could not determine page count after {action}", "WARN")
                 return True
 
-        # After all attempts
+        # After all attempts — notify user if still out of range
         in_range = page_count and min_pages <= page_count <= max_pages
-        self.log(f"[{context}] Final page count: {page_count:.1f}/{venue_pages} body pages "
-                 f"({'OK' if in_range else 'OUT OF RANGE'} after {MAX_ATTEMPTS} attempts)", "INFO" if in_range else "ERROR")
+        if not in_range:
+            msg = (f"⚠️ Page count still out of range after {MAX_ATTEMPTS} attempts: "
+                   f"{page_count:.1f} pages (target: {min_pages:.2f}–{max_pages:.1f}). "
+                   f"Manual adjustment may be needed.")
+            self.log(f"[{context}] {msg}", "ERROR")
+            if self.telegram.is_configured:
+                self.telegram.send(msg)
+        else:
+            self.log(f"[{context}] Final page count: {page_count:.1f}/{venue_pages} body pages OK", "INFO")
         return in_range
 
     def _ensure_clearpage_before_bibliography(self):
