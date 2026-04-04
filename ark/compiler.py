@@ -684,7 +684,7 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
             data = {
                 "candidate_id": name,
                 "content": paper_context,
-                "visual_intent": caption,
+                "visual_intent": f"{caption} IMPORTANT: Keep text minimal — component labels MAX 3-5 words, connection labels MAX 1-3 words. Use icons and visual layout to convey meaning, not text. Total visible text under 50 words.",
                 "additional_info": {"rounded_ratio": aspect_ratio},
             }
 

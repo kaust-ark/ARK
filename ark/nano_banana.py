@@ -318,10 +318,19 @@ Design a PUBLICATION-QUALITY illustration. For each element, be extremely specif
 - The diagram should feel RICH and INFORMATIVE — not empty or sparse
 - Add small illustrative icons/thumbnails inside key components (2D vector-style, NOT emoji)
 - Use different shapes for different component types (not all rounded rectangles)
-- Add small detail annotations where helpful (e.g., "×N" for repeated blocks, "K pairs" for memory size)
 - Overall background: white or off-white (#FAFAFA)
 - NO drop shadows, NO gradients, NO 3D effects. Flat design with semantic richness.
 - Every visual element should encode meaning — if a color/shape/line doesn't convey information, remove it
+
+### 6. TEXT BREVITY (CRITICAL — the #1 mistake is too much text)
+- A diagram is a VISUAL ABSTRACTION, not a text document. Communicate through shapes, colors, icons, and layout — NOT paragraphs.
+- **Component labels**: MAX 3-5 words (e.g., "LLM Semantic Detection", NOT "Uses a large language model to analyze skill instructions and classify them as benign or malicious")
+- **Connection labels**: MAX 1-3 words (e.g., "Benign", "Malicious", "Repaired")
+- **Annotations**: MAX 1 short phrase if essential (e.g., "F1=0.95", "N=18K"). Skip if not critical.
+- **NO sentences or descriptions inside components**. The caption and paper body handle explanations.
+- **NO bullet lists, paragraphs, or multi-line text blocks** inside any component.
+- If a component needs explanation beyond its label, use a small icon to convey meaning visually instead.
+- Total visible text in the entire figure should be under ~50 words.
 
 IMPORTANT: Do NOT include font sizes (e.g., "12pt"), hex color codes (e.g., "#E6F3FF"), or CSS-like properties in component descriptions. Those are for the style guide only. Just describe WHAT to draw — shapes, labels, connections, zones, icons — in plain language. The image generator will interpret font specs as literal text to render.
 
@@ -406,6 +415,9 @@ Examine the attached figure critically.
 - All text same size (no typography hierarchy) → Publication Readiness ≤ 3
 - Sparse/empty layout with too much white space → Publication Readiness ≤ 3
 - Drop shadows or 3D effects (should be FLAT design) → Aesthetics ≤ 3
+- Text overload: sentences, paragraphs, or bullet lists inside components → Conciseness ≤ 2
+- Component labels longer than 5 words → Conciseness ≤ 3
+- Total visible text exceeds ~50 words → Conciseness ≤ 3
 
 ## Scoring Criteria (1-5, be VERY strict)
 
