@@ -647,10 +647,18 @@ After making all changes, you MUST verify the page count:
         self.log(f"[{context}] Page check: {page_count:.1f} body pages "
                  f"(target: {min_pages:.2f}–{max_pages:.1f}, {columns}-col)", "INFO")
 
-        # Case 1: Over limit → compress
-        if page_count > max_pages:
-            self.log(f"[{context}] Over limit ({page_count:.1f} > {max_pages:.1f}), running compression...", "WARN")
-            self.run_agent("writer", f"""## PAGE COMPRESSION — venue limit is {venue_pages} body pages
+        # Loop until page count is in range or max attempts exhausted
+        MAX_ATTEMPTS = 3
+        for attempt in range(MAX_ATTEMPTS):
+            in_range = min_pages <= page_count <= max_pages
+            if in_range:
+                self.log(f"[{context}] Page count OK: {page_count:.1f}/{venue_pages} (attempt {attempt + 1})", "INFO")
+                return True
+
+            if page_count > max_pages:
+                action = "compress"
+                self.log(f"[{context}] Over limit ({page_count:.1f} > {max_pages:.1f}), compressing (attempt {attempt + 1}/{MAX_ATTEMPTS})...", "WARN")
+                self.run_agent("writer", f"""## PAGE COMPRESSION — venue limit is {venue_pages} body pages (attempt {attempt + 1})
 
 The paper body is currently {page_count:.1f} pages, exceeding the {venue_pages}-page limit.
 Target: between {min_pages:.2f} and {venue_pages:.0f} body pages. Do NOT over-compress.
@@ -662,45 +670,41 @@ Reduce carefully — aim for exactly {venue_pages} pages, NOT much less. Strateg
 - Reduce whitespace around figures/tables (use \\vspace{{-4pt}})
 - Do NOT remove key technical content, results, or entire sections
 
-After changes:
-1. Ensure `\\clearpage` before `\\bibliography` so references start on a new page
-2. Compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex && pdflatex -interaction=nonstopmode main.tex
-3. Body pages must be between {min_pages:.2f} and {venue_pages:.0f} — check this before finishing!
+After changes, compile and verify body pages are between {min_pages:.2f} and {venue_pages:.0f}.
+Ensure `\\clearpage` before `\\bibliography`.
 """, timeout=1800)
-            self.compile_latex()
-            page_count = getattr(self, '_body_page_count', 0)
-            if page_count and page_count > max_pages:
-                self.log(f"[{context}] Still over limit after compression: {page_count:.1f}", "ERROR")
-                return False
 
-        # Case 2: Under target → expand (also runs after over-compression)
-        if page_count and page_count < min_pages:
-            self.log(f"[{context}] Under target ({page_count:.1f} < {min_pages:.1f}), running expansion...", "WARN")
-            self.run_agent("writer", f"""## PAGE EXPANSION — paper is too short
+            elif page_count < min_pages:
+                action = "expand"
+                self.log(f"[{context}] Under target ({page_count:.1f} < {min_pages:.2f}), expanding (attempt {attempt + 1}/{MAX_ATTEMPTS})...", "WARN")
+                self.run_agent("writer", f"""## PAGE EXPANSION — paper is too short (attempt {attempt + 1})
 
-The paper body is currently {page_count:.1f} pages. For a {venue_pages}-page venue, the last page (page {venue_pages}) must be at least 90% filled. Target: {min_pages:.1f}–{venue_pages:.0f} body pages.
+The paper body is currently {page_count:.1f} pages. Target: {min_pages:.2f}–{venue_pages:.0f} body pages.
+The last page must be at least 90% filled.
 
-Expand the paper by adding substantive content (NOT filler):
+Expand by adding substantive content (NOT filler):
 - Deepen the analysis/discussion section with more insights
 - Add more related work comparisons and positioning
 - Expand experimental methodology details (hyperparameters, setup)
 - Add a limitations paragraph or future work discussion
-- Expand figure captions with more context
-- Do NOT add padding text, redundant restatements, or unnecessary whitespace
+- Do NOT add padding text or redundant restatements
 
-After changes:
-1. Ensure `\\clearpage` before `\\bibliography` so references start on a new page
-2. Compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex && pdflatex -interaction=nonstopmode main.tex
-3. Body pages should be between {min_pages:.1f} and {venue_pages:.0f}
+After changes, compile and verify body pages are between {min_pages:.2f} and {venue_pages:.0f}.
+Ensure `\\clearpage` before `\\bibliography`.
 """, timeout=1800)
+
+            self._ensure_clearpage_before_bibliography()
             self.compile_latex()
             page_count = getattr(self, '_body_page_count', 0)
-            if page_count and page_count < min_pages:
-                self.log(f"[{context}] Still too short after expansion: {page_count:.1f}", "WARN")
+            if not page_count:
+                self.log(f"[{context}] Could not determine page count after {action}", "WARN")
+                return True
 
-        if page_count:
-            self.log(f"[{context}] Final page count: {page_count:.1f}/{venue_pages} body pages", "INFO")
-        return True
+        # After all attempts
+        in_range = page_count and min_pages <= page_count <= max_pages
+        self.log(f"[{context}] Final page count: {page_count:.1f}/{venue_pages} body pages "
+                 f"({'OK' if in_range else 'OUT OF RANGE'} after {MAX_ATTEMPTS} attempts)", "INFO" if in_range else "ERROR")
+        return in_range
 
     def _ensure_clearpage_before_bibliography(self):
         """Programmatically ensure \\clearpage appears before \\bibliography in main.tex."""
