@@ -322,15 +322,25 @@ Design a PUBLICATION-QUALITY illustration. For each element, be extremely specif
 - NO drop shadows, NO gradients, NO 3D effects. Flat design with semantic richness.
 - Every visual element should encode meaning — if a color/shape/line doesn't convey information, remove it
 
-### 6. TEXT BREVITY (CRITICAL — the #1 mistake is too much text)
-- A diagram is a VISUAL ABSTRACTION, not a text document. Communicate through shapes, colors, icons, and layout — NOT paragraphs.
-- **Component labels**: MAX 3-5 words (e.g., "LLM Semantic Detection", NOT "Uses a large language model to analyze skill instructions and classify them as benign or malicious")
-- **Connection labels**: MAX 1-3 words (e.g., "Benign", "Malicious", "Repaired")
-- **Annotations**: MAX 1 short phrase if essential (e.g., "F1=0.95", "N=18K"). Skip if not critical.
-- **NO sentences or descriptions inside components**. The caption and paper body handle explanations.
-- **NO bullet lists, paragraphs, or multi-line text blocks** inside any component.
-- If a component needs explanation beyond its label, use a small icon to convey meaning visually instead.
-- Total visible text in the entire figure should be under ~50 words.
+### 6. TEXT vs VISUAL BALANCE (CRITICAL)
+**Text must be SHORT, but visuals must be RICH.** These are different things.
+
+TEXT rules (keep it minimal):
+- Component labels: MAX 3-5 words. NO sentences inside components.
+- Connection labels: MAX 1-3 words (e.g., "Benign", "Repaired")
+- NO paragraphs, bullet lists, or multi-line text inside components
+- Total visible text in the figure: under ~60 words
+
+VISUAL rules (make it rich and detailed):
+- Each component should have a DETAILED, recognizable icon (not a simple flat shape — e.g., a magnifying glass hovering over a document for detection, gears with a wrench for repair, a shield with embedded lock for security, a brick wall with a scanning beam for firewall)
+- Show internal sub-structure visually: nested mini-elements, small thumbnails, overlapping shapes
+- Use visual metaphors: a funnel for filtering, a pipeline for flow, stacked layers for hierarchy
+
+LAYOUT rules (keep it compact):
+- MINIMIZE whitespace between components. Pack elements closely.
+- Components should feel tightly arranged with clear, short connections
+- Avoid large empty areas — if there's space, add a visual annotation or detail
+- The diagram should feel DENSE and INFORMATIVE even without reading the text
 
 IMPORTANT: Do NOT include font sizes (e.g., "12pt"), hex color codes (e.g., "#E6F3FF"), or CSS-like properties in component descriptions. Those are for the style guide only. Just describe WHAT to draw — shapes, labels, connections, zones, icons — in plain language. The image generator will interpret font specs as literal text to render.
 

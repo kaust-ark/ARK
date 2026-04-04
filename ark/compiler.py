@@ -520,10 +520,17 @@ For each concept figure, output a JSON block with this exact format:
     "name": "fig_overview",
     "caption": "System architecture overview",
     "section_context": "Detailed description of what the figure should show, including all components, connections, data flows, and key metrics mentioned in the paper. Be as detailed as possible — the more context, the better the generated figure.",
-    "latex_label": "fig:overview"
+    "latex_label": "fig:overview",
+    "placement": "full_width"
   }}
 ]
 ```
+
+For each figure, you MUST decide the "placement" field:
+- "full_width": for complex figures — multi-stage pipelines, system architectures with many components, diagrams that need horizontal space. Uses `\\begin{{figure*}}` spanning all columns.
+- "single_column": for simpler figures — single concept with few components, small diagrams. Uses `\\begin{{figure}}` in one column.
+
+Decision criteria: if the figure has 4+ components, multiple stages, or branching paths → "full_width". If it's a simple 2-3 component relationship → "single_column".
 
 Only include figures that:
 1. Are referenced in LaTeX but have no existing file, OR
@@ -563,15 +570,16 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
         venue_format = self.config.get("venue_format", venue)
         geo = get_geometry(venue_format) if venue_format else {"columnwidth_in": 3.333}
 
-        # Determine aspect ratio based on venue
         columns = geo.get("columns", 1)
-        aspect_ratio = "16:9" if columns == 1 else "16:10"
+        col_w = geo.get("columnwidth_in", 3.333)
+        text_w = geo.get("textwidth_in", 7.0)
 
         generated = 0
         for fig in figures:
             name = fig.get("name", "concept_fig")
             caption = fig.get("caption", "")
             section_ctx = fig.get("section_context", "")
+            placement = fig.get("placement", "full_width")
             output_path = self.figures_dir / f"{name}.png"
 
             # Skip if file already exists and is non-empty
@@ -579,7 +587,19 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
                 self.log(f"  Skipping {name}: already exists", "INFO")
                 continue
 
-            self.log(f"  Generating: {name}...", "INFO")
+            # Determine aspect ratio and width based on agent's placement decision
+            if columns == 1:
+                # Single-column templates (NeurIPS): always use textwidth
+                fig_width = text_w
+                aspect_ratio = "16:10"
+            elif placement == "full_width":
+                fig_width = text_w
+                aspect_ratio = "21:9"  # wide for spanning both columns
+            else:
+                fig_width = col_w
+                aspect_ratio = "4:3"  # compact for single column
+
+            self.log(f"  Generating: {name} (placement={placement}, {fig_width:.1f}in, ratio={aspect_ratio})...", "INFO")
 
             # Try PaperBanana pipeline first (best quality)
             ok = self._try_paperbanana(
@@ -603,7 +623,7 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
                     api_key=api_key,
                     model=self.config.get("nano_banana_model", "pro"),
                     venue=venue,
-                    column_width_in=geo.get("columnwidth_in", 3.333),
+                    column_width_in=fig_width,
                     max_critic_rounds=self.config.get("nano_banana_critic_rounds", 3),
                     log_fn=self.log,
                 )
@@ -684,7 +704,7 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
             data = {
                 "candidate_id": name,
                 "content": paper_context,
-                "visual_intent": f"{caption} IMPORTANT: Keep text minimal — component labels MAX 3-5 words, connection labels MAX 1-3 words. Use icons and visual layout to convey meaning, not text. Total visible text under 50 words.",
+                "visual_intent": f"{caption} STYLE: Labels MAX 3-5 words, NO sentences inside components. BUT make icons detailed and elaborate (not simple flat shapes). Layout should be COMPACT — minimize whitespace, pack components closely. The figure should feel dense and information-rich through its visual elements, not through text.",
                 "additional_info": {"rounded_ratio": aspect_ratio},
             }
 
