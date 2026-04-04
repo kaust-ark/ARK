@@ -1979,11 +1979,9 @@ function renderDetailActions(p) {
   if (p.status === 'running' || p.status === 'queued') {
     html += `<button class="btn-secondary" onclick="stopProject('${p.id}')">${t('stop')}</button>`;
   }
-  if (p.status === 'stopped' || p.status === 'failed') {
-    html += `<button class="btn-primary" onclick="openRestartModal('${p.id}')">Restart</button>`;
-  }
-  if (p.status === 'done') {
-    html += `<button class="btn-primary" onclick="openContinueModal('${p.id}')">${t('continue_action')}</button>`;
+  if (p.status === 'stopped' || p.status === 'failed' || p.status === 'done') {
+    html += `<button class="btn-primary" onclick="openContinueModal('${p.id}')">Continue</button>`;
+    html += `<button class="btn-secondary" onclick="openRestartModal('${p.id}')">Restart</button>`;
   }
   if (p.status === 'waiting_template') {
     html += `<div style="font-size:.85rem;color:var(--text-second);padding:8px 0">

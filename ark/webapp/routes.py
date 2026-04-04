@@ -812,8 +812,8 @@ async def api_restart_project(project_id: str, request: Request):
         project = get_project(session, project_id)
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
-        if project.status not in ("stopped", "failed"):
-            raise HTTPException(400, "Only stopped or failed projects can be restarted")
+        if project.status not in ("stopped", "failed", "done"):
+            raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
         active = [p for p in get_projects_for_user(session, project.user_id)
                   if p.status in ("queued", "running", "pending") and p.id != project_id]
         if active:
@@ -896,8 +896,8 @@ async def api_continue_project(project_id: str, request: Request):
         project = get_project(session, project_id)
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
-        if project.status != "done":
-            raise HTTPException(400, "Only done projects can be continued.")
+        if project.status not in ("done", "stopped", "failed"):
+            raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
         active = [p for p in get_projects_for_user(session, project.user_id)
                   if p.status in ("queued", "running", "pending") and p.id != project_id]
         if active:
