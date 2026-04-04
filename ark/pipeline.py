@@ -160,6 +160,25 @@ class PipelineMixin:
         page_images = self._maybe_generate_page_images()
         visual_review_section = ""
         if page_images:
+            # Load figure manifest to tell reviewer which figures are AI-generated
+            figure_types_section = ""
+            try:
+                from ark.figure_manifest import load_manifest, get_protected_files
+                manifest = load_manifest(self.figures_dir)
+                figures = manifest.get("figures", {})
+                ai_figs = [f for f, info in figures.items()
+                           if info.get("source") in ("paperbanana", "nano_banana")]
+                mpl_figs = [f for f, info in figures.items()
+                            if info.get("source") == "matplotlib"]
+                if ai_figs or mpl_figs:
+                    figure_types_section = "\n\nFigure sources (for review guidance):\n"
+                    if ai_figs:
+                        figure_types_section += f"- AI-generated concept figures (do not flag for matplotlib style): {', '.join(ai_figs)}\n"
+                    if mpl_figs:
+                        figure_types_section += f"- Matplotlib data plots (can flag for code fixes): {', '.join(mpl_figs)}\n"
+            except Exception:
+                pass
+
             visual_review_section = f"""
 
 ## Visual Review
@@ -172,7 +191,7 @@ Key checks:
 - Is the layout professional (alignment, spacing, margins)?
 - Is the information density appropriate?
 - Does the overall visual quality meet research publication standards?
-"""
+{figure_types_section}"""
 
         # 2. Reviewer Agent
         step_num += 1
@@ -1109,14 +1128,18 @@ Output your evaluation in JSON format:
         self.log_section("✏️ Writing Initial Paper Draft")
         self._send_dev_phase_telegram("writing", 0, 0)
 
-        # Generate figures from results
+        # Generate matplotlib figures from results (fast, do first)
         self.log_step("Generating figures from experiment results...", "progress")
         self.generate_figures()
 
-        # Generate AI concept figures (Nano Banana) if enabled
+        # Start AI concept figure generation in background (slow, ~7min/fig)
+        # Writer can proceed in parallel — it writes text first, figures are \includegraphics refs
+        nano_banana_future = None
         if self.config.get("figure_generation") == "nano_banana":
-            self.log_step("Generating AI concept figures (Nano Banana)...", "progress")
-            self._generate_nano_banana_figures()
+            from concurrent.futures import ThreadPoolExecutor
+            self._nano_banana_executor = ThreadPoolExecutor(max_workers=1)
+            self.log_step("Starting AI concept figure generation (background)...", "progress")
+            nano_banana_future = self._nano_banana_executor.submit(self._generate_nano_banana_figures)
 
         # Writer produces complete initial draft
         paper_requirements = self.load_paper_requirements()
@@ -1181,6 +1204,17 @@ Produce the complete paper. Do not stop until all sections are written and it co
 """
 
         self.run_agent("writer", prompt, timeout=3600)
+
+        # Wait for background AI figure generation to complete (if running)
+        if nano_banana_future is not None:
+            self.log_step("Waiting for AI concept figures to complete...", "progress")
+            try:
+                nano_banana_future.result(timeout=1200)  # 20 min max
+                self.log_step("AI concept figures ready", "success")
+            except Exception as e:
+                self.log(f"AI concept figure generation failed: {e}", "WARN")
+            finally:
+                self._nano_banana_executor.shutdown(wait=False)
 
         # Compile initial draft
         self.log_step("Compiling initial draft...", "progress")
