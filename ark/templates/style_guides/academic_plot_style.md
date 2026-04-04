@@ -90,9 +90,99 @@ Color alone is never sufficient to distinguish data series. Always combine color
 - Colorbar always present with label
 
 ### Box Plots / Violin Plots
-- Show individual data points overlaid (jittered strip)
-- Median line clearly visible
+- Show individual data points overlaid (jittered strip, alpha=0.4, size=3)
+- Median line clearly visible (black, 2pt)
 - Use same colorblind-safe palette as other charts
+- Violin: add inner mini box plot for quartiles
+
+### Grouped Bar Charts
+- Group bars with `width = 0.8 / n_groups`, offset by `x + i*width`
+- Each group gets a distinct color from Wong palette
+- Add hatching patterns for colorblind differentiation
+- Group labels centered below the group
+- Individual bar labels rotated if needed or use horizontal bars
+
+### Stacked Bar Charts
+- Use sequential lightness of same hue (e.g., light blue to dark blue)
+- Add thin white borders (1pt) between stacked segments
+- Annotate segment values inside (white text on dark, black on light)
+- Legend order matches visual stack order (bottom to top)
+
+### Dual-Axis Charts
+- Left axis: bars or primary data (standard color)
+- Right axis: line with markers (contrasting color, e.g., red)
+- Clearly label both axes with units and matching colors
+- Use `ax.twinx()` — never plot both on same axis
+- Include legend that labels both series
+
+### Radar / Spider Charts
+- Fill with semi-transparent color (alpha=0.2)
+- Bold outline (1.5pt) with markers at each vertex
+- Label each axis at the outer ring
+- If comparing multiple series: distinct colors + different line styles
+
+### Donut Charts (instead of pie)
+- Use `wedgeprops=dict(width=0.4)` for donut hole
+- Annotate percentages outside with leader lines
+- Sort slices largest to smallest (clockwise)
+- Maximum 6-7 slices; group small ones into "Other"
+
+### Confusion Matrix
+- Use `imshow` with diverging colormap (`RdYlGn` or `coolwarm`)
+- Annotate every cell with the value (white on dark, black on light)
+- Square cells: `ax.set_aspect('equal')`
+- Labels on both axes, rotated x-labels if needed
+
+### Error Bar Charts
+- Caps: `capsize=3`, black color
+- Error bar linewidth: 1pt, same color as bar edge
+- If asymmetric errors: use `yerr=[[lower], [upper]]`
+
+### Multi-Panel Figures (subplots)
+- Use `fig, axes = plt.subplots(1, n, figsize=(...), constrained_layout=True)`
+- Share y-axis when comparing same metric: `sharey=True`
+- Remove redundant y-labels on inner panels
+- Panel labels: **(a)**, **(b)**, **(c)** as bold text, top-left of each panel
+- Consistent axis ranges across panels when possible
+
+---
+
+## Matplotlib Code Patterns (for writer agent reference)
+
+### Standard figure setup
+```python
+import json
+import matplotlib.pyplot as plt
+
+# Load figure config
+with open('paper/figures/figure_config.json') as f:
+    cfg = json.load(f)
+plt.rcParams.update(cfg['matplotlib_rcparams'])
+W = cfg['geometry']['columnwidth_in']
+
+# Wong colorblind-safe palette
+COLORS = ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9', '#F0E442']
+HATCHES = ['', '///', '\\\\\\', '...', 'xxx', '+++', 'ooo']
+```
+
+### Horizontal bar chart (avoids x-label overlap)
+```python
+fig, ax = plt.subplots(figsize=(W, W*0.5), constrained_layout=True)
+y = range(len(labels))
+bars = ax.barh(y, values, color=colors, edgecolor='#333', linewidth=0.5)
+for bar, h in zip(bars, hatches): bar.set_hatch(h)
+ax.set_yticks(y); ax.set_yticklabels(labels)
+ax.invert_yaxis()
+ax.spines['top'].set_visible(False); ax.spines['right'].set_visible(False)
+```
+
+### Multi-panel with shared axis
+```python
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(W, W*0.45), sharey=True, constrained_layout=True)
+ax1.set_title('(a) Metric A', fontweight='bold')
+ax2.set_title('(b) Metric B', fontweight='bold')
+ax2.set_yticklabels([])  # remove duplicate y labels
+```
 
 ---
 

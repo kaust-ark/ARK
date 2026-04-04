@@ -486,33 +486,29 @@ FIGURES_NEED_FIX"""
         return self._pdf_to_images_fallback()
 
     def _generate_nano_banana_figures(self):
-        """Generate AI concept figures using Nano Banana (Gemini image generation).
+        """Generate AI concept figures using PaperBanana pipeline or Nano Banana fallback.
 
         Flow:
         1. Run agent to analyze paper and identify concept figures
         2. Agent outputs JSON list of figures with prompts
-        3. Call nano_banana.generate_figure() for each
+        3. For each figure: try PaperBanana (Retriever→Planner→Stylist→Visualizer→Critic),
+           fall back to Nano Banana pipeline if PaperBanana unavailable
         4. Generated PNGs saved to figures_dir
         """
-        try:
-            from ark.nano_banana import generate_figure, generate_figure_pipeline, get_api_key, build_figure_prompt
-        except ImportError:
-            self.log("Nano Banana module not available, skipping AI figure generation", "WARN")
-            return
-
+        from ark.nano_banana import get_api_key
         api_key = get_api_key()
         if not api_key:
             self.log("No Gemini API key found, skipping AI figure generation", "WARN")
             return
 
-        model = self.config.get("nano_banana_model", "pro")
         venue = self.config.get("venue", "")
         latex_dir = self.config.get("latex_dir", "Latex")
 
         # Ask agent to identify concept figures that need AI generation
         analysis_output = self.run_agent("visualizer", f"""
-Analyze the paper {latex_dir}/main.tex and identify figures that would benefit from
-AI-generated concept diagrams (architecture diagrams, mechanism illustrations, overview figures).
+Analyze the paper {latex_dir}/main.tex and identify ALL figures that would benefit from
+AI-generated concept diagrams (architecture diagrams, mechanism illustrations, overview figures,
+workflow diagrams, system diagrams, pipeline diagrams).
 
 Do NOT include data plots (bar charts, line charts, scatter plots) — those should remain as matplotlib.
 
@@ -523,7 +519,7 @@ For each concept figure, output a JSON block with this exact format:
   {{
     "name": "fig_overview",
     "caption": "System architecture overview",
-    "section_context": "Brief description of what the figure should show based on the paper",
+    "section_context": "Detailed description of what the figure should show, including all components, connections, data flows, and key metrics mentioned in the paper. Be as detailed as possible — the more context, the better the generated figure.",
     "latex_label": "fig:overview"
   }}
 ]
@@ -567,6 +563,10 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
         venue_format = self.config.get("venue_format", venue)
         geo = get_geometry(venue_format) if venue_format else {"columnwidth_in": 3.333}
 
+        # Determine aspect ratio based on venue
+        columns = geo.get("columns", 1)
+        aspect_ratio = "16:9" if columns == 1 else "16:10"
+
         generated = 0
         for fig in figures:
             name = fig.get("name", "concept_fig")
@@ -580,29 +580,33 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
                 continue
 
             self.log(f"  Generating: {name}...", "INFO")
-            use_pipeline = self.config.get("nano_banana_pipeline", True)
-            if use_pipeline:
+
+            # Try PaperBanana pipeline first (best quality)
+            ok = self._try_paperbanana(
+                name=name,
+                caption=caption,
+                paper_context=section_ctx or paper_text[:3000],
+                output_path=output_path,
+                api_key=api_key,
+                aspect_ratio=aspect_ratio,
+            )
+
+            # Fallback to our Nano Banana pipeline
+            if not ok:
+                self.log(f"  PaperBanana unavailable, falling back to Nano Banana...", "INFO")
+                from ark.nano_banana import generate_figure_pipeline
                 ok = generate_figure_pipeline(
                     figure_name=name,
                     caption=caption,
                     paper_context=section_ctx or paper_text[:2000],
                     output_path=output_path,
                     api_key=api_key,
-                    model=model,
+                    model=self.config.get("nano_banana_model", "pro"),
                     venue=venue,
                     column_width_in=geo.get("columnwidth_in", 3.333),
                     max_critic_rounds=self.config.get("nano_banana_critic_rounds", 3),
                     log_fn=self.log,
                 )
-            else:
-                prompt = build_figure_prompt(
-                    figure_name=name,
-                    caption=caption,
-                    paper_context=section_ctx or paper_text[:2000],
-                    venue=venue,
-                    column_width_in=geo.get("columnwidth_in", 3.333),
-                )
-                ok = generate_figure(prompt, output_path, api_key=api_key, model=model)
             if ok:
                 generated += 1
                 self.log(f"  Generated: {output_path.name}", "INFO")
@@ -613,6 +617,102 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
             self.log_step(f"Generated {generated} AI concept figures", "success")
         else:
             self.log_step("No new concept figures generated", "info")
+
+    def _try_paperbanana(self, name: str, caption: str, paper_context: str,
+                          output_path, api_key: str, aspect_ratio: str = "16:9") -> bool:
+        """Try to generate a concept figure using PaperBanana's full pipeline.
+
+        PaperBanana uses: Retriever → Planner → Stylist → Visualizer → Critic (×3 rounds)
+        with reference images from PaperBananaBench for few-shot learning.
+
+        Returns True if figure was generated successfully, False if PaperBanana unavailable.
+        """
+        import asyncio
+
+        try:
+            import sys
+            pb_dir = Path(__file__).parent.parent / "submodules" / "PaperBanana"
+            if not pb_dir.exists():
+                return False
+            if str(pb_dir) not in sys.path:
+                sys.path.insert(0, str(pb_dir))
+
+            from agents.planner_agent import PlannerAgent
+            from agents.visualizer_agent import VisualizerAgent
+            from agents.stylist_agent import StylistAgent
+            from agents.critic_agent import CriticAgent
+            from agents.retriever_agent import RetrieverAgent
+            from utils.config import ExpConfig
+            from utils.paperviz_processor import PaperVizProcessor
+        except ImportError as e:
+            self.log(f"PaperBanana not available: {e}", "WARN")
+            return False
+
+        # Check if PaperBananaBench data exists (for reference retrieval)
+        data_dir = pb_dir / "data" / "PaperBananaBench"
+        retrieval = "auto" if (data_dir / "diagram" / "ref.json").exists() else "none"
+        if retrieval == "auto":
+            self.log(f"  Using PaperBanana with reference retrieval ({data_dir})", "INFO")
+        else:
+            self.log(f"  Using PaperBanana without reference retrieval", "INFO")
+
+        # Configure — use env var or config for API key
+        import os
+        os.environ["GOOGLE_API_KEY"] = api_key
+
+        try:
+            exp_config = ExpConfig(
+                dataset_name="PaperBananaBench",
+                task_name="diagram",
+                exp_mode="demo_full",
+                retrieval_setting=retrieval,
+                max_critic_rounds=3,
+                work_dir=pb_dir,
+            )
+
+            processor = PaperVizProcessor(
+                exp_config=exp_config,
+                vanilla_agent=None,
+                planner_agent=PlannerAgent(exp_config=exp_config),
+                visualizer_agent=VisualizerAgent(exp_config=exp_config),
+                stylist_agent=StylistAgent(exp_config=exp_config),
+                critic_agent=CriticAgent(exp_config=exp_config),
+                retriever_agent=RetrieverAgent(exp_config=exp_config),
+                polish_agent=None,
+            )
+
+            data = {
+                "candidate_id": name,
+                "content": paper_context,
+                "visual_intent": caption,
+                "additional_info": {"rounded_ratio": aspect_ratio},
+            }
+
+            # Run async pipeline
+            async def _run():
+                return await processor.process_single_query(data, do_eval=False)
+
+            result = asyncio.run(_run())
+
+            # Extract best image
+            import base64
+            eval_field = result.get("eval_image_field", "")
+            for key in sorted(result.keys(), reverse=True):
+                if "base64_jpg" in key and result[key] and len(result[key]) > 100:
+                    if key == eval_field or True:  # Use the last valid image
+                        img_data = base64.b64decode(result[key])
+                        output_path = Path(output_path)
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        output_path.write_bytes(img_data)
+                        self.log(f"  PaperBanana generated: {output_path.name} ({len(img_data)} bytes)", "INFO")
+                        return True
+
+            self.log("  PaperBanana ran but produced no valid image", "WARN")
+            return False
+
+        except Exception as e:
+            self.log(f"  PaperBanana error: {e}", "WARN")
+            return False
 
     def _pdf_to_images_fallback(self) -> list:
         """Fallback: use external pdf_to_images.py script."""
