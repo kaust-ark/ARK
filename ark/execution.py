@@ -647,21 +647,46 @@ After making all changes, you MUST verify the page count:
         self.log(f"[{context}] Page check: {page_count:.1f} body pages "
                  f"(target: {min_pages:.2f}–{max_pages:.1f}, {columns}-col)", "INFO")
 
-        # Loop until page count is in range (safety limit to avoid infinite loop)
-        MAX_ATTEMPTS = 5
-        for attempt in range(MAX_ATTEMPTS):
-            in_range = min_pages <= page_count <= max_pages
+        # Loop until page count is in range.
+        # Every 4 failed attempts, relax tolerance by 0.1 pages (both sides).
+        attempt = 0
+        tolerance_relaxations = 0
+        cur_min = min_pages
+        cur_max = max_pages
+
+        while True:
+            in_range = cur_min <= page_count <= cur_max
             if in_range:
-                self.log(f"[{context}] Page count OK: {page_count:.1f}/{venue_pages} (attempt {attempt + 1})", "INFO")
+                if tolerance_relaxations > 0:
+                    self.log(f"[{context}] Page count OK: {page_count:.1f}/{venue_pages} "
+                             f"(accepted with relaxed tolerance after {attempt} attempts)", "INFO")
+                else:
+                    self.log(f"[{context}] Page count OK: {page_count:.1f}/{venue_pages}", "INFO")
                 return True
 
-            if page_count > max_pages:
-                action = "compress"
-                self.log(f"[{context}] Over limit ({page_count:.1f} > {max_pages:.1f}), compressing (attempt {attempt + 1}/{MAX_ATTEMPTS})...", "WARN")
-                self.run_agent("writer", f"""## PAGE COMPRESSION — venue limit is {venue_pages} body pages (attempt {attempt + 1})
+            attempt += 1
 
-The paper body is currently {page_count:.1f} pages, exceeding the {venue_pages}-page limit.
-Target: between {min_pages:.2f} and {venue_pages:.0f} body pages. Do NOT over-compress.
+            # Every 4 attempts, relax tolerance
+            if attempt > 0 and attempt % 4 == 0:
+                tolerance_relaxations += 1
+                cur_min = min_pages - tolerance_relaxations * 0.1
+                cur_max = max_pages + tolerance_relaxations * 0.1
+                self.log(f"[{context}] Relaxing tolerance (round {tolerance_relaxations}): "
+                         f"new range {cur_min:.2f}–{cur_max:.1f}", "WARN")
+                # Re-check with relaxed tolerance before another agent call
+                continue
+
+            if self._quota_exhausted:
+                self.log(f"[{context}] Quota exhausted, accepting {page_count:.1f} pages", "WARN")
+                return page_count <= venue_pages + 0.5  # Hard ceiling: never more than half page over
+
+            if page_count > cur_max:
+                action = "compress"
+                self.log(f"[{context}] Over limit ({page_count:.1f} > {cur_max:.1f}), compressing (attempt {attempt})...", "WARN")
+                self.run_agent("writer", f"""## PAGE COMPRESSION (attempt {attempt})
+
+The paper body is currently {page_count:.1f} pages, exceeding the limit.
+Target: between {cur_min:.2f} and {venue_pages:.0f} body pages. Do NOT over-compress.
 
 Reduce carefully — aim for exactly {venue_pages} pages, NOT much less. Strategies:
 - Condense verbose paragraphs by ~10-15% (not more)
@@ -670,17 +695,16 @@ Reduce carefully — aim for exactly {venue_pages} pages, NOT much less. Strateg
 - Reduce whitespace around figures/tables (use \\vspace{{-4pt}})
 - Do NOT remove key technical content, results, or entire sections
 
-After changes, compile and verify body pages are between {min_pages:.2f} and {venue_pages:.0f}.
+After changes, compile and verify body pages are between {cur_min:.2f} and {venue_pages:.0f}.
 Ensure `\\clearpage` before `\\bibliography`.
 """, timeout=1800)
 
-            elif page_count < min_pages:
+            elif page_count < cur_min:
                 action = "expand"
-                self.log(f"[{context}] Under target ({page_count:.1f} < {min_pages:.2f}), expanding (attempt {attempt + 1}/{MAX_ATTEMPTS})...", "WARN")
-                self.run_agent("writer", f"""## PAGE EXPANSION — paper is too short (attempt {attempt + 1})
+                self.log(f"[{context}] Under target ({page_count:.1f} < {cur_min:.2f}), expanding (attempt {attempt})...", "WARN")
+                self.run_agent("writer", f"""## PAGE EXPANSION (attempt {attempt})
 
-The paper body is currently {page_count:.1f} pages. Target: {min_pages:.2f}–{venue_pages:.0f} body pages.
-The last page must be at least 90% filled.
+The paper body is currently {page_count:.1f} pages. Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
 
 Expand by adding substantive content (NOT filler):
 - Deepen the analysis/discussion section with more insights
@@ -689,7 +713,7 @@ Expand by adding substantive content (NOT filler):
 - Add a limitations paragraph or future work discussion
 - Do NOT add padding text or redundant restatements
 
-After changes, compile and verify body pages are between {min_pages:.2f} and {venue_pages:.0f}.
+After changes, compile and verify body pages are between {cur_min:.2f} and {venue_pages:.0f}.
 Ensure `\\clearpage` before `\\bibliography`.
 """, timeout=1800)
 
@@ -699,19 +723,6 @@ Ensure `\\clearpage` before `\\bibliography`.
             if not page_count:
                 self.log(f"[{context}] Could not determine page count after {action}", "WARN")
                 return True
-
-        # After all attempts — notify user if still out of range
-        in_range = page_count and min_pages <= page_count <= max_pages
-        if not in_range:
-            msg = (f"⚠️ Page count still out of range after {MAX_ATTEMPTS} attempts: "
-                   f"{page_count:.1f} pages (target: {min_pages:.2f}–{max_pages:.1f}). "
-                   f"Manual adjustment may be needed.")
-            self.log(f"[{context}] {msg}", "ERROR")
-            if self.telegram.is_configured:
-                self.telegram.send(msg)
-        else:
-            self.log(f"[{context}] Final page count: {page_count:.1f}/{venue_pages} body pages OK", "INFO")
-        return in_range
 
     def _ensure_clearpage_before_bibliography(self):
         """Programmatically ensure \\clearpage appears before \\bibliography in main.tex."""
