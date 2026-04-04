@@ -88,6 +88,97 @@ class CompilerMixin:
 
         return f"Found {len(blocks)} error(s) in main.log:\n\n" + "\n---\n".join(blocks)
 
+    def _compile_until_success(self, context: str = "") -> bool:
+        """Keep fixing and recompiling until LaTeX compiles successfully.
+
+        Strategy escalation:
+        1. Attempts 1-3: Writer fixes errors normally
+        2. Attempt 4: Programmatic fix (strip non-UTF8 bytes, fix common issues)
+        3. Attempts 5-7: Writer with aggressive "comment out broken parts" prompt
+        4. Attempt 8+: Writer rewrites broken sections from scratch
+
+        Returns True when compiled, False only if 10 attempts all fail
+        (should be extremely rare — our own agents generated this).
+        """
+        MAX_ATTEMPTS = 10
+        last_errors = ""
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            success, errors = self.compile_latex_with_errors()
+            if success:
+                if attempt > 1:
+                    self.log_step(f"Compilation fixed on attempt {attempt}", "success")
+                else:
+                    self.log_step("Initial draft compiled successfully", "success")
+                return True
+
+            self.log_step(f"Compile attempt {attempt} failed", "warning")
+
+            # Strategy 1 (attempts 1-3): normal writer fix
+            if attempt <= 3:
+                self.run_agent("writer",
+                    f"LaTeX compilation failed. Read paper/main.tex carefully, find and fix "
+                    f"the syntax errors below. Do NOT remove content — fix the LaTeX syntax.\n\n{errors}")
+
+            # Strategy 2 (attempt 4): programmatic fix for common issues
+            elif attempt == 4:
+                self.log_step("Trying programmatic fixes...", "progress")
+                self._auto_fix_latex()
+                # Also let writer have another look after programmatic fix
+                success, errors = self.compile_latex_with_errors()
+                if success:
+                    self.log_step("Programmatic fix worked", "success")
+                    return True
+                self.run_agent("writer",
+                    f"After programmatic cleanup, LaTeX still fails. Fix these remaining errors:\n\n{errors}")
+
+            # Strategy 3 (attempts 5-7): aggressive — comment out broken parts
+            elif attempt <= 7:
+                same_error = errors[:200] == last_errors[:200]
+                self.run_agent("writer",
+                    f"LaTeX has failed {attempt} times{' with the same error' if same_error else ''}. "
+                    f"Take aggressive action: COMMENT OUT the broken section entirely and replace "
+                    f"with a brief placeholder like '% TODO: fix this section'. "
+                    f"The paper MUST compile.\n\n{errors}")
+
+            # Strategy 4 (attempt 8+): nuclear — rewrite from scratch
+            else:
+                self.run_agent("writer",
+                    f"LaTeX has failed {attempt} times. Read the ENTIRE main.tex file, identify ALL "
+                    f"syntax errors, and rewrite any broken sections from scratch. Remove any "
+                    f"non-standard packages or commands that might cause issues. "
+                    f"Priority: the paper MUST compile, even if some content is lost.\n\n{errors}")
+
+            last_errors = errors
+
+        self.log_step(f"Compilation failed after {MAX_ATTEMPTS} attempts", "error")
+        return False
+
+    def _auto_fix_latex(self):
+        """Programmatic fixes for common LaTeX compilation issues."""
+        main_tex = self.latex_dir / "main.tex"
+        if not main_tex.exists():
+            return
+
+        # Fix 1: Strip non-UTF8 bytes
+        raw = main_tex.read_bytes()
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            cleaned = raw.decode("utf-8", errors="ignore").encode("utf-8")
+            main_tex.write_bytes(cleaned)
+            self.log("Auto-fix: stripped non-UTF8 bytes from main.tex", "INFO")
+
+        # Fix 2: Same for .bib files
+        for bib in self.latex_dir.glob("*.bib"):
+            raw = bib.read_bytes()
+            try:
+                raw.decode("utf-8")
+            except UnicodeDecodeError:
+                cleaned = raw.decode("utf-8", errors="ignore").encode("utf-8")
+                bib.write_bytes(cleaned)
+                self.log(f"Auto-fix: stripped non-UTF8 bytes from {bib.name}", "INFO")
+
     def compile_latex(self) -> bool:
         """Compile the LaTeX paper.
 
@@ -107,13 +198,14 @@ class CompilerMixin:
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
-                    text=True,
                     timeout=120,
                     cwd=self.latex_dir,
                 )
+                stderr = result.stderr.decode("utf-8", errors="replace")
+                stdout = result.stdout.decode("utf-8", errors="replace")
                 if result.returncode != 0 and "main.tex" in cmd:
-                    self._last_compile_stderr = result.stderr[:1000] or result.stdout[-1000:]
-                    self.log(f"LaTeX compilation warning: {result.stderr[:500]}")
+                    self._last_compile_stderr = stderr[:1000] or stdout[-1000:]
+                    self.log(f"LaTeX compilation warning: {stderr[:500]}")
 
             pdf_path = self.latex_dir / "main.pdf"
             if pdf_path.exists() and pdf_path.stat().st_size > 0:
@@ -284,175 +376,73 @@ class CompilerMixin:
         return geo
 
     def _run_figure_phase(self):
-        """Independent Figure Phase: ensure figures are template-aware and visually correct.
+        """Figure Phase: generate figures and ensure template-aware sizing.
 
-        Runs BEFORE the reviewer sees the paper. Loop:
-        1. Generate figure_config.json
-        2. Run figure generation script (if exists)
-        3. Compile LaTeX + convert to images
-        4. Run figure_fixer agent to visually inspect
-        5. If issues found and fixed, re-run (max 2 loops)
+        1. Generate figure_config.json (geometry)
+        2. Load manifest, backup protected (AI-generated) figures
+        3. Run matplotlib figure script (if exists) + overlap detection
+        4. Restore any overwritten protected figures
+        5. Generate AI concept figures (Nano Banana, if enabled)
+        6. Compile LaTeX
+
+        Figure *quality* issues are handled by the reviewer, not here.
         """
-        MAX_FIGURE_LOOPS = 2
+        from ark.figure_manifest import (
+            load_manifest, save_manifest, register_figure,
+            backup_protected, restore_protected,
+        )
 
         # Step 1: Generate geometry config
         geo = self._generate_figure_config()
 
-        # Step 2: Run figure generation script
+        # Step 2: Load manifest (auto-migrates if missing)
+        manifest = load_manifest(self.figures_dir)
+
+        # Step 3: Run figure generation script
         script_path = self.config.get("create_figures_script", "scripts/create_paper_figures.py")
         full_script = self.code_dir / script_path
-        overlap_report = None
         if full_script.exists():
             self.log_step("Running figure generation script...", "progress")
+
+            # Backup protected files before running matplotlib script
+            backups = backup_protected(self.figures_dir, manifest)
+
             self.generate_figures()
 
-            # Step 2.1: Programmatic overlap detection and auto-fix
+            # Restore any AI-generated files overwritten by the script
+            restore_protected(self.figures_dir, backups, log_fn=self.log)
+
+            # Register matplotlib outputs in manifest
+            for fig_file in self.figures_dir.glob("fig*"):
+                if fig_file.suffix in (".pdf", ".png", ".jpg"):
+                    if fig_file.name not in manifest.get("figures", {}):
+                        register_figure(manifest, fig_file.name, "matplotlib")
+                    elif manifest["figures"][fig_file.name].get("source") == "matplotlib":
+                        pass  # Already registered
+            save_manifest(self.figures_dir, manifest)
+
+            # Step 3.1: Programmatic overlap detection and auto-fix
             try:
                 from ark.figure_overlap import check_and_fix_figures
                 overlap_report = check_and_fix_figures(
                     full_script, self.figures_dir, geo, log_fn=self.log,
                 )
                 if overlap_report.get("summary", {}).get("with_overlaps", 0) > 0:
-                    # Re-run figure generation after fixes were applied
                     self.log_step("Regenerating figures after overlap fixes...", "progress")
+                    backups = backup_protected(self.figures_dir, manifest)
                     self.generate_figures()
+                    restore_protected(self.figures_dir, backups, log_fn=self.log)
             except Exception as e:
                 self.log(f"Overlap detection error (non-fatal): {e}", "WARN")
         else:
             self.log_step(f"No figure script at {script_path}, skipping generation", "info")
 
-        # Step 2.5: Generate AI concept figures (Nano Banana)
-        # Track which files are AI-generated so the figure fixer won't touch them
-        ai_generated_files = set()
+        # Step 4: Generate AI concept figures (Nano Banana)
         if self.config.get("figure_generation") == "nano_banana":
             self.log_step("Generating AI concept figures (Nano Banana)...", "progress")
-            # Snapshot existing files before generation
-            existing_before = {f.name for f in self.figures_dir.glob("*")}
             self._generate_nano_banana_figures()
-            # Any new files are AI-generated concept figures
-            existing_after = {f.name for f in self.figures_dir.glob("*")}
-            ai_generated_files = existing_after - existing_before
-            # Also include files that were already generated in earlier phases
-            for f in self.figures_dir.glob("*.png"):
-                if f.name.startswith("fig_") and f.name not in ai_generated_files:
-                    # Check if this was generated by PaperBanana (large, not from matplotlib)
-                    # PaperBanana PNGs are typically >100KB; matplotlib PNGs are smaller
-                    if f.stat().st_size > 150_000:
-                        ai_generated_files.add(f.name)
 
-        for loop in range(MAX_FIGURE_LOOPS):
-            # Step 3: Compile and convert to images
-            self.compile_latex()
-            page_images = self.pdf_to_images()
-
-            if not page_images:
-                self.log_step("No page images available, skipping figure check", "warning")
-                break
-
-            # Step 4: Run figure_fixer agent
-            images_list = "\n".join(f"- {img}" for img in page_images)
-            figure_files = list(self.figures_dir.glob("*"))
-            figures_list = "\n".join(f"- {f.name}" for f in figure_files if f.suffix in (".pdf", ".png", ".jpg"))
-
-            # Include overlap report if available
-            overlap_section = ""
-            overlap_report_path = self.figures_dir / "overlap_report.json"
-            if overlap_report_path.exists():
-                try:
-                    or_data = json.loads(overlap_report_path.read_text())
-                    figs_with_issues = [f for f in or_data.get("figures", []) if f.get("has_overlaps")]
-                    if figs_with_issues:
-                        overlap_lines = []
-                        for f in figs_with_issues:
-                            overlap_lines.append(f"- **{f['name']}**: {f['overlap_count']} overlaps, density={f['density']}")
-                            for o in f.get("overlaps", [])[:5]:
-                                overlap_lines.append(f"  - {o['type1']}({o['text1']}) ↔ {o['type2']}({o['text2']}), severity={o['severity']}")
-                            if f.get("suggestions"):
-                                overlap_lines.append(f"  - Suggestions: {', '.join(f['suggestions'])}")
-                        overlap_section = f"""
-### Programmatic Overlap Report (auto-detected)
-The system detected text overlaps in these figures and attempted auto-fixes.
-Verify the fixes are correct. If issues remain, fix them manually.
-
-{chr(10).join(overlap_lines)}
-"""
-                except Exception:
-                    pass
-
-            # Build protected files section
-            protected_section = ""
-            if ai_generated_files:
-                protected_list = "\n".join(f"- {f}" for f in sorted(ai_generated_files))
-                protected_section = f"""
-### ⚠️ PROTECTED AI-Generated Concept Figures (DO NOT MODIFY)
-The following figures were generated by PaperBanana/Gemini AI and must NOT be
-overwritten, regenerated, or replaced by matplotlib. Do NOT modify any Python
-script to output to these filenames. Only check their LaTeX placement/sizing.
-{protected_list}
-"""
-
-            fixer_prompt = f"""## Figure Quality Check (Loop {loop + 1}/{MAX_FIGURE_LOOPS})
-
-### Template Geometry Parameters
-- Column width: {geo['columnwidth_in']} inches
-- Full width: {geo['textwidth_in']} inches
-- Base font size: {geo['font_size_pt']}pt
-- Config file: {self.figures_dir}/figure_config.json
-
-### Current Figure Files
-{figures_list}
-{protected_section}{overlap_section}
-### PDF Page Images (use Read tool to view each page)
-{images_list}
-
-### Check Requirements
-1. Use the Read tool to read each page PNG image and carefully check:
-   - Is the text in figures clearly readable (equivalent >= 8pt)?
-   - Do figures overflow the column width boundaries?
-   - Are there any overlapping labels? (Check the overlap report above for known issues)
-   - Do tables overflow their boundaries?
-   - Does the overall visual quality meet academic publication standards?
-2. If issues are found:
-   - Locate the corresponding Python plotting script or LaTeX table code
-   - Modify figsize to column width {geo['columnwidth_in']}in or full width {geo['textwidth_in']}in
-   - Modify font.size to {geo['font_size_pt']}pt
-   - For overlapping x-labels: use `rotation=45, ha='right'` or switch to horizontal bars
-   - For crowded plots: increase figsize height or use `constrained_layout=True`
-   - Read {self.figures_dir}/figure_config.json for full configuration
-   - Re-run the script to regenerate figures
-3. If no issues or already fixed, output the verdict
-
-### Output Format (last line must be one of the following)
-FIGURES_OK
-FIGURES_NEED_FIX"""
-
-            self.log_step(f"Figure quality check (loop {loop + 1})...", "progress")
-            result = self.run_agent("visualizer", fixer_prompt, timeout=1200)
-
-            if "FIGURES_OK" in (result or ""):
-                self.log_step("Figure quality check passed", "success")
-                break
-            elif "FIGURES_NEED_FIX" in (result or ""):
-                self.log_step("Figure fixer made changes, will re-check...", "progress")
-                if full_script.exists():
-                    # Back up AI-generated concept figures before re-running script
-                    backups = {}
-                    for fname in ai_generated_files:
-                        fpath = self.figures_dir / fname
-                        if fpath.exists():
-                            backups[fname] = fpath.read_bytes()
-                    self.generate_figures()
-                    # Restore any AI-generated files that were overwritten
-                    for fname, data in backups.items():
-                        fpath = self.figures_dir / fname
-                        if not fpath.exists() or fpath.read_bytes() != data:
-                            fpath.write_bytes(data)
-                            self.log(f"Restored AI-generated figure: {fname}", "INFO")
-            else:
-                self.log_step("Figure fixer verdict unclear, continuing...", "warning")
-                break
-
-        # Final compile after figure phase
+        # Step 5: Compile LaTeX
         self.compile_latex()
 
     def _should_skip_figure_phase(self) -> bool:
@@ -640,6 +630,7 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
             self.log(f"  Generating: {name} (placement={placement}, {fig_width:.1f}in, ratio={aspect_ratio})...", "INFO")
 
             # Try PaperBanana pipeline first (best quality)
+            source = "paperbanana"
             ok = self._try_paperbanana(
                 name=name,
                 caption=caption,
@@ -651,6 +642,7 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
 
             # Fallback to our Nano Banana pipeline
             if not ok:
+                source = "nano_banana"
                 self.log(f"  PaperBanana unavailable, falling back to Nano Banana...", "INFO")
                 from ark.nano_banana import generate_figure_pipeline
                 ok = generate_figure_pipeline(
@@ -668,6 +660,11 @@ If no concept figures are needed, output: NO_CONCEPT_FIGURES
             if ok:
                 generated += 1
                 self.log(f"  Generated: {output_path.name}", "INFO")
+                # Register in manifest
+                from ark.figure_manifest import load_manifest, save_manifest, register_figure
+                manifest = load_manifest(self.figures_dir)
+                register_figure(manifest, output_path.name, source)
+                save_manifest(self.figures_dir, manifest)
             else:
                 self.log(f"  Failed: {name}", "WARN")
 

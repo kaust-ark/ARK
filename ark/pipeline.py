@@ -1216,24 +1216,23 @@ Produce the complete paper. Do not stop until all sections are written and it co
             finally:
                 self._nano_banana_executor.shutdown(wait=False)
 
-        # Compile initial draft
+        # Compile initial draft (must succeed before moving to review)
         self.log_step("Compiling initial draft...", "progress")
-        if self.compile_latex():
-            self.log_step("Initial draft compiled successfully", "success")
-            # Send initial draft PDF via Telegram
-            if self.telegram.is_configured:
-                pdf_path = self.latex_dir / "main.pdf"
-                if pdf_path.exists():
-                    ok = self.telegram.send_document(
-                        pdf_path,
-                        caption=f"📄 <b>Initial draft ready</b> — {self.project_name}\n"
-                                f"Dev Phase complete ({dev_state['iteration']} iterations)\n"
-                                f"Entering Review Phase now.",
-                    )
-                    if not ok:
-                        self.telegram.send("📄 Initial draft compiled (PDF too large to send, download from portal)")
-        else:
-            self.log_step("Initial compilation failed, writer will fix in review loop", "warning")
+        draft_compiled = self._compile_until_success(
+            context=f"Dev Phase complete ({dev_state['iteration']} iterations)"
+        )
+
+        if draft_compiled and self.telegram.is_configured:
+            pdf_path = self.latex_dir / "main.pdf"
+            if pdf_path.exists():
+                ok = self.telegram.send_document(
+                    pdf_path,
+                    caption=f"📄 <b>Initial draft ready</b> — {self.project_name}\n"
+                            f"Dev Phase complete ({dev_state['iteration']} iterations)\n"
+                            f"Entering Review Phase now.",
+                )
+                if not ok:
+                    self.telegram.send("📄 Initial draft compiled (PDF too large to send, download from portal)")
 
         # Mark dev phase as completed
         dev_state["status"] = "completed"

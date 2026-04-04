@@ -902,14 +902,24 @@ After modifications, ensure:
             except Exception as e:
                 self.log(f"Verification failed: {e}", "WARN")
 
-            # Regenerate figures
+            # Regenerate figures (protect AI-generated files via manifest)
             self.log_step("Regenerating figures with modified code...", "progress")
             try:
+                from ark.figure_manifest import (
+                    load_manifest, backup_protected, restore_protected,
+                )
+                manifest = load_manifest(self.figures_dir)
+                backups = backup_protected(self.figures_dir, manifest)
+
                 result = subprocess.run(
                     ["python", target_file],
                     capture_output=True, text=True, timeout=120,
                     cwd=self.code_dir
                 )
+
+                # Restore any AI-generated figures overwritten by the script
+                restore_protected(self.figures_dir, backups, log_fn=self.log)
+
                 if result.returncode == 0:
                     self.log_step("Figures regenerated successfully", "success")
                     self.compile_latex()

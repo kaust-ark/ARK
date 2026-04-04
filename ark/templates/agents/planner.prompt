@@ -26,6 +26,13 @@ Each issue must be assigned to one of the following types:
 | LITERATURE_REQUIRED | Literature search needed | "Missing related work" |
 | WRITING_ONLY | Only LaTeX modification needed | "Introduction logic is unclear" |
 
+### Figure Issue Classification
+
+When the reviewer flags a `[FIGURE]` issue:
+- Target is a Python script → classify as `FIGURE_CODE_REQUIRED`
+- Target is "AI regeneration needed" → classify as `FIGURE_CODE_REQUIRED` (add `"regenerate": true` in the action field)
+- Target is LaTeX placement/caption only → classify as `WRITING_ONLY`
+
 ## Hard Page Limit Rule
 
 The venue enforces a strict **{VENUE_PAGES}-page limit** for body text (excluding references and appendix). Exceeding this limit results in **automatic desk rejection**.

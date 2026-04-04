@@ -37,6 +37,35 @@ If page_01.png does not exist, please run compilation first to generate it.
 {LATEX_DIR}/main.tex
 ```
 
+## Figure Quality Evaluation
+
+When reading each page image, evaluate EVERY figure against these criteria:
+
+1. **Readability**: Is all text >= 8pt equivalent? Are labels legible when printed?
+2. **Layout fit**: Does the figure fit within its column/page boundaries without overflow?
+3. **Label clarity**: Are there overlapping labels, clipped text, or occluded elements?
+4. **Data integrity**: Do data plots accurately represent the described results?
+5. **Professional quality**: No pixelation, consistent styling across all figures?
+
+Report figure issues as Major or Minor issues using this format:
+
+For data plot issues (font size, overlap, layout):
+```
+### M/mN. [FIGURE] fig_filename: <issue description>
+Target: scripts/create_paper_figures.py
+Action: <specific fix, e.g. "increase font to 9pt", "rotate x-labels 45 degrees">
+```
+
+For concept/architecture diagram issues (wrong content, missing components):
+```
+### M/mN. [FIGURE] fig_filename: <issue description>
+Target: AI regeneration needed
+Action: <what should change in the regenerated figure>
+```
+
+Do NOT flag AI-generated concept figures (architecture diagrams, system overviews)
+for matplotlib styling issues — these are intentionally generated as rich visual diagrams.
+
 ## Review Dimensions (score 1-10 per dimension)
 
 | Dimension | Criteria | Weight |
