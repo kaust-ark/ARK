@@ -890,9 +890,20 @@
 <div class="modal-backdrop" id="modal-continue">
   <div class="modal">
     <h3 data-i18n="continue_project">Continue Project</h3>
-    <div class="form-group">
-      <label data-i18n-html="additional_iterations_label">Additional iterations <span style="color:var(--text-muted);font-weight:400">(max 3)</span></label>
-      <input type="number" id="continue-iter" value="3" min="1" max="3" style="width:80px" />
+    <div class="form-row">
+      <div class="form-group" style="flex:1">
+        <label data-i18n-html="additional_iterations_label">Additional iterations <span style="color:var(--text-muted);font-weight:400">(max 3)</span></label>
+        <input type="number" id="continue-iter" value="3" min="1" max="3" style="width:80px" />
+      </div>
+      <div class="form-group" style="flex:2">
+        <label>Model</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap" id="continue-model-options">
+          <label class="model-option"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span></label>
+          <label class="model-option continue-model-admin" style="display:none"><input type="radio" name="continue-model" value="claude-opus-4-6" /><span class="model-chip">Opus 4.6</span></label>
+          <label class="model-option continue-model-admin" style="display:none"><input type="radio" name="continue-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
+          <label class="model-option continue-model-admin" style="display:none"><input type="radio" name="continue-model" value="gemini" /><span class="model-chip">Gemini</span></label>
+        </div>
+      </div>
     </div>
     <div class="form-group">
       <label data-i18n-html="instructions_comments_label">Instructions / Comments <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
@@ -902,7 +913,7 @@
     </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal('modal-continue')" data-i18n="cancel">Cancel</button>
-      <button class="btn-primary" id="continue-btn" onclick="submitContinue()" data-i18n="continue_btn">▶ Continue</button>
+      <button class="btn-primary" id="continue-btn" onclick="submitContinue()" data-i18n="continue_btn">Continue</button>
     </div>
   </div>
 </div>
@@ -2295,23 +2306,41 @@ function renderScoreChart(history) {
 // ══════════════════════════════════════════════════════
 let continueProjectId = null;
 
-function openContinueModal(id) {
+async function openContinueModal(id) {
   continueProjectId = id;
   document.getElementById('continue-comment').value = '';
   document.getElementById('continue-iter').value = '3';
+
+  // Fetch project detail to pre-fill model
+  const res = await fetch(`/api/projects/${id}`);
+  if (res.ok) {
+    const p = await res.json();
+    const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6', 'claude-opus-4-6': 'claude-opus-4-6',
+                       'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini', 'sonnet': 'claude-sonnet-4-6',
+                       'opus': 'claude-opus-4-6', 'haiku': 'claude-haiku-4-5' };
+    const modelVal = modelMap[p.model] || 'claude-sonnet-4-6';
+    document.querySelectorAll('input[name="continue-model"]').forEach(r => {
+      r.checked = (r.value === modelVal);
+    });
+  }
+  if (currentUser && currentUser.is_admin) {
+    document.querySelectorAll('.continue-model-admin').forEach(el => el.style.display = '');
+  }
+
   document.getElementById('modal-continue').classList.add('open');
 }
 
 async function submitContinue() {
   const iter = Math.max(1, Math.min(3, parseInt(document.getElementById('continue-iter').value) || 3));
   const comment = document.getElementById('continue-comment').value.trim();
+  const model = ([...document.querySelectorAll('input[name="continue-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-4-6';
   const btn = document.getElementById('continue-btn');
   btn.disabled = true;
   try {
     const res = await fetch(`/api/projects/${continueProjectId}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ additional_iterations: iter, comment }),
+      body: JSON.stringify({ additional_iterations: iter, comment, model }),
     });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));

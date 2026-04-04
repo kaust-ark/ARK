@@ -905,9 +905,9 @@ async def api_continue_project(project_id: str, request: Request):
         new_max = project.max_iterations + additional
         update_project(session, project, max_iterations=new_max)
         pdir = _project_dir(settings, project.user_id, project_id)
-        # Read existing model from config, or default
-        existing_model = _read_project_model(pdir) or "claude-sonnet-4-6"
-        _write_config_yaml(pdir, project, model=existing_model)
+        # Use requested model, or fall back to existing
+        model = body.get("model") or _read_project_model(pdir) or "claude-sonnet-4-6"
+        _write_config_yaml(pdir, project, model=model)
         if comment:
             _write_user_update(pdir, comment, source="webapp_continue")
             _write_user_instructions(pdir, comment, source="webapp_continue")
