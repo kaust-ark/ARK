@@ -608,7 +608,15 @@ def _strip_bibtex_fields(bib: str) -> str:
             if brace_depth <= 0:
                 current_field_kept = None  # field complete
 
-    return "\n".join(result)
+    cleaned = "\n".join(result)
+
+    # Remove volume if it equals year (e.g. TMLR where volume=2025, year=2025)
+    vol_match = re.search(r"volume\s*=\s*\{(\d{4})\}", cleaned)
+    year_match = re.search(r"year\s*=\s*\{(\d{4})\}", cleaned)
+    if vol_match and year_match and vol_match.group(1) == year_match.group(1):
+        cleaned = re.sub(r"\s*volume\s*=\s*\{\d{4}\},?\n?", "\n", cleaned)
+
+    return cleaned
 
 
 
@@ -944,10 +952,11 @@ def fix_bib(bib_path: str, results: list[VerificationResult]) -> None:
             content = content.replace(r.original_bibtex, tagged)
 
         elif r.status == "NEEDS-CHECK":
-            # Add [NEEDS-CHECK] comment if not already there
-            if "% [NEEDS-CHECK]" not in content.split(r.original_bibtex)[0].split("\n")[-1]:
-                tagged = f"% [NEEDS-CHECK] {r.details}\n{r.original_bibtex}"
-                content = content.replace(r.original_bibtex, tagged)
+            # Add note field inside the entry so it shows in PDF
+            if "note" not in r.original_bibtex.lower():
+                modified_entry = r.original_bibtex.rstrip().rstrip("}")
+                modified_entry += r'  note = {\textcolor{red}{[NEEDS-CHECK: citation not verified]}},' + "\n}"
+                content = content.replace(r.original_bibtex, modified_entry)
 
     bib_file.write_text(content)
 
@@ -985,6 +994,9 @@ def append_papers_to_bib(bib_path: str, papers: list[Paper]) -> list[str]:
 
         if cite_key in existing_keys:
             continue
+
+        # Store BibTeX on the paper object for literature.yaml
+        paper.bibtex = bib
 
         source = paper.dblp_key and "dblp" or (paper.doi and "crossref" or paper.source)
         tagged = f"% {_ARK_SOURCE_TAG}{source}]\n{bib}"
@@ -1034,7 +1046,7 @@ def _write_needs_check_to_bib(bib_path: str, titles: list[str],
             counter += 1
 
         # Build entry with whatever info we have
-        fields = [f"  title = {{{{{title}}}}}"]
+        fields = [f"  title = {{{title}}}"]
         if author:
             fields.append(f"  author = {{{author} et al.}}")
         if year:
@@ -1056,6 +1068,85 @@ def _write_needs_check_to_bib(bib_path: str, titles: list[str],
             f.write("\n\n" + "\n\n".join(new_entries) + "\n")
 
     return added_keys
+
+
+def regenerate_bib_from_literature(literature_path: str, bib_path: str) -> None:
+    """Regenerate references.bib entirely from literature.yaml.
+
+    This is the enforcement mechanism: literature.yaml is the single source of truth.
+    Any entries writer added to bib outside of our system are discarded.
+    NEEDS-CHECK entries get a note field for PDF visibility.
+    """
+    import yaml
+
+    lit_file = Path(literature_path)
+    if not lit_file.exists():
+        return
+
+    try:
+        data = yaml.safe_load(lit_file.read_text()) or {}
+    except Exception:
+        return
+
+    # Collect all BibTeX from literature.yaml references
+    entries = []
+    _updated = False
+
+    for ref in data.get("references", []):
+        if not isinstance(ref, dict):
+            continue
+        bibtex = ref.get("bibtex")
+        key = ref.get("bibtex_key", "")
+        source = ref.get("source", "")
+        if not key:
+            continue
+
+        # If bibtex not stored, try to re-fetch it
+        if not bibtex:
+            title = ref.get("title", "")
+            if title:
+                paper = _search_by_title(title)
+                if paper:
+                    bibtex = fetch_bibtex(paper)
+                    if bibtex:
+                        ref["bibtex"] = bibtex  # cache for next time
+                        _updated = True
+
+        if bibtex:
+            tag = f"% [ARK:source={source}]" if source else "% [ARK:source=verified]"
+            entries.append(f"{tag}\n{bibtex}")
+
+    # Add NEEDS-CHECK entries
+    for nc in data.get("needs_check", []):
+        if not isinstance(nc, dict):
+            continue
+        key = nc.get("bibtex_key", "")
+        title = nc.get("title", "")
+        author = nc.get("authors", "")
+        year = nc.get("year", 0)
+        if not key or not title:
+            continue
+
+        fields = [f"  title = {{{title}}}"]
+        if author:
+            fields.append(f"  author = {{{author} et al.}}")
+        if year:
+            fields.append(f"  year = {{{year}}}")
+        fields.append(r"  note = {\textcolor{red}{[NEEDS-CHECK: citation not verified]}}")
+
+        entry = (
+            f"% [NEEDS-CHECK]\n"
+            f"@misc{{{key},\n"
+            + ",\n".join(fields) + ",\n"
+            f"}}"
+        )
+        entries.append(entry)
+
+    # Write bib
+    bib_file = Path(bib_path)
+    bib_file.parent.mkdir(parents=True, exist_ok=True)
+    bib_file.write_text("% ARK auto-managed references\n% Generated from literature.yaml — do not edit manually\n\n"
+                        + "\n\n".join(entries) + "\n")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1213,6 +1304,8 @@ def update_literature_yaml(literature_path: str, papers: list[Paper],
         }
         if paper.abstract:
             entry["abstract"] = paper.abstract[:500]
+        if paper.bibtex:
+            entry["bibtex"] = paper.bibtex
         # Mark importance based on Deep Research context
         if ctx:
             entry["context"] = ctx
@@ -1226,7 +1319,9 @@ def update_literature_yaml(literature_path: str, papers: list[Paper],
 
 def _write_needs_check_to_literature(literature_path: str, titles: list[str],
                                      cite_keys: list[str] = None,
-                                     contexts: list[str] = None) -> None:
+                                     contexts: list[str] = None,
+                                     authors: list[str] = None,
+                                     years: list = None) -> None:
     """Append [NEEDS-CHECK] entries to literature.yaml for papers not found in any API."""
     import yaml
     from datetime import datetime
@@ -1256,6 +1351,12 @@ def _write_needs_check_to_literature(literature_path: str, titles: list[str],
             }
             if cite_keys and i < len(cite_keys):
                 entry["bibtex_key"] = cite_keys[i]
+            author = (authors[i] if authors and i < len(authors) else "") or ""
+            year = (years[i] if years and i < len(years) else 0) or 0
+            if author:
+                entry["authors"] = author
+            if year:
+                entry["year"] = year
             ctx = (contexts[i] if contexts and i < len(contexts) else "") or ""
             if ctx:
                 entry["context"] = ctx
@@ -1365,7 +1466,7 @@ def bootstrap_citations(
                                contexts=found_contexts)
     if needs_check_titles:
         _write_needs_check_to_literature(literature_path, needs_check_titles, needs_check_keys,
-                                         needs_check_contexts)
+                                         needs_check_contexts, needs_check_authors, needs_check_years)
 
     return BootstrapResult(
         found=found_papers,
@@ -1446,18 +1547,36 @@ def _extract_keywords_from_title(title: str) -> str:
 #  Mark [NEEDS-CHECK] citations in tex files
 # ═══════════════════════════════════════════════════════════
 
-def mark_needs_check_in_tex(bib_path: str, tex_dir: str) -> int:
+def mark_needs_check_in_tex(bib_path: str, tex_dir: str,
+                            literature_path: str = None) -> int:
     """Scan .tex files and add [NEEDS-CHECK] marker after any \\cite of a needs-check entry.
 
-    This runs after writer finishes, so it doesn't depend on writer compliance.
+    Reads NEEDS-CHECK keys from literature.yaml (single source of truth).
+    Falls back to parsing bib comments if literature.yaml not available.
     Returns number of citations marked.
     """
-    # Find needs-check keys from bib
-    entries = parse_bib(bib_path)
+    import yaml
+
     needs_check_keys = set()
-    for entry in entries:
-        if "[NEEDS-CHECK]" in entry.get("preceding_comments", ""):
-            needs_check_keys.add(entry["key"])
+
+    # Primary: read from literature.yaml
+    if literature_path:
+        lit_file = Path(literature_path)
+        if lit_file.exists():
+            try:
+                lit_data = yaml.safe_load(lit_file.read_text()) or {}
+                for nc in lit_data.get("needs_check", []):
+                    if isinstance(nc, dict) and nc.get("bibtex_key"):
+                        needs_check_keys.add(nc["bibtex_key"])
+            except Exception:
+                pass
+
+    # Fallback: parse bib comments
+    if not needs_check_keys:
+        entries = parse_bib(bib_path)
+        for entry in entries:
+            if "[NEEDS-CHECK]" in entry.get("preceding_comments", ""):
+                needs_check_keys.add(entry["key"])
 
     if not needs_check_keys:
         return 0
@@ -1481,6 +1600,14 @@ def mark_needs_check_in_tex(bib_path: str, tex_dir: str) -> int:
                 marked += count
 
         if new_content != content:
+            # Ensure xcolor package is loaded for \textcolor to work
+            if r"\textcolor" in new_content and "xcolor" not in new_content:
+                new_content = re.sub(
+                    r"(\\documentclass[^\n]*\n)",
+                    r"\1\\usepackage{xcolor}\n",
+                    new_content,
+                    count=1,
+                )
             tex_file.write_text(new_content)
 
     return marked

@@ -45,6 +45,24 @@ def copy_venue_template(venue_format: str, dest_paper_dir: Path) -> bool:
             shutil.copytree(item, dst)
         else:
             shutil.copy2(item, dst)
+
+    # Auto-extract any .zip files (e.g. NeurIPS Styles.zip containing .sty files)
+    import zipfile
+    for zf_path in dest_paper_dir.glob("*.zip"):
+        try:
+            with zipfile.ZipFile(zf_path) as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    name = Path(info.filename).name
+                    if Path(name).suffix.lower() in (".sty", ".cls", ".bst"):
+                        dst = dest_paper_dir / name
+                        if not dst.exists():
+                            with zf.open(info) as src_f, open(dst, "wb") as dst_f:
+                                dst_f.write(src_f.read())
+        except Exception:
+            pass
+
     return True
 
 

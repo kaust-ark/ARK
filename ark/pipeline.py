@@ -860,10 +860,13 @@ Rules:
         """Check if the dev phase should run before the review loop.
 
         Returns True if:
+        - skip_dev_phase is not set in config
         - No findings.yaml exists (no experiments done yet)
         - No reviews in paper_state.yaml (haven't entered review loop)
         - Dev phase not already completed (check dev_phase_state.yaml)
         """
+        if self.config.get("skip_dev_phase", False):
+            return False
         dev_state_file = self.state_dir / "dev_phase_state.yaml"
         if dev_state_file.exists():
             try:
@@ -1573,69 +1576,121 @@ Produce the complete paper. Do not stop until all sections are written and it co
     # ═══════════════════════════════════════════════════════════
 
     def _run_citation_verification(self):
-        """Verify references.bib entries against DBLP/CrossRef, fix errors, clean unused."""
+        """Verify references.bib, fix errors, mark NEEDS-CHECK, clean unused."""
         from ark.citation import verify_bib, fix_bib, cleanup_unused, mark_needs_check_in_tex
 
         bib_path = self.latex_dir / "references.bib"
         if not bib_path.exists():
             return
 
+        lit_path = str(self.state_dir / "literature.yaml")
         bib_str = str(bib_path)
+        tex_dir = str(self.latex_dir)
+
         self.log_step("Citation verification...", "progress")
 
         try:
-            # 1. Verify each entry
+            # 1. Verify each entry against DBLP/CrossRef
             results = verify_bib(bib_str)
-            if not results:
-                return
 
-            needs_check = [r for r in results if r.status == "NEEDS-CHECK"]
-            corrected = [r for r in results if r.status == "CORRECTED"]
-            single_src = [r for r in results if r.status == "SINGLE_SOURCE"]
-            verified = [r for r in results if r.status == "VERIFIED"]
+            if results:
+                needs_check = [r for r in results if r.status == "NEEDS-CHECK"]
+                corrected = [r for r in results if r.status == "CORRECTED"]
 
-            # 2. Apply fixes (overwrite corrected, tag needs-check)
-            if corrected or needs_check:
-                fix_bib(bib_str, results)
+                # 2. Apply fixes (add note field for NEEDS-CHECK, overwrite CORRECTED)
+                if corrected or needs_check:
+                    fix_bib(bib_str, results)
 
-            # 3. Clean up unused entries
-            tex_dir = str(self.latex_dir)
-            removed = cleanup_unused(bib_str, tex_dir)
+                # 3. Log summary
+                summary = []
+                verified = [r for r in results if r.status == "VERIFIED"]
+                if verified:
+                    summary.append(f"{len(verified)} verified")
+                if corrected:
+                    summary.append(f"{len(corrected)} corrected")
+                if needs_check:
+                    summary.append(f"{len(needs_check)} needs-check")
+                if summary:
+                    self.log_step(f"Citations: {', '.join(summary)}", "success")
 
-            # 4. Log summary
-            summary = []
-            if verified:
-                summary.append(f"{len(verified)} verified")
-            if single_src:
-                summary.append(f"{len(single_src)} single-source")
-            if corrected:
-                summary.append(f"{len(corrected)} corrected")
-            if needs_check:
-                summary.append(f"{len(needs_check)} needs-check")
-            if removed:
-                summary.append(f"{len(removed)} unused removed")
+            # 4. Enforce critical citations — if writer dropped a MUST CITE paper, add it back
+            self._enforce_critical_citations(lit_path, tex_dir)
 
-            if summary:
-                self.log_step(f"Citations: {', '.join(summary)}", "success")
-
-            # 5. Notify user about needs-check entries
-            if needs_check:
-                self.send_notification(
-                    "Citation Check",
-                    f"{len(needs_check)} citation(s) not confirmed:\n"
-                    + "\n".join(f"- {r.entry_key}: {r.details}" for r in needs_check[:5]),
-                    priority="warning",
-                )
-
-            # 6. Mark [NEEDS-CHECK] citations in tex source
-            marked = mark_needs_check_in_tex(bib_str, tex_dir)
+            # 5. Mark [NEEDS-CHECK] citations in tex (reads from literature.yaml)
+            marked = mark_needs_check_in_tex(bib_str, tex_dir, literature_path=lit_path)
             if marked:
                 self.log_step(f"Marked {marked} [NEEDS-CHECK] citation(s) in tex", "success")
 
+            # 6. Clean up unused entries
+            removed = cleanup_unused(bib_str, tex_dir)
+            if removed:
+                self.log_step(f"Removed {len(removed)} unused citations", "success")
+
             # 7. Recompile if anything changed
-            if corrected or removed or marked:
-                self.log_step("Recompiling after citation fixes...", "progress")
+            if (results and (corrected or needs_check)) or marked or removed:
+                self.log_step("Recompiling after citation updates...", "progress")
                 self.compile_latex()
 
         except Exception as e:
             self.log(f"Citation verification error: {e}", "WARN")
+
+    def _enforce_critical_citations(self, lit_path: str, tex_dir: str):
+        """Check that all critical (MUST CITE) papers are cited in tex.
+
+        If a critical paper is missing from tex, ask writer to add it.
+        Checks both references and needs_check in literature.yaml.
+        """
+        import yaml
+
+        lit_file = Path(lit_path)
+        if not lit_file.exists():
+            return
+
+        try:
+            lit_data = yaml.safe_load(lit_file.read_text()) or {}
+        except Exception:
+            return
+
+        # Collect all critical cite keys
+        critical = []
+        for ref in lit_data.get("references", []):
+            if isinstance(ref, dict) and ref.get("importance") == "critical":
+                critical.append((ref.get("bibtex_key", ""), ref.get("title", "")))
+        for nc in lit_data.get("needs_check", []):
+            if isinstance(nc, dict) and nc.get("importance") == "critical":
+                critical.append((nc.get("bibtex_key", ""), nc.get("title", "")))
+
+        if not critical:
+            return
+
+        # Collect all cited keys from tex
+        import re
+        cited_keys = set()
+        tex_path = Path(tex_dir)
+        for tex_file in tex_path.glob("**/*.tex"):
+            content = tex_file.read_text(errors="replace")
+            for m in re.finditer(r"\\cite[pt]?\{([^}]+)\}", content):
+                for key in m.group(1).split(","):
+                    cited_keys.add(key.strip())
+
+        # Find missing critical citations
+        missing = [(key, title) for key, title in critical if key and key not in cited_keys]
+
+        if not missing:
+            return
+
+        self.log_step(f"{len(missing)} critical citation(s) missing from paper, asking writer to add", "warning")
+
+        missing_list = "\n".join(f"- \\cite{{{key}}} — {title}" for key, title in missing)
+        latex_dir_name = self.config.get("latex_dir", "Latex")
+
+        self.run_agent("writer", f"""
+The following critical citations are missing from the paper. They are marked as MUST CITE
+in the research report but are not currently referenced anywhere in {latex_dir_name}/main.tex.
+
+{missing_list}
+
+Add each of these citations to the most appropriate location in the paper (typically Related Work).
+Write a brief sentence or clause that naturally incorporates each \\cite{{}} command.
+Do NOT remove any existing citations. Do NOT modify references.bib.
+""", timeout=600)

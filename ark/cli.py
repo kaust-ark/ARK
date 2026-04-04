@@ -3773,13 +3773,12 @@ def cmd_cite_search(args):
 
 
 def cmd_cite_debug(args):
-    """Two-round citation debug loop: write → review → fix → verify."""
-    from ark.citation import (
-        search_papers, extract_search_queries, format_candidates_for_agent,
-        parse_agent_selection, append_papers_to_bib, verify_bib, fix_bib,
-        cleanup_unused, update_literature_yaml, bootstrap_citations,
-    )
+    """Test citation pipeline using real Orchestrator code paths.
 
+    Runs: Deep Research → citation bootstrap → writer (Related Work only)
+          → citation verification → compile.
+    Uses the actual Orchestrator methods so citation behavior is identical to ark run.
+    """
     config = get_project_config(args.project)
     if not config:
         print(f"Project '{args.project}' not found.")
@@ -3788,370 +3787,77 @@ def cmd_cite_debug(args):
     project_dir = get_projects_dir() / args.project
     code_dir = Path(config.get("code_dir", ""))
     latex_dir = code_dir / config.get("latex_dir", "Latex")
-    bib_path = str(latex_dir / "references.bib")
-    agents_dir = project_dir / "agents"
-    literature_path = str(code_dir / "auto_research" / "state" / "literature.yaml")
-
-    paper_title = config.get("title", args.project)
-    research_idea = config.get("research_idea", "")
-    model = config.get("model", "claude")
+    bib_path = latex_dir / "references.bib"
+    lit_path = code_dir / "auto_research" / "state" / "literature.yaml"
 
     print(f"\n{styled(Style.BOLD, f'Citation Debug: {args.project}')}")
-    print(f"  Title: {paper_title}")
-    print(f"  Model: {model}\n")
+    print(f"  Title: {config.get('title', args.project)}")
+    print(f"  Using real Orchestrator code paths\n")
 
-    # Reset references.bib for clean test
-    bib_file = Path(bib_path)
-    bib_file.parent.mkdir(parents=True, exist_ok=True)
-    bib_file.write_text("% ARK auto-managed references\n\n")
-    print("  Reset references.bib\n")
+    # Reset references.bib and literature.yaml for clean test
+    bib_path.parent.mkdir(parents=True, exist_ok=True)
+    bib_path.write_text("% ARK auto-managed references\n\n")
+    if lit_path.exists():
+        lit_path.unlink()
+    print("  Reset references.bib and literature.yaml\n")
 
-    def run_agent(agent_type, prompt, timeout=900):
-        """Lightweight agent runner for debug mode."""
-        prompt_file = agents_dir / f"{agent_type}.prompt"
-        if not prompt_file.exists():
-            print(f"  [WARN] Prompt not found: {prompt_file}")
-            return ""
+    # If --research, delete deep_research.md to force re-run
+    if args.research:
+        dr_file = code_dir / "auto_research" / "state" / "deep_research.md"
+        if dr_file.exists():
+            dr_file.unlink()
+            print("  Deleted deep_research.md (will re-run Deep Research)\n")
 
-        base_prompt = prompt_file.read_text()
-        full_prompt = f"{base_prompt}\n\n---\n\n## Current Task\n\n{prompt}"
+    # Initialize real Orchestrator (for its methods, not full run)
+    from ark.orchestrator import Orchestrator
 
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        if model == "claude":
-            cmd = [
-                "claude", "-p", full_prompt,
-                "--permission-mode", "bypassPermissions",
-                "--no-session-persistence",
-                "--output-format", "text",
-            ]
-            ark_model = _get_configured_model()
-            if ark_model:
-                cmd.extend(["--model", ark_model])
-        else:
-            print(f"  [WARN] cite-debug only supports claude backend, got {model}")
-            return ""
+    orch = Orchestrator(
+        project=args.project,
+        max_iterations=1,
+        mode="paper",
+        model=config.get("model", "claude"),
+        code_dir=str(code_dir),
+        project_dir=str(project_dir),
+    )
 
-        print(f"  Running {agent_type} agent...")
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True,
-                timeout=timeout, cwd=str(code_dir), env=env,
-            )
-            return result.stdout
-        except subprocess.TimeoutExpired:
-            print(f"  [WARN] {agent_type} timed out")
-            return ""
-        except Exception as e:
-            print(f"  [ERROR] {agent_type}: {e}")
-            return ""
-
-    # ── Deep Research (if requested or missing) ──
-    deep_research_file = code_dir / "auto_research" / "state" / "deep_research.md"
-    if args.research or not deep_research_file.exists():
-        print(styled(Style.BOLD, "═══ Deep Research ═══\n"))
-        try:
-            from ark.deep_research import run_deep_research, get_gemini_api_key
-            api_key = get_gemini_api_key()
-            if api_key:
-                state_dir = code_dir / "auto_research" / "state"
-                state_dir.mkdir(parents=True, exist_ok=True)
-                result = run_deep_research(config=config, output_dir=state_dir, api_key=api_key)
-                if result:
-                    print(f"  Deep Research completed: {result}\n")
-                else:
-                    print("  Deep Research returned no result\n")
-            else:
-                print("  No Gemini API key found, skipping Deep Research\n")
-        except ImportError:
-            print("  google-genai not installed, skipping Deep Research\n")
-
-    # ── Round 1: Bootstrap citations (same as production pipeline) ──
-    print(styled(Style.BOLD, "═══ Round 1: Citation bootstrapping + writing ═══\n"))
-
-    if deep_research_file.exists():
-        # Same flow as _bootstrap_citations_from_deep_research() in pipeline.py
-        print("  Found deep_research.md — extracting paper titles via LLM...\n")
-        report_text = deep_research_file.read_text()
-        if len(report_text) > 15000:
-            report_text = report_text[:15000] + "\n\n... (truncated)"
-
-        extract_prompt = f"""Read the following research report and extract ALL academic papers mentioned in it.
-
-For each paper, return a JSON object with these fields:
-- "title": the paper's actual full title
-- "authors": first author surname (e.g. "Vaswani")
-- "year": publication year as integer (e.g. 2017)
-- "query": a search query to find it (title + author + year)
-
-Return a JSON array. Example:
-[
-  {{"title": "Attention Is All You Need", "authors": "Vaswani", "year": 2017, "query": "Attention Is All You Need Vaswani 2017"}},
-  {{"title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding", "authors": "Devlin", "year": 2019, "query": "BERT Pre-training Deep Bidirectional Transformers Devlin 2019"}}
-]
-
-Rules:
-- "title" must be the paper's actual full title as it would appear on the paper itself
-- "query" should include the title plus first author surname and year to help search
-- If only an abbreviation is given (e.g. "TimeGAN by Yoon et al., 2019"), infer the full title for "title" and construct a rich "query"
-- Do NOT include book titles, dataset names, or tool names
-- Do NOT invent papers not mentioned in the report
-- If no papers are mentioned, return []
-
-## Research Report
-
-{report_text}
-"""
-        agent_out = run_agent("researcher", extract_prompt, timeout=300)
-
-        # Parse JSON [{title, query}, ...]
-        import json as _json
-        papers_info = []
-        text = agent_out.strip()
-        if "```" in text:
-            _m = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
-            if _m:
-                text = _m.group(1).strip()
-        start = text.find("[")
-        end = text.rfind("]")
-        if start != -1 and end != -1 and end > start:
-            try:
-                parsed = _json.loads(text[start:end + 1])
-                if isinstance(parsed, list):
-                    if parsed and isinstance(parsed[0], dict):
-                        papers_info = [
-                            {
-                                "title": p.get("title", ""),
-                                "query": p.get("query", p.get("title", "")),
-                                "authors": p.get("authors", ""),
-                                "year": p.get("year", 0),
-                            }
-                            for p in parsed if isinstance(p, dict) and p.get("title")
-                        ]
-                    elif parsed and isinstance(parsed[0], str):
-                        papers_info = [{"title": s, "query": s} for s in parsed if isinstance(s, str) and len(s) > 5]
-            except _json.JSONDecodeError:
-                pass
-
-        if papers_info:
-            titles = [p["title"] for p in papers_info]
-            queries = [p["query"] for p in papers_info]
-            authors_l = [p.get("authors", "") for p in papers_info]
-            years_l = [p.get("year", 0) for p in papers_info]
-            print(f"  Extracted {len(titles)} paper titles, searching APIs...\n")
-            result = bootstrap_citations(titles, bib_path, literature_path,
-                                         search_queries=queries, authors=authors_l, years=years_l)
-            if result.found_keys:
-                print(f"  Added {len(result.found_keys)} citations: {result.found_keys}")
-            if result.needs_check:
-                print(f"  {len(result.needs_check)} papers not found:")
-                for t in result.needs_check:
-                    print(f"    - {t}")
-            print()
-        else:
-            print("  No paper titles extracted from report\n")
+    # Step 1: Deep Research + Citation Bootstrap (real code path)
+    # _run_research_phase() calls _bootstrap_citations_from_deep_research() at the end
+    print(styled(Style.BOLD, "═══ Step 1: Deep Research + Citation Bootstrap ═══\n"))
+    if orch._should_run_research_phase():
+        orch._run_research_phase()
     else:
-        # Fallback: no deep_research.md, use keyword search
-        print("  No deep_research.md found — using keyword search fallback\n")
-        queries = extract_search_queries(paper_title, research_idea)
-        print(f"  Search queries: {queries[:3]}")
-        all_candidates = []
-        for q in queries[:3]:
-            all_candidates.extend(search_papers(q, max_results=10))
-        seen = set()
-        unique = []
-        for p in all_candidates:
-            key = p.doi or p.title.lower()[:60]
-            if key not in seen:
-                seen.add(key)
-                unique.append(p)
-        all_candidates = unique[:15]
-        print(f"  Found {len(all_candidates)} candidate papers\n")
+        # Deep Research exists but maybe bootstrap hasn't run yet
+        print("  Deep Research report already exists")
+        orch._bootstrap_citations_from_deep_research()
 
-        if all_candidates:
-            candidates_text = format_candidates_for_agent(all_candidates)
-            selection_prompt = f"""
-## Paper Background
-Title: {paper_title}
-Research idea: {research_idea}
-
-## Candidate Papers (from academic databases)
-
-{candidates_text}
-
-## Your Task
-
-Select the papers most relevant to our research.
-
-Output format:
-SELECTED: 1, 5, 11
-[1] Reason: ... | Section: Related Work
-
-Rules:
-- ONLY select from the numbered list above
-- Do NOT suggest any papers not in the list
-"""
-            agent_out = run_agent("researcher", selection_prompt)
-            selected = parse_agent_selection(agent_out, all_candidates)
-            if selected:
-                added = append_papers_to_bib(bib_path, selected)
-                update_literature_yaml(literature_path, selected, added, agent_out)
-                print(f"  Added {len(added)} citations: {added}\n")
-
-    # Writer: write Related Work
-    print("  Writing Related Work section...")
-    run_agent("writer", f"""
-Write or update the Related Work section in {config.get('latex_dir', 'Latex')}/main.tex.
-Use the citations available in references.bib (use \\cite{{key}} commands).
-Read auto_research/state/literature.yaml for guidance on which papers to cite and where.
+    # Step 2: Writer (Related Work only)
+    print(styled(Style.BOLD, "\n═══ Step 2: Writer (Related Work only) ═══\n"))
+    latex_dir_name = config.get("latex_dir", "Latex")
+    orch.run_agent("writer", f"""
+Write the Related Work section in {latex_dir_name}/main.tex.
+Use ONLY the citations available in {latex_dir_name}/references.bib (use \\cite{{key}} commands).
+Read auto_research/state/literature.yaml for guidance on which papers to cite, their abstracts,
+and where to place them. Do NOT modify references.bib.
+Do NOT write other sections — only Related Work.
 """, timeout=1200)
 
-    # Compile
-    print("  Compiling LaTeX...")
-    subprocess.run(
-        ["bash", "-c", f"cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex && bibtex main && pdflatex -interaction=nonstopmode main.tex && pdflatex -interaction=nonstopmode main.tex"],
-        capture_output=True, cwd=str(code_dir),
-    )
+    # Step 3: Citation verification (real code path)
+    print(styled(Style.BOLD, "\n═══ Step 3: Citation Verification ═══\n"))
+    orch.compile_latex()
+    orch._run_citation_verification()
 
-    # ── Round 2: Review → fix → verify ──
-    print(styled(Style.BOLD, "\n═══ Round 2: Review → citation fix → verify ═══\n"))
-
-    # Reviewer
-    review_out = run_agent("reviewer", f"""
-Review the paper at {config.get('latex_dir', 'Latex')}/main.tex.
-Pay special attention to:
-- Are citations appropriate and sufficient?
-- Is Related Work well-written and comprehensive?
-- Are there any unsupported claims that need citations?
-Save the review to auto_research/state/latest_review.md
-""", timeout=1200)
-
-    # Planner
-    planner_out = run_agent("planner", f"""
-Analyze the review at auto_research/state/latest_review.md.
-Generate action_plan.yaml. Classify issues — use LITERATURE_REQUIRED for citation gaps.
-""", timeout=600)
-
-    # Check if planner requested literature
-    action_plan_file = code_dir / "auto_research" / "state" / "action_plan.yaml"
-    lit_issues = []
-    if action_plan_file.exists():
-        try:
-            import yaml
-            plan = yaml.safe_load(action_plan_file.read_text()) or {}
-            lit_issues = [i for i in plan.get("issues", [])
-                         if i.get("type") == "LITERATURE_REQUIRED"]
-        except Exception:
-            pass
-
-    if lit_issues:
-        print(f"  Planner requested {len(lit_issues)} literature tasks")
-        print("  Re-reading Deep Research report for additional citations...\n")
-        # Re-bootstrap from Deep Research (same as Round 1, skips already-added papers)
-        if deep_research_file.exists():
-            report_text = deep_research_file.read_text()
-            if len(report_text) > 15000:
-                report_text = report_text[:15000] + "\n\n... (truncated)"
-
-            extract_prompt2 = f"""Read the following research report and extract ALL academic papers mentioned in it.
-
-For each paper, return a JSON object with these fields:
-- "title": the paper's actual full title
-- "authors": first author surname (e.g. "Vaswani")
-- "year": publication year as integer (e.g. 2017)
-- "query": a search query to find it (title + author + year)
-
-Return a JSON array. Example:
-[
-  {{"title": "Attention Is All You Need", "authors": "Vaswani", "year": 2017, "query": "Attention Is All You Need Vaswani 2017"}}
-]
-
-Rules:
-- "title" must be the paper's actual full title
-- Do NOT include book titles, dataset names, or tool names
-- Do NOT invent papers not mentioned in the report
-- If no papers are mentioned, return []
-
-## Research Report
-
-{report_text}
-"""
-            agent_out2 = run_agent("researcher", extract_prompt2, timeout=300)
-
-            import json as _json2
-            papers_info2 = []
-            text2 = agent_out2.strip()
-            if "```" in text2:
-                _m2 = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text2, re.DOTALL)
-                if _m2:
-                    text2 = _m2.group(1).strip()
-            start2 = text2.find("[")
-            end2 = text2.rfind("]")
-            if start2 != -1 and end2 != -1 and end2 > start2:
-                try:
-                    parsed2 = _json2.loads(text2[start2:end2 + 1])
-                    if isinstance(parsed2, list) and parsed2 and isinstance(parsed2[0], dict):
-                        papers_info2 = [
-                            {"title": p.get("title", ""), "query": p.get("query", p.get("title", "")),
-                             "authors": p.get("authors", ""), "year": p.get("year", 0)}
-                            for p in parsed2 if isinstance(p, dict) and p.get("title")
-                        ]
-                except _json2.JSONDecodeError:
-                    pass
-
-            if papers_info2:
-                titles2 = [p["title"] for p in papers_info2]
-                queries2 = [p["query"] for p in papers_info2]
-                authors2 = [p.get("authors", "") for p in papers_info2]
-                years2 = [p.get("year", 0) for p in papers_info2]
-                result2 = bootstrap_citations(titles2, bib_path, literature_path,
-                                              search_queries=queries2, authors=authors2, years=years2)
-                if result2.found_keys:
-                    print(f"  Added {len(result2.found_keys)} more citations: {result2.found_keys}")
-        else:
-            print("  No Deep Research report available")
-
-    # Writer fixes based on review
-    print("\n  Writer revising based on review...")
-    run_agent("writer", f"""
-Read auto_research/state/latest_review.md and revise the paper.
-Focus on citation-related issues. Use \\cite{{key}} with keys in references.bib.
-Do NOT modify references.bib.
-Do NOT remove existing \\cite{{}} commands — only add or modify, never delete existing citations.
-""", timeout=1200)
-
-    # Final verify
-    print(styled(Style.BOLD, "\n═══ Final Verification ═══\n"))
-    results = verify_bib(bib_path)
-    for r in results:
-        status_str = r.status
-        if r.status == "VERIFIED":
-            print(f"  ✓ {r.entry_key:30s}  {r.details}")
-        elif r.status == "CORRECTED":
-            print(f"  ↑ {r.entry_key:30s}  {r.details}")
-        elif r.status == "NEEDS-CHECK":
-            print(f"  ✗ {r.entry_key:30s}  {r.details}")
-        else:
-            print(f"  ~ {r.entry_key:30s}  {r.details}")
-
-    # Apply fixes
-    fix_bib(bib_path, results)
-    removed = cleanup_unused(bib_path, str(latex_dir))
-
-    # Final compile
-    print("\n  Final compile...")
-    subprocess.run(
-        ["bash", "-c", f"cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex && bibtex main && pdflatex -interaction=nonstopmode main.tex && pdflatex -interaction=nonstopmode main.tex"],
-        capture_output=True, cwd=str(code_dir),
-    )
+    # Step 4: Final compile
+    print(styled(Style.BOLD, "\n═══ Step 4: Final Compile ═══\n"))
+    orch.compile_latex()
 
     # Summary
-    counts = {}
-    for r in results:
-        counts[r.status] = counts.get(r.status, 0) + 1
-    parts = [f"{v} {k.lower()}" for k, v in counts.items()]
-    print(f"\n  {styled(Style.BOLD, 'Summary')}: {', '.join(parts)}")
-    if removed:
-        print(f"  Cleaned up: {len(removed)} unused entries")
+    from ark.citation import parse_bib
+    if bib_path.exists():
+        final_entries = parse_bib(str(bib_path))
+        nc_count = sum(1 for e in final_entries if "NEEDS-CHECK" in str(e.get("fields", {}).get("note", "")))
+        print(f"\n  {styled(Style.BOLD, 'Summary')}: {len(final_entries)} references in bib")
+        if nc_count:
+            print(f"  {nc_count} [NEEDS-CHECK] citation(s)")
     print(f"  Check: {latex_dir}/main.pdf\n")
 
 

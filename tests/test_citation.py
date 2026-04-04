@@ -230,7 +230,7 @@ class TestFixBib:
         )]
         fix_bib(str(bib), results)
         content = bib.read_text()
-        assert "[NEEDS-CHECK]" in content
+        assert "NEEDS-CHECK" in content
 
     def test_replaces_corrected(self, tmp_path):
         bib = tmp_path / "references.bib"
