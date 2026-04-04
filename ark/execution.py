@@ -653,18 +653,19 @@ After making all changes, you MUST verify the page count:
             self.run_agent("writer", f"""## PAGE COMPRESSION — venue limit is {venue_pages} body pages
 
 The paper body is currently {page_count:.1f} pages, exceeding the {venue_pages}-page limit.
+Target: between {min_pages:.2f} and {venue_pages:.0f} body pages. Do NOT over-compress.
 
-Reduce to exactly {venue_pages} pages or just under. Strategies:
-- Condense verbose paragraphs (aim for ~15% shorter text)
+Reduce carefully — aim for exactly {venue_pages} pages, NOT much less. Strategies:
+- Condense verbose paragraphs by ~10-15% (not more)
 - Merge overlapping sentences in related work
-- Move less essential subsections to \\appendix
-- Reduce whitespace around figures/tables (use \\vspace{{-Xpt}})
-- Do NOT remove key technical content or results
+- Move only truly non-essential subsections to \\appendix
+- Reduce whitespace around figures/tables (use \\vspace{{-4pt}})
+- Do NOT remove key technical content, results, or entire sections
 
 After changes:
 1. Ensure `\\clearpage` before `\\bibliography` so references start on a new page
 2. Compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex && pdflatex -interaction=nonstopmode main.tex
-3. Body pages must be ≤ {venue_pages}
+3. Body pages must be between {min_pages:.2f} and {venue_pages:.0f} — check this before finishing!
 """, timeout=1800)
             self.compile_latex()
             page_count = getattr(self, '_body_page_count', 0)
@@ -672,8 +673,8 @@ After changes:
                 self.log(f"[{context}] Still over limit after compression: {page_count:.1f}", "ERROR")
                 return False
 
-        # Case 2: Under target → expand
-        elif page_count < min_pages:
+        # Case 2: Under target → expand (also runs after over-compression)
+        if page_count and page_count < min_pages:
             self.log(f"[{context}] Under target ({page_count:.1f} < {min_pages:.1f}), running expansion...", "WARN")
             self.run_agent("writer", f"""## PAGE EXPANSION — paper is too short
 
