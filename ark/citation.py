@@ -970,7 +970,11 @@ def fix_bib(bib_path: str, results: list[VerificationResult]) -> None:
             # Add note field inside the entry so it shows in PDF
             if "note" not in r.original_bibtex.lower():
                 modified_entry = r.original_bibtex.rstrip().rstrip("}")
-                modified_entry += r'  note = {\textcolor{red}{[NEEDS-CHECK: citation not verified]}},' + "\n}"
+                # Ensure last field has a trailing comma before adding note
+                modified_entry = modified_entry.rstrip()
+                if modified_entry and not modified_entry.endswith(","):
+                    modified_entry += ","
+                modified_entry += "\n" + r'  note = {\textcolor{red}{[NEEDS-CHECK: citation not verified]}}' + "\n}"
                 content = content.replace(r.original_bibtex, modified_entry)
 
     bib_file.write_text(content)
