@@ -85,7 +85,7 @@ Abstract goes here.
 \section{Method}
 \section{Experiments}
 \section{Conclusion}
-\bibliographystyle{plain}
+\bibliographystyle{plainnat}
 \bibliography{references}
 \end{document}
 """)

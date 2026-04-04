@@ -442,7 +442,7 @@ def _get_main_tex_content(venue_format: str, title: str, venue_name: str, author
 
 
 
-\bibliographystyle{plain}
+\bibliographystyle{plainnat}
 \bibliography{references}
 
 """

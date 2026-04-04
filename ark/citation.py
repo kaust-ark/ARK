@@ -477,11 +477,20 @@ def search_papers(query: str, max_results: int = 15) -> list[Paper]:
 # ═══════════════════════════════════════════════════════════
 
 def _fetch_bibtex_from_arxiv(arxiv_id: str) -> str | None:
-    """Fetch BibTeX directly from arXiv: arxiv.org/bibtex/{id}"""
+    """Fetch BibTeX directly from arXiv: arxiv.org/bibtex/{id}
+
+    Adds a note field with arXiv ID so it renders in all .bst styles
+    (plainnat etc. don't support the eprint field natively).
+    """
     url = f"https://arxiv.org/bibtex/{arxiv_id}"
     bib = _http_get(url)
     if bib and "@" in bib:
-        return _strip_bibtex_fields(bib.strip())
+        stripped = _strip_bibtex_fields(bib.strip())
+        # Add note with arXiv info for .bst files that don't support eprint
+        if "note" not in stripped.lower():
+            stripped = stripped.rstrip().rstrip("}")
+            stripped += f"  note = {{arXiv:{arxiv_id}}},\n}}"
+        return stripped
     return None
 
 
@@ -657,14 +666,20 @@ def fetch_bibtex(paper: Paper) -> str | None:
                     return _strip_bibtex_fields(bib)
                 break
 
-    # 3. DOI content negotiation (CrossRef)
+    # 3. arXiv (before DOI — DOI content negotiation loses arXiv fields)
+    if paper.arxiv_id and not _is_published(paper):
+        arxiv_bib = _fetch_bibtex_from_arxiv(paper.arxiv_id)
+        if arxiv_bib:
+            return arxiv_bib
+
+    # 4. DOI content negotiation (CrossRef)
     if paper.doi:
         bib = _fetch_bibtex_from_doi(paper.doi)
         if bib:
             return _strip_bibtex_fields(bib)
         time.sleep(_CROSSREF_DELAY)
 
-    # 4. arXiv (last resort)
+    # 5. arXiv (last resort, even for published papers if nothing else worked)
     if paper.arxiv_id:
         bib = _fetch_bibtex_from_arxiv(paper.arxiv_id)
         if bib:
