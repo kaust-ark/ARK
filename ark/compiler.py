@@ -201,8 +201,8 @@ class CompilerMixin:
                     timeout=120,
                     cwd=self.latex_dir,
                 )
-                stderr = result.stderr.decode("utf-8", errors="replace")
-                stdout = result.stdout.decode("utf-8", errors="replace")
+                stderr = result.stderr.decode("utf-8", errors="replace") if isinstance(result.stderr, bytes) else (result.stderr or "")
+                stdout = result.stdout.decode("utf-8", errors="replace") if isinstance(result.stdout, bytes) else (result.stdout or "")
                 if result.returncode != 0 and "main.tex" in cmd:
                     self._last_compile_stderr = stderr[:1000] or stdout[-1000:]
                     self.log(f"LaTeX compilation warning: {stderr[:500]}")

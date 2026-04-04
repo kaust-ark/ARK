@@ -907,6 +907,72 @@
   </div>
 </div>
 
+<!-- RESTART MODAL -->
+<div class="modal-backdrop" id="modal-restart">
+  <div class="modal" style="max-width:620px">
+    <h3>Restart Project</h3>
+    <div class="form-group">
+      <label>Research Idea</label>
+      <textarea id="restart-idea" rows="4" style="width:100%"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Instructions <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+      <textarea id="restart-comment" rows="3" style="width:100%"
+        placeholder="e.g. Focus on a different baseline, change experiment setup..."></textarea>
+    </div>
+    <div class="form-row">
+      <div class="form-group" style="flex:2">
+        <label>Venue</label>
+        <select id="restart-venue" onchange="restartVenueChanged(this)"></select>
+      </div>
+      <div class="form-group" style="flex:1">
+        <label>Max iterations</label>
+        <input type="number" id="restart-max-iter" value="3" min="1" max="3" style="width:80px" />
+      </div>
+    </div>
+    <input type="hidden" id="restart-venue-format" />
+    <input type="hidden" id="restart-venue-pages" />
+    <div class="form-group">
+      <label>Model</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap" id="restart-model-options">
+        <label class="model-option"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span></label>
+        <label class="model-option restart-model-admin" style="display:none"><input type="radio" name="restart-model" value="claude-opus-4-6" /><span class="model-chip">Opus 4.6</span></label>
+        <label class="model-option restart-model-admin" style="display:none"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
+        <label class="model-option restart-model-admin" style="display:none"><input type="radio" name="restart-model" value="gemini" /><span class="model-chip">Gemini</span></label>
+      </div>
+    </div>
+    <div class="tg-section" style="margin-top:12px">
+      <div class="tg-section-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex-shrink:0">
+          <circle cx="12" cy="12" r="12" fill="#29B6F6"/>
+          <path d="M5.5 11.5l10-4.5-1.5 9-3-2.5-2 2v-3l5-4.5-6.5 3.5-2-1z" fill="white"/>
+        </svg>
+        <span>Telegram Notifications</span>
+      </div>
+      <div class="form-row" style="margin-top:8px">
+        <div class="form-group" style="margin-bottom:0">
+          <label>Bot Token</label>
+          <input type="text" id="restart-tg-token" placeholder="123456789:ABCdef..." autocomplete="off" />
+        </div>
+        <div class="form-group" style="margin-bottom:0">
+          <label>Chat ID</label>
+          <input type="text" id="restart-tg-chatid" placeholder="1234567890" />
+        </div>
+      </div>
+    </div>
+    <div id="restart-deep-research-section" style="margin-top:16px;display:none">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="restart-keep-dr" checked />
+        <span>Keep existing Deep Research report <span style="color:var(--text-muted);font-weight:400">(uncheck to redo)</span></span>
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal('modal-restart')">Cancel</button>
+      <button class="btn-primary" id="restart-btn" onclick="submitRestart()">Restart</button>
+    </div>
+  </div>
+</div>
+
 <!-- ADMIN EDIT MODAL -->
 <div class="modal-backdrop" id="modal-admin-edit">
   <div class="modal" style="max-width:620px">
@@ -1903,7 +1969,7 @@ function renderDetailActions(p) {
     html += `<button class="btn-secondary" onclick="stopProject('${p.id}')">${t('stop')}</button>`;
   }
   if (p.status === 'stopped' || p.status === 'failed') {
-    html += `<button class="btn-primary" onclick="startProject('${p.id}')">${t('start')}</button>`;
+    html += `<button class="btn-primary" onclick="openRestartModal('${p.id}')">Restart</button>`;
   }
   if (p.status === 'done') {
     html += `<button class="btn-primary" onclick="openContinueModal('${p.id}')">${t('continue_action')}</button>`;
@@ -2254,6 +2320,107 @@ async function submitContinue() {
     }
     closeModal('modal-continue');
     loadDetail(continueProjectId);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  Restart Modal
+// ══════════════════════════════════════════════════════
+let restartProjectId = null;
+
+async function openRestartModal(id) {
+  restartProjectId = id;
+  // Fetch project detail to pre-fill fields
+  const res = await fetch(`/api/projects/${id}`);
+  if (!res.ok) { alert('Failed to load project details'); return; }
+  const p = await res.json();
+
+  document.getElementById('restart-idea').value = p.idea || '';
+  document.getElementById('restart-comment').value = '';
+  document.getElementById('restart-max-iter').value = p.max_iterations || 3;
+  document.getElementById('restart-tg-token').value = p.telegram_token || '';
+  document.getElementById('restart-tg-chatid').value = p.telegram_chat_id || '';
+
+  // Populate venue select (reuse venues from hero form)
+  const venueSelect = document.getElementById('restart-venue');
+  const heroSelect = document.getElementById('hero-venue-select');
+  venueSelect.innerHTML = heroSelect.innerHTML;
+  // Set current venue
+  if (p.venue) {
+    for (const opt of venueSelect.options) {
+      if (opt.value === p.venue || opt.textContent === p.venue) {
+        opt.selected = true;
+        break;
+      }
+    }
+  }
+  // Set hidden venue_format and venue_pages from current project
+  document.getElementById('restart-venue-format').value = p.venue_format || 'neurips';
+  document.getElementById('restart-venue-pages').value = p.venue_pages || 9;
+
+  // Set model radio
+  const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6', 'claude-opus-4-6': 'claude-opus-4-6',
+                     'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini', 'sonnet': 'claude-sonnet-4-6',
+                     'opus': 'claude-opus-4-6', 'haiku': 'claude-haiku-4-5' };
+  const modelVal = modelMap[p.model] || 'claude-sonnet-4-6';
+  document.querySelectorAll('input[name="restart-model"]').forEach(r => {
+    r.checked = (r.value === modelVal);
+  });
+  // Show admin model options if user is admin
+  if (currentUser && currentUser.is_admin) {
+    document.querySelectorAll('.restart-model-admin').forEach(el => el.style.display = '');
+  }
+
+  // Deep research checkbox
+  const drSection = document.getElementById('restart-deep-research-section');
+  if (p.has_deep_research) {
+    drSection.style.display = '';
+    document.getElementById('restart-keep-dr').checked = true;
+  } else {
+    drSection.style.display = 'none';
+  }
+
+  document.getElementById('modal-restart').classList.add('open');
+}
+
+function restartVenueChanged(sel) {
+  const opt = sel.options[sel.selectedIndex];
+  if (opt && opt.dataset.format) {
+    document.getElementById('restart-venue-format').value = opt.dataset.format;
+    document.getElementById('restart-venue-pages').value = opt.dataset.pages || 9;
+  }
+}
+
+async function submitRestart() {
+  const btn = document.getElementById('restart-btn');
+  btn.disabled = true;
+  try {
+    const body = {
+      idea: document.getElementById('restart-idea').value.trim(),
+      venue: document.getElementById('restart-venue').value,
+      venue_format: document.getElementById('restart-venue-format').value,
+      venue_pages: parseInt(document.getElementById('restart-venue-pages').value) || 9,
+      max_iterations: Math.max(1, Math.min(3, parseInt(document.getElementById('restart-max-iter').value) || 3)),
+      model: ([...document.querySelectorAll('input[name="restart-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-4-6',
+      telegram_token: document.getElementById('restart-tg-token').value.trim(),
+      telegram_chat_id: document.getElementById('restart-tg-chatid').value.trim(),
+      comment: document.getElementById('restart-comment').value.trim(),
+      redo_deep_research: !document.getElementById('restart-keep-dr').checked,
+    };
+    const res = await fetch(`/api/projects/${restartProjectId}/restart`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      alert(e.detail || 'Failed to restart project.');
+      return;
+    }
+    closeModal('modal-restart');
+    loadDetail(restartProjectId);
   } finally {
     btn.disabled = false;
   }

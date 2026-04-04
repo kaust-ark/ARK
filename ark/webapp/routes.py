@@ -175,6 +175,57 @@ def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
 
 
+def _clean_project_state(project_dir: Path, keep_deep_research: bool = True):
+    """Remove all generated state/results for a fresh restart.
+
+    Preserves: config.yaml, uploaded.pdf, venue template files (.cls/.sty/.bst),
+    agent prompts, and optionally deep_research.md/pdf.
+    """
+    # Clean auto_research/state/
+    state_dir = project_dir / "auto_research" / "state"
+    if state_dir.exists():
+        for f in state_dir.iterdir():
+            if keep_deep_research and f.name.startswith("deep_research"):
+                continue
+            if f.is_file():
+                f.unlink()
+
+    # Clean auto_research/logs/
+    logs_dir = project_dir / "auto_research" / "logs"
+    if logs_dir.exists():
+        shutil.rmtree(logs_dir, ignore_errors=True)
+        logs_dir.mkdir(exist_ok=True)
+
+    # Clean results/ and experiments/
+    for dirname in ("results", "experiments"):
+        d = project_dir / dirname
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+            d.mkdir(exist_ok=True)
+
+    # Clean paper/ — keep venue template files, remove generated content
+    paper_dir = project_dir / "paper"
+    if paper_dir.exists():
+        keep_exts = {".cls", ".sty", ".bst"}
+        for f in paper_dir.iterdir():
+            if f.is_dir():
+                if f.name == "figures":
+                    shutil.rmtree(f, ignore_errors=True)
+                    f.mkdir(exist_ok=True)
+            elif f.suffix not in keep_exts:
+                f.unlink()
+
+    # Clean scripts/ (generated figure scripts)
+    scripts_dir = project_dir / "scripts"
+    if scripts_dir.exists():
+        shutil.rmtree(scripts_dir, ignore_errors=True)
+
+    # Remove .git (will be re-initialized)
+    git_dir = project_dir / ".git"
+    if git_dir.exists():
+        shutil.rmtree(git_dir, ignore_errors=True)
+
+
 def _write_user_instructions(project_dir: Path, message: str, source: str = "webapp_create"):
     """Write a persistent instruction to user_instructions.yaml."""
     state_dir = project_dir / "auto_research" / "state"
@@ -703,6 +754,8 @@ async def api_get_project(project_id: str, request: Request):
             "title": project.title,
             "idea": project.idea,
             "venue": project.venue,
+            "venue_format": project.venue_format,
+            "venue_pages": project.venue_pages,
             "mode": project.mode,
             "status": project.status,
             "score": score,
@@ -715,6 +768,9 @@ async def api_get_project(project_id: str, request: Request):
             "queue_position": _queue_position(project_id, session),
             "user_email": owner.email if owner else "",
             "model": _read_project_model(pdir),
+            "telegram_token": project.telegram_token,
+            "telegram_chat_id": project.telegram_chat_id,
+            "has_deep_research": (pdir / "auto_research" / "state" / "deep_research.md").exists(),
             "environment": "ROCS Testbed" if project.slurm_job_id and project.slurm_job_id != "local" else "Local",
             "created_at": project.created_at.isoformat(),
             "updated_at": project.updated_at.isoformat(),
@@ -745,6 +801,13 @@ async def api_restart_project(project_id: str, request: Request):
     user = _require_user(request)
     _check_webapp_enabled()
     settings = get_settings()
+
+    # Parse JSON body (new restart dialog sends settings)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
         if not project or not _can_access_project(user, project):
@@ -756,6 +819,41 @@ async def api_restart_project(project_id: str, request: Request):
         if active:
             raise HTTPException(400, "You already have an active project.")
         pdir = _project_dir(settings, project.user_id, project_id)
+
+        # Update project fields from request body
+        if body.get("idea"):
+            project.idea = body["idea"]
+        if body.get("venue"):
+            project.venue = body["venue"]
+        if body.get("venue_format"):
+            project.venue_format = body["venue_format"]
+        if "venue_pages" in body:
+            project.venue_pages = int(body["venue_pages"])
+        if "max_iterations" in body:
+            project.max_iterations = max(1, min(3, int(body["max_iterations"])))
+        if "telegram_token" in body:
+            project.telegram_token = body["telegram_token"]
+        if "telegram_chat_id" in body:
+            project.telegram_chat_id = body["telegram_chat_id"]
+        project.score = 0.0
+
+        # Clean up project state for fresh restart
+        redo_deep_research = body.get("redo_deep_research", False)
+        _clean_project_state(pdir, keep_deep_research=not redo_deep_research)
+
+        # Rewrite config.yaml with updated settings
+        model = body.get("model", "claude-sonnet-4-6")
+        _write_config_yaml(pdir, project, model=model)
+
+        # Write instructions if provided
+        comment = body.get("comment", "").strip()
+        if comment:
+            _write_user_instructions(pdir, comment, source="webapp_restart")
+
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+
         final_status = _try_submit_or_pending(project, pdir, session, settings)
         send_telegram_notify(
             f"🔄 <b>{project.name}</b> restarted ({final_status})",
