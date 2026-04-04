@@ -1132,6 +1132,9 @@ Output your evaluation in JSON format:
         # ── FIGURES FIRST, THEN WRITE ──
         # All figures must be ready before writer starts, so writer can reference them.
 
+        # Step 0: Generate figure_config.json with correct venue geometry BEFORE coder runs
+        self._generate_figure_config()
+
         # Step A: Create plotting script from experiment results
         self._create_plotting_script_if_needed()
 
@@ -1522,8 +1525,38 @@ The script must be self-contained and runnable with: python {script_rel}
 ## Experiment findings summary:
 {findings[:3000]}
 
+## CRITICAL: Figure Config (read this FIRST)
+{figures_dir}/figure_config.json contains the EXACT dimensions from the LaTeX template.
+You MUST load it and use its values. The config has this structure:
+```json
+{{
+  "geometry": {{
+    "columnwidth_in": 3.333,  // width for single-column figures
+    "textwidth_in": 7.0,      // width for full-width figures
+    "font_size_pt": 10        // base font size matching LaTeX body text
+  }},
+  "matplotlib_rcparams": {{ ... }},  // apply ALL of these via plt.rcParams.update()
+  "sizes": {{
+    "single_column": [3.333, 2.333],     // figsize for single-column figures
+    "double_column": [7.0, 2.45]         // figsize for full-width figures
+  }}
+}}
+```
+
+Load it like this:
+```python
+with open('{figures_dir}/figure_config.json') as f:
+    cfg = json.load(f)
+plt.rcParams.update(cfg['matplotlib_rcparams'])
+COL_W = cfg['geometry']['columnwidth_in']   # for single-column figures
+TEXT_W = cfg['geometry']['textwidth_in']     # for full-width figures
+```
+
+Most statistical figures should use single_column size: figsize=(COL_W, COL_W*0.7).
+Only use double_column for multi-panel figures (side-by-side subplots).
+
 ## Requirements:
-1. Read {figures_dir}/figure_config.json for dimensions and matplotlib rcParams
+1. Load figure_config.json as shown above — do NOT hardcode dimensions
 2. Generate at least 2 statistical figures:
    a) Main results comparison (bar chart or horizontal bar chart)
    b) Ablation or analysis chart (grouped bars, line chart, or heatmap)
@@ -1531,7 +1564,7 @@ The script must be self-contained and runnable with: python {script_rel}
 4. Name figures descriptively: fig_main_results.pdf, fig_ablation.pdf, etc.
 
 ## Style Guide (MUST follow):
-- Load rcParams from figure_config.json
+- Apply ALL rcParams from figure_config.json (font sizes match LaTeX template)
 - Wong colorblind-safe palette: ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9']
 - Add hatching patterns for bar charts (colorblind accessibility)
 - Use horizontal bars when there are 5+ categories (avoids x-label overlap)
