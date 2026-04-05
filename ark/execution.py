@@ -725,54 +725,30 @@ Ensure `\\clearpage` before `\\bibliography`.
                 return True
 
     def _ensure_clearpage_before_bibliography(self):
-        """Ensure \\FloatBarrier + \\clearpage before \\bibliography in main.tex.
+        """Ensure \\clearpage before \\bibliography in main.tex.
 
-        FloatBarrier forces all pending figures to be placed within the body
-        (prevents them from floating past References). clearpage starts a new
-        page for References. Both are injected programmatically.
+        This guarantees References starts on a new page, separate from body.
         """
         main_tex = self.latex_dir / "main.tex"
         if not main_tex.exists():
             return
         try:
             content = main_tex.read_text()
-            changed = False
-
-            # Ensure \usepackage{placeins} is in preamble (for \FloatBarrier)
-            if r'\usepackage{placeins}' not in content:
-                # Insert after last \usepackage line in preamble
-                import re
-                last_pkg = list(re.finditer(r'\\usepackage(\[.*?\])?\{.*?\}', content))
-                if last_pkg:
-                    insert_pos = last_pkg[-1].end()
-                    content = content[:insert_pos] + '\n\\usepackage{placeins}' + content[insert_pos:]
-                    changed = True
-
             marker = r'\bibliography{'
             if marker not in content:
                 return
-
-            # Build the correct pre-bibliography block
-            pre_bib = '\\FloatBarrier\n\\clearpage\n'
-
-            # Check if already correct
-            if pre_bib + marker in content:
-                if changed:
-                    main_tex.write_text(content)
-                return
-
-            # Remove any existing partial insertions and rebuild
+            # Clean up any old FloatBarrier injections
             content = content.replace('\\FloatBarrier\n\\clearpage\n' + marker, marker)
             content = content.replace('\\FloatBarrier\n' + marker, marker)
-            content = content.replace('\\clearpage\n' + marker, marker)
-            content = content.replace('\\clearpage\n\n' + marker, marker)
-
-            # Insert FloatBarrier + clearpage before bibliography
-            content = content.replace(marker, pre_bib + marker)
+            # Check if \clearpage already precedes \bibliography
+            if '\\clearpage\n' + marker in content or '\\clearpage\n\n' + marker in content:
+                return
+            # Insert \clearpage before \bibliography
+            content = content.replace(marker, '\\clearpage\n' + marker)
             main_tex.write_text(content)
-            self.log("Injected \\FloatBarrier + \\clearpage before \\bibliography", "INFO")
+            self.log("Injected \\clearpage before \\bibliography", "INFO")
         except Exception as e:
-            self.log(f"Failed to inject FloatBarrier/clearpage: {e}", "WARN")
+            self.log(f"Failed to inject \\clearpage: {e}", "WARN")
 
     def _run_writing_phase(self, action_plan: dict, prior_context: str = ""):
         """Execute writing phase for all writing tasks."""

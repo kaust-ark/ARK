@@ -62,6 +62,19 @@ The paper body (excluding references and appendix) has a strict page target:
 
 **Always ensure `\clearpage` appears before `\bibliography`** so references start on a new page.
 
+## Figure Placement Rules (MUST check after every edit)
+
+After every modification, compile and check that:
+1. **No blank pages with only figures** — if a figure can't fit on the current page, it may float to a later page. If this creates a page with only figure(s) and no text, fix it by:
+   - Moving the `\begin{figure}` declaration earlier in the text
+   - Reducing figure height with `\includegraphics[width=...,height=...]`
+   - Using `[!htbp]` placement specifier instead of `[t]`
+2. **No figures after the last section** — all figures must appear within or between body sections, never between the last section and `\clearpage`/References
+3. **Figures match their context** — a figure referenced in Section 3 should appear on or near Section 3's pages, not 2 pages later
+4. **Multi-panel figures use correct environment** — figures with 2+ panels (side-by-side) should use `\begin{figure*}` (full width) in multi-column templates, so fonts are readable
+
+If you see layout issues after compiling, fix them before finishing.
+
 **Compression strategies** (in order of priority):
 1. Move detailed ablations, sensitivity analyses, and per-category breakdowns to `\appendix`
 2. Merge Discussion and Conclusion into one section
