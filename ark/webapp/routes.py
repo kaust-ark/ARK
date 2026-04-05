@@ -273,6 +273,7 @@ def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude
         "model": model_backend,
         "model_variant": model_variant,
         "max_iterations": project.max_iterations,
+        "max_dev_iterations": project.max_dev_iterations,
         "language": "en",
         "code_dir": str(project_dir),
         "latex_dir": "paper",
@@ -711,10 +712,15 @@ async def api_list_projects(request: Request, scope: str = "mine"):
             pdir = _project_dir(settings, p.user_id, p.id)
             score = _read_project_score(pdir)
             pdf = _find_pdf(pdir)
+            # Sync paper_title from LaTeX into DB title if it differs
+            paper_title = _read_paper_title(pdir)
+            if paper_title and paper_title != p.title:
+                update_project(session, p, title=paper_title)
+            display_title = paper_title or p.title or p.name
             d = {
                 "id": p.id,
                 "name": p.name,
-                "title": p.title,
+                "title": display_title,
                 "idea": p.idea,
                 "venue": p.venue,
                 "mode": p.mode,
@@ -739,7 +745,8 @@ async def api_create_project(
     venue_format: str = Form("neurips"),
     venue_pages: int = Form(9),
     mode: str = Form("paper"),
-    max_iterations: int = Form(3),
+    max_iterations: int = Form(2),
+    max_dev_iterations: int = Form(3),
     pdf_file: Optional[UploadFile] = File(None),
     template_zip: Optional[UploadFile] = File(None),
     model: str = Form("claude-sonnet-4-6"),
@@ -845,6 +852,7 @@ async def api_create_project(
             venue_format=venue_format,
             venue_pages=venue_pages,
             max_iterations=max_iterations,
+            max_dev_iterations=max_dev_iterations,
             mode=mode,
             status=initial_status,
             has_pdf_upload=has_pdf_upload,
@@ -1318,23 +1326,23 @@ async def api_venues():
     """Return supported venues list."""
     venues = [
         # ML / AI
-        {"name": "NeurIPS",    "format": "neurips",  "pages": 9},
-        {"name": "ICML",       "format": "icml",     "pages": 9},
-        {"name": "ICLR",       "format": "iclr",     "pages": 9},
-        {"name": "ACL",        "format": "acl",      "pages": 8},
-        {"name": "EMNLP",      "format": "emnlp",    "pages": 8},
-        {"name": "CVPR",       "format": "cvpr",     "pages": 8},
-        {"name": "MLSys",      "format": "mlsys",    "pages": 8},
-        {"name": "EuroMLSys",  "format": "euromlsys",  "pages": 6},
+        {"name": "NeurIPS",    "format": "neurips",  "pages": 9,  "year": 2025},
+        {"name": "ICML",       "format": "icml",     "pages": 9,  "year": 2025},
+        {"name": "ICLR",       "format": "iclr",     "pages": 9,  "year": 2026},
+        {"name": "ACL",        "format": "acl",      "pages": 8,  "year": 2025},
+        {"name": "EMNLP",      "format": "emnlp",    "pages": 8,  "year": 2025},
+        {"name": "CVPR",       "format": "cvpr",     "pages": 8,  "year": 2025},
+        {"name": "MLSys",      "format": "mlsys",    "pages": 8,  "year": 2026},
+        {"name": "EuroMLSys",  "format": "euromlsys",  "pages": 6, "year": 2025},
         # Systems
-        {"name": "SOSP",       "format": "sosp",     "pages": 14},
-        {"name": "EuroSys",    "format": "sosp",     "pages": 12},
-        {"name": "NSDI",       "format": "osdi",     "pages": 14},
-        {"name": "OSDI",       "format": "osdi",     "pages": 14},
-        {"name": "USENIX ATC", "format": "osdi",     "pages": 12},
-        {"name": "IEEE S&P",   "format": "neurips",  "pages": 13},
+        {"name": "SOSP",       "format": "sosp",     "pages": 14, "year": 2025},
+        {"name": "EuroSys",    "format": "sosp",     "pages": 12, "year": 2026},
+        {"name": "NSDI",       "format": "osdi",     "pages": 14, "year": 2025},
+        {"name": "OSDI",       "format": "osdi",     "pages": 14, "year": 2025},
+        {"name": "USENIX ATC", "format": "osdi",     "pages": 12, "year": 2026},
+        {"name": "IEEE S&P",   "format": "neurips",  "pages": 13, "year": 2025},
         # Networking
-        {"name": "INFOCOM",    "format": "infocom",  "pages": 9},
+        {"name": "INFOCOM",    "format": "infocom",  "pages": 9,  "year": 2025},
     ]
     return JSONResponse(venues)
 
