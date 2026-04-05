@@ -88,11 +88,14 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-_SLUG_ADJECTIVES = ["Red", "Blue", "Swift", "Calm", "Bold", "Keen", "Warm", "Bright"]
-_SLUG_NOUNS = ["Comet", "Orbit", "Spark", "Quasar", "Nova", "Prism", "Pulse", "Ridge"]
-
-def _random_slug() -> str:
-    return f"{random.choice(_SLUG_ADJECTIVES)}-{random.choice(_SLUG_NOUNS)}"
+def _slugify(text: str, max_len: int = 48) -> str:
+    """Convert text to a URL-safe slug."""
+    import re as _re
+    slug = text.lower().strip()
+    slug = _re.sub(r'[^a-z0-9\s-]', '', slug)
+    slug = _re.sub(r'[\s_]+', '-', slug)
+    slug = _re.sub(r'-+', '-', slug).strip('-')
+    return slug[:max_len] if slug else "project"
 
 
 def _extract_and_validate_template(zip_bytes: bytes, paper_dir: Path) -> str | None:
@@ -526,7 +529,10 @@ def _try_submit_or_pending(project, pdir, session, settings) -> str:
 
 @router.get("/", response_class=HTMLResponse)
 async def index():
-    return HTMLResponse((_STATIC_DIR / "app.html").read_text())
+    return HTMLResponse(
+        (_STATIC_DIR / "app.html").read_text(),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 # ── auth ──────────────────────────────────────────────────────────────────────
@@ -766,14 +772,15 @@ async def api_create_project(
         if active:
             raise HTTPException(400, "You already have an active project. Wait for it to finish.")
 
-    project_id = _random_slug()
-    # Ensure uniqueness — append -2, -3, … if the ID already exists
-    with get_session(settings.db_path) as _s:
-        base_id = project_id
-        counter = 2
-        while _s.get(Project, project_id):
-            project_id = f"{base_id}-{counter}"
-            counter += 1
+    # Generate project ID: uuid prefix + slug from title/idea
+    slug = _slugify(title or idea[:60] or "project")
+    project_id = str(uuid.uuid4())[:8] + "-" + slug
+
+    # Auto-generate title from idea if not provided
+    if not title and idea:
+        # Use first sentence or first 100 chars of idea as initial title
+        first_sentence = idea.split('.')[0].strip()
+        title = first_sentence[:100] if first_sentence else idea[:100]
 
     pdir = _project_dir(settings, user.id, project_id)
     pdir.mkdir(parents=True, exist_ok=True)
@@ -845,8 +852,8 @@ async def api_create_project(
             session,
             id=project_id,
             user_id=user.id,
-            name=project_id,
-            title=title or project_id,
+            name=slug,
+            title=title or slug,
             idea=idea,
             venue=venue,
             venue_format=venue_format,
