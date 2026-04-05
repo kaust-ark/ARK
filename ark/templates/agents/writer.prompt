@@ -69,7 +69,11 @@ After every modification, compile and check that:
    - Moving the `\begin{figure}` declaration earlier in the text
    - Reducing figure height with `\includegraphics[width=...,height=...]`
    - Using `[!htbp]` placement specifier instead of `[t]`
-2. **No figures after the last section** — all figures must appear within or between body sections, never between the last section and `\clearpage`/References
+2. **`\FloatBarrier` before the last section** — add `\FloatBarrier` (from `\usepackage{placeins}`) immediately before the last body section (usually Conclusion). This guarantees all figures appear before the final section, not after it. Example:
+   ```
+   \FloatBarrier
+   \section{Conclusion}
+   ```
 3. **Figures match their context** — a figure referenced in Section 3 should appear on or near Section 3's pages, not 2 pages later
 4. **Multi-panel figures use correct environment** — figures with 2+ panels (side-by-side) should use `\begin{figure*}` (full width) in multi-column templates, so fonts are readable
 
