@@ -724,29 +724,66 @@ Ensure `\\clearpage` before `\\bibliography`.
                 self.log(f"[{context}] Could not determine page count after {action}", "WARN")
                 return True
 
+    # LaTeX snippet that saves the current vertical position to the .aux file.
+    # \pdfsavepos records the position at shipout; the deferred \write expands
+    # \pdflastypos at that moment, giving the y-coordinate (in sp, from the
+    # page bottom).  Must use \write (not \protected@write) so expansion
+    # happens at shipout time, after \pdfsavepos has recorded the position.
+    _ARK_BODY_END_MARKER = (
+        r"\makeatletter\pdfsavepos"
+        r"\write\@auxout{\string\gdef\string\arkBodyEndY{\the\pdflastypos}"
+        r"\string\gdef\string\arkPageH{\number\pdfpageheight}}"
+        r"\makeatother"
+    )
+
     def _ensure_clearpage_before_bibliography(self):
         """Ensure \\clearpage before \\bibliography in main.tex.
 
         This guarantees References starts on a new page, separate from body.
+        Also injects a \\pdfsavepos marker right before the first \\clearpage
+        so the exact body-end y-position is written to the .aux file.
         """
         main_tex = self.latex_dir / "main.tex"
         if not main_tex.exists():
             return
         try:
             content = main_tex.read_text()
-            marker = r'\bibliography{'
-            if marker not in content:
+            if r'\bibliography{' not in content:
                 return
-            # Clean up any old FloatBarrier injections
-            content = content.replace('\\FloatBarrier\n\\clearpage\n' + marker, marker)
-            content = content.replace('\\FloatBarrier\n' + marker, marker)
-            # Check if \clearpage already precedes \bibliography
-            if '\\clearpage\n' + marker in content or '\\clearpage\n\n' + marker in content:
-                return
-            # Insert \clearpage before \bibliography
-            content = content.replace(marker, '\\clearpage\n' + marker)
+
+            # Remove any previously injected body-end marker (idempotent)
+            content = content.replace(self._ARK_BODY_END_MARKER + '\n', '')
+
+            # Find the first bibliography-related command (\bibliographystyle or \bibliography)
+            bib_style_pos = content.find(r'\bibliographystyle{')
+            bib_pos = content.find(r'\bibliography{')
+            # The anchor is whichever comes first
+            anchor_pos = min(p for p in (bib_style_pos, bib_pos) if p >= 0)
+
+            # Check if \clearpage already precedes the anchor
+            before_anchor = content[:anchor_pos].rstrip()
+            has_clearpage = before_anchor.endswith(r'\clearpage')
+
+            if not has_clearpage:
+                # Insert \clearpage before the anchor
+                content = content[:anchor_pos] + '\\clearpage\n' + content[anchor_pos:]
+                self.log("Injected \\clearpage before \\bibliography", "INFO")
+                # Recalculate anchor position
+                anchor_pos = min(
+                    p for p in (content.find(r'\bibliographystyle{'),
+                                content.find(r'\bibliography{'))
+                    if p >= 0
+                )
+                before_anchor = content[:anchor_pos].rstrip()
+
+            # Inject pdfsavepos marker before the first \clearpage
+            # Find the \clearpage that immediately precedes the anchor
+            clearpage_pos = before_anchor.rfind(r'\clearpage')
+            content = (content[:clearpage_pos]
+                       + self._ARK_BODY_END_MARKER + '\n'
+                       + content[clearpage_pos:])
+
             main_tex.write_text(content)
-            self.log("Injected \\clearpage before \\bibliography", "INFO")
         except Exception as e:
             self.log(f"Failed to inject \\clearpage: {e}", "WARN")
 

@@ -277,14 +277,76 @@ class CompilerMixin:
         return 0
 
     def _count_body_pages(self, pdf_path: Path) -> float:
-        """Count body pages (before References section) using PyMuPDF.
+        """Count body pages (before References section).
 
-        For dual-column templates, measures the RIGHT column fill on the last
-        body page, which is what matters for page limit compliance.
+        Primary method: read \\arkBodyEndY / \\arkPageH from the .aux file
+        (injected by _ensure_clearpage_before_bibliography via \\pdfsavepos).
+        This gives the exact y-position where body text ends, immune to
+        page-number / header / footer interference.
+
+        Fallback: PyMuPDF text-block analysis (less accurate).
 
         Returns a float: e.g. 5.8 means 5 full pages + last page 80% filled.
-        For dual-column: last page fill = right column fill ratio (not left).
         """
+        # ── Try aux-based measurement first ──
+        result = self._count_body_pages_from_aux(pdf_path)
+        if result is not None:
+            return result
+
+        # ── Fallback: PyMuPDF text-block analysis ──
+        return self._count_body_pages_from_pdf(pdf_path)
+
+    def _count_body_pages_from_aux(self, pdf_path: Path) -> float | None:
+        """Read body-end position from .aux file (written by \\pdfsavepos).
+
+        Returns body page count as a float, or None if aux data unavailable.
+        """
+        aux_path = self.latex_dir / "main.aux"
+        if not aux_path.exists():
+            return None
+        try:
+            aux_text = aux_path.read_text(errors="replace")
+            import re
+            m_y = re.search(r'\\gdef\\arkBodyEndY\{(\d+)\}', aux_text)
+            m_h = re.search(r'\\gdef\\arkPageH\{(\d+)\}', aux_text)
+            if not m_y or not m_h:
+                return None
+
+            body_end_y_sp = int(m_y.group(1))   # sp from page bottom
+            page_height_sp = int(m_h.group(1))   # total page height in sp
+            if page_height_sp <= 0:
+                return None
+
+            # fill_ratio = fraction of page used (from top)
+            fill_ratio = 1.0 - (body_end_y_sp / page_height_sp)
+
+            # Determine which page the body ends on by finding References page
+            import fitz
+            doc = fitz.open(str(pdf_path))
+            ref_page_idx = None
+            for i in range(len(doc)):
+                text = doc[i].get_text()
+                if any(line.strip() == 'References' for line in text.split('\n')):
+                    ref_page_idx = i
+                    break
+            doc.close()
+
+            if ref_page_idx is None:
+                return None  # can't determine without References marker
+
+            # Body ends on the page before References (since we inject
+            # the marker right before \clearpage\bibliography)
+            last_body_idx = max(ref_page_idx - 1, 0)
+            result = last_body_idx + fill_ratio
+            self.log(f"Body page count (aux): {result:.2f} "
+                     f"(page {last_body_idx+1}, {fill_ratio:.1%} filled)", "DEBUG")
+            return result
+        except Exception as e:
+            self.log(f"Aux-based page count failed: {e}", "DEBUG")
+            return None
+
+    def _count_body_pages_from_pdf(self, pdf_path: Path) -> float:
+        """Fallback: count body pages via PyMuPDF text-block analysis."""
         try:
             import fitz
             doc = fitz.open(str(pdf_path))
@@ -307,7 +369,6 @@ class CompilerMixin:
             # (if References has its own page via \clearpage)
             # OR the same page (if References starts mid-page)
             ref_page = doc[ref_page_idx]
-            ref_page_text = ref_page.get_text()
 
             # Check if References is at the very top of its page (i.e., \clearpage was used)
             ref_y = 0
@@ -354,8 +415,6 @@ class CompilerMixin:
                 fill_ratio = right_last_y / page_height
             elif ref_at_top:
                 # Single column, References on separate page: check last body page fill
-                # Filter out headers/footers: ignore blocks in top 8% and bottom 5% of page,
-                # and blocks shorter than 10 chars (page numbers, headers)
                 body_blocks = [
                     b for b in blocks
                     if b[3] > page_height * 0.06       # below header
