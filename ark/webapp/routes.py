@@ -772,13 +772,12 @@ async def api_create_project(
         if active:
             raise HTTPException(400, "You already have an active project. Wait for it to finish.")
 
-    # Generate project ID: uuid prefix + slug from title/idea
+    # Generate project ID: full UUID
+    project_id = str(uuid.uuid4())
     slug = _slugify(title or idea[:60] or "project")
-    project_id = str(uuid.uuid4())[:8] + "-" + slug
 
     # Auto-generate title from idea if not provided
     if not title and idea:
-        # Use first sentence or first 100 chars of idea as initial title
         first_sentence = idea.split('.')[0].strip()
         title = first_sentence[:100] if first_sentence else idea[:100]
 
