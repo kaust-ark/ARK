@@ -452,6 +452,9 @@ Notes:
         # Hard page count enforcement before delivery
         self._enforce_page_count(context="pre-delivery")
 
+        # Final citation verification — re-apply NEEDS-CHECK tags that writer may have removed
+        self._run_citation_verification()
+
         # Send iteration summary + PDF to Telegram
         self.send_iteration_summary(score, current_score, review_output)
 
@@ -1224,6 +1227,7 @@ Produce the complete paper. Do not stop until all sections are written and it co
 
         if draft_compiled:
             self._enforce_page_count(context="dev-phase-delivery")
+            self._run_citation_verification()
 
         if draft_compiled and self.telegram.is_configured:
             pdf_path = self.latex_dir / "main.pdf"
