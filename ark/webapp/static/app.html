@@ -546,10 +546,7 @@
 <!-- NAV -->
 <nav id="main-nav" style="display:none">
   <a class="nav-brand" href="/#" onclick="event.preventDefault();navigate('dashboard')"><span>ARK</span> SANDS Portal</a>
-  <a id="nav-admin-link" href="/#admin" onclick="event.preventDefault();navigate('admin')"
-     style="display:none;font-size:.85rem;font-weight:600;color:var(--teal);text-decoration:none;padding:4px 10px;border-radius:6px;border:1px solid var(--teal-light)">
-    <span data-i18n="nav_admin">Admin</span>
-  </a>
+  <span id="nav-admin-link" style="display:none"></span>
   <a href="/#feedback" onclick="event.preventDefault();navigate('feedback')"
      style="font-size:.85rem;font-weight:600;color:var(--text-second);text-decoration:none;padding:4px 10px;border-radius:6px;border:1px solid var(--border)">
     Feedback
@@ -631,6 +628,7 @@
     <span class="admin-status" id="admin-status-text">—</span>
     <button class="btn-admin btn-admin-toggle" id="btn-admin-toggle" onclick="adminToggle()">…</button>
     <button class="btn-admin btn-admin-kill" onclick="adminKillAll()" data-i18n="kill_all">Kill All Jobs</button>
+    <button class="btn-admin" onclick="navigate('admin')" style="background:var(--teal);color:#fff;font-weight:600">Management</button>
   </div>
 
   <!-- Hero creation card -->
