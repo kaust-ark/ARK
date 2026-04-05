@@ -444,15 +444,13 @@ Notes:
         # Record to Memory
         self.record_score_to_memory(score)
 
-        # Recompile after writing phase to get the latest PDF
-        self.log_step("Recompiling after improvements...", "progress")
+        # ── Pre-delivery checks (all hard guarantees) ──
+        self.log_step("Pre-delivery checks...", "progress")
         self._ensure_clearpage_before_bibliography()
+        self._ensure_float_barrier()
         self.compile_latex()
-
-        # Hard page count enforcement before delivery
+        self._fix_overfull(context="pre-delivery")
         self._enforce_page_count(context="pre-delivery")
-
-        # Final citation verification — re-apply NEEDS-CHECK tags that writer may have removed
         self._run_citation_verification()
 
         # Send iteration summary + PDF to Telegram
@@ -1226,6 +1224,9 @@ Produce the complete paper. Do not stop until all sections are written and it co
         )
 
         if draft_compiled:
+            self._ensure_float_barrier()
+            self.compile_latex()
+            self._fix_overfull(context="dev-phase-delivery")
             self._enforce_page_count(context="dev-phase-delivery")
             self._run_citation_verification()
 

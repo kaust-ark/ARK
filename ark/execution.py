@@ -750,6 +750,111 @@ Ensure `\\clearpage` before `\\bibliography`.
         except Exception as e:
             self.log(f"Failed to inject \\clearpage: {e}", "WARN")
 
+    def _ensure_float_barrier(self):
+        """Ensure \\FloatBarrier before the last \\section in main.tex.
+
+        Prevents figures from floating past the last section (e.g., Conclusion)
+        into blank pages. Also ensures \\usepackage{placeins} is in preamble.
+        """
+        main_tex = self.latex_dir / "main.tex"
+        if not main_tex.exists():
+            return
+        try:
+            import re as _re
+            content = main_tex.read_text()
+
+            # Ensure \usepackage{placeins}
+            if 'placeins' not in content:
+                # Insert after last \usepackage in preamble
+                pkgs = list(_re.finditer(r'\\usepackage(\[.*?\])?\{[^}]+\}', content))
+                if pkgs:
+                    pos = pkgs[-1].end()
+                    content = content[:pos] + '\n\\usepackage{placeins}' + content[pos:]
+
+            # Find all \section positions (not \subsection)
+            sections = list(_re.finditer(r'(?<!sub)\\section\{', content))
+            if len(sections) < 2:
+                main_tex.write_text(content)
+                return
+
+            # Last section position
+            last_sec = sections[-1]
+
+            # Check if \FloatBarrier already before it
+            before = content[max(0, last_sec.start() - 30):last_sec.start()]
+            if '\\FloatBarrier' in before:
+                main_tex.write_text(content)
+                return
+
+            # Insert \FloatBarrier before last \section
+            insert_pos = last_sec.start()
+            content = content[:insert_pos] + '\\FloatBarrier\n' + content[insert_pos:]
+            main_tex.write_text(content)
+            self.log(f"Injected \\FloatBarrier before last section", "INFO")
+        except Exception as e:
+            self.log(f"Failed to inject FloatBarrier: {e}", "WARN")
+
+    def _fix_overfull(self, context: str = "pre-delivery"):
+        """Fix overfull \\hbox warnings by asking writer to reword.
+
+        Loops until 0 overfull warnings or max attempts.
+        """
+        MAX_ATTEMPTS = 3
+        latex_dir = self.config.get("latex_dir", "paper")
+
+        for attempt in range(MAX_ATTEMPTS):
+            # Parse overfull from log
+            log_path = self.latex_dir / "main.log"
+            if not log_path.exists():
+                return
+
+            log_text = log_path.read_text(errors="replace")
+            import re as _re
+            overfull_lines = _re.findall(
+                r'Overfull \\hbox \(([0-9.]+)pt too wide\) in paragraph at lines (\d+)--(\d+)',
+                log_text
+            )
+            # Only fix significant ones (>3pt)
+            significant = [(float(pt), int(l1), int(l2)) for pt, l1, l2 in overfull_lines if float(pt) > 3.0]
+
+            if not significant:
+                if attempt > 0:
+                    self.log(f"[{context}] All overfull warnings fixed (attempt {attempt})", "INFO")
+                return
+
+            if self._quota_exhausted:
+                self.log(f"[{context}] {len(significant)} overfull warnings remain (quota exhausted)", "WARN")
+                return
+
+            self.log(f"[{context}] Fixing {len(significant)} overfull warnings (attempt {attempt + 1}/{MAX_ATTEMPTS})...", "WARN")
+
+            overfull_desc = "\n".join(
+                f"- Lines {l1}-{l2}: {pt:.1f}pt too wide" for pt, l1, l2 in significant[:10]
+            )
+
+            self.run_agent("writer", f"""## FIX OVERFULL HBOX (attempt {attempt + 1})
+
+The paper has {len(significant)} overfull \\hbox warnings (text extending past column margin):
+
+{overfull_desc}
+
+Fix each by rewording the sentence to allow LaTeX better line breaking:
+- Shorten long compound words or phrases
+- Add \\- hyphenation hints for technical terms
+- Split long inline math or URLs
+- Rephrase to use shorter synonyms
+
+Do NOT change figures, template, or page structure.
+After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex
+""", timeout=600)
+
+            self.compile_latex()
+
+        # Final check
+        remaining = len([1 for pt, _, _ in significant if float(pt) > 3.0]) if significant else 0
+        if remaining:
+            self.log(f"[{context}] {remaining} overfull warnings remain after {MAX_ATTEMPTS} attempts", "WARN")
+
     def _run_writing_phase(self, action_plan: dict, prior_context: str = ""):
         """Execute writing phase for all writing tasks."""
         issues = action_plan.get("issues", [])
