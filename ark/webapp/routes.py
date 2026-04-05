@@ -432,8 +432,10 @@ def _read_current_iteration(project_dir: Path) -> int:
         return 0
 
 
+_TEMPLATE_TITLES = {"Paper Title", "Title Text", "Insert Title Here", ""}
+
 def _read_paper_title(project_dir: Path) -> str:
-    """Read paper title from paper/main.tex \\title{...}."""
+    """Read paper title from paper/main.tex \\title{...}. Ignores template defaults."""
     tex = project_dir / "paper" / "main.tex"
     if not tex.exists():
         return ""
@@ -442,7 +444,9 @@ def _read_paper_title(project_dir: Path) -> str:
         text = tex.read_text(errors="replace")
         m = _re.search(r'\\title\{([^}]+)\}', text)
         if m:
-            return m.group(1).strip()
+            title = m.group(1).strip()
+            if title not in _TEMPLATE_TITLES:
+                return title
     except Exception:
         pass
     return ""
