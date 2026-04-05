@@ -686,12 +686,63 @@ Notes:
 
         self.log("", "RAW")
 
+        # Step 1.5: Auto-generate paper title if not provided
+        self._generate_title_if_needed()
+
         # Step 2: Extract citations from Deep Research report
         self._bootstrap_citations_from_deep_research()
 
         self.log_section("Research Phase Complete")
 
     # ==================== Citation Bootstrapping ====================
+
+    def _generate_title_if_needed(self):
+        """Auto-generate paper title from idea + venue + deep research if not provided."""
+        title = self.config.get("title", "")
+        if title:
+            return  # User provided a title, keep it
+
+        idea = self.config.get("idea", "")
+        venue = self.config.get("venue", "")
+        if not idea:
+            return
+
+        # Read deep research summary for context
+        dr_file = self.state_dir / "deep_research.md"
+        dr_summary = ""
+        if dr_file.exists():
+            dr_summary = dr_file.read_text()[:2000]
+
+        self.log_step("Generating paper title...", "progress")
+        result = self.run_agent("planner", f"""Generate a concise, academic paper title for the following research.
+
+## Research Idea
+{idea[:2000]}
+
+## Target Venue
+{venue}
+
+## Background Research (if available)
+{dr_summary}
+
+Output ONLY the title — one line, no quotes, no explanation. The title should be:
+- Concise (8-15 words)
+- Descriptive of the main contribution
+- In the style of {venue or 'a top-tier ML conference'} papers
+""", timeout=120)
+
+        if result and result.strip():
+            new_title = result.strip().strip('"').strip("'").split('\n')[0].strip()
+            if len(new_title) > 10:
+                self.config["title"] = new_title
+                self.log(f"Generated title: {new_title}", "INFO")
+                # Update config.yaml on disk
+                import yaml
+                config_path = self.code_dir / "config.yaml"
+                if config_path.exists():
+                    cfg = yaml.safe_load(config_path.read_text()) or {}
+                    cfg["title"] = new_title
+                    config_path.write_text(yaml.dump(cfg, default_flow_style=False, allow_unicode=True))
 
     def _bootstrap_citations_from_deep_research(self):
         """Extract paper titles from Deep Research report via LLM, then fetch BibTeX via API.

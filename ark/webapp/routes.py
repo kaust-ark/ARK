@@ -727,7 +727,7 @@ async def api_list_projects(request: Request, scope: str = "mine"):
             paper_title = _read_paper_title(pdir)
             if paper_title and paper_title != p.title:
                 update_project(session, p, title=paper_title, name=paper_title)
-            display_title = paper_title or p.title
+            display_title = paper_title or p.title or "\u23f0 Pending: ARK will decide later"
             d = {
                 "id": p.id,
                 "name": p.name,
@@ -780,16 +780,9 @@ async def api_create_project(
     # Generate project ID: full UUID
     project_id = str(uuid.uuid4())
 
-    # Title: use provided title, or extract from idea as temporary title
-    if not title and idea:
-        # Take first ~80 chars of idea, cut at word boundary
-        snippet = idea[:80].strip()
-        last_space = snippet.rfind(' ')
-        if last_space > 40:
-            snippet = snippet[:last_space]
-        title = snippet + ("..." if len(idea) > len(snippet) else "")
-    if not title:
-        title = "Untitled Project"
+    # Title: keep as-is. If user didn't provide, it stays empty.
+    # Dashboard will show "⏰ Pending" for empty titles.
+    # Title will be auto-generated after deep research.
 
     pdir = _project_dir(settings, user.id, project_id)
     pdir.mkdir(parents=True, exist_ok=True)
