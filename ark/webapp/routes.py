@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 import logging
+import random
 import re
 import shutil
 import uuid
@@ -61,19 +62,24 @@ def _get_google_oauth() -> _OAuth | None:
     )
     return _google_oauth
 from .db import (
+    Feedback,
     Project,
     User,
+    create_feedback,
     create_project,
     delete_project,
+    get_all_feedbacks,
     get_all_projects,
+    get_feedbacks_for_user,
     get_or_create_user_by_email,
     get_project,
     get_projects_for_user,
     get_session,
+    get_user,
     update_project,
 )
 from .jobs import cancel_job, cancel_local_job, launch_local_job, slurm_available, slurm_state_to_status, submit_job
-from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify
+from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email
 from .templates import copy_venue_template, has_venue_template
 
 router = APIRouter()
@@ -82,9 +88,128 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _slugify(text: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower().strip())
-    return slug.strip("-")[:48] or "project"
+_SLUG_ADJECTIVES = ["Red", "Blue", "Swift", "Calm", "Bold", "Keen", "Warm", "Bright"]
+_SLUG_NOUNS = ["Comet", "Orbit", "Spark", "Quasar", "Nova", "Prism", "Pulse", "Ridge"]
+
+def _random_slug() -> str:
+    return f"{random.choice(_SLUG_ADJECTIVES)}-{random.choice(_SLUG_NOUNS)}"
+
+
+def _extract_and_validate_template(zip_bytes: bytes, paper_dir: Path) -> str | None:
+    """Extract a user-uploaded ZIP template into paper_dir and try to compile.
+
+    Returns None on success, or an error message string on failure.
+    """
+    import subprocess
+    import tempfile
+
+    # Extract ZIP
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except Exception:
+        return "Invalid ZIP file. Please upload a valid .zip archive."
+
+    # Security: reject entries with path traversal
+    for info in zf.infolist():
+        if info.filename.startswith("/") or ".." in info.filename:
+            return "ZIP file contains unsafe paths. Please repack without absolute or '..' paths."
+
+    # Determine if files are inside a single top-level directory
+    top_dirs = {n.split("/")[0] for n in zf.namelist() if "/" in n}
+    names = [n for n in zf.namelist() if not n.endswith("/")]
+    has_wrapper_dir = len(top_dirs) == 1 and all(n.startswith(list(top_dirs)[0] + "/") for n in names)
+    prefix = list(top_dirs)[0] + "/" if has_wrapper_dir else ""
+
+    for info in zf.infolist():
+        if info.is_dir():
+            continue
+        rel = info.filename[len(prefix):] if prefix and info.filename.startswith(prefix) else info.filename
+        if not rel:
+            continue
+        dest = paper_dir / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with zf.open(info) as src_f, open(dest, "wb") as dst_f:
+            dst_f.write(src_f.read())
+
+    # Also extract any nested .zip style files (e.g., NeurIPS styles)
+    for nested_zip in paper_dir.glob("*.zip"):
+        try:
+            with zipfile.ZipFile(nested_zip) as nzf:
+                for info in nzf.infolist():
+                    if info.is_dir():
+                        continue
+                    fname = Path(info.filename).name
+                    if Path(fname).suffix.lower() in (".sty", ".cls", ".bst"):
+                        dst = paper_dir / fname
+                        if not dst.exists():
+                            with nzf.open(info) as sf, open(dst, "wb") as df:
+                                df.write(sf.read())
+        except Exception:
+            pass
+
+    # Find main .tex file
+    tex_files = list(paper_dir.glob("*.tex"))
+    main_tex = None
+    for tf in tex_files:
+        if tf.name == "main.tex":
+            main_tex = tf
+            break
+    if not main_tex:
+        # Try to find one with \documentclass
+        for tf in tex_files:
+            content = tf.read_text(errors="ignore")
+            if r"\documentclass" in content:
+                main_tex = tf
+                break
+    if not main_tex:
+        return "No LaTeX main file found. ZIP must contain a .tex file with \\documentclass."
+
+    # Rename to main.tex if needed
+    if main_tex.name != "main.tex":
+        target = paper_dir / "main.tex"
+        if not target.exists():
+            main_tex.rename(target)
+            main_tex = target
+
+    # Ensure figures directory exists
+    (paper_dir / "figures").mkdir(exist_ok=True)
+
+    # Ensure references.bib exists
+    if not (paper_dir / "references.bib").exists():
+        (paper_dir / "references.bib").write_text("")
+
+    # Try compilation (quick pdflatex pass — just check for fatal errors)
+    try:
+        result = subprocess.run(
+            ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
+            cwd=str(paper_dir),
+            capture_output=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            # Extract the actual error from log
+            log_text = result.stdout.decode(errors="replace")
+            # Find the first "! " error line
+            error_lines = []
+            for line in log_text.splitlines():
+                if line.startswith("! "):
+                    error_lines.append(line)
+                    if len(error_lines) >= 3:
+                        break
+            error_msg = "\n".join(error_lines) if error_lines else "Unknown LaTeX error"
+            return f"Template compilation failed:\n{error_msg}\n\nPlease fix the template and re-upload."
+    except FileNotFoundError:
+        # pdflatex not installed — skip validation, trust the user
+        logger.warning("pdflatex not found, skipping template validation")
+    except subprocess.TimeoutExpired:
+        return "Template compilation timed out (>60s). Please simplify the template."
+
+    # Clean up aux files from test compilation
+    for ext in (".aux", ".log", ".out", ".pdf", ".toc", ".bbl", ".blg", ".fls", ".fdb_latexmk"):
+        for f in paper_dir.glob(f"*{ext}"):
+            f.unlink(missing_ok=True)
+
+    return None
 
 
 def _get_current_user(request: Request) -> Optional[User]:
@@ -444,8 +569,12 @@ async def auth_verify(request: Request, token: str = ""):
             status_code=400,
         )
     with get_session(settings.db_path) as session:
-        user = get_or_create_user_by_email(session, email)
+        user, is_new = get_or_create_user_by_email(session, email)
         request.session["user_id"] = user.id
+        if is_new:
+            asyncio.get_event_loop().run_in_executor(
+                None, send_welcome_email, settings, email, user.name, settings.base_url,
+            )
     return RedirectResponse("/")
 
 
@@ -526,8 +655,12 @@ async def auth_google_callback(request: Request):
         )
 
     with get_session(settings.db_path) as session:
-        user = get_or_create_user_by_email(session, email)
+        user, is_new = get_or_create_user_by_email(session, email)
         request.session["user_id"] = user.id
+        if is_new:
+            asyncio.get_event_loop().run_in_executor(
+                None, send_welcome_email, settings, email, user.name, settings.base_url,
+            )
     return RedirectResponse("/")
 
 
@@ -549,6 +682,8 @@ async def api_me(request: Request):
         "name": user.name,
         "picture": user.picture,
         "is_admin": _is_admin(user),
+        "telegram_token": user.telegram_token or "",
+        "telegram_chat_id": user.telegram_chat_id or "",
     })
 
 
@@ -567,10 +702,9 @@ async def api_list_projects(request: Request, scope: str = "mine"):
         # Pre-fetch user emails for admin view
         user_email_cache: dict[str, str] = {}
         if _is_admin(user):
-            from .db import get_user as _get_user
             for p in projects:
                 if p.user_id not in user_email_cache:
-                    owner = _get_user(session, p.user_id)
+                    owner = get_user(session, p.user_id)
                     user_email_cache[p.user_id] = owner.email if owner else p.user_id
         result = []
         for p in projects:
@@ -599,7 +733,6 @@ async def api_list_projects(request: Request, scope: str = "mine"):
 @router.post("/api/projects")
 async def api_create_project(
     request: Request,
-    name: str = Form(""),
     title: str = Form(""),
     idea: str = Form(""),
     venue: str = Form("NeurIPS"),
@@ -608,6 +741,7 @@ async def api_create_project(
     mode: str = Form("paper"),
     max_iterations: int = Form(3),
     pdf_file: Optional[UploadFile] = File(None),
+    template_zip: Optional[UploadFile] = File(None),
     model: str = Form("claude-sonnet-4-6"),
     telegram_token: str = Form(""),
     telegram_chat_id: str = Form(""),
@@ -625,8 +759,14 @@ async def api_create_project(
         if active:
             raise HTTPException(400, "You already have an active project. Wait for it to finish.")
 
-    slug = _slugify(name or title or idea[:40] or "project")
-    project_id = str(uuid.uuid4())[:8] + "-" + slug
+    project_id = _random_slug()
+    # Ensure uniqueness — append -2, -3, … if the ID already exists
+    with get_session(settings.db_path) as _s:
+        base_id = project_id
+        counter = 2
+        while _s.get(Project, project_id):
+            project_id = f"{base_id}-{counter}"
+            counter += 1
 
     pdir = _project_dir(settings, user.id, project_id)
     pdir.mkdir(parents=True, exist_ok=True)
@@ -652,13 +792,27 @@ async def api_create_project(
             except Exception:
                 pass
 
-    # Check if venue template is bundled
-    template_available = has_venue_template(venue_format)
-    if template_available:
-        copy_venue_template(venue_format, paper_dir)
-    else:
+    # Handle custom template upload
+    if venue_format == "custom" and template_zip and template_zip.filename:
         paper_dir.mkdir(parents=True, exist_ok=True)
         (paper_dir / "figures").mkdir(exist_ok=True)
+        zip_bytes = await template_zip.read()
+        tpl_result = _extract_and_validate_template(zip_bytes, paper_dir)
+        if tpl_result is not None:
+            # Cleanup on failure
+            shutil.rmtree(pdir, ignore_errors=True)
+            raise HTTPException(400, tpl_result)
+        template_available = True
+    elif venue_format == "custom":
+        raise HTTPException(400, "Please upload a template ZIP file for the Customized venue.")
+    else:
+        # Check if venue template is bundled
+        template_available = has_venue_template(venue_format)
+        if template_available:
+            copy_venue_template(venue_format, paper_dir)
+        else:
+            paper_dir.mkdir(parents=True, exist_ok=True)
+            (paper_dir / "figures").mkdir(exist_ok=True)
 
     # Copy agent prompt templates (with variable substitution)
     agents_dir = pdir / "agents"
@@ -668,8 +822,8 @@ async def api_create_project(
         venue_name = venue or venue_format or "NeurIPS"
         for _pf in _templates_dir.glob("*.prompt"):
             _content = _pf.read_text()
-            _content = _content.replace("{PROJECT_NAME}", slug)
-            _content = _content.replace("{PAPER_TITLE}", title or slug)
+            _content = _content.replace("{PROJECT_NAME}", project_id)
+            _content = _content.replace("{PAPER_TITLE}", title or project_id)
             _content = _content.replace("{VENUE_NAME}", venue_name)
             _content = _content.replace("{VENUE_FORMAT}", venue_format or "neurips")
             _content = _content.replace("{VENUE_PAGES}", str(venue_pages))
@@ -684,8 +838,8 @@ async def api_create_project(
             session,
             id=project_id,
             user_id=user.id,
-            name=slug,
-            title=title or slug,
+            name=project_id,
+            title=title or project_id,
             idea=idea,
             venue=venue,
             venue_format=venue_format,
@@ -697,6 +851,16 @@ async def api_create_project(
             telegram_token=telegram_token,
             telegram_chat_id=telegram_chat_id,
         )
+        # Persist telegram fields on user for auto-fill on next project
+        if telegram_token or telegram_chat_id:
+            db_user = get_user(session, user.id)
+            if db_user:
+                if telegram_token:
+                    db_user.telegram_token = telegram_token
+                if telegram_chat_id:
+                    db_user.telegram_chat_id = telegram_chat_id
+                session.add(db_user)
+                session.commit()
         _write_config_yaml(pdir, project, model=model)
 
         if comment.strip():
@@ -775,6 +939,20 @@ async def api_get_project(project_id: str, request: Request):
             "created_at": project.created_at.isoformat(),
             "updated_at": project.updated_at.isoformat(),
         })
+
+
+@router.patch("/api/projects/{project_id}")
+async def api_patch_project(project_id: str, request: Request):
+    user = _require_user(request)
+    body = await request.json()
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project or not _can_access_project(user, project):
+            raise HTTPException(404)
+        if "title" in body:
+            update_project(session, project, title=body["title"])
+        return JSONResponse({"ok": True})
 
 
 @router.post("/api/projects/{project_id}/stop")
@@ -1159,3 +1337,56 @@ async def api_venues():
         {"name": "INFOCOM",    "format": "infocom",  "pages": 9},
     ]
     return JSONResponse(venues)
+
+
+# ── feedback ───────────────────────────────────────────────────────────────────
+
+@router.post("/api/feedback")
+async def api_create_feedback(request: Request):
+    user = _require_user(request)
+    body = await request.json()
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(400, "Message is required")
+    project_id = (body.get("project_id") or "").strip()
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        # Validate project_id belongs to user if provided
+        if project_id:
+            proj = get_project(session, project_id)
+            if not proj or (proj.user_id != user.id and not _is_admin(user)):
+                raise HTTPException(400, "Invalid project")
+        fb = create_feedback(session, user_id=user.id, project_id=project_id, message=message)
+        return JSONResponse({"id": fb.id, "created_at": fb.created_at.isoformat()}, status_code=201)
+
+
+@router.get("/api/feedback")
+async def api_list_feedback(request: Request):
+    user = _require_user(request)
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        if _is_admin(user):
+            feedbacks = get_all_feedbacks(session)
+        else:
+            feedbacks = get_feedbacks_for_user(session, user.id)
+        # Build user email cache for admin
+        user_cache: dict[str, str] = {}
+        result = []
+        for fb in feedbacks:
+            if _is_admin(user) and fb.user_id not in user_cache:
+                u = get_user(session, fb.user_id)
+                user_cache[fb.user_id] = u.email if u else fb.user_id
+            # Resolve project title
+            proj_title = ""
+            if fb.project_id:
+                p = get_project(session, fb.project_id)
+                proj_title = (p.title or p.name) if p else ""
+            result.append({
+                "id": fb.id,
+                "message": fb.message,
+                "project_id": fb.project_id,
+                "project_title": proj_title,
+                "user_email": user_cache.get(fb.user_id, ""),
+                "created_at": fb.created_at.isoformat(),
+            })
+        return JSONResponse(result)

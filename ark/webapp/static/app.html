@@ -550,6 +550,10 @@
      style="display:none;font-size:.85rem;font-weight:600;color:var(--teal);text-decoration:none;padding:4px 10px;border-radius:6px;border:1px solid var(--teal-light)">
     <span data-i18n="nav_admin">Admin</span>
   </a>
+  <a href="/#feedback" onclick="event.preventDefault();navigate('feedback')"
+     style="font-size:.85rem;font-weight:600;color:var(--text-second);text-decoration:none;padding:4px 10px;border-radius:6px;border:1px solid var(--border)">
+    Feedback
+  </a>
   <div class="spacer"></div>
   <div class="lang-select">
     <button class="btn-lang-globe" onclick="toggleLangMenu(event,'lang-menu')" title="Language">🌐</button>
@@ -672,6 +676,11 @@
           placeholder="e.g. Focus on comparing against baseline X, use PyTorch, run on 2 GPUs, write in a formal style…"></textarea>
       </div>
 
+      <div class="hero-adv-field" style="margin-top:12px">
+        <label data-i18n-html="paper_title_label">Paper Title <span style="font-weight:400;color:var(--text-muted)">(optional — auto-generated if blank)</span></label>
+        <input type="text" name="title" data-i18n-placeholder="placeholder_auto_title" placeholder="Auto-generated if blank" />
+      </div>
+
       <div class="hero-secondary-row">
         <div class="hero-field hero-field-venue">
           <label data-i18n="venue">Venue</label>
@@ -682,6 +691,33 @@
         <div class="hero-field hero-field-iter">
           <label data-i18n="max_iterations">Max iterations</label>
           <input type="number" name="max_iterations" value="3" min="1" max="3" />
+        </div>
+      </div>
+
+      <!-- Custom template upload (shown when venue = Customized) -->
+      <div id="custom-template-wrap" style="display:none;margin-top:12px;">
+        <div style="display:flex;gap:12px;align-items:flex-end;">
+          <div style="flex:1;">
+            <label style="font-size:13px;font-weight:600;color:var(--text-muted);">Template ZIP</label>
+            <div id="custom-tpl-drop"
+                 ondragover="event.preventDefault();this.classList.add('drag-over')"
+                 ondragleave="this.classList.remove('drag-over')"
+                 ondrop="event.preventDefault();this.classList.remove('drag-over');customTplSelected(event.dataTransfer.files[0])"
+                 onclick="document.getElementById('custom-tpl-input').click()"
+                 style="margin-top:4px;border:2px dashed var(--border);border-radius:10px;padding:14px 16px;
+                        cursor:pointer;text-align:center;color:var(--text-muted);font-size:13px;
+                        transition:border-color .15s,background .15s;">
+              <span id="custom-tpl-label">Drop a .zip file here or click to browse</span>
+            </div>
+            <input type="file" id="custom-tpl-input" accept=".zip"
+                   onchange="customTplSelected(this.files[0]);this.value=''" style="display:none" />
+          </div>
+          <div style="width:100px;">
+            <label style="font-size:13px;font-weight:600;color:var(--text-muted);">Pages</label>
+            <input type="number" id="custom-tpl-pages" value="9" min="1" max="50"
+                   style="margin-top:4px;width:100%;padding:10px 12px;border:1px solid var(--border);
+                          border-radius:10px;font-size:14px;background:var(--bg);" />
+          </div>
         </div>
       </div>
 
@@ -721,16 +757,6 @@
           <span class="adv-arrow">▶</span> <span data-i18n="advanced_options">Advanced options</span>
         </button>
         <div class="hero-advanced-body" id="hero-advanced-body">
-          <div class="hero-adv-grid">
-            <div class="hero-adv-field">
-              <label data-i18n-html="paper_title_label">Paper title <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
-              <input type="text" name="title" data-i18n-placeholder="placeholder_auto_title" placeholder="Auto-generated if blank" />
-            </div>
-            <div class="hero-adv-field">
-              <label data-i18n-html="project_id_label">Project ID <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
-              <input type="text" name="name" placeholder="my-project-id" pattern="[a-z0-9\-]*" />
-            </div>
-          </div>
           <div class="hero-adv-field">
             <label data-i18n="model">Model</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap" id="model-options">
@@ -787,6 +813,13 @@
     <div class="detail-meta" id="detail-meta"></div>
   </div>
 
+  <div id="detail-title-row" style="margin-bottom:12px">
+    <h3 id="detail-paper-title" style="font-size:1.3rem;font-weight:700;color:var(--text-primary);cursor:pointer;margin:0;padding:4px 0"
+        title="Click to edit" onclick="startEditTitle(this)"></h3>
+    <input id="detail-title-input" style="display:none;font-size:1.3rem;font-weight:700;width:100%;border:1px solid var(--accent);border-radius:6px;padding:4px 8px;outline:none"
+           onblur="saveTitle()" onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape'){this.value=this.dataset.original;this.blur()}" />
+  </div>
+
   <div class="detail-actions" id="detail-actions"></div>
 
   <div id="detail-queue-pos" style="display:none;margin-bottom:12px;padding:10px 14px;
@@ -828,8 +861,6 @@
   </div>
 
   <div class="detail-card" style="margin-bottom:16px">
-    <h4 data-i18n="title">Title</h4>
-    <p id="detail-paper-title" style="font-size:1rem;font-weight:600;line-height:1.5;color:var(--text-primary);margin-bottom:16px"></p>
     <h4 data-i18n="idea">Idea</h4>
     <p id="detail-idea" style="font-size:.9rem;line-height:1.7;color:var(--text-second)"></p>
   </div>
@@ -883,6 +914,32 @@
         <tbody id="admin-tbody"></tbody>
       </table>
     </div>
+  </div>
+</div>
+
+<!-- FEEDBACK PAGE -->
+<div id="page-feedback" class="page" style="padding:32px 24px;max-width:720px;margin:0 auto">
+  <h2 style="margin-bottom:20px;font-size:1.5rem;font-weight:700">Feedback</h2>
+  <div class="hero-card" style="margin-bottom:24px">
+    <form id="feedback-form" onsubmit="submitFeedback(event)">
+      <div class="form-group">
+        <label>Associated project <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+        <select id="feedback-project" style="width:100%;padding:8px 12px;border-radius:8px;border:1px solid var(--border);font-size:14px;background:var(--bg)">
+          <option value="">— None —</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Your feedback</label>
+        <textarea id="feedback-message" rows="4" required
+          placeholder="Bug reports, feature requests, suggestions…"
+          style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);font-size:14px;background:var(--bg);resize:vertical"></textarea>
+      </div>
+      <button type="submit" class="btn-primary" id="feedback-submit-btn">Submit</button>
+    </form>
+  </div>
+  <h3 style="font-size:1.1rem;font-weight:600;margin-bottom:12px">Previous feedback</h3>
+  <div id="feedback-list" style="display:flex;flex-direction:column;gap:10px">
+    <p style="color:var(--text-muted);font-size:.9rem">Loading…</p>
   </div>
 </div>
 
@@ -1479,6 +1536,10 @@ function navigate(page, params = {}) {
     stopDetailStream();
     loadAdminPage();
     history.pushState({}, '', '/#admin');
+  } else if (page === 'feedback') {
+    stopDetailStream();
+    loadFeedbackPage();
+    history.pushState({}, '', '/#feedback');
   }
 }
 
@@ -1549,6 +1610,16 @@ async function checkAuth() {
   currentUser = data;
   renderNavUser();
 
+  // Auto-fill telegram fields from user's last-used values
+  if (data.telegram_token) {
+    const el = document.querySelector('#hero-form input[name="telegram_token"]');
+    if (el && !el.value) el.value = data.telegram_token;
+  }
+  if (data.telegram_chat_id) {
+    const el = document.querySelector('#hero-form input[name="telegram_chat_id"]');
+    if (el && !el.value) el.value = data.telegram_chat_id;
+  }
+
   // Show admin-only model options if user is admin
   if (currentUser.is_admin) {
     document.querySelectorAll('.model-option-admin').forEach(el => {
@@ -1569,6 +1640,8 @@ async function checkAuth() {
     } else {
       navigate('dashboard');
     }
+  } else if (hash === '#feedback') {
+    navigate('feedback');
   } else {
     navigate('dashboard');
   }
@@ -1652,6 +1725,13 @@ async function adminKillAll() {
 //  Dashboard
 // ══════════════════════════════════════════════════════
 async function loadDashboard() {
+  // Re-fill telegram fields (may have been cleared by form.reset())
+  if (currentUser) {
+    const tgT = document.querySelector('#hero-form input[name="telegram_token"]');
+    const tgC = document.querySelector('#hero-form input[name="telegram_chat_id"]');
+    if (tgT && !tgT.value && currentUser.telegram_token) tgT.value = currentUser.telegram_token;
+    if (tgC && !tgC.value && currentUser.telegram_chat_id) tgC.value = currentUser.telegram_chat_id;
+  }
   loadAdminPanel();
   loadVenues();
   const res = await fetch('/api/projects');
@@ -1707,7 +1787,7 @@ async function loadDetail(id) {
   resetProgress(p.max_iterations);
   setProgressWidgetVisible(p.status === 'running' || p.status === 'queued');
 
-  document.getElementById('detail-title').textContent = p.title || p.name;
+  document.getElementById('detail-title').textContent = p.id;
   const badge = document.getElementById('detail-badge');
   badge.className = `badge badge-${p.status}`;
   badge.textContent = t('status_' + p.status) || p.status;
@@ -1715,7 +1795,9 @@ async function loadDetail(id) {
   document.getElementById('detail-meta').innerHTML =
     `<span>${esc(p.venue)}</span><span>·</span><span>${t('info_created')}: ${fmtDate(p.created_at)}</span>`;
 
-  document.getElementById('detail-paper-title').textContent = p.paper_title || p.title || p.name || '—';
+  const titleEl = document.getElementById('detail-paper-title');
+  titleEl.textContent = p.paper_title || p.title || p.name || '—';
+  titleEl.dataset.projectId = p.id;
   document.getElementById('detail-idea').textContent = p.idea || '—';
 
   let statusLine;
@@ -1737,10 +1819,12 @@ async function loadDetail(id) {
     statusLine = p.status;
   }
   document.getElementById('detail-info').innerHTML = `
+    <div><b>Project ID:</b> <code style="font-size:.85em;background:var(--bg-hover);padding:1px 5px;border-radius:4px">${esc(p.id)}</code></div>
     <div><b>${t('info_venue')}:</b> ${esc(p.venue)}</div>
-    <div><b>${t('info_user')}:</b> ${esc(p.user_email || '')}</div>
     <div><b>${t('info_model')}:</b> ${esc(p.model || 'claude-sonnet-4-6')}</div>
+    <div><b>Iteration:</b> ${p.current_iteration || 0} / ${p.max_iterations}</div>
     <div><b>${t('info_environment')}:</b> ${esc(p.environment || 'ROCS Testbed')}</div>
+    <div><b>${t('info_user')}:</b> ${esc(p.user_email || '')}</div>
     <div><b>${t('info_created')}:</b> ${fmtDate(p.created_at)}</div>
     <div><b>${t('info_updated')}:</b> ${fmtDate(p.updated_at)}</div>
     <div><b>${t('info_status')}:</b> ${esc(statusLine)}</div>
@@ -1963,7 +2047,7 @@ function renderZoneBar(score) {
 
 function renderDetailActions(p) {
   const el = document.getElementById('detail-actions');
-  const zipReady = (p.score || 0) > 0;
+  const zipReady = (p.score || 0) > 0 || p.mode === 'dev' || p.status === 'done' || p.status === 'stopped';
   const zipTitle = zipReady ? '' : 'title="Available after first review completes"';
   let html = '';
   if (p.status !== 'waiting_template') {
@@ -1990,6 +2074,33 @@ function renderDetailActions(p) {
   }
   html += `<button class="btn-danger" onclick="deleteProject('${p.id}')">${t('delete')}</button>`;
   el.innerHTML = html;
+}
+
+function startEditTitle(el) {
+  const input = document.getElementById('detail-title-input');
+  input.value = el.textContent;
+  input.dataset.original = el.textContent;
+  input.dataset.projectId = el.dataset.projectId;
+  el.style.display = 'none';
+  input.style.display = 'block';
+  input.focus();
+  input.select();
+}
+
+async function saveTitle() {
+  const input = document.getElementById('detail-title-input');
+  const titleEl = document.getElementById('detail-paper-title');
+  const newTitle = input.value.trim();
+  input.style.display = 'none';
+  titleEl.style.display = 'block';
+  if (newTitle && newTitle !== input.dataset.original) {
+    titleEl.textContent = newTitle;
+    await fetch(`/api/projects/${input.dataset.projectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: newTitle })
+    });
+  }
 }
 
 async function stopProject(id) {
@@ -2113,15 +2224,37 @@ async function loadVenues() {
   if (!sel) return;
   sel.innerHTML = venues.map(v =>
     `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.pages ? ' (' + v.pages + ' pages)' : ''}</option>`
-  ).join('');
+  ).join('') + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
   heroVenueChanged(sel);
 }
+
+let customTplFile = null;
 
 function heroVenueChanged(sel) {
   const opt = sel.options[sel.selectedIndex];
   if (!opt) return;
-  document.getElementById('hero-venue-format').value = opt.dataset.format || 'article';
-  document.getElementById('hero-venue-pages').value = opt.dataset.pages || '9';
+  const isCustom = opt.value === 'Customized';
+  document.getElementById('custom-template-wrap').style.display = isCustom ? '' : 'none';
+  if (!isCustom) {
+    document.getElementById('hero-venue-format').value = opt.dataset.format || 'article';
+    document.getElementById('hero-venue-pages').value = opt.dataset.pages || '9';
+    customTplFile = null;
+  } else {
+    document.getElementById('hero-venue-format').value = 'custom';
+    document.getElementById('hero-venue-pages').value =
+      document.getElementById('custom-tpl-pages').value || '9';
+  }
+}
+
+function customTplSelected(file) {
+  if (!file) return;
+  if (!file.name.endsWith('.zip')) {
+    alert('Please upload a .zip file containing your LaTeX template.');
+    return;
+  }
+  customTplFile = file;
+  document.getElementById('custom-tpl-label').textContent = file.name;
+  document.getElementById('custom-tpl-drop').style.borderColor = 'var(--teal)';
 }
 
 // ══════════════════════════════════════════════════════
@@ -2222,6 +2355,19 @@ async function submitNewProject(e) {
   // Remove the hidden name="idea" textarea value (already in fd), append files
   selectedFiles.forEach(f => fd.append('attachments', f));
 
+  // Handle custom template
+  const isCustom = fd.get('venue') === 'Customized';
+  if (isCustom) {
+    if (!customTplFile) {
+      alert('Please upload a template ZIP file for the Customized venue.');
+      btn.disabled = false;
+      label.textContent = t('launch_research');
+      return;
+    }
+    fd.append('template_zip', customTplFile);
+    fd.set('venue_pages', document.getElementById('custom-tpl-pages').value || '9');
+  }
+
   const idea = (fd.get('idea') || '').trim();
   if (!idea && !selectedFiles.length) {
     alert(t('alert_idea_required'));
@@ -2240,6 +2386,10 @@ async function submitNewProject(e) {
     const proj = await res.json();
     form.reset();
     heroClearFiles();
+    customTplFile = null;
+    document.getElementById('custom-tpl-label').textContent = 'Drop a .zip file here or click to browse';
+    document.getElementById('custom-tpl-drop').style.borderColor = '';
+    document.getElementById('custom-template-wrap').style.display = 'none';
     document.getElementById('hero-char-count').textContent = t('chars', 0);
     navigate('detail', { id: proj.id });
   } finally {
@@ -2741,6 +2891,83 @@ document.addEventListener('keydown', e => {
     closeModal('modal-admin-edit');
   }
 });
+
+// ══════════════════════════════════════════════════════
+//  Feedback page
+// ══════════════════════════════════════════════════════
+async function loadFeedbackPage() {
+  // Populate project selector
+  const sel = document.getElementById('feedback-project');
+  sel.innerHTML = '<option value="">— None —</option>';
+  try {
+    const res = await fetch('/api/projects');
+    const projects = await res.json();
+    projects.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.title || p.name || p.id;
+      sel.appendChild(opt);
+    });
+  } catch(e) {}
+  // Load existing feedback
+  loadFeedbackList();
+}
+
+async function loadFeedbackList() {
+  const el = document.getElementById('feedback-list');
+  try {
+    const res = await fetch('/api/feedback');
+    const items = await res.json();
+    if (!items.length) {
+      el.innerHTML = '<p style="color:var(--text-muted);font-size:.9rem">No feedback yet.</p>';
+      return;
+    }
+    el.innerHTML = items.map(fb => {
+      const d = new Date(fb.created_at);
+      const ts = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+      const proj = fb.project_title ? `<span style="color:var(--teal);font-size:.8rem;margin-left:8px">${esc(fb.project_title)}</span>` : '';
+      const user = fb.user_email ? `<span style="color:var(--text-muted);font-size:.8rem;margin-left:8px">${esc(fb.user_email)}</span>` : '';
+      return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 16px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+          <span style="font-size:.8rem;color:var(--text-muted)">${ts}</span>${proj}${user}
+        </div>
+        <div style="font-size:.9rem;white-space:pre-wrap">${esc(fb.message)}</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = '<p style="color:var(--text-muted);font-size:.9rem">Failed to load feedback.</p>';
+  }
+}
+
+async function submitFeedback(e) {
+  e.preventDefault();
+  const btn = document.getElementById('feedback-submit-btn');
+  const msg = document.getElementById('feedback-message').value.trim();
+  if (!msg) return;
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+  try {
+    const body = { message: msg };
+    const pid = document.getElementById('feedback-project').value;
+    if (pid) body.project_id = pid;
+    const res = await fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert('Error: ' + (err.detail || 'Unknown error'));
+      return;
+    }
+    document.getElementById('feedback-message').value = '';
+    document.getElementById('feedback-project').value = '';
+    loadFeedbackList();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Submit';
+  }
+}
 
 // ══════════════════════════════════════════════════════
 //  Boot
