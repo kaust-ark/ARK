@@ -471,9 +471,10 @@ def _read_project_model(project_dir: Path) -> str:
 
 
 def _find_pdf(project_dir: Path) -> Optional[Path]:
-    paper_dir = project_dir / "paper"
-    for pdf in sorted(paper_dir.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True):
-        return pdf
+    """Find the generated paper PDF. Only returns main.pdf (not template/sample PDFs)."""
+    main_pdf = project_dir / "paper" / "main.pdf"
+    if main_pdf.exists() and main_pdf.stat().st_size > 10000:  # >10KB = real paper, not empty
+        return main_pdf
     return None
 
 
