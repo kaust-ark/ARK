@@ -718,11 +718,11 @@ async def api_list_projects(request: Request, scope: str = "mine"):
             pdir = _project_dir(settings, p.user_id, p.id)
             score = _read_project_score(pdir)
             pdf = _find_pdf(pdir)
-            # Sync paper_title from LaTeX into DB title if it differs
+            # Sync paper_title from LaTeX into DB title+name if it differs
             paper_title = _read_paper_title(pdir)
             if paper_title and paper_title != p.title:
-                update_project(session, p, title=paper_title)
-            display_title = paper_title or p.title or p.name
+                update_project(session, p, title=paper_title, name=paper_title)
+            display_title = paper_title or p.title
             d = {
                 "id": p.id,
                 "name": p.name,
@@ -774,12 +774,10 @@ async def api_create_project(
 
     # Generate project ID: full UUID
     project_id = str(uuid.uuid4())
-    slug = _slugify(title or idea[:60] or "project")
 
-    # Auto-generate title from idea if not provided
-    if not title and idea:
-        first_sentence = idea.split('.')[0].strip()
-        title = first_sentence[:100] if first_sentence else idea[:100]
+    # Title: use provided title, or "Pending Deep Research" (will be auto-generated in Dev phase)
+    if not title:
+        title = "Pending Deep Research"
 
     pdir = _project_dir(settings, user.id, project_id)
     pdir.mkdir(parents=True, exist_ok=True)
@@ -851,8 +849,8 @@ async def api_create_project(
             session,
             id=project_id,
             user_id=user.id,
-            name=slug,
-            title=title or slug,
+            name=title,
+            title=title,
             idea=idea,
             venue=venue,
             venue_format=venue_format,
