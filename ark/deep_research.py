@@ -71,14 +71,21 @@ def build_research_query(config: dict) -> str:
     venue = config.get("venue", "")
     venue_pages = config.get("venue_pages", "")
     goal_anchor = config.get("goal_anchor", "")
-    research_idea = config.get("research_idea", "")
+    research_idea = config.get("research_idea", "") or config.get("idea", "")
+
+    # Skip temporary/placeholder titles
+    is_real_title = title and not title.endswith("...") and title not in ("Untitled Project", "Pending Deep Research")
 
     query_parts = []
 
-    if title:
+    if is_real_title:
         query_parts.append(
             f"I am writing an academic paper titled \"{title}\" "
             f"targeting {venue} conference."
+        )
+    elif venue:
+        query_parts.append(
+            f"I am writing an academic paper targeting {venue} conference."
         )
 
     if research_idea:

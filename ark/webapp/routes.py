@@ -780,9 +780,16 @@ async def api_create_project(
     # Generate project ID: full UUID
     project_id = str(uuid.uuid4())
 
-    # Title: use provided title, or "Pending Deep Research" (will be auto-generated in Dev phase)
+    # Title: use provided title, or extract from idea as temporary title
+    if not title and idea:
+        # Take first ~80 chars of idea, cut at word boundary
+        snippet = idea[:80].strip()
+        last_space = snippet.rfind(' ')
+        if last_space > 40:
+            snippet = snippet[:last_space]
+        title = snippet + ("..." if len(idea) > len(snippet) else "")
     if not title:
-        title = "Pending Deep Research"
+        title = "Untitled Project"
 
     pdir = _project_dir(settings, user.id, project_id)
     pdir.mkdir(parents=True, exist_ok=True)
