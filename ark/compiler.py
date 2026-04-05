@@ -335,10 +335,16 @@ class CompilerMixin:
             page_height = last_body_page.rect.height
 
             # Detect dual-column by checking if text exists in both halves
+            # Filter out headers (top 6%) and footers (bottom 4%) — page numbers, running titles
             blocks = last_body_page.get_text("blocks")
+            content_blocks = [
+                b for b in blocks
+                if b[3] > page_height * 0.06
+                and b[1] < page_height * 0.96
+            ]
             mid_x = page_width / 2
-            left_blocks = [b for b in blocks if b[0] < mid_x and b[3] > page_height * 0.1]
-            right_blocks = [b for b in blocks if b[0] >= mid_x and b[3] > page_height * 0.1]
+            left_blocks = [b for b in content_blocks if b[0] < mid_x]
+            right_blocks = [b for b in content_blocks if b[0] >= mid_x]
 
             is_dual_column = len(left_blocks) > 0 and len(right_blocks) > 0
 
@@ -348,8 +354,15 @@ class CompilerMixin:
                 fill_ratio = right_last_y / page_height
             elif ref_at_top:
                 # Single column, References on separate page: check last body page fill
-                if blocks:
-                    last_y = max(b[3] for b in blocks if b[3] > page_height * 0.1)
+                # Filter out headers/footers: ignore blocks in top 8% and bottom 5% of page,
+                # and blocks shorter than 10 chars (page numbers, headers)
+                body_blocks = [
+                    b for b in blocks
+                    if b[3] > page_height * 0.06       # below header
+                    and b[1] < page_height * 0.96       # above footer
+                ]
+                if body_blocks:
+                    last_y = max(b[3] for b in body_blocks)
                     fill_ratio = last_y / page_height
                 else:
                     fill_ratio = 0.0
