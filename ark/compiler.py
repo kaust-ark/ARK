@@ -635,66 +635,81 @@ class CompilerMixin:
         venue = self.config.get("venue", "")
         latex_dir = self.config.get("latex_dir", "Latex")
 
-        # Ask agent to identify concept figures that need AI generation
-        analysis_output = self.run_agent("visualizer", f"""
-Analyze the paper {latex_dir}/main.tex and identify ALL figures that would benefit from
-AI-generated concept diagrams (architecture diagrams, mechanism illustrations, overview figures,
-workflow diagrams, system diagrams, pipeline diagrams).
+        # Gather context for planner — use idea, findings, deep research (NOT main.tex which may be empty)
+        idea = self.config.get("idea", "")
+        title = self.config.get("title", "")
+        findings_file = self.state_dir / "findings.yaml" if hasattr(self, 'state_dir') else None
+        dr_file = self.state_dir / "deep_research.md" if hasattr(self, 'state_dir') else None
 
-Do NOT include data plots (bar charts, line charts, scatter plots) — those should remain as matplotlib.
+        paper_context = f"Paper title: {title}\n\n"
+        if idea:
+            paper_context += f"Research idea:\n{idea[:2000]}\n\n"
+        if findings_file and findings_file.exists():
+            paper_context += f"Experiment findings:\n{findings_file.read_text()[:2000]}\n\n"
+        if dr_file and dr_file.exists():
+            paper_context += f"Background research:\n{dr_file.read_text()[:1500]}\n"
 
-For each concept figure, output a JSON block with this exact format:
+        # Also check main.tex if it has content (for review phase, not empty template)
+        main_tex = self.latex_dir / "main.tex"
+        if main_tex.exists():
+            tex_content = main_tex.read_text()
+            # Only use main.tex if it has real content (not just a template skeleton)
+            if len(tex_content) > 1000:
+                paper_context += f"\nCurrent paper content:\n{tex_content[:2000]}\n"
+
+        # Ask PLANNER (not visualizer) to decide what concept figures are needed
+        analysis_output = self.run_agent("planner", f"""Based on the research described below, identify concept figures that should be
+AI-generated for this paper. These are architecture diagrams, system overviews, pipeline illustrations,
+mechanism diagrams — NOT data plots (bar charts, line charts etc. are handled separately).
+
+## Research Context
+{paper_context[:5000]}
+
+## Your Task
+Identify 1-3 concept figures that would best illustrate this research. Every paper needs at least
+one system overview/architecture figure. Output a JSON block:
 
 ```json
 [
   {{
     "name": "fig_overview",
-    "caption": "System architecture overview",
-    "section_context": "Detailed description of what the figure should show, including all components, connections, data flows, and key metrics mentioned in the paper. Be as detailed as possible — the more context, the better the generated figure.",
+    "caption": "System architecture overview showing the main components and data flow",
+    "section_context": "Detailed description of what the figure should show — all components, connections, stages, data flows. Be specific about the research system's structure.",
     "latex_label": "fig:overview",
     "placement": "full_width"
   }}
 ]
 ```
 
-For each figure, you MUST decide the "placement" field:
-- "full_width": for complex figures — multi-stage pipelines, system architectures with many components, diagrams that need horizontal space. Uses `\\begin{{figure*}}` spanning all columns.
-- "single_column": for simpler figures — single concept with few components, small diagrams. Uses `\\begin{{figure}}` in one column.
+Rules for "placement":
+- "full_width": for complex multi-stage pipelines, architectures with 4+ components
+- "single_column": for simple 2-3 component diagrams
 
-Decision criteria: if the figure has 4+ components, multiple stages, or branching paths → "full_width". If it's a simple 2-3 component relationship → "single_column".
-
-Only include figures that:
-1. Are referenced in LaTeX but have no existing file, OR
-2. Are concept/architecture/mechanism diagrams that could be improved with AI generation
-
-If no concept figures are needed, output: NO_CONCEPT_FIGURES
+You MUST output at least 1 figure (system overview). Output up to 3 figures maximum.
+Do NOT output NO_CONCEPT_FIGURES — every paper needs at least one architecture diagram.
 """, timeout=600)
-
-        if not analysis_output or "NO_CONCEPT_FIGURES" in analysis_output:
-            self.log_step("No concept figures needed", "info")
-            return
 
         # Parse figure list from agent output
         figures = []
         try:
-            json_match = re.search(r'\[[\s\S]*?\]', analysis_output)
+            json_match = re.search(r'\[[\s\S]*?\]', analysis_output or "")
             if json_match:
                 figures = json.loads(json_match.group())
         except (json.JSONDecodeError, AttributeError):
-            self.log("Failed to parse concept figure list from agent output", "WARN")
-            return
+            self.log("Failed to parse concept figure list from planner output", "WARN")
 
+        # Fallback: if planner returned nothing, create a default system overview
         if not figures:
-            return
+            self.log("Planner did not suggest figures, creating default system overview", "INFO")
+            figures = [{
+                "name": "fig_overview",
+                "caption": f"System overview of {title or 'the proposed approach'}",
+                "section_context": idea[:2000] if idea else paper_context[:2000],
+                "latex_label": "fig:overview",
+                "placement": "full_width",
+            }]
 
-        # Read paper context for prompt generation
-        paper_text = ""
-        main_tex = self.latex_dir / "main.tex"
-        if main_tex.exists():
-            try:
-                paper_text = main_tex.read_text()[:5000]
-            except Exception:
-                pass
+        paper_text = paper_context
 
         # Get geometry for sizing
         from ark.latex_geometry import get_geometry
