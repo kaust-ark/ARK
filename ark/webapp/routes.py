@@ -507,13 +507,13 @@ def _write_user_update(project_dir: Path, message: str, source: str = "webapp"):
     f.write_text(yaml.dump({"updates": updates}, allow_unicode=True))
 
 
-def _try_submit_or_pending(project, pdir, session, settings) -> str:
+def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> str:
     from sqlmodel import select as _sel
     active = session.exec(
         _sel(Project).where(Project.status.in_(["queued", "running"]))
         .where(Project.id != project.id)
     ).all()
-    if active:
+    if active and not is_admin:
         update_project(session, project, status="pending")
         return "pending"
     log_dir = pdir / "logs"
@@ -774,7 +774,7 @@ async def api_create_project(
         if len(user_projects) >= MAX_PROJECTS_PER_USER:
             raise HTTPException(400, f"Max {MAX_PROJECTS_PER_USER} projects per user.")
         active = [p for p in user_projects if p.status in ("queued", "running", "pending")]
-        if active:
+        if active and not _is_admin(user):
             raise HTTPException(400, "You already have an active project. Wait for it to finish.")
 
     # Generate project ID: full UUID
@@ -900,7 +900,7 @@ async def api_create_project(
                 "slurm_job_id": "",
             }, status_code=201)
 
-        final_status = _try_submit_or_pending(project, pdir, session, settings)
+        final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=_is_admin(user))
 
         send_telegram_notify(
             f"🔬 <b>{project.name}</b> submitted ({final_status})\n"
@@ -1011,7 +1011,7 @@ async def api_restart_project(project_id: str, request: Request):
             raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
         active = [p for p in get_projects_for_user(session, project.user_id)
                   if p.status in ("queued", "running", "pending") and p.id != project_id]
-        if active:
+        if active and not _is_admin(user):
             raise HTTPException(400, "You already have an active project.")
         pdir = _project_dir(settings, project.user_id, project_id)
 
@@ -1036,6 +1036,13 @@ async def api_restart_project(project_id: str, request: Request):
         redo_deep_research = body.get("redo_deep_research", False)
         _clean_project_state(pdir, keep_deep_research=not redo_deep_research)
 
+        # Re-copy venue template (clean removed .bib/.tex template files)
+        venue_fmt = body.get("venue_format") or project.venue_format or ""
+        if venue_fmt and venue_fmt != "custom":
+            paper_dir = pdir / "paper"
+            paper_dir.mkdir(parents=True, exist_ok=True)
+            copy_venue_template(venue_fmt, paper_dir)
+
         # Rewrite config.yaml with updated settings
         model = body.get("model", "claude-sonnet-4-6")
         _write_config_yaml(pdir, project, model=model)
@@ -1049,7 +1056,7 @@ async def api_restart_project(project_id: str, request: Request):
         session.commit()
         session.refresh(project)
 
-        final_status = _try_submit_or_pending(project, pdir, session, settings)
+        final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=_is_admin(user))
         send_telegram_notify(
             f"🔄 <b>{project.name}</b> restarted ({final_status})",
             bot_token=project.telegram_token,
@@ -1095,7 +1102,7 @@ async def api_continue_project(project_id: str, request: Request):
             raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
         active = [p for p in get_projects_for_user(session, project.user_id)
                   if p.status in ("queued", "running", "pending") and p.id != project_id]
-        if active:
+        if active and not _is_admin(user):
             raise HTTPException(400, "You already have an active project.")
         new_max = project.max_iterations + additional
         update_project(session, project, max_iterations=new_max)
@@ -1106,7 +1113,7 @@ async def api_continue_project(project_id: str, request: Request):
         if comment:
             _write_user_update(pdir, comment, source="webapp_continue")
             _write_user_instructions(pdir, comment, source="webapp_continue")
-        final_status = _try_submit_or_pending(project, pdir, session, settings)
+        final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=_is_admin(user))
         return JSONResponse({"ok": True, "status": final_status, "max_iterations": new_max})
 
 
