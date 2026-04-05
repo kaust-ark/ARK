@@ -685,29 +685,27 @@ Rules for "placement":
 - "full_width": for complex multi-stage pipelines, architectures with 4+ components
 - "single_column": for simple 2-3 component diagrams
 
-You MUST output at least 1 figure (system overview). Output up to 3 figures maximum.
-Do NOT output NO_CONCEPT_FIGURES — every paper needs at least one architecture diagram.
+We encourage at least 1 system overview figure if the research has a multi-component system.
+Output up to 3 figures maximum. If the research truly has no visual architecture to illustrate,
+output: NO_CONCEPT_FIGURES
 """, timeout=600)
+
+        if not analysis_output or "NO_CONCEPT_FIGURES" in analysis_output:
+            self.log_step("Planner decided no concept figures needed", "info")
+            return
 
         # Parse figure list from agent output
         figures = []
         try:
-            json_match = re.search(r'\[[\s\S]*?\]', analysis_output or "")
+            json_match = re.search(r'\[[\s\S]*?\]', analysis_output)
             if json_match:
                 figures = json.loads(json_match.group())
         except (json.JSONDecodeError, AttributeError):
             self.log("Failed to parse concept figure list from planner output", "WARN")
+            return
 
-        # Fallback: if planner returned nothing, create a default system overview
         if not figures:
-            self.log("Planner did not suggest figures, creating default system overview", "INFO")
-            figures = [{
-                "name": "fig_overview",
-                "caption": f"System overview of {title or 'the proposed approach'}",
-                "section_context": idea[:2000] if idea else paper_context[:2000],
-                "latex_label": "fig:overview",
-                "placement": "full_width",
-            }]
+            return
 
         paper_text = paper_context
 
