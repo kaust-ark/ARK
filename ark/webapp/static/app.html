@@ -689,8 +689,8 @@
           </select>
         </div>
         <div class="hero-field hero-field-iter">
-          <label data-i18n="max_iterations">Max iterations</label>
-          <input type="number" name="max_iterations" value="3" min="1" max="3" />
+          <label>Pages <span id="hero-pages-default" style="font-weight:400;color:var(--text-muted);font-size:.85em">(default: 9)</span></label>
+          <input type="number" name="venue_pages" id="hero-venue-pages-input" value="9" min="1" max="50" />
         </div>
       </div>
 
@@ -723,7 +723,6 @@
 
       <input type="hidden" name="mode" value="paper" />
       <input type="hidden" name="venue_format" id="hero-venue-format" value="neurips" />
-      <input type="hidden" name="venue_pages" id="hero-venue-pages" value="9" />
 
       <!-- Telegram — always visible -->
       <div class="tg-section" style="margin-top:16px">
@@ -778,6 +777,16 @@
               </label>
             </div>
           </div>
+          <div style="display:flex;gap:16px;margin-top:12px">
+            <div class="hero-adv-field" style="flex:1">
+              <label>Max Dev Iterations <span style="font-weight:400;color:var(--text-muted);font-size:.85em">(default: 3)</span></label>
+              <input type="number" name="max_dev_iterations" value="3" min="1" max="10" />
+            </div>
+            <div class="hero-adv-field" style="flex:1">
+              <label>Max Review Iterations <span style="font-weight:400;color:var(--text-muted);font-size:.85em">(default: 2)</span></label>
+              <input type="number" name="max_iterations" value="2" min="1" max="5" />
+            </div>
+          </div>
         </div>
       </div>
 
@@ -807,16 +816,15 @@
   <div class="detail-header">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
       <button class="btn-secondary" onclick="navigate('dashboard')" style="padding:6px 12px;font-size:.85rem" data-i18n="back">← Back</button>
-      <h2 id="detail-title">Project</h2>
       <span id="detail-badge" class="badge"></span>
     </div>
-    <div class="detail-meta" id="detail-meta"></div>
   </div>
 
-  <div id="detail-title-row" style="margin-bottom:12px">
-    <h3 id="detail-paper-title" style="font-size:1.3rem;font-weight:700;color:var(--text-primary);cursor:pointer;margin:0;padding:4px 0"
+  <div id="detail-title-row" style="margin-bottom:16px;padding:16px 20px;background:var(--bg-hover);border-radius:12px;border-left:4px solid var(--accent)">
+    <div style="font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:6px" data-i18n="title">Title</div>
+    <h3 id="detail-paper-title" style="font-size:1.25rem;font-weight:700;color:var(--text-primary);cursor:pointer;margin:0;line-height:1.4"
         title="Click to edit" onclick="startEditTitle(this)"></h3>
-    <input id="detail-title-input" style="display:none;font-size:1.3rem;font-weight:700;width:100%;border:1px solid var(--accent);border-radius:6px;padding:4px 8px;outline:none"
+    <input id="detail-title-input" style="display:none;font-size:1.25rem;font-weight:700;width:100%;border:1px solid var(--accent);border-radius:6px;padding:4px 8px;outline:none;background:var(--bg)"
            onblur="saveTitle()" onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape'){this.value=this.dataset.original;this.blur()}" />
   </div>
 
@@ -1787,13 +1795,9 @@ async function loadDetail(id) {
   resetProgress(p.max_iterations);
   setProgressWidgetVisible(p.status === 'running' || p.status === 'queued');
 
-  document.getElementById('detail-title').textContent = p.id;
   const badge = document.getElementById('detail-badge');
   badge.className = `badge badge-${p.status}`;
   badge.textContent = t('status_' + p.status) || p.status;
-
-  document.getElementById('detail-meta').innerHTML =
-    `<span>${esc(p.venue)}</span><span>·</span><span>${t('info_created')}: ${fmtDate(p.created_at)}</span>`;
 
   const titleEl = document.getElementById('detail-paper-title');
   titleEl.textContent = p.paper_title || p.title || p.name || '—';
@@ -2223,7 +2227,7 @@ async function loadVenues() {
   const sel = document.getElementById('hero-venue-select');
   if (!sel) return;
   sel.innerHTML = venues.map(v =>
-    `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.pages ? ' (' + v.pages + ' pages)' : ''}</option>`
+    `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}(${v.year || 2025})</option>`
   ).join('') + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
   heroVenueChanged(sel);
 }
@@ -2235,14 +2239,19 @@ function heroVenueChanged(sel) {
   if (!opt) return;
   const isCustom = opt.value === 'Customized';
   document.getElementById('custom-template-wrap').style.display = isCustom ? '' : 'none';
+  const pagesInput = document.getElementById('hero-venue-pages-input');
+  const pagesDefault = document.getElementById('hero-pages-default');
   if (!isCustom) {
+    const defaultPages = opt.dataset.pages || '9';
     document.getElementById('hero-venue-format').value = opt.dataset.format || 'article';
-    document.getElementById('hero-venue-pages').value = opt.dataset.pages || '9';
+    if (pagesInput) pagesInput.value = defaultPages;
+    if (pagesDefault) pagesDefault.textContent = '(default: ' + defaultPages + ')';
     customTplFile = null;
   } else {
     document.getElementById('hero-venue-format').value = 'custom';
-    document.getElementById('hero-venue-pages').value =
-      document.getElementById('custom-tpl-pages').value || '9';
+    const customPages = document.getElementById('custom-tpl-pages').value || '9';
+    if (pagesInput) pagesInput.value = customPages;
+    if (pagesDefault) pagesDefault.textContent = '(default: 9)';
   }
 }
 
