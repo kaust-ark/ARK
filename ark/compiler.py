@@ -279,34 +279,87 @@ class CompilerMixin:
     def _count_body_pages(self, pdf_path: Path) -> float:
         """Count body pages (before References section) using PyMuPDF.
 
-        Returns a float: integer part = complete pages before References,
-        fractional part = how far down that page References starts (0.0–1.0).
-        E.g. 6.3 means body fills 6 complete pages plus 30% of the next page.
+        For dual-column templates, measures the RIGHT column fill on the last
+        body page, which is what matters for page limit compliance.
+
+        Returns a float: e.g. 5.8 means 5 full pages + last page 80% filled.
+        For dual-column: last page fill = right column fill ratio (not left).
         """
         try:
             import fitz
             doc = fitz.open(str(pdf_path))
+
+            # Find which page has "References"
+            ref_page_idx = None
             for i in range(len(doc)):
-                page = doc[i]
-                text = page.get_text()
-                found = any(line.strip() == 'References' for line in text.split('\n'))
-                if not found:
-                    continue
-                # References is on page i — measure its y-position
-                page_height = page.rect.height
-                for block in page.get_text("dict")["blocks"]:
-                    for line_obj in block.get("lines", []):
-                        line_text = "".join(s["text"] for s in line_obj.get("spans", []))
-                        if line_text.strip() == "References":
-                            ref_y = line_obj["bbox"][1]
-                            doc.close()
-                            return i + ref_y / page_height
-                # Fallback: found in plain text but not in dict blocks
+                text = doc[i].get_text()
+                if any(line.strip() == 'References' for line in text.split('\n')):
+                    ref_page_idx = i
+                    break
+
+            if ref_page_idx is None:
+                # No References found — all pages are body
+                total = len(doc)
                 doc.close()
-                return float(i)
-            total = len(doc)
+                return float(total)
+
+            # The last body page is the page BEFORE References
+            # (if References has its own page via \clearpage)
+            # OR the same page (if References starts mid-page)
+            ref_page = doc[ref_page_idx]
+            ref_page_text = ref_page.get_text()
+
+            # Check if References is at the very top of its page (i.e., \clearpage was used)
+            ref_y = 0
+            for block in ref_page.get_text("dict")["blocks"]:
+                for line_obj in block.get("lines", []):
+                    line_text = "".join(s["text"] for s in line_obj.get("spans", []))
+                    if line_text.strip() == "References":
+                        ref_y = line_obj["bbox"][1]
+                        break
+                if ref_y > 0:
+                    break
+
+            page_height = ref_page.rect.height
+            ref_at_top = ref_y < page_height * 0.15  # References in top 15% = separate page
+
+            if ref_at_top and ref_page_idx > 0:
+                # References on its own page — last body page is previous page
+                last_body_idx = ref_page_idx - 1
+            else:
+                # References starts mid-page — body ends partway through this page
+                last_body_idx = ref_page_idx
+
+            last_body_page = doc[last_body_idx]
+            page_width = last_body_page.rect.width
+            page_height = last_body_page.rect.height
+
+            # Detect dual-column by checking if text exists in both halves
+            blocks = last_body_page.get_text("blocks")
+            mid_x = page_width / 2
+            left_blocks = [b for b in blocks if b[0] < mid_x and b[3] > page_height * 0.1]
+            right_blocks = [b for b in blocks if b[0] >= mid_x and b[3] > page_height * 0.1]
+
+            is_dual_column = len(left_blocks) > 0 and len(right_blocks) > 0
+
+            if is_dual_column:
+                # Dual column: fill ratio = right column's last text y / page height
+                right_last_y = max(b[3] for b in right_blocks) if right_blocks else 0
+                fill_ratio = right_last_y / page_height
+            elif ref_at_top:
+                # Single column, References on separate page: check last body page fill
+                if blocks:
+                    last_y = max(b[3] for b in blocks if b[3] > page_height * 0.1)
+                    fill_ratio = last_y / page_height
+                else:
+                    fill_ratio = 0.0
+            else:
+                # Single column, References mid-page: body ends at References y
+                fill_ratio = ref_y / page_height
+
+            result = last_body_idx + fill_ratio
             doc.close()
-            return float(total)
+            return result
         except Exception as e:
             self.log(f"Body page count failed: {e}", "WARN")
             return 0.0
