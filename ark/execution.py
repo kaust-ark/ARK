@@ -771,13 +771,21 @@ Ensure `\\clearpage` before `\\bibliography`.
                     pos = pkgs[-1].end()
                     content = content[:pos] + '\n\\usepackage{placeins}' + content[pos:]
 
-            # Find all \section positions (not \subsection)
-            sections = list(_re.finditer(r'(?<!sub)\\section\{', content))
+            # Find the body boundary — \appendix, \clearpage before \bibliography, or \bibliography
+            body_end = len(content)
+            for boundary in [r'\appendix', r'\clearpage', r'\bibliography{']:
+                pos = content.find(boundary)
+                if pos != -1 and pos < body_end:
+                    body_end = pos
+
+            # Find all \section positions in body only (not appendix, not \subsection)
+            body_content = content[:body_end]
+            sections = list(_re.finditer(r'(?<!sub)\\section\{', body_content))
             if len(sections) < 2:
                 main_tex.write_text(content)
                 return
 
-            # Last section position
+            # Last body section position
             last_sec = sections[-1]
 
             # Check if \FloatBarrier already before it
