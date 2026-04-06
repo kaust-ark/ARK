@@ -539,6 +539,11 @@
     .btn-icon:hover { background: var(--card); border-color: var(--text-muted); }
     .btn-icon.danger:hover { background: #fee2e2; border-color: #fca5a5; }
     @media (max-width: 800px) { .admin-table .col-idea, .admin-table .col-created { display: none; } }
+    /* Toast */
+    #ark-toast { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); z-index: 9999; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+    .ark-toast-item { padding: 10px 22px; border-radius: 10px; font-size: .9rem; background: #1e293b; color: #fff; opacity: 0; transform: translateY(-8px); transition: all .3s; pointer-events: auto; }
+    .ark-toast-item.warn { background: #92400e; }
+    .ark-toast-item.show { opacity: 1; transform: translateY(0); }
   </style>
 </head>
 <body>
@@ -625,10 +630,11 @@
   <!-- Admin panel — hidden until checkAuth confirms is_admin -->
   <div id="admin-panel" class="admin-panel" style="display:none">
     <span class="admin-label" data-i18n="nav_admin">Admin</span>
-    <span class="admin-status" id="admin-status-text">—</span>
-    <button class="btn-admin btn-admin-toggle" id="btn-admin-toggle" onclick="adminToggle()">…</button>
-    <button class="btn-admin btn-admin-kill" onclick="adminKillAll()" data-i18n="kill_all">Kill All Jobs</button>
-    <button class="btn-admin" onclick="navigate('admin')" style="background:var(--teal);color:#fff;font-weight:600">Management</button>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <button class="btn-admin btn-admin-toggle" id="btn-admin-toggle" onclick="adminToggle()" style="background:var(--teal);color:#fff;font-weight:600">…</button>
+      <button class="btn-admin btn-admin-kill" onclick="adminKillAll()" data-i18n="stop_all" style="background:var(--teal);color:#fff;font-weight:600">Stop All</button>
+      <button class="btn-admin" onclick="navigate('admin')" style="background:var(--teal);color:#fff;font-weight:600">Admin Console</button>
+    </div>
   </div>
 
   <!-- Hero creation card -->
@@ -761,8 +767,8 @@
                 <input type="radio" name="model" value="claude-sonnet-4-6" checked />
                 <span class="model-chip">Sonnet 4.6</span>
               </label>
-              <label class="model-option model-option-admin" title="Admin only" style="display:none">
-                <input type="radio" name="model" value="claude-opus-4-6" />
+              <label class="model-option model-option-premium" style="opacity:.45;cursor:pointer" title="Buy Jihao a coffee to enable">
+                <input type="radio" name="model" value="claude-opus-4-6" disabled />
                 <span class="model-chip">Opus 4.6</span>
               </label>
               <label class="model-option model-option-admin" title="Admin only" style="display:none">
@@ -781,12 +787,12 @@
           </div>
           <div style="display:flex;gap:16px;margin-top:12px">
             <div class="hero-adv-field" style="flex:1">
-              <label>Max Dev Iterations <span style="font-weight:400;color:var(--text-muted);font-size:.85em">(default: 3)</span></label>
-              <input type="number" name="max_dev_iterations" value="3" min="1" max="10" />
+              <label>Max Dev Iterations</label>
+              <input type="number" name="max_dev_iterations" value="1" min="1" max="1" />
             </div>
             <div class="hero-adv-field" style="flex:1">
-              <label>Max Review Iterations <span style="font-weight:400;color:var(--text-muted);font-size:.85em">(default: 2)</span></label>
-              <input type="number" name="max_iterations" value="2" min="1" max="5" />
+              <label>Max Review Iterations</label>
+              <input type="number" name="max_iterations" value="1" min="1" max="1" />
             </div>
           </div>
         </div>
@@ -891,7 +897,7 @@
     <span class="admin-label" data-i18n="submissions">Submissions</span>
     <span class="admin-gate-badge" id="admin-page-gate-badge">—</span>
     <button class="btn-admin btn-admin-toggle" id="btn-admin-page-toggle" onclick="adminPageToggle()">…</button>
-    <button class="btn-admin btn-admin-kill" onclick="adminPageKillAll()" data-i18n="kill_all">Kill All Jobs</button>
+    <button class="btn-admin btn-admin-kill" onclick="adminPageKillAll()" data-i18n="stop_all">Stop All</button>
   </div>
   <div class="admin-table-wrap">
     <div class="admin-table-header">
@@ -1143,11 +1149,9 @@ const TRANSLATIONS = {
     login_google: 'Continue with Google',
     // gate / admin panel
     gate_banner_text: 'Submissions are currently <strong>disabled</strong> by admin. New projects cannot be started.',
-    submissions_disabled: 'Submissions DISABLED — new jobs will be rejected',
-    submissions_enabled: 'Submissions enabled',
     enable_submissions: 'Enable Submissions',
     disable_submissions: 'Disable Submissions',
-    kill_all: 'Kill All Jobs',
+    stop_all: 'Stop All',
     // hero
     hero_title: 'Build your next paper with ARK',
     attach: 'Attach', venue: 'Venue', max_iterations: 'Max iterations',
@@ -1256,11 +1260,9 @@ const TRANSLATIONS = {
     login_or: 'أو',
     login_google: 'المتابعة عبر Google',
     gate_banner_text: 'تم <strong>تعطيل</strong> التقديم من قِبَل المشرف. لا يمكن بدء مشاريع جديدة.',
-    submissions_disabled: 'التقديم معطّل — سيتم رفض المهام الجديدة',
-    submissions_enabled: 'التقديم مفعّل',
     enable_submissions: 'تفعيل التقديم',
     disable_submissions: 'تعطيل التقديم',
-    kill_all: 'إيقاف جميع المهام',
+    stop_all: 'إيقاف الكل',
     hero_title: 'ابنِ ورقتك البحثية القادمة مع ARK',
     attach: 'إرفاق', venue: 'المؤتمر', max_iterations: 'الحد الأقصى للتكرارات',
     telegram_notifications: 'إشعارات Telegram',
@@ -1354,11 +1356,9 @@ const TRANSLATIONS = {
     login_or: '或',
     login_google: '使用 Google 登录',
     gate_banner_text: '管理员已<strong>禁用</strong>提交功能。无法启动新项目。',
-    submissions_disabled: '提交已禁用 — 新任务将被拒绝',
-    submissions_enabled: '提交已启用',
     enable_submissions: '启用提交',
     disable_submissions: '禁用提交',
-    kill_all: '终止所有任务',
+    stop_all: '全部停止',
     hero_title: '用 ARK 构建你的下一篇论文',
     attach: '附件', venue: '投稿会议', max_iterations: '最大迭代次数',
     telegram_notifications: 'Telegram 通知',
@@ -1441,6 +1441,18 @@ const TRANSLATIONS = {
 };
 
 let currentLang = localStorage.getItem('ark_lang') || 'en';
+
+/* ── Toast notification ── */
+function showToast(msg, type) {
+  let c = document.getElementById('ark-toast');
+  if (!c) { c = document.createElement('div'); c.id = 'ark-toast'; document.body.appendChild(c); }
+  const el = document.createElement('div');
+  el.className = 'ark-toast-item' + (type === 'warn' ? ' warn' : '');
+  el.textContent = msg;
+  c.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 300); }, 3000);
+}
 
 function t(key, ...args) {
   let str = (TRANSLATIONS[currentLang] && TRANSLATIONS[currentLang][key]) || TRANSLATIONS.en[key] || key;
@@ -1639,6 +1651,42 @@ async function checkAuth() {
       const input = el.querySelector('input');
       if (input) input.disabled = false;
     });
+    // Unlock premium models for admin
+    document.querySelectorAll('.model-option-premium').forEach(el => {
+      el.style.opacity = '';
+      el.style.cursor = '';
+      el.title = '';
+      el.classList.add('model-option-admin');
+      const input = el.querySelector('input');
+      if (input) input.disabled = false;
+    });
+    // Unlock iteration limits for admin
+    const devIter = document.querySelector('input[name="max_dev_iterations"]');
+    if (devIter) { devIter.max = 10; devIter.value = 3; }
+    const revIter = document.querySelector('input[name="max_iterations"]');
+    if (revIter) { revIter.max = 5; revIter.value = 2; }
+  } else {
+    // Non-admin: show coffee toast when clicking premium models
+    document.querySelectorAll('.model-option-premium').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        showToast('Buy Jihao a coffee to enable ☕', 'warn');
+      });
+    });
+    // Non-admin: show coffee toast when trying to change iterations
+    ['max_dev_iterations', 'max_iterations'].forEach(name => {
+      const input = document.querySelector(`input[name="${name}"]`);
+      if (input) {
+        input.style.cursor = 'pointer';
+        ['click', 'focus', 'mousedown', 'keydown'].forEach(evt => {
+          input.addEventListener(evt, (e) => {
+            e.preventDefault();
+            input.blur();
+            showToast('Buy Jihao a coffee to enable ☕', 'warn');
+          });
+        });
+      }
+    });
   }
 
   // Route based on hash
@@ -1692,23 +1740,8 @@ async function loadAdminPanel() {
 }
 
 function _renderAdminStatus() {
-  const txt = document.getElementById('admin-status-text');
   const btn = document.getElementById('btn-admin-toggle');
-  if (_adminDisabled) {
-    txt.textContent = t('submissions_disabled');
-    txt.className = 'admin-status off';
-    btn.textContent = t('enable_submissions');
-    btn.style.background = '#15803d';
-    btn.onmouseover = () => btn.style.background = '#166534';
-    btn.onmouseout  = () => btn.style.background = '#15803d';
-  } else {
-    txt.textContent = t('submissions_enabled');
-    txt.className = 'admin-status ok';
-    btn.textContent = t('disable_submissions');
-    btn.style.background = '#1e40af';
-    btn.onmouseover = () => btn.style.background = '#1e3a8a';
-    btn.onmouseout  = () => btn.style.background = '#1e40af';
-  }
+  btn.textContent = _adminDisabled ? t('enable_submissions') : t('disable_submissions');
 }
 
 async function adminToggle() {
