@@ -644,7 +644,17 @@ async def auth_logout(request: Request):
     return RedirectResponse("/")
 
 
-_GOOGLE_REDIRECT_URI = "https://kaust-ark.github.io/oauth-callback"
+_GOOGLE_REDIRECT_URI_PROD = "https://kaust-ark.github.io/oauth-callback"
+_GOOGLE_REDIRECT_URI_DEV = "https://kaust-ark.github.io/oauth-callback-dev"
+
+
+def _get_google_redirect_uri() -> str:
+    """Return the appropriate OAuth redirect URI based on the current environment."""
+    settings = get_settings()
+    # Dev environment uses a separate callback page
+    if f":{1027}" in settings.base_url:
+        return _GOOGLE_REDIRECT_URI_DEV
+    return _GOOGLE_REDIRECT_URI_PROD
 
 
 @router.get("/auth/google")
@@ -653,7 +663,7 @@ async def auth_google(request: Request):
     if not oauth:
         raise HTTPException(400, "Google login is not configured on this server.")
     return await oauth.google.authorize_redirect(
-        request, _GOOGLE_REDIRECT_URI, prompt="select_account"
+        request, _get_google_redirect_uri(), prompt="select_account"
     )
 
 

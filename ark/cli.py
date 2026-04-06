@@ -3005,18 +3005,31 @@ def _get_prod_worktree_dir() -> Path:
 
 _DEV_SERVICE = "ark-webapp-dev"
 _PROD_SERVICE = "ark-webapp"
-_DEV_PORT = 8424
-_PROD_PORT = 8423
+_DEV_PORT = 1027
+_PROD_PORT = 9527
 
 
 def _service_file_path(service_name: str) -> Path:
     return Path.home() / ".config" / "systemd" / "user" / f"{service_name}.service"
 
 
+def _conda_env_python(env_name: str) -> str:
+    """Return the python binary path for a conda environment."""
+    conda_base = Path.home() / "miniforge3" / "envs" / env_name / "bin" / "python"
+    if conda_base.exists():
+        return str(conda_base)
+    # Fallback: try anaconda3
+    anaconda_base = Path.home() / "anaconda3" / "envs" / env_name / "bin" / "python"
+    if anaconda_base.exists():
+        return str(anaconda_base)
+    return sys.executable  # last resort
+
+
 def _generate_service_unit(host: str, port: int, work_dir: Path, description: str,
-                           env_vars=None) -> str:
+                           env_vars=None, python_bin: str = None) -> str:
     """Generate a systemd user service unit file for the ARK webapp."""
-    python_bin = sys.executable
+    if python_bin is None:
+        python_bin = sys.executable
     env_lines = ""
     if env_vars:
         for k, v in env_vars.items():
@@ -3058,26 +3071,34 @@ def _check_linger():
 def _cmd_webapp_install(host: str, port: int, dev: bool = False):
     """Install and start ARK webapp as a systemd user service."""
     import subprocess as _sp
+    import socket as _socket
+
+    # Shared data directory for both dev and prod
+    data_dir = get_ark_root() / ".ark" / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    db_path = data_dir / "webapp.db"
 
     if dev:
         svc_name = _DEV_SERVICE
         port = port if port != _PROD_PORT else _DEV_PORT
         work_dir = get_ark_root()
         desc = "ARK Research Portal (dev)"
-        db_name = "webapp-dev.db"
-        # Load dev overrides from .ark/webapp-dev.env
-        dev_env_file = get_config_dir() / "webapp-dev.env"
-        if not dev_env_file.exists():
-            dev_env_file.write_text(
-                "# Dev-only overrides (takes priority over webapp.env)\n"
-                "# ALLOWED_EMAILS=user1@example.com,user2@example.com\n"
-            )
-            print(f"  Created {_c(str(dev_env_file), Colors.CYAN)} — edit to set dev-only config.")
+        python_bin = _conda_env_python("ark-dev")
+        conda_env = "ark-dev"
+
+        # Install editable in ark-dev env
+        print(f"  Installing dependencies (editable) in {conda_env}...")
+        r = _sp.run(
+            [python_bin, "-m", "pip", "install", "-e", ".[webapp]", "-q"],
+            capture_output=True, text=True, cwd=work_dir,
+        )
+        if r.returncode != 0:
+            print(f"  {_c(f'pip install warning: {r.stderr.strip()[:200]}', Colors.YELLOW)}")
     else:
         svc_name = _PROD_SERVICE
         work_dir = _get_prod_worktree_dir()
         desc = "ARK Research Portal"
-        db_name = "webapp.db"
+        python_bin = _conda_env_python("ark-prod")
 
         # Ensure prod worktree exists
         if not work_dir.exists():
@@ -3085,15 +3106,32 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
             print(f"  Run {_c('ark webapp release', Colors.BOLD)} first to create it.")
             return
 
-    # Override DB_PATH via environment variable so dev/prod use separate DBs
-    db_path = get_ark_root() / "ark_webapp" / db_name
-    env_vars = {"ARK_WEBAPP_DB_PATH": str(db_path)}
+        # Symlink shared webapp.env into prod worktree
+        prod_ark_dir = work_dir / ".ark"
+        prod_ark_dir.mkdir(parents=True, exist_ok=True)
+        prod_env_link = prod_ark_dir / "webapp.env"
+        main_env = get_config_dir() / "webapp.env"
+        if main_env.exists() and not prod_env_link.exists():
+            prod_env_link.symlink_to(main_env)
+
+    # Environment variables for systemd service
+    hostname = _socket.gethostname()
+    env_vars = {
+        "ARK_WEBAPP_DB_PATH": str(db_path),
+        "PROJECTS_ROOT": str(data_dir / "projects"),
+    }
+
     if dev:
         env_vars["ARK_SESSION_COOKIE"] = "session_dev"
-
-    # Load dev-only env overrides
-    if dev:
+        env_vars["BASE_URL"] = f"http://{hostname}:{port}"
+        # Load dev-only env overrides
         dev_env_file = get_config_dir() / "webapp-dev.env"
+        if not dev_env_file.exists():
+            dev_env_file.write_text(
+                "# Dev-only overrides (takes priority over webapp.env)\n"
+                "# ALLOWED_EMAILS=user1@example.com,user2@example.com\n"
+            )
+            print(f"  Created {_c(str(dev_env_file), Colors.CYAN)} — edit to set dev-only config.")
         if dev_env_file.exists():
             for line in dev_env_file.read_text().splitlines():
                 line = line.strip()
@@ -3105,7 +3143,7 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
     svc_path = _service_file_path(svc_name)
     svc_path.parent.mkdir(parents=True, exist_ok=True)
 
-    unit = _generate_service_unit(host, port, work_dir, desc, env_vars)
+    unit = _generate_service_unit(host, port, work_dir, desc, env_vars, python_bin=python_bin)
     svc_path.write_text(unit)
     print(f"  Service file written to {_c(str(svc_path), Colors.CYAN)}")
 
@@ -3256,16 +3294,26 @@ def _cmd_webapp_release(args):
 
     print(f"  {_c('Prod worktree:', Colors.GREEN)} {prod_dir} → {tag}")
 
-    # 5. Install in prod worktree
-    print(f"  Installing dependencies in prod...")
+    # 5. Install in prod worktree using ark-prod conda env (non-editable)
+    prod_python = _conda_env_python("ark-prod")
+    print(f"  Installing dependencies in ark-prod (non-editable)...")
     r = _sp.run(
-        [sys.executable, "-m", "pip", "install", "-e", ".[webapp]", "-q"],
+        [prod_python, "-m", "pip", "install", ".[webapp]", "-q"],
         capture_output=True, text=True, cwd=prod_dir,
     )
     if r.returncode != 0:
         print(f"  {_c(f'pip install warning: {r.stderr.strip()[:200]}', Colors.YELLOW)}")
 
-    # 6. Restart prod service if running
+    # 6. Symlink shared webapp.env into prod worktree
+    prod_ark_dir = prod_dir / ".ark"
+    prod_ark_dir.mkdir(parents=True, exist_ok=True)
+    prod_env_link = prod_ark_dir / "webapp.env"
+    main_env = get_config_dir() / "webapp.env"
+    if main_env.exists():
+        prod_env_link.unlink(missing_ok=True)
+        prod_env_link.symlink_to(main_env)
+
+    # 7. Restart prod service if running
     svc_path = _service_file_path(_PROD_SERVICE)
     if svc_path.exists():
         print(f"  Restarting prod service...")

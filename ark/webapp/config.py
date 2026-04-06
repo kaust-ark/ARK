@@ -14,7 +14,7 @@ def _env_file() -> Path:
     return get_config_dir() / "webapp.env"
 
 _DEFAULTS = {
-    "BASE_URL": f"http://{socket.gethostname()}:8423",
+    "BASE_URL": f"http://{socket.gethostname()}:9527",
     "EMAIL_DOMAINS": "",
     "SMTP_HOST": "smtp.gmail.com",
     "SMTP_PORT": "587",
@@ -54,7 +54,7 @@ def _write_default_env():
 # ARK Web App configuration
 # Edit this file, then restart: ark webapp
 
-BASE_URL=http://{hostname}:8423
+BASE_URL=http://{hostname}:9527
 
 # SMTP — required for magic link login
 SMTP_HOST=smtp.gmail.com
@@ -78,9 +78,9 @@ ADMIN_EMAILS=
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 
-PROJECTS_ROOT={_root / 'ark_webapp' / 'projects'}
+PROJECTS_ROOT={_root / '.ark' / 'data' / 'projects'}
 SECRET_KEY={secrets.token_hex(32)}
-DB_PATH={_config_dir / 'webapp.db'}
+DB_PATH={_root / '.ark' / 'data' / 'webapp.db'}
 
 # Optional SLURM settings (auto-detected if blank)
 SLURM_PARTITION=
@@ -106,13 +106,17 @@ class Settings:
         self.smtp_from: str = merged.get("SMTP_FROM", "ark@localhost")
         _root = get_ark_root()
         _config_dir = get_config_dir()
-        self.projects_root: Path = Path(merged.get("PROJECTS_ROOT") or str(_root / "ark_webapp" / "projects"))
+        self.projects_root: Path = Path(
+            os.environ.get("PROJECTS_ROOT")
+            or merged.get("PROJECTS_ROOT")
+            or str(_root / ".ark" / "data" / "projects")
+        )
         self.secret_key: str = merged.get("SECRET_KEY", _DEFAULTS["SECRET_KEY"])
         # ARK_WEBAPP_DB_PATH env var takes priority (used for dev/prod separation)
         self.db_path: str = (
             os.environ.get("ARK_WEBAPP_DB_PATH")
             or merged.get("DB_PATH")
-            or str(_config_dir / "webapp.db")
+            or str(_root / ".ark" / "data" / "webapp.db")
         )
         self.slurm_partition: str = merged.get("SLURM_PARTITION", "")
         self.slurm_account: str = merged.get("SLURM_ACCOUNT", "")
