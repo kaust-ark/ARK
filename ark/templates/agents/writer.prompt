@@ -76,6 +76,10 @@ After every modification, compile and check that:
    ```
 3. **Figures match their context** — a figure referenced in Section 3 should appear on or near Section 3's pages, not 2 pages later
 4. **Multi-panel figures use correct environment** — figures with 2+ panels (side-by-side) should use `\begin{figure*}` (full width) in multi-column templates, so fonts are readable
+5. **No large whitespace gaps on body pages** — floats that don't fit on the current page can leave a big vertical gap (e.g., a paragraph ends, several inches of whitespace, then the next section starts on the next page). After compiling, visually scan every body page:
+   - If you see a gap larger than ~1/4 of page height between paragraphs, it's a float placement problem
+   - Fix it by: shrinking the offending figure, moving its `\begin{figure}` closer to where it's first referenced, switching `[t]` to `[!htbp]`, or combining adjacent small figures into one
+   - As a last resort, allow the float to appear slightly earlier or later than its reference rather than creating mid-page whitespace
 
 If you see layout issues after compiling, fix them before finishing.
 

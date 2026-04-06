@@ -650,7 +650,7 @@ After making all changes, you MUST verify the page count:
             min_pages = venue_pages - 0.05  # double-column: right column 90% filled
         else:
             min_pages = venue_pages - 0.1   # single-column: last page 90% filled
-        max_pages = venue_pages + 0.1
+        max_pages = venue_pages
         latex_dir = self.config.get("latex_dir", "paper")
 
         self.log(f"[{context}] Page check: {page_count:.1f} body pages "
@@ -662,6 +662,7 @@ After making all changes, you MUST verify the page count:
         tolerance_relaxations = 0
         cur_min = min_pages
         cur_max = max_pages
+        history = []  # list of {"before", "after", "action"} for feedback to LLM
 
         while True:
             in_range = cur_min <= page_count <= cur_max
@@ -690,19 +691,38 @@ After making all changes, you MUST verify the page count:
                          f"({page_count:.1f}/{venue_pages} pages)", "ERROR")
                 raise QuotaExhaustedError(page_count, venue_pages)
 
+            # Build history block (shown from attempt 2 onward)
+            if history:
+                hist_lines = ["## Previous attempts in this loop"]
+                for i, h in enumerate(history, 1):
+                    delta = h["after"] - h["before"]
+                    hist_lines.append(
+                        f"{i}. {h['before']:.2f} → {h['after']:.2f} pages "
+                        f"(asked to {h['action']}, actual delta {delta:+.2f})"
+                    )
+                hist_lines.append(
+                    "Use these observations to calibrate your edit size — "
+                    "if a previous attempt overshot, be gentler; if it had no "
+                    "measurable effect, be more aggressive.\n"
+                )
+                hist_block = "\n".join(hist_lines) + "\n"
+            else:
+                hist_block = ""
+
+            page_before = page_count
+            gap = page_count - venue_pages  # positive=over, negative=under
+
             if page_count > cur_max:
                 action = "compress"
                 self.log(f"[{context}] Over limit ({page_count:.1f} > {cur_max:.1f}), compressing (attempt {attempt})...", "WARN")
-                self.run_agent("writer", f"""## PAGE COMPRESSION (attempt {attempt})
+                self.run_agent("writer", f"""{hist_block}## PAGE COMPRESSION (attempt {attempt})
 
-The paper body is currently {page_count:.1f} pages, exceeding the limit.
+The paper body is currently {page_count:.2f} pages, {gap:+.2f} pages over the limit ({columns}-column).
 Target: between {cur_min:.2f} and {venue_pages:.0f} body pages. Do NOT over-compress.
 
 Reduce carefully — aim for exactly {venue_pages} pages, NOT much less. Strategies:
-- Condense verbose paragraphs by ~10-15% (not more)
 - Merge overlapping sentences in related work
 - Move only truly non-essential subsections to \\appendix
-- Reduce whitespace around figures/tables (use \\vspace{{-4pt}})
 - Do NOT remove key technical content, results, or entire sections
 
 After changes, compile and verify body pages are between {cur_min:.2f} and {venue_pages:.0f}.
@@ -712,9 +732,10 @@ Ensure `\\clearpage` before `\\bibliography`.
             elif page_count < cur_min:
                 action = "expand"
                 self.log(f"[{context}] Under target ({page_count:.1f} < {cur_min:.2f}), expanding (attempt {attempt})...", "WARN")
-                self.run_agent("writer", f"""## PAGE EXPANSION (attempt {attempt})
+                self.run_agent("writer", f"""{hist_block}## PAGE EXPANSION (attempt {attempt})
 
-The paper body is currently {page_count:.1f} pages. Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
+The paper body is currently {page_count:.2f} pages, {-gap:+.2f} pages short of the target ({columns}-column).
+Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
 
 Expand by adding substantive content (NOT filler):
 - Deepen the analysis/discussion section with more insights
@@ -730,6 +751,7 @@ Ensure `\\clearpage` before `\\bibliography`.
             self._ensure_clearpage_before_bibliography()
             self.compile_latex()
             page_count = getattr(self, '_body_page_count', 0)
+            history.append({"before": page_before, "after": page_count, "action": action})
             if not page_count:
                 self.log(f"[{context}] Could not determine page count after {action}", "WARN")
                 return True
