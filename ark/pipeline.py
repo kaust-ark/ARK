@@ -1,6 +1,7 @@
 """PipelineMixin: main run loop, paper iteration, research iteration, dependency check."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from ark.execution import QuotaExhaustedError
 from ark.ui import RateLimitCountdown
 
 
@@ -450,7 +452,27 @@ Notes:
         self._ensure_float_barrier()
         self.compile_latex()
         self._fix_overfull(context="pre-delivery")
-        self._enforce_page_count(context="pre-delivery")
+        try:
+            self._enforce_page_count(context="pre-delivery")
+        except QuotaExhaustedError as e:
+            self.iteration -= 1  # Don't count this failed iteration
+            self.log("", "RAW")
+            self.log_summary_box("Iteration ABORTED (quota exhausted during page enforcement)", [
+                f"Score: {score}/10 (unchanged)",
+                f"Page count: {e.page_count:.1f}/{e.venue_pages} (over limit, cannot compress)",
+                "Iteration not counted, will retry after quota resets",
+            ], inside_phase=False)
+            self.save_checkpoint()
+            wait_time = 1800  # 30 min
+            self.log(f"Pausing {wait_time}s waiting for API quota to reset...", "ERROR")
+            self.send_notification(
+                "Quota Exhausted",
+                f"Page compression failed ({e.page_count:.1f}/{e.venue_pages} pages), "
+                f"pausing {wait_time // 60}min before retry",
+                priority="critical",
+            )
+            RateLimitCountdown(wait_time).run()
+            return True  # continue to retry
         self._run_citation_verification()
 
         # Send iteration summary + PDF to Telegram
@@ -657,7 +679,7 @@ Notes:
         self.log_section("Research Phase  |  Literature & Background Survey")
 
         if self.telegram.is_configured:
-            self.telegram.send("<b>🔬 ══ RESEARCH PHASE ══</b>\nRunning Deep Research (5-20 min)...", parse_mode="HTML")
+            self.telegram.send(f"<b>🔬 {self.display_name}</b>\nResearch Phase — Deep Research (5-20 min)...", parse_mode="HTML")
 
         # Step 1: Run Deep Research
         self.log_step_header(1, 1, "Deep Research (Gemini)")
@@ -983,33 +1005,48 @@ Rules:
     def _run_dev_phase(self):
         """Run the Dev Phase: iterative experiments → initial paper draft.
 
-        Flow per iteration:
+        Steps:
           1. Plan experiments (planner)
-          2. Run ALL experiments in batch (experimenter + compute)
+          2. Run experiments (experimenter + compute)
           3. Analyze results (researcher)
-          4. Evaluate completeness (planner)
-          → If sufficient: write initial draft and exit
-          → If not: next iteration
-
-        After loop: writer produces complete initial draft.
+          4. Evaluate completeness (planner) → loop if insufficient
+          5. Generate figures (matplotlib + AI concept)
+          6. Write initial draft (writer)
+          7. Deliver (compile, verify, notify)
         """
         max_dev_iters = self.config.get("max_dev_iterations", 3)
         dev_state = self._load_dev_phase_state()
-
-        # Resume from previous iteration if restarting
         start_iter = dev_state.get("iteration", 0)
 
         self.log("", "RAW")
         self.log_section(f"Dev Phase  |  Building experiments & data  |  max {max_dev_iters} iterations")
         self._send_dev_phase_telegram("start", 0, max_dev_iters)
 
-        # Gather Deep Research context (Research Phase already completed by now)
+        research_idea = self.config.get("research_idea", "")
+
+        # Steps 1-4: Iterative experiment loop
+        self._run_experiment_loop(dev_state, start_iter, max_dev_iters, research_idea)
+
+        # Steps 5-7: Generate figures, write draft, deliver
+        self.log("", "RAW")
+        self.log_section("✏️ Writing Initial Paper Draft")
+        self._send_dev_phase_telegram("writing", 0, 0)
+
+        self._generate_all_figures()
+        self._write_initial_draft(research_idea)
+        self._deliver_dev_phase(dev_state, max_dev_iters)
+
+    def _run_experiment_loop(self, dev_state: dict, start_iter: int,
+                             max_dev_iters: int, research_idea: str):
+        """Steps 1-4: Iterative experiment planning, execution, analysis, and evaluation.
+
+        Loops until experiments are sufficient or max iterations reached.
+        """
         deep_research_file = self.state_dir / "deep_research.md"
         deep_research_ctx = ""
         if deep_research_file.exists():
             deep_research_ctx = deep_research_file.read_text()[:3000]
 
-        research_idea = self.config.get("research_idea", "")
         findings_summary = self._load_findings_summary()
 
         for dev_iter in range(start_iter + 1, max_dev_iters + 1):
@@ -1022,8 +1059,33 @@ Rules:
             self._send_dev_phase_telegram("iteration", dev_iter, max_dev_iters)
 
             # Step 1: Plan experiments
-            self.log_step_header(1, 4, "Plan Experiments")
-            plan_output = self.run_agent("planner", f"""
+            plan_output = self._plan_experiments(dev_iter, max_dev_iters,
+                                                  research_idea, deep_research_ctx,
+                                                  findings_summary)
+
+            # Step 2: Run experiments
+            exp_output = self._run_experiments(dev_iter, max_dev_iters, plan_output)
+
+            # Step 3: Analyze results
+            research_output = self._analyze_results(exp_output)
+
+            # Step 4: Evaluate completeness
+            findings_summary = self._load_findings_summary()
+            sufficient = self._evaluate_completeness(research_idea, findings_summary,
+                                                      research_output)
+
+            if sufficient:
+                self.log_step("Experiments sufficient, proceeding to initial draft", "success")
+                break
+
+            self.log_step(f"Dev iter {dev_iter}: more experiments needed", "warning")
+
+    def _plan_experiments(self, dev_iter: int, max_dev_iters: int,
+                          research_idea: str, deep_research_ctx: str,
+                          findings_summary: str) -> str:
+        """Step 1: Plan experiments using planner agent."""
+        self.log_step_header(1, 4, "Plan Experiments")
+        output = self.run_agent("planner", f"""
 You are planning experiments for a research project. This is Dev Phase iteration {dev_iter}/{max_dev_iters}.
 
 ## Research Idea
@@ -1054,17 +1116,20 @@ experiments:
     baseline: "comparison baseline"
 ```
 """, timeout=1200)
-            self.log_step_header(1, 4, "Plan Experiments", "end")
+        self.log_step_header(1, 4, "Plan Experiments", "end")
+        return output
 
-            # Step 2: Run experiments (batch)
-            self.log_step_header(2, 4, "Run Experiments")
-            self._send_dev_phase_telegram("experiments", dev_iter, max_dev_iters)
+    def _run_experiments(self, dev_iter: int, max_dev_iters: int,
+                         plan_output: str) -> str:
+        """Step 2: Run experiments using experimenter agent + compute backend."""
+        self.log_step_header(2, 4, "Run Experiments")
+        self._send_dev_phase_telegram("experiments", dev_iter, max_dev_iters)
 
-            compute_ctx = self._compute_backend.setup()
-            compute_instructions = self._compute_backend.get_agent_instructions()
+        compute_ctx = self._compute_backend.setup()
+        compute_instructions = self._compute_backend.get_agent_instructions()
 
-            try:
-                exp_output = self.run_agent("experimenter", f"""
+        try:
+            exp_output = self.run_agent("experimenter", f"""
 Execute ALL planned experiments for this dev iteration.
 
 ## Experiment Plan
@@ -1082,17 +1147,19 @@ Read auto_research/state/experiment_plan.yaml for the full plan.
 - Handle errors gracefully (log failures, continue with remaining experiments)
 """, timeout=1800)
 
-                self.log_step("Waiting for all experiments to complete...", "progress")
-                self._compute_backend.wait_for_completion(max_wait_hours=4)
-                self._compute_backend.collect_results()
-            finally:
-                self._compute_backend.teardown()
+            self.log_step("Waiting for all experiments to complete...", "progress")
+            self._compute_backend.wait_for_completion(max_wait_hours=4)
+            self._compute_backend.collect_results()
+        finally:
+            self._compute_backend.teardown()
 
-            self.log_step_header(2, 4, "Run Experiments", "end")
+        self.log_step_header(2, 4, "Run Experiments", "end")
+        return exp_output
 
-            # Step 3: Analyze results
-            self.log_step_header(3, 4, "Analyze Results")
-            research_output = self.run_agent("researcher", f"""
+    def _analyze_results(self, exp_output: str) -> str:
+        """Step 3: Analyze experiment results using researcher agent."""
+        self.log_step_header(3, 4, "Analyze Results")
+        output = self.run_agent("researcher", f"""
 Analyze ALL experiment results from this dev iteration.
 
 ## What was run
@@ -1116,15 +1183,15 @@ findings:
     supports_claim: "Which paper claim this supports"
 ```
 """, timeout=1200)
-            self.log_step_header(3, 4, "Analyze Results", "end")
+        self.log_step_header(3, 4, "Analyze Results", "end")
+        return output
 
-            # Step 4: Evaluate completeness
-            self.log_step_header(4, 4, "Evaluate Completeness")
+    def _evaluate_completeness(self, research_idea: str, findings_summary: str,
+                                research_output: str) -> bool:
+        """Step 4: Evaluate if experiments are sufficient to write paper."""
+        self.log_step_header(4, 4, "Evaluate Completeness")
 
-            # Reload findings
-            findings_summary = self._load_findings_summary()
-
-            eval_output = self.run_agent("planner", f"""
+        eval_output = self.run_agent("planner", f"""
 Evaluate whether we have sufficient experimental data for the paper.
 
 ## Research Idea
@@ -1154,55 +1221,51 @@ Output your evaluation in JSON format:
 }}
 ```
 """, timeout=600)
-            self.log_step_header(4, 4, "Evaluate Completeness", "end")
+        self.log_step_header(4, 4, "Evaluate Completeness", "end")
 
-            # Parse evaluation
-            import json as _json
-            import re as _re
-            sufficient = False
-            try:
-                json_match = _re.search(r'\{[^{}]*"sufficient"[^{}]*\}', eval_output, _re.DOTALL)
-                if json_match:
-                    eval_json = _json.loads(json_match.group())
-                    sufficient = eval_json.get("sufficient", False)
-                else:
-                    sufficient = '"sufficient": true' in eval_output.lower()
-            except Exception:
-                sufficient = "sufficient.*true" in eval_output.lower()
+        # Parse evaluation
+        sufficient = False
+        try:
+            json_match = re.search(r'\{[^{}]*"sufficient"[^{}]*\}', eval_output, re.DOTALL)
+            if json_match:
+                eval_json = json.loads(json_match.group())
+                sufficient = eval_json.get("sufficient", False)
+            else:
+                sufficient = '"sufficient": true' in eval_output.lower()
+        except Exception:
+            sufficient = "sufficient.*true" in eval_output.lower()
 
-            if sufficient:
-                self.log_step("Experiments sufficient, proceeding to initial draft", "success")
-                break
+        return sufficient
 
-            self.log_step(f"Dev iter {dev_iter}: more experiments needed", "warning")
+    def _generate_all_figures(self):
+        """Generate all figures: geometry config, matplotlib plots, AI concept figures.
 
-        # Dev phase complete — write initial draft
-        self.log("", "RAW")
-        self.log_section("✏️ Writing Initial Paper Draft")
-        self._send_dev_phase_telegram("writing", 0, 0)
-
-        # ── FIGURES FIRST, THEN WRITE ──
-        # All figures must be ready before writer starts, so writer can reference them.
-
-        # Step 0: Generate figure_config.json with correct venue geometry BEFORE coder runs
+        Must run before _write_initial_draft() so writer knows which figures are available.
+        """
+        # Generate figure_config.json with correct venue geometry
         self._generate_figure_config()
 
-        # Step A: Create plotting script from experiment results
+        # Create plotting script from experiment results
         self._create_plotting_script_if_needed()
 
-        # Step B: Generate matplotlib figures
+        # Generate matplotlib figures
         self.log_step("Generating statistical figures from experiment results...", "progress")
         self.generate_figures()
 
-        # Step C: Generate AI concept figures (sequential — must complete before writer)
+        # Generate AI concept figures
         if self.config.get("figure_generation") == "nano_banana":
             self.log_step("Generating AI concept figures (PaperBanana)...", "progress")
-            self._generate_nano_banana_figures()
+            n = self._generate_nano_banana_figures()
+            if n == 0:
+                self.log("No concept figures were generated", "WARN")
 
-        # Step D: List all available figures for the writer
+    def _write_initial_draft(self, research_idea: str):
+        """Write the initial paper draft using writer agent.
+
+        Assumes all figures are already generated (call _generate_all_figures first).
+        """
         figure_list = self._list_available_figures()
 
-        # Step E: Writer writes paper with KNOWN figure filenames
         paper_requirements = self.load_paper_requirements()
         req_summary = yaml.dump(paper_requirements, allow_unicode=True) if paper_requirements else "No special requirements"
         findings_summary = self._load_findings_summary()
@@ -1267,7 +1330,12 @@ Produce the complete paper. Do not stop until all sections are written and it co
 
         self.run_agent("writer", prompt, timeout=3600)
 
-        # Step F: Inject \clearpage before \bibliography + enforce page count
+    def _deliver_dev_phase(self, dev_state: dict, max_dev_iters: int):
+        """Compile, verify, and deliver the dev phase draft.
+
+        Handles: clearpage injection, compilation, page count, citations,
+        Telegram notification, and marking dev phase as completed.
+        """
         self._ensure_clearpage_before_bibliography()
         self.log_step("Compiling initial draft...", "progress")
         draft_compiled = self._compile_until_success(
@@ -1278,7 +1346,23 @@ Produce the complete paper. Do not stop until all sections are written and it co
             self._ensure_float_barrier()
             self.compile_latex()
             self._fix_overfull(context="dev-phase-delivery")
-            self._enforce_page_count(context="dev-phase-delivery")
+            try:
+                self._enforce_page_count(context="dev-phase-delivery")
+            except QuotaExhaustedError as e:
+                wait_time = 1800
+                self.log(f"Quota exhausted during dev phase page enforcement "
+                         f"({e.page_count:.1f}/{e.venue_pages} pages), "
+                         f"pausing {wait_time // 60}min before retry...", "ERROR")
+                self.send_notification(
+                    "Quota Exhausted",
+                    f"Dev phase page enforcement failed "
+                    f"({e.page_count:.1f}/{e.venue_pages} pages), "
+                    f"pausing {wait_time // 60}min before retry",
+                    priority="critical",
+                )
+                RateLimitCountdown(wait_time).run()
+                self._quota_exhausted = False  # Reset for retry
+                self._enforce_page_count(context="dev-phase-delivery-retry")
             self._run_citation_verification()
 
         if draft_compiled and self.telegram.is_configured:
@@ -1286,7 +1370,7 @@ Produce the complete paper. Do not stop until all sections are written and it co
             if pdf_path.exists():
                 ok = self.telegram.send_document(
                     pdf_path,
-                    caption=f"📄 <b>Initial draft ready</b> — {self.project_name}\n"
+                    caption=f"📄 <b>Initial draft ready</b> — {self.display_name}\n"
                             f"Dev Phase complete ({dev_state['iteration']} iterations)\n"
                             f"Entering Review Phase now.",
                 )
@@ -1656,8 +1740,9 @@ Only use double_column for multi-panel figures (side-by-side subplots).
         if not self.telegram.is_configured:
             return
         try:
+            name = self.display_name
             if event == "start":
-                self.telegram.send(f"<b>⚙️ ══ DEV PHASE ══</b>\nMax {total} iterations", parse_mode="HTML")
+                self.telegram.send(f"<b>⚙️ {name}</b>\nDev Phase — max {total} iterations", parse_mode="HTML")
             elif event == "iteration":
                 self.telegram.send(f"🔬 Dev {current}/{total}: Planning experiments...")
             elif event == "experiments":
@@ -1665,7 +1750,7 @@ Only use double_column for multi-panel figures (side-by-side subplots).
             elif event == "writing":
                 self.telegram.send(f"✏️ Dev done → Writing initial draft...")
             elif event == "complete":
-                self.telegram.send(f"<b>✅ Dev Phase Complete</b> → Review Phase", parse_mode="HTML")
+                self.telegram.send(f"<b>✅ {name}</b> — Dev Phase Complete → Review", parse_mode="HTML")
         except Exception:
             pass
 

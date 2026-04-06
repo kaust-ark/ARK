@@ -1,0 +1,10 @@
+# LaTeX build artifacts - do not commit
+*.pdf
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.synctex.gz
+*.fls
+*.fdb_latexmk

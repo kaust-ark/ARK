@@ -15,6 +15,9 @@ class User(SQLModel, table=True):
     email: str = Field(unique=True, index=True)
     name: str = ""
     picture: str = ""
+    welcome_sent: bool = False
+    telegram_token: str = ""
+    telegram_chat_id: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -27,7 +30,8 @@ class Project(SQLModel, table=True):
     venue: str = ""
     venue_format: str = ""
     venue_pages: int = 9
-    max_iterations: int = 3
+    max_iterations: int = 2       # review iterations
+    max_dev_iterations: int = 3   # dev phase iterations
     mode: str = "paper"
     status: str = "queued"      # queued | running | done | failed | stopped
     slurm_job_id: str = ""
@@ -38,6 +42,14 @@ class Project(SQLModel, table=True):
     telegram_chat_id: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Feedback(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    user_id: str = Field(index=True)
+    project_id: str = ""          # optional association
+    message: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 _engine = None
@@ -58,16 +70,17 @@ def get_session(db_path: str):
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def get_or_create_user_by_email(session: Session, email: str) -> User:
+def get_or_create_user_by_email(session: Session, email: str) -> tuple[User, bool]:
+    """Return (user, is_new). ``is_new`` is True when the account was just created."""
     user = session.exec(select(User).where(User.email == email)).first()
     if user:
-        return user
+        return user, False
     name = email.split("@")[0].split(".")[0].capitalize()
     user = User(email=email, name=name)
     session.add(user)
     session.commit()
     session.refresh(user)
-    return user
+    return user, True
 
 
 def get_user(session: Session, user_id: str) -> Optional[User]:
@@ -121,4 +134,27 @@ def get_running_projects(session: Session) -> list[Project]:
 def get_waiting_template_projects(session: Session) -> list[Project]:
     return list(session.exec(
         select(Project).where(Project.status == "waiting_template")
+    ).all())
+
+
+# ── feedback helpers ────────────────────────────────────────────────────────
+
+def create_feedback(session: Session, **kwargs) -> Feedback:
+    fb = Feedback(**kwargs)
+    session.add(fb)
+    session.commit()
+    session.refresh(fb)
+    return fb
+
+
+def get_feedbacks_for_user(session: Session, user_id: str) -> list[Feedback]:
+    return list(session.exec(
+        select(Feedback).where(Feedback.user_id == user_id)
+        .order_by(Feedback.created_at.desc())
+    ).all())
+
+
+def get_all_feedbacks(session: Session) -> list[Feedback]:
+    return list(session.exec(
+        select(Feedback).order_by(Feedback.created_at.desc())
     ).all())

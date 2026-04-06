@@ -11,6 +11,15 @@ from pathlib import Path
 from typing import List
 
 
+class QuotaExhaustedError(Exception):
+    """Raised when page count enforcement fails due to quota exhaustion."""
+
+    def __init__(self, page_count: float, venue_pages: int):
+        self.page_count = page_count
+        self.venue_pages = venue_pages
+        super().__init__(f"Quota exhausted with {page_count:.1f}/{venue_pages} body pages")
+
+
 class ExecutionMixin:
     """Mixin providing execution logic for the paper improvement pipeline.
 
@@ -351,7 +360,7 @@ Please read auto_research/state/latest_review.md and regenerate.
                 if reply and reply.strip():
                     user_provided_fix = True
                 elif reply is None and self.telegram.is_configured:
-                    self.telegram.send(f"⏰ *{self.project_name}*: 15min timeout — auto-fixing {len(tech_violations)} violation(s), continuing.")
+                    self.telegram.send(f"⏰ <b>{self.display_name}</b>: 15min timeout — auto-fixing {len(tech_violations)} violation(s), continuing.", parse_mode="HTML")
 
             # Auto-fix technical violations if user didn't provide guidance
             if tech_violations and not user_provided_fix:
@@ -677,8 +686,9 @@ After making all changes, you MUST verify the page count:
                 continue
 
             if self._quota_exhausted:
-                self.log(f"[{context}] Quota exhausted, accepting {page_count:.1f} pages", "WARN")
-                return page_count <= venue_pages + 0.5  # Hard ceiling: never more than half page over
+                self.log(f"[{context}] Quota exhausted, cannot enforce page count "
+                         f"({page_count:.1f}/{venue_pages} pages)", "ERROR")
+                raise QuotaExhaustedError(page_count, venue_pages)
 
             if page_count > cur_max:
                 action = "compress"
@@ -971,9 +981,12 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
 
             if concept_tasks:
                 self.log_step(f"Routing {len(concept_tasks)} concept figure tasks to Nano Banana", "progress")
-                self._generate_nano_banana_figures()
-                for task in concept_tasks:
-                    task["status"] = "completed"
+                n_generated = self._generate_nano_banana_figures()
+                if n_generated > 0:
+                    for task in concept_tasks:
+                        task["status"] = "completed"
+                else:
+                    self.log("Concept figure generation produced 0 figures, tasks remain pending", "WARN")
                 self._save_action_plan(action_plan)
 
             # Only keep matplotlib tasks for the standard figure code path

@@ -1767,7 +1767,8 @@ function renderProjectCard(p) {
   const score = (p.score || 0).toFixed(1);
   const pct = Math.round((p.score || 0) / 10 * 100);
   const statusLabel = t('status_' + p.status) || p.status;
-  const idea = p.idea ? esc(p.idea.substring(0,90)) + (p.idea.length>90?'…':'') : '';
+  const idea = p.idea ? esc(p.idea.substring(0,90)) + (p.idea.length>90?'…':'')
+    : (p.has_pdf_upload ? '📄 Uploaded PDF' : '');
   return `
     <div class="project-card" onclick="navigate('detail', {id:'${p.id}'})">
       <div class="project-card-header">
@@ -1806,7 +1807,14 @@ async function loadDetail(id) {
   const titleEl = document.getElementById('detail-paper-title');
   titleEl.textContent = p.paper_title || p.title || p.name || '—';
   titleEl.dataset.projectId = p.id;
-  document.getElementById('detail-idea').textContent = p.idea || '—';
+  const ideaEl = document.getElementById('detail-idea');
+  if (p.idea) {
+    ideaEl.textContent = p.idea;
+  } else if (p.has_pdf_upload) {
+    ideaEl.innerHTML = `📄 <a href="/api/projects/${esc(p.id)}/uploaded-pdf" target="_blank" style="color:var(--teal)">Uploaded PDF</a>`;
+  } else {
+    ideaEl.textContent = '—';
+  }
 
   let statusLine;
   if (p.status === 'done') {
@@ -2366,6 +2374,11 @@ async function submitNewProject(e) {
 
   const fd = new FormData(form);
   // Remove the hidden name="idea" textarea value (already in fd), append files
+  // Send the first PDF as pdf_file (backend expects this field name)
+  const pdfIdx = selectedFiles.findIndex(f => f.name.toLowerCase().endsWith('.pdf'));
+  if (pdfIdx !== -1) {
+    fd.set('pdf_file', selectedFiles[pdfIdx]);
+  }
   selectedFiles.forEach(f => fd.append('attachments', f));
 
   // Handle custom template
@@ -2719,7 +2732,7 @@ function renderAdminTable(filter) {
     const email = (p.user_email || '').replace(/@.*/, '') || p.user_email || '—';
     const titleStr = p.title || p.name || '';
     const title = titleStr.substring(0, 40);
-    const ideaStr = p.idea || '';
+    const ideaStr = p.idea || (p.has_pdf_upload ? '📄 Uploaded PDF' : '');
     const idea = ideaStr.substring(0, 50);
     const color = statusColors[p.status] || '#94a3b8';
     const label = statusLabels[p.status] || p.status;

@@ -55,6 +55,9 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         self.model = model
         self.project_name = project
 
+        # Human-readable display name (resolved after config loads)
+        self._display_name = None
+
         # Project paths and config
         if project_dir:
             self.project_path = Path(project_dir).absolute()
@@ -180,6 +183,15 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         self._tg_chat_history: list[dict] = []
         self._tg_chat_lock = threading.Lock()
         self._tg_history_file = self.state_dir / "tg_history.jsonl"
+
+    @property
+    def display_name(self) -> str:
+        """Human-readable project name: title from config, else project slug."""
+        if self._display_name is None:
+            title = self.config.get("title") or ""
+            name = self.config.get("name") or ""
+            self._display_name = title or name or self.project_name
+        return self._display_name
 
     # ========== Deep Research (background) ==========
 
@@ -589,7 +601,7 @@ a {{ color: #0d9488; }}
             self.telegram.send_raw("No compiled PDF available yet.")
             return
 
-        caption = f"📄 iter {self.iteration}, score {self._last_score:.1f}/10"
+        caption = f"📄 {self.display_name} — iter {self.iteration}, score {self._last_score:.1f}/10"
         ok = self.telegram.send_document(pdf, caption=caption)
         if ok:
             self.log(f"PDF sent via Telegram: {pdf} ({pdf.stat().st_size} bytes)", "INFO")
@@ -633,6 +645,7 @@ a {{ color: #0d9488; }}
 
         # Build compact message
         lines = [
+            f"<b>{self.display_name}</b>",
             f"━━━ #{self.iteration}  {score_line} ━━━",
             f"Target: {self.paper_accept_threshold}/10 | {gap_line}",
         ]
@@ -1512,7 +1525,7 @@ a {{ color: #0d9488; }}
         if reply is None:
             default_label = options[default] if options else 'N/A'
             self.log(f"Decision timed out, using default: {default_label}", "WARN")
-            self.telegram.send(f"⏰ *{self.project_name}*: timeout — auto-selected: {default_label}")
+            self.telegram.send(f"⏰ <b>{self.display_name}</b>: timeout — auto-selected: {default_label}", parse_mode="HTML")
             return default, ""
 
         if options:

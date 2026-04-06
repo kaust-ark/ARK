@@ -688,26 +688,55 @@ class CompilerMixin:
         # Fallback: subprocess via conda env
         return self._pdf_to_images_fallback()
 
-    def _generate_nano_banana_figures(self):
+    def _generate_nano_banana_figures(self) -> int:
         """Generate AI concept figures using PaperBanana pipeline or Nano Banana fallback.
 
+        All concept figure data lives in figures_dir (paper/figures/):
+        - concept_figures.json — spec of what figures to generate
+        - fig_*.png — generated images
+        - figure_manifest.json — tracks provenance (source: paperbanana/nano_banana)
+
         Flow:
-        1. Run agent to analyze paper and identify concept figures
-        2. Agent outputs JSON list of figures with prompts
-        3. For each figure: try PaperBanana (Retriever→Planner→Stylist→Visualizer→Critic),
-           fall back to Nano Banana pipeline if PaperBanana unavailable
-        4. Generated PNGs saved to figures_dir
+        1. Check if spec + all PNGs already exist → skip planner
+        2. Otherwise run planner agent to identify concept figures
+        3. Read spec from: figures_dir (designated) → agent text → rglob (fallback)
+        4. Normalize spec to figures_dir/concept_figures.json
+        5. For each figure not yet in manifest: PaperBanana → Nano Banana fallback
+
+        Returns:
+            Number of concept figures available (existing + newly generated).
         """
         from ark.nano_banana import get_api_key
+        from ark.figure_manifest import load_manifest, save_manifest, register_figure, AI_SOURCES
+
+        spec_path = self.figures_dir / "concept_figures.json"
+        manifest = load_manifest(self.figures_dir)
+
+        # ── Phase 0: Check if all concept figures already exist ──
+        if spec_path.exists():
+            try:
+                figures = json.loads(spec_path.read_text())
+                if isinstance(figures, list) and figures:
+                    all_done = all(
+                        (self.figures_dir / f"{fig.get('name', '')}.png").exists()
+                        and manifest.get("figures", {}).get(f"{fig.get('name', '')}.png", {}).get("source") in AI_SOURCES
+                        for fig in figures if isinstance(fig, dict)
+                    )
+                    if all_done:
+                        self.log(f"All {len(figures)} concept figures already exist, skipping", "INFO")
+                        return len(figures)
+            except (json.JSONDecodeError, OSError):
+                pass  # Spec file corrupt, will re-generate
+
+        # ── Phase 1: Get API key ──
         api_key = get_api_key()
         if not api_key:
             self.log("No Gemini API key found, skipping AI figure generation", "WARN")
-            return
+            return 0
 
         venue = self.config.get("venue", "")
-        latex_dir = self.config.get("latex_dir", "Latex")
 
-        # Gather context for planner — use idea, findings, deep research (NOT main.tex which may be empty)
+        # ── Phase 2: Gather context for planner ──
         idea = self.config.get("idea", "")
         title = self.config.get("title", "")
         findings_file = self.state_dir / "findings.yaml" if hasattr(self, 'state_dir') else None
@@ -721,15 +750,14 @@ class CompilerMixin:
         if dr_file and dr_file.exists():
             paper_context += f"Background research:\n{dr_file.read_text()[:1500]}\n"
 
-        # Also check main.tex if it has content (for review phase, not empty template)
         main_tex = self.latex_dir / "main.tex"
         if main_tex.exists():
             tex_content = main_tex.read_text()
-            # Only use main.tex if it has real content (not just a template skeleton)
             if len(tex_content) > 1000:
                 paper_context += f"\nCurrent paper content:\n{tex_content[:2000]}\n"
 
-        # Ask PLANNER (not visualizer) to decide what concept figures are needed
+        # ── Phase 3: Run planner agent ──
+        figures_dir_rel = self.figures_dir.relative_to(self.code_dir) if self.figures_dir.is_relative_to(self.code_dir) else self.figures_dir
         analysis_output = self.run_agent("planner", f"""Based on the research described below, identify concept figures that should be
 AI-generated for this paper. These are architecture diagrams, system overviews, pipeline illustrations,
 mechanism diagrams — NOT data plots (bar charts, line charts etc. are handled separately).
@@ -739,8 +767,12 @@ mechanism diagrams — NOT data plots (bar charts, line charts etc. are handled 
 
 ## Your Task
 Identify 1-3 concept figures that would best illustrate this research. Every paper needs at least
-one system overview/architecture figure. Output a JSON block:
+one system overview/architecture figure.
 
+IMPORTANT: Save the JSON array to the file: {figures_dir_rel}/concept_figures.json
+Also output the same JSON in your response text.
+
+The JSON format:
 ```json
 [
   {{
@@ -764,24 +796,47 @@ output: NO_CONCEPT_FIGURES
 
         if not analysis_output or "NO_CONCEPT_FIGURES" in analysis_output:
             self.log_step("Planner decided no concept figures needed", "info")
-            return
+            return 0
 
-        # Parse figure list from agent output
+        # ── Phase 4: Read concept figure spec (2-level fallback) ──
         figures = []
-        try:
-            json_match = re.search(r'\[[\s\S]*?\]', analysis_output)
-            if json_match:
-                figures = json.loads(json_match.group())
-        except (json.JSONDecodeError, AttributeError):
-            self.log("Failed to parse concept figure list from planner output", "WARN")
-            return
+
+        # Level 1: Read from designated path (agent was told to save here)
+        if spec_path.exists():
+            try:
+                parsed = json.loads(spec_path.read_text())
+                if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                    figures = parsed
+                    self.log(f"Loaded concept figures from {spec_path}", "INFO")
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Level 2: Parse from agent text response
+        if not figures and analysis_output:
+            bracket_blocks = re.findall(r'\[[\s\S]*?\]', analysis_output)
+            for block in sorted(bracket_blocks, key=len, reverse=True):
+                if len(block) < 20:
+                    continue
+                try:
+                    parsed = json.loads(block)
+                    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                        figures = parsed
+                        self.log("Parsed concept figures from planner text output", "INFO")
+                        break
+                except json.JSONDecodeError:
+                    continue
 
         if not figures:
-            return
+            self.log("No concept figures from designated path or planner text output", "WARN")
+            return 0
 
+        # ── Phase 4.5: Normalize — save spec to designated path ──
+        self.figures_dir.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(json.dumps(figures, indent=2, ensure_ascii=False) + "\n")
+
+        # ── Phase 5: Generate images ──
         paper_text = paper_context
 
-        # Get geometry for sizing
         from ark.latex_geometry import get_geometry
         venue_format = self.config.get("venue_format", venue)
         geo = get_geometry(venue_format) if venue_format else {"columnwidth_in": 3.333}
@@ -791,6 +846,7 @@ output: NO_CONCEPT_FIGURES
         text_w = geo.get("textwidth_in", 7.0)
 
         generated = 0
+        skipped = 0
         for fig in figures:
             name = fig.get("name", "concept_fig")
             caption = fig.get("caption", "")
@@ -798,25 +854,23 @@ output: NO_CONCEPT_FIGURES
             placement = fig.get("placement", "full_width")
             output_path = self.figures_dir / f"{name}.png"
 
-            # Skip if a real AI-generated figure already exists (>100KB)
-            # Small files (<100KB) are likely writer-created placeholders — regenerate
-            if output_path.exists() and output_path.stat().st_size > 100_000:
-                self.log(f"  Skipping {name}: AI figure already exists ({output_path.stat().st_size // 1024}KB)", "INFO")
+            # Skip if already registered in manifest as AI-generated
+            fig_info = manifest.get("figures", {}).get(f"{name}.png", {})
+            if fig_info.get("source") in AI_SOURCES and output_path.exists():
+                self.log(f"  Skipping {name}: already in manifest as {fig_info['source']}", "INFO")
+                skipped += 1
                 continue
-            if output_path.exists() and output_path.stat().st_size > 0:
-                self.log(f"  Replacing small placeholder {name} ({output_path.stat().st_size // 1024}KB) with AI figure", "INFO")
 
-            # Determine aspect ratio and width based on agent's placement decision
+            # Determine aspect ratio and width based on placement
             if columns == 1:
-                # Single-column templates (NeurIPS): always use textwidth
                 fig_width = text_w
                 aspect_ratio = "16:10"
             elif placement == "full_width":
                 fig_width = text_w
-                aspect_ratio = "21:9"  # wide for spanning both columns
+                aspect_ratio = "21:9"
             else:
                 fig_width = col_w
-                aspect_ratio = "4:3"  # compact for single column
+                aspect_ratio = "4:3"
 
             self.log(f"  Generating: {name} (placement={placement}, {fig_width:.1f}in, ratio={aspect_ratio})...", "INFO")
 
@@ -851,9 +905,6 @@ output: NO_CONCEPT_FIGURES
             if ok:
                 generated += 1
                 self.log(f"  Generated: {output_path.name}", "INFO")
-                # Register in manifest
-                from ark.figure_manifest import load_manifest, save_manifest, register_figure
-                manifest = load_manifest(self.figures_dir)
                 register_figure(manifest, output_path.name, source)
                 save_manifest(self.figures_dir, manifest)
             else:
@@ -861,8 +912,12 @@ output: NO_CONCEPT_FIGURES
 
         if generated > 0:
             self.log_step(f"Generated {generated} AI concept figures", "success")
+        elif skipped > 0:
+            self.log_step(f"All {skipped} concept figures already exist", "info")
         else:
             self.log_step("No new concept figures generated", "info")
+
+        return generated + skipped
 
     def _try_paperbanana(self, name: str, caption: str, paper_context: str,
                           output_path, api_key: str, aspect_ratio: str = "16:9") -> bool:

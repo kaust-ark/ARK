@@ -3,37 +3,39 @@
 </p>
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/logo_ark_transparent.png" alt="ARK" width="280">
+  <img src="https://kaust-ark.github.io/assets/logo_ark_transparent.png" alt="ARK" width="260">
 </p>
 
-<h1 align="center">ARK: مجموعة أدوات البحث الذكي</h1>
+<h1 align="center">ARK &mdash; مجموعة أدوات البحث الآلي</h1>
 
 <p align="center">
-  <strong>من فكرة بحثية إلى ورقة جاهزة للنشر — بشكل مستقل تمامًا</strong>
+  <em>أتمتة العمل الشاق، لا الاتجاه.</em>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/agents-8-orange.svg" alt="8 agents">
-  <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ venues">
+  <img src="https://img.shields.io/badge/agents-8-orange.svg" alt="8 وكلاء">
+  <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="+11 مؤتمر">
+  <img src="https://img.shields.io/badge/tests-106-brightgreen.svg" alt="106 اختبار">
 </p>
 
 <p align="center">
   <a href="https://kaust-ark.github.io/"><strong>الموقع</strong></a> &bull;
   <a href="#البداية-السريعة">البداية السريعة</a> &bull;
-  <a href="#كيف-يعمل">كيف يعمل</a> &bull;
-  <a href="#مرجع-الأوامر">الأوامر</a> &bull;
-  <a href="https://kaust-ark.github.io/architecture.md">البنية</a> &bull;
-  <a href="https://kaust-ark.github.io/configuration.md">الإعدادات</a>
+  <a href="#ark-pipeline">Pipeline</a> &bull;
+  <a href="#ark-agents">Agents</a> &bull;
+  <a href="#مرجع-الأوامر">الأوامر</a>
 </p>
 
 ---
 
-يقوم ARK بتنسيق 8 وكلاء ذكاء اصطناعي متخصصين **لتخطيط التجارب، وكتابة الشيفرة، وتشغيل اختبارات الأداء، وصياغة أوراق LaTeX، ومراجعتها تكرارياً** عبر مراجعة أقران آلية — حتى تصل الورقة إلى جودة النشر.
+يُنسّق ARK **٨ وكلاء ذكاء اصطناعي متخصصين** لتحويل فكرة بحثية إلى ورقة علمية — بحث أدبي، تجارب Slurm، صياغة LaTeX، توليد أشكال، ومراجعة تكرارية — بينما تبقى في السيطرة عبر **CLI** أو **بوابة الويب** أو **Telegram**.
 
-قدّم فكرة بحثية ومؤتمرًا مستهدفًا. ARK يتولى الباقي.
+```
+قدّم فكرة ومؤتمرًا مستهدفًا. ARK يتولى الباقي.
+```
 
 ## أوراق بحثية كتبها ARK
 
@@ -45,102 +47,110 @@
 <sub>تنسيق NeurIPS &bull; ٦ صفحات &bull; ١٤ تكرارًا</sub>
 </p>
 
-## الميزات الرئيسية
+---
 
-| | الميزة | التفاصيل |
-|---|-------|----------|
-| **٨ وكلاء** | المراجع، المخطط، المُجرِّب، الكاتب، الباحث، المُصوِّر، مُصحح الأخطاء، المبرمج | مع أوامر مخصصة لكل مشروع |
-| **٣ مراحل** | Research &rarr; Dev &rarr; Review | مسح أدبي، تجارب، تحسين الورقة |
-| **Claude Code** | مبني على [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | يُنصح باشتراك Max — يستهلك رموزًا كثيرة |
-| **+١١ مؤتمر** | NeurIPS، ICML، ICLR، AAAI، ACL، IEEE، ACM، LNCS... | ضبط تلقائي لهندسة الصفحة وحجم الرسوم |
-| **بوت تيليغرام** | مراقبة وتدخل في الوقت الحقيقي | تأكيدات استباقية عند القرارات المهمة |
-| **الحوسبة** | Slurm &bull; Local &bull; AWS &bull; GCP &bull; Azure | تشغيل التجارب في أي مكان |
-| **البحث المعمّق** | تكامل Gemini Deep Research | مسح أدبي قبل بدء الكتابة |
-| **Nano Banana** | توليد رسوم بالذكاء الاصطناعي | مخططات مفاهيمية عبر نماذج Gemini |
-| **سلامة الاستشهادات** | استشهادات عبر API أولاً &bull; تحقق من مصدرين | DBLP/CrossRef — LLM لا يكتب BibTeX |
-| **استرداد ذكي** | نقاط حفظ &bull; تصحيح تلقائي &bull; إصلاح ذاتي | معالجة أخطاء LaTeX وفشل التجارب |
-| **تتبع التكلفة** | تقارير لكل تكرار وتراكمية | معرفة دقيقة بتكلفة كل تكرار |
+## ARK Pipeline
 
-## كيف يعمل
-
-يمر ARK بثلاث مراحل متتابعة:
+يمرّ ARK بثلاث مراحل متتابعة. مرحلة المراجعة تتكرر حتى تصل الورقة إلى الدرجة المستهدفة.
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/phases_overview.png" alt="مراحل ARK" width="800">
+  <img src="https://kaust-ark.github.io/assets/pipeline_overview.png" alt="ARK Pipeline" width="700">
 </p>
 
 | المرحلة | ما يحدث |
-|---------|---------|
-| **البحث** | Gemini Deep Research يجمع المعرفة الخلفية والمسح الأدبي |
-| **التطوير** | دورة تجارب تكرارية: تخطيط → تشغيل → تحليل → تقييم → كتابة مسودة أولية |
-| **المراجعة** | حلقة تحسين الورقة حتى يصل تقييم المراجع إلى عتبة القبول |
+|:--------|:--------|
+| **Research** | Gemini Deep Research يجمع المعرفة الخلفية والمسح الأدبي |
+| **Dev** | دورة تجارب تكرارية: تخطيط &rarr; تشغيل Slurm &rarr; تحليل &rarr; كتابة مسودة أولية |
+| **Review** | تجميع &rarr; مراجعة &rarr; تخطيط &rarr; تنفيذ &rarr; تحقّق، تكرار حتى الدرجة &ge; العتبة |
 
-### خطوات مرحلة المراجعة
+### دورة المراجعة
 
-كل تكرار في مرحلة المراجعة يمر بـ ٤ خطوات:
-
-<p align="center">
-  <img src="https://kaust-ark.github.io/assets/review_phase_steps.png" alt="خطوات مرحلة المراجعة" width="700">
-</p>
-
-| الخطوة | ما يحدث |
-|--------|---------|
-| **١. الترجمة** | LaTeX → PDF، عدّ الصفحات، استخراج صور الصفحات |
-| **٢. المراجعة** | تقييم الورقة (١–١٠)، تحديد المشكلات الكبرى والصغرى |
-| **٣. التخطيط والتنفيذ** | بناء خطة عمل؛ الباحث والمُجرِّب يعملان بالتوازي؛ الكاتب يعدّل LaTeX |
-| **٤. التصوير** | فحص أبعاد الرسوم وفقًا لمواصفات المؤتمر، إصلاح تلقائي، إعادة ترجمة |
-
-تتكرر الحلقة حتى يصل التقييم إلى عتبة القبول — أو تتدخل عبر تيليغرام.
-
-### البنية
+كل تكرار في مرحلة المراجعة يمرّ بـ **٥ خطوات**:
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/architecture.png" alt="بنية ARK" width="700">
+  <img src="https://kaust-ark.github.io/assets/review_loop.png" alt="دورة المراجعة" width="700">
 </p>
 
+| الخطوة | الوصف |
+|:-------|:------|
+| **Compile** | LaTeX &rarr; PDF، عدّ الصفحات، استخراج صور الصفحات |
+| **Review** | تقييم الورقة ١&ndash;١٠، سرد المشكلات الكبرى والصغرى |
+| **Plan** | المخطط يُنشئ خطة عمل ذات أولويات |
+| **Execute** | الباحث + المُجرِّب يعملان بالتوازي؛ الكاتب يعدّل LaTeX |
+| **Validate** | التحقق من أن التغييرات تُترجَم بنجاح؛ إعادة إنتاج PDF |
+
+تتكرر الحلقة حتى يصل التقييم إلى عتبة القبول — أو تتدخل عبر Telegram.
+
+---
+
+## ARK Agents
+
 <p align="center">
-  <a href="https://kaust-ark.github.io/architecture.md">وثائق البنية الكاملة &rarr;</a>
+  <img src="https://kaust-ark.github.io/assets/architecture_overview.png" alt="بنية ARK" width="600">
 </p>
+
+| الوكيل | الدور |
+|:-------|:------|
+| **Reviewer** | يُقيّم الورقة وفق معايير المؤتمر ويُنشئ مهام تحسين |
+| **Planner** | يحوّل ملاحظات المراجعة إلى خطة عمل ذات أولويات |
+| **Writer** | يصيغ أقسام LaTeX ويُنقّحها بمراجع مُتحقَّقة عبر DBLP |
+| **Experimenter** | يصمم التجارب، يُرسل مهام Slurm، ويحلل النتائج |
+| **Researcher** | مسح أدبي عميق عبر واجهات أكاديمية (DBLP، CrossRef، Semantic Scholar) |
+| **Visualizer** | يُنشئ أشكالاً بـ Nano Banana وأبعاد لوحة مُدركة للمؤتمر |
+| **Meta-Debugger** | يكتشف التوقف، يشخّص الإخفاقات، ويُشغّل الإصلاح الذاتي |
+| **Coder** | يكتب ويُصحّح كود التجارب وسكريبتات التحليل |
+
+---
+
+## ما يميّز ARK
+
+| | الأدوات الأخرى | ARK |
+|---|:---------------|:----|
+| **التحكم** | تعمل بلا إشراف، تنحرف عن النية، لا تصحيح أثناء التشغيل | إنسان في الحلقة: توقف عند القرارات الحرجة، تدخّل عبر Telegram أو الويب |
+| **التنسيق** | تخطيطات مضطربة، أخطاء LaTeX، إصلاح يدوي | LaTeX مُبرمَج + قوالب مؤتمرات (NeurIPS، ACL، IEEE&hellip;) |
+| **الاستشهادات** | LLM يختلق مراجع تبدو معقولة لكنها غير موجودة | كل اقتباس يُتحقَّق عبر DBLP — لا مراجع وهمية |
+| **الأشكال** | أنماط افتراضية، أحجام خاطئة، لا مراعاة لقيود الصفحة | Nano Banana + أبعاد لوحة وعرض أعمدة وخطوط دقيقة |
+
+---
 
 ## البداية السريعة
 
-أولاً، أنشئ بيئة Python افتراضية وفعّلها باستخدام الأداة التي تفضلها (conda أو uv أو venv أو غيرها).
-
 ```bash
-# ١. التثبيت
+# التثبيت
 pip install -e .
 
-# ٢. إنشاء مشروع (معالج تفاعلي)
-ark new mma                    # مثال: ورقة عن ضرب المصفوفات
+# إنشاء مشروع (معالج تفاعلي)
+ark new mma
 
-# ٣. التشغيل — ARK يتولى من هنا
-ark run mma                    # يبدأ حلقة Research → Dev → Review
+# التشغيل — ARK يتولى من هنا
+ark run mma
 
-# ٤. المراقبة المباشرة
-ark monitor mma                # لوحة مباشرة: الوكلاء، اتجاه التقييم
+# المراقبة المباشرة
+ark monitor mma
 
-# ٥. التحقق من التقدم
-ark status mma                 # التقييم: 7.2/10، التكرار: 5، المرحلة: Review
+# التحقق من التقدم
+ark status mma
 ```
 
-يرشدك المعالج عبر: مجلد الشيفرة، المؤتمر المستهدف، فكرة البحث، المؤلفين، بيئة الحوسبة، توليد الرسوم، وإعداد تيليغرام.
+يرشدك المعالج عبر: مجلد الشيفرة، المؤتمر المستهدف، فكرة البحث، المؤلفين، بيئة الحوسبة، توليد الرسوم، وإعداد Telegram.
 
 ### البدء من ملف PDF موجود
 
 ```bash
-# استخراج العنوان والمؤلفين وخطة البحث من مقترح/مسودة
 ark new mma --from-pdf proposal.pdf
 ```
 
-يحلل ARK ملف PDF باستخدام PyMuPDF + Claude Haiku، ويملأ المعالج مسبقًا، ويمكنه بدء مشروع ورقة أو تطوير كامل من المواصفات المستخرجة.
+يحلل ARK ملف PDF باستخدام PyMuPDF + Claude Haiku، ويملأ المعالج مسبقًا، ويبدأ من المواصفات المستخرجة.
+
+---
 
 ## مرجع الأوامر
 
 | الأمر | الوظيفة |
-|-------|---------|
+|:------|:--------|
 | `ark new <name>` | إنشاء مشروع عبر معالج تفاعلي |
-| `ark run <name>` | بدء الحلقة المستقلة |
-| `ark status [name]` | التقييم، التكرار، المرحلة، التكلفة (أو سرد جميع المشاريع) |
+| `ark run <name>` | بدء الـ pipeline المستقل |
+| `ark status [name]` | التقييم، التكرار، المرحلة، التكلفة |
 | `ark monitor <name>` | لوحة مراقبة مباشرة: نشاط الوكلاء، اتجاه التقييم |
 | `ark update <name>` | إدخال تعليمات أثناء التشغيل |
 | `ark stop <name>` | إيقاف سلس |
@@ -149,41 +159,24 @@ ark new mma --from-pdf proposal.pdf
 | `ark config <name> [key] [val]` | عرض أو تعديل الإعدادات |
 | `ark clear <name>` | إعادة تعيين الحالة للبدء من جديد |
 | `ark delete <name>` | حذف المشروع بالكامل |
-| `ark setup-bot` | إعداد بوت تيليغرام (مرة واحدة) |
+| `ark setup-bot` | إعداد بوت Telegram |
 | `ark list` | سرد جميع المشاريع وحالتها |
-| `ark webapp install` | تثبيت خدمة بوابة الويب للإنتاج (المنفذ 8423) |
-| `ark webapp install --dev` | تثبيت خدمة بوابة الويب للتطوير (المنفذ 8424) |
-| `ark webapp uninstall` | إيقاف وإزالة خدمة الإنتاج |
-| `ark webapp release` | وسم ونشر الكود الحالي إلى بيئة الإنتاج |
-
-> **ملاحظة:** `ark webapp --daemon` مهمل وسيتم إزالته في إصدار مستقبلي. استخدم `ark webapp install` بدلاً منه.
+| `ark webapp install` | تثبيت خدمة بوابة الويب |
 
 <details>
 <summary><strong>بوابة الويب (تطوير/إنتاج)</strong></summary>
 
-يوفر ARK بيئتين ويب بقواعد بيانات منفصلة:
-
 | | الإنتاج | التطوير |
-|--|---------|---------|
-| URL | `http://mcmgt01:8423` | `http://mcmgt01:8424` |
+|--|:--------|:--------|
+| المنفذ | 8423 | 8424 |
 | الخدمة | `ark-webapp` | `ark-webapp-dev` |
-| قاعدة البيانات | `ark_webapp/webapp.db` | `ark_webapp/webapp-dev.db` |
 | الكود | `~/.ark/prod/` (مقفل على وسم git) | المستودع الحالي (مباشر) |
 
 ```bash
-# النشر الأول
-ark webapp release              # إنشاء بيئة الإنتاج من الكود الحالي (وسم v0.1.0)
-ark webapp install              # بدء خدمة الإنتاج (المنفذ 8423)
-ark webapp install --dev        # بدء خدمة التطوير (المنفذ 8424)
-
-# نشر تغييرات جديدة للإنتاج
-ark webapp release              # وسم، تحديث worktree الإنتاج، إعادة تشغيل الخدمة
-
-# وسم إصدار مخصص
-ark webapp release --tag v1.0.0
+ark webapp release              # وسم + نشر للإنتاج
+ark webapp install              # بدء الإنتاج (المنفذ 8423)
+ark webapp install --dev        # بدء التطوير (المنفذ 8424)
 ```
-
-بيئة التطوير تعكس تغييرات الكود فوراً. بيئة الإنتاج تُحدّث فقط عند تنفيذ `ark webapp release`.
 
 </details>
 
@@ -191,72 +184,48 @@ ark webapp release --tag v1.0.0
 <summary><strong>استدعاء المُنسق مباشرة</strong></summary>
 
 ```bash
-# وضع الورقة، بحد أقصى ٢٠ تكرارًا
 python -m ark.orchestrator --project mma --mode paper --max-iterations 20
-
-# وضع التطوير (تطوير برمجيات، ليس كتابة أوراق)
 python -m ark.orchestrator --project mma --mode dev
-
-# التشغيل في الخلفية
-nohup python -m ark.orchestrator --project mma --mode paper \
-  > auto_research/logs/orchestrator.log 2>&1 &
 ```
 
 </details>
 
-## تكامل تيليغرام
+---
 
-### خطوات الإعداد
+## تكامل Telegram
 
-1. افتح تيليغرام، أرسل `/newbot` إلى [@BotFather](https://t.me/BotFather) واتبع التعليمات للحصول على **Bot Token**
-2. شغّل معالج الإعداد:
-   ```bash
-   ark setup-bot
-   ```
-3. الصق Bot Token عند الطلب
-4. أرسل أي رسالة إلى بوتك الجديد في تيليغرام، ثم اضغط Enter
-5. يكتشف ARK معرّف المحادثة تلقائيًا ويرسل رسالة اختبار
+```bash
+ark setup-bot    # مرة واحدة: الصق رمز BotFather، كشف تلقائي لمعرّف المحادثة
+```
 
-تُحفظ البيانات في `~/.ark/telegram.yaml` وتُشارَك بين جميع المشاريع.
+ما تحصل عليه:
+- **إشعارات مباشرة** &mdash; تغيرات التقييم، انتقالات المراحل، الأخطاء
+- **إرسال تعليمات** &mdash; توجيه التكرار الحالي
+- **طلب PDF** &mdash; أحدث ورقة مترجمة تُرسل للمحادثة
+- **تأكيدات استباقية** &mdash; يسأل ARK قبل القرارات المهمة
 
-### ما تحصل عليه
-
-- **إشعارات مباشرة** — تغيرات التقييم، انتقالات المراحل، الأخطاء
-- **إرسال تعليمات** — أرسل رسالة لتوجيه التكرار الحالي
-- **طلب PDF** — احصل على أحدث ورقة مترجمة
-- **تأكيدات استباقية** — يسأل ARK قبل بدء Deep Research أو عند الحاجة لرابط قالب LaTeX
-- **عفريت مستمر** — يستمر في الاستجابة حتى عند توقف المُنسق
+---
 
 ## المتطلبات
 
 - **Python 3.9+** مع `pyyaml` و `PyMuPDF`
 - [**Claude Code**](https://docs.anthropic.com/en/docs/claude-code) CLI مثبّت ومصادق عليه
-- **يُنصح بشدة باشتراك Claude Max** — يستهلك ARK رموزًا كثيرة جدًا (كل تكرار يستدعي وكلاء متعددين)
+- **يُنصح باشتراك Claude Max** &mdash; يستهلك رموزًا كثيرة
 - اختياري: LaTeX (`pdflatex` + `bibtex`)، Slurm، `google-genai` للرسوم الذكية
 
 ```bash
-pip install -e .                    # الأساسي (يتضمن PyMuPDF)
+pip install -e .                    # الأساسي
 pip install -e ".[research]"       # + Gemini Deep Research و Nano Banana
 ```
 
-## المزيد
+## المؤتمرات المدعومة
 
-- [البنية ومرجع الوحدات](https://kaust-ark.github.io/architecture.md)
-- [الإعدادات والمؤتمرات وبيئات الحوسبة](https://kaust-ark.github.io/configuration.md)
-- [الاختبارات (٨٤ اختبارًا)](docs/testing.md)
-
-## خارطة الطريق والمشكلات المعروفة
-
-انظر [TODO.md](TODO.md) للقائمة الكاملة. أبرز النقاط:
-
-- **تكامل المهارات التخصصية** — دمج [claude-scientific-skills](https://github.com/K-Dense-AI/claude-scientific-skills) (أكثر من ١٧٠ مهارة في البيولوجيا والكيمياء والفيزياء والجغرافيا والمالية وغيرها) لدعم الباحثين من خارج علوم الحاسوب
-- **تكافؤ الواجهات الخلفية** — واجهتا Codex و Gemini لم تصلا بعد إلى التكافؤ الكامل مع Claude Code
-- **التحقق من الحوسبة السحابية** — أكواد AWS/GCP/Azure موجودة لكن لم تُختبر من البداية للنهاية
-- **البيئات المحدودة والمخصصة** — دعم HPC بدون إنترنت، Jetson، مختبرات ذات اتصال محدود
-- **جودة تنسيق الرسوم** — تجاوز عرض العمود، عدم تطابق حجم الخط، مشاكل محاذاة الرسوم الفرعية
-- **سلامة الاستشهادات** — نظام استشهادات عبر API أولاً (DBLP/CrossRef)، LLM لا يكتب BibTeX، تحقق تلقائي كل تكرار
-- **اختبار التكامل** — لا يوجد اختبار شامل للمسار بعد
+NeurIPS &bull; ICML &bull; ICLR &bull; AAAI &bull; ACL &bull; IEEE &bull; ACM SIGPLAN &bull; ACM SIGCONF &bull; LNCS &bull; MLSys &bull; USENIX &mdash; بالإضافة إلى أسماء بديلة لـ PLDI، ASPLOS، SOSP، EuroSys، OSDI، NSDI، INFOCOM، وغيرها.
 
 ## الرخصة
 
 [Apache 2.0](LICENSE)
+
+<p align="center">
+  <sub>بُني في <a href="https://sands.kaust.edu.sa/">مختبر SANDS، جامعة الملك عبدالله للعلوم والتقنية</a></sub>
+</p>

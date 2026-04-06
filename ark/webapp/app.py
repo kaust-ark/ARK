@@ -22,6 +22,11 @@ logger = logging.getLogger("ark.webapp")
 _log_mtimes: dict[str, float] = {}   # project_id → last log mtime
 
 
+def _pname(p) -> str:
+    """Human-readable project label: title if set, else slug name."""
+    return p.title if p.title else p.name
+
+
 def _advance_pending_queue(session, settings):
     """If no project is globally active (queued/running), submit the oldest pending one."""
     from .db import update_project, Project
@@ -96,7 +101,7 @@ async def _poll_jobs(app: FastAPI):
                                     d = _yaml.safe_load(ps.read_text()) or {}
                                     score = float(d.get("current_score", 0))
                                 send_telegram_notify(
-                                    f"✅ <b>{p.name}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
+                                    f"✅ <b>{_pname(p)}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
                                     bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                                 )
                                 user = get_user(session, p.user_id)
@@ -110,7 +115,7 @@ async def _poll_jobs(app: FastAPI):
                                     send_completion_email(
                                         settings,
                                         to_email=user.email,
-                                        project_name=p.name,
+                                        project_name=_pname(p),
                                         score=score,
                                         pdf_path=pdf_path,
                                         project_url=url,
@@ -119,7 +124,7 @@ async def _poll_jobs(app: FastAPI):
                                 _stuck_alerted.discard(p.id)
                             elif new_status in ("failed", "stopped"):
                                 send_telegram_notify(
-                                    f"❌ <b>{p.name}</b> {new_status}\n<a href='{url}'>{url}</a>",
+                                    f"❌ <b>{_pname(p)}</b> {new_status}\n<a href='{url}'>{url}</a>",
                                     bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                                 )
                                 _log_mtimes.pop(p.id, None)
@@ -142,7 +147,7 @@ async def _poll_jobs(app: FastAPI):
                                     idle_min = (time.time() - mtime) / 60
                                     if idle_min > STUCK_MINUTES:
                                         send_telegram_notify(
-                                            f"⚠️ <b>{p.name}</b> may be stuck\n"
+                                            f"⚠️ <b>{_pname(p)}</b> may be stuck\n"
                                             f"No log output for {int(idle_min)} min",
                                             bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                                         )
@@ -173,7 +178,7 @@ async def _poll_jobs(app: FastAPI):
                                     update_project(session, p, status="queued", slurm_job_id=new_job_id)
                                     logger.info(f"Auto-restarted {p.id}: new job {new_job_id} (attempt {len(log_files)})")
                                     send_telegram_notify(
-                                        f"⚡ <b>{p.name}</b> 自动重启（集群 cancel，第 {len(log_files)} 次）\n"
+                                        f"⚡ <b>{_pname(p)}</b> 自动重启（集群 cancel，第 {len(log_files)} 次）\n"
                                         f"新 Job: #{new_job_id}\n<a href='{url}'>{url}</a>",
                                         bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                                     )
@@ -191,7 +196,7 @@ async def _poll_jobs(app: FastAPI):
 
                         if new_status == "running":
                             send_telegram_notify(
-                                f"🚀 <b>{p.name}</b> started running\n<a href='{url}'>{url}</a>",
+                                f"🚀 <b>{_pname(p)}</b> started running\n<a href='{url}'>{url}</a>",
                                 bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                             )
 
@@ -205,7 +210,7 @@ async def _poll_jobs(app: FastAPI):
                                 score = float(d.get("current_score", 0))
 
                             send_telegram_notify(
-                                f"✅ <b>{p.name}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
+                                f"✅ <b>{_pname(p)}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
                                 bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                             )
 
@@ -221,7 +226,7 @@ async def _poll_jobs(app: FastAPI):
                                 send_completion_email(
                                     settings,
                                     to_email=user.email,
-                                    project_name=p.name,
+                                    project_name=_pname(p),
                                     score=score,
                                     pdf_path=pdf_path,
                                     project_url=url,
@@ -232,7 +237,7 @@ async def _poll_jobs(app: FastAPI):
 
                         elif new_status in ("failed", "stopped"):
                             send_telegram_notify(
-                                f"❌ <b>{p.name}</b> {new_status}\n<a href='{url}'>{url}</a>",
+                                f"❌ <b>{_pname(p)}</b> {new_status}\n<a href='{url}'>{url}</a>",
                                 bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                             )
                             _log_mtimes.pop(p.id, None)
@@ -256,7 +261,7 @@ async def _poll_jobs(app: FastAPI):
                                 idle_min = (time.time() - mtime) / 60
                                 if idle_min > STUCK_MINUTES:
                                     send_telegram_notify(
-                                        f"⚠️ <b>{p.name}</b> may be stuck\n"
+                                        f"⚠️ <b>{_pname(p)}</b> may be stuck\n"
                                         f"No log output for {int(idle_min)} min",
                                         bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                                     )
@@ -380,7 +385,7 @@ async def _poll_template_links(settings):
                     update_project(session, proj, status=new_proj_status,
                                    slurm_job_id=slurm_job_id)
                     send_telegram_notify(
-                        f"✅ Template installed! <b>{proj.name}</b> queued.\nJob: #{slurm_job_id}",
+                        f"✅ Template installed! <b>{_pname(proj)}</b> queued.\nJob: #{slurm_job_id}",
                         bot_token=token, chat_id=chat_id,
                     )
                 except Exception as e:
@@ -394,17 +399,34 @@ async def _poll_template_links(settings):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    # Ensure DB tables exist
-    get_engine(settings.db_path)
-    # Idempotent migration: add telegram columns if missing
+    # Idempotent migration: add columns BEFORE SQLAlchemy create_all,
+    # so the ORM sees the full schema when it reflects existing tables.
     import sqlite3 as _sq3
     try:
         _c = _sq3.connect(settings.db_path)
-        for col in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''"):
+        for col in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''",
+                    "max_dev_iterations INTEGER DEFAULT 3"):
             try:
                 _c.execute(f"ALTER TABLE project ADD COLUMN {col}")
             except Exception:
                 pass
+        try:
+            _c.execute("ALTER TABLE user ADD COLUMN welcome_sent BOOLEAN DEFAULT 0")
+        except Exception:
+            pass
+        for ucol in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''"):
+            try:
+                _c.execute(f"ALTER TABLE user ADD COLUMN {ucol}")
+            except Exception:
+                pass
+        # Feedback table
+        _c.execute("""CREATE TABLE IF NOT EXISTS feedback (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            project_id TEXT DEFAULT '',
+            message TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
         _c.commit()
         # Fix existing user display names (first.last@domain → First)
         try:
@@ -419,6 +441,8 @@ async def lifespan(app: FastAPI):
         _c.close()
     except Exception:
         pass
+    # Now create engine + tables (ORM will see the migrated schema)
+    get_engine(settings.db_path)
     logger.info(f"ARK Webapp starting. DB: {settings.db_path}")
     logger.info(f"Projects root: {settings.projects_root}")
 

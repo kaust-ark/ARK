@@ -161,6 +161,187 @@ def _sendmail_fallback(from_addr: str, to_email: str, msg_str: str) -> bool:
         return False
 
 
+def send_welcome_email(settings, to_email: str, user_name: str, base_url: str) -> bool:
+    """Send a one-time welcome email to a new ARK user. Returns True on success."""
+    import socket as _socket
+    from email.utils import formatdate, make_msgid
+    from email.mime.image import MIMEImage
+
+    logo_path = Path(__file__).parent / "static" / "logo_ark_transparent.png"
+
+    subject = "Welcome to ARK — Automatic Research Kit"
+
+    plain = f"""\
+Hi {user_name},
+
+Thanks for joining ARK -- an AI-powered platform that automates the
+research pipeline from idea to polished paper.
+
+What ARK does:
+- End-to-end research automation: planning, coding, experiments, LaTeX
+- Multi-venue support: NeurIPS, ICML, ACL, CVPR, IEEE, ACM and more
+- Live dashboard: track progress, download PDFs, review scores
+
+Get started: {base_url}
+
+ARK is built by the research team at KAUST. We are actively iterating
+and would love your feedback. Just reply to this email or reach out at
+jihao.xin@kaust.edu.sa.
+
+-- ARK Research Portal, KAUST
+"""
+
+    html = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#f0fdfa;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdfa;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- Banner -->
+  <tr><td bgcolor="#0d9488" style="background:#0d9488;background:linear-gradient(135deg,#0d9488 0%,#134e4a 100%);padding:40px 40px 36px;text-align:center;">
+    <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px;"><tr>
+      <td><img src="cid:ark_logo" alt="ARK" height="52" style="display:block;" /></td>
+      <td style="padding-left:14px;color:#ccfbf1;font-size:38px;font-weight:300;letter-spacing:6px;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;">ARK</td>
+    </tr></table>
+    <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:-0.5px;">
+      Welcome Onboard!
+    </h1>
+  </td></tr>
+
+  <!-- Body -->
+  <tr><td style="padding:40px 44px;">
+    <p style="margin:0 0 20px;color:#1a1a1a;font-size:17px;line-height:1.6;">
+      Hi <strong>{user_name}</strong>,
+    </p>
+    <p style="margin:0 0 20px;color:#333;font-size:15px;line-height:1.7;">
+      Thanks for joining <strong>ARK</strong> &mdash; an AI-powered platform that automates
+      the research pipeline from idea to polished paper. Upload an idea, pick a venue,
+      and let ARK handle literature review, experimentation, writing, and compilation.
+    </p>
+
+    <!-- Feature highlights -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:24px 0;">
+      <tr>
+        <td style="padding:12px 16px;background:#f0fdfa;border-radius:10px;border-left:4px solid #0d9488;">
+          <p style="margin:0;color:#134e4a;font-size:14px;line-height:1.6;">
+            <strong style="color:#0d9488;">Idea &rarr; Paper</strong><br/>
+            End-to-end research automation: planning, coding, experiments, and LaTeX compilation.
+          </p>
+        </td>
+      </tr>
+      <tr><td style="height:10px;"></td></tr>
+      <tr>
+        <td style="padding:12px 16px;background:#f0fdfa;border-radius:10px;border-left:4px solid #0d9488;">
+          <p style="margin:0;color:#134e4a;font-size:14px;line-height:1.6;">
+            <strong style="color:#0d9488;">Multi-Venue Support</strong><br/>
+            NeurIPS, ICML, ACL, IEEE, ACM &mdash; ARK formats for your target venue automatically.
+          </p>
+        </td>
+      </tr>
+      <tr><td style="height:10px;"></td></tr>
+      <tr>
+        <td style="padding:12px 16px;background:#f0fdfa;border-radius:10px;border-left:4px solid #0d9488;">
+          <p style="margin:0;color:#134e4a;font-size:14px;line-height:1.6;">
+            <strong style="color:#0d9488;">Live Dashboard</strong><br/>
+            Track progress in real time, download PDFs, and review scores &mdash; all from the web portal.
+          </p>
+        </td>
+      </tr>
+    </table>
+
+    <!-- CTA Button -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:28px 0;">
+      <tr><td align="center">
+        <a href="{base_url}" style="display:inline-block;background:#0d9488;color:#fff;
+           font-size:15px;font-weight:600;padding:14px 36px;border-radius:8px;
+           text-decoration:none;letter-spacing:0.3px;">
+          Open ARK Dashboard
+        </a>
+      </td></tr>
+    </table>
+
+    <!-- About us -->
+    <p style="margin:0 0 16px;color:#333;font-size:15px;line-height:1.7;">
+      ARK is built by the research team at
+      <strong>King Abdullah University of Science and Technology (KAUST)</strong>.
+      We&rsquo;re actively iterating on the platform and would love your feedback.
+    </p>
+    <p style="margin:0 0 8px;color:#333;font-size:15px;line-height:1.7;">
+      Found a bug? Have an idea? Just reply to this email or reach out at
+      <a href="mailto:jihao.xin@kaust.edu.sa" style="color:#0d9488;text-decoration:none;font-weight:600;">
+        jihao.xin@kaust.edu.sa</a>.
+    </p>
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="background:#f8fffe;padding:24px 44px;border-top:1px solid #e0f2f1;">
+    <p style="margin:0;color:#999;font-size:12px;line-height:1.5;text-align:center;">
+      ARK &mdash; Automatic Research Kit &bull; KAUST<br/>
+      You received this email because you signed up for ARK.
+    </p>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+"""
+
+    relay_domain = getattr(settings, "smtp_relay", "") or "ciuxrelay.kaust.edu.sa"
+    relay_host = relay_domain
+    relay_domain = relay_domain.split(".", 1)[-1]
+    from_addr = getattr(settings, "smtp_from", "") or f"ark@{_socket.gethostname()}.{relay_domain}"
+
+    # Build: multipart/mixed → multipart/alternative (plain + related(html + logo))
+    msg = MIMEMultipart("alternative")
+    msg.attach(MIMEText(plain, "plain"))
+
+    # HTML + inline logo as multipart/related
+    html_related = MIMEMultipart("related")
+    html_related.attach(MIMEText(html, "html"))
+    if logo_path.exists():
+        with open(logo_path, "rb") as f:
+            logo = MIMEImage(f.read(), _subtype="png")
+        logo.add_header("Content-ID", "<ark_logo>")
+        logo.add_header("Content-Disposition", "inline", filename="logo.png")
+        html_related.attach(logo)
+    msg.attach(html_related)
+
+    msg["From"] = f"ARK Research Portal <{from_addr}>"
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain=f"{_socket.gethostname()}.{relay_domain}")
+    msg_str = msg.as_string()
+
+    # Try KAUST relay first
+    try:
+        with smtplib.SMTP(relay_host, 25, timeout=10) as server:
+            server.sendmail(from_addr, to_email, msg_str)
+        logger.info(f"Welcome email sent via relay to {to_email}")
+        return True
+    except Exception as e:
+        logger.warning(f"Relay failed ({e}), trying SMTP auth...")
+
+    # Try SMTP with auth
+    if settings.smtp_user and settings.smtp_password:
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
+                server.starttls()
+                server.login(settings.smtp_user, settings.smtp_password)
+                server.sendmail(from_addr, to_email, msg_str)
+            logger.info(f"Welcome email sent via SMTP to {to_email}")
+            return True
+        except Exception as e:
+            logger.warning(f"SMTP failed ({e}), trying sendmail fallback...")
+
+    return _sendmail_fallback(from_addr, to_email, msg_str)
+
+
 def send_magic_link_email(settings, to_email: str, link: str) -> bool:
     """Send a magic login link email. Returns True on success."""
     subject = "[ARK] Your login link"

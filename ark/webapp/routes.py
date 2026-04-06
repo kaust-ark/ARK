@@ -88,6 +88,12 @@ _STATIC_DIR = Path(__file__).parent / "static"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
+def _pname(p) -> str:
+    """Human-readable project label: title if set, else slug name."""
+    return p.title if p.title else p.name
+
+
 def _slugify(text: str, max_len: int = 48) -> str:
     """Convert text to a URL-safe slug."""
     import re as _re
@@ -252,6 +258,48 @@ def _can_access_project(user: User, project: Project) -> bool:
 
 def _project_dir(settings, user_id: str, project_id: str) -> Path:
     return settings.projects_root / user_id / project_id
+
+
+async def _summarize_pdf(pdf_bytes: bytes) -> str:
+    """Extract text from PDF and summarize into a structured research idea via Claude."""
+    try:
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        raw_text = "\n".join(page.get_text() for page in doc).strip()
+        doc.close()
+    except Exception:
+        return ""
+    if not raw_text:
+        return ""
+    # Truncate raw text to ~30k chars for Claude context
+    raw_text = raw_text[:30000]
+    prompt = f"""You are a research assistant. Read the following academic paper text and produce a detailed, structured research idea summary. Include:
+
+1. **Research Problem**: What problem does this paper address?
+2. **Core Approach**: What is the proposed method/framework?
+3. **Key Contributions**: List the main contributions (3-5 bullet points)
+4. **Technical Details**: Important algorithms, architectures, or techniques
+5. **Evaluation**: How is the work evaluated? What benchmarks/datasets?
+
+Keep the summary detailed but concise (1500-2500 chars). Write in the same language as the paper.
+Do NOT include paper metadata (authors, affiliations, page numbers).
+Output ONLY the summary, no preamble.
+
+---
+{raw_text}"""
+    try:
+        import subprocess as sp
+        result = sp.run(
+            ["claude", "-p", prompt, "--no-session-persistence", "--output-format", "text",
+             "--model", "claude-haiku-4-5"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()[:8000]
+    except Exception:
+        pass
+    # Fallback: raw truncated text
+    return raw_text[:8000]
 
 
 def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude-sonnet-4-6"):
@@ -442,7 +490,7 @@ def _read_paper_title(project_dir: Path) -> str:
     try:
         import re as _re
         text = tex.read_text(errors="replace")
-        m = _re.search(r'\\title\{([^}]+)\}', text)
+        m = _re.search(r'\\(?:icmltitle|title)\{([^}]+)\}', text)
         if m:
             title = m.group(1).strip()
             if title not in _TEMPLATE_TITLES:
@@ -738,6 +786,7 @@ async def api_list_projects(request: Request, scope: str = "mine"):
                 "status": p.status,
                 "score": score,
                 "has_pdf": pdf is not None,
+                "has_pdf_upload": bool(p.has_pdf_upload),
                 "slurm_job_id": p.slurm_job_id,
                 "created_at": p.created_at.isoformat(),
                 "updated_at": p.updated_at.isoformat(),
@@ -798,15 +847,9 @@ async def api_create_project(
         with open(upload_path, "wb") as f:
             f.write(pdf_bytes)
         has_pdf_upload = True
-        # Extract text as idea if none provided
+        # Extract text and summarize via Claude if no idea provided
         if not idea.strip():
-            try:
-                import fitz  # PyMuPDF
-                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-                idea = "\n".join(page.get_text() for page in doc).strip()[:8000]
-                doc.close()
-            except Exception:
-                pass
+            idea = await _summarize_pdf(pdf_bytes)
 
     # Handle custom template upload
     if venue_format == "custom" and template_zip and template_zip.filename:
@@ -887,7 +930,7 @@ async def api_create_project(
         if not template_available:
             # Ask user to send template via Telegram, don't submit job yet
             send_telegram_notify(
-                f"📦 <b>{project.name}</b> needs a <b>{venue}</b> LaTeX template.\n\n"
+                f"📦 <b>{_pname(project)}</b> needs a <b>{venue}</b> LaTeX template.\n\n"
                 f"Please reply with a direct download link (.zip) to the official {venue} author kit.\n"
                 f"The system will automatically extract and set up the template.",
                 bot_token=project.telegram_token,
@@ -903,7 +946,7 @@ async def api_create_project(
         final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=_is_admin(user))
 
         send_telegram_notify(
-            f"🔬 <b>{project.name}</b> submitted ({final_status})\n"
+            f"🔬 <b>{_pname(project)}</b> submitted ({final_status})\n"
             f"Venue: {project.venue} · {project.max_iterations} iter",
             bot_token=project.telegram_token,
             chat_id=project.telegram_chat_id,
@@ -945,6 +988,7 @@ async def api_get_project(project_id: str, request: Request):
             "current_iteration": _read_current_iteration(pdir),
             "max_iterations": project.max_iterations,
             "has_pdf": pdf is not None,
+            "has_pdf_upload": bool(project.has_pdf_upload),
             "slurm_job_id": project.slurm_job_id,
             "queue_position": _queue_position(project_id, session),
             "user_email": owner.email if owner else "",
@@ -1018,6 +1062,8 @@ async def api_restart_project(project_id: str, request: Request):
         # Update project fields from request body
         if body.get("idea"):
             project.idea = body["idea"]
+            # Clear title so it gets auto-regenerated for the new idea
+            project.title = None
         if body.get("venue"):
             project.venue = body["venue"]
         if body.get("venue_format"):
@@ -1058,7 +1104,7 @@ async def api_restart_project(project_id: str, request: Request):
 
         final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=_is_admin(user))
         send_telegram_notify(
-            f"🔄 <b>{project.name}</b> restarted ({final_status})",
+            f"🔄 <b>{_pname(project)}</b> restarted ({final_status})",
             bot_token=project.telegram_token,
             chat_id=project.telegram_chat_id,
         )
@@ -1182,6 +1228,23 @@ async def api_get_pdf(project_id: str, request: Request):
         raise HTTPException(404, "PDF not ready")
     return FileResponse(pdf, media_type="application/pdf",
                         filename=pdf.name, content_disposition_type="inline")
+
+
+@router.get("/api/projects/{project_id}/uploaded-pdf")
+async def api_get_uploaded_pdf(project_id: str, request: Request):
+    user = _require_user(request)
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project or not _can_access_project(user, project):
+            raise HTTPException(404)
+        owner_id = project.user_id
+    pdir = _project_dir(settings, owner_id, project_id)
+    uploaded = pdir / "uploaded.pdf"
+    if not uploaded.exists():
+        raise HTTPException(404, "No uploaded PDF")
+    return FileResponse(uploaded, media_type="application/pdf",
+                        filename="uploaded.pdf", content_disposition_type="inline")
 
 
 @router.get("/api/projects/{project_id}/zip")

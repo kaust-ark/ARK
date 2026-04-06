@@ -3,37 +3,39 @@
 </p>
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/logo_ark_transparent.png" alt="ARK" width="280">
+  <img src="https://kaust-ark.github.io/assets/logo_ark_transparent.png" alt="ARK" width="260">
 </p>
 
-<h1 align="center">ARK: Automatic Research Kit</h1>
+<h1 align="center">ARK &mdash; Automatic Research Kit</h1>
 
 <p align="center">
-  <strong>From research idea to camera-ready paper — fully autonomous</strong>
+  <em>Offload the labour. Steer the science.</em>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/agents-8-orange.svg" alt="8 agents">
-  <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ venues">
+  <img src="https://img.shields.io/badge/agents-8-orange.svg" alt="8 Agents">
+  <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
+  <img src="https://img.shields.io/badge/tests-106-brightgreen.svg" alt="106 Tests">
 </p>
 
 <p align="center">
   <a href="https://kaust-ark.github.io/"><strong>Website</strong></a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
-  <a href="#how-it-works">How It Works</a> &bull;
-  <a href="#cli-reference">CLI</a> &bull;
-  <a href="https://kaust-ark.github.io/architecture.md">Architecture</a> &bull;
-  <a href="https://kaust-ark.github.io/configuration.md">Configuration</a>
+  <a href="#ark-pipeline">Pipeline</a> &bull;
+  <a href="#ark-agents">Agents</a> &bull;
+  <a href="#cli-reference">CLI</a>
 </p>
 
 ---
 
-ARK orchestrates 8 specialized AI agents to **plan experiments, write code, run benchmarks, draft LaTeX papers, and iteratively revise** them through automated peer review — until the paper reaches publication quality.
+ARK orchestrates **8 specialized AI agents** to turn a research idea into a paper &mdash; literature search, Slurm experiments, LaTeX drafting, figure generation, and iterative peer review &mdash; while you stay in control via **CLI**, **Web Portal**, or **Telegram**.
 
-Give it a research idea and a target venue. ARK handles the rest.
+```
+Give it an idea and a venue. ARK handles the rest.
+```
 
 ## Papers Written by ARK
 
@@ -45,82 +47,89 @@ Give it a research idea and a target venue. ARK handles the rest.
 <sub>NeurIPS format &bull; 6 pages &bull; 14 iterations</sub>
 </p>
 
-## Key Features
+---
 
-| | Feature | Details |
-|---|---------|---------|
-| **8 Agents** | Reviewer, Planner, Experimenter, Writer, Researcher, Visualizer, Meta-Debugger, Coder | Each with specialized prompts per project |
-| **3 Phases** | Research &rarr; Dev &rarr; Review | Background survey, experiments, iterative paper improvement |
-| **Claude Code** | Powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Max subscription recommended — very token-intensive |
-| **11+ Venues** | NeurIPS, ICML, ICLR, AAAI, ACL, IEEE, ACM, LNCS... | Auto-configured geometry & figure sizing |
-| **Telegram Bot** | Real-time monitoring & intervention | Proactive confirmations at key decisions |
-| **Compute** | Slurm &bull; Local &bull; AWS &bull; GCP &bull; Azure | Run experiments anywhere |
-| **Deep Research** | Gemini Deep Research integration | Literature survey before writing starts |
-| **Nano Banana** | AI figure generation | Concept diagrams via Gemini image models |
-| **Citation Integrity** | API-first citations &bull; dual-source verification | DBLP/CrossRef — LLM never writes BibTeX |
-| **Smart Recovery** | Checkpoint/resume &bull; meta-debug &bull; self-repair | Handles LaTeX errors, experiment failures |
-| **Cost Tracking** | Per-iteration and cumulative reports | Know exactly what each iteration costs |
+## ARK Pipeline
 
-## How It Works
-
-ARK runs three phases in sequence:
+ARK runs three phases in sequence. The Review phase loops until the paper reaches the target score.
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/phases_overview.png" alt="ARK Three Phases" width="800">
+  <img src="https://kaust-ark.github.io/assets/pipeline_overview.png" alt="ARK Pipeline" width="700">
 </p>
 
-| Phase | What happens |
-|-------|-------------|
-| **Research** | Deep Research (Gemini) gathers background knowledge and literature survey |
-| **Dev** | Iterative experiment cycle: plan experiments &rarr; run &rarr; analyze results &rarr; evaluate completeness &rarr; write initial draft |
-| **Review** | Iterative paper improvement loop until the reviewer score hits the acceptance threshold |
+| Phase | What Happens |
+|:------|:-------------|
+| **Research** | Gemini Deep Research runs a literature survey and gathers background knowledge |
+| **Dev** | Iterative experiment cycle: plan &rarr; run on Slurm &rarr; analyze &rarr; write initial draft |
+| **Review** | Compile &rarr; Review &rarr; Plan &rarr; Execute &rarr; Validate, repeating until score &ge; threshold |
 
-### Review Phase Steps
+### Review Loop
 
-Each Review Phase iteration runs through 4 steps:
+Each iteration of the Review phase runs **5 steps**:
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/review_phase_steps.png" alt="Review Phase Steps" width="700">
+  <img src="https://kaust-ark.github.io/assets/review_loop.png" alt="Review Loop" width="700">
 </p>
 
-| Step | What happens |
-|------|-------------|
-| **1. Compile** | Build LaTeX &rarr; PDF, count pages, extract page images |
-| **2. Review** | AI reviewer scores the paper (1&ndash;10), identifies Major & Minor issues |
-| **3. Plan & Execute** | Planner creates action plan; researcher and experimenter run in parallel; writer revises LaTeX |
-| **4. Visualize** | Check figure dimensions against venue spec, auto-fix sizing, recompile |
+| Step | Description |
+|:-----|:------------|
+| **Compile** | LaTeX &rarr; PDF, page count, page images |
+| **Review** | AI reviewer scores 1&ndash;10, lists Major &amp; Minor issues |
+| **Plan** | Planner creates a prioritized action plan |
+| **Execute** | Researcher + Experimenter run in parallel; Writer revises LaTeX |
+| **Validate** | Verify changes compile; recompile PDF |
 
 The loop repeats until the score reaches the acceptance threshold &mdash; or you intervene via Telegram.
 
-### Architecture
+---
+
+## ARK Agents
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/architecture.png" alt="ARK Architecture" width="700">
+  <img src="https://kaust-ark.github.io/assets/architecture_overview.png" alt="ARK Architecture" width="600">
 </p>
 
-<p align="center">
-  <a href="https://kaust-ark.github.io/architecture.md">Full architecture docs &rarr;</a>
-</p>
+| Agent | Role |
+|:------|:-----|
+| **Reviewer** | Scores the paper against venue standards, generates improvement tasks |
+| **Planner** | Turns review feedback into a prioritized action plan |
+| **Writer** | Drafts and refines LaTeX sections with DBLP-verified references |
+| **Experimenter** | Designs experiments, submits Slurm jobs, analyzes results |
+| **Researcher** | Deep literature survey via academic APIs (DBLP, CrossRef, Semantic Scholar) |
+| **Visualizer** | Generates figures with Nano Banana and venue-aware canvas geometry |
+| **Meta-Debugger** | Detects stalls, diagnoses failures, triggers self-repair |
+| **Coder** | Writes and debugs experiment code and analysis scripts |
+
+---
+
+## What Sets ARK Apart
+
+| | Other Tools | ARK |
+|---|:------------|:----|
+| **Control** | Fully autonomous &mdash; drifts from intent, no mid-run correction | Human-in-the-loop: pause at key decisions, steer via Telegram or web |
+| **Formatting** | Broken layouts, LaTeX errors, manual cleanup | Hard-coded LaTeX + venue templates (NeurIPS, ACL, IEEE&hellip;) |
+| **Citations** | LLMs fabricate plausible-looking references | Every citation verified against DBLP &mdash; no fake references |
+| **Figures** | Default styles, wrong sizes, no page awareness | Nano Banana + venue-aware canvas, column widths, and fonts |
+
+---
 
 ## Quick Start
 
-First, create and activate a Python virtual environment using your preferred tool (conda, uv, venv, etc.).
-
 ```bash
-# 1. Install
+# Install
 pip install -e .
 
-# 2. Create a project (interactive wizard)
-ark new mma                    # e.g. "CPU Matrix Multiplication" paper
+# Create a project (interactive wizard)
+ark new mma
 
-# 3. Run — ARK takes it from here
-ark run mma                    # starts Research → Dev → Review loop
+# Run — ARK takes it from here
+ark run mma
 
-# 4. Watch it work
-ark monitor mma                # live dashboard: agents, score trend
+# Monitor in real time
+ark monitor mma
 
-# 5. Check progress
-ark status mma                 # score: 7.2/10, iteration: 5, phase: Review
+# Check progress
+ark status mma
 ```
 
 The wizard walks you through: code directory, venue, research idea, authors, compute backend, figure generation, and Telegram setup.
@@ -128,20 +137,21 @@ The wizard walks you through: code directory, venue, research idea, authors, com
 ### Start from an Existing PDF
 
 ```bash
-# Extract title, authors, and research plan from a proposal/draft
 ark new mma --from-pdf proposal.pdf
 ```
 
-ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and can kick off a full paper or dev project from the extracted spec.
+ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks off from the extracted spec.
+
+---
 
 ## CLI Reference
 
-| Command | What it does |
-|---------|-------------|
+| Command | Description |
+|:--------|:------------|
 | `ark new <name>` | Create project via interactive wizard |
-| `ark run <name>` | Launch the autonomous loop |
-| `ark status [name]` | Score, iteration, phase, cost (or list all projects) |
-| `ark monitor <name>` | Live dashboard with agent activity, score trend |
+| `ark run <name>` | Launch the autonomous pipeline |
+| `ark status [name]` | Score, iteration, phase, cost |
+| `ark monitor <name>` | Live dashboard: agent activity, score trend |
 | `ark update <name>` | Inject a mid-run instruction |
 | `ark stop <name>` | Gracefully stop |
 | `ark restart <name>` | Stop + restart |
@@ -149,41 +159,24 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and can ki
 | `ark config <name> [key] [val]` | View or edit config |
 | `ark clear <name>` | Reset state for a fresh start |
 | `ark delete <name>` | Remove project entirely |
-| `ark setup-bot` | Configure Telegram bot (one-time) |
+| `ark setup-bot` | Configure Telegram bot |
 | `ark list` | List all projects with status |
-| `ark webapp install` | Install prod web portal service (port 8423) |
-| `ark webapp install --dev` | Install dev web portal service (port 8424) |
-| `ark webapp uninstall` | Stop and remove prod service |
-| `ark webapp release` | Tag and deploy current code to prod |
-
-> **Note:** `ark webapp --daemon` is deprecated and will be removed in a future release. Use `ark webapp install` instead.
+| `ark webapp install` | Install web portal service |
 
 <details>
 <summary><strong>Web Portal (dev/prod)</strong></summary>
 
-ARK has two webapp environments with separate databases:
-
 | | Prod | Dev |
-|--|------|-----|
-| URL | `http://mcmgt01:8423` | `http://mcmgt01:8424` |
+|--|:-----|:----|
+| Port | 8423 | 8424 |
 | Service | `ark-webapp` | `ark-webapp-dev` |
-| DB | `ark_webapp/webapp.db` | `ark_webapp/webapp-dev.db` |
 | Code | `~/.ark/prod/` (pinned to git tag) | Current repo (live) |
 
 ```bash
-# First-time setup
-ark webapp release              # create prod from current code (tags v0.1.0)
-ark webapp install              # start prod service (port 8423)
-ark webapp install --dev        # start dev service (port 8424)
-
-# Deploy new changes to prod
-ark webapp release              # tag, update prod worktree, restart service
-
-# Custom version tag
-ark webapp release --tag v1.0.0
+ark webapp release              # tag + deploy to prod
+ark webapp install              # start prod (port 8423)
+ark webapp install --dev        # start dev (port 8424)
 ```
-
-Dev reflects code changes immediately. Prod only updates on `ark webapp release`.
 
 </details>
 
@@ -191,72 +184,48 @@ Dev reflects code changes immediately. Prod only updates on `ark webapp release`
 <summary><strong>Direct orchestrator invocation</strong></summary>
 
 ```bash
-# Paper mode, max 20 iterations
 python -m ark.orchestrator --project mma --mode paper --max-iterations 20
-
-# Dev mode (software development, not paper writing)
 python -m ark.orchestrator --project mma --mode dev
-
-# Background
-nohup python -m ark.orchestrator --project mma --mode paper \
-  > auto_research/logs/orchestrator.log 2>&1 &
 ```
 
 </details>
 
+---
+
 ## Telegram Integration
 
-### Setup
+```bash
+ark setup-bot    # one-time: paste BotFather token, auto-detect chat ID
+```
 
-1. Open Telegram, message [@BotFather](https://t.me/BotFather), send `/newbot`, and follow prompts to get a **Bot Token**
-2. Run the setup wizard:
-   ```bash
-   ark setup-bot
-   ```
-3. Paste your Bot Token when prompted
-4. Send any message to your new bot in Telegram, then press Enter
-5. ARK auto-detects your Chat ID and sends a test message
+What you get:
+- **Live notifications** &mdash; score changes, phase transitions, errors
+- **Send instructions** &mdash; steer the current iteration
+- **Request PDFs** &mdash; latest compiled paper sent to chat
+- **Proactive confirmations** &mdash; ARK asks before key decisions
 
-Credentials are saved to `~/.ark/telegram.yaml` and shared by all projects.
-
-### What you get
-
-- **Live notifications** — score changes, phase transitions, errors
-- **Send instructions** — text a message to steer the current iteration
-- **Request PDFs** — get the latest compiled paper sent to you
-- **Proactive confirmations** — ARK asks before starting Deep Research or when it needs a LaTeX template URL
-- **Persistent daemon** — keeps responding even when the orchestrator is stopped
+---
 
 ## Requirements
 
 - **Python 3.9+** with `pyyaml` and `PyMuPDF`
 - [**Claude Code**](https://docs.anthropic.com/en/docs/claude-code) CLI installed and authenticated
-- **Claude Max subscription strongly recommended** — ARK is extremely token-intensive (each iteration invokes multiple agents)
+- **Claude Max subscription recommended** &mdash; very token-intensive
 - Optional: LaTeX (`pdflatex` + `bibtex`), Slurm, `google-genai` for AI figures
 
 ```bash
-pip install -e .                    # Core (PyMuPDF included)
+pip install -e .                    # Core
 pip install -e ".[research]"       # + Gemini Deep Research & Nano Banana
 ```
 
-## More
+## Supported Venues
 
-- [Architecture & Module Reference](docs/architecture.md)
-- [Configuration, Venues & Compute Backends](docs/configuration.md)
-- [Testing (84 tests)](docs/testing.md)
-
-## Roadmap & Known Issues
-
-See [TODO.md](TODO.md) for the full list. Highlights:
-
-- **Domain skill integration** — integrate [claude-scientific-skills](https://github.com/K-Dense-AI/claude-scientific-skills) (170+ skills for biology, chemistry, physics, geospatial, finance, etc.) to support non-CS researchers
-- **Backend parity** — Codex and Gemini backends lack full feature parity with Claude Code
-- **Cloud compute verification** — AWS/GCP/Azure compute backends exist but are not yet end-to-end validated
-- **Edge & custom environments** — support air-gapped HPC, Jetson, limited-connectivity labs
-- **Figure layout quality** — column overflow, font size mismatch, subplot alignment issues
-- **Citation integrity** — API-first citation system (DBLP/CrossRef), LLM never writes BibTeX, per-iteration verification
-- **Integration testing** — no end-to-end pipeline test yet
+NeurIPS &bull; ICML &bull; ICLR &bull; AAAI &bull; ACL &bull; IEEE &bull; ACM SIGPLAN &bull; ACM SIGCONF &bull; LNCS &bull; MLSys &bull; USENIX &mdash; plus aliases for PLDI, ASPLOS, SOSP, EuroSys, OSDI, NSDI, INFOCOM, and more.
 
 ## License
 
 [Apache 2.0](LICENSE)
+
+<p align="center">
+  <sub>Built by <a href="https://sands.kaust.edu.sa/">SANDS Lab, KAUST</a></sub>
+</p>
