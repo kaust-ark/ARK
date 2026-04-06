@@ -168,14 +168,15 @@ ARK 使用 PyMuPDF + Claude Haiku 解析 PDF，预填向导，从提取的规格
 
 | | 生产环境 | 开发环境 |
 |--|:---------|:---------|
-| 端口 | 8423 | 8424 |
+| 端口 | 9527 | 1027 |
 | 服务名 | `ark-webapp` | `ark-webapp-dev` |
+| Conda 环境 | `ark-prod` | `ark-dev` |
 | 代码 | `~/.ark/prod/`（锁定 git tag） | 当前 repo（实时生效） |
 
 ```bash
 ark webapp release              # 打 tag + 部署到生产
-ark webapp install              # 启动生产服务（端口 8423）
-ark webapp install --dev        # 启动开发服务（端口 8424）
+ark webapp install              # 启动生产服务（端口 9527）
+ark webapp install --dev        # 启动开发服务（端口 1027）
 ```
 
 </details>

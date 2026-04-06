@@ -168,14 +168,15 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 
 | | Prod | Dev |
 |--|:-----|:----|
-| Port | 8423 | 8424 |
+| Port | 9527 | 1027 |
 | Service | `ark-webapp` | `ark-webapp-dev` |
+| Conda env | `ark-prod` | `ark-dev` |
 | Code | `~/.ark/prod/` (pinned to git tag) | Current repo (live) |
 
 ```bash
 ark webapp release              # tag + deploy to prod
-ark webapp install              # start prod (port 8423)
-ark webapp install --dev        # start dev (port 8424)
+ark webapp install              # start prod (port 9527)
+ark webapp install --dev        # start dev (port 1027)
 ```
 
 </details>

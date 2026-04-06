@@ -483,20 +483,35 @@ def _read_current_iteration(project_dir: Path) -> int:
 _TEMPLATE_TITLES = {"Paper Title", "Title Text", "Insert Title Here", ""}
 
 def _read_paper_title(project_dir: Path) -> str:
-    """Read paper title from paper/main.tex \\title{...}. Ignores template defaults."""
+    """Read paper title from paper/main.tex \\title{...}, fallback to config.yaml.
+
+    Ignores template defaults. The config.yaml fallback covers the case where
+    the title has been auto-generated but LaTeX hasn't been written yet (e.g.
+    during the dev phase).
+    """
+    # Primary: LaTeX \title{}
     tex = project_dir / "paper" / "main.tex"
-    if not tex.exists():
-        return ""
-    try:
-        import re as _re
-        text = tex.read_text(errors="replace")
-        m = _re.search(r'\\(?:icmltitle|title)\{([^}]+)\}', text)
-        if m:
-            title = m.group(1).strip()
-            if title not in _TEMPLATE_TITLES:
+    if tex.exists():
+        try:
+            import re as _re
+            text = tex.read_text(errors="replace")
+            m = _re.search(r'\\(?:icmltitle|title)\{([^}]+)\}', text)
+            if m:
+                title = m.group(1).strip()
+                if title not in _TEMPLATE_TITLES:
+                    return title
+        except Exception:
+            pass
+    # Fallback: config.yaml title (set by _generate_title_if_needed)
+    cfg = project_dir / "config.yaml"
+    if cfg.exists():
+        try:
+            d = yaml.safe_load(cfg.read_text()) or {}
+            title = (d.get("title") or "").strip()
+            if title:
                 return title
-    except Exception:
-        pass
+        except Exception:
+            pass
     return ""
 
 

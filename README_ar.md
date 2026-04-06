@@ -168,14 +168,15 @@ ark new mma --from-pdf proposal.pdf
 
 | | الإنتاج | التطوير |
 |--|:--------|:--------|
-| المنفذ | 8423 | 8424 |
+| المنفذ | 9527 | 1027 |
 | الخدمة | `ark-webapp` | `ark-webapp-dev` |
+| بيئة Conda | `ark-prod` | `ark-dev` |
 | الكود | `~/.ark/prod/` (مقفل على وسم git) | المستودع الحالي (مباشر) |
 
 ```bash
 ark webapp release              # وسم + نشر للإنتاج
-ark webapp install              # بدء الإنتاج (المنفذ 8423)
-ark webapp install --dev        # بدء التطوير (المنفذ 8424)
+ark webapp install              # بدء الإنتاج (المنفذ 9527)
+ark webapp install --dev        # بدء التطوير (المنفذ 1027)
 ```
 
 </details>

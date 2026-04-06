@@ -19,6 +19,7 @@ pdfs/
 
 # Projects
 projects/
+ark_web_projects
 
 # Local environment / database
 .env
