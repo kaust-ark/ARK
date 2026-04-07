@@ -1059,6 +1059,21 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="modal-launch-confirm">
+  <div class="modal" style="max-width:600px">
+    <h3 data-i18n="launch_confirm_title">Before you launch</h3>
+    <div data-i18n-html="launch_confirm_body" style="font-size:.92rem;line-height:1.55;color:var(--text-second)"></div>
+    <label style="display:flex;align-items:flex-start;gap:8px;margin-top:14px;cursor:pointer">
+      <input type="checkbox" id="launch-confirm-checkbox" onchange="launchConfirmToggle(this)" style="margin-top:3px;flex-shrink:0"/>
+      <span data-i18n="launch_confirm_ack">I understand and agree to proceed.</span>
+    </label>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="launchConfirmCancel()" data-i18n="launch_confirm_cancel">Cancel</button>
+      <button type="button" class="btn-primary" id="launch-confirm-proceed" disabled onclick="launchConfirmProceed()" data-i18n="launch_confirm_proceed">Confirm &amp; Launch</button>
+    </div>
+  </div>
+</div>
+
 <!-- ADMIN EDIT MODAL -->
 <div class="modal-backdrop" id="modal-admin-edit">
   <div class="modal" style="max-width:620px">
@@ -1164,6 +1179,11 @@ const TRANSLATIONS = {
     instructions_label: 'Instructions for ARK <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
     model: 'Model',
     launch_research: 'Launch Research',
+    launch_confirm_title: 'Before you launch',
+    launch_confirm_body: '<p>ARK is currently in <strong>closed beta</strong>. By launching this research run, you acknowledge the following:</p><ul style="padding-left:18px;margin:10px 0"><li><strong>Where it runs.</strong> Your idea, attached files, and all generated artifacts will execute on ARK\'s research infrastructure (the <strong>ROCS testbed</strong>) and are accessible to the ARK team.</li><li><strong>How it\'s used.</strong> Your idea is forwarded to third-party language models (e.g. <strong>Claude Code</strong>, <strong>Gemini</strong>) as part of the research pipeline. Standard provider terms apply.</li><li><strong>Telemetry.</strong> During the beta, the ARK team reviews execution logs and intermediate outputs to diagnose issues and improve the framework.</li><li><strong>Confidentiality.</strong> The ARK team will <strong>not</strong> publish your idea or share it outside the team.</li></ul><p>If your idea is subject to NDA, embargo, or other confidentiality obligations, please do not submit it during the beta.</p>',
+    launch_confirm_ack: 'I understand and agree to proceed.',
+    launch_confirm_cancel: 'Cancel',
+    launch_confirm_proceed: 'Confirm & Launch',
     placeholder_idea: 'Describe your research idea… or drop files here',
     placeholder_auto_title: 'Auto-generated if blank',
     placeholder_instructions: 'e.g. Focus on comparing against baseline X, use PyTorch, run on 2 GPUs, write in a formal style…',
@@ -1274,6 +1294,11 @@ const TRANSLATIONS = {
     instructions_label: 'تعليمات لـ ARK <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
     model: 'النموذج',
     launch_research: 'إطلاق البحث',
+    launch_confirm_title: 'قبل الإطلاق',
+    launch_confirm_body: '<p>ARK حالياً في <strong>إصدار تجريبي مغلق</strong>. بإطلاق هذه التجربة، فإنك تُقرّ بما يلي:</p><ul style="padding-right:18px;padding-left:0;margin:10px 0"><li><strong>مكان التشغيل.</strong> ستُنفَّذ فكرتك والملفات المرفقة وجميع المخرجات على البنية البحثية الخاصة بـ ARK (<strong>ROCS testbed</strong>)، ويمكن لفريق ARK الاطلاع عليها.</li><li><strong>طريقة الاستخدام.</strong> تُمرَّر فكرتك إلى نماذج لغوية تابعة لجهات خارجية (مثل <strong>Claude Code</strong> و<strong>Gemini</strong>) ضمن خط الأنابيب البحثي، وتسري عليها شروط مزوّدي الخدمة.</li><li><strong>سجلات التشغيل.</strong> خلال الإصدار التجريبي، يراجع فريق ARK سجلات التنفيذ والمخرجات الوسيطة لتشخيص المشكلات وتحسين الإطار.</li><li><strong>السرية.</strong> <strong>لن</strong> ينشر فريق ARK فكرتك ولن يشاركها خارج الفريق.</li></ul><p>إذا كانت فكرتك خاضعة لاتفاقية عدم إفشاء أو حظر نشر، فيُرجى عدم تقديمها خلال فترة الإصدار التجريبي.</p>',
+    launch_confirm_ack: 'لقد قرأت ووافقت على المتابعة.',
+    launch_confirm_cancel: 'إلغاء',
+    launch_confirm_proceed: 'تأكيد وإطلاق',
     placeholder_idea: 'صِف فكرتك البحثية… أو اسحب الملفات هنا',
     placeholder_auto_title: 'يُولَّد تلقائياً إن تُرك فارغاً',
     placeholder_instructions: 'مثال: ركّز على المقارنة مع الخط الأساسي X، استخدم PyTorch، شغّل على وحدتَي GPU…',
@@ -1370,6 +1395,11 @@ const TRANSLATIONS = {
     instructions_label: '给 ARK 的指令 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
     model: '模型',
     launch_research: '启动研究',
+    launch_confirm_title: '启动前请确认',
+    launch_confirm_body: '<p>ARK 目前处于<strong>封闭内测阶段</strong>。点击启动即表示你了解并同意以下事项：</p><ul style="padding-left:18px;margin:10px 0"><li><strong>运行位置。</strong>你的 idea、附件以及所有生成内容将在 ARK 的科研基础设施（<strong>ROCS testbed</strong>）上运行，ARK 团队可访问这些数据。</li><li><strong>使用方式。</strong>你的 idea 会作为研究流程的一部分被转发到第三方大语言模型（例如 <strong>Claude Code</strong>、<strong>Gemini</strong>），并受相应服务条款约束。</li><li><strong>遥测与日志。</strong>内测期间，ARK 团队会查看运行日志和中间产物，用于排查问题、优化框架。</li><li><strong>保密承诺。</strong>ARK 团队<strong>不会</strong>主动公开你的 idea，也不会在团队外分享。</li></ul><p>如你的 idea 涉及 NDA、禁发期或其他保密义务，请勿在内测期间提交。</p>',
+    launch_confirm_ack: '我已阅读并同意以上事项。',
+    launch_confirm_cancel: '取消',
+    launch_confirm_proceed: '确认并启动',
     placeholder_idea: '描述你的研究想法… 或拖拽文件到这里',
     placeholder_auto_title: '留空则自动生成',
     placeholder_instructions: '例如：重点与基线 X 进行比较，使用 PyTorch，用 2 张 GPU 跑实验…',
@@ -2272,7 +2302,7 @@ async function loadVenues() {
   const sel = document.getElementById('hero-venue-select');
   if (!sel) return;
   sel.innerHTML = venues.map(v =>
-    `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}(${v.year || 2025})</option>`
+    `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}(${v.year || 2025})${v.tag ? ' ' + v.tag : ''}</option>`
   ).join('') + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
   heroVenueChanged(sel);
 }
@@ -2397,16 +2427,58 @@ function toggleHeroAdvanced() {
 // ══════════════════════════════════════════════════════
 //  Hero form — submit
 // ══════════════════════════════════════════════════════
+let _pendingHeroForm = null;
+
 async function submitNewProject(e) {
   e.preventDefault();
   const form = e.target;
+  const fd = new FormData(form);
+
+  // Basic validation before showing the confirmation modal
+  const idea = (fd.get('idea') || '').trim();
+  if (!idea && !selectedFiles.length) {
+    alert(t('alert_idea_required'));
+    return;
+  }
+  if (fd.get('venue') === 'Customized' && !customTplFile) {
+    alert('Please upload a template ZIP file for the Customized venue.');
+    return;
+  }
+
+  // Stash form, open confirmation modal
+  _pendingHeroForm = form;
+  const cb = document.getElementById('launch-confirm-checkbox');
+  const proceedBtn = document.getElementById('launch-confirm-proceed');
+  if (cb) cb.checked = false;
+  if (proceedBtn) proceedBtn.disabled = true;
+  document.getElementById('modal-launch-confirm').classList.add('open');
+}
+
+function launchConfirmToggle(checkbox) {
+  const proceedBtn = document.getElementById('launch-confirm-proceed');
+  if (proceedBtn) proceedBtn.disabled = !checkbox.checked;
+}
+
+function launchConfirmCancel() {
+  closeModal('modal-launch-confirm');
+  _pendingHeroForm = null;
+}
+
+async function launchConfirmProceed() {
+  const form = _pendingHeroForm;
+  _pendingHeroForm = null;
+  closeModal('modal-launch-confirm');
+  if (!form) return;
+  await performLaunch(form);
+}
+
+async function performLaunch(form) {
   const btn = document.getElementById('hero-submit-btn');
   const label = document.getElementById('hero-submit-label');
   btn.disabled = true;
   label.innerHTML = '<span class="spinner"></span>';
 
   const fd = new FormData(form);
-  // Remove the hidden name="idea" textarea value (already in fd), append files
   // Send the first PDF as pdf_file (backend expects this field name)
   const pdfIdx = selectedFiles.findIndex(f => f.name.toLowerCase().endsWith('.pdf'));
   if (pdfIdx !== -1) {
@@ -2415,24 +2487,9 @@ async function submitNewProject(e) {
   selectedFiles.forEach(f => fd.append('attachments', f));
 
   // Handle custom template
-  const isCustom = fd.get('venue') === 'Customized';
-  if (isCustom) {
-    if (!customTplFile) {
-      alert('Please upload a template ZIP file for the Customized venue.');
-      btn.disabled = false;
-      label.textContent = t('launch_research');
-      return;
-    }
+  if (fd.get('venue') === 'Customized') {
     fd.append('template_zip', customTplFile);
     fd.set('venue_pages', document.getElementById('custom-tpl-pages').value || '9');
-  }
-
-  const idea = (fd.get('idea') || '').trim();
-  if (!idea && !selectedFiles.length) {
-    alert(t('alert_idea_required'));
-    btn.disabled = false;
-    label.textContent = t('launch_research');
-    return;
   }
 
   try {
@@ -2720,7 +2777,7 @@ async function loadAdminPage() {
     const sel = document.getElementById('edit-venue-select');
     if (sel && sel.options.length <= 1) {
       sel.innerHTML = venues.map(v =>
-        `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.pages ? ' (' + v.pages + ' pages)' : ''}</option>`
+        `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.pages ? ' (' + v.pages + ' pages)' : ''}${v.tag ? ' ' + v.tag : ''}</option>`
       ).join('');
     }
   } else {
@@ -2728,7 +2785,7 @@ async function loadAdminPage() {
     const sel = document.getElementById('edit-venue-select');
     if (sel && sel.options.length <= 1) {
       sel.innerHTML = venues.map(v =>
-        `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.pages ? ' (' + v.pages + ' pages)' : ''}</option>`
+        `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.pages ? ' (' + v.pages + ' pages)' : ''}${v.tag ? ' ' + v.tag : ''}</option>`
       ).join('');
     }
   }

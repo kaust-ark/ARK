@@ -1429,15 +1429,16 @@ async def api_stream_log(project_id: str, request: Request):
 async def api_venues():
     """Return supported venues list."""
     venues = [
+        # Verified
+        {"name": "ICML",       "format": "icml",     "pages": 9,  "year": 2025, "tag": "[Verified] (Default)"},
+        {"name": "NeurIPS",    "format": "neurips",  "pages": 9,  "year": 2025, "tag": "[Verified]"},
+        {"name": "EuroMLSys",  "format": "euromlsys",  "pages": 6, "year": 2025, "tag": "[Verified]"},
         # ML / AI
-        {"name": "NeurIPS",    "format": "neurips",  "pages": 9,  "year": 2025},
-        {"name": "ICML",       "format": "icml",     "pages": 9,  "year": 2025},
         {"name": "ICLR",       "format": "iclr",     "pages": 9,  "year": 2026},
         {"name": "ACL",        "format": "acl",      "pages": 8,  "year": 2025},
         {"name": "EMNLP",      "format": "emnlp",    "pages": 8,  "year": 2025},
         {"name": "CVPR",       "format": "cvpr",     "pages": 8,  "year": 2025},
         {"name": "MLSys",      "format": "mlsys",    "pages": 8,  "year": 2026},
-        {"name": "EuroMLSys",  "format": "euromlsys",  "pages": 6, "year": 2025},
         # Systems
         {"name": "SOSP",       "format": "sosp",     "pages": 14, "year": 2025},
         {"name": "EuroSys",    "format": "sosp",     "pages": 12, "year": 2026},
