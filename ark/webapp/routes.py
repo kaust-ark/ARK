@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path as _Path
 from pathlib import Path
 from typing import Optional
+import os
+import subprocess
 
 logger = logging.getLogger("ark.webapp.routes")
 
@@ -78,6 +80,7 @@ from .db import (
     get_user,
     update_project,
 )
+from .crypto import encrypt_text, decrypt_text
 from .jobs import cancel_job, cancel_local_job, launch_local_job, slurm_available, slurm_state_to_status, submit_job
 from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email
 from .templates import copy_venue_template, has_venue_template
@@ -579,16 +582,21 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
     if active and not is_admin:
         update_project(session, project, status="pending")
         return "pending"
+    
+    # Fetch user keys
+    user_obj = get_user(session, project.user_id)
+    api_keys = _get_user_keys(user_obj) if user_obj else {}
+
     log_dir = pdir / "logs"
     log_dir.mkdir(exist_ok=True)
     if slurm_available():
         job_id = submit_job(project.id, project.mode, project.max_iterations,
-                            pdir, log_dir, settings)
+                            pdir, log_dir, settings, api_keys=api_keys)
         update_project(session, project, status="queued", slurm_job_id=job_id)
         return "queued"
     else:
         job_id = launch_local_job(project.id, project.mode, project.max_iterations,
-                                  pdir, log_dir, settings)
+                                  pdir, log_dir, settings, api_keys=api_keys)
         update_project(session, project, status="running", slurm_job_id=job_id)
         return "running"
 
@@ -772,6 +780,121 @@ async def api_me(request: Request):
     })
 
 
+# ── user settings & keys ──────────────────────────────────────────────────────
+
+def _get_user_keys(user: User) -> dict:
+    if not user.encrypted_keys:
+        return {}
+    try:
+        return json.loads(decrypt_text(user.encrypted_keys))
+    except Exception:
+        return {}
+
+
+def _mask_key(key: str) -> str:
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "****"
+    return f"{key[:4]}...{key[-4:]}"
+
+
+@router.get("/api/user/settings")
+async def api_get_user_settings(request: Request):
+    user = _require_user(request)
+    keys = _get_user_keys(user)
+    return JSONResponse({
+        "gemini": _mask_key(keys.get("gemini")),
+        "anthropic": _mask_key(keys.get("anthropic")),
+        "openai": _mask_key(keys.get("openai")),
+        "claude_oauth_token": _mask_key(keys.get("claude_oauth_token")),
+        "claude_account_uuid": keys.get("claude_account_uuid", ""),
+        "claude_email": keys.get("claude_email", ""),
+        "claude_org_uuid": keys.get("claude_org_uuid", ""),
+        "has_keys": any(keys.values()),
+    })
+
+
+@router.post("/api/user/settings")
+async def api_save_user_settings(request: Request):
+    user = _require_user(request)
+    body = await request.json()
+    
+    # Keep a copy of old keys to revert if verification fails
+    old_keys = _get_user_keys(user)
+    current_keys = old_keys.copy()
+    
+    # Update keys based on body
+    for field in ["gemini", "anthropic", "openai", "claude_oauth_token", "claude_account_uuid", "claude_email", "claude_org_uuid"]:
+        if field not in body:
+            continue
+        
+        val = (body.get(field) or "").strip()
+        
+        if not val:
+            # User explicitly cleared the field
+            current_keys[field] = ""
+            continue
+        
+        # For masked fields, only update if not a placeholder
+        if field in ["gemini", "anthropic", "openai", "claude_oauth_token"]:
+            if "..." not in val:
+                current_keys[field] = val
+        else:
+            # Unmasked fields (UUIDs, email)
+            current_keys[field] = val
+
+
+    # Run verification suite
+    from ark.webapp.utils.verify import run_verification_suite
+    settings = get_settings()
+
+    # Mutual exclusion check: Anthropic API Key OR Claude CLI Session
+    if current_keys.get("anthropic") and current_keys.get("claude_oauth_token"):
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="Conflict: You cannot provide both an Anthropic API Key and a Claude CLI Session token. Please clear one of them."
+        )
+    
+    # We pass current_keys to ensure we have the context for Claude CLI (UUIDs, email, etc.)
+
+    # even if they weren't all updated in this request.
+    verification_results = run_verification_suite(user.id, settings.projects_root, current_keys)
+    
+    # Revert failed keys
+    # 1. LLM API Keys
+    for p in ["gemini", "anthropic", "openai"]:
+        res = verification_results.get(p)
+        if res and not res.get("ok"):
+            # Verification failed, revert to old value
+            current_keys[p] = old_keys.get(p, "")
+            
+    # 2. Claude CLI
+    claude_res = verification_results.get("claude_token")
+    if claude_res and not claude_res.get("ok"):
+        # Verification failed, revert all Claude CLI fields
+        for f in ["claude_oauth_token", "claude_account_uuid", "claude_email", "claude_org_uuid"]:
+            current_keys[f] = old_keys.get(f, "")
+
+    with get_session(settings.db_path) as session:
+        db_user = get_user(session, user.id)
+        if db_user:
+            db_user.encrypted_keys = encrypt_text(json.dumps(current_keys))
+            session.add(db_user)
+            session.commit()
+
+            
+    return JSONResponse({
+        "ok": True, 
+        "verification": verification_results
+    })
+
+
+
+# Removing old interactive Claude auth logic as we switched to manual Headless Setup
+
+
 # ── projects API ──────────────────────────────────────────────────────────────
 
 @router.get("/api/projects")
@@ -850,6 +973,12 @@ async def api_create_project(
         active = [p for p in user_projects if p.status in ("queued", "running", "pending")]
         if active and not _is_admin(user):
             raise HTTPException(400, "You already have an active project. Wait for it to finish.")
+            
+        # Check for configured keys
+        db_user = get_user(_s, user.id)
+        keys = _get_user_keys(db_user) if db_user else {}
+        if not any(keys.values()):
+            raise HTTPException(400, "Please configure at least one API key or link your Claude account in Settings first.")
 
     # Generate project ID: full UUID
     project_id = str(uuid.uuid4())
