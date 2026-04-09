@@ -1977,7 +1977,7 @@ async function loadDetail(id) {
     <div><b>${t('info_venue')}:</b> ${esc(p.venue)}</div>
     <div><b>${t('info_model')}:</b> ${esc(p.model || 'claude-sonnet-4-6')}</div>
     <div><b>Iteration:</b> ${p.current_iteration || 0} / ${p.max_iterations}</div>
-    <div><b>${t('info_environment')}:</b> ${esc(p.environment || 'ROCS Testbed')}</div>
+    <div><b>${t('info_environment')}:</b> ${esc(p.environment || 'Local')}</div>
     <div><b>${t('info_user')}:</b> ${esc(p.user_email || '')}</div>
     <div><b>${t('info_created')}:</b> ${fmtDate(p.created_at)}</div>
     <div><b>${t('info_updated')}:</b> ${fmtDate(p.updated_at)}</div>

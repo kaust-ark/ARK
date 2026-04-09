@@ -1143,7 +1143,7 @@ async def api_get_project(project_id: str, request: Request):
             "telegram_token": project.telegram_token,
             "telegram_chat_id": project.telegram_chat_id,
             "has_deep_research": (pdir / "auto_research" / "state" / "deep_research.md").exists(),
-            "environment": "ROCS Testbed" if project.slurm_job_id and project.slurm_job_id != "local" else "Local",
+            "environment": "ROCS Testbed" if project.slurm_job_id and not project.slurm_job_id.startswith("local") else "Local",
             "created_at": project.created_at.isoformat(),
             "updated_at": project.updated_at.isoformat(),
         })
