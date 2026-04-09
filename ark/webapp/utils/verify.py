@@ -115,12 +115,7 @@ def verify_claude_cli(user_id: str, projects_root: Path, keys: Dict[str, str]) -
         # 2. Provision session file
         config = {
             "hasCompletedOnboarding": True,
-            "lastOnboardingVersion": version,
-            "oauthAccount": {
-                "accountUuid": keys.get("claude_account_uuid", ""),
-                "emailAddress": keys.get("claude_email", ""),
-                "organizationUuid": keys.get("claude_org_uuid", "")
-            }
+            "lastOnboardingVersion": version
         }
         (verify_dir / ".claude.json").write_text(json.dumps(config))
         

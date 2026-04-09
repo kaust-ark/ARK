@@ -53,12 +53,7 @@ def provision_claude_session(target_dir: Path, keys: dict[str, str]):
     
     config = {
         "hasCompletedOnboarding": True,
-        "lastOnboardingVersion": get_claude_version(),
-        "oauthAccount": {
-            "accountUuid": keys.get("claude_account_uuid", ""),
-            "emailAddress": keys.get("claude_email", ""),
-            "organizationUuid": keys.get("claude_org_uuid", "")
-        }
+        "lastOnboardingVersion": get_claude_version()
     }
     
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -123,18 +118,27 @@ def submit_job(
 
     script_path = log_dir / "submit.sh"
     log_dir.mkdir(parents=True, exist_ok=True)
-    script_path.write_text(script)
-    script_path.chmod(0o755)
+    
+    try:
+        # Securely write script with 0600 permissions immediately
+        if script_path.exists():
+            script_path.unlink()
+        script_path.write_text(script)
+        script_path.chmod(0o600)
 
-    result = _run(["sbatch", str(script_path)])
-    if result.returncode != 0:
-        raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
+        result = _run(["sbatch", str(script_path)])
+        if result.returncode != 0:
+            raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
 
-    # "Submitted batch job 12345"
-    m = re.search(r"(\d+)", result.stdout)
-    if not m:
-        raise RuntimeError(f"Could not parse job ID from sbatch output: {result.stdout!r}")
-    return m.group(1)
+        # "Submitted batch job 12345"
+        m = re.search(r"(\d+)", result.stdout)
+        if not m:
+            raise RuntimeError(f"Could not parse job ID from sbatch output: {result.stdout!r}")
+        return m.group(1)
+    finally:
+        # Wipe the script from disk immediately after handing off to SLURM
+        if script_path.exists():
+            script_path.unlink()
 
 
 def poll_job(job_id: str) -> str:

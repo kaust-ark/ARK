@@ -1193,36 +1193,19 @@
       <div style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#9a3412">
         <strong style="display:block; margin-bottom:4px">How to get these?</strong>
         <ol style="padding-left:16px; margin:0">
-          <li>On your local PC (with a browser), run: <code style="background:#ffedd5; padding:2px 4px; border-radius:4px; font-family:monospace">claude setup-token</code></li>
-          <li>Copy the token, then run: <code style="background:#ffedd5; padding:2px 4px; border-radius:4px; font-family:monospace">cat ~/.claude.json</code> to find your UUIDs and Email.</li>
+          <li>On your local PC, run: <code style="background:#ffedd5; padding:2px 4px; border-radius:4px; font-family:monospace">claude setup-token</code></li>
+          <li>Copy the token and paste it below.</li>
         </ol>
       </div>
 
 
-      <div class="form-group" style="margin-bottom:12px">
+      <div class="form-group" style="margin-bottom:0">
         <label style="font-size:.75rem">OAuth Token (sk-ant-oat01-...)</label>
         <div style="display:flex;gap:8px;align-items:center">
           <input type="password" id="settings-claude-token" placeholder="sk-ant-oat01-..." style="flex:1" />
           <span id="settings-claude_token-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
         </div>
         <div id="status-claude-token" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
-      </div>
-
-
-      <div class="form-row">
-        <div class="form-group" style="margin-bottom:12px">
-          <label style="font-size:.75rem">Account UUID</label>
-          <input type="text" id="settings-claude-uuid" placeholder="xxxxxxxx-xxxx-..." />
-        </div>
-        <div class="form-group" style="margin-bottom:12px">
-          <label style="font-size:.75rem">Email Address</label>
-          <input type="text" id="settings-claude-email" placeholder="user@example.com" />
-        </div>
-      </div>
-
-      <div class="form-group" style="margin-bottom:0">
-        <label style="font-size:.75rem">Organization UUID</label>
-        <input type="text" id="settings-claude-org" placeholder="xxxxxxxx-xxxx-..." />
       </div>
     </div>
 
@@ -3195,9 +3178,6 @@ async function openSettingsModal() {
     document.getElementById('settings-openai').value = data.openai || '';
     
     document.getElementById('settings-claude-token').value = data.claude_oauth_token || '';
-    document.getElementById('settings-claude-uuid').value = data.claude_account_uuid || '';
-    document.getElementById('settings-claude-email').value = data.claude_email || '';
-    document.getElementById('settings-claude-org').value = data.claude_org_uuid || '';
 
     document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
@@ -3227,9 +3207,6 @@ async function saveUserSettings() {
       anthropic: document.getElementById('settings-anthropic').value.trim(),
       openai: document.getElementById('settings-openai').value.trim(),
       claude_oauth_token: document.getElementById('settings-claude-token').value.trim(),
-      claude_account_uuid: document.getElementById('settings-claude-uuid').value.trim(),
-      claude_email: document.getElementById('settings-claude-email').value.trim(),
-      claude_org_uuid: document.getElementById('settings-claude-org').value.trim(),
     };
 
     // Show wait icons for non-empty keys

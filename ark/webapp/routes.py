@@ -786,7 +786,7 @@ def _get_user_keys(user: User) -> dict:
     if not user.encrypted_keys:
         return {}
     try:
-        return json.loads(decrypt_text(user.encrypted_keys))
+        return json.loads(decrypt_text(user.encrypted_keys, user.id))
     except Exception:
         return {}
 
@@ -808,9 +808,6 @@ async def api_get_user_settings(request: Request):
         "anthropic": _mask_key(keys.get("anthropic")),
         "openai": _mask_key(keys.get("openai")),
         "claude_oauth_token": _mask_key(keys.get("claude_oauth_token")),
-        "claude_account_uuid": keys.get("claude_account_uuid", ""),
-        "claude_email": keys.get("claude_email", ""),
-        "claude_org_uuid": keys.get("claude_org_uuid", ""),
         "has_keys": any(keys.values()),
     })
 
@@ -825,7 +822,7 @@ async def api_save_user_settings(request: Request):
     current_keys = old_keys.copy()
     
     # Update keys based on body
-    for field in ["gemini", "anthropic", "openai", "claude_oauth_token", "claude_account_uuid", "claude_email", "claude_org_uuid"]:
+    for field in ["gemini", "anthropic", "openai", "claude_oauth_token"]:
         if field not in body:
             continue
         
@@ -840,9 +837,6 @@ async def api_save_user_settings(request: Request):
         if field in ["gemini", "anthropic", "openai", "claude_oauth_token"]:
             if "..." not in val:
                 current_keys[field] = val
-        else:
-            # Unmasked fields (UUIDs, email)
-            current_keys[field] = val
 
 
     # Run verification suite
@@ -857,7 +851,7 @@ async def api_save_user_settings(request: Request):
             detail="Conflict: You cannot provide both an Anthropic API Key and a Claude CLI Session token. Please clear one of them."
         )
     
-    # We pass current_keys to ensure we have the context for Claude CLI (UUIDs, email, etc.)
+    # run_verification_suite will verify the updated keys.
 
     # even if they weren't all updated in this request.
     verification_results = run_verification_suite(user.id, settings.projects_root, current_keys)
@@ -873,14 +867,13 @@ async def api_save_user_settings(request: Request):
     # 2. Claude CLI
     claude_res = verification_results.get("claude_token")
     if claude_res and not claude_res.get("ok"):
-        # Verification failed, revert all Claude CLI fields
-        for f in ["claude_oauth_token", "claude_account_uuid", "claude_email", "claude_org_uuid"]:
-            current_keys[f] = old_keys.get(f, "")
+        # Verification failed, revert Claude token
+        current_keys["claude_oauth_token"] = old_keys.get("claude_oauth_token", "")
 
     with get_session(settings.db_path) as session:
         db_user = get_user(session, user.id)
         if db_user:
-            db_user.encrypted_keys = encrypt_text(json.dumps(current_keys))
+            db_user.encrypted_keys = encrypt_text(json.dumps(current_keys), user.id)
             session.add(db_user)
             session.commit()
 
