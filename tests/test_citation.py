@@ -285,7 +285,7 @@ class TestFormatCandidates:
 class TestNetworkSearch:
     def test_search_and_fetch(self):
         from ark.citation import search_papers, fetch_bibtex
-        papers = search_papers("Attention Is All You Need", max_results=5)
+        papers = search_papers("Vaswani Attention Is All You Need", max_results=5)
         assert len(papers) > 0
         # Should find the Vaswani paper
         match = [p for p in papers if "attention" in p.title.lower() and p.year == 2017]

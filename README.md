@@ -163,23 +163,44 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 | `ark list` | List all projects with status |
 | `ark webapp install` | Install web portal service |
 
+---
+
+## Web Portal
+
+ARK includes a web-based portal for managing projects, viewing scores, and steering agents.
+
+### Configuration
+
+The web app is configured via `webapp.env` located in your ARK config directory (default: `.ark/webapp.env` in the project root). This file is created automatically on the first run of `ark webapp`.
+
+#### Authentication & Access
+- **SMTP**: Required for "Magic Link" login. Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASSWORD`.
+- **Restrictions**: Use `ALLOWED_EMAILS` (specific users) or `EMAIL_DOMAINS` (entire organizations) to limit access.
+- **Google OAuth**: Optional. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+
+### Management Commands
+
+| Command | Description |
+|:--------|:------------|
+| `ark webapp` | Start the app in the foreground (useful for debugging). |
+| `ark webapp release` | Tag the current code and deploy to the production worktree. |
+| `ark webapp install [--dev]` | Install and start as a `systemd` user service. |
+| `ark webapp status` | Show status of the systemd service. |
+| `ark webapp restart` | Restart the webapp service. |
+| `ark webapp logs [-f]` | View or tail service logs. |
+
 <details>
-<summary><strong>Web Portal (dev/prod)</strong></summary>
+<summary><strong>Service Details (Prod vs. Dev)</strong></summary>
 
 | | Prod | Dev |
 |--|:-----|:----|
-| Port | 9527 | 1027 |
-| Service | `ark-webapp` | `ark-webapp-dev` |
-| Conda env | `ark-prod` | `ark-dev` |
-| Code | `~/.ark/prod/` (pinned to git tag) | Current repo (live) |
-
-```bash
-ark webapp release              # tag + deploy to prod
-ark webapp install              # start prod (port 9527)
-ark webapp install --dev        # start dev (port 1027)
-```
+| **Port** | 9527 | 1027 |
+| **Service Name** | `ark-webapp` | `ark-webapp-dev` |
+| **Conda Env** | `ark-prod` | `ark-dev` |
+| **Code Source** | `~/.ark/prod/` (pinned) | Current repository (live) |
 
 </details>
+
 
 <details>
 <summary><strong>Direct orchestrator invocation</strong></summary>
