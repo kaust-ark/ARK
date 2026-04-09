@@ -163,21 +163,41 @@ ark new mma --from-pdf proposal.pdf
 | `ark list` | سرد جميع المشاريع وحالتها |
 | `ark webapp install` | تثبيت خدمة بوابة الويب |
 
+---
+
+## بوابة الويب
+
+يتضمن ARK بوابة ويب لإدارة المشاريع وعرض الدرجات وتوجيه الوكلاء.
+
+### الإعدادات
+
+يتم تكوين تطبيق الويب عبر `webapp.env` الموجود في دليل إعدادات ARK (الافتراضي: `.ark/webapp.env` في جذر المشروع). يتم إنشاؤه تلقائيًا عند أول تشغيل لـ `ark webapp`.
+
+#### المصادقة والوصول
+- **SMTP**: مطلوب لتسجيل الدخول بالرابط السحري. عيّن `SMTP_HOST` و`SMTP_USER` و`SMTP_PASSWORD`.
+- **تقييد الوصول**: استخدم `ALLOWED_EMAILS` (مستخدمون محددون) أو `EMAIL_DOMAINS` (مؤسسات كاملة).
+- **Google OAuth**: اختياري. عيّن `GOOGLE_CLIENT_ID` و`GOOGLE_CLIENT_SECRET`.
+
+### أوامر الإدارة
+
+| الأمر | الوصف |
+|:------|:------|
+| `ark webapp` | بدء التطبيق في الواجهة (مفيد للتصحيح). |
+| `ark webapp release` | وسم الكود الحالي ونشره في شجرة العمل الإنتاجية. |
+| `ark webapp install [--dev]` | تثبيت وبدء كخدمة `systemd` للمستخدم. |
+| `ark webapp status` | عرض حالة خدمة systemd. |
+| `ark webapp restart` | إعادة تشغيل خدمة التطبيق. |
+| `ark webapp logs [-f]` | عرض أو متابعة سجلات الخدمة. |
+
 <details>
-<summary><strong>بوابة الويب (تطوير/إنتاج)</strong></summary>
+<summary><strong>تفاصيل الخدمة (إنتاج مقابل تطوير)</strong></summary>
 
 | | الإنتاج | التطوير |
 |--|:--------|:--------|
-| المنفذ | 9527 | 1027 |
-| الخدمة | `ark-webapp` | `ark-webapp-dev` |
-| بيئة Conda | `ark-prod` | `ark-dev` |
-| الكود | `~/.ark/prod/` (مقفل على وسم git) | المستودع الحالي (مباشر) |
-
-```bash
-ark webapp release              # وسم + نشر للإنتاج
-ark webapp install              # بدء الإنتاج (المنفذ 9527)
-ark webapp install --dev        # بدء التطوير (المنفذ 1027)
-```
+| **المنفذ** | 9527 | 1027 |
+| **اسم الخدمة** | `ark-webapp` | `ark-webapp-dev` |
+| **بيئة Conda** | `ark-prod` | `ark-dev` |
+| **مصدر الكود** | `~/.ark/prod/` (مقفل) | المستودع الحالي (مباشر) |
 
 </details>
 

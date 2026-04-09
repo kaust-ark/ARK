@@ -74,7 +74,7 @@ EMAIL_DOMAINS=
 ADMIN_EMAILS=
 
 # Google OAuth (optional). Get credentials at console.cloud.google.com → APIs & Services → Credentials.
-# Redirect URI to register: http://{hostname}:9527/auth/google/callback
+# Redirect URI to register: <BASE_URL>/auth/google/callback  (use the BASE_URL value above)
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 

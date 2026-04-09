@@ -163,21 +163,41 @@ ARK 使用 PyMuPDF + Claude Haiku 解析 PDF，预填向导，从提取的规格
 | `ark list` | 列出所有项目及状态 |
 | `ark webapp install` | 安装 Web 门户服务 |
 
+---
+
+## Web 门户
+
+ARK 提供基于 Web 的门户，用于管理项目、查看评分和控制智能体。
+
+### 配置
+
+Web 应用通过 `webapp.env` 配置，位于 ARK 配置目录（默认：项目根目录下的 `.ark/webapp.env`）。首次运行 `ark webapp` 时自动创建。
+
+#### 认证与访问
+- **SMTP**：魔法链接登录所需。设置 `SMTP_HOST`、`SMTP_USER` 和 `SMTP_PASSWORD`。
+- **访问限制**：使用 `ALLOWED_EMAILS`（指定用户）或 `EMAIL_DOMAINS`（整个组织）限制访问。
+- **Google OAuth**：可选。设置 `GOOGLE_CLIENT_ID` 和 `GOOGLE_CLIENT_SECRET`。
+
+### 管理命令
+
+| 命令 | 描述 |
+|:-----|:-----|
+| `ark webapp` | 前台启动应用（适用于调试）。 |
+| `ark webapp release` | 打 tag 并部署到生产环境工作树。 |
+| `ark webapp install [--dev]` | 安装并启动为 `systemd` 用户服务。 |
+| `ark webapp status` | 查看 systemd 服务状态。 |
+| `ark webapp restart` | 重启 Web 应用服务。 |
+| `ark webapp logs [-f]` | 查看或追踪服务日志。 |
+
 <details>
-<summary><strong>Web 门户（开发/生产环境）</strong></summary>
+<summary><strong>服务详情（生产 vs. 开发）</strong></summary>
 
 | | 生产环境 | 开发环境 |
 |--|:---------|:---------|
-| 端口 | 9527 | 1027 |
-| 服务名 | `ark-webapp` | `ark-webapp-dev` |
-| Conda 环境 | `ark-prod` | `ark-dev` |
-| 代码 | `~/.ark/prod/`（锁定 git tag） | 当前 repo（实时生效） |
-
-```bash
-ark webapp release              # 打 tag + 部署到生产
-ark webapp install              # 启动生产服务（端口 9527）
-ark webapp install --dev        # 启动开发服务（端口 1027）
-```
+| **端口** | 9527 | 1027 |
+| **服务名** | `ark-webapp` | `ark-webapp-dev` |
+| **Conda 环境** | `ark-prod` | `ark-dev` |
+| **代码来源** | `~/.ark/prod/`（锁定版本） | 当前 repo（实时生效） |
 
 </details>
 

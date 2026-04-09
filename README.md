@@ -201,7 +201,6 @@ The web app is configured via `webapp.env` located in your ARK config directory 
 
 </details>
 
-
 <details>
 <summary><strong>Direct orchestrator invocation</strong></summary>
 
