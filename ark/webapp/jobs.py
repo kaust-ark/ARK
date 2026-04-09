@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -98,6 +99,8 @@ def submit_job(
     partition = settings.slurm_partition or _auto_partition()
     account = settings.slurm_account or _auto_account()
 
+    safe_api_keys = {k: shlex.quote(v) for k, v in (api_keys or {}).items()}
+
     template_text = _SLURM_TEMPLATE.read_text()
     script = Template(template_text).render(
         project_id=project_id,
@@ -110,7 +113,7 @@ def submit_job(
         gres=settings.slurm_gres,
         cpus_per_task=settings.slurm_cpus_per_task,
         conda_env=settings.slurm_conda_env,
-        api_keys=api_keys or {},
+        api_keys=safe_api_keys,
     )
 
     if api_keys:

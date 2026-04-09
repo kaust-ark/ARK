@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import text
 from sqlmodel import Field, Session, SQLModel, create_engine, delete, select
 
 
@@ -56,11 +57,22 @@ class Feedback(SQLModel, table=True):
 _engine = None
 
 
+def _migrate(engine):
+    """Run lightweight schema migrations for SQLite."""
+    with engine.connect() as conn:
+        rows = conn.execute(text("PRAGMA table_info(user)")).fetchall()
+        existing = {row[1] for row in rows}
+        if "encrypted_keys" not in existing:
+            conn.execute(text("ALTER TABLE user ADD COLUMN encrypted_keys TEXT"))
+            conn.commit()
+
+
 def get_engine(db_path: str):
     global _engine
     if _engine is None:
         _engine = create_engine(f"sqlite:///{db_path}", echo=False)
         SQLModel.metadata.create_all(_engine)
+        _migrate(_engine)
     return _engine
 
 

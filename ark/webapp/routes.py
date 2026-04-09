@@ -854,7 +854,7 @@ async def api_save_user_settings(request: Request):
     # run_verification_suite will verify the updated keys.
 
     # even if they weren't all updated in this request.
-    verification_results = run_verification_suite(user.id, settings.projects_root, current_keys)
+    verification_results = await asyncio.to_thread(run_verification_suite, user.id, settings.projects_root, current_keys)
     
     # Revert failed keys
     # 1. LLM API Keys
