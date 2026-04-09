@@ -1467,7 +1467,7 @@ async def api_get_log(project_id: str, request: Request, lines: int = 200):
     # Find the latest log file
     log_lines: list[str] = []
     log_file = ""
-    for pattern in ["slurm_*.out", "orchestrator.log", "*.log"]:
+    for pattern in ["local_*.out", "slurm_*.out", "orchestrator.log", "*.log"]:
         matches = sorted(log_dir.glob(pattern), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
         if matches:
             log_file = str(matches[0])
@@ -1505,7 +1505,7 @@ async def api_stream_log(project_id: str, request: Request):
 
             # Find latest log file
             log_file = None
-            for pattern in ["slurm_*.out", "orchestrator.log", "*.log"]:
+            for pattern in ["local_*.out", "slurm_*.out", "orchestrator.log", "*.log"]:
                 matches = sorted(log_dir.glob(pattern),
                                  key=lambda p: p.stat().st_mtime if p.exists() else 0,
                                  reverse=True)
