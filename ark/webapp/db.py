@@ -18,6 +18,7 @@ class User(SQLModel, table=True):
     welcome_sent: bool = False
     telegram_token: str = ""
     telegram_chat_id: str = ""
+    encrypted_keys: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

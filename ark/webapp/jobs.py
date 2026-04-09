@@ -24,6 +24,43 @@ def slurm_available() -> bool:
     return shutil.which("sbatch") is not None
 
 
+_CLAUDE_VERSION_CACHE = None
+
+def get_claude_version() -> str:
+    """Detect and cache the current version of the Claude CLI."""
+    global _CLAUDE_VERSION_CACHE
+    if _CLAUDE_VERSION_CACHE:
+        return _CLAUDE_VERSION_CACHE
+    try:
+        r = _run(["claude", "--version"])
+        # Output: "2.0.32 (Claude Code)"
+        m = re.search(r"([\d\.]+)", r.stdout)
+        if m:
+            _CLAUDE_VERSION_CACHE = m.group(1)
+            return _CLAUDE_VERSION_CACHE
+    except Exception:
+        pass
+    return "0.1.0"
+
+
+def provision_claude_session(target_dir: Path, keys: dict[str, str]):
+    """
+    Writes a manual ~/.claude.json to skip onboarding.
+    Requires oauth_token, account_uuid, email, and org_uuid in keys.
+    """
+    if "claude_oauth_token" not in keys:
+        return
+    
+    config = {
+        "hasCompletedOnboarding": True,
+        "lastOnboardingVersion": get_claude_version()
+    }
+    
+    target_dir.mkdir(parents=True, exist_ok=True)
+    import json
+    (target_dir / ".claude.json").write_text(json.dumps(config))
+
+
 def _auto_partition() -> str:
     """Try to detect an available partition from sinfo."""
     try:
@@ -55,6 +92,7 @@ def submit_job(
     project_dir: Path,
     log_dir: Path,
     settings,
+    api_keys: dict[str, str] = None,
 ) -> str:
     """Render slurm_template.sh and submit via sbatch. Returns job_id string."""
     partition = settings.slurm_partition or _auto_partition()
@@ -72,22 +110,35 @@ def submit_job(
         gres=settings.slurm_gres,
         cpus_per_task=settings.slurm_cpus_per_task,
         conda_env=settings.slurm_conda_env,
+        api_keys=api_keys or {},
     )
+
+    if api_keys:
+        provision_claude_session(project_dir, api_keys)
 
     script_path = log_dir / "submit.sh"
     log_dir.mkdir(parents=True, exist_ok=True)
-    script_path.write_text(script)
-    script_path.chmod(0o755)
+    
+    try:
+        # Securely write script with 0600 permissions immediately
+        if script_path.exists():
+            script_path.unlink()
+        script_path.write_text(script)
+        script_path.chmod(0o600)
 
-    result = _run(["sbatch", str(script_path)])
-    if result.returncode != 0:
-        raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
+        result = _run(["sbatch", str(script_path)])
+        if result.returncode != 0:
+            raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
 
-    # "Submitted batch job 12345"
-    m = re.search(r"(\d+)", result.stdout)
-    if not m:
-        raise RuntimeError(f"Could not parse job ID from sbatch output: {result.stdout!r}")
-    return m.group(1)
+        # "Submitted batch job 12345"
+        m = re.search(r"(\d+)", result.stdout)
+        if not m:
+            raise RuntimeError(f"Could not parse job ID from sbatch output: {result.stdout!r}")
+        return m.group(1)
+    finally:
+        # Wipe the script from disk immediately after handing off to SLURM
+        if script_path.exists():
+            script_path.unlink()
 
 
 def poll_job(job_id: str) -> str:
@@ -138,6 +189,7 @@ def launch_local_job(
     project_dir: Path,
     log_dir: Path,
     settings,
+    api_keys: dict[str, str] = None,
 ) -> str:
     """Launch orchestrator as a local subprocess. Returns 'local:{pid}'."""
     log_dir = Path(log_dir)
@@ -172,6 +224,21 @@ def launch_local_job(
         f"open({str(exit_file)!r}, 'w').write(str(_r.returncode))\n"
     )
 
+    # Prepare environment with user keys and home isolation
+    env = os.environ.copy()
+    if api_keys:
+        provision_claude_session(project_dir, api_keys)
+        for k, v in api_keys.items():
+            if k == "claude_oauth_token":
+                env["CLAUDE_CODE_OAUTH_TOKEN"] = v
+            elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai"):
+                # Standard LLM keys
+                env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
+                env[env_key] = v
+    
+    env["HOME"] = str(project_dir)
+    env["XDG_CONFIG_HOME"] = str(project_dir / ".config")
+
     with open(log_file, "w") as lf:
         proc = subprocess.Popen(
             [sys.executable, "-c", wrapper],
@@ -179,6 +246,7 @@ def launch_local_job(
             stderr=subprocess.STDOUT,
             start_new_session=True,
             cwd=str(project_dir),
+            env=env,
         )
 
     return f"local:{proc.pid}"
