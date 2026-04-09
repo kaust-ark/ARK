@@ -5,6 +5,9 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
+pytest.importorskip("cryptography", reason="webapp optional deps not installed")
+pytest.importorskip("fastapi", reason="webapp optional deps not installed")
+
 from ark.webapp.crypto import encrypt_text, decrypt_text
 
 class TestCredentialSecurity:
