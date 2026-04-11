@@ -1,6 +1,7 @@
 """AgentMixin: agent execution, output parsing, rate limit handling."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import signal
@@ -10,6 +11,58 @@ import time
 import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
+
+
+def _parse_claude_json(stdout: str) -> dict | None:
+    """Parse output of `claude --output-format json`. Returns None on any failure.
+
+    Tolerates trailing whitespace and the rare case where stdout has leading
+    non-JSON debug output by scanning for the final result-shaped object.
+    Never raises — callers fall back to treating stdout as plain text.
+    """
+    text = (stdout or "").strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Last-resort: locate the final result envelope
+        marker = '{"type":"result"'
+        start = text.rfind(marker)
+        if start == -1:
+            return None
+        try:
+            return json.loads(text[start:])
+        except json.JSONDecodeError:
+            return None
+
+
+def _extract_usage(parsed: dict) -> dict:
+    """Pull token/cost fields out of parsed claude JSON. Zero-default so callers
+    don't need null checks. Always returns a complete dict shape."""
+    parsed = parsed or {}
+    u = parsed.get("usage") or {}
+    model_usage = parsed.get("modelUsage") or {}
+    model = next(iter(model_usage), "")
+    return {
+        "model": model,
+        "input_tokens": int(u.get("input_tokens") or 0),
+        "output_tokens": int(u.get("output_tokens") or 0),
+        "cache_read_tokens": int(u.get("cache_read_input_tokens") or 0),
+        "cache_creation_tokens": int(u.get("cache_creation_input_tokens") or 0),
+        "cost_usd": float(parsed.get("total_cost_usd") or 0.0),
+        "duration_api_ms": int(parsed.get("duration_api_ms") or 0),
+    }
+
+
+def _fmt_tok(n: int) -> str:
+    """Format a token count as compact human-readable (e.g. 12.3k, 1.2M)."""
+    n = int(n or 0)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
 
 from ark.paths import get_config_dir
 from ark.ui import (
@@ -434,7 +487,7 @@ Execute the task and update the corresponding files.
                         "claude", "-p", full_prompt,
                         "--permission-mode", "bypassPermissions",
                         "--no-session-persistence",
-                        "--output-format", "text",
+                        "--output-format", "json",
                         "--append-system-prompt", self._build_path_boundary(),
                     ]
                     ark_model = self._get_ark_model()
@@ -469,10 +522,23 @@ Execute the task and update the corresponding files.
 
                 timer.start()
                 result = ""
+                usage_record = None  # populated when claude returns parseable JSON
 
                 try:
                     stdout, stderr = process.communicate(timeout=timeout)
-                    result = stdout
+                    # claude --output-format json: parse the envelope, extract `result`
+                    # field for downstream and `usage` for cost tracking. Fall back to
+                    # raw stdout on parse failure so the existing empty-run / failure
+                    # paths still trigger normally.
+                    if self.model == "claude":
+                        parsed = _parse_claude_json(stdout)
+                        if parsed is not None:
+                            result = parsed.get("result", "") or ""
+                            usage_record = _extract_usage(parsed)
+                        else:
+                            result = stdout
+                    else:
+                        result = stdout
 
                     if stderr:
                         stderr_lower = stderr.lower()
@@ -517,7 +583,17 @@ Execute the task and update the corresponding files.
                     timer.stop()
                     self.log(f"Agent {agent_type} timed out ({timeout}s)", "WARN")
                     stdout, _ = process.communicate()
-                    result = stdout
+                    # JSON envelope is usually missing on timeout (truncated mid-stream).
+                    # Try once; on failure fall back to raw text and let empty-run handle it.
+                    if self.model == "claude":
+                        parsed = _parse_claude_json(stdout)
+                        if parsed is not None:
+                            result = parsed.get("result", "") or ""
+                            usage_record = _extract_usage(parsed)
+                        else:
+                            result = stdout
+                    else:
+                        result = stdout
 
                 watchdog.stop()
                 timer.stop()
@@ -589,31 +665,78 @@ Execute the task and update the corresponding files.
                     start_time = time.time()
                     continue
                 self.send_notification("Agent Error Failed", f"{agent_type}: {e}", priority="critical")
-                self._agent_stats.append({
+                err_stat = {
                     "agent_type": agent_type,
                     "elapsed_seconds": elapsed,
                     "prompt_len": 0,
                     "output_len": 0,
                     "timestamp": datetime.now().isoformat(),
                     "error": str(e),
-                })
+                    # Zero-default cost fields so aggregation never sees missing keys
+                    "model": "",
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cost_usd": 0.0,
+                    "duration_api_ms": 0,
+                }
+                self._agent_stats.append(err_stat)
+                try:
+                    self._write_cost_report()
+                except Exception:
+                    pass
                 return ""
 
         timer.stop()
         self.log_step(f"{Icons.for_agent(agent_type)} {agent_styled(agent_type, f'[{agent_type}]')} completed ({elapsed}s)", "success")
+
+        # One-line cost summary (only when claude returned parseable usage)
+        if usage_record:
+            in_tok = usage_record["input_tokens"]
+            out_tok = usage_record["output_tokens"]
+            cr = usage_record["cache_read_tokens"]
+            cc = usage_record["cache_creation_tokens"]
+            cached_in = cr + cc
+            total_in = in_tok + cached_in
+            hit_pct = int(100 * cr / total_in) if total_in else 0
+            self.log_step(
+                f"  💰 ${usage_record['cost_usd']:.4f}  "
+                f"in:{_fmt_tok(in_tok)}  out:{_fmt_tok(out_tok)}  "
+                f"cache:{_fmt_tok(cached_in)}({hit_pct}% hit)",
+                "info"
+            )
 
         # Agent summary
         summary_items = self._summarize_agent_output(agent_type, result)
         if summary_items:
             self.log_summary_box(f"{agent_type.upper()} Summary", summary_items)
 
-        # Cost tracking
-        self._agent_stats.append({
+        # Cost tracking — extend with real token/cost when claude JSON was parsed
+        stat = {
             "agent_type": agent_type,
             "elapsed_seconds": elapsed,
             "prompt_len": len(full_prompt),
             "output_len": len(result) if result else 0,
             "timestamp": datetime.now().isoformat(),
-        })
+            # Zero-defaults so cost_report aggregation never sees missing keys
+            "model": "",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "cost_usd": 0.0,
+            "duration_api_ms": 0,
+        }
+        if usage_record:
+            stat.update(usage_record)
+        self._agent_stats.append(stat)
+
+        # Live cost report — written after every agent so the webapp SSE stream
+        # can pick up updates within ~2s. Failures here must never break the run.
+        try:
+            self._write_cost_report()
+        except Exception as exc:
+            self.log(f"  cost report write failed: {exc}", "WARN")
 
         return result

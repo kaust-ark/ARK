@@ -876,6 +876,35 @@
       <h4 data-i18n="project_info">Project Info</h4>
       <div id="detail-info" style="font-size:.9rem;line-height:1.8;color:var(--text-second)"></div>
     </div>
+    <div class="detail-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <h4 data-i18n="cost" style="margin:0">Cost</h4>
+        <div id="cost-view-toggle" style="display:none;background:var(--card);border:1px solid var(--card-border);border-radius:8px;padding:2px;font-size:.72rem">
+          <button type="button" class="cost-tab cost-tab-active" data-view="cost" onclick="setCostView('cost')" style="border:none;background:var(--teal);color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-weight:600">USD</button>
+          <button type="button" class="cost-tab" data-view="tokens" onclick="setCostView('tokens')" style="border:none;background:transparent;color:var(--text-second);padding:4px 12px;border-radius:6px;cursor:pointer;font-weight:600">Tokens</button>
+        </div>
+      </div>
+      <div id="detail-cost-empty" style="color:var(--text-muted);font-size:.85rem" data-i18n="no_cost_data">No cost data yet.</div>
+      <div id="detail-cost" style="display:none">
+        <!-- Headline number + meta -->
+        <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
+          <div id="cost-headline" style="font-size:1.7rem;font-weight:700;color:var(--teal-dark);line-height:1">$0.00</div>
+          <div id="cost-headline-unit" style="font-size:.75rem;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em"></div>
+        </div>
+        <div id="cost-meta" style="font-size:.78rem;color:var(--text-muted);margin-bottom:12px"></div>
+
+        <!-- Token-type legend (only shown in tokens view) -->
+        <div id="cost-legend" style="display:none;font-size:.7rem;color:var(--text-second);margin-bottom:8px;display:flex;flex-wrap:wrap;gap:10px">
+          <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:9px;height:9px;background:#3b82f6;border-radius:2px;display:inline-block"></span>input</span>
+          <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:9px;height:9px;background:#22c55e;border-radius:2px;display:inline-block"></span>cache read</span>
+          <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:9px;height:9px;background:#f59e0b;border-radius:2px;display:inline-block"></span>cache write</span>
+          <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:9px;height:9px;background:#ef4444;border-radius:2px;display:inline-block"></span>output</span>
+        </div>
+
+        <!-- Per-agent chart (svg injected by renderCost) -->
+        <div id="cost-chart" style="margin-top:6px"></div>
+      </div>
+    </div>
   </div>
 
   <div class="detail-card" style="margin-bottom:16px">
@@ -1268,6 +1297,7 @@ const TRANSLATIONS = {
     // detail
     back: '← Back',
     score: 'Score', project_info: 'Project Info',
+    cost: 'Cost', no_cost_data: 'No cost data yet.',
     title: 'Title', idea: 'Idea',
     live_log: 'Live Log', bottom: '↓ Bottom',
     waiting_for_logs: 'Waiting for logs...',
@@ -1381,6 +1411,7 @@ const TRANSLATIONS = {
     empty_state: 'لا مشاريع بعد — ابدأ بتفويض مهمتك البحثية الأولى أعلاه.',
     back: '← رجوع',
     score: 'الدرجة', project_info: 'معلومات المشروع',
+    cost: 'التكلفة', no_cost_data: 'لا توجد بيانات تكلفة بعد.',
     title: 'العنوان', idea: 'الفكرة',
     live_log: 'السجل المباشر', bottom: '↓ الأسفل',
     waiting_for_logs: 'في انتظار السجلات...',
@@ -1482,6 +1513,7 @@ const TRANSLATIONS = {
     empty_state: '暂无项目 — 在上方开始你的第一个研究任务。',
     back: '← 返回',
     score: '评分', project_info: '项目信息',
+    cost: '消耗', no_cost_data: '暂无消耗数据。',
     title: '标题', idea: '研究想法',
     live_log: '实时日志', bottom: '↓ 底部',
     waiting_for_logs: '等待日志...',
@@ -1986,6 +2018,7 @@ async function loadDetail(id) {
 
   setScore(p.score || 0);
   renderScoreChart(p.score_history || []);
+  renderCost(p.cost_report);
   renderDetailActions(p);
 
   const qp = document.getElementById('detail-queue-pos');
@@ -2199,6 +2232,160 @@ function renderZoneBar(score) {
   el.innerHTML = `<svg width="100%" viewBox="0 0 ${W} 42" style="overflow:visible;display:block">${segs}${ptr}${ticks}</svg>`;
 }
 
+// ── Cost panel ────────────────────────────────────────────────────────────
+// Token type colors (kept in sync with the legend in HTML)
+const COST_COLORS = {
+  input:        '#3b82f6',  // blue
+  cache_read:   '#22c55e',  // green — cheap, want lots
+  cache_write:  '#f59e0b',  // amber
+  output:       '#ef4444',  // red — expensive
+};
+
+let _costView = 'cost';   // 'cost' | 'tokens'
+let _costReport = null;   // last received report, kept so toggle can re-render
+
+function setCostView(view) {
+  if (view !== 'cost' && view !== 'tokens') return;
+  _costView = view;
+  document.querySelectorAll('.cost-tab').forEach(btn => {
+    const active = btn.dataset.view === view;
+    btn.classList.toggle('cost-tab-active', active);
+    btn.style.background = active ? 'var(--teal)' : 'transparent';
+    btn.style.color = active ? '#fff' : 'var(--text-second)';
+  });
+  document.getElementById('cost-legend').style.display =
+    view === 'tokens' ? 'flex' : 'none';
+  if (_costReport) renderCost(_costReport);
+}
+
+function _fmtUsd(n)  { return '$' + (Number(n) || 0).toFixed(4); }
+function _fmtUsd2(n) { return '$' + (Number(n) || 0).toFixed(2); }
+function _fmtTok(n) {
+  n = Number(n) || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+  return String(n);
+}
+
+function renderCost(report) {
+  _costReport = report;
+  const empty = document.getElementById('detail-cost-empty');
+  const card = document.getElementById('detail-cost');
+  const toggle = document.getElementById('cost-view-toggle');
+  if (!empty || !card) return;
+  if (!report || !report.total_agent_calls) {
+    empty.style.display = '';
+    card.style.display = 'none';
+    if (toggle) toggle.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  card.style.display = '';
+  if (toggle) toggle.style.display = '';
+
+  const inTok  = report.total_input_tokens || 0;
+  const outTok = report.total_output_tokens || 0;
+  const crTok  = report.total_cache_read_tokens || 0;
+  const ccTok  = report.total_cache_creation_tokens || 0;
+  const totalTok = inTok + outTok + crTok + ccTok;
+  const totalInLike = inTok + crTok + ccTok;
+  const hitPct = totalInLike ? Math.round(100 * crTok / totalInLike) : 0;
+  const hitColor = hitPct >= 60 ? '#16a34a' : hitPct >= 30 ? '#ca8a04' : '#dc2626';
+
+  // Headline + meta line, depending on view
+  if (_costView === 'cost') {
+    document.getElementById('cost-headline').textContent = _fmtUsd(report.total_cost_usd);
+    document.getElementById('cost-headline-unit').textContent = 'USD';
+  } else {
+    document.getElementById('cost-headline').textContent = _fmtTok(totalTok);
+    document.getElementById('cost-headline-unit').textContent = 'TOKENS';
+  }
+  document.getElementById('cost-meta').innerHTML =
+    `${report.total_agent_calls} calls &nbsp;·&nbsp; ` +
+    `cache hit <span style="color:${hitColor};font-weight:700">${hitPct}%</span>`;
+
+  // Build per-agent rows
+  const perAgent = report.per_agent || {};
+  const agents = Object.entries(perAgent).map(([name, d]) => ({
+    name,
+    calls: d.calls || 0,
+    cost:  d.total_cost_usd || 0,
+    input: d.total_input_tokens || 0,
+    output: d.total_output_tokens || 0,
+    cread: d.total_cache_read_tokens || 0,
+    cwrite: d.total_cache_creation_tokens || 0,
+    tokens: (d.total_input_tokens || 0) + (d.total_output_tokens || 0) +
+            (d.total_cache_read_tokens || 0) + (d.total_cache_creation_tokens || 0),
+  }));
+
+  // Sort by the metric currently in view, descending
+  agents.sort((a, b) => (_costView === 'cost' ? b.cost - a.cost : b.tokens - a.tokens));
+
+  // Layout constants for the SVG chart
+  const W = 320;
+  const ROW_H = 22;
+  const GAP = 6;
+  const LABEL_W = 78;       // agent name column
+  const VALUE_W = 64;       // right-side value column
+  const BAR_X = LABEL_W + 4;
+  const BAR_W = W - LABEL_W - VALUE_W - 8;
+  const BAR_H = 12;
+
+  // Determine the maximum so bars can be scaled
+  const maxVal = _costView === 'cost'
+    ? Math.max(...agents.map(a => a.cost), 1e-9)
+    : Math.max(...agents.map(a => a.tokens), 1);
+
+  const svgRows = agents.map((a, i) => {
+    const rowY = i * (ROW_H + GAP);
+    const barY = rowY + (ROW_H - BAR_H) / 2;
+
+    // Build segments depending on view
+    let segs = '';
+    if (_costView === 'cost') {
+      // Single solid bar — length proportional to USD
+      const w = a.cost / maxVal * BAR_W;
+      segs = `<rect x="${BAR_X}" y="${barY}" width="${w.toFixed(1)}" height="${BAR_H}"
+        fill="var(--teal)" rx="2"/>`;
+    } else {
+      // Stacked bar split by 4 token types — length proportional to total tokens
+      const totalW = (a.tokens / maxVal) * BAR_W;
+      const parts = [
+        ['input',       a.input,  COST_COLORS.input],
+        ['cache_read',  a.cread,  COST_COLORS.cache_read],
+        ['cache_write', a.cwrite, COST_COLORS.cache_write],
+        ['output',      a.output, COST_COLORS.output],
+      ];
+      let cursor = BAR_X;
+      segs = parts.map(([key, n, color]) => {
+        if (!n || !a.tokens) return '';
+        const w = n / a.tokens * totalW;
+        const rect = `<rect x="${cursor.toFixed(1)}" y="${barY}" width="${w.toFixed(1)}" height="${BAR_H}" fill="${color}"><title>${key}: ${_fmtTok(n)}</title></rect>`;
+        cursor += w;
+        return rect;
+      }).join('');
+    }
+
+    // Right-side value
+    const rightVal = _costView === 'cost'
+      ? _fmtUsd(a.cost)
+      : _fmtTok(a.tokens);
+
+    return `
+      <g>
+        <text x="0" y="${rowY + ROW_H / 2 + 4}" font-size="11" font-weight="600" fill="var(--text-primary)">${esc(a.name)}</text>
+        <text x="${LABEL_W}" y="${rowY + ROW_H / 2 + 4}" text-anchor="end" font-size="9" fill="var(--text-muted)">${a.calls}×</text>
+        <rect x="${BAR_X}" y="${barY}" width="${BAR_W}" height="${BAR_H}" fill="var(--card-border)" rx="2"/>
+        ${segs}
+        <text x="${W}" y="${rowY + ROW_H / 2 + 4}" text-anchor="end" font-size="10" font-weight="600" fill="var(--text-second)">${rightVal}</text>
+      </g>`;
+  }).join('');
+
+  const totalH = agents.length * (ROW_H + GAP);
+  const svg = `<svg width="100%" viewBox="0 0 ${W} ${totalH}" style="display:block;overflow:visible">${svgRows}</svg>`;
+  document.getElementById('cost-chart').innerHTML = svg;
+}
+
 function renderDetailActions(p) {
   const el = document.getElementById('detail-actions');
   const zipReady = (p.score || 0) > 0 || p.mode === 'dev' || p.status === 'done' || p.status === 'stopped';
@@ -2335,6 +2522,7 @@ function startDetailStream(id) {
       badge.textContent = t('status_' + data.status) || data.status;
     }
     if (data.score !== undefined) setScore(data.score);
+    if (data.cost_report !== undefined) renderCost(data.cost_report);
     if (data.status === 'done' || data.status === 'failed' || data.status === 'stopped') {
       // Stop SSE — do NOT call loadDetail (would restart SSE → infinite loop)
       stopDetailStream();
@@ -2345,6 +2533,7 @@ function startDetailStream(id) {
         .then(p => {
           renderDetailActions(p);
           renderScoreChart(p.score_history || []);
+          renderCost(p.cost_report);
         });
     }
   });

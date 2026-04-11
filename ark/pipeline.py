@@ -1755,36 +1755,79 @@ Only use double_column for multi-panel figures (side-by-side subplots).
             pass
 
     def _write_cost_report(self):
-        """Write per-agent and total cost/stats to cost_report.yaml."""
+        """Write per-agent and total cost/stats to cost_report.yaml.
+
+        Called after every agent invocation so the webapp SSE stream can pick
+        up live updates within ~2s. Writes atomically (.tmp + os.replace) so
+        readers never see a partial file. Aggregates real token & USD fields
+        when the claude JSON envelope was parsed; falls back to character
+        counts otherwise.
+        """
         if not self._agent_stats:
             return
 
-        # Aggregate per agent type
+        # Aggregate per agent type. Each bucket carries both legacy char-count
+        # fields (for backwards compat with telegram_daemon / older tests) and
+        # the new token + cost fields populated from claude JSON output.
         by_type = {}
         for stat in self._agent_stats:
             atype = stat["agent_type"]
             if atype not in by_type:
-                by_type[atype] = {"calls": 0, "total_seconds": 0, "total_prompt_len": 0, "total_output_len": 0}
-            by_type[atype]["calls"] += 1
-            by_type[atype]["total_seconds"] += stat.get("elapsed_seconds", 0)
-            by_type[atype]["total_prompt_len"] += stat.get("prompt_len", 0)
-            by_type[atype]["total_output_len"] += stat.get("output_len", 0)
+                by_type[atype] = {
+                    "calls": 0,
+                    "total_seconds": 0,
+                    "total_prompt_len": 0,
+                    "total_output_len": 0,
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_cache_read_tokens": 0,
+                    "total_cache_creation_tokens": 0,
+                    "total_cost_usd": 0.0,
+                }
+            b = by_type[atype]
+            b["calls"] += 1
+            b["total_seconds"] += stat.get("elapsed_seconds", 0)
+            b["total_prompt_len"] += stat.get("prompt_len", 0)
+            b["total_output_len"] += stat.get("output_len", 0)
+            b["total_input_tokens"] += stat.get("input_tokens", 0)
+            b["total_output_tokens"] += stat.get("output_tokens", 0)
+            b["total_cache_read_tokens"] += stat.get("cache_read_tokens", 0)
+            b["total_cache_creation_tokens"] += stat.get("cache_creation_tokens", 0)
+            b["total_cost_usd"] += float(stat.get("cost_usd", 0.0) or 0.0)
 
         total_calls = sum(d["calls"] for d in by_type.values())
         total_time = sum(d["total_seconds"] for d in by_type.values())
+        total_cost_usd = sum(d["total_cost_usd"] for d in by_type.values())
+        total_input_tokens = sum(d["total_input_tokens"] for d in by_type.values())
+        total_output_tokens = sum(d["total_output_tokens"] for d in by_type.values())
+        total_cache_read_tokens = sum(d["total_cache_read_tokens"] for d in by_type.values())
+        total_cache_creation_tokens = sum(d["total_cache_creation_tokens"] for d in by_type.values())
 
         report = {
             "generated_at": datetime.now().isoformat(),
             "total_agent_calls": total_calls,
             "total_agent_seconds": total_time,
+            "total_cost_usd": round(total_cost_usd, 6),
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
+            "total_cache_read_tokens": total_cache_read_tokens,
+            "total_cache_creation_tokens": total_cache_creation_tokens,
             "per_agent": by_type,
             "raw_stats": self._agent_stats[-100:],  # Keep last 100 entries
         }
 
         report_path = self.state_dir / "cost_report.yaml"
-        with open(report_path, "w") as f:
-            yaml.dump(report, f, default_flow_style=False, allow_unicode=True)
-        self.log(f"Cost report written: {report_path} ({total_calls} calls, {total_time}s total)", "INFO")
+        tmp_path = report_path.with_suffix(".yaml.tmp")
+        try:
+            with open(tmp_path, "w") as f:
+                yaml.dump(report, f, default_flow_style=False, allow_unicode=True)
+            os.replace(tmp_path, report_path)
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise
 
     def run(self):
         """Main loop."""

@@ -483,6 +483,33 @@ def _read_current_iteration(project_dir: Path) -> int:
         return 0
 
 
+def _read_cost_report(project_dir: Path) -> dict:
+    """Read cost_report.yaml and return a slim summary suitable for the UI.
+
+    Drops `raw_stats` (last-100 entries) to keep the payload small for SSE.
+    Returns an empty dict if the file is missing or unreadable — the UI
+    treats that as "no cost data yet".
+    """
+    p = project_dir / "auto_research" / "state" / "cost_report.yaml"
+    if not p.exists():
+        return {}
+    try:
+        d = yaml.safe_load(p.read_text()) or {}
+    except Exception:
+        return {}
+    return {
+        "total_cost_usd": d.get("total_cost_usd", 0),
+        "total_input_tokens": d.get("total_input_tokens", 0),
+        "total_output_tokens": d.get("total_output_tokens", 0),
+        "total_cache_read_tokens": d.get("total_cache_read_tokens", 0),
+        "total_cache_creation_tokens": d.get("total_cache_creation_tokens", 0),
+        "total_agent_calls": d.get("total_agent_calls", 0),
+        "total_agent_seconds": d.get("total_agent_seconds", 0),
+        "per_agent": d.get("per_agent", {}),
+        "generated_at": d.get("generated_at"),
+    }
+
+
 _TEMPLATE_TITLES = {"Paper Title", "Title Text", "Insert Title Here", ""}
 
 def _read_paper_title(project_dir: Path) -> str:
@@ -1146,6 +1173,7 @@ async def api_get_project(project_id: str, request: Request):
             "environment": "ROCS Testbed" if project.slurm_job_id and not project.slurm_job_id.startswith("local") else "Local",
             "created_at": project.created_at.isoformat(),
             "updated_at": project.updated_at.isoformat(),
+            "cost_report": _read_cost_report(pdir),
         })
 
 
@@ -1524,12 +1552,17 @@ async def api_stream_log(project_id: str, request: Request):
                 except Exception:
                     pass
 
-            # Also emit status
+            # Also emit status (includes live cost report so the dashboard
+            # cost panel updates within ~2s of every agent completion)
             with get_session(settings.db_path) as session:
                 p = get_project(session, project_id)
                 if p:
                     score = _read_project_score(pdir)
-                    payload = json.dumps({"status": p.status, "score": score})
+                    payload = json.dumps({
+                        "status": p.status,
+                        "score": score,
+                        "cost_report": _read_cost_report(pdir),
+                    })
                     yield f"event: status\ndata: {payload}\n\n"
 
             await asyncio.sleep(2)

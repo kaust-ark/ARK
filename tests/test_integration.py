@@ -5,6 +5,7 @@ at the subprocess level and verifies the end-to-end pipeline produces correct
 state files, scores, agent call sequence, and cost tracking.
 """
 
+import json
 import os
 import struct
 import sys
@@ -52,6 +53,11 @@ class MockController:
         self.review_score = review_score
         self.agent_calls: list[str] = []
         self._reviewer_call_count = 0
+        # When True, wrap agent stdout in a claude --output-format json envelope
+        # so the JSON parsing path in agents.py is exercised. The cost values
+        # below are deterministic so tests can assert exact aggregates.
+        self.json_mode = False
+        self.json_cost_per_call = 0.025  # USD per agent call when json_mode
 
     # -- subprocess.run mock ------------------------------------------------
 
@@ -108,6 +114,37 @@ class MockController:
             self._write_review()
         elif agent_type == "planner":
             self._write_action_plan()
+
+        # When json_mode is on, wrap the agent's textual output in a fake claude
+        # --output-format json envelope so the JSON-parsing path in agents.py
+        # runs end-to-end. Token / cost numbers are deterministic per call so
+        # tests can assert on exact aggregates.
+        if self.json_mode:
+            envelope = {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": stdout_text,
+                "duration_ms": 1500,
+                "duration_api_ms": 1400,
+                "total_cost_usd": self.json_cost_per_call,
+                "usage": {
+                    "input_tokens": 100,
+                    "cache_creation_input_tokens": 200,
+                    "cache_read_input_tokens": 800,
+                    "output_tokens": 50,
+                },
+                "modelUsage": {
+                    "claude-opus-4-6[1m]": {
+                        "inputTokens": 100,
+                        "outputTokens": 50,
+                        "cacheReadInputTokens": 800,
+                        "cacheCreationInputTokens": 200,
+                        "costUSD": self.json_cost_per_call,
+                    }
+                },
+            }
+            stdout_text = json.dumps(envelope)
 
         proc = MagicMock()
         proc.communicate.return_value = (stdout_text, "")
@@ -668,3 +705,62 @@ class TestIntegration:
             assert "agent_type" in stat
             assert "elapsed_seconds" in stat
             assert "timestamp" in stat
+
+    def test_cost_tracking_token_fields(self, integration_project):
+        """When claude returns JSON, _agent_stats and cost_report.yaml carry
+        real token + USD aggregates parsed from the envelope."""
+        import yaml as _yaml
+        orch, controller = integration_project
+        controller.json_mode = True
+        orch.run_paper_iteration()
+
+        # Per-call stats include the new token/cost fields
+        assert orch._agent_stats, "expected at least one agent call"
+        for stat in orch._agent_stats:
+            for key in ("input_tokens", "output_tokens",
+                        "cache_read_tokens", "cache_creation_tokens",
+                        "cost_usd", "model"):
+                assert key in stat, f"missing {key} in stat"
+            # The mock envelope sets these to fixed values for non-error calls
+            if not stat.get("error"):
+                assert stat["input_tokens"] == 100
+                assert stat["output_tokens"] == 50
+                assert stat["cache_read_tokens"] == 800
+                assert stat["cache_creation_tokens"] == 200
+                assert stat["cost_usd"] == controller.json_cost_per_call
+                assert stat["model"] == "claude-opus-4-6[1m]"
+
+        # cost_report.yaml is written live and aggregates correctly
+        report_path = orch.state_dir / "cost_report.yaml"
+        assert report_path.exists(), "live cost report should exist after run"
+        report = _yaml.safe_load(report_path.read_text())
+        n_calls = report["total_agent_calls"]
+        assert n_calls > 0
+        assert report["total_cost_usd"] == round(
+            n_calls * controller.json_cost_per_call, 6
+        )
+        assert report["total_input_tokens"] == n_calls * 100
+        assert report["total_output_tokens"] == n_calls * 50
+        assert report["total_cache_read_tokens"] == n_calls * 800
+        assert report["total_cache_creation_tokens"] == n_calls * 200
+        # per-agent buckets carry the same fields
+        for agent_name, bucket in report["per_agent"].items():
+            assert "total_cost_usd" in bucket
+            assert "total_input_tokens" in bucket
+            assert bucket["total_cost_usd"] >= 0
+
+    def test_cost_tracking_malformed_json(self, integration_project):
+        """When claude stdout is not valid JSON, agents fall back to plain
+        text without crashing and stats append with zero cost fields."""
+        orch, controller = integration_project
+        # json_mode stays False — mock returns plain text, which should
+        # fail _parse_claude_json and trigger the fallback path
+        orch.run_paper_iteration()
+        assert orch._agent_stats, "expected at least one agent call"
+        for stat in orch._agent_stats:
+            # Fallback path leaves cost fields at their zero defaults
+            assert stat.get("cost_usd", 0) == 0
+            assert stat.get("input_tokens", 0) == 0
+            assert stat.get("output_tokens", 0) == 0
+        # Live cost report still written even with zero costs
+        assert (orch.state_dir / "cost_report.yaml").exists()
