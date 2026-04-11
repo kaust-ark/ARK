@@ -44,6 +44,13 @@ class TelegramConfig:
 
     def _load_global(self) -> dict:
         if self._global is None:
+            # In webapp / multi-user mode, never read the lab-wide telegram
+            # config: each project must use its own bot/chat from the
+            # project record.
+            no_global = os.environ.get("ARK_NO_GLOBAL_CONFIG", "").strip().lower()
+            if no_global and no_global not in ("0", "false", "no", "off"):
+                self._global = {}
+                return self._global
             if self._global_config_path().exists():
                 try:
                     with open(self._global_config_path()) as f:

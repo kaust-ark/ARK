@@ -81,7 +81,17 @@ from .db import (
     update_project,
 )
 from .crypto import encrypt_text, decrypt_text
-from .jobs import cancel_job, cancel_local_job, launch_local_job, slurm_available, slurm_state_to_status, submit_job
+from .jobs import (
+    cancel_job,
+    cancel_local_job,
+    launch_local_job,
+    project_env_prefix,
+    project_env_ready,
+    provision_project_env,
+    slurm_available,
+    slurm_state_to_status,
+    submit_job,
+)
 from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email
 from .templates import copy_venue_template, has_venue_template
 
@@ -355,11 +365,11 @@ def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
 
 
-def _clean_project_state(project_dir: Path, keep_deep_research: bool = True):
+def _clean_project_state(project_dir: Path, keep_deep_research: bool = True, keep_figures: bool = False):
     """Remove all generated state/results for a fresh restart.
 
     Preserves: config.yaml, uploaded.pdf, venue template files (.cls/.sty/.bst),
-    agent prompts, and optionally deep_research.md/pdf.
+    agent prompts, and optionally deep_research.md/pdf and paper/figures/.
     """
     # Clean auto_research/state/
     state_dir = project_dir / "auto_research" / "state"
@@ -390,8 +400,10 @@ def _clean_project_state(project_dir: Path, keep_deep_research: bool = True):
         for f in paper_dir.iterdir():
             if f.is_dir():
                 if f.name == "figures":
-                    shutil.rmtree(f, ignore_errors=True)
-                    f.mkdir(exist_ok=True)
+                    if not keep_figures:
+                        shutil.rmtree(f, ignore_errors=True)
+                        f.mkdir(exist_ok=True)
+                    # else: preserve fig_*.png, concept_figures.json, figure_manifest.json
             elif f.suffix not in keep_exts:
                 f.unlink()
 
@@ -598,6 +610,100 @@ def _write_user_update(project_dir: Path, message: str, source: str = "webapp"):
     updates.append({"consumed": False, "message": message,
                     "source": source, "timestamp": _dt.utcnow().isoformat()})
     f.write_text(yaml.dump({"updates": updates}, allow_unicode=True))
+
+
+async def _provision_env_then_submit(
+    project_id: str,
+    user_id: str,
+    template_available: bool,
+    is_admin: bool,
+):
+    """
+    Background task: clone the base conda env into <pdir>/.env, then either
+    submit the project or move it to waiting_template. Drives the project
+    through the ``initializing`` status and pushes Telegram updates.
+    """
+    settings = get_settings()
+    pdir = _project_dir(settings, user_id, project_id)
+    base_env = settings.project_base_conda_env
+
+    # Pull current Telegram credentials so we can notify on outcomes.
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project:
+            return
+        token = project.telegram_token
+        chat_id = project.telegram_chat_id
+        url = f"{settings.base_url}/#project/{project_id}"
+
+    send_telegram_notify(
+        f"🛠️ <b>{_pname(project)}</b> initializing — cloning conda env "
+        f"<code>{base_env}</code>…",
+        bot_token=token, chat_id=chat_id,
+    )
+
+    if not base_env:
+        # Provisioning disabled — skip env creation, behave like the legacy path.
+        success, message = True, "per-project env disabled (PROJECT_BASE_CONDA_ENV='')"
+    else:
+        success, message = await asyncio.to_thread(
+            provision_project_env, pdir, base_env,
+            pdir / "logs" / "env_provision.log",
+        )
+
+    logger.info(f"Project {project_id} env provision: success={success} msg={message}")
+
+    if not success:
+        with get_session(settings.db_path) as session:
+            project = get_project(session, project_id)
+            if project and project.status == "initializing":
+                update_project(session, project, status="failed")
+        send_telegram_notify(
+            f"❌ <b>{_pname(project)}</b> env provisioning failed: {message}",
+            bot_token=token, chat_id=chat_id,
+        )
+        return
+
+    # Env is ready — transition out of initializing.
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project:
+            return
+        # User may have stopped/deleted while we were cloning. Don't override.
+        if project.status != "initializing":
+            logger.info(f"Project {project_id} no longer initializing (now {project.status}); skipping submit")
+            return
+
+        if not template_available:
+            update_project(session, project, status="waiting_template")
+            send_telegram_notify(
+                f"📦 <b>{_pname(project)}</b> env ready — {message}.\n"
+                f"Now waiting for a <b>{project.venue}</b> LaTeX template "
+                f"(reply with a .zip link).",
+                bot_token=token, chat_id=chat_id,
+            )
+            return
+
+        # Submit normally (or queue if another project is active).
+        try:
+            final_status = _try_submit_or_pending(
+                project, pdir, session, settings, is_admin=is_admin,
+            )
+        except Exception as e:
+            logger.error(f"Submit-after-provision failed for {project_id}: {e}")
+            update_project(session, project, status="failed")
+            send_telegram_notify(
+                f"❌ <b>{_pname(project)}</b> submission failed after env ready: {e}",
+                bot_token=token, chat_id=chat_id,
+            )
+            return
+
+    send_telegram_notify(
+        f"🔬 <b>{_pname(project)}</b> env ready ({message}) — {final_status}\n"
+        f"Venue: {project.venue} · {project.max_iterations} iter\n"
+        f"<a href='{url}'>{url}</a>",
+        bot_token=token, chat_id=chat_id,
+    )
 
 
 def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> str:
@@ -990,7 +1096,7 @@ async def api_create_project(
         user_projects = get_projects_for_user(_s, user.id)
         if len(user_projects) >= MAX_PROJECTS_PER_USER:
             raise HTTPException(400, f"Max {MAX_PROJECTS_PER_USER} projects per user.")
-        active = [p for p in user_projects if p.status in ("queued", "running", "pending")]
+        active = [p for p in user_projects if p.status in ("queued", "running", "pending", "initializing")]
         if active and not _is_admin(user):
             raise HTTPException(400, "You already have an active project. Wait for it to finish.")
             
@@ -1064,7 +1170,10 @@ async def api_create_project(
             _content = _content.replace("{FIGURES_DIR}", "paper/figures")
             (agents_dir / _pf.name).write_text(_content)
 
-    initial_status = "queued" if template_available else "waiting_template"
+    # New flow: every project starts in "initializing" while we clone its
+    # per-project conda env in the background. The background task then
+    # transitions it to either waiting_template or runs _try_submit_or_pending.
+    initial_status = "initializing"
 
     with get_session(settings.db_path) as session:
         project = create_project(
@@ -1101,37 +1210,22 @@ async def api_create_project(
             _write_user_update(pdir, comment.strip(), source="webapp_create")
             _write_user_instructions(pdir, comment.strip(), source="webapp_create")
 
-        if not template_available:
-            # Ask user to send template via Telegram, don't submit job yet
-            send_telegram_notify(
-                f"📦 <b>{_pname(project)}</b> needs a <b>{venue}</b> LaTeX template.\n\n"
-                f"Please reply with a direct download link (.zip) to the official {venue} author kit.\n"
-                f"The system will automatically extract and set up the template.",
-                bot_token=project.telegram_token,
-                chat_id=project.telegram_chat_id,
-            )
-            return JSONResponse({
-                "id": project.id,
-                "name": project.name,
-                "status": initial_status,
-                "slurm_job_id": "",
-            }, status_code=201)
+    # Kick off env provisioning in the background. The task is responsible
+    # for sending Telegram updates and transitioning the project to its next
+    # status (queued/running/pending/waiting_template/failed).
+    asyncio.create_task(_provision_env_then_submit(
+        project_id=project_id,
+        user_id=user.id,
+        template_available=template_available,
+        is_admin=_is_admin(user),
+    ))
 
-        final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=_is_admin(user))
-
-        send_telegram_notify(
-            f"🔬 <b>{_pname(project)}</b> submitted ({final_status})\n"
-            f"Venue: {project.venue} · {project.max_iterations} iter",
-            bot_token=project.telegram_token,
-            chat_id=project.telegram_chat_id,
-        )
-
-        return JSONResponse({
-            "id": project.id,
-            "name": project.name,
-            "status": final_status,
-            "slurm_job_id": project.slurm_job_id,
-        }, status_code=201)
+    return JSONResponse({
+        "id": project_id,
+        "name": title,
+        "status": initial_status,
+        "slurm_job_id": "",
+    }, status_code=201)
 
 
 @router.get("/api/projects/{project_id}")
@@ -1146,6 +1240,11 @@ async def api_get_project(project_id: str, request: Request):
         score = _read_project_score(pdir)
         pdf = _find_pdf(pdir)
         owner = session.get(User, project.user_id)
+        env_ready = project_env_ready(pdir)
+        if env_ready:
+            conda_env_display = str(project_env_prefix(pdir))
+        else:
+            conda_env_display = settings.slurm_conda_env or ""
         return JSONResponse({
             "id": project.id,
             "name": project.name,
@@ -1171,6 +1270,8 @@ async def api_get_project(project_id: str, request: Request):
             "telegram_chat_id": project.telegram_chat_id,
             "has_deep_research": (pdir / "auto_research" / "state" / "deep_research.md").exists(),
             "environment": "ROCS Testbed" if project.slurm_job_id and not project.slurm_job_id.startswith("local") else "Local",
+            "conda_env": conda_env_display,
+            "conda_env_ready": env_ready,
             "created_at": project.created_at.isoformat(),
             "updated_at": project.updated_at.isoformat(),
             "cost_report": _read_cost_report(pdir),
@@ -1229,7 +1330,7 @@ async def api_restart_project(project_id: str, request: Request):
         if project.status not in ("stopped", "failed", "done"):
             raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
         active = [p for p in get_projects_for_user(session, project.user_id)
-                  if p.status in ("queued", "running", "pending") and p.id != project_id]
+                  if p.status in ("queued", "running", "pending", "initializing") and p.id != project_id]
         if active and not _is_admin(user):
             raise HTTPException(400, "You already have an active project.")
         pdir = _project_dir(settings, project.user_id, project_id)
@@ -1255,7 +1356,12 @@ async def api_restart_project(project_id: str, request: Request):
 
         # Clean up project state for fresh restart
         redo_deep_research = body.get("redo_deep_research", False)
-        _clean_project_state(pdir, keep_deep_research=not redo_deep_research)
+        keep_figures = body.get("keep_figures", False)
+        _clean_project_state(
+            pdir,
+            keep_deep_research=not redo_deep_research,
+            keep_figures=keep_figures,
+        )
 
         # Re-copy venue template (clean removed .bib/.tex template files)
         venue_fmt = body.get("venue_format") or project.venue_format or ""
@@ -1322,7 +1428,7 @@ async def api_continue_project(project_id: str, request: Request):
         if project.status not in ("done", "stopped", "failed"):
             raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
         active = [p for p in get_projects_for_user(session, project.user_id)
-                  if p.status in ("queued", "running", "pending") and p.id != project_id]
+                  if p.status in ("queued", "running", "pending", "initializing") and p.id != project_id]
         if active and not _is_admin(user):
             raise HTTPException(400, "You already have an active project.")
         new_max = project.max_iterations + additional
@@ -1373,7 +1479,7 @@ async def api_admin_killall(request: Request):
     with get_session(settings.db_path) as session:
         from sqlmodel import select as _sel
         active = session.exec(
-            _sel(Project).where(Project.status.in_(["queued", "running", "pending"]))
+            _sel(Project).where(Project.status.in_(["queued", "running", "pending", "initializing"]))
         ).all()
         for p in active:
             if p.slurm_job_id:

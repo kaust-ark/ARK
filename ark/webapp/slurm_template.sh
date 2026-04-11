@@ -16,7 +16,13 @@ echo "[ARK] Project dir: {{ project_dir }}"
 
 source ~/.bashrc
 export PATH="$HOME/.local/bin:$HOME/texlive/2025/bin/x86_64-linux:$PATH"
-conda activate {{ conda_env }}
+# Prefer the project-local conda env (created at submission time);
+# fall back to the shared {{ conda_env }} env for legacy projects.
+if [ -d "{{ project_dir }}/.env/conda-meta" ]; then
+    conda activate "{{ project_dir }}/.env"
+else
+    conda activate {{ conda_env }}
+fi
 {% for k, v in api_keys.items() %}
 {% if k == "claude_oauth_token" %}
 export CLAUDE_CODE_OAUTH_TOKEN={{ v }}
@@ -27,6 +33,12 @@ export {{ env_key }}={{ v }}
 {% endfor %}
 export HOME="{{ project_dir }}"
 export XDG_CONFIG_HOME="{{ project_dir }}/.config"
+# Disable user-site discovery so the project's conda env is the only
+# source of Python packages. No /home/<user>/.local cross-contamination.
+export PYTHONNOUSERSITE=1
+# Forbid lab-wide config fallback (gemini key, telegram, etc.) — each
+# project must use only the keys passed in by the webapp.
+export ARK_NO_GLOBAL_CONFIG=1
 
 cd {{ project_dir }}
 python -m ark.orchestrator \

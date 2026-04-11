@@ -16,12 +16,162 @@ from jinja2 import Template
 
 _SLURM_TEMPLATE = Path(__file__).parent / "slurm_template.sh"
 
+# Per-project conda env: lives at <project_dir>/.env as a `--prefix` env cloned
+# from the configured base env. Detected via the conda-meta directory which
+# every conda env has, even an empty one.
+PROJECT_ENV_DIRNAME = ".env"
+
+
+def project_env_prefix(project_dir: Path) -> Path:
+    return Path(project_dir) / PROJECT_ENV_DIRNAME
+
+
+def project_env_ready(project_dir: Path) -> bool:
+    return (project_env_prefix(project_dir) / "conda-meta").is_dir()
+
+
+def find_claude_binary() -> str | None:
+    """
+    Locate the ``claude`` CLI even when systemd's bare PATH doesn't include
+    the user's nvm/npm bin dir. Tries shutil.which, $HOME/.local/bin, then
+    every nvm node version's bin dir, then a few common npm prefixes.
+    """
+    found = shutil.which("claude")
+    if found:
+        return found
+    home = Path(os.path.expanduser("~"))
+    candidates: list[Path] = [home / ".local" / "bin" / "claude"]
+    nvm_dir = home / ".nvm" / "versions" / "node"
+    if nvm_dir.is_dir():
+        # Newest version first so we pick the actively used one.
+        try:
+            for v in sorted(nvm_dir.iterdir(), reverse=True):
+                candidates.append(v / "bin" / "claude")
+        except OSError:
+            pass
+    candidates += [
+        home / ".npm-global" / "bin" / "claude",
+        Path("/usr/local/bin/claude"),
+    ]
+    for c in candidates:
+        if c.is_file() and os.access(c, os.X_OK):
+            return str(c)
+    return None
+
+
+def build_subprocess_path(extra: list[str] | None = None) -> str:
+    """
+    Build a PATH string suitable for spawning ARK subprocesses (orchestrator,
+    claude CLI, etc.) when the parent process has a bare systemd PATH.
+    Prepends: claude binary dir, ~/.local/bin, texlive 2025 bin, plus any
+    caller-supplied dirs, then the existing PATH.
+    """
+    parts: list[str] = list(extra or [])
+    home = Path(os.path.expanduser("~"))
+
+    claude = find_claude_binary()
+    if claude:
+        parts.append(str(Path(claude).parent))
+
+    parts.append(str(home / ".local" / "bin"))
+
+    texlive = home / "texlive" / "2025" / "bin" / "x86_64-linux"
+    if texlive.is_dir():
+        parts.append(str(texlive))
+
+    existing = os.environ.get("PATH", "/usr/bin:/bin")
+    # Dedupe while preserving order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in parts + existing.split(":"):
+        if p and p not in seen:
+            seen.add(p)
+            out.append(p)
+    return ":".join(out)
+
+
+def find_conda_binary() -> str | None:
+    """
+    Locate the conda binary even when PATH is bare (e.g. systemd unit with no
+    Environment=PATH=). Tries shutil.which, then $CONDA_EXE, then common
+    install prefixes under $HOME.
+    """
+    found = shutil.which("conda")
+    if found:
+        return found
+    env_var = os.environ.get("CONDA_EXE")
+    if env_var and Path(env_var).is_file():
+        return env_var
+    home = Path(os.path.expanduser("~"))
+    for candidate in (
+        home / "miniforge3" / "condabin" / "conda",
+        home / "miniforge3" / "bin" / "conda",
+        home / "miniconda3" / "condabin" / "conda",
+        home / "miniconda3" / "bin" / "conda",
+        home / "anaconda3" / "condabin" / "conda",
+        home / "anaconda3" / "bin" / "conda",
+        Path("/opt/conda/bin/conda"),
+    ):
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def provision_project_env(project_dir: Path, base_env: str = "ark-dev",
+                          log_path: Path | None = None) -> tuple[bool, str]:
+    """
+    Create a per-project conda env at <project_dir>/.env by cloning ``base_env``.
+
+    Returns ``(success, message)``. Idempotent: returns success immediately if
+    the env is already present. Writes the conda command output to ``log_path``
+    (or <project_dir>/.env_provision.log) for debugging.
+    """
+    project_dir = Path(project_dir)
+    target = project_env_prefix(project_dir)
+    log_path = Path(log_path) if log_path else (project_dir / ".env_provision.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if project_env_ready(project_dir):
+        return True, f"already exists at {target}"
+
+    conda_bin = find_conda_binary()
+    if not conda_bin:
+        msg = ("conda binary not found (checked PATH, $CONDA_EXE, and common "
+               "miniforge/anaconda locations); cannot provision project env")
+        log_path.write_text(msg + "\n")
+        return False, msg
+
+    # Stale partial env from a prior failed clone — wipe before retrying.
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
+
+    cmd = [conda_bin, "create", "--prefix", str(target),
+           "--clone", base_env, "--yes"]
+    started = time.time()
+    try:
+        with open(log_path, "w") as lf:
+            lf.write(f"$ {' '.join(cmd)}\n")
+            lf.flush()
+            proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT)
+        elapsed = time.time() - started
+        if proc.returncode == 0 and project_env_ready(project_dir):
+            return True, f"cloned {base_env} in {elapsed:.1f}s"
+        return False, f"conda create failed (rc={proc.returncode}); see {log_path}"
+    except Exception as e:
+        return False, f"conda create raised {type(e).__name__}: {e}"
+
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
 
 
 def slurm_available() -> bool:
+    # Escape hatch: set ARK_FORCE_LOCAL=1 to bypass SLURM submission and run
+    # everything as local subprocesses (useful when slurmctld spool is full or
+    # the cluster is unavailable). Falsy values ("", "0", "false") are ignored.
+    force_local = os.environ.get("ARK_FORCE_LOCAL", "").strip().lower()
+    if force_local and force_local not in ("0", "false", "no", "off"):
+        return False
     return shutil.which("sbatch") is not None
 
 
@@ -202,11 +352,18 @@ def launch_local_job(
     exit_file = log_dir / "local_exit.txt"
     exit_file.unlink(missing_ok=True)
 
-    # Build the orchestrator command, preferring the configured conda env.
-    conda_env = getattr(settings, "slurm_conda_env", "") or ""
-    conda_bin = shutil.which("conda") if conda_env else None
-    if conda_bin and conda_env:
-        python_prefix = [conda_bin, "run", "--no-capture-output", "-n", conda_env, "python"]
+    # Build the orchestrator command, preferring the project-local conda env
+    # at <project_dir>/.env. Falls back to the named env from settings, then
+    # the webapp's own interpreter.
+    conda_bin = find_conda_binary()
+    local_env = project_env_prefix(project_dir)
+    fallback_env = getattr(settings, "slurm_conda_env", "") or ""
+    if conda_bin and project_env_ready(project_dir):
+        python_prefix = [conda_bin, "run", "--no-capture-output",
+                         "--prefix", str(local_env), "python"]
+    elif conda_bin and fallback_env:
+        python_prefix = [conda_bin, "run", "--no-capture-output",
+                         "-n", fallback_env, "python"]
     else:
         python_prefix = [sys.executable]
 
@@ -241,6 +398,20 @@ def launch_local_job(
     
     env["HOME"] = str(project_dir)
     env["XDG_CONFIG_HOME"] = str(project_dir / ".config")
+    # Disable Python's pip user-site discovery so projects are completely
+    # isolated — no project can read packages from /home/xinj/.local/... or
+    # any other user's user-site. The cloned per-project conda env is the
+    # ONLY source of Python packages for the orchestrator.
+    env["PYTHONNOUSERSITE"] = "1"
+    # Tell the orchestrator (and any ark.* code it loads) to NEVER fall back
+    # to lab-wide configs like /home/xinj/ARK/.ark/config.yaml. Each project
+    # must use only the api keys / oauth tokens that the webapp passed in
+    # via env vars from the project's owning user.
+    env["ARK_NO_GLOBAL_CONFIG"] = "1"
+    # Make sure the orchestrator's PATH can find the claude CLI (lives in
+    # ~/.nvm/.../bin), latexmk (~/.local/bin), and pdflatex (~/texlive/2025/...).
+    # systemd's bare PATH doesn't include any of these.
+    env["PATH"] = build_subprocess_path()
 
     with open(log_file, "w") as lf:
         proc = subprocess.Popen(

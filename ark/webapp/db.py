@@ -140,7 +140,7 @@ def get_all_projects(session: Session) -> list[Project]:
 
 def get_running_projects(session: Session) -> list[Project]:
     return list(session.exec(
-        select(Project).where(Project.status.in_(["queued", "running", "pending"]))
+        select(Project).where(Project.status.in_(["queued", "running", "pending", "initializing"]))
     ).all())
 
 

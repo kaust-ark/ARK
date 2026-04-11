@@ -28,6 +28,12 @@ _DEFAULTS = {
     "SLURM_PARTITION": "",
     "SLURM_ACCOUNT": "",
     "SLURM_CONDA_ENV": "ark",
+    # Base conda env that each new project's per-project env is cloned from.
+    # Defaults to "ark" because that's the env that historically ran the
+    # orchestrator and has all the heavy deps (google-genai, numpy, pandas,
+    # matplotlib, weasyprint, pytest, …) that ark-dev/ark-prod intentionally
+    # omit. Set to empty to disable per-project env provisioning entirely.
+    "PROJECT_BASE_CONDA_ENV": "ark",
     "GOOGLE_CLIENT_ID": "",
     "GOOGLE_CLIENT_SECRET": "",
 }
@@ -121,6 +127,7 @@ class Settings:
         self.slurm_partition: str = merged.get("SLURM_PARTITION", "")
         self.slurm_account: str = merged.get("SLURM_ACCOUNT", "")
         self.slurm_conda_env: str = merged.get("SLURM_CONDA_ENV", "ark")
+        self.project_base_conda_env: str = merged.get("PROJECT_BASE_CONDA_ENV", "ark")
         self.slurm_gres: str = merged.get("SLURM_GRES", "")
         self.slurm_cpus_per_task: int = int(merged.get("SLURM_CPUS_PER_TASK", "4"))
         raw_domains = merged.get("EMAIL_DOMAINS", "")

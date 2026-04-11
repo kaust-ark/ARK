@@ -123,14 +123,28 @@ def verify_claude_cli(user_id: str, projects_root: Path, keys: Dict[str, str]) -
         # Strip CLAUDECODE to prevent nested-session issues
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-        
+        # systemd's bare PATH doesn't include ~/.nvm/.../bin where the claude
+        # CLI lives, so resolve it explicitly and enrich PATH so claude itself
+        # can find node, etc.
+        from ark.webapp.jobs import find_claude_binary, build_subprocess_path
+        env["PATH"] = build_subprocess_path()
+        env["PYTHONNOUSERSITE"] = "1"
+        env["ARK_NO_GLOBAL_CONFIG"] = "1"
+        # Isolate HOME so this verification can't pick up any other user's
+        # ~/.claude state and so it leaves no trace in the real $HOME.
+        env["HOME"] = str(verify_dir)
+        env["XDG_CONFIG_HOME"] = str(verify_dir / ".config")
+        claude_bin = find_claude_binary()
+        if not claude_bin:
+            return {"ok": False, "msg": "claude CLI not found on server (checked PATH, ~/.nvm, ~/.local/bin)"}
+
         # Use a model that's cheap and fast for testing (Haiku if available, else default)
         cmd = [
-            "claude", "-p", "Say 'Functional' in one word",
+            claude_bin, "-p", "Say 'Functional' in one word",
             "--output-format", "text"
         ]
 
-        
+
         result = subprocess.run(
             cmd,
             capture_output=True,

@@ -22,13 +22,25 @@ def _global_config() -> Path:
 
 
 def get_gemini_api_key() -> str:
-    """Get Gemini API key from env var or global config."""
+    """
+    Get Gemini API key from env var or global config.
+
+    When ``ARK_NO_GLOBAL_CONFIG=1`` is set (which the webapp does for every
+    orchestrator subprocess), the global ``.ark/config.yaml`` fallback is
+    skipped — only env vars are honored. This prevents one webapp user's
+    project from silently using another user's (or the lab admin's)
+    Gemini key when they haven't configured their own.
+    """
     # 1. Environment variable
     key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if key:
         return key
 
-    # 2. Global config
+    # 2. Global config (skipped under webapp / multi-user mode)
+    no_global = os.environ.get("ARK_NO_GLOBAL_CONFIG", "").strip().lower()
+    if no_global and no_global not in ("0", "false", "no", "off"):
+        return ""
+
     if _global_config().exists():
         try:
             with open(_global_config()) as f:

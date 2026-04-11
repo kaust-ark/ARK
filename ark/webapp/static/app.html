@@ -211,6 +211,7 @@
       font-size: .72rem; font-weight: 600; padding: 3px 8px; border-radius: 20px;
       white-space: nowrap;
     }
+    .badge-initializing      { background: #ede9fe; color: #5b21b6; }
     .badge-queued            { background: #fef9c3; color: #854d0e; }
     .badge-running           { background: #dcfce7; color: #166534; }
     .badge-done              { background: #dbeafe; color: #1d4ed8; }
@@ -1083,6 +1084,12 @@
         <span>Keep existing Deep Research report <span style="color:var(--text-muted);font-weight:400">(uncheck to redo)</span></span>
       </label>
     </div>
+    <div id="restart-keep-figures-section" style="margin-top:12px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="restart-keep-figures" />
+        <span>Keep existing AI figures <span style="color:var(--text-muted);font-weight:400">(reuse <code>paper/figures/</code>; skips nano banana)</span></span>
+      </label>
+    </div>
     <div class="modal-footer">
       <button type="button" class="btn-secondary" onclick="closeModal('modal-restart')">Cancel</button>
       <button class="btn-primary" id="restart-btn" onclick="submitRestart()">Restart</button>
@@ -1308,7 +1315,8 @@ const TRANSLATIONS = {
     delete: '🗑 Delete',
     waiting_template_msg: '📦 Waiting for <b>%s</b> template.<br>Send a <code>.zip</code> download link via Telegram to your project bot.',
     // status labels
-    status_queued: 'Initializing…', status_running: 'Running', status_done: 'Done',
+    status_initializing: '🛠️ Setting up env…',
+    status_queued: '⏳ Queued', status_running: 'Running', status_done: 'Done',
     status_failed: 'Failed', status_stopped: 'Stopped',
     status_waiting_template: '⏳ Awaiting Template', status_pending: '⏳ In Queue',
     // detail info
@@ -1420,7 +1428,8 @@ const TRANSLATIONS = {
     stop: '■ إيقاف', start: '▶ بدء', continue_action: '▶ متابعة',
     delete: '🗑 حذف',
     waiting_template_msg: '📦 في انتظار قالب <b>%s</b>.<br>أرسل رابط تحميل <code>.zip</code> عبر Telegram إلى بوت مشروعك.',
-    status_queued: 'جارٍ التهيئة…', status_running: 'قيد التشغيل', status_done: 'مكتمل',
+    status_initializing: '🛠️ تهيئة البيئة…',
+    status_queued: '⏳ في الطابور', status_running: 'قيد التشغيل', status_done: 'مكتمل',
     status_failed: 'فشل', status_stopped: 'موقوف',
     status_waiting_template: '⏳ في انتظار القالب', status_pending: '⏳ في قائمة الانتظار',
     info_venue: 'المؤتمر', info_user: 'المستخدم', info_model: 'النموذج',
@@ -1522,7 +1531,8 @@ const TRANSLATIONS = {
     stop: '■ 停止', start: '▶ 启动', continue_action: '▶ 继续',
     delete: '🗑 删除',
     waiting_template_msg: '📦 正在等待 <b>%s</b> 模板。<br>请通过 Telegram 向项目机器人发送 <code>.zip</code> 下载链接。',
-    status_queued: '初始化中…', status_running: '运行中', status_done: '已完成',
+    status_initializing: '🛠️ 准备环境中…',
+    status_queued: '⏳ 排队中', status_running: '运行中', status_done: '已完成',
     status_failed: '失败', status_stopped: '已停止',
     status_waiting_template: '⏳ 等待模板', status_pending: '⏳ 排队中',
     info_venue: '会议', info_user: '用户', info_model: '模型',
@@ -1993,6 +2003,8 @@ async function loadDetail(id) {
     statusLine = (p.current_iteration || 0) > 0
       ? t('running_iter', p.current_iteration, p.max_iterations)
       : t('running_plain');
+  } else if (p.status === 'initializing') {
+    statusLine = '🛠️ Initializing — cloning conda env…';
   } else if (p.status === 'queued') {
     statusLine = t('queued');
   } else if (p.status === 'pending') {
@@ -2004,12 +2016,17 @@ async function loadDetail(id) {
   } else {
     statusLine = p.status;
   }
+  // Conda env line: show project-local prefix path if ready, else "shared".
+  const condaEnvLine = p.conda_env
+    ? `<div><b>Conda Env:</b> <code style="font-size:.78em;background:var(--bg-hover);padding:1px 5px;border-radius:4px">${esc(p.conda_env)}</code>${p.conda_env_ready ? '' : ' <span style="color:var(--text-muted)">(provisioning…)</span>'}</div>`
+    : '';
   document.getElementById('detail-info').innerHTML = `
     <div><b>Project ID:</b> <code style="font-size:.85em;background:var(--bg-hover);padding:1px 5px;border-radius:4px">${esc(p.id)}</code></div>
     <div><b>${t('info_venue')}:</b> ${esc(p.venue)}</div>
     <div><b>${t('info_model')}:</b> ${esc(p.model || 'claude-sonnet-4-6')}</div>
     <div><b>Iteration:</b> ${p.current_iteration || 0} / ${p.max_iterations}</div>
     <div><b>${t('info_environment')}:</b> ${esc(p.environment || 'Local')}</div>
+    ${condaEnvLine}
     <div><b>${t('info_user')}:</b> ${esc(p.user_email || '')}</div>
     <div><b>${t('info_created')}:</b> ${fmtDate(p.created_at)}</div>
     <div><b>${t('info_updated')}:</b> ${fmtDate(p.updated_at)}</div>
@@ -2032,7 +2049,7 @@ async function loadDetail(id) {
   }
 
   loadLog(id);
-  if (p.status === 'running' || p.status === 'queued' || p.status === 'pending') {
+  if (p.status === 'running' || p.status === 'queued' || p.status === 'pending' || p.status === 'initializing') {
     startDetailStream(id);
   }
 }
@@ -2969,6 +2986,7 @@ async function submitRestart() {
       telegram_chat_id: document.getElementById('restart-tg-chatid').value.trim(),
       comment: document.getElementById('restart-comment').value.trim(),
       redo_deep_research: !document.getElementById('restart-keep-dr').checked,
+      keep_figures: document.getElementById('restart-keep-figures').checked,
     };
     const res = await fetch(`/api/projects/${restartProjectId}/restart`, {
       method: 'POST',
@@ -3070,11 +3088,13 @@ function renderAdminTable(filter) {
 
   const list = filter === 'all' ? _adminAllProjects : _adminAllProjects.filter(p => p.status === filter);
   const statusColors = {
+    initializing: '#a78bfa',
     queued: '#f59e0b', running: '#22c55e', done: '#3b82f6',
     failed: '#ef4444', stopped: '#94a3b8', pending: '#6366f1',
     waiting_template: '#ec4899',
   };
   const statusLabels = {
+    initializing: t('status_initializing'),
     queued: t('status_queued'), running: t('status_running'), done: t('status_done'),
     failed: t('status_failed'), stopped: t('status_stopped'),
     pending: t('status_pending'), waiting_template: t('status_waiting_template'),

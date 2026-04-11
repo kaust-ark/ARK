@@ -99,9 +99,14 @@ class SlurmBackend(ComputeBackend):
 
     @property
     def conda_env(self) -> str:
-        return (self._compute_config.get("conda_env")
-                or self.config.get("conda_env")
-                or self.project_name)
+        explicit = (self._compute_config.get("conda_env")
+                    or self.config.get("conda_env"))
+        if explicit:
+            return explicit
+        local_env = self.code_dir / ".env"
+        if (local_env / "conda-meta").is_dir():
+            return str(local_env)
+        return self.project_name
 
     @property
     def slurm_template(self) -> str:
@@ -202,9 +207,15 @@ class LocalBackend(ComputeBackend):
 
     @property
     def conda_env(self) -> str:
-        return (self._compute_config.get("conda_env")
-                or self.config.get("conda_env")
-                or self.project_name)
+        explicit = (self._compute_config.get("conda_env")
+                    or self.config.get("conda_env"))
+        if explicit:
+            return explicit
+        # Per-project env created by the webapp at <code_dir>/.env.
+        local_env = self.code_dir / ".env"
+        if (local_env / "conda-meta").is_dir():
+            return str(local_env)
+        return self.project_name
 
     @property
     def gpu_count(self) -> int:
