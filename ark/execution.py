@@ -552,7 +552,7 @@ After running the experiment:
 2. Check whether result files were generated
 3. Evaluate whether the data supports the paper's arguments
 4. Update auto_research/state/findings.yaml with new findings
-""", timeout=1800)
+""", timeout=3600)
 
             # 3. Wait for jobs
             self.log_step("Waiting for experiment completion...", "info")

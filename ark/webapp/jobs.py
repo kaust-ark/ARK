@@ -403,11 +403,6 @@ def launch_local_job(
     # any other user's user-site. The cloned per-project conda env is the
     # ONLY source of Python packages for the orchestrator.
     env["PYTHONNOUSERSITE"] = "1"
-    # Tell the orchestrator (and any ark.* code it loads) to NEVER fall back
-    # to lab-wide configs like /home/xinj/ARK/.ark/config.yaml. Each project
-    # must use only the api keys / oauth tokens that the webapp passed in
-    # via env vars from the project's owning user.
-    env["ARK_NO_GLOBAL_CONFIG"] = "1"
     # Make sure the orchestrator's PATH can find the claude CLI (lives in
     # ~/.nvm/.../bin), latexmk (~/.local/bin), and pdflatex (~/texlive/2025/...).
     # systemd's bare PATH doesn't include any of these.
@@ -427,16 +422,35 @@ def launch_local_job(
 
 
 def poll_local_job(pid: int, log_dir: Path) -> str:
-    """Return RUNNING, COMPLETED, or FAILED for a local subprocess job."""
-    try:
-        os.kill(pid, 0)
-        return "RUNNING"
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        return "RUNNING"
+    """
+    Return RUNNING, COMPLETED, or FAILED for a local subprocess job.
 
-    # Process has exited — check sentinel
+    Also reaps the wrapper subprocess if it's a finished child (zombie).
+    Plain ``os.kill(pid, 0)`` returns success for zombies — the kernel
+    only checks "is this PID slot occupied" — so without this we'd see
+    finished projects stuck in RUNNING forever.
+    """
+    # Try waitpid first; this both checks state AND reaps if it's our
+    # child and has finished.
+    try:
+        wpid, _status = os.waitpid(pid, os.WNOHANG)
+        if wpid == 0:
+            # Child still running.
+            return "RUNNING"
+        # wpid == pid → was a zombie, just reaped → fall through to sentinel.
+    except ChildProcessError:
+        # Not our child (e.g. reparented to PID 1 after a webapp restart,
+        # or never our child at all). Fall back to existence check.
+        try:
+            os.kill(pid, 0)
+            return "RUNNING"
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # Process exists but we can't signal it — it's alive.
+            return "RUNNING"
+
+    # Process really has exited — check the sentinel the wrapper writes.
     exit_file = Path(log_dir) / "local_exit.txt"
     if exit_file.exists():
         code = exit_file.read_text().strip()

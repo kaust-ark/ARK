@@ -64,7 +64,6 @@ def _fmt_tok(n: int) -> str:
         return f"{n / 1_000:.1f}k"
     return str(n)
 
-from ark.paths import get_config_dir
 from ark.ui import (
     ElapsedTimer, RateLimitCountdown, agent_styled, styled, Style, Icons,
 )
@@ -190,16 +189,13 @@ class AgentMixin:
         )
 
     def _get_ark_model(self) -> str | None:
-        """Read ARK model preference from .ark/config.yaml. Returns None to use CLI default."""
-        config_file = get_config_dir() / "config.yaml"
-        try:
-            if config_file.exists():
-                with open(config_file) as f:
-                    cfg = yaml.safe_load(f) or {}
-                return cfg.get("model")
-        except Exception:
-            pass
-        return None
+        """
+        Return the ARK model from the project config, or None to use CLI default.
+
+        No global config fallback — ARK is multi-tenant; per-project config
+        must declare its own model.
+        """
+        return self.config.get("model")
 
     def _kill_process_tree(self, pid: int):
         """Kill a process and all its descendants."""
@@ -522,6 +518,8 @@ Execute the task and update the corresponding files.
 
                 timer.start()
                 result = ""
+                stdout = ""
+                stderr = ""
                 usage_record = None  # populated when claude returns parseable JSON
 
                 try:
@@ -582,7 +580,14 @@ Execute the task and update the corresponding files.
                     process.kill()
                     timer.stop()
                     self.log(f"Agent {agent_type} timed out ({timeout}s)", "WARN")
-                    stdout, _ = process.communicate()
+                    # Capture whatever stdout/stderr is available so the empty-run
+                    # detection + downstream `stderr` references don't NameError.
+                    try:
+                        stdout, stderr = process.communicate(timeout=10)
+                    except Exception:
+                        stdout, stderr = "", ""
+                    stdout = stdout or ""
+                    stderr = stderr or ""
                     # JSON envelope is usually missing on timeout (truncated mid-stream).
                     # Try once; on failure fall back to raw text and let empty-run handle it.
                     if self.model == "claude":
@@ -599,10 +604,20 @@ Execute the task and update the corresponding files.
                 timer.stop()
                 elapsed = int(time.time() - start_time)
 
-                # Empty-run detection with auto-retry
-                MIN_AGENT_TIME = 15
-                MIN_RESULT_LEN = 100
-                is_empty = elapsed < MIN_AGENT_TIME and len(result.strip()) < MIN_RESULT_LEN
+                # Empty-run detection with auto-retry.
+                # "Empty" means the agent didn't do its job — that's a property
+                # of the *outcome*, not the *length* or *speed* of the response.
+                # A good title is 60 chars; a good yes/no is 3 chars; a good
+                # "find this file" is one line. Length is not a quality signal.
+                #
+                # The only honest signals for "this run was broken":
+                #   - process exited non-zero (claude code crashed / errored)
+                #   - process produced literally no output
+                stripped = result.strip()
+                is_empty = (
+                    process.returncode != 0
+                    or not stripped
+                )
                 if is_empty:
                     self.log(f"Agent [{agent_type}] empty-run detected (attempt {attempt}/{MAX_RETRIES}): ran only {elapsed}s, output only {len(result.strip())} chars", "WARN")
                     self.log(f"  returncode: {process.returncode}", "WARN")

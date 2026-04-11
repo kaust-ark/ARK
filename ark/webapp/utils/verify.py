@@ -129,7 +129,6 @@ def verify_claude_cli(user_id: str, projects_root: Path, keys: Dict[str, str]) -
         from ark.webapp.jobs import find_claude_binary, build_subprocess_path
         env["PATH"] = build_subprocess_path()
         env["PYTHONNOUSERSITE"] = "1"
-        env["ARK_NO_GLOBAL_CONFIG"] = "1"
         # Isolate HOME so this verification can't pick up any other user's
         # ~/.claude state and so it leaves no trace in the real $HOME.
         env["HOME"] = str(verify_dir)

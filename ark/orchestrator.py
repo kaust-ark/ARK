@@ -32,7 +32,6 @@ ARK_ROOT = Path(__file__).parent.parent.absolute()
 PROJECT_DIR = None
 
 from ark.memory import get_memory, SimpleMemory
-from ark.paths import get_config_dir
 from ark.agents import AgentMixin
 from ark.compiler import CompilerMixin
 from ark.execution import ExecutionMixin
@@ -362,16 +361,13 @@ a {{ color: #0d9488; }}
         self.telegram.stop()
 
     def _get_bot_model(self) -> str:
-        """Read bot model preference from .ark/config.yaml."""
-        config_file = get_config_dir() / "config.yaml"
-        try:
-            if config_file.exists():
-                with open(config_file) as f:
-                    cfg = yaml.safe_load(f) or {}
-                return cfg.get("bot_model", "claude-sonnet-4-6")
-        except Exception:
-            pass
-        return "claude-sonnet-4-6"
+        """
+        Return the model used for Telegram bot replies.
+
+        Prefers a per-project ``bot_model`` from the project config; falls
+        back to the default. No global config fallback — ARK is multi-tenant.
+        """
+        return self.config.get("bot_model") or "claude-sonnet-4-6"
 
     def _handle_telegram_message(self, text: str):
         """Handle incoming Telegram message via Claude agent."""

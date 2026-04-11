@@ -16,6 +16,47 @@ from ark.execution import QuotaExhaustedError
 from ark.ui import RateLimitCountdown
 
 
+# Lines that look like the model's own labels rather than the actual title.
+# These get stripped out before we accept the title.
+_TITLE_LABEL_PATTERNS = re.compile(
+    r"^\s*(generated\s+)?title\s*[:：\-]\s*$",
+    re.IGNORECASE,
+)
+
+
+def _parse_title_from_agent_output(raw: str) -> str:
+    """
+    Extract a clean paper title from a planner agent's free-form output.
+
+    Models occasionally prefix the title with a label line ("Title:" or
+    "Generated title:") on its own, then put the actual title on the next
+    line — naively grabbing ``split('\\n')[0]`` would save the *label* as
+    the title (we hit this in the wild). Strategy:
+
+      1. Strip wrapping quotes/whitespace from each non-empty line.
+      2. Drop lines that are pure labels (``Title:``, ``Generated title:``).
+      3. Strip a leading inline label like ``Title: Real Paper Title``.
+      4. Return the first surviving line.
+    """
+    if not raw:
+        return ""
+    cleaned: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip().strip('"').strip("'").strip()
+        if not line:
+            continue
+        # Drop a line that is *only* a label.
+        if _TITLE_LABEL_PATTERNS.match(line):
+            continue
+        # Strip an inline leading label, e.g. "Title: Foo Bar" -> "Foo Bar".
+        m = re.match(r"^(?:generated\s+)?title\s*[:：\-]\s*(.+)$", line, re.IGNORECASE)
+        if m:
+            line = m.group(1).strip().strip('"').strip("'").strip()
+        if line:
+            cleaned.append(line)
+    return cleaned[0] if cleaned else ""
+
+
 class PipelineMixin:
     """Mixin providing the top-level pipeline orchestration.
 
@@ -754,8 +795,8 @@ Output ONLY the title — one line, no quotes, no explanation. The title should 
 """, timeout=120)
 
         if result and result.strip():
-            new_title = result.strip().strip('"').strip("'").split('\n')[0].strip()
-            if len(new_title) > 10:
+            new_title = _parse_title_from_agent_output(result)
+            if new_title and len(new_title) > 10:
                 self.config["title"] = new_title
                 self.log(f"Generated title: {new_title}", "INFO")
                 # Update config.yaml on disk
@@ -1085,6 +1126,25 @@ Rules:
                           findings_summary: str) -> str:
         """Step 1: Plan experiments using planner agent."""
         self.log_step_header(1, 4, "Plan Experiments")
+        venue_pages = int(self.config.get("venue_pages", 9) or 9)
+        # Page-aware experiment budget. A 1-page workshop poster doesn't need
+        # 8 experiments; a full conference paper does. Cap accordingly so the
+        # experimenter agent can finish within its timeout budget.
+        if venue_pages <= 2:
+            max_exps = 1
+            scope_note = ("This is a very short paper ({}p). Plan exactly ONE focused, fast "
+                          "experiment that can run in under 5 minutes. Use small parameter "
+                          "sweeps and small datasets.").format(venue_pages)
+        elif venue_pages <= 4:
+            max_exps = 2
+            scope_note = ("This is a short paper ({}p). Plan AT MOST 2 experiments, each "
+                          "expected to run in under 10 minutes.").format(venue_pages)
+        elif venue_pages <= 6:
+            max_exps = 3
+            scope_note = ("This is a short paper ({}p). Plan AT MOST 3 experiments.").format(venue_pages)
+        else:
+            max_exps = 5
+            scope_note = "Plan a comprehensive set of AT MOST 5 experiments."
         output = self.run_agent("planner", f"""
 You are planning experiments for a research project. This is Dev Phase iteration {dev_iter}/{max_dev_iters}.
 
@@ -1097,8 +1157,14 @@ You are planning experiments for a research project. This is Dev Phase iteration
 ## Current Findings
 {findings_summary if findings_summary else "No experiments run yet."}
 
+## Scope & Budget
+{scope_note}
+You MUST plan no more than {max_exps} experiments total. Pick the minimum
+set that demonstrates the core idea — favor running 1 well-designed
+experiment over many shallow ones.
+
 ## Task
-Design a comprehensive experiment plan:
+Design a focused experiment plan ({max_exps} experiments max):
 1. What experiments to run (with specific scripts, parameters, baselines)
 2. What metrics to measure
 3. What baselines to compare against
@@ -1145,7 +1211,9 @@ Read auto_research/state/experiment_plan.yaml for the full plan.
 - Each script should save results to results/ directory
 - Use clear naming: results/exp1_results.csv, results/exp2_results.csv, etc.
 - Handle errors gracefully (log failures, continue with remaining experiments)
-""", timeout=1800)
+- Keep simulations small enough to finish within the agent budget; prefer
+  fewer parameter values and shorter trace lengths to many slow runs.
+""", timeout=3600)
 
             self.log_step("Waiting for all experiments to complete...", "progress")
             self._compute_backend.wait_for_completion(max_wait_hours=4)

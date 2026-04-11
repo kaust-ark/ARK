@@ -1,10 +1,8 @@
 """Dedicated Telegram bot dispatcher for a single ARK project.
 
 Each project gets its own bot token — no routing, no shared state, no daemon.
-
-Config stored in ~/.ark/telegram.yaml:
-    bot_token: "..."
-    chat_id: "..."
+ARK is multi-tenant: telegram credentials come from the per-project config
+(or env vars for CLI use). There is no shared global telegram.yaml.
 """
 
 import json
@@ -14,11 +12,8 @@ import threading
 import urllib.error
 import urllib.request
 import uuid
-import yaml
 from pathlib import Path
 from typing import Callable, Optional
-
-from ark.paths import get_config_dir
 
 
 # ══════════════════════════════════════════════════════════════
@@ -26,40 +21,19 @@ from ark.paths import get_config_dir
 # ══════════════════════════════════════════════════════════════
 
 class TelegramConfig:
-    """Loads Telegram credentials with backward-compatible fallback chain.
+    """Loads Telegram credentials from per-project config or env vars.
 
     Lookup order:
-    1. project config dict   (per-project, wins)
-    2. ~/.ark/telegram.yaml  (global fallback)
-    3. environment variables  (ARK_TELEGRAM_BOT_TOKEN, ARK_TELEGRAM_CHAT_ID)
-    """
+    1. project config dict     (per-project, wins)
+    2. environment variables   (ARK_TELEGRAM_BOT_TOKEN, ARK_TELEGRAM_CHAT_ID)
 
-    @staticmethod
-    def _global_config_path():
-        return get_config_dir() / "telegram.yaml"
+    There is no global/shared config file fallback. Each project (and each
+    CLI invocation) must supply its own credentials. This keeps webapp
+    tenants strictly isolated.
+    """
 
     def __init__(self, project_config: dict = None):
         self._project_config = project_config or {}
-        self._global = None
-
-    def _load_global(self) -> dict:
-        if self._global is None:
-            # In webapp / multi-user mode, never read the lab-wide telegram
-            # config: each project must use its own bot/chat from the
-            # project record.
-            no_global = os.environ.get("ARK_NO_GLOBAL_CONFIG", "").strip().lower()
-            if no_global and no_global not in ("0", "false", "no", "off"):
-                self._global = {}
-                return self._global
-            if self._global_config_path().exists():
-                try:
-                    with open(self._global_config_path()) as f:
-                        self._global = yaml.safe_load(f) or {}
-                except Exception:
-                    self._global = {}
-            else:
-                self._global = {}
-        return self._global
 
     @property
     def bot_token(self) -> Optional[str]:
@@ -67,11 +41,7 @@ class TelegramConfig:
         token = self._project_config.get("telegram_bot_token")
         if token:
             return str(token)
-        # 2. Global config
-        token = self._load_global().get("bot_token")
-        if token:
-            return str(token)
-        # 3. Env var
+        # 2. Env var
         return os.environ.get("ARK_TELEGRAM_BOT_TOKEN")
 
     @property
@@ -80,27 +50,16 @@ class TelegramConfig:
         cid = self._project_config.get("telegram_chat_id")
         if cid:
             return str(cid)
-        # 2. Global config
-        cid = self._load_global().get("chat_id")
-        if cid:
-            return str(cid)
+        # 2. Env var
         return os.environ.get("ARK_TELEGRAM_CHAT_ID", "")
 
     @property
     def is_configured(self) -> bool:
         return bool(self.bot_token and self.chat_id)
 
-    def save(self, bot_token: str, chat_id: str):
-        """Write credentials to ~/.ark/telegram.yaml."""
-        self._global_config_path().parent.mkdir(parents=True, exist_ok=True)
-        data = {"bot_token": bot_token, "chat_id": str(chat_id)}
-        with open(self._global_config_path(), "w") as f:
-            yaml.dump(data, f, default_flow_style=False)
-        self._global = data
-
     @classmethod
     def from_project_config(cls, project_config: dict) -> 'TelegramConfig':
-        """Create config with project fallback (backward compat)."""
+        """Create config from a project config dict."""
         return cls(project_config=project_config)
 
 

@@ -9,72 +9,21 @@ research before starting the paper writing loop.
 import os
 import threading
 import time
-import yaml
 from datetime import datetime
 from pathlib import Path
 
 
-from ark.paths import get_config_dir
-
-
-def _global_config() -> Path:
-    return get_config_dir() / "config.yaml"
-
-
 def get_gemini_api_key() -> str:
     """
-    Get Gemini API key from env var or global config.
+    Return the Gemini API key from the process environment.
 
-    When ``ARK_NO_GLOBAL_CONFIG=1`` is set (which the webapp does for every
-    orchestrator subprocess), the global ``.ark/config.yaml`` fallback is
-    skipped — only env vars are honored. This prevents one webapp user's
-    project from silently using another user's (or the lab admin's)
-    Gemini key when they haven't configured their own.
+    ARK is multi-tenant: each user must supply their own key. There is
+    no shared/global config fallback. The webapp injects the key from
+    the project owner's encrypted user record into the orchestrator
+    subprocess as an environment variable; CLI users must export
+    ``GEMINI_API_KEY`` (or the synonym ``GOOGLE_API_KEY``) themselves.
     """
-    # 1. Environment variable
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if key:
-        return key
-
-    # 2. Global config (skipped under webapp / multi-user mode)
-    no_global = os.environ.get("ARK_NO_GLOBAL_CONFIG", "").strip().lower()
-    if no_global and no_global not in ("0", "false", "no", "off"):
-        return ""
-
-    if _global_config().exists():
-        try:
-            with open(_global_config()) as f:
-                cfg = yaml.safe_load(f) or {}
-            key = cfg.get("gemini_api_key")
-            if key:
-                return key
-        except Exception:
-            pass
-
-    return ""
-
-
-def save_gemini_api_key(key: str):
-    """Save Gemini API key to global config."""
-    _global_config().parent.mkdir(parents=True, exist_ok=True)
-
-    cfg = {}
-    if _global_config().exists():
-        try:
-            with open(_global_config()) as f:
-                cfg = yaml.safe_load(f) or {}
-        except Exception:
-            pass
-
-    cfg["gemini_api_key"] = key
-    with open(_global_config(), "w") as f:
-        yaml.dump(cfg, f, default_flow_style=False)
-
-    # Restrict permissions
-    try:
-        os.chmod(_global_config(), 0o600)
-    except Exception:
-        pass
+    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
 
 
 def build_research_query(config: dict) -> str:

@@ -43,15 +43,13 @@ def get_projects_dir() -> Path:
 
 
 def _get_configured_model(default: str = "claude-sonnet-4-6") -> str:
-    """Read model from .ark/config.yaml, falling back to default."""
-    config_file = get_config_dir() / "config.yaml"
-    try:
-        if config_file.exists():
-            with open(config_file) as f:
-                cfg = yaml.safe_load(f) or {}
-            return cfg.get("model", default)
-    except Exception:
-        pass
+    """
+    Return the default ARK model.
+
+    No global config fallback — ARK is multi-tenant; per-project config.yaml
+    must declare its own model. Callers needing a project-specific model
+    should read it from the project's own config.yaml.
+    """
     return default
 
 
@@ -1503,9 +1501,8 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
         # Check for Gemini API key
         from ark.deep_research import get_gemini_api_key
         if not get_gemini_api_key():
-            print(f"  {_c('Note:', Colors.YELLOW)} No Gemini API key found.")
-            print(f"  Set it: ark config {name} --set gemini_api_key=YOUR_KEY")
-            print(f"  Or add to ~/.ark/config.yaml")
+            print(f"  {_c('Note:', Colors.YELLOW)} No Gemini API key found in environment.")
+            print(f"  Export it before running: export GEMINI_API_KEY=YOUR_KEY")
         else:
             print(f"  {_c('✓', Colors.GREEN)} Gemini API key found")
 
@@ -1705,28 +1702,18 @@ def _finalize_project(name: str, project_dir: Path, config: dict,
 # ============================================================
 
 def _run_deep_research_for_project(config: dict, state_dir: Path, custom_query: str = None):
-    """Run Gemini Deep Research for a project. Auto-runs if API key is available."""
-    from ark.deep_research import (
-        run_deep_research,
-        get_gemini_api_key,
-        save_gemini_api_key,
-    )
+    """Run Gemini Deep Research for a project if GEMINI_API_KEY is set."""
+    from ark.deep_research import run_deep_research, get_gemini_api_key
 
     print()
     print(f"{_c('Deep Research (Gemini)', Colors.BOLD)}")
 
     api_key = get_gemini_api_key()
     if not api_key:
-        if sys.stdin.isatty():
-            print("  No Gemini API key found.")
-            api_key = prompt_input("  Enter Gemini API key").strip()
-            if api_key:
-                save_gemini_api_key(api_key)
-                print(f"  {_c('API key saved to ~/.ark/config.yaml', Colors.DIM)}")
-        if not api_key:
-            print(f"  {_c('Skipped: no API key. Set with: ark config gemini-key <KEY>', Colors.YELLOW)}")
-            print()
-            return None
+        print(f"  {_c('Skipped: no GEMINI_API_KEY in environment.', Colors.YELLOW)}")
+        print(f"  {_c('Export it before running: export GEMINI_API_KEY=YOUR_KEY', Colors.DIM)}")
+        print()
+        return None
 
     # Allow custom query interactively
     if custom_query is None and sys.stdin.isatty():
@@ -2816,85 +2803,16 @@ def cmd_setup_bot(args):
         _cmd_setup_bot_project(project)
         return
 
-    # Global setup
-    from ark.telegram import TelegramConfig
-
+    # Global telegram config is no longer supported. ARK is multi-tenant:
+    # each project must have its own bot token, configured per-project.
     print()
-    print(f"  {_c('Telegram Setup (Global)', Colors.BOLD + Colors.CYAN)}")
+    print(f"  {_c('Global telegram setup is no longer supported.', Colors.YELLOW)}")
     print()
-
-    # Load existing global config
-    existing = TelegramConfig()
-    existing_token = existing._load_global().get("bot_token")  # global only, not project
-
-    if existing_token:
-        print(f"  {_c('Existing bot token found.', Colors.YELLOW)}")
-        if not prompt_yn("  Replace it?", default=False):
-            tg_token = existing_token
-        else:
-            tg_token = prompt_input("  New Bot Token").strip()
-    else:
-        print(f"  Get your Bot Token from @BotFather in Telegram (/newbot).")
-        tg_token = prompt_input("  Bot Token").strip()
-
-    if not tg_token:
-        print("Aborted.")
-        return
-
-    # Auto-detect chat_id via getUpdates
-    print()
-    print(f"  {_c('Now go to Telegram and send any message to your bot.', Colors.BOLD)}")
-    input("  Press Enter when done... ")
-
-    import urllib.request, json as _json, time as _time
-    tg_chat_id = None
-    for attempt in range(3):
-        try:
-            url = f"https://api.telegram.org/bot{tg_token}/getUpdates"
-            with urllib.request.urlopen(url, timeout=10) as resp:
-                data = _json.loads(resp.read())
-            results = data.get("result", [])
-            if results:
-                last = results[-1]
-                msg = last.get("message") or last.get("edited_message") or {}
-                sender = msg.get("from", {})
-                tg_chat_id = str(sender.get("id") or msg.get("chat", {}).get("id", ""))
-                if tg_chat_id:
-                    print(f"  {_c(f'→ Chat ID detected: {tg_chat_id}', Colors.GREEN)}")
-                    break
-        except Exception as e:
-            print(f"  {_c(f'Warning: {e}', Colors.YELLOW)}")
-        if attempt < 2:
-            print(f"  No messages found yet, retrying in 3s...")
-            _time.sleep(3)
-
-    if not tg_chat_id:
-        print(f"  {_c('Could not auto-detect Chat ID.', Colors.YELLOW)}")
-        tg_chat_id = prompt_input("  Enter Chat ID manually").strip()
-
-    if not tg_chat_id:
-        print("Aborted.")
-        return
-
-    # Send test message
-    try:
-        url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-        data = _json.dumps({
-            "chat_id": tg_chat_id,
-            "text": "✅ ARK Telegram notifications configured!",
-            "parse_mode": "Markdown",
-        }).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=10)
-        print(f"  {_c('→ Test message sent! Check your Telegram.', Colors.GREEN)}")
-    except Exception as e:
-        print(f"  {_c(f'Warning: test message failed: {e}', Colors.YELLOW)}")
-
-    # Save to global config (~/.ark/telegram.yaml)
-    existing.save(tg_token, tg_chat_id)
-
-    print()
-    print(f"  {_c('Saved to ~/.ark/telegram.yaml (shared by all projects).', Colors.GREEN)}")
+    print(f"  ARK is multi-tenant — each project must have its own bot.")
+    print(f"  Configure per-project:    {_c('ark setup-bot <project_name>', Colors.BOLD)}")
+    print(f"  Or set env vars before running:")
+    print(f"    {_c('export ARK_TELEGRAM_BOT_TOKEN=...', Colors.DIM)}")
+    print(f"    {_c('export ARK_TELEGRAM_CHAT_ID=...', Colors.DIM)}")
     print()
 
 

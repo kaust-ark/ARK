@@ -1632,7 +1632,15 @@ async def api_stream_log(project_id: str, request: Request):
     log_dir = pdir / "logs"
 
     async def event_generator():
+        # Track which log file we're tailing and how many lines we've sent
+        # FROM THAT FILE. The client just fetched the last N lines via
+        # /log?lines=N before opening this stream, so on the very first
+        # iteration we skip everything that's already in the file (to avoid
+        # double-rendering on the dashboard) and only emit what arrives
+        # *after* the stream opened.
+        current_file: Path | None = None
         sent_lines = 0
+        first_iteration = True
         while True:
             if await request.is_disconnected():
                 break
@@ -1650,6 +1658,19 @@ async def api_stream_log(project_id: str, request: Request):
             if log_file and log_file.exists():
                 try:
                     all_lines = log_file.read_text(errors="replace").splitlines()
+                    if log_file != current_file:
+                        # Either the very first iteration (skip past the
+                        # client's initial /log fetch) or the orchestrator
+                        # rotated to a new log file (e.g. env_provision.log
+                        # → local_*.out). On a real rotation we DO want to
+                        # send the whole new file, since the client never
+                        # saw it; on first iteration we DON'T want to resend
+                        # the catch-up.
+                        if first_iteration:
+                            sent_lines = len(all_lines)
+                        else:
+                            sent_lines = 0
+                        current_file = log_file
                     new_lines = all_lines[sent_lines:]
                     for line in new_lines:
                         payload = json.dumps({"line": line})
@@ -1657,6 +1678,8 @@ async def api_stream_log(project_id: str, request: Request):
                     sent_lines += len(new_lines)
                 except Exception:
                     pass
+
+            first_iteration = False
 
             # Also emit status (includes live cost report so the dashboard
             # cost panel updates within ~2s of every agent completion)
