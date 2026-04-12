@@ -163,14 +163,27 @@ class PipelineMixin:
             if not compiled:
                 self.log_step(f"LaTeX failed after {MAX_COMPILE_RETRIES} attempts", "error")
                 idx, reply = self.ask_user_decision(
-                    f"LaTeX compilation failed after {MAX_COMPILE_RETRIES} writer attempts.\n\n"
-                    f"Latest errors:\n{errors[:500]}",
+                    f"LaTeX compilation failed after {MAX_COMPILE_RETRIES} writer attempts.",
                     options=[
                         "Skip this iteration",
                         f"Retry with {MAX_COMPILE_RETRIES} more writer attempts",
                         "I'll fix manually, then continue",
                     ],
                     timeout=900, default=0,
+                    what_happened=(
+                        f"LaTeX failed to compile {MAX_COMPILE_RETRIES} times in a row "
+                        f"this iteration. The writer agent could not recover."
+                    ),
+                    background=[
+                        f"Iteration {self.iteration}",
+                        f"Latest errors (truncated): {errors[:300]}",
+                    ],
+                    option_details=[
+                        "Score stays at the last value; the iteration is marked done and we move on.",
+                        f"Spends another ~{MAX_COMPILE_RETRIES} writer attempts (~6 min) before giving up again.",
+                        "Pauses here. You fix the .tex files in your editor and reply when ready; I'll re-compile once.",
+                    ],
+                    phase="latex_compile",
                 )
                 if idx == 1:
                     # Retry loop (one extra round)
@@ -195,6 +208,7 @@ class PipelineMixin:
             self.log_step("PDF generated successfully", "success")
             self.log_step_header(step_num, total_steps, "Compile LaTeX", "end")
             self.save_step_checkpoint(step_num, "Compile LaTeX")
+            self.notify_progress("Compile", "PDF generated", level="done")
 
         # Citation Verification & Cleanup (runs every iteration)
         self._run_citation_verification()
@@ -294,6 +308,11 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
             score_delta = score - current_score
             delta_str = f"+{score_delta:.1f}" if score_delta >= 0 else f"{score_delta:.1f}"
             self.log_step(f"Score: {score}/10 ({delta_str} from last)", "success" if score_delta >= 0 else "warning")
+            self.notify_progress(
+                "Review",
+                f"Score {score}/10 ({delta_str} from last)",
+                level="done" if score_delta >= 0 else "warn",
+            )
 
             # Record issues for repeat tracking
             issue_ids = self.extract_issue_ids()
@@ -315,7 +334,19 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
                     score, 0, review_output,
                     trigger="First review score is low",
                 )
-                self.ask_user_decision(question, options, timeout=900)
+                background = self._build_decision_background(
+                    review_output, options, score=score,
+                )
+                self.ask_user_decision(
+                    question, options, timeout=900,
+                    what_happened=(
+                        f"First review came back at {score}/10 — below the 5.0 floor "
+                        f"(target {self.paper_accept_threshold}/10)."
+                    ),
+                    background=background,
+                    option_details=self._build_option_details(options, review_output),
+                    phase="first_review",
+                )
                 self._asked_this_iteration = True
 
             # Update paper state
@@ -393,6 +424,15 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
 
             self.log_step_header(step_num, total_steps, "Plan", "end")
             self.save_step_checkpoint(step_num, "Plan")
+            try:
+                n_actions = 0
+                if isinstance(action_plan, dict):
+                    n_actions = len(action_plan.get("actions") or action_plan.get("issues") or [])
+                elif isinstance(action_plan, list):
+                    n_actions = len(action_plan)
+                self.notify_progress("Plan", f"{n_actions} action(s) queued", level="done")
+            except Exception:
+                self.notify_progress("Plan", "ready", level="done")
 
         # ── Step 4: Execute ───────────────────────────────────────────────────
         step_num += 1
@@ -434,6 +474,15 @@ Notes:
 
             self.log_step_header(step_num, total_steps, "Execute", "end")
             self.save_step_checkpoint(step_num, "Execute")
+            try:
+                _ok = bool(execute_ok)  # noqa: F821 - defined in the try above
+            except NameError:
+                _ok = False
+            self.notify_progress(
+                "Execute",
+                "completed" if _ok else "incomplete (fallback writer used)",
+                level="done" if _ok else "warn",
+            )
 
         # Quota exhaustion: abort iteration, pause, and retry
         if self._quota_exhausted:
@@ -467,6 +516,7 @@ Notes:
                 self._run_figure_phase()
             self.log_step_header(step_num, total_steps, "Validate", "end")
             self.save_step_checkpoint(step_num, "Validate")
+            self.notify_progress("Validate", "figures checked", level="done")
 
         self.save_paper_state(paper_state)
         self._last_score = score
@@ -562,11 +612,24 @@ Notes:
                 review_src = review_output
                 if not review_src and (self.state_dir / "latest_review.md").exists():
                     review_src = (self.state_dir / "latest_review.md").read_text()
+                trigger = f"Stuck {self.memory.stagnation_count} rounds at {score}/10"
                 question, options = self._build_intervention_options(
-                    score, current_score, review_src or "",
-                    trigger=f"Stuck {self.memory.stagnation_count} rounds at {score}/10",
+                    score, current_score, review_src or "", trigger=trigger,
                 )
-                self.ask_user_decision(question, options, timeout=900)
+                background = self._build_decision_background(
+                    review_src or "", options, score=score,
+                )
+                self.ask_user_decision(
+                    question, options, timeout=900,
+                    what_happened=(
+                        f"Stagnation triggered: score has stayed at {score}/10 for "
+                        f"{self.memory.stagnation_count} consecutive iterations "
+                        f"(progress < 0.3 each round). Self-repair will trigger at 5 rounds."
+                    ),
+                    background=background,
+                    option_details=self._build_option_details(options, review_src or ""),
+                    phase="stagnation_intervention",
+                )
                 self._asked_this_iteration = True
 
         # Meta-Debugger check
@@ -649,7 +712,20 @@ Notes:
             "Continue anyway (compilation will fail)",
         ]
 
-        idx, reply = self.ask_user_decision(question, options, timeout=900, default=0)
+        idx, reply = self.ask_user_decision(
+            question, options, timeout=900, default=0,
+            what_happened=f"Required LaTeX binaries are missing: {', '.join(missing)}.",
+            background=[
+                "Paper mode needs pdflatex + bibtex to compile.",
+                f"Install command detected: {install_cmd or 'none'}",
+            ],
+            option_details=[
+                "Exits ARK so you can install manually, then re-launch.",
+                "Runs the install command above (needs sudo for apt/dnf).",
+                "Proceeds without LaTeX — the compile step will fail every iteration.",
+            ],
+            phase="latex_tools_check",
+        )
 
         if idx == 1 and install_cmd:
             self.log(f"Running: {install_cmd}", "INFO")
@@ -1525,8 +1601,12 @@ Produce the complete paper. Do not stop until all sections are written and it co
     def _extract_issue_summaries(self, review_output: str, level: str = "major") -> list:
         """Parse review markdown for issue summaries.
 
-        Looks for patterns like 'M1: description', '- M2: description',
-        '**M3**: description' for major issues, or 'm1:', 'm2:' for minor.
+        Handles real reviewer formats:
+            ### M1. Title
+            ### M1: Title
+            **M1**: Title
+            - M1: Title
+            M1: Title
 
         Args:
             review_output: Raw review markdown text.
@@ -1539,20 +1619,198 @@ Produce the complete paper. Do not stop until all sections are written and it co
             return []
 
         prefix = "M" if level == "major" else "m"
-        # Match patterns: M1: desc, - M1: desc, **M1**: desc, **M1:** desc
-        pattern = rf'(?:^|\n)\s*[-*]*\s*\**({prefix}\d+)\**:?\**\s*(.+)'
-        matches = re.findall(pattern, review_output, re.IGNORECASE)
+        # Allow leading `#` (markdown headers), `-`/`*` (list markers), `**`
+        # (bold), then the ID, then `.` or `:` separators, then the title.
+        pattern = rf'(?:^|\n)[#\s]*[-*]*\s*\**({prefix}\d+)\**[.:]?\**\s*(.+)'
+        # `re.MULTILINE` so `^` matches each line. Case-insensitive so we
+        # accept "m1" as well, then we normalize.
+        matches = re.findall(pattern, review_output, re.IGNORECASE | re.MULTILINE)
 
         results = []
         seen = set()
         for issue_id, summary in matches:
             issue_id = issue_id.upper() if level == "major" else issue_id.lower()
+            # For the minor level, skip anything that case-folds to an upper-M
+            # match (since the pattern is case-insensitive by necessity).
+            if level == "minor" and issue_id != issue_id.lower():
+                continue
             if issue_id not in seen:
                 seen.add(issue_id)
-                # Trim to one line, max 80 chars
-                summary = summary.strip().split("\n")[0][:80]
-                results.append((issue_id, summary))
+                # Trim to one line, max 100 chars
+                summary = summary.strip().split("\n")[0][:100]
+                # Strip trailing markdown/bold leftovers
+                summary = summary.rstrip("*").strip()
+                if summary:
+                    results.append((issue_id, summary))
         return results
+
+    def _extract_issue_details(self, review_output: str, ids: list,
+                               level: str = "major", max_chars: int = 600) -> dict:
+        """Extract the full multi-line description block for each requested issue.
+
+        Returns {id: description_text}. The description is the text between the
+        issue header and the next `### M\\d`, `---`, or top-level section
+        (`## `), trimmed and capped at `max_chars` characters.
+        """
+        if not review_output or not ids:
+            return {}
+
+        prefix = "M" if level == "major" else "m"
+        wanted = {iid.upper() if level == "major" else iid.lower() for iid in ids}
+
+        # Find every header position
+        header_pat = rf'(?:^|\n)[#\s]*[-*]*\s*\**({prefix}\d+)\**[.:]?\**\s*(.+)'
+        header_re = re.compile(header_pat, re.IGNORECASE | re.MULTILINE)
+
+        all_matches = list(header_re.finditer(review_output))
+        if not all_matches:
+            return {}
+
+        # Patterns that mark the end of a description block
+        end_pat = re.compile(r'\n\s*---\s*\n|\n##\s+|\n###\s*' + prefix + r'\d+',
+                             re.IGNORECASE)
+
+        out = {}
+        for i, m in enumerate(all_matches):
+            iid_raw = m.group(1)
+            iid = iid_raw.upper() if level == "major" else iid_raw.lower()
+            if level == "minor" and iid != iid.lower():
+                continue
+            if iid not in wanted or iid in out:
+                continue
+
+            start = m.end()  # body starts after the header line
+            # Find the end of this issue's body
+            tail = review_output[start:]
+            stop_match = end_pat.search(tail)
+            body = tail[: stop_match.start()] if stop_match else tail
+
+            # Clean: collapse blank lines, strip leading/trailing whitespace,
+            # remove markdown bold/italic markers for readability
+            body = body.strip()
+            body = re.sub(r'\n{3,}', '\n\n', body)
+            body = re.sub(r'\*\*([^*]+)\*\*', r'\1', body)  # **bold** → bold
+            body = re.sub(r'(?<!\*)\*([^*\n]+)\*(?!\*)', r'\1', body)  # *italic* → italic
+
+            if len(body) > max_chars:
+                body = body[: max_chars - 1].rstrip() + "…"
+            out[iid] = body
+
+        return out
+
+    def _ids_referenced_in_options(self, options: list) -> list:
+        """Pull issue IDs (M1, M2, m3, ...) referenced inside option labels."""
+        ids = []
+        for opt in options or []:
+            for m in re.findall(r'\b([Mm]\d+)\b', opt or ""):
+                if m not in ids:
+                    ids.append(m)
+        return ids
+
+    def _build_decision_background(self, review_output: str, options: list,
+                                    score: float = 0.0) -> list:
+        """Background bullets for a decision prompt: score history, stagnation
+        rule, repeat issues, and the FULL descriptions of any issues whose
+        IDs are referenced in the option labels (so the user actually knows
+        what M1/M2 mean instead of seeing bare IDs).
+        """
+        bg = []
+
+        # Score history
+        try:
+            recent = [r.get("score", 0) for r in (self.load_paper_state().get("reviews") or [])[-6:]]
+            if recent:
+                bg.append("Score history: " + " → ".join(f"{s:.1f}" for s in recent))
+        except Exception:
+            pass
+
+        # Stagnation, with the rule explained inline
+        stag = getattr(self.memory, "stagnation_count", 0)
+        if stag > 0:
+            bg.append(
+                f"Stagnation: {stag}/5 rounds without ≥0.3 score gain "
+                f"(self-repair triggers at 5)."
+            )
+
+        # Repeating issues
+        if hasattr(self.memory, "get_repeat_issues"):
+            try:
+                repeat = self.memory.get_repeat_issues(threshold=2) or []
+                if repeat:
+                    parts = ", ".join(f"{rid} (×{cnt})" for rid, cnt in repeat[:5])
+                    bg.append(f"Repeating issues: {parts}")
+            except Exception:
+                pass
+
+        # Full descriptions of any major issues referenced in the options
+        ids = self._ids_referenced_in_options(options)
+        major_ids = [i for i in ids if i.upper() == i and i.startswith("M")]
+        if not major_ids:
+            # No IDs in options — fall back to the top 2 majors so the user
+            # at least sees the headline issues.
+            top_majors = self._extract_issue_summaries(review_output, "major")[:2]
+            major_ids = [iid for iid, _ in top_majors]
+
+        if major_ids:
+            details = self._extract_issue_details(
+                review_output, major_ids, level="major", max_chars=400,
+            )
+            summaries = dict(self._extract_issue_summaries(review_output, "major"))
+            # Cap how many full descriptions we attach so the message stays
+            # under Telegram's 4096-char limit even after polish.
+            for iid in major_ids[:2]:
+                title = summaries.get(iid, "")
+                body = details.get(iid, "")
+                # Combine header + body into a single bullet entry. Use
+                # plain-text decoration (no HTML tags) so the orchestrator's
+                # html.escape() doesn't mangle it. A leading "▸" makes the
+                # issue header stand out as a sub-section inside Background.
+                header = f"▸ {iid}: {title}" if title else f"▸ {iid}"
+                if body:
+                    flat = " ".join(body.split())
+                    bg.append(f"{header}\n   {flat}")
+                else:
+                    bg.append(header)
+
+        return bg
+
+    def _build_option_details(self, options: list, review_output: str) -> list:
+        """Per-option detail strings shown under each numbered choice."""
+        summaries = dict(self._extract_issue_summaries(review_output, "major"))
+        details = []
+        for opt in options or []:
+            ids = re.findall(r'\b(M\d+)\b', opt or "")
+            if ids:
+                # First referenced issue → tell the user what will happen
+                iid = ids[0]
+                title = summaries.get(iid, "")
+                if title:
+                    details.append(
+                        f"Spends the next iteration on {iid} ({title}). "
+                        f"Other issues are deferred."
+                    )
+                else:
+                    details.append(
+                        f"Spends the next iteration on {iid}. Other issues deferred."
+                    )
+            elif "all" in (opt or "").lower() and "major" in (opt or "").lower():
+                details.append(
+                    "Tries to address every major issue in one iteration. "
+                    "Risk of shallow fixes; works best when issues are small."
+                )
+            elif "different approach" in (opt or "").lower():
+                details.append(
+                    "Drops the previous strategy. The agent is forced to try a "
+                    "new method (e.g., new experiment, new figure type)."
+                )
+            elif "custom" in (opt or "").lower():
+                details.append(
+                    "Free text — whatever you reply becomes the next directive "
+                    "for the agent."
+                )
+            else:
+                details.append("")
+        return details
 
     def _build_intervention_options(self, score: float, prev_score: float,
                                     review_output: str, trigger: str) -> tuple:
@@ -1666,7 +1924,16 @@ Produce the complete paper. Do not stop until all sections are written and it co
         question, options = self._build_intervention_options(
             score, prev_score, review_output, trigger,
         )
-        idx, reply = self.ask_user_decision(question, options, timeout=900)
+        background = self._build_decision_background(
+            review_output, options, score=score,
+        )
+        idx, reply = self.ask_user_decision(
+            question, options, timeout=900,
+            what_happened=trigger,
+            background=background,
+            option_details=self._build_option_details(options, review_output),
+            phase="smart_intervention",
+        )
         self._asked_this_iteration = True
         if reply:
             self.log(f"User intervention reply: {reply[:200]}", "INFO")

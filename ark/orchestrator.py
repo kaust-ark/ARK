@@ -178,10 +178,39 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         tg_config = TelegramConfig.from_project_config(self.config)
         self.telegram = TelegramDispatcher(self.project_name, tg_config)
 
+        # Optional Haiku-powered message polishing. Defaults ON when an
+        # Anthropic key is available; the project can disable with
+        # `telegram_polish: false`. Fail-soft: if the key is missing or the
+        # API call errors, the raw message is sent unchanged.
+        if self.config.get("telegram_polish", True):
+            anthropic_key = (
+                self.config.get("anthropic_api_key")
+                or self.config.get("anthropic")
+                or os.environ.get("ANTHROPIC_API_KEY", "")
+            )
+            if anthropic_key:
+                try:
+                    from ark.telegram_ai import polish_message
+                    polish_model = self.config.get("telegram_polish_model", "claude-haiku-4-5")
+                    self.telegram._polish_fn = (
+                        lambda text, ctx, _k=anthropic_key, _m=polish_model:
+                        polish_message(text, ctx, api_key=_k, model=_m)
+                    )
+                except Exception as e:
+                    self.log(f"Telegram polish hook setup failed: {e}", "WARN")
+
         # Telegram conversation history (in-memory, thread-safe)
         self._tg_chat_history: list[dict] = []
         self._tg_chat_lock = threading.Lock()
         self._tg_history_file = self.state_dir / "tg_history.jsonl"
+
+        # Background threads that upload artifacts (PDF, review report) to
+        # Telegram after each iteration. Tracked so stop_telegram_listener()
+        # can join them on shutdown — otherwise the daemon threads can be
+        # killed mid-upload when the orchestrator exits, and the user never
+        # receives the final iteration's PDF.
+        self._artifact_threads: list[threading.Thread] = []
+        self._artifact_threads_lock = threading.Lock()
 
     @property
     def display_name(self) -> str:
@@ -357,7 +386,34 @@ a {{ color: #0d9488; }}
             self.log("Telegram dispatcher started", "INFO")
 
     def stop_telegram_listener(self):
-        """Stop the Telegram dispatcher."""
+        """Stop the Telegram dispatcher.
+
+        Joins any in-flight artifact-upload threads first so the user
+        actually receives the final iteration's PDF and review report
+        before the dispatcher is torn down. The wait is bounded so a
+        stuck upload can't block process exit indefinitely.
+        """
+        with self._artifact_threads_lock:
+            pending = [t for t in self._artifact_threads if t.is_alive()]
+        if pending:
+            self.log(
+                f"Waiting for {len(pending)} artifact upload(s) to finish...",
+                "INFO",
+            )
+            # 90s per thread is generous for ~5 MB PDFs over Telegram.
+            for t in pending:
+                t.join(timeout=90)
+                if t.is_alive():
+                    self.log(
+                        f"Artifact thread {t.name} still running after 90s, "
+                        f"detaching",
+                        "WARN",
+                    )
+        # Unblock any pending ask_user_decision() before stopping the
+        # polling thread, otherwise the orchestrator hangs until the
+        # decision timeout expires.
+        if self.telegram._is_waiting:
+            self.telegram._ask_event.set()
         self.telegram.stop()
 
     def _get_bot_model(self) -> str:
@@ -604,6 +660,125 @@ a {{ color: #0d9488; }}
         else:
             self.log(f"PDF upload failed: {pdf}", "WARN")
 
+    def _render_review_to_pdf(self, md_text: str, out_path: "Path") -> bool:
+        """Best-effort markdown → PDF conversion. Returns True on success.
+
+        Tries pandoc first (if available), then python-markdown + weasyprint
+        (both shipped in the ark conda env). Any failure returns False so the
+        caller can fall back to sending the raw .md file.
+        """
+        from pathlib import Path
+        import shutil
+        import subprocess
+
+        out_path = Path(out_path)
+
+        # 1. pandoc (most universal). Skip if missing.
+        if shutil.which("pandoc"):
+            try:
+                proc = subprocess.run(
+                    ["pandoc", "-f", "markdown", "-o", str(out_path),
+                     "--pdf-engine=xelatex", "-V", "geometry:margin=1in"],
+                    input=md_text, text=True,
+                    capture_output=True, timeout=60,
+                )
+                if proc.returncode == 0 and out_path.exists() and out_path.stat().st_size >= 1024:
+                    return True
+            except Exception:
+                pass
+
+        # 2. python-markdown + weasyprint
+        try:
+            import markdown as _md
+            from weasyprint import HTML
+            html_body = _md.markdown(
+                md_text,
+                extensions=["fenced_code", "tables", "toc", "sane_lists"],
+            )
+            css = (
+                "body { font-family: sans-serif; max-width: 760px; "
+                "margin: 1em auto; padding: 0 1em; line-height: 1.5; "
+                "font-size: 11pt; color: #222; }"
+                "h1, h2, h3 { color: #111; }"
+                "code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }"
+                "pre { background: #f4f4f4; padding: 0.6em; border-radius: 4px; "
+                "overflow-x: auto; font-size: 9pt; }"
+                "table { border-collapse: collapse; }"
+                "th, td { border: 1px solid #bbb; padding: 4px 8px; }"
+                "blockquote { border-left: 3px solid #ccc; margin: 0; padding: 0 1em; color: #555; }"
+                "hr { border: none; border-top: 1px solid #ccc; margin: 1em 0; }"
+            )
+            full_html = (
+                f"<html><head><meta charset='utf-8'>"
+                f"<style>{css}</style></head><body>{html_body}</body></html>"
+            )
+            HTML(string=full_html).write_pdf(str(out_path))
+            if out_path.exists() and out_path.stat().st_size >= 1024:
+                return True
+        except Exception as e:
+            self.log(f"weasyprint review→PDF failed: {e}", "WARN")
+
+        return False
+
+    def _send_review_report_via_telegram(self, score: float = None):
+        """Send the latest reviewer report (latest_review.md) via Telegram.
+
+        Tries to render to PDF first; falls back to sending the .md file as
+        a text document. Called from send_iteration_summary() right after the
+        paper PDF so the user receives both side-by-side.
+        """
+        if not self.telegram.is_configured:
+            return
+
+        review_md = self.state_dir / "latest_review.md"
+        if not review_md.exists():
+            return
+
+        md_text = ""
+        try:
+            md_text = review_md.read_text()
+        except Exception:
+            return
+        if not md_text.strip():
+            return
+
+        score_str = f"{score:.1f}/10" if score is not None else ""
+        caption = (
+            f"📝 Review report — {self.display_name} "
+            f"iter {self.iteration}{(' · ' + score_str) if score_str else ''}"
+        )
+
+        # Try PDF rendering first
+        pdf_path = self.state_dir / f"latest_review_iter{self.iteration}.pdf"
+        try:
+            ok = self._render_review_to_pdf(md_text, pdf_path)
+        except Exception as e:
+            self.log(f"Review report PDF render error: {e}", "WARN")
+            ok = False
+
+        if ok:
+            try:
+                sent = self.telegram.send_document(pdf_path, caption=caption)
+                if sent:
+                    self.log(f"Review report PDF sent: {pdf_path}", "INFO")
+                    return
+                self.log("Review PDF upload failed, falling back to .md", "WARN")
+            except Exception as e:
+                self.log(f"Review PDF send raised: {e}", "WARN")
+
+        # Fallback: send the .md file directly
+        try:
+            sent = self.telegram.send_document(
+                review_md, caption=caption,
+                require_pdf=False, min_size=64,
+            )
+            if sent:
+                self.log(f"Review report .md sent: {review_md}", "INFO")
+            else:
+                self.log("Review report .md upload failed", "WARN")
+        except Exception as e:
+            self.log(f"Review .md send raised: {e}", "WARN")
+
     def send_iteration_summary(self, score: float, prev_score: float, review_text: str = ""):
         """Send compact iteration summary + PDF to Telegram."""
         if not self.telegram.is_configured:
@@ -648,10 +823,40 @@ a {{ color: #0d9488; }}
         if issue_summary:
             lines.append(issue_summary)
 
-        self.telegram.send("\n".join(lines), parse_mode="HTML")
+        self.telegram.send_async(
+            "\n".join(lines),
+            parse_mode="HTML",
+            polish=True,
+            polish_ctx=self._polish_ctx("iteration_summary"),
+        )
 
-        # Send PDF
-        self._send_pdf_via_telegram()
+        # Send the paper PDF and the review report in the background so the
+        # orchestrator doesn't block on the (slow) multipart uploads or on
+        # the markdown→PDF render. The thread is tracked so that
+        # stop_telegram_listener() can join it on shutdown — without that,
+        # the daemon thread can be killed mid-upload when the orchestrator
+        # exits and the user never receives the final iteration's PDF.
+        def _send_artifacts_bg(_score):
+            try:
+                self._send_pdf_via_telegram()
+            except Exception as e:
+                self.log(f"Paper PDF send failed: {e}", "WARN")
+            try:
+                self._send_review_report_via_telegram(score=_score)
+            except Exception as e:
+                self.log(f"Review report send failed: {e}", "WARN")
+
+        t = threading.Thread(
+            target=_send_artifacts_bg, args=(score,), daemon=True,
+            name=f"artifact-send-iter{self.iteration}",
+        )
+        with self._artifact_threads_lock:
+            # Drop already-finished threads so the list doesn't grow forever.
+            self._artifact_threads = [
+                x for x in self._artifact_threads if x.is_alive()
+            ]
+            self._artifact_threads.append(t)
+        t.start()
 
     # ========== User Updates ==========
 
@@ -1448,13 +1653,19 @@ a {{ color: #0d9488; }}
         """Send notification via Telegram (primary) and email (fallback).
 
         Notifications are formatted with distinctive banners based on type
-        so they're easy to scan at a glance in Telegram.
+        so they're easy to scan at a glance in Telegram. Non-critical
+        notifications are routed to notify_progress() so the user actually
+        sees them, instead of being silently dropped.
         """
         critical_keywords = ["error", "failed", "token", "accepted", "completed", "timeout", "started", "finished"]
         should_send = priority == "critical" or any(kw in subject.lower() for kw in critical_keywords)
 
         if not should_send:
-            self.log(f"Notification skipped (non-critical): {subject}", "INFO")
+            # Don't drop — route to a short progress ping so the user sees it.
+            try:
+                self.notify_progress(subject, message[:200] if message else "", level="info")
+            except Exception:
+                self.log(f"Notification rerouted-to-progress failed: {subject}", "INFO")
             return
 
         # Pick a distinctive banner based on notification type
@@ -1499,57 +1710,305 @@ a {{ color: #0d9488; }}
 
     # ========== Telegram Enhancements ==========
 
+    def _status_block(self) -> str:
+        """Compact 3-4 line status header used by every important message.
+
+        Pulls from already-cached state (no new I/O on the hot path).
+        Output is Telegram HTML.
+        """
+        import html as _html
+        name = _html.escape(self.display_name or self.project_name)
+        mode = self.mode or "?"
+        max_iter = self.max_iterations or 0
+        line1 = f"<b>{name}</b> · {mode} · iter {self.iteration}/{max_iter}"
+
+        score_line = ""
+        trend_line = ""
+        stag_line = ""
+        if self.mode == "paper":
+            try:
+                paper_state = self.load_paper_state()
+                current_score = paper_state.get("current_score", 0) or 0
+                if current_score:
+                    gap = self.paper_accept_threshold - current_score
+                    score_line = (
+                        f"Score <b>{current_score}/10</b> → target "
+                        f"{self.paper_accept_threshold}/10 (gap {gap:.1f})"
+                    )
+
+                # Recent score trend (last 5)
+                reviews = paper_state.get("reviews") or []
+                recent = [r.get("score", 0) for r in reviews[-5:]]
+                if len(recent) >= 2:
+                    trend_line = "Recent: " + " → ".join(f"{s:.1f}" for s in recent)
+
+                # Stagnation: explain the rule inline so the user understands.
+                # The memory module uses MIN_PROGRESS_DELTA=0.3 and
+                # STAGNATION_THRESHOLD=5 — see ark/memory.py.
+                stag = getattr(self.memory, "stagnation_count", 0)
+                if stag >= 2:
+                    stag_line = (
+                        f"⚠️ Stagnation: <b>{stag}/5</b> rounds without "
+                        f"≥0.3 score gain (self-repair triggers at 5)"
+                    )
+            except Exception:
+                pass
+
+        lines = [line1]
+        if score_line:
+            lines.append(score_line)
+        if trend_line:
+            lines.append(trend_line)
+        if stag_line:
+            lines.append(stag_line)
+        return "\n".join(lines)
+
+    def _polish_ctx(self, kind: str, phase: str = "") -> dict:
+        """Context dict passed to Haiku polish (small + privacy-light)."""
+        try:
+            current_score = 0
+            if self.mode == "paper":
+                ps = self.load_paper_state()
+                current_score = ps.get("current_score", 0) or 0
+        except Exception:
+            current_score = 0
+        return {
+            "project": self.display_name or self.project_name,
+            "mode": self.mode,
+            "iteration": self.iteration,
+            "score": current_score,
+            "phase": phase,
+            "kind": kind,
+        }
+
+    def notify_progress(self, stage: str, detail: str = "", level: str = "info"):
+        """Send a short progress ping at a pipeline checkpoint.
+
+        Bypasses send_notification's keyword filter (which silently drops
+        non-critical events). Routes through send_async so it never blocks
+        the orchestrator. Polish OFF — these are short status lines.
+        """
+        if not self.telegram.is_configured:
+            return
+        if not self.config.get("telegram_progress_notify", True):
+            return
+
+        emoji = {
+            "start": "▶️",
+            "done": "✅",
+            "working": "⚙️",
+            "warn": "⚠️",
+            "info": "•",
+        }.get(level, "•")
+
+        import html as _html
+        stage_html = _html.escape(stage)
+        detail_html = _html.escape(detail) if detail else ""
+        line = f"{emoji} <b>{stage_html}</b>" + (f" — {detail_html}" if detail_html else "")
+
+        try:
+            msg = f"{self._status_block()}\n{line}"
+            self.telegram.send_async(msg, parse_mode="HTML", polish=False)
+        except Exception as e:
+            self.log(f"notify_progress failed: {e}", "WARN")
+
     def ask_user_decision(self, question: str, options: list = None,
-                          timeout: int = 900, default: int = 0) -> tuple:
-        """Send compact multiple-choice decision request via Telegram."""
+                          timeout: int = 900, default: int = 0,
+                          *, what_happened: str = "",
+                          background: list = None,
+                          option_details: list = None,
+                          phase: str = "",
+                          polish: bool = True) -> tuple:
+        """Send a multiple-choice decision request via Telegram.
+
+        Backwards compatible: existing callers passing only positional args
+        continue to work. New keyword args (`what_happened`, `background`,
+        `option_details`, `phase`) opt in to the rich format. A "Custom"
+        escape option is always appended automatically so the user is never
+        forced into a canned choice.
+
+        Returns (idx, reply_text). If the user typed a number, idx is that
+        index and reply_text is the raw reply. If the user typed free text,
+        idx is len(options)-1 (the Custom slot) and reply_text is the text.
+        On timeout, returns (default, "").
+        """
         if not self.telegram.is_configured:
             self.log(f"No Telegram configured, using default option {default}", "WARN")
             return default, ""
 
         timeout = self.config.get("telegram_decision_timeout", timeout)
-        timeout_min = timeout // 60
+        timeout_min = max(timeout // 60, 1)
 
-        msg = f"⚠️ {question}\n"
-        if options:
-            for i, opt in enumerate(options, 1):
-                default_marker = f" ← auto {timeout_min}min" if i - 1 == default else ""
-                msg += f"\n{i}. {opt}{default_marker}"
-            msg += f"\n\nReply 1-{len(options)} or type"
+        # Always offer a Custom escape (auto-appended if missing)
+        opts = list(options or [])
+        details = list(option_details or [])
+        if not opts or not any("custom" in (o or "").lower() for o in opts):
+            opts.append("Custom — type your own instruction")
+            details.append("Free text. Whatever you reply becomes the next directive.")
+        # Pad details so indices line up
+        while len(details) < len(opts):
+            details.append("")
 
-        reply = self.ask_telegram_user(msg, timeout=timeout)
+        # Build the rich message
+        import html as _html
+        parts = [self._status_block(), "━━━━━━━━━━━━━━━━━━━━━",
+                 "⚠️ <b>Decision needed</b>"]
 
-        if reply is None:
-            default_label = options[default] if options else 'N/A'
-            self.log(f"Decision timed out, using default: {default_label}", "WARN")
-            self.telegram.send(f"⏰ <b>{self.display_name}</b>: timeout — auto-selected: {default_label}", parse_mode="HTML")
+        if what_happened:
+            parts.append("")
+            parts.append("<b>What happened</b>")
+            parts.append(_html.escape(what_happened))
+
+        if background:
+            parts.append("")
+            parts.append("<b>Background</b>")
+            for b in background:
+                if b:
+                    parts.append(f"• {_html.escape(str(b))}")
+
+        # If no rich context was supplied, fall back to using `question`
+        # itself as the "what happened" body so legacy callers still get
+        # a sensible message.
+        if not what_happened and not background and question:
+            parts.append("")
+            parts.append(_html.escape(question))
+
+        parts.append("")
+        parts.append(
+            f"<b>Options</b> (auto-pick <b>#{default + 1}</b> in {timeout_min} min)"
+        )
+        for i, (opt, det) in enumerate(zip(opts, details), 1):
+            mark = "  ← default" if (i - 1) == default else ""
+            parts.append(f"<b>{i}.</b> {_html.escape(opt)}{mark}")
+            if det:
+                parts.append(f"   ↳ <i>{_html.escape(det)}</i>")
+
+        parts.append("")
+        parts.append(f"Reply <b>1–{len(opts)}</b>, or type your own message.")
+
+        msg = "\n".join(parts)
+
+        # Apply polish synchronously for ask() (which needs to send first,
+        # then block on the reply event). Same fail-soft semantics as the
+        # async sender thread.
+        polished = msg
+        if polish and self.telegram._polish_fn is not None:
+            try:
+                ctx = self._polish_ctx("decision", phase=phase)
+                result = [msg]
+                def _run():
+                    try:
+                        r = self.telegram._polish_fn(msg, ctx)
+                        if r and isinstance(r, str):
+                            result[0] = r
+                    except Exception:
+                        pass
+                t = threading.Thread(target=_run, daemon=True)
+                t.start()
+                t.join(timeout=getattr(self.telegram, "_polish_timeout", 8.0))
+                polished = result[0]
+            except Exception:
+                polished = msg
+
+        # Send + wait for reply. ask_telegram_user wraps telegram.ask which
+        # uses send() (synchronous, then blocks on event). We pass the
+        # already-rendered HTML directly via telegram.ask to preserve format.
+        if not self.telegram.is_configured:
             return default, ""
 
-        if options:
-            try:
-                idx = int(reply.strip()) - 1
-                if 0 <= idx < len(options):
-                    return idx, reply
-            except ValueError:
-                pass
+        self.log(f"Waiting for Telegram decision reply (timeout {timeout}s)...", "INFO")
+        # Use telegram.ask() but bypass its to_html re-conversion since we
+        # already produced HTML. Send directly then wait.
+        self.telegram.send(polished, parse_mode="HTML")
+        self.telegram._is_waiting = True
+        self.telegram._ask_reply = None
+        self.telegram._ask_event.clear()
+        try:
+            got = self.telegram._ask_event.wait(timeout=timeout)
+            reply = self.telegram._ask_reply if got else None
+            if got and reply:
+                self.telegram.send_raw("✅ Received, continuing...")
+        finally:
+            self.telegram._is_waiting = False
 
-        return default, reply
+        if reply is None:
+            default_label = opts[default] if opts else "N/A"
+            self.log(f"Decision timed out, using default: {default_label}", "WARN")
+            self.telegram.send_async(
+                f"⏰ <b>{_html.escape(self.display_name)}</b>: timeout — "
+                f"auto-selected option <b>#{default + 1}</b>: "
+                f"{_html.escape(default_label)}",
+                parse_mode="HTML",
+                polish=False,
+            )
+            return default, ""
+
+        # Numeric reply → option index. A bare digit is just a menu selection;
+        # do NOT inject it as a user_update directive, otherwise downstream
+        # agents would see "2" as next-iteration guidance.
+        try:
+            idx = int(reply.strip()) - 1
+            if 0 <= idx < len(opts):
+                return idx, reply
+        except ValueError:
+            pass
+
+        # Free-text reply lands in the Custom slot (last option). This IS
+        # real user guidance, so inject it into user_updates.yaml so the
+        # next iteration's agents pick it up.
+        try:
+            self.inject_user_update(reply)
+        except Exception:
+            pass
+        return len(opts) - 1, reply
 
     def send_error_alert(self, error: str, phase: str, blocking: bool = False,
                          options: list = None) -> str:
-        """Send error alert. If blocking=True, waits for user reply."""
-        msg = f"*Error*\n\nPhase: {phase}\nError: {error}"
+        """Send a structured error alert. If blocking, waits for user reply."""
+        # Truncate long errors so the message stays scannable
+        err_short = error if len(error) <= 600 else error[:600] + "..."
 
-        if blocking and options:
+        if blocking:
+            opts = list(options) if options else [
+                "Retry now",
+                "Skip and continue",
+                "Pause and wait for me",
+            ]
+            details = [
+                "Re-runs the failing step from the same state.",
+                "Marks this step as done with the current (broken) output and moves on.",
+                "Holds the orchestrator until you reply with new guidance.",
+            ][: len(opts)]
             idx, reply = self.ask_user_decision(
-                f"Error in {phase}: {error}\n\nHow to proceed?",
-                options=options, timeout=3600, default=0,
+                question=f"Error in {phase}",
+                options=opts,
+                timeout=3600,
+                default=0,
+                what_happened=f"{phase} failed: {err_short}",
+                background=[
+                    f"Phase: {phase}",
+                    f"Iteration: {self.iteration}",
+                ],
+                option_details=details,
+                phase=phase,
+                polish=True,
             )
-            return reply or (options[idx] if options else "")
-        elif blocking:
-            return self.ask_telegram_user(msg, timeout=3600)
-        else:
-            self.send_notification("Error Alert", msg, priority="critical")
-            return None
+            return reply or (opts[idx] if opts else "")
+
+        # Non-blocking: just notify
+        import html as _html
+        msg = (
+            f"{self._status_block()}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"❌ <b>Error in {_html.escape(phase)}</b>\n"
+            f"<pre>{_html.escape(err_short)}</pre>"
+        )
+        if self.telegram.is_configured:
+            self.telegram.send_async(
+                msg, parse_mode="HTML", polish=True,
+                polish_ctx=self._polish_ctx("error", phase=phase),
+            )
+        return None
 
 
 def main():

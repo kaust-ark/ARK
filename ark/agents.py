@@ -190,12 +190,24 @@ class AgentMixin:
 
     def _get_ark_model(self) -> str | None:
         """
-        Return the ARK model from the project config, or None to use CLI default.
+        Return the ARK model name to pass to ``claude --model``.
 
-        No global config fallback — ARK is multi-tenant; per-project config
-        must declare its own model.
+        Reads ``model_variant`` from the project config (e.g.
+        ``"claude-sonnet-4-6"``) — that's the actual CLI model name.
+        Falls back to ``model`` only if it already looks like a real model
+        identifier (contains a dash); a bare ``"claude"`` is the *backend*
+        type, not a CLI model name, and would make the CLI exit 1 with
+        "There's an issue with the selected model".
+
+        Returns None to let the Claude CLI use its built-in default.
         """
-        return self.config.get("model")
+        variant = self.config.get("model_variant")
+        if variant:
+            return variant
+        legacy = self.config.get("model")
+        if legacy and "-" in legacy:
+            return legacy
+        return None
 
     def _kill_process_tree(self, pid: int):
         """Kill a process and all its descendants."""

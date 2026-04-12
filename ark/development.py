@@ -230,21 +230,53 @@ class DevMixin:
                 f"All {total} dev tasks completed, tests passing. "
                 f"Code review score: {latest_review_score}/10"
             )
-            reply = self.ask_telegram_user(
-                f"*{self.project_name.upper()} Dev Phase Complete*\n\n"
-                f"All {total} tasks done, tests passing.\n"
-                f"Code review: {latest_review_score}/10\n\n"
-                f"Reply 'paper' to switch to paper mode, or provide new dev tasks.",
+            completed_ids = [t.get("id", "?") for t in tasks if t.get("status") == "completed"]
+            idx, reply = self.ask_user_decision(
+                "Dev phase complete — what next?",
+                options=[
+                    "Switch to paper mode",
+                    "Run another dev iteration with new tasks",
+                    "Pause and let me review",
+                ],
                 timeout=3600,
+                default=0,
+                what_happened=(
+                    f"All {total} dev tasks completed, tests passing, "
+                    f"code review score: {latest_review_score}/10."
+                ),
+                background=[
+                    f"Completed tasks: {', '.join(completed_ids[:8])}"
+                    + (f" (+{len(completed_ids) - 8} more)" if len(completed_ids) > 8 else ""),
+                    f"Test result: {test_res.get('passed', 0)} passed, "
+                    f"{test_res.get('failed', 0)} failed, {test_res.get('errors', 0)} errors",
+                ],
+                option_details=[
+                    "Transitions to paper mode (review/improve loop) starting next iteration.",
+                    "Stays in dev mode. Type your new task list as the reply, or use the Custom slot.",
+                    "Holds the orchestrator until you reply with explicit guidance.",
+                ],
+                phase="dev_complete",
             )
-            if reply and "paper" in reply.lower():
+            # Dispatch by index. Options were:
+            #   0 = Switch to paper mode
+            #   1 = Run another dev iteration
+            #   2 = Pause and let me review
+            #   3 = Custom (free-text → new task list)
+            if idx == 0:
                 self._switch_to_paper_mode()
                 return True
-            elif reply:
-                if hasattr(self.memory, 'goal_anchor'):
-                    self.memory.goal_anchor += f"\n\n## New Tasks from User\n\n{reply}"
+            if idx == 1:
+                # Plain "run another iteration" — no new tasks attached.
                 return True
-            return False
+            if idx == 2:
+                # User asked to pause; stop the dev loop so the orchestrator
+                # falls through and exits cleanly.
+                self.log("User selected Pause — exiting dev loop", "INFO")
+                return False
+            # idx == 3 → Custom slot. Treat the free-text reply as new tasks.
+            if reply and hasattr(self.memory, "goal_anchor"):
+                self.memory.goal_anchor += f"\n\n## New Tasks from User\n\n{reply}"
+            return True
 
         return True
 
@@ -297,6 +329,11 @@ class DevMixin:
         tasks = dev_state.get("tasks", [])
         pending = [t for t in tasks if t.get("status") in ("pending", None)]
         self.log_step(f"Plan: {len(tasks)} total tasks, {len(pending)} pending", "success")
+        self.notify_progress(
+            "Dev plan",
+            f"{len(tasks)} task(s), {len(pending)} pending",
+            level="done",
+        )
 
         return dev_state
 
@@ -532,15 +569,32 @@ class DevMixin:
             self.log("Auto-switching to paper mode (all conditions met)", "INFO")
             return True
 
-        reply = self.ask_telegram_user(
-            f"*{self.project_name.upper()} Dev Phase Ready*\n\n"
-            f"All tasks completed, tests passing, code review {latest_score}/10.\n\n"
-            f"Switch to paper mode? Reply 'yes' to switch, or provide new dev tasks.",
+        idx, reply = self.ask_user_decision(
+            "Dev phase ready — switch to paper mode?",
+            options=[
+                "Yes — switch now",
+                "No — keep iterating in dev mode",
+            ],
             timeout=1800,
+            default=0,
+            what_happened=(
+                f"All tasks completed, tests passing, code review score "
+                f"{latest_score}/10. Ready for paper mode."
+            ),
+            background=[
+                f"Project: {self.project_name}",
+                f"Auto-switch is disabled in config (auto_switch_to_paper: false).",
+            ],
+            option_details=[
+                "Transitions to paper mode immediately. The next iteration runs the paper pipeline.",
+                "Stays in dev mode. You can add new tasks via the Custom slot.",
+            ],
+            phase="dev_ready",
         )
+        if idx == 0:
+            return True
         if reply and any(w in reply.lower() for w in ("yes", "paper", "switch", "ok")):
             return True
-
         return False
 
     def _switch_to_paper_mode(self):
@@ -605,6 +659,15 @@ class DevMixin:
                 "returncode": -1,
                 "raw_output": str(e)[-3000:],
             }
+
+        try:
+            p = test_results.get("passed", 0)
+            f = test_results.get("failed", 0)
+            err = test_results.get("errors", 0)
+            level = "done" if (f == 0 and err == 0) else "warn"
+            self.notify_progress("Tests", f"{p} passed, {f} failed, {err} errors", level=level)
+        except Exception:
+            pass
 
         return test_results
 

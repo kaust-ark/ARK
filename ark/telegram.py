@@ -7,6 +7,7 @@ ARK is multi-tenant: telegram credentials come from the per-project config
 
 import json
 import os
+import queue
 import re
 import threading
 import urllib.error
@@ -90,6 +91,14 @@ class TelegramDispatcher:
         self._ask_event = threading.Event()
         self._is_waiting = False
 
+        # Async send queue (non-blocking sends drain in background)
+        self._send_queue: "queue.Queue" = queue.Queue(maxsize=200)
+        self._sender_thread: Optional[threading.Thread] = None
+        # Optional polish hook: callable(text, ctx) -> str. Set by orchestrator
+        # if Haiku polishing is enabled. Must be fail-soft (never raise).
+        self._polish_fn: Optional[Callable[[str, dict], str]] = None
+        self._polish_timeout: float = 8.0
+
     @property
     def is_configured(self) -> bool:
         return self._config.is_configured
@@ -97,7 +106,7 @@ class TelegramDispatcher:
     # ── Lifecycle ──────────────────────────────────────────
 
     def start(self, on_message: Callable[[str], None] = None):
-        """Start background polling."""
+        """Start background polling and the async sender thread."""
         if not self.is_configured:
             return
 
@@ -106,12 +115,25 @@ class TelegramDispatcher:
         self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
         self._poll_thread.start()
 
+        # Start the async sender thread for non-blocking send_async()
+        self._sender_thread = threading.Thread(target=self._sender_loop, daemon=True)
+        self._sender_thread.start()
+
     def stop(self):
-        """Stop background polling."""
+        """Stop background polling and drain the async sender queue."""
         self._stop_event.set()
+        # Push a sentinel so the sender thread wakes up and exits cleanly
+        try:
+            self._send_queue.put_nowait(None)
+        except queue.Full:
+            pass
         if self._poll_thread:
             self._poll_thread.join(timeout=5)
             self._poll_thread = None
+        if self._sender_thread:
+            # Give the queue up to 10s to drain in-flight messages
+            self._sender_thread.join(timeout=10)
+            self._sender_thread = None
 
     # ── Sending ────────────────────────────────────────────
 
@@ -127,6 +149,67 @@ class TelegramDispatcher:
             return
         self._send_impl(text, parse_mode)
 
+    def send_async(self, text: str, parse_mode: str = "",
+                   polish: bool = False, polish_ctx: dict = None):
+        """Non-blocking send: enqueue for the background sender thread.
+
+        If `polish` is True and a polish_fn is configured, the message is
+        refined by Haiku inside the sender thread before being sent.
+        Drops + warns if the queue is full so the pipeline never deadlocks
+        on a stuck Telegram API.
+        """
+        if not self.is_configured:
+            return
+        try:
+            self._send_queue.put_nowait((text, parse_mode, bool(polish), polish_ctx or {}))
+        except queue.Full:
+            # Best-effort: fall back to a synchronous send so the message
+            # at least has a chance of getting through. Swallows errors.
+            try:
+                self._send_impl(text, parse_mode)
+            except Exception:
+                pass
+
+    def _sender_loop(self):
+        """Background thread: drain the async send queue."""
+        while True:
+            try:
+                item = self._send_queue.get(timeout=1.0)
+            except queue.Empty:
+                if self._stop_event.is_set():
+                    return
+                continue
+
+            if item is None:  # sentinel from stop()
+                return
+
+            text, parse_mode, polish, polish_ctx = item
+            final_text = text
+
+            # Optional Haiku polish (fail-soft, hard timeout)
+            if polish and self._polish_fn is not None:
+                try:
+                    result = [text]
+                    def _run():
+                        try:
+                            r = self._polish_fn(text, polish_ctx)
+                            if r and isinstance(r, str):
+                                result[0] = r
+                        except Exception:
+                            pass
+                    t = threading.Thread(target=_run, daemon=True)
+                    t.start()
+                    t.join(timeout=self._polish_timeout)
+                    final_text = result[0]
+                except Exception:
+                    final_text = text
+
+            try:
+                self._send_impl(final_text, parse_mode)
+            except Exception:
+                # Never let a single bad message kill the sender thread
+                pass
+
     def _send_impl(self, text: str, parse_mode: str = ""):
         """Send text message, splitting if >4000 chars."""
         token = self._config.bot_token
@@ -141,8 +224,13 @@ class TelegramDispatcher:
                 data["parse_mode"] = parse_mode
             self._api_call("sendMessage", **data)
 
-    def send_document(self, file_path: Path, caption: str = "") -> bool:
-        """Send a file (PDF, etc.) via Telegram.
+    def send_document(self, file_path: Path, caption: str = "",
+                       require_pdf: bool = True, min_size: int = 1024) -> bool:
+        """Send a file (PDF or other) via Telegram.
+
+        By default validates that the file is a real PDF (≥1KB, %PDF- header).
+        Pass `require_pdf=False` to send any file (markdown, txt, csv, etc.) —
+        in that case only `min_size` is enforced.
 
         Returns True if the upload succeeded and Telegram confirmed the
         correct file size, False otherwise.
@@ -157,11 +245,11 @@ class TelegramDispatcher:
             return False
 
         local_size = file_path.stat().st_size
-        if local_size < 1024:
+        if local_size < min_size:
             return False
 
         file_data = file_path.read_bytes()
-        if not file_data[:5] == b'%PDF-':
+        if require_pdf and not file_data[:5] == b'%PDF-':
             return False
 
         safe_caption = caption or ""

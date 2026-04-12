@@ -350,21 +350,51 @@ Please read auto_research/state/latest_review.md and regenerate.
             user_provided_fix = False
             if tech_violations and self.telegram.is_configured:
                 viol_list = "\n".join(f"- {vid}: tried `{vtype}` again" for vid, vtype, _, _ in tech_violations)
-                reply = self.ask_telegram_user(
-                    f"*{self.project_name}* repeating failed strategies:\n\n"
-                    f"{viol_list}\n\n"
-                    f"Suggest a different approach? (auto-fixes in 15min)",
+                idx, reply = self.ask_user_decision(
+                    "Repeating failed strategies on technical issues",
+                    options=[
+                        "Auto-fix: try EXPERIMENT_REQUIRED next",
+                        "Auto-fix: try FIGURE_CODE_REQUIRED next",
+                        "Pause and wait for my guidance",
+                    ],
                     timeout=900,
+                    default=0,
+                    what_happened=(
+                        f"{len(tech_violations)} technical issue(s) are reusing strategies "
+                        f"that already failed:\n{viol_list}"
+                    ),
+                    background=[
+                        "Banned strategies are tracked per-issue across iterations.",
+                        "Auto-fix in 15 min if no reply.",
+                    ],
+                    option_details=[
+                        "Upgrades the issue type to EXPERIMENT_REQUIRED and re-runs the experimenter.",
+                        "Upgrades the issue type to FIGURE_CODE_REQUIRED and re-runs the writer on the figure.",
+                        "Stops execution here. Reply with text to set a new direction; the agents will use it next iteration.",
+                    ],
+                    phase="violated_strategies",
                 )
                 self._asked_this_iteration = True
-                if reply and reply.strip():
+                # idx 2 = "Pause and wait for my guidance" — don't auto-fix.
+                # idx 3 = Custom free-text slot — treat reply as user guidance.
+                if idx == 2 or (reply and reply.strip() and idx == 3):
                     user_provided_fix = True
-                elif reply is None and self.telegram.is_configured:
-                    self.telegram.send(f"⏰ <b>{self.display_name}</b>: 15min timeout — auto-fixing {len(tech_violations)} violation(s), continuing.", parse_mode="HTML")
+                elif reply is None:
+                    self.telegram.send_async(
+                        f"⏰ <b>{self.display_name}</b>: 15min timeout — auto-fixing "
+                        f"{len(tech_violations)} violation(s), continuing.",
+                        parse_mode="HTML",
+                        polish=False,
+                    )
 
             # Auto-fix technical violations if user didn't provide guidance
             if tech_violations and not user_provided_fix:
                 self.log("Auto-fixing banned method violations for technical issues", "INFO")
+                self.notify_progress(
+                    "Auto-fix",
+                    f"upgrading {len(tech_violations)} violation(s)",
+                    level="warn",
+                )
                 for vid, vtype, banned, vdesc in tech_violations:
                     for issue in issues:
                         if issue.get("id") != vid:
