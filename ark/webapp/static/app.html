@@ -1322,7 +1322,7 @@ const TRANSLATIONS = {
     // detail info
     info_venue: 'Venue', info_user: 'User', info_model: 'Model',
     info_environment: 'Environment', info_created: 'Created', info_updated: 'Updated',
-    info_status: 'Status',
+    info_status: 'Status', info_phase: 'Phase',
     completed_iter: 'Completed (%d iterations)',
     running_iter: 'Running (%d / %d iterations)',
     running_plain: 'Running',
@@ -1434,7 +1434,7 @@ const TRANSLATIONS = {
     status_waiting_template: '⏳ في انتظار القالب', status_pending: '⏳ في قائمة الانتظار',
     info_venue: 'المؤتمر', info_user: 'المستخدم', info_model: 'النموذج',
     info_environment: 'البيئة', info_created: 'تاريخ الإنشاء', info_updated: 'آخر تحديث',
-    info_status: 'الحالة',
+    info_status: 'الحالة', info_phase: 'المرحلة',
     completed_iter: 'مكتمل (%d تكرارات)',
     running_iter: 'قيد التشغيل (%d / %d تكرارات)',
     running_plain: 'قيد التشغيل',
@@ -1537,7 +1537,7 @@ const TRANSLATIONS = {
     status_waiting_template: '⏳ 等待模板', status_pending: '⏳ 排队中',
     info_venue: '会议', info_user: '用户', info_model: '模型',
     info_environment: '环境', info_created: '创建时间', info_updated: '更新时间',
-    info_status: '状态',
+    info_status: '状态', info_phase: '阶段',
     completed_iter: '已完成（%d 次迭代）',
     running_iter: '运行中（%d / %d 次迭代）',
     running_plain: '运行中',
@@ -1967,6 +1967,59 @@ function renderProjectCard(p) {
 }
 
 // ══════════════════════════════════════════════════════
+//  Phase status helper
+// ══════════════════════════════════════════════════════
+function _renderPhaseStatus(p) {
+  const ps = p.phase_status;
+  if (!ps || !ps.phase) {
+    // Fallback for older backends
+    return `<div><b>Iteration:</b> ${p.current_iteration || 0} / ${p.max_iterations}</div>`;
+  }
+
+  const phaseLabels = {
+    research: t('phase_research') || 'Research',
+    dev: t('phase_dev') || 'Dev',
+    review: t('phase_review') || 'Review',
+    accepted: '✓ Accepted',
+    initializing: 'Initializing',
+  };
+  const phaseColors = {
+    research: '#8b5cf6',
+    dev: '#f59e0b',
+    review: '#3b82f6',
+    accepted: '#10b981',
+    initializing: 'var(--text-muted)',
+  };
+
+  const phaseName = phaseLabels[ps.phase] || ps.phase;
+  const phaseColor = phaseColors[ps.phase] || 'var(--text)';
+
+  // Build iteration detail string
+  let iterDetail = '';
+  if (ps.phase === 'dev') {
+    iterDetail = ` (${ps.dev_iter}/${ps.max_dev_iter})`;
+  } else if (ps.phase === 'review') {
+    iterDetail = ` (${ps.review_iter}/${ps.max_review_iter})`;
+  }
+
+  const badge = `<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:.82em;font-weight:600;color:#fff;background:${phaseColor}">${esc(phaseName)}${iterDetail}</span>`;
+
+  // Build dev + review iteration summary line
+  const parts = [];
+  if (ps.max_dev_iter > 0) {
+    parts.push(`Dev ${ps.dev_iter}/${ps.max_dev_iter}`);
+  }
+  if (ps.max_review_iter > 0) {
+    parts.push(`Review ${ps.review_iter}/${ps.max_review_iter}`);
+  }
+  const iterLine = parts.length
+    ? `<div style="color:var(--text-muted);font-size:.88em;margin-top:2px">${parts.join(' · ')}</div>`
+    : '';
+
+  return `<div><b>${t('info_phase') || 'Phase'}:</b> ${badge}${iterLine}</div>`;
+}
+
+// ══════════════════════════════════════════════════════
 //  Project Detail
 // ══════════════════════════════════════════════════════
 async function loadDetail(id) {
@@ -2024,7 +2077,7 @@ async function loadDetail(id) {
     <div><b>Project ID:</b> <code style="font-size:.85em;background:var(--bg-hover);padding:1px 5px;border-radius:4px">${esc(p.id)}</code></div>
     <div><b>${t('info_venue')}:</b> ${esc(p.venue)}</div>
     <div><b>${t('info_model')}:</b> ${esc(p.model || 'claude-sonnet-4-6')}</div>
-    <div><b>Iteration:</b> ${p.current_iteration || 0} / ${p.max_iterations}</div>
+    ${_renderPhaseStatus(p)}
     <div><b>${t('info_environment')}:</b> ${esc(p.environment || 'Local')}</div>
     ${condaEnvLine}
     <div><b>${t('info_user')}:</b> ${esc(p.user_email || '')}</div>

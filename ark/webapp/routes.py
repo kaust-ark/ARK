@@ -495,6 +495,59 @@ def _read_current_iteration(project_dir: Path) -> int:
         return 0
 
 
+def _read_phase_status(project_dir: Path, project) -> dict:
+    """Read current phase, dev iteration, and review iteration status.
+
+    Returns a dict with: phase, dev_iter, max_dev_iter, review_iter, max_review_iter
+    """
+    state_dir = project_dir / "auto_research" / "state"
+    result = {
+        "phase": "",
+        "dev_iter": 0,
+        "max_dev_iter": project.max_dev_iterations,
+        "review_iter": 0,
+        "max_review_iter": project.max_iterations,
+    }
+
+    # Read dev phase state
+    dev_state_file = state_dir / "dev_phase_state.yaml"
+    if dev_state_file.exists():
+        try:
+            ds = yaml.safe_load(dev_state_file.read_text()) or {}
+            result["dev_iter"] = int(ds.get("iteration", 0))
+            dev_status = ds.get("status", "pending")
+            if dev_status == "complete":
+                result["phase"] = "review"
+            elif dev_status == "in_progress":
+                result["phase"] = "dev"
+        except Exception:
+            pass
+
+    # Read paper (review) state
+    paper_state_file = state_dir / "paper_state.yaml"
+    if paper_state_file.exists():
+        try:
+            ps = yaml.safe_load(paper_state_file.read_text()) or {}
+            reviews = ps.get("reviews") or []
+            if reviews:
+                result["review_iter"] = int(reviews[-1].get("iteration", len(reviews)))
+                result["phase"] = "review"
+            paper_status = ps.get("status", "")
+            if paper_status in ("accepted", "accepted_pending_cleanup"):
+                result["phase"] = "accepted"
+        except Exception:
+            pass
+
+    # Check for research phase
+    deep_research_file = state_dir / "deep_research.md"
+    if deep_research_file.exists() and not result["phase"]:
+        result["phase"] = "research"
+    elif not result["phase"] and project.status == "running":
+        result["phase"] = "initializing"
+
+    return result
+
+
 def _read_cost_report(project_dir: Path) -> dict:
     """Read cost_report.yaml and return a slim summary suitable for the UI.
 
@@ -1260,6 +1313,7 @@ async def api_get_project(project_id: str, request: Request):
             "score_history": _read_score_history(pdir),
             "current_iteration": _read_current_iteration(pdir),
             "max_iterations": project.max_iterations,
+            "phase_status": _read_phase_status(pdir, project),
             "has_pdf": pdf is not None,
             "has_pdf_upload": bool(project.has_pdf_upload),
             "slurm_job_id": project.slurm_job_id,
