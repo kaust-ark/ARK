@@ -27,13 +27,13 @@ _DEFAULTS = {
     "DB_PATH": "",  # resolved lazily
     "SLURM_PARTITION": "",
     "SLURM_ACCOUNT": "",
-    "SLURM_CONDA_ENV": "ark",
+    "SLURM_CONDA_ENV": "ark-base",
     # Base conda env that each new project's per-project env is cloned from.
-    # Defaults to "ark" because that's the env that historically ran the
-    # orchestrator and has all the heavy deps (google-genai, numpy, pandas,
-    # matplotlib, weasyprint, pytest, …) that ark-dev/ark-prod intentionally
-    # omit. Set to empty to disable per-project env provisioning entirely.
-    "PROJECT_BASE_CONDA_ENV": "ark",
+    # ark-base is the project template env with runtime deps (numpy, pandas,
+    # matplotlib, anthropic, etc.) but NOT the ARK code itself.
+    # ark-dev and ark-prod are for developing/deploying the ARK webapp.
+    # Set to empty to disable per-project env provisioning entirely.
+    "PROJECT_BASE_CONDA_ENV": "ark-base",
     "GOOGLE_CLIENT_ID": "",
     "GOOGLE_CLIENT_SECRET": "",
 }
@@ -91,7 +91,7 @@ DB_PATH={_root / '.ark' / 'data' / 'webapp.db'}
 # Optional SLURM settings (auto-detected if blank)
 SLURM_PARTITION=
 SLURM_ACCOUNT=
-SLURM_CONDA_ENV=ark
+SLURM_CONDA_ENV=ark-base
 """
     _env_file().write_text(content)
     print(f"Created config: {_env_file()}")
@@ -126,8 +126,8 @@ class Settings:
         )
         self.slurm_partition: str = merged.get("SLURM_PARTITION", "")
         self.slurm_account: str = merged.get("SLURM_ACCOUNT", "")
-        self.slurm_conda_env: str = merged.get("SLURM_CONDA_ENV", "ark")
-        self.project_base_conda_env: str = merged.get("PROJECT_BASE_CONDA_ENV", "ark")
+        self.slurm_conda_env: str = merged.get("SLURM_CONDA_ENV", "ark-base")
+        self.project_base_conda_env: str = merged.get("PROJECT_BASE_CONDA_ENV", "ark-base")
         self.slurm_gres: str = merged.get("SLURM_GRES", "")
         self.slurm_cpus_per_task: int = int(merged.get("SLURM_CPUS_PER_TASK", "4"))
         raw_domains = merged.get("EMAIL_DOMAINS", "")

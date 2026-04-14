@@ -1327,17 +1327,39 @@ a {{ color: #0d9488; }}
         self.log("Warning: could not parse score, returning 0")
         return 0.0
 
-    def extract_issue_ids(self) -> List[str]:
-        """Extract all issue IDs from latest_review.md."""
+    def extract_issue_ids(self) -> list:
+        """Extract issue IDs and titles from latest_review.md.
+
+        Returns a list of dicts: [{"id": "M1", "title": "Short descriptive title"}, ...]
+        The title is used for content-based issue tracking across iterations.
+        Falls back to ID-only if titles cannot be parsed.
+        """
         if not self.latest_review_file.exists():
             return []
 
         content = self.latest_review_file.read_text()
+
+        # Try to extract structured issues: ### M1. Title or ### M1. [TAG] Title
+        structured_pattern = r'###\s+([Mm]\d+)\.\s*(?:\[.*?\]\s*)?(.+)'
+        structured_matches = re.findall(structured_pattern, content)
+
+        if structured_matches:
+            issues = []
+            seen = set()
+            for issue_id, title in structured_matches:
+                if issue_id not in seen:
+                    seen.add(issue_id)
+                    issues.append({"id": issue_id, "title": title.strip()})
+            self.log(f"Extracted {len(issues)} issues: {[(i['id'], i['title'][:40]) for i in issues]}")
+            return issues
+
+        # Fallback: extract just IDs (legacy format)
         issue_pattern = r'\b([Mm]\d+)\b'
         matches = re.findall(issue_pattern, content)
-        unique_issues = list(set(matches))
-        self.log(f"Extracted {len(unique_issues)} issues: {unique_issues}")
-        return unique_issues
+        unique_ids = list(set(matches))
+        issues = [{"id": i, "title": ""} for i in unique_ids]
+        self.log(f"Extracted {len(issues)} issues (ID-only fallback): {unique_ids}")
+        return issues
 
     def _check_needs_experiment(self, review_output: str) -> bool:
         """Analyze review to determine if experiments are needed."""

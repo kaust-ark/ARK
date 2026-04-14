@@ -117,7 +117,7 @@ def find_conda_binary() -> str | None:
     return None
 
 
-def provision_project_env(project_dir: Path, base_env: str = "ark-dev",
+def provision_project_env(project_dir: Path, base_env: str = "ark-base",
                           log_path: Path | None = None) -> tuple[bool, str]:
     """
     Create a per-project conda env at <project_dir>/.env by cloning ``base_env``.

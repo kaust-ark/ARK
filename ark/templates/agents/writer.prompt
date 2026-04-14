@@ -46,6 +46,15 @@ When handling figure-related tasks, **you must first read** `{FIGURES_DIR}/figur
    cd {LATEX_DIR} && latexmk -pdf main.tex
    ```
 
+## Claim Verification (MANDATORY)
+
+Every quantitative claim in the paper must be traceable to a real result file:
+
+1. **Before writing any number** (accuracy, F1, latency, throughput, etc.), verify it exists in a file under `results/`. Read the actual result file to get the correct value.
+2. **Do NOT invent or round numbers** — copy exact values from result files. If a result file says F1=0.8234, write 0.82 (rounded), not 0.85 (fabricated).
+3. **If a result doesn't exist**, do not write the claim. Instead, leave a LaTeX comment: `% TODO: result not available — needs experiment`
+4. **Do NOT describe experiments that weren't run**. If `results/` is empty or contains only simulated data, do not write an Experiments section that claims real results were obtained.
+
 ## Hard Page Limit — {VENUE_PAGES} pages (MANDATORY)
 
 The paper body (excluding references and appendix) has a strict page target:

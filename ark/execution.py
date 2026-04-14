@@ -327,9 +327,12 @@ Please read auto_research/state/latest_review.md and regenerate.
             issue_id = issue.get("id", "")
             issue_type = issue.get("type", "")
             issue_desc = issue.get("title", "") or issue.get("description", "")
+            # Build an issue dict for content-based tracking
+            issue_ref = {"id": issue_id, "title": issue_desc}
             if issue_id and issue_type:
-                self.memory.record_repair_method(issue_id, issue_type)
-                banned = self.memory.get_banned_methods(issue_id, issue_desc)
+                self.memory.record_repair_method(issue_ref, issue_type)
+                issue_key = self.memory._issue_key(issue_ref)
+                banned = self.memory.get_banned_methods(issue_key, issue_desc)
                 if issue_type in banned:
                     violations.append((issue_id, issue_type, banned, issue_desc))
                     self.log(f"Violation: {issue_id} used a banned method {issue_type}!", "ERROR")
@@ -418,7 +421,8 @@ Please read auto_research/state/latest_review.md and regenerate.
                             action["agent"] = upgrade_agent
                         if not actions:
                             issue["actions"] = [{"agent": upgrade_agent, "task": issue.get("description", issue.get("title", ""))}]
-                        self.memory.record_repair_method(vid, upgrade_type)
+                        v_desc = issue.get("title", "") or issue.get("description", "")
+                        self.memory.record_repair_method({"id": vid, "title": v_desc}, upgrade_type)
                         self.log(f"  Auto-fixed {vid}: {old_type} -> {upgrade_type} (agent: {upgrade_agent})", "INFO")
                         break
 

@@ -74,6 +74,11 @@ class PipelineMixin:
     check_user_updates, _last_score, hooks, _agent_stats, _write_cost_report.
     """
 
+    @property
+    def _research_idea(self) -> str:
+        """Get research idea from config, checking both field names."""
+        return self.config.get("research_idea", "") or self.config.get("idea", "")
+
     def run_paper_iteration(self) -> bool:
         """Execute one paper review iteration. Returns whether to continue."""
         self.iteration += 1
@@ -758,80 +763,386 @@ Notes:
                 return cmd
         return ""
 
-    # ==================== Research Phase (Deep Research) ====================
+    # ==================== Research Phase ====================
 
     def _should_run_research_phase(self) -> bool:
         """Check if the Research Phase should run.
 
-        Returns True if:
-        - deep_research.md does not exist yet
-        - skip_deep_research is not set in config
-        - A Gemini API key is available
+        Returns True if any sub-step still needs to run:
+        - idea.md missing (proposal not analyzed yet)
+        - deep_research.md missing (Gemini hasn't run yet)
+        - project_context.md missing (specialization not done yet)
         """
-        deep_research_file = self.state_dir / "deep_research.md"
-        if deep_research_file.exists():
-            return False
-
         if self.config.get("skip_deep_research", False):
             return False
 
-        try:
-            from ark.deep_research import get_gemini_api_key
-            api_key = get_gemini_api_key()
-            if not api_key:
-                return False
-        except ImportError:
+        idea_done = (self.state_dir / "idea.md").exists()
+        dr_done = (self.state_dir / "deep_research.md").exists()
+        ctx_done = (self.state_dir / "project_context.md").exists()
+
+        if idea_done and dr_done and ctx_done:
             return False
 
         return True
 
     def _run_research_phase(self):
-        """Run the Research Phase: Gemini Deep Research for literature & background.
+        """Run the Research Phase: understand project, gather background, specialize.
 
-        This phase runs Deep Research synchronously (blocking) before the Dev Phase.
-        It gathers background knowledge, related work, and literature survey
-        that subsequent phases use for experiment planning and paper writing.
+        All sub-steps are idempotent — each checks if its output exists and skips if so.
+
+        Step 1: Analyze Proposal
+            initializer reads uploaded PDF → idea.md + deep research query
+
+        Step 2: Deep Research
+            Gemini Deep Research API → deep_research.md → PDF sent to user via Telegram
+
+        Step 3: Specialization
+            initializer reads idea.md + deep_research.md →
+            3.1 determine title
+            3.2 generate project_context.md (web-verified)
+            3.3 specialize agent prompts (template + project knowledge → agents/ dir)
+            3.4 select skills from library
+
+        Step 4: Bootstrap
+            4.1 clone conda env (ark-base → .env/)
+            4.2 bootstrap citations → references.bib
         """
         self.log("", "RAW")
-        self.log_section("Research Phase  |  Literature & Background Survey")
+        self.log_section("Research Phase  |  Understanding Project & Building Foundation")
 
         if self.telegram.is_configured:
-            self.telegram.send(f"<b>🔬 {self.display_name}</b>\nResearch Phase — Deep Research (5-20 min)...", parse_mode="HTML")
-
-        # Step 1: Run Deep Research
-        self.log_step_header(1, 1, "Deep Research (Gemini)")
-
-        from ark.deep_research import run_deep_research, get_gemini_api_key
-        api_key = get_gemini_api_key()
-
-        try:
-            result = run_deep_research(
-                config=self.config,
-                output_dir=self.state_dir,
-                api_key=api_key,
+            self.telegram.send(
+                f"<b>🔬 {self.display_name}</b>\nResearch Phase — analyzing proposal & building foundation...",
+                parse_mode="HTML",
             )
 
-            if result:
-                self.log(f"Deep Research completed: {result}", "INFO")
-                self._send_deep_research_telegram(result)
+        # ── Step 1: Analyze Proposal ────────────────────────────────────
+        idea_file = self.state_dir / "idea.md"
+        dr_query = None  # Will be set by initializer output
+
+        if not idea_file.exists():
+            self.log_step_header(1, 4, "Analyze Proposal")
+
+            uploaded_pdf = self.config.get("uploaded_pdf", "")
+            if uploaded_pdf and Path(uploaded_pdf).exists():
+                source_instruction = f"Read the uploaded PDF at `{uploaded_pdf}` carefully."
             else:
-                self.log("Deep Research returned no result.", "WARN")
-                if self.telegram.is_configured:
-                    self.telegram.send("Deep Research returned no result — continuing without it.")
+                source_instruction = (
+                    f"The research idea is provided below:\n\n"
+                    f"{self._research_idea}"
+                )
+
+            venue = self.config.get("venue", "")
+            venue_pages = self.config.get("venue_pages", "")
+
+            dr_query = self.run_agent("initializer", f"""
+Analyze the project proposal and produce two outputs.
+
+## Source Material
+{source_instruction}
+
+## Target Venue
+{venue} ({venue_pages} pages body text)
+
+## Output 1: idea.md
+Write the file `auto_research/state/idea.md` with these sections:
+
+### Research Summary
+A clear 2-3 paragraph summary: what problem is addressed, what the authors propose,
+and what contributions are expected.
+
+### External Systems & Platforms
+List EVERY external system, platform, tool, framework, or dataset mentioned.
+For each one: what it is, how it is used in this research, any details mentioned.
+
+### Proposed Methodology
+What experiments do the authors plan? What data? What metrics? What baselines?
+
+### Suggested Title
+If the current title "{self.config.get('title', '')}" is empty or could be improved,
+suggest a concise academic title. Otherwise write "Current title is appropriate."
+
+## Output 2: Deep Research Query
+After writing idea.md, output a focused deep research query for Gemini.
+The query should:
+- Summarize the research topic for a literature search engine
+- Ask 5-8 specific questions about related work, baselines, benchmarks
+- Ask about the external systems mentioned (what they are, how to install them, alternatives)
+- Ask about concrete experimental methodology for this type of research
+- Request a section on "Required Systems & Setup" with install instructions
+
+Output the query as plain text at the END of your response, after a line that says
+"DEEP_RESEARCH_QUERY:" — everything after that line is the query.
+
+Be thorough and faithful to the proposal.
+""", timeout=600)
+
+            self.log_step_header(1, 4, "Analyze Proposal", "end")
+        else:
+            self.log_step("idea.md exists, skipping proposal analysis", "info")
+
+        # ── Step 2: Deep Research ───────────────────────────────────────
+        dr_file = self.state_dir / "deep_research.md"
+        if not dr_file.exists():
+            self.log_step_header(2, 4, "Deep Research (Gemini)")
+
+            from ark.deep_research import run_deep_research, get_gemini_api_key
+            api_key = self.config.get("gemini_api_key", "") or get_gemini_api_key()
+
+            if api_key:
+                # Extract query from initializer output, or build from idea.md
+                query = None
+                if dr_query and "DEEP_RESEARCH_QUERY:" in dr_query:
+                    query = dr_query.split("DEEP_RESEARCH_QUERY:", 1)[1].strip()
+
+                if not query and idea_file.exists():
+                    # Build query from idea.md content
+                    idea_content = idea_file.read_text()
+                    title = self.config.get("title", "")
+                    venue = self.config.get("venue", "")
+                    query = (
+                        f"I am writing an academic paper titled \"{title}\" targeting {venue}.\n\n"
+                        f"Research summary:\n{idea_content[:6000]}\n\n"
+                        "Please conduct comprehensive research. I need:\n"
+                        "1. Literature review of relevant recent papers (2022-2026)\n"
+                        "2. State-of-the-art approaches, benchmarks, and baselines\n"
+                        "3. Key technical challenges and open problems\n"
+                        "4. External systems/tools this research depends on, with install instructions\n"
+                        "5. Concrete experimental methodology and evaluation metrics\n"
+                        "6. API keys or credentials needed\n\n"
+                        "Include a '## Required Systems & Setup' section."
+                    )
+
+                try:
+                    result = run_deep_research(
+                        config=self.config,
+                        output_dir=self.state_dir,
+                        api_key=api_key,
+                        custom_query=query,
+                    )
+                    if result:
+                        self.log(f"Deep Research completed: {result}", "INFO")
+                        self._send_deep_research_telegram(result)
+                    else:
+                        self.log("Deep Research returned no result.", "WARN")
+                except Exception as e:
+                    self.log(f"Deep Research failed: {e}", "WARN")
+            else:
+                self.log("No Gemini API key — skipping Deep Research", "WARN")
+
+            self.log_step_header(2, 4, "Deep Research (Gemini)", "end")
+        else:
+            self.log_step("Deep research report exists, skipping", "info")
+
+        # ── Step 3: Specialization ──────────────────────────────────────
+        ctx_file = self.state_dir / "project_context.md"
+        if not ctx_file.exists():
+            self.log_step_header(3, 4, "Specialization")
+
+            idea_content = idea_file.read_text()[:8000] if idea_file.exists() else ""
+            dr_content = dr_file.read_text()[:12000] if dr_file.exists() else ""
+
+            # 3.1 + 3.2: Title + project_context.md + agent specialization + skills
+            skills_index = self._load_skills_index()
+            templates_dir = Path(__file__).parent / "templates" / "agents"
+            agents_dir = self.agents_dir if hasattr(self, 'agents_dir') else (
+                Path(self.config.get("code_dir", ".")).parent / "agents"
+            )
+            agent_names = [p.stem for p in templates_dir.glob("*.prompt")
+                          if p.stem not in ("initializer", "meta_debugger")]
+
+            self.run_agent("initializer", f"""
+You are specializing this project. Read the idea summary and deep research report,
+then complete ALL of the following tasks.
+
+## idea.md
+{idea_content}
+
+## Deep Research Report
+{dr_content}
+
+## Task 1: Determine Title
+The current title is: "{self.config.get('title', '')}".
+If it is empty or placeholder-like, generate a proper academic title and write it
+to the FIRST LINE of `auto_research/state/project_context.md` as:
+`# Title: <your title>`
+
+## Task 2: Generate project_context.md
+Write `auto_research/state/project_context.md` with these sections:
+
+### ## External Systems
+For EACH system the project depends on, you MUST search the web to verify:
+- What it actually is (do NOT guess from name)
+- Official URL and repository
+- Correct install command
+- Key CLI commands or API usage for experiments
+- Prerequisites and known issues
+
+Format:
+```
+- **Name**: [official name]
+  - What: [one-line description]
+  - Official URL: [website/repo]
+  - Install: [exact command]
+  - Verify: [verification command]
+  - Key Usage: [essential commands for experiments]
+  - Notes: [prerequisites, known issues]
+```
+
+### ## Environment Setup
+Python version, Node.js version, key packages needed.
+
+### ## Experiment Guidance
+Concrete experiment descriptions with real data sources, APIs, expected I/O.
+
+### ## Credentials & Access
+API keys needed, free vs paid, what to ask user for.
+
+## Task 3: Specialize Agent Prompts
+For each of the following agents, READ their current prompt file in the project
+agents/ directory, then APPEND a `## Project-Specific Knowledge` section with
+domain knowledge from the project context.
+
+Agents to specialize: {', '.join(agent_names)}
+
+For each agent, read `agents/{{agent_name}}.prompt` and append relevant knowledge:
+- **experimenter**: install commands, system setup, what experiments to run, check existing services before installing
+- **planner**: experiment directions, system capabilities, what baselines to compare
+- **reviewer**: domain-specific review criteria, what to check for
+- **writer**: key terminology, contribution framing, related work context
+- **researcher**: literature context, what databases to search
+- **coder**: relevant frameworks and libraries
+
+IMPORTANT: Do NOT modify the existing prompt content. Only APPEND new sections.
+For experimenter specifically, include these rules in the appended section:
+- NEVER use `npm install -g` — always use local `npm install` or `npx`
+- Before installing any tool, check if it already exists: `which <tool>`, `<tool> --version`, `ps aux | grep <service>`
+- If API keys or credentials are missing, write what is needed to `results/credentials_needed.json` and STOP — do not skip experiments silently
+
+## Task 4: Select Skills
+Below is a skills library index. Select 3-8 skills that are DIRECTLY relevant
+to this project. Output a file `auto_research/state/selected_skills.json` containing
+a JSON array of selected skill paths.
+
+Skills index:
+{skills_index[:8000]}
+
+Only select skills that would genuinely help the experimenter or researcher
+for THIS specific project. Prefer fewer, precise matches over many vague ones.
+""", timeout=900)
+
+            self.log_step("Specialization complete", "success")
+
+            # Copy selected skills to project
+            self._install_selected_skills()
+
+            # Update title in config if generated
+            self._update_title_from_context()
+
+            self.log_step_header(3, 4, "Specialization", "end")
+        else:
+            self.log_step("Project context exists, skipping specialization", "info")
+
+        # ── Step 4: Bootstrap ───────────────────────────────────────────
+        self.log_step_header(4, 4, "Bootstrap")
+
+        # 4.1: Conda environment
+        try:
+            from ark.webapp.jobs import provision_project_env, project_env_ready
+            if not project_env_ready(self.code_dir):
+                base_env = self.config.get("base_conda_env", "ark-base")
+                self.log_step(f"Provisioning conda environment (cloning {base_env})...", "progress")
+                success, msg = provision_project_env(self.code_dir, base_env)
+                if success:
+                    self.log_step(f"Conda env ready: {msg}", "success")
+                else:
+                    self.log_step(f"Conda env provisioning failed: {msg}", "warning")
+            else:
+                self.log_step("Conda env already exists", "success")
         except Exception as e:
-            self.log(f"Deep Research failed: {e}", "WARN")
-            if self.telegram.is_configured:
-                self.telegram.send(f"Deep Research failed: {str(e)[:200]} — continuing without it.")
+            self.log(f"Conda env provisioning skipped: {e}", "WARN")
 
-        self.log("", "RAW")
-
-        # Step 1.5: Auto-generate paper title if not provided
-        self._generate_title_if_needed()
-
-        # Step 2: Extract citations from Deep Research report
+        # 4.2: Bootstrap citations
         self._bootstrap_citations_from_deep_research()
 
+        self.log_step_header(4, 4, "Bootstrap", "end")
+
         self.log_section("Research Phase Complete")
+
+    def _load_skills_index(self) -> str:
+        """Load the skills library index as a compact string for the initializer."""
+        import json
+        index_path = Path(__file__).parent.parent / "skills" / "index.json"
+        if not index_path.exists():
+            return "No skills library available."
+        try:
+            with open(index_path) as f:
+                skills = json.load(f)
+            lines = []
+            for s in skills:
+                tags = ", ".join(s.get("tags", [])[:3])
+                lines.append(f"- {s['name']}: {s['description'][:80]} [{tags}] @ {s['path']}")
+            return "\n".join(lines)
+        except Exception:
+            return "Skills index could not be loaded."
+
+    def _install_selected_skills(self):
+        """Copy selected skills to the project directory."""
+        import json
+        selected_file = self.state_dir / "selected_skills.json"
+        if not selected_file.exists():
+            return
+
+        try:
+            with open(selected_file) as f:
+                selected_paths = json.load(f)
+
+            if not isinstance(selected_paths, list):
+                return
+
+            skills_dest = Path(self.code_dir) / ".claude" / "skills"
+            skills_dest.mkdir(parents=True, exist_ok=True)
+
+            installed = []
+            for skill_path in selected_paths:
+                src = Path(skill_path)
+                if src.exists() and (src / "SKILL.md").exists():
+                    dest = skills_dest / src.name
+                    if not dest.exists():
+                        import shutil
+                        shutil.copytree(src, dest)
+                        installed.append(src.name)
+
+            if installed:
+                self.log_step(f"Installed {len(installed)} skills: {', '.join(installed)}", "success")
+        except Exception as e:
+            self.log(f"Skills installation failed: {e}", "WARN")
+
+    def _update_title_from_context(self):
+        """Extract title from project_context.md if it starts with '# Title:'."""
+        ctx_file = self.state_dir / "project_context.md"
+        if not ctx_file.exists():
+            return
+
+        content = ctx_file.read_text()
+        if content.startswith("# Title:"):
+            title = content.split("\n", 1)[0].replace("# Title:", "").strip()
+            if title and not self.config.get("title"):
+                self.config["title"] = title
+                # Update config.yaml on disk
+                config_file = Path(self.code_dir).parent / "config.yaml"
+                if not config_file.exists():
+                    # Try project dir
+                    from ark.paths import get_ark_root
+                    config_file = get_ark_root() / "projects" / self.project_name / "config.yaml"
+                if config_file.exists():
+                    import yaml
+                    with open(config_file) as f:
+                        cfg = yaml.safe_load(f) or {}
+                    cfg["title"] = title
+                    with open(config_file, "w") as f:
+                        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                    self.log(f"Title updated: {title}", "INFO")
 
     # ==================== Citation Bootstrapping ====================
 
@@ -841,7 +1152,7 @@ Notes:
         if title:
             return  # User provided a title, keep it
 
-        idea = self.config.get("idea", "")
+        idea = self._research_idea
         venue = self.config.get("venue", "")
         if not idea:
             return
@@ -850,13 +1161,13 @@ Notes:
         dr_file = self.state_dir / "deep_research.md"
         dr_summary = ""
         if dr_file.exists():
-            dr_summary = dr_file.read_text()[:2000]
+            dr_summary = dr_file.read_text()[:4000]
 
         self.log_step("Generating paper title...", "progress")
         result = self.run_agent("planner", f"""Generate a concise, academic paper title for the following research.
 
 ## Research Idea
-{idea[:2000]}
+{idea[:4000]}
 
 ## Target Venue
 {venue}
@@ -1139,7 +1450,7 @@ Rules:
         self.log_section(f"Dev Phase  |  Building experiments & data  |  max {max_dev_iters} iterations")
         self._send_dev_phase_telegram("start", 0, max_dev_iters)
 
-        research_idea = self.config.get("research_idea", "")
+        research_idea = self._research_idea
 
         # Steps 1-4: Iterative experiment loop
         self._run_experiment_loop(dev_state, start_iter, max_dev_iters, research_idea)
@@ -1162,7 +1473,7 @@ Rules:
         deep_research_file = self.state_dir / "deep_research.md"
         deep_research_ctx = ""
         if deep_research_file.exists():
-            deep_research_ctx = deep_research_file.read_text()[:3000]
+            deep_research_ctx = deep_research_file.read_text()[:8000]
 
         findings_summary = self._load_findings_summary()
 
@@ -1228,7 +1539,12 @@ You are planning experiments for a research project. This is Dev Phase iteration
 {research_idea}
 
 ## Deep Research Context
-{deep_research_ctx[:2000] if deep_research_ctx else "No deep research available yet."}
+{deep_research_ctx[:6000] if deep_research_ctx else "No deep research available yet."}
+
+## Project-Specific Context
+Read auto_research/state/project_context.md for verified information about what
+external systems this project requires and how to install them. Use this as your
+primary source for the required_systems section — do not re-derive from deep research.
 
 ## Current Findings
 {findings_summary if findings_summary else "No experiments run yet."}
@@ -1241,13 +1557,24 @@ experiment over many shallow ones.
 
 ## Task
 Design a focused experiment plan ({max_exps} experiments max):
-1. What experiments to run (with specific scripts, parameters, baselines)
-2. What metrics to measure
-3. What baselines to compare against
-4. Expected outcomes
+1. First, identify what external systems, tools, libraries, or datasets the project requires based on the research idea and deep research context. These are tools that must be INSTALLED and USED — not re-implemented from scratch.
+2. What experiments to run (with specific scripts, parameters, baselines)
+3. What metrics to measure
+4. What baselines to compare against
+5. Expected outcomes
 
 Save the experiment plan to auto_research/state/experiment_plan.yaml with format:
 ```yaml
+# Systems that must be installed before experiments can run.
+# The experimenter will install these first and verify they work.
+# Only list external packages/tools the project DEPENDS ON — do not list
+# standard libraries (numpy, pandas, etc.) or tools the experimenter writes.
+required_systems:
+  - name: "human-readable name"
+    why: "why this system is needed for the experiments"
+    install_hint: "pip install X, or conda install X, or git clone URL"
+    verify: "python -c 'import X; print(X.__version__)'"
+
 experiments:
   - id: "exp1"
     title: "Experiment title"
@@ -1257,6 +1584,8 @@ experiments:
     metrics: ["metric1", "metric2"]
     baseline: "comparison baseline"
 ```
+
+IMPORTANT: If the research idea describes a specific platform, framework, or system (e.g., "evaluate on OpenClaw", "benchmark on MLPerf"), you MUST list it under required_systems. The experimenter is NOT allowed to re-implement these from scratch — they must install and use the real thing. If you are unsure how to install something, write your best guess for install_hint and the experimenter will search online for the correct method.
 """, timeout=1200)
         self.log_step_header(1, 4, "Plan Experiments", "end")
         return output
@@ -1278,18 +1607,56 @@ Execute ALL planned experiments for this dev iteration.
 Read auto_research/state/experiment_plan.yaml for the full plan.
 
 ## Previous Planner Output
-{plan_output[:1500] if plan_output else "See experiment_plan.yaml"}
+{plan_output[:4000] if plan_output else "See experiment_plan.yaml"}
 
 {compute_instructions}
 
-## Requirements
+## MANDATORY: Environment Setup First
+
+Before writing ANY experiment scripts, you must:
+
+1. Read the experiment plan's `required_systems` section
+2. For EACH required system:
+   a. **First, search the web** for the system's official website, GitHub repo, and
+      installation instructions. Do NOT blindly trust the install_hint — verify it
+      by searching online. The planner may have guessed wrong about what the system
+      is or how to install it.
+   b. Once you know the correct package name and install method, install it.
+      Try ALL available methods if the first one fails:
+      - pip install
+      - npm install -g (for Node.js tools)
+      - conda install
+      - git clone + install from source
+      - Docker (if available)
+   c. You MUST try at least 2-3 different install methods before declaring failure.
+      "Heavy dependency chain" or "takes too long" is NOT a valid reason to skip.
+   d. Run the verify command to confirm it works
+   e. Only if ALL install methods fail, write a failure report to results/setup_failure.json
+3. Save the setup results to results/environment_setup.json:
+   ```json
+   {{"systems": [{{"name": "...", "installed": true, "version": "...", "verify_passed": true}}]}}
+   ```
+4. ONLY after all required systems are verified, proceed to write experiment scripts
+
+## Critical Rule: Use Real Libraries
+
+Your experiment scripts MUST import and use the installed required_systems packages.
+Do NOT re-implement the target system from scratch. For example:
+- If the plan says "required: Open WebUI" → install it (`pip install open-webui`) and use its API
+- If the plan says "required: mlperf" → use the actual mlperf harness
+- Writing your own substitute class instead of using the real package is NOT acceptable
+
+If a required system cannot be installed after trying all methods, report failure honestly.
+Do NOT build a "workaround" or "standalone mode" — the experiment either runs on the real
+system or it fails with a clear report of what is needed.
+
+## Other Requirements
 - Write and submit ALL experiment scripts at once
 - Each script should save results to results/ directory
-- Use clear naming: results/exp1_results.csv, results/exp2_results.csv, etc.
+- Use clear naming: results/exp1_results.json, results/exp2_results.json, etc.
 - Handle errors gracefully (log failures, continue with remaining experiments)
-- Keep simulations small enough to finish within the agent budget; prefer
-  fewer parameter values and shorter trace lengths to many slow runs.
-""", timeout=3600)
+- Keep experiments small enough to finish within the agent budget
+""", timeout=7200)
 
             self.log_step("Waiting for all experiments to complete...", "progress")
             self._compute_backend.wait_for_completion(max_wait_hours=4)
@@ -1307,7 +1674,7 @@ Read auto_research/state/experiment_plan.yaml for the full plan.
 Analyze ALL experiment results from this dev iteration.
 
 ## What was run
-{exp_output[:1500] if exp_output else "Check results/ directory for new files."}
+{exp_output[:4000] if exp_output else "Check results/ directory for new files."}
 
 ## Task
 1. Check all result files in results/ directory
@@ -1345,7 +1712,7 @@ Evaluate whether we have sufficient experimental data for the paper.
 {findings_summary}
 
 ## Researcher Analysis
-{research_output[:1500] if research_output else "No analysis available."}
+{research_output[:4000] if research_output else "No analysis available."}
 
 ## Task
 Determine if the experiments are sufficient to write a complete paper:
@@ -2182,7 +2549,7 @@ Only use double_column for multi-panel figures (side-by-side subplots).
         # Send session banner (replaces verbose "Started" notification)
         self._send_session_banner()
 
-        # Research Phase: run Deep Research (blocking) before other phases
+        # Research Phase: understand project, gather background, extract requirements
         if self._should_run_research_phase():
             self._run_research_phase()
 

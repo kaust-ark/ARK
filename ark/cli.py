@@ -1073,19 +1073,11 @@ def cmd_new(args):
 
 
 def _load_and_show_pdf(pdf_path: str, instructions: str = "") -> dict:
-    """Extract spec from PDF and display results."""
-    print(f"  {_c('Analyzing PDF...', Colors.DIM)} {pdf_path}")
-    pdf_spec = _extract_spec_from_pdf(pdf_path, instructions=instructions)
-    if pdf_spec.get("title"):
-        print(f"  {_c('Title:', Colors.BOLD)}   {pdf_spec['title']}")
-    if pdf_spec.get("authors"):
-        print(f"  {_c('Authors:', Colors.BOLD)} {', '.join(pdf_spec['authors'])}")
-    if pdf_spec.get("summary"):
-        print(f"  {_c('Summary:', Colors.BOLD)} {pdf_spec['summary'][:150]}...")
-    if pdf_spec.get("coding_tasks"):
-        print(f"  {_c('Tasks:', Colors.BOLD)}   {len(pdf_spec['coding_tasks'])} coding tasks → {_c('dev mode suggested', Colors.CYAN)}")
+    """Load PDF and show basic info. Deep analysis is done by the initializer agent during Research Phase."""
+    print(f"  {_c('PDF loaded:', Colors.GREEN)} {os.path.basename(pdf_path)}")
+    print(f"  {_c('Note:', Colors.DIM)} Full analysis will run during Research Phase (initializer agent reads PDF directly)")
     print()
-    return pdf_spec
+    return {"pdf_path": os.path.abspath(pdf_path)}
 
 
 def _wizard_step_header(step_num: int, title: str):

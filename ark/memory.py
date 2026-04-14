@@ -201,43 +201,74 @@ class SimpleMemory:
 
     # ==================== Issue Repeat Tracking ====================
 
-    def record_issues(self, issues: List[str], iteration: int):
-        """Record issues that appeared in the current review
+    @staticmethod
+    def _normalize_title(title: str) -> str:
+        """Normalize an issue title for matching across iterations.
+
+        Strips common filler words and lowercases so that
+        'Missing real-world baseline' matches 'missing real world baselines'.
+        """
+        import re as _re
+        t = title.lower().strip()
+        # Remove punctuation except hyphens
+        t = _re.sub(r'[^\w\s-]', '', t)
+        # Remove common filler words
+        fillers = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'of', 'for',
+                   'in', 'on', 'to', 'and', 'or', 'not', 'no', 'with', 'this',
+                   'that', 'it', 'its', 'be', 'has', 'have', 'had', 'do', 'does'}
+        words = [w for w in t.split() if w not in fillers]
+        return ' '.join(sorted(words))  # Sort for order-independence
+
+    def _issue_key(self, issue) -> str:
+        """Get the tracking key for an issue.
+
+        Accepts either a string (legacy ID like 'M1') or a dict with 'id' and 'title'.
+        Uses normalized title when available for content-based matching;
+        falls back to ID for legacy compatibility.
+        """
+        if isinstance(issue, dict):
+            title = issue.get("title", "")
+            if title:
+                return self._normalize_title(title)
+            return issue.get("id", "unknown")
+        return str(issue)
+
+    def record_issues(self, issues: list, iteration: int):
+        """Record issues that appeared in the current review.
 
         Args:
-            issues: List of Issue IDs, e.g. ["M1", "M2", "m1"]
+            issues: List of issue dicts [{"id": "M1", "title": "..."}, ...] or
+                    legacy list of ID strings ["M1", "M2"]
             iteration: Current iteration number
         """
-        current_set = set(issues)
-        last_set = set(self.last_issues)
+        current_keys = set(self._issue_key(i) for i in issues)
+        last_keys = set(self.last_issues)  # Already stored as keys
 
         # Issues that were resolved (present last time but gone now)
-        resolved = last_set - current_set
-        for issue_id in resolved:
-            # Reset count for resolved issues — they were fixed
-            if issue_id in self.issue_history:
-                self.issue_history[issue_id] = 0
+        resolved = last_keys - current_keys
+        for key in resolved:
+            if key in self.issue_history:
+                self.issue_history[key] = 0
 
         # Check if last repair was effective (if applicable)
         if self.last_repair_iteration > 0:
-            repeat_issues = current_set & last_set
+            repeat_issues = current_keys & last_keys
             if repeat_issues:
                 self.repair_effective = False
             else:
                 self.repair_effective = True
 
-        # Update issue history: only increment for issues that persist from last review
-        # New issues (not in last review) start at 1
-        # Returning issues (in both reviews) get incremented
-        for issue_id in issues:
-            if issue_id in last_set:
+        # Update issue history: only increment for issues that persist
+        for issue in issues:
+            key = self._issue_key(issue)
+            if key in last_keys:
                 # Persisting issue — increment
-                self.issue_history[issue_id] = self.issue_history.get(issue_id, 0) + 1
+                self.issue_history[key] = self.issue_history.get(key, 0) + 1
             else:
                 # New issue — start at 1
-                self.issue_history[issue_id] = 1
+                self.issue_history[key] = 1
 
-        self.last_issues = issues
+        self.last_issues = list(current_keys)
         self.save()
 
     def get_repeat_issues(self, threshold: int = 3) -> List[Tuple[str, int]]:
@@ -257,17 +288,17 @@ class SimpleMemory:
 
     # ==================== Repair Method History ====================
 
-    def record_repair_method(self, issue_id: str, method: str):
+    def record_repair_method(self, issue_id_or_issue, method: str):
         """Record the repair method used for an issue (allows duplicates, tracks attempt count)
 
         Args:
-            issue_id: Issue ID, e.g. "M1"
+            issue_id_or_issue: Issue ID string (e.g. "M1") or issue dict with 'id'/'title'
             method: Repair method, e.g. "WRITING_ONLY", "FIGURE_CODE_REQUIRED"
         """
-        if issue_id not in self.issue_repair_methods:
-            self.issue_repair_methods[issue_id] = []
-        # Allow duplicate additions so we can track how many times the same method was attempted
-        self.issue_repair_methods[issue_id].append(method)
+        key = self._issue_key(issue_id_or_issue)
+        if key not in self.issue_repair_methods:
+            self.issue_repair_methods[key] = []
+        self.issue_repair_methods[key].append(method)
         self.save()
 
     def get_tried_methods(self, issue_id: str) -> List[str]:
@@ -345,12 +376,14 @@ class SimpleMemory:
         escalations = {}
         issue_descriptions = issue_descriptions or {}
 
-        for issue_id, count in self.issue_history.items():
+        for issue_key, count in self.issue_history.items():
             if count >= 3:  # 3+ repetitions need attention
-                tried = self.get_tried_methods(issue_id)
-                desc = issue_descriptions.get(issue_id, "")
+                tried = self.get_tried_methods(issue_key)
+                # Use the key itself as description for classification (keys are
+                # normalized titles now, which contain the issue semantics)
+                desc = issue_descriptions.get(issue_key, issue_key)
                 issue_type = self.classify_issue_type(desc)
-                banned = self.get_banned_methods(issue_id, desc)
+                banned = self.get_banned_methods(issue_key, desc)
 
                 # Determine escalation direction based on issue type
                 required = None
@@ -374,7 +407,7 @@ class SimpleMemory:
                         if "WRITING_ONLY" in tried:
                             required = "Try FIGURE_CODE_REQUIRED"
 
-                escalations[issue_id] = {
+                escalations[issue_key] = {
                     "count": count,
                     "tried_methods": tried,
                     "banned_methods": banned,

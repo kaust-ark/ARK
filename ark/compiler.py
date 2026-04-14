@@ -737,18 +737,18 @@ class CompilerMixin:
         venue = self.config.get("venue", "")
 
         # ── Phase 2: Gather context for planner ──
-        idea = self.config.get("idea", "")
+        idea = self.config.get("research_idea", "") or self.config.get("idea", "")
         title = self.config.get("title", "")
         findings_file = self.state_dir / "findings.yaml" if hasattr(self, 'state_dir') else None
         dr_file = self.state_dir / "deep_research.md" if hasattr(self, 'state_dir') else None
 
         paper_context = f"Paper title: {title}\n\n"
         if idea:
-            paper_context += f"Research idea:\n{idea[:2000]}\n\n"
+            paper_context += f"Research idea:\n{idea[:4000]}\n\n"
         if findings_file and findings_file.exists():
-            paper_context += f"Experiment findings:\n{findings_file.read_text()[:2000]}\n\n"
+            paper_context += f"Experiment findings:\n{findings_file.read_text()[:3000]}\n\n"
         if dr_file and dr_file.exists():
-            paper_context += f"Background research:\n{dr_file.read_text()[:1500]}\n"
+            paper_context += f"Background research:\n{dr_file.read_text()[:4000]}\n"
 
         main_tex = self.latex_dir / "main.tex"
         if main_tex.exists():

@@ -52,6 +52,14 @@ The venue enforces a strict **{VENUE_PAGES}-page limit** for body text (excludin
 If there are methods marked as banned in the iteration history, **do not use those methods**.
 If an issue has been fixed with WRITING_ONLY 3 times and remains unresolved, escalate it to FIGURE_CODE_REQUIRED or EXPERIMENT_REQUIRED.
 
+## Experiment Planning Guidelines
+
+When creating EXPERIMENT_REQUIRED tasks:
+- The experiment must interact with **real systems, real data, or real tools** — not simulations
+- Specify what software/framework needs to be installed and what data is needed
+- If the project proposal describes a specific system (e.g., a platform, a dataset, a benchmark), experiments must run on that actual system
+- If the experimenter needs credentials or access that isn't available, note this explicitly in the action field so the system can request them from the user
+
 ## Output Format
 
 Save the action plan to `auto_research/state/action_plan.yaml`:

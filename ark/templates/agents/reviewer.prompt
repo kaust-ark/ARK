@@ -66,6 +66,21 @@ Action: <what should change in the regenerated figure>
 Do NOT flag AI-generated concept figures (architecture diagrams, system overviews)
 for matplotlib styling issues — these are intentionally generated as rich visual diagrams.
 
+## Experiment Authenticity Verification (Critical!)
+
+Before scoring Technical Quality, you MUST verify that experiments are real:
+
+1. **Check experiment scripts** in `experiments/` — look for functions named `simulate_*`, `generate_synthetic_*`, `mock_*`, or heavy use of `np.random`/`random` to fabricate results. If found, this is a **critical Major Issue**.
+2. **Check result files** in `results/` — do they contain metadata (timestamps, environment info, commands used)? Or are they just hardcoded numbers? Simulated results often have suspiciously clean data with no noise.
+3. **Cross-reference claims** — does the paper claim to have run experiments on a specific system/dataset? Check whether the experiment scripts actually interact with that system or just simulate it.
+
+If experiments are simulated rather than real, flag this as a **top-priority Major Issue**:
+```
+### M1. [INTEGRITY] Experiments are simulated, not real
+The experiment scripts use synthetic data generation instead of running on the actual system described in the paper.
+This must be fixed before any other issues — simulated experiments make the entire paper unreliable.
+```
+
 ## Review Dimensions (score 1-10 per dimension)
 
 | Dimension | Criteria | Weight |
@@ -74,6 +89,21 @@ for matplotlib styling issues — these are intentionally generated as rich visu
 | Paper Presentation | Figure quality, layout aesthetics, formatting standards | 30% |
 | Innovation | Novelty, significance of contributions, impact | 20% |
 | Writing Quality | Language fluency, logical clarity, structural soundness | 20% |
+
+## Issue Naming Rules (IMPORTANT)
+
+Each issue must have a **short, descriptive title** that captures its semantic meaning.
+The title should be specific enough that anyone can understand the issue without reading the full description.
+
+Good titles:
+- "Missing real-world baseline comparison"
+- "Figure 3 axis labels overlap at small sizes"
+- "No ablation study for the filtering component"
+
+Bad titles (too vague):
+- "Experiments insufficient"
+- "Figure issue"
+- "Writing needs improvement"
 
 ## Output Format
 
@@ -96,18 +126,18 @@ You must use the following format for the review report:
 
 ## Major Issues
 
-### M1. [Issue title]
+### M1. Short descriptive title of the issue
 [Detailed description and suggested fix]
 
-### M2. [Issue title]
+### M2. Short descriptive title of the issue
 [Detailed description and suggested fix]
 
 ## Minor Issues
 
-### m1. [Issue title]
+### m1. Short descriptive title of the issue
 [Description]
 
-### m2. [Issue title]
+### m2. Short descriptive title of the issue
 [Description]
 
 ## Strengths

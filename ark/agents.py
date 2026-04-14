@@ -155,7 +155,11 @@ class _BlockingCommandWatchdog:
 # deep_research: Gemini Deep Research background report (up to 8KB)
 # prior_context: output from the previous agent in the pipeline chain
 # context_files: generic file references (research_state, findings, etc.)
+# Note: project-specific knowledge is now written directly into agent prompt files
+# during the Specialization step (Research Phase Step 3). The runtime injection of
+# project_context has been replaced by Template-Specialization architecture.
 AGENT_CONTEXT_PROFILES = {
+    "initializer":    {"memory": False, "deep_research": False, "prior_context": False, "context_files": True},
     "reviewer":       {"memory": True,  "deep_research": False, "prior_context": False, "context_files": False},
     "planner":        {"memory": True,  "deep_research": False, "prior_context": True,  "context_files": False},
     "writer":         {"memory": False, "deep_research": True,  "prior_context": True,  "context_files": False},
@@ -435,6 +439,7 @@ class AgentMixin:
                 "- auto_research/state/research_state.yaml - Current research state\n"
                 "- auto_research/state/findings.yaml - Existing findings\n"
                 "- auto_research/state/deep_research.md - Deep Research background report\n"
+                "- auto_research/state/project_context.md - Project requirements and setup\n"
                 "- report.md - Research report\n"
                 "- results/ directory - Experiment results"
             )
