@@ -1182,17 +1182,9 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
             "coder": "relevant frameworks, libraries, and coding patterns for this domain",
         }
 
-        agents_dir = Path(self.config.get("code_dir", ".")).parent
-        # Try standard project agents dir
-        for candidate in [
-            Path(self.config.get("code_dir", ".")).parent / self.project_name / "agents" if hasattr(self, 'project_name') else None,
-            getattr(self, 'agents_dir', None),
-        ]:
-            if candidate and candidate.exists():
-                agents_dir = candidate
-                break
-
-        if not agents_dir.exists():
+        # Use the same agents_dir that run_agent() uses
+        agents_dir = getattr(self, 'agents_dir', None)
+        if not agents_dir or not agents_dir.exists():
             self.log("Agents directory not found, skipping prompt specialization", "WARN")
             return
 
