@@ -67,9 +67,10 @@ class TestExtractIssueIds:
 ### m1. Minor Issue One
 """)
         ids = mock_orchestrator.extract_issue_ids()
-        assert "M1" in ids
-        assert "M2" in ids
-        assert "m1" in ids
+        id_strs = [i["id"] if isinstance(i, dict) else i for i in ids]
+        assert "M1" in id_strs
+        assert "M2" in id_strs
+        assert "m1" in id_strs
 
     def test_no_file(self, mock_orchestrator):
         assert mock_orchestrator.extract_issue_ids() == []
