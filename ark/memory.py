@@ -268,7 +268,7 @@ class SimpleMemory:
                 # New issue — start at 1
                 self.issue_history[key] = 1
 
-        self.last_issues = list(current_keys)
+        self.last_issues = [self._issue_key(i) for i in issues]
         self.save()
 
     def get_repeat_issues(self, threshold: int = 3) -> List[Tuple[str, int]]:
