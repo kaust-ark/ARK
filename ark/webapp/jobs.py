@@ -396,6 +396,10 @@ def launch_local_job(
                 env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
                 env[env_key] = v
     
+    # Ensure the orchestrator can find the ark package even when running
+    # inside a project-local conda env that doesn't have ark installed.
+    ark_code_root = str(Path(__file__).resolve().parents[2])
+    env["PYTHONPATH"] = ark_code_root + ((":" + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
     env["HOME"] = str(project_dir)
     env["XDG_CONFIG_HOME"] = str(project_dir / ".config")
     # Disable Python's pip user-site discovery so projects are completely

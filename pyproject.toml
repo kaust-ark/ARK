@@ -25,6 +25,8 @@ webapp = [
     "python-dotenv>=1.0",
     "itsdangerous>=2.1",
     "cryptography>=41.0",
+    "markdown>=3.5",
+    "weasyprint>=60.0",
 ]
 
 
