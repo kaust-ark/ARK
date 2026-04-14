@@ -443,6 +443,15 @@ async def lifespan(app: FastAPI):
         pass
     # Now create engine + tables (ORM will see the migrated schema)
     get_engine(settings.db_path)
+
+    # Migrate existing project data: populate new DB columns from YAML state files
+    from ark.webapp.db import migrate_project_data
+    try:
+        migrate_project_data(settings.db_path, str(settings.projects_root))
+        logger.info("Project data migration completed.")
+    except Exception as e:
+        logger.warning(f"Project data migration failed (non-fatal): {e}")
+
     logger.info(f"ARK Webapp starting. DB: {settings.db_path}")
     logger.info(f"Projects root: {settings.projects_root}")
 

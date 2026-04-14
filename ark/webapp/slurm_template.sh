@@ -44,6 +44,8 @@ python -m ark.orchestrator \
   --code-dir {{ project_dir }} \
   --mode {{ mode }} \
   --iterations {{ max_iterations }} \
-  --max-days 2
+  --max-days 2 \
+  --db-path {{ db_path }} \
+  --project-id {{ project_id }}
 
 echo "[ARK] Job finished: $(date)"

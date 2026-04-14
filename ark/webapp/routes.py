@@ -436,10 +436,12 @@ def _write_user_instructions(project_dir: Path, message: str, source: str = "web
     instructions_file.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
 
 
-def _read_project_score(project_dir: Path) -> float:
-    """Try to read the latest review score from state files."""
+def _read_project_score(project_dir: Path, project=None) -> float:
+    """Read score from DB (primary) or state files (fallback)."""
+    if project and project.score:
+        return float(project.score)
+    # Fallback to YAML for legacy/unsynced projects
     state_dir = project_dir / "auto_research" / "state"
-    # paper_state.yaml is the authoritative source
     ps = state_dir / "paper_state.yaml"
     if ps.exists():
         try:
@@ -449,22 +451,18 @@ def _read_project_score(project_dir: Path) -> float:
                 return float(score)
         except Exception:
             pass
-    # fallback: legacy files
-    for name in ("review.yaml", "findings.yaml"):
-        f = state_dir / name
-        if f.exists():
-            try:
-                d = yaml.safe_load(f.read_text()) or {}
-                score = d.get("score") or d.get("overall_score") or d.get("review_score")
-                if score is not None:
-                    return float(score)
-            except Exception:
-                pass
     return 0.0
 
 
-def _read_score_history(project_dir: Path) -> list[dict]:
-    """Read per-iteration score history from paper_state.yaml."""
+def _read_score_history(project_dir: Path, project=None) -> list[dict]:
+    """Read score history from DB (primary) or paper_state.yaml (fallback)."""
+    if project and project.score_history:
+        try:
+            import json
+            return json.loads(project.score_history)
+        except Exception:
+            pass
+    # Fallback to YAML
     state_file = project_dir / "auto_research" / "state" / "paper_state.yaml"
     if not state_file.exists():
         return []
@@ -480,8 +478,11 @@ def _read_score_history(project_dir: Path) -> list[dict]:
         return []
 
 
-def _read_current_iteration(project_dir: Path) -> int:
-    """Read current iteration from the last review in paper_state.yaml."""
+def _read_current_iteration(project_dir: Path, project=None) -> int:
+    """Read current iteration from DB (primary) or paper_state.yaml (fallback)."""
+    if project and project.iteration:
+        return project.iteration
+    # Fallback to YAML
     state_file = project_dir / "auto_research" / "state" / "paper_state.yaml"
     if not state_file.exists():
         return 0
@@ -496,11 +497,10 @@ def _read_current_iteration(project_dir: Path) -> int:
 
 
 def _read_phase_status(project_dir: Path, project) -> dict:
-    """Read current phase, dev iteration, and review iteration status.
+    """Read phase status from DB (primary) or YAML state files (fallback).
 
     Returns a dict with: phase, dev_iter, max_dev_iter, review_iter, max_review_iter
     """
-    state_dir = project_dir / "auto_research" / "state"
     result = {
         "phase": "",
         "dev_iter": 0,
@@ -509,7 +509,16 @@ def _read_phase_status(project_dir: Path, project) -> dict:
         "max_review_iter": project.max_iterations,
     }
 
-    # Read dev phase state
+    # Try DB fields first
+    if project.phase:
+        result["phase"] = project.phase
+        result["dev_iter"] = project.dev_iteration
+        result["review_iter"] = project.iteration
+        return result
+
+    # Fallback to YAML for legacy/unsynced projects
+    state_dir = project_dir / "auto_research" / "state"
+
     dev_state_file = state_dir / "dev_phase_state.yaml"
     if dev_state_file.exists():
         try:
@@ -523,7 +532,6 @@ def _read_phase_status(project_dir: Path, project) -> dict:
         except Exception:
             pass
 
-    # Read paper (review) state
     paper_state_file = state_dir / "paper_state.yaml"
     if paper_state_file.exists():
         try:
@@ -538,7 +546,6 @@ def _read_phase_status(project_dir: Path, project) -> dict:
         except Exception:
             pass
 
-    # Check for research phase
     deep_research_file = state_dir / "deep_research.md"
     if deep_research_file.exists() and not result["phase"]:
         result["phase"] = "research"
@@ -548,31 +555,45 @@ def _read_phase_status(project_dir: Path, project) -> dict:
     return result
 
 
-def _read_cost_report(project_dir: Path) -> dict:
-    """Read cost_report.yaml and return a slim summary suitable for the UI.
+def _read_cost_report(project_dir: Path, project=None) -> dict:
+    """Read cost report from DB (primary) + YAML per-agent details (secondary).
 
-    Drops `raw_stats` (last-100 entries) to keep the payload small for SSE.
-    Returns an empty dict if the file is missing or unreadable — the UI
-    treats that as "no cost data yet".
+    DB has totals; YAML has per-agent breakdown. Returns a merged dict.
     """
+    result = {}
+
+    # DB has the totals — fast, no file I/O
+    if project and project.total_cost_usd:
+        result = {
+            "total_cost_usd": project.total_cost_usd,
+            "total_input_tokens": project.total_input_tokens,
+            "total_output_tokens": project.total_output_tokens,
+            "total_agent_calls": project.total_agent_calls,
+        }
+
+    # Per-agent breakdown still comes from YAML (too detailed for DB columns)
     p = project_dir / "auto_research" / "state" / "cost_report.yaml"
-    if not p.exists():
-        return {}
-    try:
-        d = yaml.safe_load(p.read_text()) or {}
-    except Exception:
-        return {}
-    return {
-        "total_cost_usd": d.get("total_cost_usd", 0),
-        "total_input_tokens": d.get("total_input_tokens", 0),
-        "total_output_tokens": d.get("total_output_tokens", 0),
-        "total_cache_read_tokens": d.get("total_cache_read_tokens", 0),
-        "total_cache_creation_tokens": d.get("total_cache_creation_tokens", 0),
-        "total_agent_calls": d.get("total_agent_calls", 0),
-        "total_agent_seconds": d.get("total_agent_seconds", 0),
-        "per_agent": d.get("per_agent", {}),
-        "generated_at": d.get("generated_at"),
-    }
+    if p.exists():
+        try:
+            d = yaml.safe_load(p.read_text()) or {}
+        except Exception:
+            d = {}
+        if not result:
+            # No DB data yet — use YAML for everything
+            result = {
+                "total_cost_usd": d.get("total_cost_usd", 0),
+                "total_input_tokens": d.get("total_input_tokens", 0),
+                "total_output_tokens": d.get("total_output_tokens", 0),
+                "total_agent_calls": d.get("total_agent_calls", 0),
+            }
+        # Always merge per-agent and timing from YAML
+        result["total_cache_read_tokens"] = d.get("total_cache_read_tokens", 0)
+        result["total_cache_creation_tokens"] = d.get("total_cache_creation_tokens", 0)
+        result["total_agent_seconds"] = d.get("total_agent_seconds", 0)
+        result["per_agent"] = d.get("per_agent", {})
+        result["generated_at"] = d.get("generated_at")
+
+    return result
 
 
 _TEMPLATE_TITLES = {"Paper Title", "Title Text", "Insert Title Here", ""}
@@ -610,13 +631,20 @@ def _read_paper_title(project_dir: Path) -> str:
     return ""
 
 
-def _read_project_model(project_dir: Path) -> str:
-    """Read model variant from project config.yaml, fallback to default."""
+def _read_project_model(project_dir: Path, project=None) -> str:
+    """Read model variant from DB (primary) or config.yaml (fallback)."""
+    if project:
+        if project.model_variant:
+            return project.model_variant
+        if project.model == "gemini":
+            return "gemini"
+        if project.model:
+            return project.model
+    # Fallback to config.yaml
     cfg = project_dir / "config.yaml"
     if cfg.exists():
         try:
             d = yaml.safe_load(cfg.read_text()) or {}
-            # Prefer model_variant (e.g., "claude-sonnet-4-6"), fall back to model backend
             variant = d.get("model_variant", "")
             if variant:
                 return variant
@@ -1096,7 +1124,7 @@ async def api_list_projects(request: Request, scope: str = "mine"):
         result = []
         for p in projects:
             pdir = _project_dir(settings, p.user_id, p.id)
-            score = _read_project_score(pdir)
+            score = _read_project_score(pdir, project=p)
             pdf = _find_pdf(pdir)
             # Sync paper_title from LaTeX into DB title+name if it differs
             paper_title = _read_paper_title(pdir)
@@ -1228,6 +1256,15 @@ async def api_create_project(
     # transitions it to either waiting_template or runs _try_submit_or_pending.
     initial_status = "initializing"
 
+    # Map model to backend + variant for DB
+    MODEL_MAP = {
+        "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
+        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
+        "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
+        "gemini": ("gemini", ""),
+    }
+    model_backend, model_variant = MODEL_MAP.get(model, ("claude", "claude-sonnet-4-6"))
+
     with get_session(settings.db_path) as session:
         project = create_project(
             session,
@@ -1246,6 +1283,10 @@ async def api_create_project(
             has_pdf_upload=has_pdf_upload,
             telegram_token=telegram_token,
             telegram_chat_id=telegram_chat_id,
+            model=model_backend,
+            model_variant=model_variant,
+            code_dir=str(pdir),
+            source="webapp",
         )
         # Persist telegram fields on user for auto-fill on next project
         if telegram_token or telegram_chat_id:
@@ -1290,7 +1331,7 @@ async def api_get_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         pdir = _project_dir(settings, project.user_id, project_id)
-        score = _read_project_score(pdir)
+        score = _read_project_score(pdir, project=project)
         pdf = _find_pdf(pdir)
         owner = session.get(User, project.user_id)
         env_ready = project_env_ready(pdir)
@@ -1310,8 +1351,8 @@ async def api_get_project(project_id: str, request: Request):
             "status": project.status,
             "score": score,
             "paper_title": _read_paper_title(pdir),
-            "score_history": _read_score_history(pdir),
-            "current_iteration": _read_current_iteration(pdir),
+            "score_history": _read_score_history(pdir, project=project),
+            "current_iteration": _read_current_iteration(pdir, project=project),
             "max_iterations": project.max_iterations,
             "phase_status": _read_phase_status(pdir, project),
             "has_pdf": pdf is not None,
@@ -1319,7 +1360,7 @@ async def api_get_project(project_id: str, request: Request):
             "slurm_job_id": project.slurm_job_id,
             "queue_position": _queue_position(project_id, session),
             "user_email": owner.email if owner else "",
-            "model": _read_project_model(pdir),
+            "model": _read_project_model(pdir, project=project),
             "telegram_token": project.telegram_token,
             "telegram_chat_id": project.telegram_chat_id,
             "has_deep_research": (pdir / "auto_research" / "state" / "deep_research.md").exists(),
@@ -1328,7 +1369,7 @@ async def api_get_project(project_id: str, request: Request):
             "conda_env_ready": env_ready,
             "created_at": project.created_at.isoformat(),
             "updated_at": project.updated_at.isoformat(),
-            "cost_report": _read_cost_report(pdir),
+            "cost_report": _read_cost_report(pdir, project=project),
         })
 
 
@@ -1489,7 +1530,7 @@ async def api_continue_project(project_id: str, request: Request):
         update_project(session, project, max_iterations=new_max)
         pdir = _project_dir(settings, project.user_id, project_id)
         # Use requested model, or fall back to existing
-        model = body.get("model") or _read_project_model(pdir) or "claude-sonnet-4-6"
+        model = body.get("model") or _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
         _write_config_yaml(pdir, project, model=model)
         if comment:
             _write_user_update(pdir, comment, source="webapp_continue")
@@ -1735,16 +1776,15 @@ async def api_stream_log(project_id: str, request: Request):
 
             first_iteration = False
 
-            # Also emit status (includes live cost report so the dashboard
-            # cost panel updates within ~2s of every agent completion)
+            # Also emit status (reads from DB — fast, no YAML parsing)
             with get_session(settings.db_path) as session:
                 p = get_project(session, project_id)
                 if p:
-                    score = _read_project_score(pdir)
+                    score = _read_project_score(pdir, project=p)
                     payload = json.dumps({
                         "status": p.status,
                         "score": score,
-                        "cost_report": _read_cost_report(pdir),
+                        "cost_report": _read_cost_report(pdir, project=p),
                     })
                     yield f"event: status\ndata: {payload}\n\n"
 

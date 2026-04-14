@@ -1591,6 +1591,47 @@ def _finalize_project(name: str, project_dir: Path, config: dict,
     """Create project directory, write config, copy templates, set up workspace."""
     code_dir = config["code_dir"]
 
+    # ── Register project in webapp DB ──────────────────────────
+    project_id = None
+    try:
+        from ark.webapp.db import (resolve_db_path, get_session,
+                                   get_or_create_user_by_email, create_project as db_create_project)
+        import getpass
+        db_path = resolve_db_path()
+        if db_path and Path(db_path).parent.exists():
+            with get_session(db_path) as session:
+                cli_email = f"{getpass.getuser()}@cli.local"
+                user, _ = get_or_create_user_by_email(session, cli_email)
+                import uuid
+                project_id = str(uuid.uuid4())
+                db_create_project(
+                    session,
+                    id=project_id,
+                    user_id=user.id,
+                    name=title or name,
+                    title=title or "",
+                    idea=config.get("research_idea", "") or config.get("idea", ""),
+                    venue=venue_name,
+                    venue_format=venue_format,
+                    venue_pages=venue_pages,
+                    max_iterations=config.get("max_iterations", 2),
+                    max_dev_iterations=config.get("max_dev_iterations", 3),
+                    mode=config.get("mode", "paper"),
+                    model=config.get("model", "claude"),
+                    model_variant=config.get("model_variant", ""),
+                    code_dir=str(code_dir),
+                    language=config.get("language", "en"),
+                    source="cli",
+                    status="queued",
+                    telegram_token=config.get("telegram_bot_token", ""),
+                    telegram_chat_id=config.get("telegram_chat_id", ""),
+                )
+            # Store project_id in config so cmd_run can pass it to orchestrator
+            config["_project_id"] = project_id
+            config["_db_path"] = db_path
+    except Exception as e:
+        print(f"  {_c('Note:', Colors.DIM)} DB registration skipped: {e}")
+
     # ── Create project directory ──────────────────────────────
     project_dir.mkdir(parents=True, exist_ok=True)
     agents_dir = project_dir / "agents"
@@ -1830,6 +1871,25 @@ def cmd_run(args):
     print(f"  Max days:       {max_days}")
     print(f"  Log file:       {log_file}")
 
+    # ── Resolve DB path and project ID for orchestrator ──
+    db_path = config.get("_db_path", "")
+    project_id = config.get("_project_id", "")
+    if not db_path:
+        try:
+            from ark.webapp.db import resolve_db_path
+            db_path = resolve_db_path()
+        except Exception:
+            pass
+    if not project_id and db_path and Path(db_path).exists():
+        try:
+            from ark.webapp.db import get_session, get_project_by_name
+            with get_session(db_path) as session:
+                p = get_project_by_name(session, name)
+                if p:
+                    project_id = p.id
+        except Exception:
+            pass
+
     # Launch orchestrator in background
     cmd = [
         sys.executable, "-m", "ark.orchestrator",
@@ -1839,6 +1899,10 @@ def cmd_run(args):
         "--iterations", str(max_iterations),
         "--max-days", str(max_days),
     ]
+    if db_path:
+        cmd.extend(["--db-path", db_path])
+    if project_id:
+        cmd.extend(["--project-id", project_id])
 
     # Strip CLAUDECODE so orchestrator can call claude CLI freely
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}

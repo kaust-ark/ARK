@@ -251,6 +251,9 @@ def submit_job(
 
     safe_api_keys = {k: shlex.quote(v) for k, v in (api_keys or {}).items()}
 
+    from ark.webapp.db import resolve_db_path
+    db_path = resolve_db_path()
+
     template_text = _SLURM_TEMPLATE.read_text()
     script = Template(template_text).render(
         project_id=project_id,
@@ -264,6 +267,7 @@ def submit_job(
         cpus_per_task=settings.slurm_cpus_per_task,
         conda_env=settings.slurm_conda_env,
         api_keys=safe_api_keys,
+        db_path=db_path,
     )
 
     if api_keys:
@@ -367,6 +371,10 @@ def launch_local_job(
     else:
         python_prefix = [sys.executable]
 
+    # Resolve DB path so orchestrator can sync status
+    from ark.webapp.db import resolve_db_path
+    db_path = resolve_db_path()
+
     cmd = python_prefix + [
         "-m", "ark.orchestrator",
         "--project", project_id,
@@ -374,6 +382,8 @@ def launch_local_job(
         "--code-dir", str(project_dir),
         "--mode", mode,
         "--iterations", str(max_iterations),
+        "--db-path", db_path,
+        "--project-id", project_id,
     ]
 
     # Inline wrapper (uses webapp's Python — only needs subprocess + pathlib).

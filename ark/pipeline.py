@@ -808,6 +808,7 @@ Notes:
             4.1 clone conda env (ark-base → .env/)
             4.2 bootstrap citations → references.bib
         """
+        self._sync_db(phase="research")
         self.log("", "RAW")
         self.log_section("Research Phase  |  Understanding Project & Building Foundation")
 
@@ -1257,6 +1258,7 @@ for this specific project.
                     cfg["title"] = title
                     with open(config_file, "w") as f:
                         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+                    self._sync_db(title=title, name=title)
                     self.log(f"Title updated: {title}", "INFO")
 
     # ==================== Citation Bootstrapping ====================
@@ -1308,6 +1310,7 @@ Output ONLY the title — one line, no quotes, no explanation. The title should 
                     cfg = yaml.safe_load(config_path.read_text()) or {}
                     cfg["title"] = new_title
                     config_path.write_text(yaml.dump(cfg, default_flow_style=False, allow_unicode=True))
+                self._sync_db(title=new_title, name=new_title)
 
     def _bootstrap_citations_from_deep_research(self):
         """Extract paper titles from Deep Research report via LLM, then fetch BibTeX via API.
@@ -1544,6 +1547,14 @@ Rules:
         dev_state_file = self.state_dir / "dev_phase_state.yaml"
         with open(dev_state_file, "w") as f:
             yaml.dump(state, f, default_flow_style=False, allow_unicode=True)
+        # Sync to DB
+        dev_status = state.get("status", "pending")
+        phase = "dev" if dev_status == "in_progress" else ("review" if dev_status in ("completed", "complete") else "")
+        self._sync_db(
+            dev_iteration=int(state.get("iteration", 0)),
+            dev_status=dev_status,
+            phase=phase,
+        )
 
     def _run_dev_phase(self):
         """Run the Dev Phase: iterative experiments → initial paper draft.
@@ -2648,6 +2659,13 @@ Only use double_column for multi-panel figures (side-by-side subplots).
             except Exception:
                 pass
             raise
+        # Sync cost totals to DB
+        self._sync_db(
+            total_cost_usd=round(total_cost_usd, 6),
+            total_input_tokens=total_input_tokens,
+            total_output_tokens=total_output_tokens,
+            total_agent_calls=total_calls,
+        )
 
     def run(self):
         """Main loop."""

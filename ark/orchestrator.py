@@ -44,7 +44,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
 
     def __init__(self, project: str, max_days: float = 3, max_iterations: int = 100,
                  mode: str = "research", model: str = "claude", code_dir: str = None,
-                 project_dir: str = None):
+                 project_dir: str = None, db_path: str = None, project_id: str = None):
         global PROJECT_DIR
 
         self.max_end_time = datetime.now() + timedelta(days=max_days)
@@ -53,6 +53,11 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         self.mode = mode
         self.model = model
         self.project_name = project
+
+        # ── DB awareness ──
+        self._db_path = db_path
+        self._project_id = project_id
+        self._db_sync_errors = 0  # count consecutive failures
 
         # Human-readable display name (resolved after config loads)
         self._display_name = None
@@ -98,7 +103,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         self.latex_dir = self.code_dir / self.config.get("latex_dir", "Latex")
         self.figures_dir = self.code_dir / self.config.get("figures_dir", "Latex/figures")
 
-        # State file paths
+        # State file paths (agent working state — stays as YAML)
         self.state_file = self.state_dir / "research_state.yaml"
         self.findings_file = self.state_dir / "findings.yaml"
         self.paper_state_file = self.state_dir / "paper_state.yaml"
@@ -220,6 +225,24 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
             name = self.config.get("name") or ""
             self._display_name = title or name or self.project_name
         return self._display_name
+
+    # ========== DB Sync ==========
+
+    def _sync_db(self, **kwargs):
+        """Update project record in the webapp DB. Fail-soft: errors are logged, never raised."""
+        if not self._db_path or not self._project_id:
+            return
+        try:
+            from ark.webapp.db import get_session, get_project, update_project
+            with get_session(self._db_path) as session:
+                project = get_project(session, self._project_id)
+                if project:
+                    update_project(session, project, **kwargs)
+            self._db_sync_errors = 0
+        except Exception as e:
+            self._db_sync_errors += 1
+            if self._db_sync_errors <= 3:
+                self.log(f"DB sync failed ({self._db_sync_errors}): {e}", "WARN")
 
     # ========== Deep Research (background) ==========
 
@@ -636,6 +659,7 @@ a {{ color: #0d9488; }}
             data["language"] = lang
             with open(prefs_file, "w") as f:
                 yaml.dump(data, f, default_flow_style=False)
+            self._sync_db(language=lang)
             self.log(f"Language preference set to: {lang}", "INFO")
         except Exception as e:
             self.log(f"Failed to save language pref: {e}", "WARN")
@@ -947,6 +971,12 @@ a {{ color: #0d9488; }}
         with open(self.checkpoint_file, "w") as f:
             yaml.dump(checkpoint, f, default_flow_style=False)
         self.log(f"Checkpoint saved: iteration={self.iteration}", "INFO")
+        self._sync_db(
+            checkpoint_data=json.dumps(checkpoint),
+            iteration=self.iteration,
+            total_input_tokens=self.total_input_tokens,
+            total_output_tokens=self.total_output_tokens,
+        )
 
     def save_step_checkpoint(self, step_num: int, step_name: str):
         """Save checkpoint after a step completes within a phase iteration."""
@@ -965,6 +995,7 @@ a {{ color: #0d9488; }}
         }
         with open(self.checkpoint_file, "w") as f:
             yaml.dump(checkpoint, f, default_flow_style=False)
+        self._sync_db(checkpoint_data=json.dumps(checkpoint))
 
     # Backward compat alias
     save_phase_checkpoint = save_step_checkpoint
@@ -1206,6 +1237,25 @@ a {{ color: #0d9488; }}
         """Save paper review state."""
         with open(self.paper_state_file, "w") as f:
             yaml.dump(state, f, default_flow_style=False, allow_unicode=True)
+        # Sync to DB
+        db_update = {
+            "score": float(state.get("current_score", 0)),
+            "iteration": self.iteration,
+        }
+        reviews = state.get("reviews", [])
+        if reviews:
+            db_update["score_history"] = json.dumps([
+                {"iteration": r.get("iteration", i + 1),
+                 "score": float(r.get("score", 0)),
+                 "timestamp": r.get("timestamp", "")}
+                for i, r in enumerate(reviews)
+            ])
+        paper_status = state.get("status", "in_progress")
+        if paper_status in ("accepted", "accepted_pending_cleanup"):
+            db_update["phase"] = "accepted"
+        else:
+            db_update["phase"] = "review"
+        self._sync_db(**db_update)
 
     def load_paper_requirements(self) -> dict:
         """Load paper requirements config."""
@@ -2046,7 +2096,18 @@ def main():
                         help="Override code directory (default: from project config)")
     parser.add_argument("--project-dir", type=str, default=None,
                         help="Override project directory (default: ARK_ROOT/projects/<project>)")
+    parser.add_argument("--db-path", type=str, default=None,
+                        help="Path to webapp SQLite DB for status sync")
+    parser.add_argument("--project-id", type=str, default=None,
+                        help="Project UUID in the webapp DB")
     args = parser.parse_args()
+
+    # Resolve DB path: explicit arg > env > webapp.env > default
+    db_path = args.db_path
+    project_id = args.project_id
+    if not db_path:
+        from ark.webapp.db import resolve_db_path
+        db_path = resolve_db_path()
 
     # Load project config to resolve code_dir if not specified
     project_dir = args.project_dir
@@ -2058,6 +2119,21 @@ def main():
             cfg = _yaml.safe_load(f) or {}
         code_dir = cfg.get("code_dir")
 
+    # Auto-resolve project_id from DB if not provided
+    if not project_id and db_path and Path(db_path).exists():
+        try:
+            from ark.webapp.db import get_session, get_project_by_name, get_project
+            with get_session(db_path) as session:
+                # Try looking up by project name or by project_dir matching id
+                p = get_project_by_name(session, args.project)
+                if not p:
+                    # Maybe --project is actually a UUID
+                    p = get_project(session, args.project)
+                if p:
+                    project_id = p.id
+        except Exception:
+            pass
+
     orchestrator = Orchestrator(
         max_days=args.max_days,
         max_iterations=args.iterations,
@@ -2066,8 +2142,28 @@ def main():
         model=args.model,
         code_dir=code_dir,
         project_dir=project_dir,
+        db_path=db_path,
+        project_id=project_id,
     )
-    orchestrator.run()
+
+    # Mark as running in DB
+    if db_path and project_id:
+        orchestrator._sync_db(status="running", pid=os.getpid())
+
+    try:
+        orchestrator.run()
+        # Mark completion in DB
+        if db_path and project_id:
+            paper_state = orchestrator.load_paper_state()
+            final_status = "done"
+            if paper_state.get("status") in ("accepted", "accepted_pending_cleanup"):
+                final_status = "done"
+            orchestrator._sync_db(status=final_status, pid=0)
+    except KeyboardInterrupt:
+        orchestrator._sync_db(status="stopped", pid=0)
+    except Exception:
+        orchestrator._sync_db(status="failed", pid=0)
+        raise
 
 
 if __name__ == "__main__":
