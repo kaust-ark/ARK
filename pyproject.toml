@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ark-research"
-version = "0.1.1"
+version = "0.2.0"
 description = "ARK - Automatic Research Kit: AI-powered idea-to-paper automation"
 requires-python = ">=3.9"
 dependencies = ["pyyaml>=6.0", "PyMuPDF>=1.24.0", "Pillow>=10.0.0"]
