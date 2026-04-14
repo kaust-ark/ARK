@@ -598,7 +598,22 @@ After running the experiment:
         finally:
             self._compute_backend.teardown()
 
-        # 5. Mark done — reviewer in next iteration decides if more work needed
+        # 5. Check if experimenter requested human intervention
+        human_responded = self._check_human_intervention(
+            stage=f"Experiment {issue.get('id')}"
+        )
+        if human_responded:
+            self.log_step(f"Human responded for {issue.get('id')}, re-running experiment", "info")
+            # Re-run the experiment with the user's input
+            issue["status"] = "pending"
+            if lock:
+                with lock:
+                    self._save_action_plan(action_plan)
+            else:
+                self._save_action_plan(action_plan)
+            return  # Will be retried in next pass
+
+        # 6. Mark done — reviewer in next iteration decides if more work needed
         issue["status"] = "completed"
         if lock:
             with lock:

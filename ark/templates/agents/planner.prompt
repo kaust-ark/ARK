@@ -59,6 +59,8 @@ When creating EXPERIMENT_REQUIRED tasks:
 - Specify what software/framework needs to be installed and what data is needed
 - If the project proposal describes a specific system (e.g., a platform, a dataset, a benchmark), experiments must run on that actual system
 - If the experimenter needs credentials or access that isn't available, note this explicitly in the action field so the system can request them from the user
+- **Do NOT include fallback evaluation methods** in the task description. If the real system is required, say so — do not suggest "use LLM-as-judge if unavailable" or "fall back to text comparison". The experimenter will request human help if installation fails.
+- If a previous iteration's experiment was marked "blocked" or "completed_fallback", escalate it: the task MUST note that prior attempts failed to use the real system and the experimenter MUST retry installation before doing anything else
 
 ## Output Format
 

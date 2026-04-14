@@ -1101,51 +1101,60 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
         if installed:
             self.log_step(f"Builtin skills installed: {', '.join(installed)}", "success")
 
-    def _check_human_intervention(self, stage: str = ""):
+    def _check_human_intervention(self, stage: str = "") -> bool:
         """Check if an agent requested human intervention via needs_human.json.
 
-        If the file exists, sends a Telegram notification and waits for a response
-        (or times out and uses the fallback).
+        If the file exists and urgency is "blocking", sends a Telegram notification
+        and blocks until the user responds. Returns True if human responded (caller
+        should re-run the blocked work), False otherwise.
         """
         import json
         needs_file = Path(self.code_dir) / "results" / "needs_human.json"
         if not needs_file.exists():
-            return
+            return False
 
         try:
             with open(needs_file) as f:
                 request = json.load(f)
         except Exception:
-            return
+            return False
 
         summary = request.get("summary", "Agent needs help")
         details = request.get("details", "")
-        urgency = request.get("urgency", "degraded")
-        fallback = request.get("fallback", "Continue with reduced functionality")
-        timeout_min = request.get("timeout_minutes", 30)
+        urgency = request.get("urgency", "blocking")
+        timeout_min = request.get("timeout_minutes", 60)
         needed_items = request.get("needed_items", [])
+        commands_tried = request.get("commands_tried", [])
+        error_output = request.get("error_output", "")
 
-        self.log(f"Human intervention requested: {summary}", "WARN")
+        self.log(f"Human intervention requested [{urgency}]: {summary}", "WARN")
 
         # Build Telegram message
         items_text = ""
         if needed_items:
             items_text = "\n".join(
-                f"  - {item.get('key', '?')}: {item.get('purpose', '')}"
+                f"  • <code>{item.get('key', '?')}</code>: {item.get('purpose', '')}"
                 for item in needed_items
             )
 
         tg_msg = (
-            f"🔔 <b>{self.display_name}</b> needs your help\n\n"
+            f"🚨 <b>{self.display_name}</b> — blocked, needs help\n\n"
             f"<b>Stage:</b> {stage}\n"
             f"<b>Issue:</b> {summary}\n"
         )
         if items_text:
             tg_msg += f"\n<b>Needed:</b>\n{items_text}\n"
+        if commands_tried:
+            tg_msg += f"\n<b>Commands tried:</b>\n"
+            for cmd in commands_tried[:5]:
+                tg_msg += f"  <code>{cmd[:80]}</code>\n"
+        if error_output:
+            tg_msg += f"\n<b>Error:</b>\n<pre>{error_output[:300]}</pre>\n"
         if details:
-            tg_msg += f"\n{details[:500]}\n"
-        tg_msg += f"\n<b>Fallback ({timeout_min}min):</b> {fallback}"
+            tg_msg += f"\n{details[:400]}\n"
+        tg_msg += f"\n⏳ Waiting up to {timeout_min} min for your reply..."
 
+        reply = None
         if self.telegram.is_configured:
             reply = self.telegram.ask(tg_msg, timeout=timeout_min * 60)
 
@@ -1153,15 +1162,18 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
                 # Save user response
                 response_file = Path(self.code_dir) / "results" / "human_response.json"
                 with open(response_file, "w") as f:
-                    json.dump({"reply": reply, "stage": stage}, f, indent=2)
+                    json.dump({"reply": reply, "stage": stage,
+                               "original_request": summary}, f, indent=2)
+                self.inject_user_update(reply)
                 self.log(f"User responded: {reply[:100]}", "INFO")
             else:
-                self.log(f"No response after {timeout_min}min, using fallback: {fallback}", "WARN")
+                self.log(f"No response after {timeout_min}min — experiments remain blocked.", "WARN")
         else:
-            self.log(f"Telegram not configured, using fallback: {fallback}", "WARN")
+            self.log(f"Telegram not configured — experiments remain blocked.", "WARN")
 
         # Remove the request file so it doesn't trigger again
         needs_file.unlink(missing_ok=True)
+        return reply is not None
 
     def _specialize_agent_prompts(self, idea_content: str, dr_content: str):
         """Specialize each agent's prompt with project-specific knowledge.
