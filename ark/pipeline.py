@@ -942,18 +942,11 @@ Be thorough and faithful to the proposal.
             idea_content = idea_file.read_text()[:8000] if idea_file.exists() else ""
             dr_content = dr_file.read_text()[:12000] if dr_file.exists() else ""
 
-            # 3.1 + 3.2: Title + project_context.md + agent specialization + skills
-            skills_index = self._load_skills_index()
-            templates_dir = Path(__file__).parent / "templates" / "agents"
-            agents_dir = self.agents_dir if hasattr(self, 'agents_dir') else (
-                Path(self.config.get("code_dir", ".")).parent / "agents"
-            )
-            agent_names = [p.stem for p in templates_dir.glob("*.prompt")
-                          if p.stem not in ("initializer", "meta_debugger")]
-
+            # 3.1: Generate project_context.md (web-verified)
+            self.log_step("Generating project context (web-verified)...", "progress")
             self.run_agent("initializer", f"""
-You are specializing this project. Read the idea summary and deep research report,
-then complete ALL of the following tasks.
+Read the idea summary and deep research report, then generate a verified
+project context document.
 
 ## idea.md
 {idea_content}
@@ -961,83 +954,47 @@ then complete ALL of the following tasks.
 ## Deep Research Report
 {dr_content}
 
-## Task 1: Determine Title
-The current title is: "{self.config.get('title', '')}".
-If it is empty or placeholder-like, generate a proper academic title and write it
-to the FIRST LINE of `auto_research/state/project_context.md` as:
-`# Title: <your title>`
+## Your Task
 
-## Task 2: Generate project_context.md
-Write `auto_research/state/project_context.md` with these sections:
-
-### ## External Systems
-For EACH system the project depends on, you MUST search the web to verify:
+For EACH external system mentioned, you MUST search the web to verify:
 - What it actually is (do NOT guess from name)
 - Official URL and repository
-- Correct install command
+- Correct install command (MUST be project-isolated — never global installs)
 - Key CLI commands or API usage for experiments
-- Prerequisites and known issues
 
-Format:
-```
-- **Name**: [official name]
-  - What: [one-line description]
-  - Official URL: [website/repo]
-  - Install: [exact command]
-  - Verify: [verification command]
-  - Key Usage: [essential commands for experiments]
-  - Notes: [prerequisites, known issues]
-```
+Write `auto_research/state/project_context.md` with sections:
+## External Systems, ## Environment Setup, ## Experiment Guidance, ## Credentials & Access
 
-### ## Environment Setup
-Python version, Node.js version, key packages needed.
+Also: if the current title "{self.config.get('title', '')}" is empty or a placeholder,
+write a suggested title as the first line: `# Title: <suggested title>`
+""", timeout=600)
+            self.log_step("Project context generated", "success")
 
-### ## Experiment Guidance
-Concrete experiment descriptions with real data sources, APIs, expected I/O.
+            # 3.2: Update title from context if needed
+            self._update_title_from_context()
 
-### ## Credentials & Access
-API keys needed, free vs paid, what to ask user for.
+            # 3.3: Specialize agent prompts (code-driven, one call per agent)
+            self.log_step("Specializing agent prompts...", "progress")
+            self._specialize_agent_prompts(idea_content, dr_content)
 
-## Task 3: Specialize Agent Prompts
-For each of the following agents, READ their current prompt file in the project
-agents/ directory, then APPEND a `## Project-Specific Knowledge` section with
-domain knowledge from the project context.
+            # 3.4: Select and install skills
+            self.log_step("Selecting skills...", "progress")
+            skills_index = self._load_skills_index()
+            if skills_index and "No skills" not in skills_index:
+                self.run_agent("initializer", f"""
+Select 3-8 skills from the library below that are DIRECTLY relevant to this project.
 
-Agents to specialize: {', '.join(agent_names)}
+## Project Summary
+{idea_content[:3000]}
 
-For each agent, read `agents/{{agent_name}}.prompt` and append relevant knowledge:
-- **experimenter**: install commands, system setup, what experiments to run, check existing services before installing
-- **planner**: experiment directions, system capabilities, what baselines to compare
-- **reviewer**: domain-specific review criteria, what to check for
-- **writer**: key terminology, contribution framing, related work context
-- **researcher**: literature context, what databases to search
-- **coder**: relevant frameworks and libraries
-
-IMPORTANT: Do NOT modify the existing prompt content. Only APPEND new sections.
-For experimenter specifically, include these rules in the appended section:
-- NEVER use `npm install -g` — always use local `npm install` or `npx`
-- Before installing any tool, check if it already exists: `which <tool>`, `<tool> --version`, `ps aux | grep <service>`
-- If API keys or credentials are missing, write what is needed to `results/credentials_needed.json` and STOP — do not skip experiments silently
-
-## Task 4: Select Skills
-Below is a skills library index. Select 3-8 skills that are DIRECTLY relevant
-to this project. Output a file `auto_research/state/selected_skills.json` containing
-a JSON array of selected skill paths.
-
-Skills index:
+## Skills Library
 {skills_index[:8000]}
 
-Only select skills that would genuinely help the experimenter or researcher
-for THIS specific project. Prefer fewer, precise matches over many vague ones.
-""", timeout=900)
-
-            self.log_step("Specialization complete", "success")
-
-            # Copy selected skills to project
+Write `auto_research/state/selected_skills.json` containing a JSON array of
+selected skill paths. Prefer fewer, precise matches over many vague ones.
+""", timeout=300)
             self._install_selected_skills()
-
-            # Update title in config if generated
-            self._update_title_from_context()
+            self.log_step("Specialization complete", "success")
 
             self.log_step_header(3, 4, "Specialization", "end")
         else:
@@ -1117,6 +1074,85 @@ for THIS specific project. Prefer fewer, precise matches over many vague ones.
                 self.log_step(f"Installed {len(installed)} skills: {', '.join(installed)}", "success")
         except Exception as e:
             self.log(f"Skills installation failed: {e}", "WARN")
+
+    def _specialize_agent_prompts(self, idea_content: str, dr_content: str):
+        """Specialize each agent's prompt with project-specific knowledge.
+
+        For each agent (except initializer and meta_debugger), calls the initializer
+        to generate a '## Project-Specific Knowledge' section, then appends it to
+        the agent's prompt file. Verifies the append succeeded.
+        """
+        ctx_file = self.state_dir / "project_context.md"
+        ctx_content = ctx_file.read_text()[:6000] if ctx_file.exists() else ""
+
+        # What knowledge each agent should receive
+        agent_focus = {
+            "experimenter": "install commands, environment setup, what experiments to run, how to use the target systems, isolation requirements",
+            "planner": "experiment directions, system capabilities, what baselines to compare, what datasets exist",
+            "reviewer": "domain-specific review criteria, what integrity checks matter, common pitfalls in this field",
+            "writer": "key terminology, contribution framing, related work positioning, anonymity requirements",
+            "researcher": "relevant literature databases, what prior work exists, key papers and benchmarks",
+            "coder": "relevant frameworks, libraries, and coding patterns for this domain",
+        }
+
+        agents_dir = Path(self.config.get("code_dir", ".")).parent
+        # Try standard project agents dir
+        for candidate in [
+            Path(self.config.get("code_dir", ".")).parent / self.project_name / "agents" if hasattr(self, 'project_name') else None,
+            getattr(self, 'agents_dir', None),
+        ]:
+            if candidate and candidate.exists():
+                agents_dir = candidate
+                break
+
+        if not agents_dir.exists():
+            self.log("Agents directory not found, skipping prompt specialization", "WARN")
+            return
+
+        specialized_count = 0
+        for agent_name, focus in agent_focus.items():
+            prompt_file = agents_dir / f"{agent_name}.prompt"
+            if not prompt_file.exists():
+                continue
+
+            current_prompt = prompt_file.read_text()
+            # Skip if already specialized
+            if "## Project-Specific Knowledge" in current_prompt:
+                specialized_count += 1
+                continue
+
+            # Ask initializer to generate the specialization section
+            result = self.run_agent("initializer", f"""
+Generate a "## Project-Specific Knowledge" section for the {agent_name} agent.
+
+This section will be appended to the agent's prompt to give it domain expertise
+for this specific project.
+
+## Project Context
+{ctx_content[:4000]}
+
+## Focus Areas for {agent_name}
+{focus}
+
+## Rules
+- Output ONLY the "## Project-Specific Knowledge" section content (with the heading)
+- Be concise but comprehensive (200-400 words)
+- Include specific tool names, commands, URLs, and technical details
+- For experimenter: emphasize project-isolated installs and checking existing services
+- For writer: include anonymity rules (no author names in title or text for blind review)
+- Do NOT repeat generic instructions already in the agent's base prompt
+""", timeout=300)
+
+            if result and len(result.strip()) > 50:
+                # Append to prompt file
+                with open(prompt_file, "a") as f:
+                    f.write(f"\n\n{result.strip()}\n")
+                specialized_count += 1
+                self.log(f"  Specialized {agent_name} prompt ({len(result)} chars)", "INFO")
+            else:
+                self.log(f"  Failed to specialize {agent_name} (empty result)", "WARN")
+
+        self.log_step(f"Specialized {specialized_count}/{len(agent_focus)} agent prompts", "success")
 
     def _update_title_from_context(self):
         """Extract title from project_context.md if it starts with '# Title:'."""

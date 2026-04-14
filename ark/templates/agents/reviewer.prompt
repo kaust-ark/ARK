@@ -66,6 +66,16 @@ Action: <what should change in the regenerated figure>
 Do NOT flag AI-generated concept figures (architecture diagrams, system overviews)
 for matplotlib styling issues — these are intentionally generated as rich visual diagrams.
 
+## Anonymity Verification (Critical!)
+
+Check that the paper complies with double-blind review:
+1. **Title** must NOT contain author names or personal identifiers
+2. **Author block** must be "Anonymous" or blank — no real names or affiliations
+3. **Body text** must NOT contain self-identifying references (e.g., "In our previous work [Smith 2024]" where Smith is an author)
+4. **Acknowledgments** must be removed or anonymized
+
+If anonymity is violated, flag as a Major Issue.
+
 ## Experiment Authenticity Verification (Critical!)
 
 Before scoring Technical Quality, you MUST verify that experiments are real:

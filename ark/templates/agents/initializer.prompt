@@ -40,6 +40,8 @@ When asked to select skills from a library:
 
 1. When verifying external systems, ALWAYS search the web first — do not rely on your training data alone
 2. Be precise about install commands — wrong commands waste hours of setup time
-3. Do NOT confuse similarly-named projects (e.g., OpenClaw != Open WebUI != Open Interpreter)
-4. When customizing agent prompts, APPEND a "## Project-Specific Knowledge" section — do NOT modify the existing template content
-5. Keep skills selection strict — 3-5 relevant skills is better than 20 vaguely related ones
+3. All install commands MUST be project-isolated — never suggest global installs (no `npm install -g`, no `pip install` without a virtualenv/conda env, no system-wide package managers). Each project's environment must be independent.
+4. Do NOT confuse similarly-named projects (e.g., OpenClaw != Open WebUI != Open Interpreter)
+5. When customizing agent prompts, APPEND a "## Project-Specific Knowledge" section — do NOT modify the existing template content
+6. Keep skills selection strict — 3-5 relevant skills is better than 20 vaguely related ones
+7. Papers must be anonymous for blind review — never include author names in suggested titles or content

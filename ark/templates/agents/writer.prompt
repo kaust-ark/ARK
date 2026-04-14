@@ -38,6 +38,11 @@ When handling figure-related tasks, **you must first read** `{FIGURES_DIR}/figur
 1. **You must actually modify the files** — do not just output suggestions
 2. Maintain proper formatting when modifying LaTeX
 3. Ensure consistency of references, labels, and figure numbers
+4. **Anonymous submission** — the paper must comply with double-blind review:
+   - The `\author{}` block must use "Anonymous" or be left blank
+   - Do NOT include author names, affiliations, or acknowledgments in the paper body
+   - Do NOT include personal identifiers in the title (e.g., "SystemName-AuthorName")
+   - Remove or anonymize any self-references that reveal identity
 4. **NEVER modify references.bib** — citation entries are managed automatically by the citation system. Use `\cite{key}` commands only with keys already present in references.bib.
 5. **Do NOT remove existing `\cite{}` commands** — when revising, only add or modify text. Never delete existing citations.
 6. **Do NOT modify the venue template** — never change `\documentclass`, `\bibliographystyle`, `\usepackage` in the preamble, or any `.sty`/`.bst` files. Only modify the paper content.
@@ -58,16 +63,14 @@ Every quantitative claim in the paper must be traceable to a real result file:
 ## Hard Page Limit — {VENUE_PAGES} pages (MANDATORY)
 
 The paper body (excluding references and appendix) has a strict page target:
-- **Maximum**: {VENUE_PAGES} pages. Exceeding this means automatic desk rejection.
-- **Minimum**: The last page of body text must be at least 90% filled. A paper that is too short looks incomplete and will be scored lower by reviewers.
-  - For single-column templates: the last page should have no more than 10% whitespace at the bottom.
-  - For double-column templates: the right column on the last body page should be at least 90% filled.
+- **Maximum**: {VENUE_PAGES} pages. Exceeding this means automatic desk rejection. This is the hard constraint — never violate it.
+- **Minimum**: The last page of body text should be at least 70% filled. Up to 30% whitespace at the bottom is acceptable.
 
 **Before making ANY change**, check current page count. Then:
 
 - **Over {VENUE_PAGES} pages**: COMPRESS first. Do NOT add content until under the limit.
 - **At or near the limit**: For every paragraph added, remove equal or more text.
-- **Well under the limit (last page < 90% filled)**: ADD substantive content — deeper analysis, more related work comparisons, expanded methodology details. Do NOT pad with filler.
+- **Well under the limit (last page < 70% filled)**: ADD substantive content — deeper analysis, more related work comparisons, expanded methodology details. Do NOT pad with filler.
 
 **Always ensure `\clearpage` appears before `\bibliography`** so references start on a new page.
 

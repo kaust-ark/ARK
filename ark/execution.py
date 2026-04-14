@@ -671,19 +671,20 @@ After making all changes, you MUST verify the page count:
         # First: ensure \clearpage before \bibliography (programmatic, no agent needed)
         self._ensure_clearpage_before_bibliography()
 
-        # 90% fill rule:
-        # Single-column: last page 90% filled → min = N - 0.1 (e.g., 6 → 5.9)
-        # Double-column: right column on last page 90% filled → min = N - 0.05 (stricter,
-        #   because half a page = one column, so 10% of a column ≈ 5% of a page)
+        # 70% fill rule:
+        # Last page must be at least 70% filled (30% whitespace allowed).
+        # NEVER exceed the page limit — desk rejection is worse than a short last page.
+        # Single-column: min = N - 0.3 (e.g., 6 → 5.7)
+        # Double-column: min = N - 0.15 (half a page = one column)
         from ark.latex_geometry import get_geometry
         venue_format = self.config.get("venue_format", "")
         geo = get_geometry(venue_format) if venue_format else {}
         columns = geo.get("columns", 1)
 
         if columns >= 2:
-            min_pages = venue_pages - 0.05  # double-column: right column 90% filled
+            min_pages = venue_pages - 0.15  # double-column: right column 70% filled
         else:
-            min_pages = venue_pages - 0.1   # single-column: last page 90% filled
+            min_pages = venue_pages - 0.3   # single-column: last page 70% filled
         max_pages = venue_pages
         latex_dir = self.config.get("latex_dir", "paper")
 

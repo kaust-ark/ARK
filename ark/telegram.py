@@ -206,9 +206,10 @@ class TelegramDispatcher:
 
             try:
                 self._send_impl(final_text, parse_mode)
-            except Exception:
+            except Exception as e:
                 # Never let a single bad message kill the sender thread
-                pass
+                import sys
+                print(f"[Telegram] send failed: {e}", file=sys.stderr)
 
     def _send_impl(self, text: str, parse_mode: str = ""):
         """Send text message, splitting if >4000 chars."""
@@ -370,7 +371,9 @@ class TelegramDispatcher:
         try:
             resp = urllib.request.urlopen(req, timeout=max(params.get("timeout", 10) + 5, 15))
             return json.loads(resp.read().decode("utf-8"))
-        except Exception:
+        except Exception as e:
+            import sys
+            print(f"[Telegram] API call {method} failed: {e}", file=sys.stderr)
             return None
 
     # ── Format Conversion ─────────────────────────────────
