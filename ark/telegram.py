@@ -271,7 +271,11 @@ class TelegramDispatcher:
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
         )
         try:
-            resp = urllib.request.urlopen(req, timeout=60)
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            resp = urllib.request.urlopen(req, timeout=60, context=ctx)
             result = json.loads(resp.read().decode("utf-8"))
             if not result.get("ok"):
                 raise RuntimeError(f"API error: {result.get('description', 'unknown')}")
@@ -369,7 +373,13 @@ class TelegramDispatcher:
             headers={"Content-Type": "application/json"},
         )
         try:
-            resp = urllib.request.urlopen(req, timeout=max(params.get("timeout", 10) + 5, 15))
+            # Use permissive SSL context to handle corporate proxies with
+            # self-signed certificates (common on HPC/enterprise networks).
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            resp = urllib.request.urlopen(req, timeout=max(params.get("timeout", 10) + 5, 15), context=ctx)
             return json.loads(resp.read().decode("utf-8"))
         except Exception as e:
             import sys
@@ -478,6 +488,10 @@ def send_once(project_config: dict, message: str,
         headers={"Content-Type": "application/json"},
     )
     try:
-        urllib.request.urlopen(req, timeout=10)
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        urllib.request.urlopen(req, timeout=10, context=ctx)
     except Exception:
         pass
