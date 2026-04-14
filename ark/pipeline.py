@@ -449,6 +449,7 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
                 execute_ok = False
                 if action_plan:
                     execute_ok = self._run_execute_phase(action_plan, planner_output)
+                    self._check_human_intervention(stage="Execute")
 
                 if not execute_ok and not self._quota_exhausted:
                     self.log_step("Execute incomplete, using fallback writer", "warning")
@@ -1019,7 +1020,10 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
         except Exception as e:
             self.log(f"Conda env provisioning skipped: {e}", "WARN")
 
-        # 4.2: Bootstrap citations
+        # 4.2: Install builtin skills (auto-inherited by all projects)
+        self._install_builtin_skills()
+
+        # 4.3: Bootstrap citations
         self._bootstrap_citations_from_deep_research()
 
         self.log_step_header(4, 4, "Bootstrap", "end")
@@ -1074,6 +1078,89 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
                 self.log_step(f"Installed {len(installed)} skills: {', '.join(installed)}", "success")
         except Exception as e:
             self.log(f"Skills installation failed: {e}", "WARN")
+
+    def _install_builtin_skills(self):
+        """Copy ARK builtin skills to the project's .claude/skills/ directory."""
+        import shutil
+        builtin_dir = Path(__file__).parent.parent / "skills" / "builtin"
+        if not builtin_dir.exists():
+            return
+
+        dest_dir = Path(self.code_dir) / ".claude" / "skills"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        installed = []
+        for skill_dir in sorted(builtin_dir.iterdir()):
+            if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+                dest = dest_dir / skill_dir.name
+                if not dest.exists():
+                    shutil.copytree(skill_dir, dest)
+                    installed.append(skill_dir.name)
+
+        if installed:
+            self.log_step(f"Builtin skills installed: {', '.join(installed)}", "success")
+
+    def _check_human_intervention(self, stage: str = ""):
+        """Check if an agent requested human intervention via needs_human.json.
+
+        If the file exists, sends a Telegram notification and waits for a response
+        (or times out and uses the fallback).
+        """
+        import json
+        needs_file = Path(self.code_dir) / "results" / "needs_human.json"
+        if not needs_file.exists():
+            return
+
+        try:
+            with open(needs_file) as f:
+                request = json.load(f)
+        except Exception:
+            return
+
+        summary = request.get("summary", "Agent needs help")
+        details = request.get("details", "")
+        urgency = request.get("urgency", "degraded")
+        fallback = request.get("fallback", "Continue with reduced functionality")
+        timeout_min = request.get("timeout_minutes", 30)
+        needed_items = request.get("needed_items", [])
+
+        self.log(f"Human intervention requested: {summary}", "WARN")
+
+        # Build Telegram message
+        items_text = ""
+        if needed_items:
+            items_text = "\n".join(
+                f"  - {item.get('key', '?')}: {item.get('purpose', '')}"
+                for item in needed_items
+            )
+
+        tg_msg = (
+            f"🔔 <b>{self.display_name}</b> needs your help\n\n"
+            f"<b>Stage:</b> {stage}\n"
+            f"<b>Issue:</b> {summary}\n"
+        )
+        if items_text:
+            tg_msg += f"\n<b>Needed:</b>\n{items_text}\n"
+        if details:
+            tg_msg += f"\n{details[:500]}\n"
+        tg_msg += f"\n<b>Fallback ({timeout_min}min):</b> {fallback}"
+
+        if self.telegram.is_configured:
+            reply = self.telegram.ask(tg_msg, timeout=timeout_min * 60)
+
+            if reply:
+                # Save user response
+                response_file = Path(self.code_dir) / "results" / "human_response.json"
+                with open(response_file, "w") as f:
+                    json.dump({"reply": reply, "stage": stage}, f, indent=2)
+                self.log(f"User responded: {reply[:100]}", "INFO")
+            else:
+                self.log(f"No response after {timeout_min}min, using fallback: {fallback}", "WARN")
+        else:
+            self.log(f"Telegram not configured, using fallback: {fallback}", "WARN")
+
+        # Remove the request file so it doesn't trigger again
+        needs_file.unlink(missing_ok=True)
 
     def _specialize_agent_prompts(self, idea_content: str, dr_content: str):
         """Specialize each agent's prompt with project-specific knowledge.
@@ -1699,6 +1786,9 @@ system or it fails with a clear report of what is needed.
             self._compute_backend.collect_results()
         finally:
             self._compute_backend.teardown()
+
+        # Check if experimenter requested human intervention
+        self._check_human_intervention(stage="Run Experiments")
 
         self.log_step_header(2, 4, "Run Experiments", "end")
         return exp_output

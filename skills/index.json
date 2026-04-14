@@ -9,7 +9,7 @@
       "Research Synthesis",
       "Project Management"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/0-autoresearch-skill"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/0-autoresearch-skill"
   },
   {
     "name": "implementing-llms-litgpt",
@@ -21,7 +21,7 @@
       "LLM Implementation",
       "LoRA"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/01-model-architecture/litgpt"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/01-model-architecture/litgpt"
   },
   {
     "name": "mamba-architecture",
@@ -33,7 +33,7 @@
       "SSM",
       "Linear Complexity"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/01-model-architecture/mamba"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/01-model-architecture/mamba"
   },
   {
     "name": "nanogpt",
@@ -45,7 +45,7 @@
       "Educational",
       "Andrej Karpathy"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/01-model-architecture/nanogpt"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/01-model-architecture/nanogpt"
   },
   {
     "name": "rwkv-architecture",
@@ -57,7 +57,7 @@
       "Transformer Hybrid",
       "Linear Complexity"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/01-model-architecture/rwkv"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/01-model-architecture/rwkv"
   },
   {
     "name": "distributed-llm-pretraining-torchtitan",
@@ -69,7 +69,7 @@
       "FSDP2",
       "Tensor Parallel"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/01-model-architecture/torchtitan"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/01-model-architecture/torchtitan"
   },
   {
     "name": "huggingface-tokenizers",
@@ -81,7 +81,7 @@
       "WordPiece",
       "Unigram"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/02-tokenization/huggingface-tokenizers"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/02-tokenization/huggingface-tokenizers"
   },
   {
     "name": "sentencepiece",
@@ -93,7 +93,7 @@
       "BPE",
       "Unigram"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/02-tokenization/sentencepiece"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/02-tokenization/sentencepiece"
   },
   {
     "name": "axolotl",
@@ -105,7 +105,7 @@
       "LoRA",
       "QLoRA"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/03-fine-tuning/axolotl"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/03-fine-tuning/axolotl"
   },
   {
     "name": "llama-factory",
@@ -117,7 +117,7 @@
       "WebUI",
       "No-Code"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/03-fine-tuning/llama-factory"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/03-fine-tuning/llama-factory"
   },
   {
     "name": "peft-fine-tuning",
@@ -129,7 +129,7 @@
       "QLoRA",
       "Parameter-Efficient"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/03-fine-tuning/peft"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/03-fine-tuning/peft"
   },
   {
     "name": "unsloth",
@@ -141,7 +141,7 @@
       "LoRA",
       "QLoRA"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/03-fine-tuning/unsloth"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/03-fine-tuning/unsloth"
   },
   {
     "name": "nnsight-remote-interpretability",
@@ -153,7 +153,7 @@
       "Mechanistic Interpretability",
       "Model Internals"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/04-mechanistic-interpretability/nnsight"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/04-mechanistic-interpretability/nnsight"
   },
   {
     "name": "pyvene-interventions",
@@ -165,7 +165,7 @@
       "Causal Tracing",
       "Interpretability"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/04-mechanistic-interpretability/pyvene"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/04-mechanistic-interpretability/pyvene"
   },
   {
     "name": "sparse-autoencoder-training",
@@ -177,7 +177,7 @@
       "Feature Discovery",
       "Superposition"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/04-mechanistic-interpretability/saelens"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/04-mechanistic-interpretability/saelens"
   },
   {
     "name": "transformer-lens-interpretability",
@@ -188,7 +188,7 @@
       "Activation Patching",
       "Circuit Analysis"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/04-mechanistic-interpretability/transformer-lens"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/04-mechanistic-interpretability/transformer-lens"
   },
   {
     "name": "nemo-curator",
@@ -200,7 +200,7 @@
       "GPU Acceleration",
       "Deduplication"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/05-data-processing/nemo-curator"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/05-data-processing/nemo-curator"
   },
   {
     "name": "ray-data",
@@ -212,7 +212,7 @@
       "ML Pipelines",
       "Batch Inference"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/05-data-processing/ray-data"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/05-data-processing/ray-data"
   },
   {
     "name": "grpo-rl-training",
@@ -224,7 +224,7 @@
       "TRL",
       "RLHF"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/06-post-training/grpo-rl-training"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/06-post-training/grpo-rl-training"
   },
   {
     "name": "miles-rl-training",
@@ -236,7 +236,7 @@
       "INT4",
       "Enterprise"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/06-post-training/miles"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/06-post-training/miles"
   },
   {
     "name": "openrlhf-training",
@@ -248,7 +248,7 @@
       "PPO",
       "GRPO"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/06-post-training/openrlhf"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/06-post-training/openrlhf"
   },
   {
     "name": "simpo-training",
@@ -260,7 +260,7 @@
       "Alignment",
       "DPO Alternative"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/06-post-training/simpo"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/06-post-training/simpo"
   },
   {
     "name": "slime-rl-training",
@@ -272,7 +272,7 @@
       "GRPO",
       "Post-Training"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/06-post-training/slime"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/06-post-training/slime"
   },
   {
     "name": "torchforge-rl-training",
@@ -284,7 +284,7 @@
       "SFT",
       "Monarch"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/06-post-training/torchforge"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/06-post-training/torchforge"
   },
   {
     "name": "fine-tuning-with-trl",
@@ -296,7 +296,7 @@
       "Fine-Tuning",
       "SFT"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/06-post-training/trl-fine-tuning"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/06-post-training/trl-fine-tuning"
   },
   {
     "name": "verl-rl-training",
@@ -308,7 +308,7 @@
       "PPO",
       "Post-Training"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/06-post-training/verl"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/06-post-training/verl"
   },
   {
     "name": "constitutional-ai",
@@ -320,7 +320,7 @@
       "Self-Critique",
       "Harmlessness"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/07-safety-alignment/constitutional-ai"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/07-safety-alignment/constitutional-ai"
   },
   {
     "name": "llamaguard",
@@ -332,7 +332,7 @@
       "Meta",
       "Guardrails"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/07-safety-alignment/llamaguard"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/07-safety-alignment/llamaguard"
   },
   {
     "name": "nemo-guardrails",
@@ -344,7 +344,7 @@
       "Jailbreak Detection",
       "Guardrails"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/07-safety-alignment/nemo-guardrails"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/07-safety-alignment/nemo-guardrails"
   },
   {
     "name": "prompt-guard",
@@ -356,7 +356,7 @@
       "Meta",
       "Input Validation"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/07-safety-alignment/prompt-guard"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/07-safety-alignment/prompt-guard"
   },
   {
     "name": "huggingface-accelerate",
@@ -368,7 +368,7 @@
       "DeepSpeed",
       "FSDP"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/08-distributed-training/accelerate"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/08-distributed-training/accelerate"
   },
   {
     "name": "deepspeed",
@@ -380,7 +380,7 @@
       "Pipeline Parallelism",
       "Mixed Precision"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/08-distributed-training/deepspeed"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/08-distributed-training/deepspeed"
   },
   {
     "name": "training-llms-megatron",
@@ -392,7 +392,7 @@
       "Tensor Parallelism",
       "Pipeline Parallelism"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/08-distributed-training/megatron-core"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/08-distributed-training/megatron-core"
   },
   {
     "name": "pytorch-fsdp2",
@@ -404,7 +404,7 @@
       "Distributed Training",
       "DTensor"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/08-distributed-training/pytorch-fsdp2"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/08-distributed-training/pytorch-fsdp2"
   },
   {
     "name": "pytorch-lightning",
@@ -416,7 +416,7 @@
       "DDP",
       "FSDP"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/08-distributed-training/pytorch-lightning"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/08-distributed-training/pytorch-lightning"
   },
   {
     "name": "ray-train",
@@ -428,7 +428,7 @@
       "Ray",
       "Hyperparameter Tuning"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/08-distributed-training/ray-train"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/08-distributed-training/ray-train"
   },
   {
     "name": "lambda-labs-gpu-cloud",
@@ -440,7 +440,7 @@
       "Inference",
       "Lambda Labs"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/09-infrastructure/lambda-labs"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/09-infrastructure/lambda-labs"
   },
   {
     "name": "modal-serverless-gpu",
@@ -452,7 +452,7 @@
       "Cloud",
       "Deployment"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/09-infrastructure/modal"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/09-infrastructure/modal"
   },
   {
     "name": "skypilot-multi-cloud-orchestration",
@@ -464,7 +464,7 @@
       "GPU",
       "Cost Optimization"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/09-infrastructure/skypilot"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/09-infrastructure/skypilot"
   },
   {
     "name": "awq-quantization",
@@ -476,7 +476,7 @@
       "4-Bit",
       "Activation-Aware"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/10-optimization/awq"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/10-optimization/awq"
   },
   {
     "name": "quantizing-models-bitsandbytes",
@@ -488,7 +488,7 @@
       "8-Bit",
       "4-Bit"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/10-optimization/bitsandbytes"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/10-optimization/bitsandbytes"
   },
   {
     "name": "optimizing-attention-flash",
@@ -500,7 +500,7 @@
       "Memory Efficiency",
       "Speed Optimization"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/10-optimization/flash-attention"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/10-optimization/flash-attention"
   },
   {
     "name": "gguf-quantization",
@@ -512,7 +512,7 @@
       "CPU Inference",
       "Apple Silicon"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/10-optimization/gguf"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/10-optimization/gguf"
   },
   {
     "name": "gptq",
@@ -524,7 +524,7 @@
       "4-Bit",
       "Post-Training"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/10-optimization/gptq"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/10-optimization/gptq"
   },
   {
     "name": "hqq-quantization",
@@ -536,7 +536,7 @@
       "Memory Efficiency",
       "Inference"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/10-optimization/hqq"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/10-optimization/hqq"
   },
   {
     "name": "ml-training-recipes",
@@ -548,7 +548,7 @@
       "LLM",
       "Vision"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/10-optimization/ml-training-recipes"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/10-optimization/ml-training-recipes"
   },
   {
     "name": "evaluating-code-models",
@@ -560,7 +560,7 @@
       "MBPP",
       "MultiPL-E"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/11-evaluation/bigcode-evaluation-harness"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/11-evaluation/bigcode-evaluation-harness"
   },
   {
     "name": "evaluating-llms-harness",
@@ -572,7 +572,7 @@
       "MMLU",
       "HumanEval"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/11-evaluation/lm-evaluation-harness"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/11-evaluation/lm-evaluation-harness"
   },
   {
     "name": "nemo-evaluator-sdk",
@@ -584,7 +584,7 @@
       "Benchmarking",
       "MMLU"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/11-evaluation/nemo-evaluator"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/11-evaluation/nemo-evaluator"
   },
   {
     "name": "llama-cpp",
@@ -596,7 +596,7 @@
       "Apple Silicon",
       "Edge Deployment"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/12-inference-serving/llama-cpp"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/12-inference-serving/llama-cpp"
   },
   {
     "name": "sglang",
@@ -608,7 +608,7 @@
       "RadixAttention",
       "Prefix Caching"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/12-inference-serving/sglang"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/12-inference-serving/sglang"
   },
   {
     "name": "tensorrt-llm",
@@ -620,7 +620,7 @@
       "Inference Optimization",
       "High Throughput"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/12-inference-serving/tensorrt-llm"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/12-inference-serving/tensorrt-llm"
   },
   {
     "name": "serving-llms-vllm",
@@ -632,7 +632,7 @@
       "Continuous Batching",
       "High Throughput"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/12-inference-serving/vllm"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/12-inference-serving/vllm"
   },
   {
     "name": "mlflow",
@@ -644,7 +644,7 @@
       "Model Registry",
       "ML Lifecycle"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/13-mlops/mlflow"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/13-mlops/mlflow"
   },
   {
     "name": "experiment-tracking-swanlab",
@@ -656,7 +656,7 @@
       "Open Source",
       "Visualization"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/13-mlops/swanlab"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/13-mlops/swanlab"
   },
   {
     "name": "tensorboard",
@@ -668,7 +668,7 @@
       "Training Metrics",
       "Model Debugging"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/13-mlops/tensorboard"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/13-mlops/tensorboard"
   },
   {
     "name": "weights-and-biases",
@@ -680,7 +680,7 @@
       "Experiment Tracking",
       "Hyperparameter Tuning"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/13-mlops/weights-and-biases"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/13-mlops/weights-and-biases"
   },
   {
     "name": "evolving-ai-agents",
@@ -692,7 +692,7 @@
       "LLM",
       "Benchmark Evaluation"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/14-agents/a-evolve"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/14-agents/a-evolve"
   },
   {
     "name": "autogpt-agents",
@@ -704,7 +704,7 @@
       "Workflow Automation",
       "Visual Builder"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/14-agents/autogpt"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/14-agents/autogpt"
   },
   {
     "name": "crewai-multi-agent",
@@ -716,7 +716,7 @@
       "Orchestration",
       "Collaboration"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/14-agents/crewai"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/14-agents/crewai"
   },
   {
     "name": "langchain",
@@ -728,7 +728,7 @@
       "Tool Calling",
       "ReAct"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/14-agents/langchain"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/14-agents/langchain"
   },
   {
     "name": "llamaindex",
@@ -740,7 +740,7 @@
       "Document Ingestion",
       "Vector Indices"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/14-agents/llamaindex"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/14-agents/llamaindex"
   },
   {
     "name": "chroma",
@@ -752,7 +752,7 @@
       "Embeddings",
       "Semantic Search"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/15-rag/chroma"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/15-rag/chroma"
   },
   {
     "name": "faiss",
@@ -764,7 +764,7 @@
       "Vector Search",
       "Facebook AI"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/15-rag/faiss"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/15-rag/faiss"
   },
   {
     "name": "pinecone",
@@ -776,7 +776,7 @@
       "Managed Service",
       "Serverless"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/15-rag/pinecone"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/15-rag/pinecone"
   },
   {
     "name": "qdrant-vector-search",
@@ -788,7 +788,7 @@
       "Semantic Search",
       "Embeddings"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/15-rag/qdrant"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/15-rag/qdrant"
   },
   {
     "name": "sentence-transformers",
@@ -800,7 +800,7 @@
       "RAG",
       "Multilingual"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/15-rag/sentence-transformers"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/15-rag/sentence-transformers"
   },
   {
     "name": "dspy",
@@ -812,7 +812,7 @@
       "RAG",
       "Agents"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/16-prompt-engineering/dspy"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/16-prompt-engineering/dspy"
   },
   {
     "name": "guidance",
@@ -824,7 +824,7 @@
       "Structured Output",
       "JSON Validation"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/16-prompt-engineering/guidance"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/16-prompt-engineering/guidance"
   },
   {
     "name": "instructor",
@@ -836,7 +836,7 @@
       "Pydantic",
       "Data Extraction"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/16-prompt-engineering/instructor"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/16-prompt-engineering/instructor"
   },
   {
     "name": "outlines",
@@ -848,7 +848,7 @@
       "JSON Schema",
       "Pydantic"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/16-prompt-engineering/outlines"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/16-prompt-engineering/outlines"
   },
   {
     "name": "langsmith-observability",
@@ -860,7 +860,7 @@
       "Evaluation",
       "Monitoring"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/17-observability/langsmith"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/17-observability/langsmith"
   },
   {
     "name": "phoenix-observability",
@@ -872,7 +872,7 @@
       "Tracing",
       "Evaluation"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/17-observability/phoenix"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/17-observability/phoenix"
   },
   {
     "name": "audiocraft-audio-generation",
@@ -884,7 +884,7 @@
       "Text-to-Audio",
       "MusicGen"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/18-multimodal/audiocraft"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/18-multimodal/audiocraft"
   },
   {
     "name": "blip-2-vision-language",
@@ -896,7 +896,7 @@
       "VQA",
       "Zero-Shot"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/18-multimodal/blip-2"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/18-multimodal/blip-2"
   },
   {
     "name": "clip",
@@ -908,7 +908,7 @@
       "Zero-Shot",
       "Image Classification"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/18-multimodal/clip"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/18-multimodal/clip"
   },
   {
     "name": "evaluating-cosmos-policy",
@@ -920,7 +920,7 @@
       "LIBERO",
       "RoboCasa"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/18-multimodal/cosmos-policy"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/18-multimodal/cosmos-policy"
   },
   {
     "name": "llava",
@@ -932,7 +932,7 @@
       "Visual Question Answering",
       "Image Chat"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/18-multimodal/llava"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/18-multimodal/llava"
   },
   {
     "name": "fine-tuning-serving-openpi",
@@ -944,7 +944,7 @@
       "Robotics",
       "JAX"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/18-multimodal/openpi"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/18-multimodal/openpi"
   },
   {
     "name": "fine-tuning-openvla-oft",
@@ -956,7 +956,7 @@
       "Robotics",
       "Fine-Tuning"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/18-multimodal/openvla-oft"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/18-multimodal/openvla-oft"
   },
   {
     "name": "segment-anything-model",
@@ -968,7 +968,7 @@
       "SAM",
       "Zero-Shot"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/18-multimodal/segment-anything"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/18-multimodal/segment-anything"
   },
   {
     "name": "stable-diffusion-image-generation",
@@ -980,7 +980,7 @@
       "Text-to-Image",
       "Multimodal"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/18-multimodal/stable-diffusion"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/18-multimodal/stable-diffusion"
   },
   {
     "name": "whisper",
@@ -992,7 +992,7 @@
       "Multimodal",
       "Multilingual"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/18-multimodal/whisper"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/18-multimodal/whisper"
   },
   {
     "name": "knowledge-distillation",
@@ -1004,7 +1004,7 @@
       "Teacher-Student",
       "MiniLLM"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/19-emerging-techniques/knowledge-distillation"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/19-emerging-techniques/knowledge-distillation"
   },
   {
     "name": "long-context",
@@ -1016,7 +1016,7 @@
       "YaRN",
       "ALiBi"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/19-emerging-techniques/long-context"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/19-emerging-techniques/long-context"
   },
   {
     "name": "model-merging",
@@ -1028,7 +1028,7 @@
       "SLERP",
       "TIES"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/19-emerging-techniques/model-merging"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/19-emerging-techniques/model-merging"
   },
   {
     "name": "model-pruning",
@@ -1040,7 +1040,7 @@
       "SparseGPT",
       "Sparsity"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/19-emerging-techniques/model-pruning"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/19-emerging-techniques/model-pruning"
   },
   {
     "name": "moe-training",
@@ -1052,7 +1052,7 @@
       "Sparse Models",
       "DeepSpeed"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/19-emerging-techniques/moe-training"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/19-emerging-techniques/moe-training"
   },
   {
     "name": "speculative-decoding",
@@ -1064,7 +1064,7 @@
       "Lookahead Decoding",
       "Fast Inference"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/19-emerging-techniques/speculative-decoding"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/19-emerging-techniques/speculative-decoding"
   },
   {
     "name": "academic-plotting",
@@ -1076,7 +1076,7 @@
       "Seaborn",
       "Plotting"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/20-ml-paper-writing/academic-plotting"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/20-ml-paper-writing/academic-plotting"
   },
   {
     "name": "ml-paper-writing",
@@ -1088,7 +1088,7 @@
       "ICLR",
       "ACL"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/20-ml-paper-writing/ml-paper-writing"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/20-ml-paper-writing/ml-paper-writing"
   },
   {
     "name": "presenting-conference-talks",
@@ -1100,7 +1100,7 @@
       "Slides",
       "Speaker Notes"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/20-ml-paper-writing/presenting-conference-talks"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/20-ml-paper-writing/presenting-conference-talks"
   },
   {
     "name": "systems-paper-writing",
@@ -1112,7 +1112,7 @@
       "ASPLOS",
       "NSDI"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/20-ml-paper-writing/systems-paper-writing"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/20-ml-paper-writing/systems-paper-writing"
   },
   {
     "name": "brainstorming-research-ideas",
@@ -1124,7 +1124,7 @@
       "Creative Thinking",
       "Research Strategy"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/21-research-ideation/brainstorming-research-ideas"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/21-research-ideation/brainstorming-research-ideas"
   },
   {
     "name": "creative-thinking-for-research",
@@ -1136,810 +1136,810 @@
       "Problem Reformulation",
       "Cognitive Science"
     ],
-    "path": "/home/xinj/ARK/skills/AI-Research-SKILLs/21-research-ideation/creative-thinking-for-research"
+    "path": "/home/xinj/ARK/skills/library/AI-Research-SKILLs/21-research-ideation/creative-thinking-for-research"
   },
   {
     "name": "adaptyv",
     "description": "How to use the Adaptyv Bio Foundry API and Python SDK for protein experiment design, submission, and results retrieval. ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/adaptyv"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/adaptyv"
   },
   {
     "name": "aeon",
     "description": "This skill should be used for time series machine learning tasks including classification, regression, clustering, forec",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/aeon"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/aeon"
   },
   {
     "name": "anndata",
     "description": "Data structure for annotated matrices in single-cell analysis. Use when working with .h5ad files or integrating with the",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/anndata"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/anndata"
   },
   {
     "name": "arboreto",
     "description": "Infer gene regulatory networks (GRNs) from gene expression data using scalable algorithms (GRNBoost2, GENIE3). Use when ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/arboreto"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/arboreto"
   },
   {
     "name": "astropy",
     "description": "Comprehensive Python library for astronomy and astrophysics. This skill should be used when working with astronomical da",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/astropy"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/astropy"
   },
   {
     "name": "benchling-integration",
     "description": "Benchling R&D platform integration. Access registry (DNA, proteins), inventory, ELN entries, workflows via API, build Be",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/benchling-integration"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/benchling-integration"
   },
   {
     "name": "bgpt-paper-search",
     "description": "Search scientific papers and retrieve structured experimental data extracted from full-text studies via the BGPT MCP ser",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/bgpt-paper-search"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/bgpt-paper-search"
   },
   {
     "name": "biopython",
     "description": "Comprehensive molecular biology toolkit. Use for sequence manipulation, file parsing (FASTA/GenBank/PDB), phylogenetics,",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/biopython"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/biopython"
   },
   {
     "name": "bioservices",
     "description": "Unified Python interface to 40+ bioinformatics services. Use when querying multiple databases (UniProt, KEGG, ChEMBL, Re",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/bioservices"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/bioservices"
   },
   {
     "name": "cellxgene-census",
     "description": "Query the CELLxGENE Census (61M+ cells) programmatically. Use when you need expression data across tissues, diseases, or",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/cellxgene-census"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/cellxgene-census"
   },
   {
     "name": "cirq",
     "description": "Google quantum computing framework. Use when targeting Google Quantum AI hardware, designing noise-aware circuits, or ru",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/cirq"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/cirq"
   },
   {
     "name": "citation-management",
     "description": "Comprehensive citation management for academic research. Search Google Scholar and PubMed for papers, extract accurate m",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/citation-management"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/citation-management"
   },
   {
     "name": "clinical-decision-support",
     "description": "Generate professional clinical decision support (CDS) documents for pharmaceutical and clinical research settings, inclu",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/clinical-decision-support"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/clinical-decision-support"
   },
   {
     "name": "clinical-reports",
     "description": "Write comprehensive clinical reports including case reports (CARE guidelines), diagnostic reports (radiology/pathology/l",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/clinical-reports"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/clinical-reports"
   },
   {
     "name": "cobrapy",
     "description": "Constraint-based metabolic modeling (COBRA). FBA, FVA, gene knockouts, flux sampling, SBML models, for systems biology a",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/cobrapy"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/cobrapy"
   },
   {
     "name": "consciousness-council",
     "description": "Run a multi-perspective Mind Council deliberation on any question, decision, or creative challenge. Use this skill whene",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/consciousness-council"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/consciousness-council"
   },
   {
     "name": "dask",
     "description": "Distributed computing for larger-than-RAM pandas/NumPy workflows. Use when you need to scale existing pandas/NumPy code ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/dask"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/dask"
   },
   {
     "name": "database-lookup",
     "description": "Search 78 public scientific, biomedical, materials science, and economic databases via REST APIs. Covers physics/astrono",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/database-lookup"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/database-lookup"
   },
   {
     "name": "datamol",
     "description": "Pythonic wrapper around RDKit with simplified interface and sensible defaults. Preferred for standard drug discovery inc",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/datamol"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/datamol"
   },
   {
     "name": "deepchem",
     "description": "Molecular ML with diverse featurizers and pre-built datasets. Use for property prediction (ADMET, toxicity) with traditi",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/deepchem"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/deepchem"
   },
   {
     "name": "deeptools",
     "description": "NGS analysis toolkit. BAM to bigWig conversion, QC (correlation, PCA, fingerprints), heatmaps/profiles (TSS, peaks), for",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/deeptools"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/deeptools"
   },
   {
     "name": "depmap",
     "description": "Query the Cancer Dependency Map (DepMap) for cancer cell line gene dependency scores (CRISPR Chronos), drug sensitivity ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/depmap"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/depmap"
   },
   {
     "name": "dhdna-profiler",
     "description": "Extract cognitive patterns and thinking fingerprints from any text. Use this skill when the user wants to analyze how so",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/dhdna-profiler"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/dhdna-profiler"
   },
   {
     "name": "diffdock",
     "description": "Diffusion-based molecular docking. Predict protein-ligand binding poses from PDB/SMILES, confidence scores, virtual scre",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/diffdock"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/diffdock"
   },
   {
     "name": "dnanexus-integration",
     "description": "DNAnexus cloud genomics platform. Build apps/applets, manage data (upload/download), dxpy Python SDK, run workflows, FAS",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/dnanexus-integration"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/dnanexus-integration"
   },
   {
     "name": "docx",
     "description": "Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files). Triggers inclu",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/docx"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/docx"
   },
   {
     "name": "esm",
     "description": "Comprehensive toolkit for protein language models including ESM3 (generative multimodal protein design across sequence, ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/esm"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/esm"
   },
   {
     "name": "etetoolkit",
     "description": "Phylogenetic tree toolkit (ETE). Tree manipulation (Newick/NHX), evolutionary event detection, orthology/paralogy, NCBI ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/etetoolkit"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/etetoolkit"
   },
   {
     "name": "exploratory-data-analysis",
     "description": "Perform comprehensive exploratory data analysis on scientific data files across 200+ file formats. This skill should be ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/exploratory-data-analysis"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/exploratory-data-analysis"
   },
   {
     "name": "flowio",
     "description": "Parse FCS (Flow Cytometry Standard) files v2.0-3.1. Extract events as NumPy arrays, read metadata/channels, convert to C",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/flowio"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/flowio"
   },
   {
     "name": "fluidsim",
     "description": "Framework for computational fluid dynamics simulations using Python. Use when running fluid dynamics simulations includi",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/fluidsim"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/fluidsim"
   },
   {
     "name": "generate-image",
     "description": "Generate or edit images using AI models (FLUX, Nano Banana 2). Use for general-purpose image generation including photos",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/generate-image"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/generate-image"
   },
   {
     "name": "geniml",
     "description": "This skill should be used when working with genomic interval data (BED files) for machine learning tasks. Use for traini",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/geniml"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/geniml"
   },
   {
     "name": "geomaster",
     "description": "Comprehensive geospatial science skill covering remote sensing, GIS, spatial analysis, machine learning for earth observ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/geomaster"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/geomaster"
   },
   {
     "name": "geopandas",
     "description": "Python library for working with geospatial vector data including shapefiles, GeoJSON, and GeoPackage files. Use when wor",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/geopandas"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/geopandas"
   },
   {
     "name": "get-available-resources",
     "description": "This skill should be used at the start of any computationally intensive scientific task to detect and report available s",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/get-available-resources"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/get-available-resources"
   },
   {
     "name": "gget",
     "description": "Fast CLI/Python queries to 20+ bioinformatics databases. Use for quick lookups: gene info, BLAST searches, AlphaFold str",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/gget"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/gget"
   },
   {
     "name": "ginkgo-cloud-lab",
     "description": "Submit and manage protocols on Ginkgo Bioworks Cloud Lab (cloud.ginkgo.bio), a web-based interface for autonomous lab ex",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/ginkgo-cloud-lab"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/ginkgo-cloud-lab"
   },
   {
     "name": "glycoengineering",
     "description": "Analyze and engineer protein glycosylation. Scan sequences for N-glycosylation sequons (N-X-S/T), predict O-glycosylatio",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/glycoengineering"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/glycoengineering"
   },
   {
     "name": "gtars",
     "description": "High-performance toolkit for genomic interval analysis in Rust with Python bindings. Use when working with genomic regio",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/gtars"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/gtars"
   },
   {
     "name": "histolab",
     "description": "Lightweight WSI tile extraction and preprocessing. Use for basic slide processing tissue detection, tile extraction, sta",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/histolab"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/histolab"
   },
   {
     "name": "hypogenic",
     "description": "Automated LLM-driven hypothesis generation and testing on tabular datasets. Use when you want to systematically explore ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/hypogenic"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/hypogenic"
   },
   {
     "name": "hypothesis-generation",
     "description": "Structured hypothesis formulation from observations. Use when you have experimental observations or data and need to for",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/hypothesis-generation"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/hypothesis-generation"
   },
   {
     "name": "imaging-data-commons",
     "description": "Query and download public cancer imaging data from NCI Imaging Data Commons using idc-index. Use for accessing large-sca",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/imaging-data-commons"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/imaging-data-commons"
   },
   {
     "name": "infographics",
     "description": "Create professional infographics using Nano Banana Pro AI with smart iterative refinement. Uses Gemini 3 Pro for quality",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/infographics"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/infographics"
   },
   {
     "name": "iso-13485-certification",
     "description": "Comprehensive toolkit for preparing ISO 13485 certification documentation for medical device Quality Management Systems.",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/iso-13485-certification"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/iso-13485-certification"
   },
   {
     "name": "labarchive-integration",
     "description": "Electronic lab notebook API integration. Access notebooks, manage entries/attachments, backup notebooks, integrate with ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/labarchive-integration"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/labarchive-integration"
   },
   {
     "name": "lamindb",
     "description": "This skill should be used when working with LaminDB, an open-source data framework for biology that makes data queryable",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/lamindb"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/lamindb"
   },
   {
     "name": "latchbio-integration",
     "description": "Latch platform for bioinformatics workflows. Build pipelines with Latch SDK, @workflow/@task decorators, deploy serverle",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/latchbio-integration"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/latchbio-integration"
   },
   {
     "name": "latex-posters",
     "description": "Create professional research posters in LaTeX using beamerposter, tikzposter, or baposter. Support for conference presen",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/latex-posters"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/latex-posters"
   },
   {
     "name": "literature-review",
     "description": "Conduct comprehensive, systematic literature reviews using multiple academic databases (PubMed, arXiv, bioRxiv, Semantic",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/literature-review"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/literature-review"
   },
   {
     "name": "markdown-mermaid-writing",
     "description": "Comprehensive markdown and Mermaid diagram writing skill. Use when creating any scientific document, report, analysis, o",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/markdown-mermaid-writing"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/markdown-mermaid-writing"
   },
   {
     "name": "market-research-reports",
     "description": "Generate comprehensive market research reports (50+ pages) in the style of top consulting firms (McKinsey, BCG, Gartner)",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/market-research-reports"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/market-research-reports"
   },
   {
     "name": "markitdown",
     "description": "Convert files and office documents to Markdown. Supports PDF, DOCX, PPTX, XLSX, images (with OCR), audio (with transcrip",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/markitdown"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/markitdown"
   },
   {
     "name": "matchms",
     "description": "Spectral similarity and compound identification for metabolomics. Use for comparing mass spectra, computing similarity s",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/matchms"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/matchms"
   },
   {
     "name": "matlab",
     "description": "MATLAB and GNU Octave numerical computing for matrix operations, data analysis, visualization, and scientific computing.",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/matlab"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/matlab"
   },
   {
     "name": "matplotlib",
     "description": "Low-level plotting library for full customization. Use when you need fine-grained control over every plot element, creat",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/matplotlib"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/matplotlib"
   },
   {
     "name": "medchem",
     "description": "Medicinal chemistry filters. Apply drug-likeness rules (Lipinski, Veber), PAINS filters, structural alerts, complexity m",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/medchem"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/medchem"
   },
   {
     "name": "modal",
     "description": "Cloud computing platform for running Python on GPUs and serverless infrastructure. Use when deploying AI/ML models, runn",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/modal"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/modal"
   },
   {
     "name": "molecular-dynamics",
     "description": "Run and analyze molecular dynamics simulations with OpenMM and MDAnalysis. Set up protein/small molecule systems, define",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/molecular-dynamics"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/molecular-dynamics"
   },
   {
     "name": "molfeat",
     "description": "Molecular featurization for ML (100+ featurizers). ECFP, MACCS, descriptors, pretrained models (ChemBERTa), convert SMIL",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/molfeat"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/molfeat"
   },
   {
     "name": "networkx",
     "description": "Comprehensive toolkit for creating, analyzing, and visualizing complex networks and graphs in Python. Use when working w",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/networkx"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/networkx"
   },
   {
     "name": "neurokit2",
     "description": "Comprehensive biosignal processing toolkit for analyzing physiological data including ECG, EEG, EDA, RSP, PPG, EMG, and ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/neurokit2"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/neurokit2"
   },
   {
     "name": "neuropixels-analysis",
     "description": "Neuropixels neural recording analysis. Load SpikeGLX/OpenEphys data, preprocess, motion correction, Kilosort4 spike sort",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/neuropixels-analysis"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/neuropixels-analysis"
   },
   {
     "name": "omero-integration",
     "description": "Microscopy data management platform. Access images via Python, retrieve datasets, analyze pixels, manage ROIs/annotation",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/omero-integration"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/omero-integration"
   },
   {
     "name": "open-notebook",
     "description": "Self-hosted, open-source alternative to Google NotebookLM for AI-powered research and document analysis. Use when organi",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/open-notebook"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/open-notebook"
   },
   {
     "name": "opentrons-integration",
     "description": "Official Opentrons Protocol API for OT-2 and Flex robots. Use when writing protocols specifically for Opentrons hardware",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/opentrons-integration"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/opentrons-integration"
   },
   {
     "name": "optimize-for-gpu",
     "description": "GPU-accelerate Python code using CuPy, Numba CUDA, Warp, cuDF, cuML, cuGraph, KvikIO, cuCIM, cuxfilter, cuVS, cuSpatial,",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/optimize-for-gpu"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/optimize-for-gpu"
   },
   {
     "name": "paper-lookup",
     "description": "Search 10 academic paper databases via REST APIs for research papers, preprints, and scholarly articles. Covers PubMed, ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/paper-lookup"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/paper-lookup"
   },
   {
     "name": "paperzilla",
     "description": "Chat with your agent about projects, recommendations, and canonical papers in Paperzilla. Use when users ask for recent ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/paperzilla"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/paperzilla"
   },
   {
     "name": "parallel-web",
     "description": "All-in-one web toolkit powered by parallel-cli, with a strong emphasis on academic and scientific sources. Use this skil",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/parallel-web"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/parallel-web"
   },
   {
     "name": "pathml",
     "description": "Full-featured computational pathology toolkit. Use for advanced WSI analysis including multiplexed immunofluorescence (C",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pathml"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pathml"
   },
   {
     "name": "pdf",
     "description": "Use this skill whenever the user wants to do anything with PDF files. This includes reading or extracting text/tables fr",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pdf"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pdf"
   },
   {
     "name": "peer-review",
     "description": "Structured manuscript/grant review with checklist-based evaluation. Use when writing formal peer reviews with specific c",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/peer-review"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/peer-review"
   },
   {
     "name": "pennylane",
     "description": "Hardware-agnostic quantum ML framework with automatic differentiation. Use when training quantum circuits via gradients,",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pennylane"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pennylane"
   },
   {
     "name": "phylogenetics",
     "description": "Build and analyze phylogenetic trees using MAFFT (multiple alignment), IQ-TREE 2 (maximum likelihood), and FastTree (fas",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/phylogenetics"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/phylogenetics"
   },
   {
     "name": "polars",
     "description": "Fast in-memory DataFrame library for datasets that fit in RAM. Use when pandas is too slow but data still fits in memory",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/polars"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/polars"
   },
   {
     "name": "polars-bio",
     "description": "High-performance genomic interval operations and bioinformatics file I/O on Polars DataFrames. Overlap, nearest, merge, ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/polars-bio"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/polars-bio"
   },
   {
     "name": "pptx",
     "description": "Use this skill any time a .pptx file is involved in any way \u2014 as input, output, or both. This includes: creating slide d",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pptx"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pptx"
   },
   {
     "name": "pptx-posters",
     "description": "Create research posters using HTML/CSS that can be exported to PDF or PPTX. Use this skill ONLY when the user explicitly",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pptx-posters"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pptx-posters"
   },
   {
     "name": "primekg",
     "description": "Query the Precision Medicine Knowledge Graph (PrimeKG) for multiscale biological data including genes, drugs, diseases, ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/primekg"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/primekg"
   },
   {
     "name": "protocolsio-integration",
     "description": "Integration with protocols.io API for managing scientific protocols. This skill should be used when working with protoco",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/protocolsio-integration"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/protocolsio-integration"
   },
   {
     "name": "pufferlib",
     "description": "High-performance reinforcement learning framework optimized for speed and scale. Use when you need fast parallel trainin",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pufferlib"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pufferlib"
   },
   {
     "name": "pydeseq2",
     "description": "Differential gene expression analysis (Python DESeq2). Identify DE genes from bulk RNA-seq counts, Wald tests, FDR corre",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pydeseq2"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pydeseq2"
   },
   {
     "name": "pydicom",
     "description": "Python library for working with DICOM (Digital Imaging and Communications in Medicine) files. Use this skill when readin",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pydicom"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pydicom"
   },
   {
     "name": "pyhealth",
     "description": "Comprehensive healthcare AI toolkit for developing, testing, and deploying machine learning models with clinical data. T",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pyhealth"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pyhealth"
   },
   {
     "name": "pylabrobot",
     "description": "Vendor-agnostic lab automation framework. Use when controlling multiple equipment types (Hamilton, Tecan, Opentrons, pla",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pylabrobot"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pylabrobot"
   },
   {
     "name": "pymatgen",
     "description": "Materials science toolkit. Crystal structures (CIF, POSCAR), phase diagrams, band structure, DOS, Materials Project inte",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pymatgen"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pymatgen"
   },
   {
     "name": "pymc",
     "description": "Bayesian modeling with PyMC. Build hierarchical models, MCMC (NUTS), variational inference, LOO/WAIC comparison, posteri",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pymc"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pymc"
   },
   {
     "name": "pymoo",
     "description": "Multi-objective optimization framework. NSGA-II, NSGA-III, MOEA/D, Pareto fronts, constraint handling, benchmarks (ZDT, ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pymoo"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pymoo"
   },
   {
     "name": "pyopenms",
     "description": "Complete mass spectrometry analysis platform. Use for proteomics workflows feature detection, peptide identification, pr",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pyopenms"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pyopenms"
   },
   {
     "name": "pysam",
     "description": "Genomic file toolkit. Read/write SAM/BAM/CRAM alignments, VCF/BCF variants, FASTA/FASTQ sequences, extract regions, calc",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pysam"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pysam"
   },
   {
     "name": "pytdc",
     "description": "Therapeutics Data Commons. AI-ready drug discovery datasets (ADME, toxicity, DTI), benchmarks, scaffold splits, molecula",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pytdc"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pytdc"
   },
   {
     "name": "pytorch-lightning",
     "description": "Deep learning framework (PyTorch Lightning). Organize PyTorch code into LightningModules, configure Trainers for multi-G",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pytorch-lightning"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pytorch-lightning"
   },
   {
     "name": "pyzotero",
     "description": "Interact with Zotero reference management libraries using the pyzotero Python client. Retrieve, create, update, and dele",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/pyzotero"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/pyzotero"
   },
   {
     "name": "qiskit",
     "description": "IBM quantum computing framework. Use when targeting IBM Quantum hardware, working with Qiskit Runtime for production wor",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/qiskit"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/qiskit"
   },
   {
     "name": "qutip",
     "description": "Quantum physics simulation library for open quantum systems. Use when studying master equations, Lindblad dynamics, deco",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/qutip"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/qutip"
   },
   {
     "name": "rdkit",
     "description": "Cheminformatics toolkit for fine-grained molecular control. SMILES/SDF parsing, descriptors (MW, LogP, TPSA), fingerprin",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/rdkit"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/rdkit"
   },
   {
     "name": "research-grants",
     "description": "Write competitive research proposals for NSF, NIH, DOE, DARPA, and Taiwan NSTC. Agency-specific formatting, review crite",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/research-grants"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/research-grants"
   },
   {
     "name": "research-lookup",
     "description": "Look up current research information using the Parallel Chat API (primary) or Perplexity sonar-pro-search (academic pape",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/research-lookup"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/research-lookup"
   },
   {
     "name": "rowan",
     "description": "Rowan is a cloud-native molecular modeling and medicinal-chemistry workflow platform with a Python API. Use for pKa and ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/rowan"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/rowan"
   },
   {
     "name": "scanpy",
     "description": "Standard single-cell RNA-seq analysis pipeline. Use for QC, normalization, dimensionality reduction (PCA/UMAP/t-SNE), cl",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scanpy"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scanpy"
   },
   {
     "name": "scholar-evaluation",
     "description": "Systematically evaluate scholarly work using the ScholarEval framework, providing structured assessment across research ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scholar-evaluation"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scholar-evaluation"
   },
   {
     "name": "scientific-brainstorming",
     "description": "Creative research ideation and exploration. Use for open-ended brainstorming sessions, exploring interdisciplinary conne",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scientific-brainstorming"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scientific-brainstorming"
   },
   {
     "name": "scientific-critical-thinking",
     "description": "Evaluate scientific claims and evidence quality. Use for assessing experimental design validity, identifying biases and ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scientific-critical-thinking"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scientific-critical-thinking"
   },
   {
     "name": "scientific-schematics",
     "description": "Create publication-quality scientific diagrams using Nano Banana 2 AI with smart iterative refinement. Uses Gemini 3.1 P",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scientific-schematics"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scientific-schematics"
   },
   {
     "name": "scientific-slides",
     "description": "Build slide decks and presentations for research talks. Use this for making PowerPoint slides, conference presentations,",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scientific-slides"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scientific-slides"
   },
   {
     "name": "scientific-visualization",
     "description": "Meta-skill for publication-ready figures. Use when creating journal submission figures requiring multi-panel layouts, si",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scientific-visualization"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scientific-visualization"
   },
   {
     "name": "scientific-writing",
     "description": "Core skill for the deep research and writing tool. Write scientific manuscripts in full paragraphs (never bullet points)",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scientific-writing"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scientific-writing"
   },
   {
     "name": "scikit-bio",
     "description": "Biological data toolkit. Sequence analysis, alignments, phylogenetic trees, diversity metrics (alpha/beta, UniFrac), ord",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scikit-bio"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scikit-bio"
   },
   {
     "name": "scikit-learn",
     "description": "Machine learning in Python with scikit-learn. Use when working with supervised learning (classification, regression), un",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scikit-learn"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scikit-learn"
   },
   {
     "name": "scikit-survival",
     "description": "Comprehensive toolkit for survival analysis and time-to-event modeling in Python using scikit-survival. Use this skill w",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scikit-survival"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scikit-survival"
   },
   {
     "name": "scvelo",
     "description": "RNA velocity analysis with scVelo. Estimate cell state transitions from unspliced/spliced mRNA dynamics, infer trajector",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scvelo"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scvelo"
   },
   {
     "name": "scvi-tools",
     "description": "Deep generative models for single-cell omics. Use when you need probabilistic batch correction (scVI), transfer learning",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/scvi-tools"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/scvi-tools"
   },
   {
     "name": "seaborn",
     "description": "Statistical visualization with pandas integration. Use for quick exploration of distributions, relationships, and catego",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/seaborn"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/seaborn"
   },
   {
     "name": "shap",
     "description": "Model interpretability and explainability using SHAP (SHapley Additive exPlanations). Use this skill when explaining mac",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/shap"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/shap"
   },
   {
     "name": "simpy",
     "description": "Process-based discrete-event simulation framework in Python. Use this skill when building simulations of systems with pr",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/simpy"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/simpy"
   },
   {
     "name": "stable-baselines3",
     "description": "Production-ready reinforcement learning algorithms (PPO, SAC, DQN, TD3, DDPG, A2C) with scikit-learn-like API. Use for s",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/stable-baselines3"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/stable-baselines3"
   },
   {
     "name": "statistical-analysis",
     "description": "Guided statistical analysis with test selection and reporting. Use when you need help choosing appropriate tests for you",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/statistical-analysis"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/statistical-analysis"
   },
   {
     "name": "statsmodels",
     "description": "Statistical models library for Python. Use when you need specific model classes (OLS, GLM, mixed models, ARIMA) with det",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/statsmodels"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/statsmodels"
   },
   {
     "name": "sympy",
     "description": "Use this skill when working with symbolic mathematics in Python. This skill should be used for symbolic computation task",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/sympy"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/sympy"
   },
   {
     "name": "tiledbvcf",
     "description": "Efficient storage and retrieval of genomic variant data using TileDB. Scalable VCF/BCF ingestion, incremental sample add",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/tiledbvcf"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/tiledbvcf"
   },
   {
     "name": "timesfm-forecasting",
     "description": "Zero-shot time series forecasting with Google's TimesFM foundation model. Use for any univariate time series (sales, sen",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/timesfm-forecasting"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/timesfm-forecasting"
   },
   {
     "name": "torch-geometric",
     "description": "Guide for building Graph Neural Networks with PyTorch Geometric (PyG). Use this skill whenever the user asks about graph",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/torch-geometric"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/torch-geometric"
   },
   {
     "name": "torchdrug",
     "description": "PyTorch-native graph neural networks for molecules and proteins. Use when building custom GNN architectures for drug dis",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/torchdrug"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/torchdrug"
   },
   {
     "name": "transformers",
     "description": "This skill should be used when working with pre-trained transformer models for natural language processing, computer vis",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/transformers"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/transformers"
   },
   {
     "name": "treatment-plans",
     "description": "Generate concise (3-4 page), focused medical treatment plans in LaTeX/PDF format for all clinical specialties. Supports ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/treatment-plans"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/treatment-plans"
   },
   {
     "name": "umap-learn",
     "description": "UMAP dimensionality reduction. Fast nonlinear manifold learning for 2D/3D visualization, clustering preprocessing (HDBSC",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/umap-learn"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/umap-learn"
   },
   {
     "name": "usfiscaldata",
     "description": "Query the U.S. Treasury Fiscal Data API for federal financial data including national debt, government spending, revenue",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/usfiscaldata"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/usfiscaldata"
   },
   {
     "name": "vaex",
     "description": "Use this skill for processing and analyzing large tabular datasets (billions of rows) that exceed available RAM. Vaex ex",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/vaex"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/vaex"
   },
   {
     "name": "venue-templates",
     "description": "Access comprehensive LaTeX templates, formatting requirements, and submission guidelines for major scientific publicatio",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/venue-templates"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/venue-templates"
   },
   {
     "name": "what-if-oracle",
     "description": "Run structured What-If scenario analysis with multi-branch possibility exploration. Use this skill when the user asks sp",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/what-if-oracle"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/what-if-oracle"
   },
   {
     "name": "xlsx",
     "description": "Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: ",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/xlsx"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/xlsx"
   },
   {
     "name": "zarr-python",
     "description": "Chunked N-D arrays for cloud storage. Compressed arrays, parallel I/O, S3/GCS integration, NumPy/Dask/Xarray compatible,",
     "tags": [],
-    "path": "/home/xinj/ARK/skills/scientific-agent-skills/scientific-skills/zarr-python"
+    "path": "/home/xinj/ARK/skills/library/scientific-agent-skills/scientific-skills/zarr-python"
   }
 ]
