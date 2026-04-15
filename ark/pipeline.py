@@ -1861,6 +1861,13 @@ Determine if the experiments are sufficient to write a complete paper:
 2. Are baselines properly compared?
 3. Are the results statistically significant?
 4. Are there obvious gaps that need more experiments?
+5. Read `auto_research/state/project_context.md` and check: were ALL external systems
+   listed there actually installed, configured, and used in experiments? If any system
+   was listed but never used (e.g., never started, never called its API, never imported
+   its package), that is a critical gap.
+6. Check `results/environment_setup.json` and `results/credentials_needed.json` — are
+   there any systems marked as "blocked" or credentials still missing? Those represent
+   incomplete experiments.
 
 Output your evaluation in JSON format:
 ```json

@@ -89,6 +89,13 @@ You are reviewing the **paper** (main.tex and its compiled PDF), not the raw dat
 - Do NOT cross-reference claims against raw JSON result files. If a claim seems unsupported, flag it based on what the paper itself presents (missing error bars, no ablation, unclear methodology, etc.).
 - Do NOT flag `[INTEGRITY]` issues based on file inspection. If the paper's numbers look internally inconsistent (e.g., a table contradicts a figure, or the text claims N=100 but the table shows N=4), flag it as a **methodological concern**, not a fabrication accusation.
 
+## Proposal Alignment Check
+
+Read `auto_research/state/idea.md` to understand the original research proposal. Then check:
+- Does the paper's experimental methodology match what was proposed? (e.g., if the proposal says "evaluate on platform X", does the paper actually run experiments on platform X, or does it substitute with a text classification benchmark?)
+- Are the key systems/platforms mentioned in the proposal reflected in the experiments?
+- If there is a gap between proposed methodology and actual experiments, flag it as a Major Issue.
+
 ## Review Dimensions (score 1-10 per dimension)
 
 | Dimension | Criteria | Weight |

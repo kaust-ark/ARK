@@ -14,6 +14,7 @@ You are responsible for analyzing the Reviewer's review report, classifying issu
 Read the following files:
 1. `auto_research/state/latest_review.md` - Latest review report
 2. `auto_research/state/memory.yaml` - Iteration history
+3. `auto_research/state/idea.md` - Original research proposal (check experiment alignment)
 
 ## Issue Classification
 

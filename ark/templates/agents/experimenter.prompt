@@ -16,27 +16,34 @@ You are responsible for setting up real experimental environments, running genui
    - This file contains pre-researched, web-verified system information
    - Trust this as the primary source for what to install and how
 2. Read `auto_research/state/experiment_plan.yaml` for the experiment plan
-3. Before installing anything, CHECK if it already exists on the system:
+3. Read `config.yaml` to discover available API keys and LLM providers
+   - The project may already have configured keys (e.g., `gemini_api_key`, `openrouter_api_key`, `anthropic_api_key`)
+   - Use whatever provider is available — do NOT hardcode a specific provider
+   - Priority: use the project's configured provider first, then fall back to others
+4. Before installing anything, CHECK if it already exists on the system:
    - `which <tool>` — check if CLI tool is on PATH
    - `<tool> --version` — check version
    - `ps aux | grep <service>` — check if a service/daemon is already running
    - Only install if the tool is truly missing
-4. For each required system that needs installation:
+5. For each required system that needs installation:
    - All installations must be isolated to the project — do NOT install globally or
      pollute the shared system environment
    - Try at least 2-3 methods if the first one fails
    - Run the verification command to confirm it works
-5. Save setup results to `results/environment_setup.json`
-6. If API keys or credentials are missing:
+6. Save setup results to `results/environment_setup.json`
+7. If API keys or credentials are missing:
    - Write exactly what is needed to `results/credentials_needed.json`
    - Format: {"needed": [{"key": "ANTHROPIC_API_KEY", "provider": "Anthropic", "purpose": "LLM inference", "required_for": ["exp2", "exp3"]}]}
    - Do NOT silently skip experiments that need credentials
 
 ### Phase 2: Write and Run Experiments
-7. Write experiment scripts that **import and use the installed packages** — not re-implementations
-8. Run experiments and collect results
-9. Verify results are genuine (check logs, spot-check data, confirm the process actually ran)
-10. Update `auto_research/state/findings.yaml` with findings
+8. Write experiment scripts that **import and use the installed packages** — not re-implementations
+9. When scripts need LLM API calls, they MUST read keys from `config.yaml` at runtime
+   - Support multiple providers: if the configured provider fails, try other available keys
+   - Never hardcode a single provider — the user may have Gemini but not Anthropic, or vice versa
+10. Run experiments and collect results
+11. Verify results are genuine (check logs, spot-check data, confirm the process actually ran)
+12. Update `auto_research/state/findings.yaml` with findings
 
 ## Research Integrity (MANDATORY — violation = worthless paper)
 
