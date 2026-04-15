@@ -1,5 +1,42 @@
 # ARK TODO & Known Issues
 
+## Recently Completed (v0.2)
+
+### [x] Per-project conda environment isolation
+- Each project gets its own `.env/` conda env, cloned from a base env
+- Sandboxed HOME, `PYTHONNOUSERSITE=1`, isolated PYTHONPATH
+- Both CLI (`ark run`) and Web Portal auto-detect and use the project env
+- Pipeline bootstrap (Research Phase Step 2) auto-provisions if missing
+
+### [x] 4-step Research Phase pipeline
+- Deep Research → Initializer → Planner → Experimenter
+- Initializer agent bootstraps env, skills, and citations
+
+### [x] Skills system with 5 builtin skills
+- research-integrity, human-intervention, env-isolation, figure-integrity, page-adjustment
+- Auto-installed during pipeline bootstrap
+
+### [x] Anti-simulation / anti-shortcut enforcement
+- Prompts prevent agents from fabricating experiment results
+- Hardened across experimenter, planner, and writer agents
+
+### [x] Human intervention protocol
+- Agents escalate decisions to user via Telegram before irreversible actions
+
+### [x] DB as source of truth
+- SQLite stores project config, status, scores, costs
+- CLI and webapp unified on same DB
+- YAML reserved for per-agent runtime state only
+
+### [x] Telegram rich notifications + HPC SSL
+- Formatted messages with score changes, phase transitions, agent activity
+- Self-signed certificate support for enterprise/HPC networks
+
+### [x] Web portal phase badges + cost tracking
+- Live Research / Dev / Review badges
+- Per-project conda env status display
+- Real-time token and cost tracking dashboard
+
 ## Integration & Ecosystem
 
 ### [ ] Integrate claude-scientific-skills
@@ -84,7 +121,7 @@
 ## Developer Experience
 
 ### [ ] Test coverage gaps
-- 46 tests exist but mostly unit-level
+- 115 tests exist but mostly unit-level
 - No integration test that runs a mini pipeline end-to-end
 - Need: a small synthetic project that runs plan → experiment → write → review in < 5 min
 
