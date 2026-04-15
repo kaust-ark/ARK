@@ -50,6 +50,8 @@ When reading each page image, evaluate EVERY figure against these criteria:
 4. **Data integrity**: Do data plots accurately represent the described results?
 5. **Professional quality**: No pixelation, consistent styling across all figures?
 
+6. **Data consistency**: Do the numbers shown in the figure match the corresponding numbers in the text and tables? A bar chart claiming 84% when the text says 0% is a critical error.
+
 Report figure issues as Major or Minor issues using this format:
 
 For data plot issues (font size, overlap, layout):
@@ -79,20 +81,13 @@ Check that the paper complies with double-blind review:
 
 If anonymity is violated, flag as a Major Issue.
 
-## Experiment Authenticity Verification (Critical!)
+## Review Scope
 
-Before scoring Technical Quality, you MUST verify that experiments are real:
+You are reviewing the **paper** (main.tex and its compiled PDF), not the raw data or experiment scripts. Your job is to evaluate the paper as a conference reviewer would — based on what is written and shown in the manuscript.
 
-1. **Check experiment scripts** in `experiments/` — look for functions named `simulate_*`, `generate_synthetic_*`, `mock_*`, or heavy use of `np.random`/`random` to fabricate results. If found, this is a **critical Major Issue**.
-2. **Check result files** in `results/` — do they contain metadata (timestamps, environment info, commands used)? Or are they just hardcoded numbers? Simulated results often have suspiciously clean data with no noise.
-3. **Cross-reference claims** — does the paper claim to have run experiments on a specific system/dataset? Check whether the experiment scripts actually interact with that system or just simulate it.
-
-If experiments are simulated rather than real, flag this as a **top-priority Major Issue**:
-```
-### M1. [INTEGRITY] Experiments are simulated, not real
-The experiment scripts use synthetic data generation instead of running on the actual system described in the paper.
-This must be fixed before any other issues — simulated experiments make the entire paper unreliable.
-```
+- Do NOT read files in `results/`, `data/`, or `experiments/` directories. Those are implementation artifacts, not part of the submission.
+- Do NOT cross-reference claims against raw JSON result files. If a claim seems unsupported, flag it based on what the paper itself presents (missing error bars, no ablation, unclear methodology, etc.).
+- Do NOT flag `[INTEGRITY]` issues based on file inspection. If the paper's numbers look internally inconsistent (e.g., a table contradicts a figure, or the text claims N=100 but the table shows N=4), flag it as a **methodological concern**, not a fabrication accusation.
 
 ## Review Dimensions (score 1-10 per dimension)
 
