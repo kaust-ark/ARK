@@ -18,7 +18,7 @@
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-8-orange.svg" alt="8 Agents">
   <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
-  <img src="https://img.shields.io/badge/tests-106-brightgreen.svg" alt="106 Tests">
+  <img src="https://img.shields.io/badge/tests-115-brightgreen.svg" alt="115 Tests">
 </p>
 
 <p align="center">
@@ -59,7 +59,7 @@ ARK runs three phases in sequence. The Review phase loops until the paper reache
 
 | Phase | What Happens |
 |:------|:-------------|
-| **Research** | Gemini Deep Research runs a literature survey and gathers background knowledge |
+| **Research** | 4-step pipeline: Deep Research &rarr; Initializer (bootstrap env &amp; citations) &rarr; Planner &rarr; Experimenter |
 | **Dev** | Iterative experiment cycle: plan &rarr; run on Slurm &rarr; analyze &rarr; write initial draft |
 | **Review** | Compile &rarr; Review &rarr; Plan &rarr; Execute &rarr; Validate, repeating until score &ge; threshold |
 
@@ -110,6 +110,40 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 | **Formatting** | Broken layouts, LaTeX errors, manual cleanup | Hard-coded LaTeX + venue templates (NeurIPS, ACL, IEEE&hellip;) |
 | **Citations** | LLMs fabricate plausible-looking references | Every citation verified against DBLP &mdash; no fake references |
 | **Figures** | Default styles, wrong sizes, no page awareness | Nano Banana + venue-aware canvas, column widths, and fonts |
+| **Isolation** | Shared env &mdash; projects interfere with each other | Per-project conda env, sandboxed HOME, full multi-tenant isolation |
+| **Integrity** | LLMs simulate results instead of running real experiments | Anti-simulation prompts + builtin skills enforce real execution |
+
+---
+
+## Environment Isolation
+
+Each project runs in its own **per-project conda environment**, cloned from a base env at project creation. This ensures full multi-tenant isolation:
+
+- **Sandboxed Python** &mdash; per-project `.env/` directory with its own packages
+- **Isolated HOME** &mdash; each orchestrator runs with `HOME` set to the project directory
+- **No cross-contamination** &mdash; `PYTHONNOUSERSITE=1` prevents leaking user-site packages
+- **Automatic provisioning** &mdash; `ark run` and the Web Portal detect and use the project conda env; the pipeline bootstraps it if missing
+
+```bash
+# The conda env is created automatically on first run.
+# ark run will detect and use it:
+ark run myproject
+#   Conda env: /path/to/projects/myproject/.env
+```
+
+## Skills System
+
+ARK ships with **builtin skills** &mdash; modular instruction sets that agents load at runtime to enforce best practices:
+
+| Skill | Purpose |
+|:------|:--------|
+| **research-integrity** | Anti-simulation prompts: agents must run real experiments, not fabricate outputs |
+| **human-intervention** | Escalation protocol: agents pause and ask via Telegram before irreversible actions |
+| **env-isolation** | Enforces per-project environment boundaries |
+| **figure-integrity** | Validates figure content matches data; prevents placeholder or hallucinated plots |
+| **page-adjustment** | Maintains page limits by adjusting content density, not deleting sections |
+
+Skills live in `skills/builtin/` and are auto-installed during pipeline bootstrap.
 
 ---
 
@@ -149,7 +183,7 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 | Command | Description |
 |:--------|:------------|
 | `ark new <name>` | Create project via interactive wizard |
-| `ark run <name>` | Launch the autonomous pipeline |
+| `ark run <name>` | Launch the pipeline (auto-detects per-project conda env) |
 | `ark status [name]` | Score, iteration, phase, cost |
 | `ark monitor <name>` | Live dashboard: agent activity, score trend |
 | `ark update <name>` | Inject a mid-run instruction |
@@ -167,7 +201,7 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 
 ## Web Portal
 
-ARK includes a web-based portal for managing projects, viewing scores, and steering agents.
+ARK includes a web-based portal for managing projects, viewing scores, and steering agents. The portal shows **live phase badges** (Research / Dev / Review), per-project conda env status, and real-time cost tracking.
 
 ### Configuration
 
@@ -220,10 +254,11 @@ ark setup-bot    # one-time: paste BotFather token, auto-detect chat ID
 ```
 
 What you get:
-- **Live notifications** &mdash; score changes, phase transitions, errors
-- **Send instructions** &mdash; steer the current iteration
+- **Rich notifications** &mdash; formatted score changes, phase transitions, agent activity, and errors
+- **Send instructions** &mdash; steer the current iteration in real time
 - **Request PDFs** &mdash; latest compiled paper sent to chat
-- **Proactive confirmations** &mdash; ARK asks before key decisions
+- **Human intervention** &mdash; agents escalate decisions to you before irreversible actions
+- **HPC-friendly** &mdash; handles self-signed SSL certificates on enterprise/HPC networks
 
 ---
 

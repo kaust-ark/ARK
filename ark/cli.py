@@ -1890,9 +1890,28 @@ def cmd_run(args):
         except Exception:
             pass
 
-    # Launch orchestrator in background
-    cmd = [
-        sys.executable, "-m", "ark.orchestrator",
+    # Launch orchestrator in background, preferring per-project conda env
+    try:
+        from ark.webapp.jobs import (
+            find_conda_binary, project_env_ready, project_env_prefix,
+        )
+        conda_bin = find_conda_binary()
+        if conda_bin and project_env_ready(project_dir):
+            python_prefix = [conda_bin, "run", "--no-capture-output",
+                             "--prefix", str(project_env_prefix(project_dir)),
+                             "python"]
+            print(f"  Conda env:      {project_env_prefix(project_dir)}")
+        elif conda_bin and config.get("conda_env"):
+            python_prefix = [conda_bin, "run", "--no-capture-output",
+                             "-n", config["conda_env"], "python"]
+            print(f"  Conda env:      {config['conda_env']}")
+        else:
+            python_prefix = [sys.executable]
+    except ImportError:
+        python_prefix = [sys.executable]
+
+    cmd = python_prefix + [
+        "-m", "ark.orchestrator",
         "--project", name,
         "--mode", mode,
         "--model", model,
@@ -1906,6 +1925,9 @@ def cmd_run(args):
 
     # Strip CLAUDECODE so orchestrator can call claude CLI freely
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    # Ensure orchestrator can find the ark package in a project-local conda env
+    ark_root = str(Path(__file__).resolve().parents[1].parent)
+    env["PYTHONPATH"] = ark_root + ((":" + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
 
     with open(log_file, "w") as lf:
         process = subprocess.Popen(

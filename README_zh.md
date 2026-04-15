@@ -18,7 +18,7 @@
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-8-orange.svg" alt="8 Agents">
   <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
-  <img src="https://img.shields.io/badge/tests-106-brightgreen.svg" alt="106 Tests">
+  <img src="https://img.shields.io/badge/tests-115-brightgreen.svg" alt="115 Tests">
 </p>
 
 <p align="center">
@@ -59,7 +59,7 @@ ARK 按三个阶段依次执行。Review 阶段循环迭代直到论文达到目
 
 | 阶段 | 执行内容 |
 |:------|:---------|
-| **Research** | Gemini Deep Research 文献调研与背景知识收集 |
+| **Research** | 4 步流水线：Deep Research &rarr; 初始化器（环境引导 &amp; 引用准备）&rarr; 规划器 &rarr; 实验者 |
 | **Dev** | 迭代实验循环：规划 &rarr; Slurm 运行 &rarr; 分析 &rarr; 撰写初稿 |
 | **Review** | 编译 &rarr; 审稿 &rarr; 规划 &rarr; 执行 &rarr; 验证，循环直到分数 &ge; 阈值 |
 
@@ -110,6 +110,40 @@ ARK 按三个阶段依次执行。Review 阶段循环迭代直到论文达到目
 | **排版** | 布局混乱、LaTeX 报错、大量人工修复 | 硬编码 LaTeX + 会议模板（NeurIPS、ACL、IEEE……） |
 | **引用** | LLM 编造看似合理但不存在的引用 | 每条引用经 DBLP API 验证，杜绝虚假文献 |
 | **图表** | 默认样式、尺寸失控、无视页面约束 | Nano Banana + 会议画布尺寸、栏宽、字号精确匹配 |
+| **隔离** | 共享环境，项目之间互相干扰 | 每项目独立 conda 环境、沙盒 HOME、完全多租户隔离 |
+| **完整性** | LLM 模拟结果而非运行真实实验 | 反模拟提示 + 内置 Skills 强制真实执行 |
+
+---
+
+## 环境隔离
+
+每个项目运行在独立的 **项目级 conda 环境** 中，在创建时从基础环境克隆。这确保了完全的多租户隔离：
+
+- **沙盒 Python** &mdash; 每项目 `.env/` 目录，拥有独立的包
+- **隔离 HOME** &mdash; 每个 orchestrator 以项目目录作为 HOME 运行
+- **无交叉污染** &mdash; `PYTHONNOUSERSITE=1` 防止用户级包泄露
+- **自动配置** &mdash; `ark run` 和 Web 门户自动检测并使用项目 conda 环境；流水线在缺失时自动引导创建
+
+```bash
+# conda 环境在首次运行时自动创建
+# ark run 会检测并使用它：
+ark run myproject
+#   Conda env: /path/to/projects/myproject/.env
+```
+
+## Skills 系统
+
+ARK 内置 **builtin skills** &mdash; 模块化指令集，智能体在运行时加载以强制执行最佳实践：
+
+| Skill | 用途 |
+|:------|:-----|
+| **research-integrity** | 反模拟提示：智能体必须运行真实实验，不得伪造输出 |
+| **human-intervention** | 升级协议：智能体在执行不可逆操作前通过 Telegram 暂停并请求确认 |
+| **env-isolation** | 强制项目级环境边界 |
+| **figure-integrity** | 验证图表内容与数据一致；防止占位或虚构的图表 |
+| **page-adjustment** | 通过调整内容密度维持页数限制，而非删除章节 |
+
+Skills 位于 `skills/builtin/`，在流水线引导阶段自动安装。
 
 ---
 
@@ -149,7 +183,7 @@ ARK 使用 PyMuPDF + Claude Haiku 解析 PDF，预填向导，从提取的规格
 | 命令 | 功能 |
 |:-----|:-----|
 | `ark new <name>` | 通过交互式向导创建项目 |
-| `ark run <name>` | 启动自主 pipeline |
+| `ark run <name>` | 启动 pipeline（自动检测项目级 conda 环境） |
 | `ark status [name]` | 分数、迭代、阶段、成本 |
 | `ark monitor <name>` | 实时仪表板：智能体活动、分数趋势 |
 | `ark update <name>` | 注入运行中指令 |
@@ -167,7 +201,7 @@ ARK 使用 PyMuPDF + Claude Haiku 解析 PDF，预填向导，从提取的规格
 
 ## Web 门户
 
-ARK 提供基于 Web 的门户，用于管理项目、查看评分和控制智能体。
+ARK 提供基于 Web 的门户，用于管理项目、查看评分和控制智能体。门户展示 **实时阶段徽章**（Research / Dev / Review）、项目级 conda 环境状态和实时成本追踪。
 
 ### 配置
 
@@ -220,10 +254,11 @@ ark setup-bot    # 一次性配置：粘贴 BotFather token，自动检测 chat 
 ```
 
 功能：
-- **实时通知** &mdash; 分数变化、阶段转换、错误报告
-- **发送指令** &mdash; 引导当前迭代方向
+- **富��本通知** &mdash; 格式化的分数变化、阶段转换、智能体活动和��误报告
+- **发送指令** &mdash; 实时引导当前迭代方向
 - **请求 PDF** &mdash; 获取最新编译论文
-- **主动确认** &mdash; 关键决策前主动询问
+- **人工干预** &mdash; 智能体在执行不可逆操作前向你请求确认
+- **HPC 友好** &mdash; 支持企业/HPC 网络的自签名 SSL ��书
 
 ---
 
