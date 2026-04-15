@@ -60,51 +60,18 @@ Every quantitative claim in the paper must be traceable to a real result file:
 3. **If a result doesn't exist**, do not write the claim. Instead, leave a LaTeX comment: `% TODO: result not available — needs experiment`
 4. **Do NOT describe experiments that weren't run**. If `results/` is empty or contains only simulated data, do not write an Experiments section that claims real results were obtained.
 
-## Hard Page Limit — {VENUE_PAGES} pages (MANDATORY)
+## Page Limit — {VENUE_PAGES} pages
 
-The paper body (excluding references and appendix) has a strict page target:
-- **Maximum**: {VENUE_PAGES} pages. Exceeding this means automatic desk rejection. This is the hard constraint — never violate it.
-- **Minimum**: The last page of body text should be at least 70% filled. Up to 30% whitespace at the bottom is acceptable.
+The paper body (excluding references and appendix) must not exceed **{VENUE_PAGES} pages** (desk rejection). The last page should be at least 70% filled.
 
-**Before making ANY change**, check current page count. Then:
+Before making changes, check the current page count. Refer to the **page-adjustment** skill for compression/expansion strategies and the **figure-integrity** skill for rules on modifying figures and tables.
 
-- **Over {VENUE_PAGES} pages**: COMPRESS first. Do NOT add content until under the limit.
-- **At or near the limit**: For every paragraph added, remove equal or more text.
-- **Well under the limit (last page < 70% filled)**: ADD substantive content — deeper analysis, more related work comparisons, expanded methodology details. Do NOT pad with filler.
+Always ensure `\clearpage` appears before `\bibliography` so references start on a new page.
 
-**Always ensure `\clearpage` appears before `\bibliography`** so references start on a new page.
-
-## Figure Placement Rules (MUST check after every edit)
+## Figure Placement
 
 After every modification, compile and check that:
-1. **No blank pages with only figures** — if a figure can't fit on the current page, it may float to a later page. If this creates a page with only figure(s) and no text, fix it by:
-   - Moving the `\begin{figure}` declaration earlier in the text
-   - Reducing figure height with `\includegraphics[width=...,height=...]`
-   - Using `[!htbp]` placement specifier instead of `[t]`
-2. **`\FloatBarrier` before the last section** — add `\FloatBarrier` (from `\usepackage{placeins}`) immediately before the last body section (usually Conclusion). This guarantees all figures appear before the final section, not after it. Example:
-   ```
-   \FloatBarrier
-   \section{Conclusion}
-   ```
-3. **Figures match their context** — a figure referenced in Section 3 should appear on or near Section 3's pages, not 2 pages later
-4. **Multi-panel figures use correct environment** — figures with 2+ panels (side-by-side) should use `\begin{figure*}` (full width) in multi-column templates, so fonts are readable
-5. **No large whitespace gaps on body pages** — floats that don't fit on the current page can leave a big vertical gap (e.g., a paragraph ends, several inches of whitespace, then the next section starts on the next page). After compiling, visually scan every body page:
-   - If you see a gap larger than ~1/4 of page height between paragraphs, it's a float placement problem
-   - Fix it by: shrinking the offending figure, moving its `\begin{figure}` closer to where it's first referenced, switching `[t]` to `[!htbp]`, or combining adjacent small figures into one
-   - As a last resort, allow the float to appear slightly earlier or later than its reference rather than creating mid-page whitespace
-
-If you see layout issues after compiling, fix them before finishing.
-
-**Compression strategies** (in order of priority):
-1. Move detailed ablations, sensitivity analyses, and per-category breakdowns to `\appendix`
-2. Merge Discussion and Conclusion into one section
-3. Replace verbose multi-paragraph explanations with concise text
-4. Compress tables — remove redundant rows/columns, use `\small` or `\footnotesize`
-5. Remove any content that repeats information from another section
-
-**Expansion strategies** (when too short):
-1. Deepen analysis/discussion — explain WHY, not just WHAT
-2. Add more related work with specific comparisons to your approach
-3. Expand experimental setup (hyperparameters, hardware, dataset splits)
-4. Add a Limitations paragraph
-5. Expand figure captions with interpretive context
+1. No blank pages with only figures — adjust float placement (`[t]`, `[!htbp]`) or move the `\begin{figure}` earlier
+2. Add `\FloatBarrier` before the last body section (usually Conclusion)
+3. Figures appear near where they are referenced, not pages later
+4. No large whitespace gaps — shrink figures or adjust placement if floats leave gaps

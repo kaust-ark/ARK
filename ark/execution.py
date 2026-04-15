@@ -765,37 +765,25 @@ After making all changes, you MUST verify the page count:
             if page_count > cur_max:
                 action = "compress"
                 self.log(f"[{context}] Over limit ({page_count:.1f} > {cur_max:.1f}), compressing (attempt {attempt})...", "WARN")
-                self.run_agent("writer", f"""{hist_block}## PAGE COMPRESSION (attempt {attempt})
+                self.run_agent("writer", f"""{hist_block}## PAGE ADJUSTMENT — compress (attempt {attempt})
 
-The paper body is currently {page_count:.2f} pages, {gap:+.2f} pages over the limit ({columns}-column).
-Target: between {cur_min:.2f} and {venue_pages:.0f} body pages. Do NOT over-compress.
+Current: {page_count:.2f} body pages ({gap:+.2f} over limit, {columns}-column).
+Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
 
-Reduce carefully — aim for exactly {venue_pages} pages, NOT much less. Strategies:
-- Merge overlapping sentences in related work
-- Move only truly non-essential subsections to \\appendix
-- Do NOT remove key technical content, results, or entire sections
-
-After changes, compile and verify body pages are between {cur_min:.2f} and {venue_pages:.0f}.
-Ensure `\\clearpage` before `\\bibliography`.
+Refer to the page-adjustment and figure-integrity skills for strategies and constraints.
+After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 """, timeout=1800)
 
             elif page_count < cur_min:
                 action = "expand"
                 self.log(f"[{context}] Under target ({page_count:.1f} < {cur_min:.2f}), expanding (attempt {attempt})...", "WARN")
-                self.run_agent("writer", f"""{hist_block}## PAGE EXPANSION (attempt {attempt})
+                self.run_agent("writer", f"""{hist_block}## PAGE ADJUSTMENT — expand (attempt {attempt})
 
-The paper body is currently {page_count:.2f} pages, {-gap:+.2f} pages short of the target ({columns}-column).
+Current: {page_count:.2f} body pages ({-gap:+.2f} short of target, {columns}-column).
 Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
 
-Expand by adding substantive content (NOT filler):
-- Deepen the analysis/discussion section with more insights
-- Add more related work comparisons and positioning
-- Expand experimental methodology details (hyperparameters, setup)
-- Add a limitations paragraph or future work discussion
-- Do NOT add padding text or redundant restatements
-
-After changes, compile and verify body pages are between {cur_min:.2f} and {venue_pages:.0f}.
-Ensure `\\clearpage` before `\\bibliography`.
+Refer to the page-adjustment and figure-integrity skills for strategies and constraints.
+After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 """, timeout=1800)
 
             self._ensure_clearpage_before_bibliography()
