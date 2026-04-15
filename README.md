@@ -270,6 +270,9 @@ What you get:
 - Optional: LaTeX (`pdflatex` + `bibtex`), Slurm, `google-genai` for AI figures
 
 ```bash
+# Set up the conda base environment
+conda env create -f environment.yml   # creates "ark-base"
+
 pip install -e .                    # Core
 pip install -e ".[research]"       # + Gemini Deep Research & Nano Banana
 ```

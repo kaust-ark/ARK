@@ -270,6 +270,9 @@ ark setup-bot    # 一次性配置：粘贴 BotFather token，自动检测 chat 
 - 可选：LaTeX（`pdflatex` + `bibtex`）、Slurm、`google-genai`（AI 图表）
 
 ```bash
+# 创建 conda 基础环境
+conda env create -f environment.yml   # 创建 "ark-base"
+
 pip install -e .                    # 核心
 pip install -e ".[research]"       # + Gemini Deep Research 和 Nano Banana
 ```
