@@ -63,6 +63,16 @@ These elements require extra care during page adjustment:
 - **`references.bib`** — managed by the citation system. Prefer not to touch it.
 - **Venue template** — `\documentclass`, `\usepackage`, `.sty`, `.bst` are off-limits.
 
+## Document Structure
+
+The correct ordering of sections at the end of the paper is:
+
+1. Body text (up to page limit)
+2. `\clearpage` + `\bibliography{references}` — references start on a new page
+3. `\clearpage` + `\appendix` — appendix starts on a new page after references
+
+Never place `\appendix` before `\bibliography`. When adding appendix content, verify this ordering is maintained.
+
 ## Verification After Adjustment
 
 After every page adjustment pass:
@@ -70,3 +80,4 @@ After every page adjustment pass:
 2. Spot-check 2-3 quantitative values against `results/` files — especially any figure or table you touched
 3. Check for LaTeX warnings on unresolved `\ref{}` or `\cite{}`
 4. Read through any section you modified — no dangling references to moved content
+5. Verify document structure: body → references → appendix (in that order)
