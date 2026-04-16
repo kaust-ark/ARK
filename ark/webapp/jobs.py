@@ -154,9 +154,29 @@ def provision_project_env(project_dir: Path, base_env: str = "ark-base",
             lf.flush()
             proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT)
         elapsed = time.time() - started
-        if proc.returncode == 0 and project_env_ready(project_dir):
-            return True, f"cloned {base_env} in {elapsed:.1f}s"
-        return False, f"conda create failed (rc={proc.returncode}); see {log_path}"
+        if proc.returncode != 0 or not project_env_ready(project_dir):
+            return False, f"conda create failed (rc={proc.returncode}); see {log_path}"
+
+        # Re-pin the ark editable install to the CURRENT webapp's source directory.
+        # Without this, a prod webapp would launch projects whose ark code points
+        # at the dev worktree (inherited from ark-base's editable mapping).
+        try:
+            import ark as _ark_mod
+            ark_source = Path(_ark_mod.__file__).resolve().parent.parent
+            env_python = target / "bin" / "python"
+            pin_cmd = [str(env_python), "-m", "pip", "install", "--quiet",
+                       "-e", str(ark_source)]
+            with open(log_path, "a") as lf:
+                lf.write(f"\n$ {' '.join(pin_cmd)}\n")
+                lf.flush()
+                pin_proc = subprocess.run(pin_cmd, stdout=lf, stderr=subprocess.STDOUT)
+            if pin_proc.returncode != 0:
+                return False, (f"ark source re-pin failed (rc={pin_proc.returncode}); "
+                               f"see {log_path}")
+        except Exception as e:
+            return False, f"ark source re-pin raised {type(e).__name__}: {e}"
+
+        return True, f"cloned {base_env} and pinned ark → {ark_source} in {elapsed:.1f}s"
     except Exception as e:
         return False, f"conda create raised {type(e).__name__}: {e}"
 
