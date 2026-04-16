@@ -18,7 +18,7 @@ from typing import Optional
 import os
 import subprocess
 
-logger = logging.getLogger("ark.webapp.routes")
+logger = logging.getLogger("ark.dashboard.routes")
 
 MAX_PROJECTS_PER_USER = 10
 MAX_ITER_PER_START = 3
@@ -97,6 +97,32 @@ from .templates import copy_venue_template, has_venue_template
 router = APIRouter()
 
 _STATIC_DIR = Path(__file__).parent / "static"
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
+
+# Jinja2 templates for server-rendered pages (so we can inject app_base).
+from starlette.templating import Jinja2Templates
+_templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+
+
+def _app_base() -> str:
+    """URL path prefix, e.g. '/dashboard' or ''. Set via ARK_ROOT_PATH env."""
+    return os.environ.get("ARK_ROOT_PATH", "")
+
+
+def _home_path() -> str:
+    """Same-origin path to the app index (honors /dashboard prefix)."""
+    return _app_base() + "/"
+
+
+def _absolute_url(path: str) -> str:
+    """Build an external URL by combining BASE_URL + ARK_ROOT_PATH + path.
+
+    Used for URLs that must be delivered outside the request context:
+    magic link emails, OAuth redirect URIs, Telegram notifications.
+    BASE_URL is the origin (e.g. https://idea2paper.org); _app_base is the
+    path prefix (e.g. /dashboard). `path` should start with '/'.
+    """
+    return f"{get_settings().base_url}{_app_base()}{path}"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -738,7 +764,8 @@ async def _start_project_async(
             return
         token = project.telegram_token
         chat_id = project.telegram_chat_id
-        url = f"{settings.base_url}/#project/{project_id}"
+        # Build public URL honoring root_path (e.g. /dashboard)
+        url = f"{settings.base_url}{os.environ.get('ARK_ROOT_PATH', '')}/#project/{project_id}"
 
     send_telegram_notify(
         f"🛠️ <b>{_pname(project)}</b> initializing…",
@@ -814,10 +841,16 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
 
 # ── pages ─────────────────────────────────────────────────────────────────────
 
-@router.get("/", response_class=HTMLResponse)
-async def index():
-    return HTMLResponse(
-        (_STATIC_DIR / "app.html").read_text(),
+@router.get("/", response_class=HTMLResponse, name="index")
+async def index(request: Request):
+    # app_base is the URL path prefix (e.g., "/dashboard"); empty when served
+    # without a prefix. Read from the custom scope key set by
+    # StripPathPrefixMiddleware — we avoid scope["root_path"] because that
+    # breaks Starlette's StaticFiles mount.
+    return _templates.TemplateResponse(
+        request,
+        "app.html",
+        {"app_base": request.scope.get("ark_root_path", "")},
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
@@ -842,7 +875,11 @@ async def auth_send_link(request: Request):
             raise HTTPException(403, f"Email domain not allowed. Allowed: {', '.join(settings.email_domains)}")
 
     token = make_token(email, settings.secret_key)
-    link = f"{settings.base_url}/auth/verify?token={token}"
+    # Build absolute magic-link URL from settings.base_url + ARK_ROOT_PATH.
+    # Using request.url_for would produce http://localhost:9527/... because
+    # Starlette doesn't update scope['server'] from X-Forwarded-Host, so we
+    # construct explicitly from the known-good BASE_URL origin.
+    link = _absolute_url(f"/auth/verify?token={token}")
 
     print(f"\n  *** MAGIC LINK for {email} ***\n  {link}\n", flush=True)
 
@@ -852,7 +889,7 @@ async def auth_send_link(request: Request):
     return JSONResponse({"ok": True})
 
 
-@router.get("/auth/verify")
+@router.get("/auth/verify", name="auth_verify")
 async def auth_verify(request: Request, token: str = ""):
     settings = get_settings()
     email = verify_token(token, settings.secret_key)
@@ -869,26 +906,13 @@ async def auth_verify(request: Request, token: str = ""):
             asyncio.get_event_loop().run_in_executor(
                 None, send_welcome_email, settings, email, user.name, settings.base_url,
             )
-    return RedirectResponse("/")
+    return RedirectResponse(_home_path())
 
 
 @router.get("/auth/logout")
 async def auth_logout(request: Request):
     request.session.clear()
-    return RedirectResponse("/")
-
-
-_GOOGLE_REDIRECT_URI_PROD = "https://kaust-ark.github.io/oauth-callback"
-_GOOGLE_REDIRECT_URI_DEV = "https://kaust-ark.github.io/oauth-callback-dev"
-
-
-def _get_google_redirect_uri() -> str:
-    """Return the appropriate OAuth redirect URI based on the current environment."""
-    settings = get_settings()
-    # Dev environment uses a separate callback page
-    if f":{1027}" in settings.base_url:
-        return _GOOGLE_REDIRECT_URI_DEV
-    return _GOOGLE_REDIRECT_URI_PROD
+    return RedirectResponse(_home_path())
 
 
 @router.get("/auth/google")
@@ -896,12 +920,16 @@ async def auth_google(request: Request):
     oauth = _get_google_oauth()
     if not oauth:
         raise HTTPException(400, "Google login is not configured on this server.")
+    # Build OAuth redirect URI from BASE_URL + root_path. Must match what's
+    # registered in Google Cloud Console. In prod this yields
+    # https://idea2paper.org/dashboard/auth/google/callback.
+    redirect_uri = _absolute_url("/auth/google/callback")
     return await oauth.google.authorize_redirect(
-        request, _get_google_redirect_uri(), prompt="select_account"
+        request, redirect_uri, prompt="select_account"
     )
 
 
-@router.get("/auth/google/callback")
+@router.get("/auth/google/callback", name="auth_google_callback")
 async def auth_google_callback(request: Request):
     oauth = _get_google_oauth()
     if not oauth:
@@ -911,12 +939,12 @@ async def auth_google_callback(request: Request):
         token = await oauth.google.authorize_access_token(request)
     except Exception as exc:
         logger.warning(f"Google OAuth error: {exc}")
-        return RedirectResponse("/?google_error=1")
+        return RedirectResponse(_home_path() + "?google_error=1")
 
     userinfo = token.get("userinfo") or {}
     email = (userinfo.get("email") or "").strip().lower()
     if not email:
-        return RedirectResponse("/?google_error=1")
+        return RedirectResponse(_home_path() + "?google_error=1")
 
     # Apply same allow-list checks as magic link
     denied = False
@@ -928,6 +956,7 @@ async def auth_google_callback(request: Request):
             denied = True
 
     if denied:
+        _home = _home_path()
         return HTMLResponse(
             f"""<!DOCTYPE html>
 <html>
@@ -951,7 +980,7 @@ async def auth_google_callback(request: Request):
     <p>Your Google account (<strong>{email}</strong>) is not authorized to access ARK.</p>
     <p>To request access, contact<br/>
        <a href="mailto:jihao.xin@kaust.edu.sa">jihao.xin@kaust.edu.sa</a></p>
-    <a class="back" href="/">← Back to login</a>
+    <a class="back" href="{_home}">← Back to login</a>
   </div>
 </body>
 </html>""",
@@ -965,7 +994,7 @@ async def auth_google_callback(request: Request):
             asyncio.get_event_loop().run_in_executor(
                 None, send_welcome_email, settings, email, user.name, settings.base_url,
             )
-    return RedirectResponse("/")
+    return RedirectResponse(_home_path())
 
 
 @router.get("/auth/google/enabled")
@@ -1062,7 +1091,7 @@ async def api_save_user_settings(request: Request):
 
 
     # Run verification suite
-    from ark.webapp.utils.verify import run_verification_suite
+    from ark.dashboard.utils.verify import run_verification_suite
     settings = get_settings()
 
     # Mutual exclusion check: Anthropic API Key OR Claude CLI Session

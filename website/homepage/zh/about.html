@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>关于我们 — ARK</title>
+  <meta name="description" content="ARK 由 KAUST SANDS Lab 开发。">
+  <link rel="icon" href="../assets/logo_ark_transparent.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .about-hero {
+      padding: 8rem 1.5rem 3rem;
+      text-align: center;
+    }
+    .about-hero h1 {
+      font-size: clamp(2rem, 4vw, 3rem);
+      margin-bottom: 1rem;
+    }
+    .about-hero p {
+      max-width: 640px;
+      margin: 0 auto;
+      font-size: 1.1rem;
+      line-height: 1.7;
+      color: var(--text-muted);
+    }
+
+    .about-section {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+    }
+    .about-section h2 {
+      font-size: 1.5rem;
+      margin-bottom: 1rem;
+      padding-bottom: .5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .about-section p {
+      line-height: 1.7;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    /* Lab card */
+    .lab-card {
+      display: flex;
+      align-items: center;
+      gap: 2rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+      margin-bottom: 3rem;
+    }
+    .lab-card img {
+      width: 80px;
+      height: 80px;
+      border-radius: var(--radius);
+    }
+    .lab-card-info h3 {
+      font-size: 1.2rem;
+      margin-bottom: .25rem;
+    }
+    .lab-card-info p {
+      margin-bottom: .5rem;
+      font-size: .95rem;
+    }
+    .lab-card-info a {
+      font-size: .9rem;
+    }
+
+    /* Team */
+    .team-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2rem;
+      margin-top: 1.5rem;
+      margin-bottom: 3rem;
+    }
+    .team-member {
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      flex: 1;
+      min-width: 280px;
+    }
+    .team-avatar {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 2px solid var(--border);
+    }
+    .team-info h3 {
+      font-size: 1.05rem;
+      margin-bottom: .15rem;
+    }
+    .team-info .team-role {
+      font-size: .85rem;
+      color: var(--teal);
+      font-weight: 500;
+      margin-bottom: .25rem;
+    }
+    .team-info a {
+      font-size: .85rem;
+    }
+
+    /* Contact */
+    .contact-box {
+      background: rgba(13, 148, 136, .06);
+      border-left: 3px solid var(--teal);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      padding: 1.25rem 1.5rem;
+      margin-top: 1.5rem;
+    }
+    .contact-box a {
+      font-weight: 600;
+    }
+
+    @media (max-width: 600px) {
+      .lab-card { flex-direction: column; text-align: center; }
+      .team-member { flex-direction: column; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar" id="navbar" style="background:rgba(248,250,252,.95);backdrop-filter:blur(12px)">
+  <div class="container">
+    <a href="index.html" class="nav-brand">
+      <img src="../assets/logo_ark_transparent.png" alt="ARK logo">
+      ARK
+    </a>
+    <div class="nav-links" id="navLinks">
+      <a href="index.html#features">特性</a>
+      <a href="index.html#pipeline">Pipeline</a>
+      <a href="doc.html">文档</a>
+      <a href="about.html" style="color:var(--teal);font-weight:600">关于</a>
+      <a href="../about.html" class="lang-toggle" title="Switch to English">🌐 EN</a>
+      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener" class="gh-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 00-3.8 23.38c.6.11.82-.26.82-.58v-2.16c-3.34.73-4.04-1.61-4.04-1.61a3.18 3.18 0 00-1.33-1.76c-1.09-.74.08-.73.08-.73a2.52 2.52 0 011.84 1.24 2.56 2.56 0 003.5 1 2.56 2.56 0 01.76-1.61c-2.67-.3-5.47-1.33-5.47-5.93a4.64 4.64 0 011.24-3.22 4.3 4.3 0 01.12-3.18s1-.33 3.3 1.23a11.4 11.4 0 016 0c2.3-1.56 3.3-1.23 3.3-1.23a4.3 4.3 0 01.12 3.18 4.64 4.64 0 011.24 3.22c0 4.61-2.81 5.63-5.48 5.93a2.86 2.86 0 01.82 2.22v3.29c0 .32.21.7.82.58A12 12 0 0012 .3"/></svg>
+        GitHub
+      </a>
+    </div>
+    <button class="hamburger" id="hamburger" aria-label="菜单">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="about-hero">
+  <h1 class="gradient-text">关于 ARK</h1>
+  <p>ARK 由 <a href="https://sands.kaust.edu.sa/" target="_blank" rel="noopener">KAUST SANDS Lab</a> 开发。我们做高效的机器学习系统，加速科学发现。</p>
+</section>
+
+<!-- Content -->
+<div class="about-section">
+
+  <h2>团队</h2>
+  <div class="team-grid">
+    <div class="team-member">
+      <img src="../assets/jihao.jpg" alt="辛继灏" class="team-avatar">
+      <div class="team-info">
+        <h3>辛继灏</h3>
+        <div class="team-role">主要开发者</div>
+        <a href="https://jihaoxin.github.io/" target="_blank" rel="noopener">个人主页</a>
+      </div>
+    </div>
+    <div class="team-member">
+      <img src="../assets/yangzhixin.jpg" alt="罗杨知心" class="team-avatar">
+      <div class="team-info">
+        <h3>罗杨知心</h3>
+        <div class="team-role">开发者</div>
+        <a href="https://www.linkedin.com/in/yangzhixin-luo-887269361/" target="_blank" rel="noopener">个人主页</a>
+      </div>
+    </div>
+    <div class="team-member">
+      <img src="../assets/bilal.jpg" alt="Muhammad Bilal" class="team-avatar">
+      <div class="team-info">
+        <h3>Muhammad Bilal</h3>
+        <div class="team-role">开发者</div>
+        <a href="https://www.linkedin.com/in/mbilalce/" target="_blank" rel="noopener">个人主页</a>
+      </div>
+    </div>
+    <div class="team-member">
+      <img src="../assets/marco.jpg" alt="Marco Canini" class="team-avatar">
+      <div class="team-info">
+        <h3>Marco Canini</h3>
+        <div class="team-role">顾问</div>
+        <a href="https://mcanini.github.io/" target="_blank" rel="noopener">个人主页</a>
+      </div>
+    </div>
+  </div>
+
+  <h2>联系方式</h2>
+  <div class="contact-box">
+    <p>有问题、想合作、或有反馈，联系 <a href="mailto:jihao.xin@kaust.edu.sa">jihao.xin@kaust.edu.sa</a>。</p>
+    <p>报 Bug 或提需求，请到 <a href="https://github.com/kaust-ark/ARK/issues" target="_blank" rel="noopener">GitHub</a> 提 Issue。</p>
+  </div>
+
+</div>
+
+<!-- Footer -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-brand">
+      <img src="../assets/logo_ark_transparent.png" alt="ARK">
+      ARK
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener">GitHub</a>
+      <a href="doc.html">文档</a>
+      <a href="about.html">关于</a>
+    </div>
+    <p class="footer-note">使用 <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">Claude Code</a> 构建</p>
+  </div>
+</footer>
+
+<script>
+const navbar = document.getElementById('navbar');
+window.addEventListener('scroll', () => {
+  navbar.classList.toggle('scrolled', window.scrollY > 20);
+});
+const hamburger = document.getElementById('hamburger');
+const navLinks = document.getElementById('navLinks');
+hamburger?.addEventListener('click', () => {
+  hamburger.classList.toggle('open');
+  navLinks.classList.toggle('open');
+});
+</script>
+</body>
+</html>

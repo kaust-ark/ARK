@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 190" fill="none">
+  <defs>
+    <!-- Subtle glow behind the hull -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+  <!-- Hull - main body -->
+  <path d="M90 45 L470 25 C480 25 485 30 480 40 L420 130 C415 138 405 142 395 140 L60 155 C45 157 35 148 40 135 L75 55 C78 48 83 45 90 45Z" fill="#263d5e" filter="url(#glow)"/>
+  <!-- Hull - dark overlay for depth (upper portion) -->
+  <path d="M90 45 L470 25 C480 25 485 30 480 40 L460 75 L100 90 L75 55 C78 48 83 45 90 45Z" fill="#1e3352"/>
+  <!-- Hull - teal accent stripe -->
+  <path d="M110 95 L460 75 L420 130 C415 138 405 142 395 140 L65 155 C55 156 48 150 50 142 L110 95Z" fill="#238a7a"/>
+  <!-- Hull - bottom teal highlight -->
+  <path d="M150 110 L440 90 L420 130 C415 138 405 142 395 140 L100 148 L150 110Z" fill="#2aaa9e"/>
+  <!-- Hull edge lines -->
+  <path d="M120 62 L465 38" stroke="#3a5a80" stroke-width="0.8" opacity="0.6"/>
+  <path d="M100 85 L458 65" stroke="#2a7a72" stroke-width="0.8" opacity="0.5"/>
+  <!-- Cabin/wheelhouse -->
+  <rect x="115" y="18" width="42" height="30" rx="3" fill="#d4a040" stroke="#c08a30" stroke-width="1"/>
+  <rect x="121" y="22" width="14" height="18" rx="1.5" fill="#162840" stroke="#b88030" stroke-width="0.8"/>
+  <rect x="139" y="22" width="12" height="18" rx="1.5" fill="#162840" stroke="#b88030" stroke-width="0.8"/>
+  <!-- Top rail -->
+  <line x1="118" y1="18" x2="154" y2="18" stroke="#e0b860" stroke-width="1.5"/>
+  <line x1="122" y1="14" x2="122" y2="18" stroke="#e0b860" stroke-width="1.2"/>
+  <line x1="150" y1="14" x2="150" y2="18" stroke="#e0b860" stroke-width="1.2"/>
+  <line x1="120" y1="14" x2="152" y2="14" stroke="#e0b860" stroke-width="1.2"/>
+  <!-- Wave 1 - top wave (navy, brighter) -->
+  <path d="M5 142 C30 128 70 128 110 142 C150 156 190 156 230 142 C270 128 310 128 350 142 C390 156 430 156 470 142 C490 134 505 134 518 140" stroke="#263d5e" stroke-width="6" stroke-linecap="round" fill="none"/>
+  <!-- Wave 2 - bottom wave (teal) -->
+  <path d="M25 162 C55 148 85 148 120 162 C155 176 190 176 230 162 C270 148 310 148 350 162 C390 176 420 176 455 162 C475 153 495 153 515 160" stroke="#22998e" stroke-width="5" stroke-linecap="round" fill="none"/>
+  <!-- Wave 3 - accent wave (bright teal) -->
+  <path d="M50 178 C75 168 100 168 130 178 C160 188 190 188 225 178 C260 168 295 168 330 178 C365 188 395 188 425 178" stroke="#2dd4bf" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+</svg>

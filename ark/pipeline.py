@@ -830,7 +830,7 @@ Notes:
         # ── Step 0: Setup (conda env provisioning) ──────────────────────
         self.log_step_header(0, 4, "Setup")
         try:
-            from ark.webapp.jobs import provision_project_env, project_env_ready
+            from ark.dashboard.jobs import provision_project_env, project_env_ready
             if not project_env_ready(self.code_dir):
                 base_env = self.config.get("base_conda_env", "ark-base")
                 self.log_step(f"Provisioning conda environment (cloning {base_env})...", "progress")

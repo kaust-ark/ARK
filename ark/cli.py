@@ -816,7 +816,7 @@ def _setup_latex_template(code_dir: str, config: dict):
     print(f"{_c('LaTeX Template Setup', Colors.BOLD)}")
 
     # Try bundled venue_templates/ first (same as webapp)
-    from ark.webapp.templates import has_venue_template, copy_venue_template
+    from ark.dashboard.templates import has_venue_template, copy_venue_template
     downloaded = False
 
     _, required = _resolve_template_urls(venue_format)
@@ -1594,7 +1594,7 @@ def _finalize_project(name: str, project_dir: Path, config: dict,
     # ── Register project in webapp DB ──────────────────────────
     project_id = None
     try:
-        from ark.webapp.db import (resolve_db_path, get_session,
+        from ark.dashboard.db import (resolve_db_path, get_session,
                                    get_or_create_user_by_email, create_project as db_create_project)
         import getpass
         db_path = resolve_db_path()
@@ -1876,13 +1876,13 @@ def cmd_run(args):
     project_id = config.get("_project_id", "")
     if not db_path:
         try:
-            from ark.webapp.db import resolve_db_path
+            from ark.dashboard.db import resolve_db_path
             db_path = resolve_db_path()
         except Exception:
             pass
     if not project_id and db_path and Path(db_path).exists():
         try:
-            from ark.webapp.db import get_session, get_project_by_name
+            from ark.dashboard.db import get_session, get_project_by_name
             with get_session(db_path) as session:
                 p = get_project_by_name(session, name)
                 if p:
@@ -1892,7 +1892,7 @@ def cmd_run(args):
 
     # Launch orchestrator in background, preferring per-project conda env
     try:
-        from ark.webapp.jobs import (
+        from ark.dashboard.jobs import (
             find_conda_binary, project_env_ready, project_env_prefix,
         )
         conda_bin = find_conda_binary()
@@ -3112,14 +3112,26 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
             prod_env_link.symlink_to(main_env)
 
     # Environment variables for systemd service
+    # ARK_ROOT_PATH mounts the webapp under a URL path prefix behind the CF
+    # Tunnel (idea2paper.org/dashboard/*). The strip-prefix middleware makes
+    # this transparent to the app, so BASE_URL stays a bare origin.
     env_vars = {
         "ARK_WEBAPP_DB_PATH": str(db_path),
         "PROJECTS_ROOT": str(data_dir / "projects"),
+        "ARK_ROOT_PATH": "/dashboard",
     }
 
     if dev:
         env_vars["ARK_SESSION_COOKIE"] = "session_dev"
+        # Dev BASE_URL stays as the internal IP — dev is only reachable from
+        # KAUST internal network, and magic-link emails from dev must be
+        # clickable inside KAUST. No CF Tunnel routes dev.
         env_vars["BASE_URL"] = f"http://{get_primary_ip()}:{port}"
+        # Dev does NOT support Google OAuth: Google rejects private IPs as
+        # OAuth redirect URIs. Clear the creds so /auth/google/enabled
+        # returns false and the UI hides the Google button.
+        env_vars["GOOGLE_CLIENT_ID"] = ""
+        env_vars["GOOGLE_CLIENT_SECRET"] = ""
         # Load dev-only env overrides
         dev_env_file = get_config_dir() / "webapp-dev.env"
         if not dev_env_file.exists():
@@ -3135,6 +3147,11 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
                     continue
                 k, _, v = line.partition("=")
                 env_vars[k.strip()] = v.strip()
+    else:
+        # Prod BASE_URL is the public origin; /dashboard prefix is added by
+        # ARK_ROOT_PATH, so anything building a full URL uses BASE_URL +
+        # ARK_ROOT_PATH + /path.
+        env_vars["BASE_URL"] = "https://idea2paper.org"
 
     svc_path = _service_file_path(svc_name)
     svc_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3357,8 +3374,8 @@ def cmd_webapp(args):
 
     try:
         import uvicorn
-        from ark.webapp import create_app
-        from ark.webapp.config import get_settings, _env_file
+        from ark.dashboard import create_app
+        from ark.dashboard.config import get_settings, _env_file
     except ImportError:
         print(f"{_c('Error:', Colors.RED)} Webapp dependencies not installed.")
         print(f"  Install with: {_c('pip install ark-research[webapp]', Colors.BOLD)}")
@@ -3428,8 +3445,8 @@ def cmd_web(args):
     def _submit(pid, mode, max_iter, user_id, con):
         """Try SLURM submit; fallback to 'local'. Returns new job_id."""
         if _sh.which("sbatch"):
-            from ark.webapp.config import get_settings
-            from ark.webapp.jobs import submit_job
+            from ark.dashboard.config import get_settings
+            from ark.dashboard.jobs import submit_job
             settings = get_settings()
             pdir = settings.projects_root / user_id / pid
             log_dir = pdir / "logs"

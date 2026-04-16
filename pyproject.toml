@@ -40,4 +40,4 @@ markers = ["network: tests that hit real APIs (deselect with '-m not network')"]
 include = ["ark*"]
 
 [tool.setuptools.package-data]
-ark = ["templates/**/*", "webapp/static/**/*", "webapp/slurm_template.sh"]
+ark = ["templates/**/*", "dashboard/static/**/*", "dashboard/templates/**/*", "dashboard/slurm_template.sh"]

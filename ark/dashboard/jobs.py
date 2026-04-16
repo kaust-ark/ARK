@@ -367,7 +367,7 @@ def submit_job(
 
     safe_api_keys = {k: shlex.quote(v) for k, v in (api_keys or {}).items()}
 
-    from ark.webapp.db import resolve_db_path
+    from ark.dashboard.db import resolve_db_path
     db_path = resolve_db_path()
 
     template_text = _SLURM_TEMPLATE.read_text()
@@ -489,7 +489,7 @@ def launch_local_job(
         python_prefix = [sys.executable]
 
     # Resolve DB path so orchestrator can sync status
-    from ark.webapp.db import resolve_db_path
+    from ark.dashboard.db import resolve_db_path
     db_path = resolve_db_path()
 
     cmd = python_prefix + [
