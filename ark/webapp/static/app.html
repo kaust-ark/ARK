@@ -778,8 +778,8 @@
                 <input type="radio" name="model" value="claude-haiku-4-5" />
                 <span class="model-chip">Haiku 4.5</span>
               </label>
-              <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon">
-                <input type="radio" name="model" value="gemini" disabled />
+              <label class="model-option">
+                <input type="radio" name="model" value="gemini" />
                 <span class="model-chip">Gemini</span>
               </label>
               <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon">
@@ -1195,7 +1195,10 @@
         <input type="password" id="settings-gemini" placeholder="sk-..." style="flex:1" />
         <span id="settings-gemini-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
       </div>
-      <div id="status-gemini" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
+      <div style="display:flex; justify-content:space-between; margin-top:2px; font-size:.7rem;">
+        <div id="status-gemini" style="color:var(--text-muted)"></div>
+        <div id="status-gemini-cli" style="color:var(--text-muted)"></div>
+      </div>
     </div>
 
     
@@ -1242,6 +1245,29 @@
           <span id="settings-claude_token-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
         </div>
         <div id="status-claude-token" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
+      </div>
+    </div>
+
+    <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px; margin-top:16px;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#0d9488"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span style="font-weight:600; font-size:.95rem">Gemini CLI Session (Headless)</span>
+      </div>
+      <div style="background:#f0fdfa; border:1px solid #99f6e4; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#0f766e">
+        <strong style="display:block; margin-bottom:4px">How to get these?</strong>
+        <ol style="padding-left:16px; margin:0">
+          <li>On your local PC, run: <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">gemini auth login</code></li>
+          <li>Copy the contents of <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">~/.gemini/oauth_creds.json</code> and paste it below.</li>
+        </ol>
+      </div>
+
+      <div class="form-group" style="margin-bottom:0">
+        <label style="font-size:.75rem">OAuth JSON (~/.gemini/oauth_creds.json)</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <textarea id="settings-gemini-oauth" placeholder='{"client_id": "...", "client_secret": "...", ...}' style="flex:1; font-family:monospace; font-size:.8rem; min-height:80px;"></textarea>
+          <span id="settings-gemini_oauth-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+        </div>
+        <div id="status-gemini-oauth" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
       </div>
     </div>
 
@@ -3440,24 +3466,29 @@ async function openSettingsModal() {
     document.getElementById('settings-openai').value = data.openai || '';
     
     document.getElementById('settings-claude-token').value = data.claude_oauth_token || '';
+    document.getElementById('settings-gemini-oauth').value = data.gemini_oauth_json || '';
 
     document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
     document.getElementById('status-claude-token').textContent = data.claude_oauth_token ? 'Current: ' + data.claude_oauth_token : '';
+    document.getElementById('status-gemini-oauth').textContent = data.gemini_oauth_json ? 'Current: [JSON Config]' : '';
   } catch(e) {}
 }
 
 async function saveUserSettings() {
   const btn = document.getElementById('settings-save-btn');
-  const providers = ['gemini', 'anthropic', 'openai', 'claude_token'];
+  const providers = ['gemini', 'gemini_cli', 'anthropic', 'openai', 'claude_token', 'gemini_oauth'];
   
   // Clear previous statuses
   providers.forEach(p => {
     const el = document.getElementById(`settings-${p}-status`);
     if (el) el.innerHTML = '';
-    const footer = document.getElementById(`status-${p.replace('_', '-')}`);
-    if (footer) footer.style.color = 'var(--text-muted)';
+    const footer = document.getElementById(`status-${p.replaceAll('_', '-')}`);
+    if (footer) {
+      footer.style.color = 'var(--text-muted)';
+      footer.textContent = '';
+    }
   });
 
   btn.disabled = true;
@@ -3469,6 +3500,7 @@ async function saveUserSettings() {
       anthropic: document.getElementById('settings-anthropic').value.trim(),
       openai: document.getElementById('settings-openai').value.trim(),
       claude_oauth_token: document.getElementById('settings-claude-token').value.trim(),
+      gemini_oauth_json: document.getElementById('settings-gemini-oauth').value.trim(),
     };
 
     // Show wait icons for non-empty keys
@@ -3476,6 +3508,7 @@ async function saveUserSettings() {
     if (body.anthropic && !body.anthropic.includes('...')) document.getElementById('settings-anthropic-status').innerHTML = '⏳';
     if (body.openai && !body.openai.includes('...')) document.getElementById('settings-openai-status').innerHTML = '⏳';
     if (body.claude_oauth_token && !body.claude_oauth_token.includes('...')) document.getElementById('settings-claude_token-status').innerHTML = '⏳';
+    if (body.gemini_oauth_json && !body.gemini_oauth_json.includes('...')) document.getElementById('settings-gemini_oauth-status').innerHTML = '⏳';
 
     const res = await fetch('/api/user/settings', {
       method: 'POST',
@@ -3491,17 +3524,17 @@ async function saveUserSettings() {
       for (const p of providers) {
         const result = ver[p];
         const statusEl = document.getElementById(`settings-${p}-status`);
-        const footerEl = document.getElementById(`status-${p.replace('_', '-')}`);
+        const footerEl = document.getElementById(`status-${p.replaceAll('_', '-')}`);
         
         if (result) {
           if (result.ok) {
-            statusEl.innerHTML = '✅';
+            if (statusEl) statusEl.innerHTML = '✅';
             if (footerEl) {
               footerEl.textContent = '✓ ' + (result.msg || 'Functional');
               footerEl.style.color = 'var(--green)';
             }
           } else {
-            statusEl.innerHTML = '❌';
+            if (statusEl) statusEl.innerHTML = '❌';
             if (footerEl) {
               footerEl.textContent = '✗ ' + (result.msg || 'Failed');
               footerEl.style.color = 'var(--red)';
@@ -3510,7 +3543,7 @@ async function saveUserSettings() {
           }
         } else {
           // If no result returned (e.g. key was empty or hidden), clear status
-          statusEl.innerHTML = '';
+          if (statusEl) statusEl.innerHTML = '';
         }
       }
 

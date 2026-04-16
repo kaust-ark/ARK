@@ -271,7 +271,9 @@ What you get:
 
 ```bash
 # Set up the conda base environment
-conda env create -f environment.yml   # creates "ark-base"
+conda env create -f environment.yml         # Linux (creates "ark-base")
+# OR for macOS:
+conda env create -f environment-macos.yml   # macOS (creates "ark-base")
 
 pip install -e .                    # Core
 pip install -e ".[research]"       # + Gemini Deep Research & Nano Banana

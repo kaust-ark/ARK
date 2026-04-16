@@ -271,7 +271,9 @@ ark setup-bot    # 一次性配置：粘贴 BotFather token，自动检测 chat 
 
 ```bash
 # 创建 conda 基础环境
-conda env create -f environment.yml   # 创建 "ark-base"
+conda env create -f environment.yml         # Linux (创建 "ark-base")
+# 或者对于 macOS：
+conda env create -f environment-macos.yml   # macOS (创建 "ark-base")
 
 pip install -e .                    # 核心
 pip install -e ".[research]"       # + Gemini Deep Research 和 Nano Banana

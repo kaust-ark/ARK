@@ -55,6 +55,87 @@ def _extract_usage(parsed: dict) -> dict:
     }
 
 
+def _parse_gemini_json(stdout: str) -> dict | None:
+    """Parse output of `gemini -o json`. Returns None on failure."""
+    text = (stdout or "").strip()
+    if not text:
+        return None
+    try:
+        # gemini -o json usually outputs the JSON object directly,
+        # but may have leading "Loaded cached credentials" etc.
+        if "{" in text:
+            text = text[text.find("{"):]
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _calculate_gemini_cost(model_id: str, input_tok: int, output_tok: int) -> float:
+    """
+    Calculate estimated cost for Gemini models (April 2026 pricing).
+    """
+    input_tok = int(input_tok or 0)
+    output_tok = int(output_tok or 0)
+    model_lower = (model_id or "").lower()
+
+    # Pricing per 1M tokens
+    if "3.1-pro" in model_lower:
+        in_rate = 2.00
+        out_rate = 12.00
+    elif "3.1-flash" in model_lower:
+        in_rate = 0.50
+        out_rate = 3.00
+    else:
+        # Default to pro
+        in_rate = 2.00
+        out_rate = 12.00
+
+    return (input_tok / 1_000_000 * in_rate) + (output_tok / 1_000_000 * out_rate)
+
+
+def _extract_gemini_usage(parsed: dict) -> dict:
+    """Aggregate token usage info from Gemini CLI's nested stats schema."""
+    parsed = parsed or {}
+    stats = parsed.get("stats", {})
+    models = stats.get("models") or stats.get("model") or {}
+
+    total_in = 0
+    total_out = 0
+    total_cached = 0
+    total_thoughts = 0
+    total_latency = 0
+    main_model = ""
+
+    for mid, info in models.items():
+        t = info.get("tokens", {})
+        total_in += int(t.get("input") or 0)
+        total_out += int(t.get("candidates") or 0)
+        total_cached += int(t.get("cached") or 0)
+        total_thoughts += int(t.get("thoughts") or 0)
+        
+        api = info.get("api", {})
+        total_latency += int(api.get("totalLatencyMs") or 0)
+        
+        # Heuristic for the "main" model being used for the response
+        if "roles" in info and "main" in info["roles"]:
+            main_model = mid
+    
+    if not main_model and models:
+        main_model = next(iter(models))
+
+    cost_usd = _calculate_gemini_cost(main_model, total_in, total_out)
+
+    return {
+        "model": main_model,
+        "input_tokens": total_in,
+        "output_tokens": total_out,
+        "cache_read_tokens": total_cached,
+        "cache_creation_tokens": 0, # Gemini schema doesn't distinguish creation
+        "cost_usd": cost_usd,
+        "duration_api_ms": total_latency,
+    }
+
+
 def _fmt_tok(n: int) -> str:
     """Format a token count as compact human-readable (e.g. 12.3k, 1.2M)."""
     n = int(n or 0)
@@ -485,16 +566,26 @@ Execute the task and update the corresponding files.
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 cmd = []
-                # Strip CLAUDECODE env var to prevent nested-session detection
-                env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+                # Strip CLAUDECODE to prevent nested-session detection.
+                # Strip GEMINI_API_KEY / GOOGLE_API_KEY so the Gemini CLI uses                                            
+                # OAuth credentials from ~/.gemini/oauth_creds.json rather than                                    
+                # the API key (which is only for Deep Research via Python API).                                           
+                _strip = {"CLAUDECODE", "GEMINI_API_KEY", "GOOGLE_API_KEY"} 
+                env = {k: v for k, v in os.environ.items() if k not in _strip}
                 if self.model == "gemini":
                     boundary = self._build_path_boundary()
                     cmd = [
                         "gemini",
-                        "-m", "auto",
+                        "-p", f"[SYSTEM RULE] {boundary}\n\n{full_prompt}",
                         "--approval-mode", "auto_edit",
-                        f"[SYSTEM RULE] {boundary}\n\n{full_prompt}",
+                        "-o", "json",
                     ]
+                    # Respect model_variant if set
+                    ark_model = self._get_ark_model()
+                    if ark_model:
+                        cmd.extend(["-m", ark_model])
+                    else:
+                        cmd.extend(["-m", "auto"])
                 elif self.model == "claude":
                     cmd = [
                         "claude", "-p", full_prompt,
@@ -517,6 +608,9 @@ Execute the task and update the corresponding files.
                 else:
                     self.log(f"Unsupported model backend: {self.model}", "ERROR")
                     return ""
+
+                ark_model = self._get_ark_model()
+                self.log(f"Backend model: {self.model} | Model: {ark_model or 'default'}", "INFO")
 
                 process = subprocess.Popen(
                     cmd,
@@ -550,6 +644,13 @@ Execute the task and update the corresponding files.
                         if parsed is not None:
                             result = parsed.get("result", "") or ""
                             usage_record = _extract_usage(parsed)
+                        else:
+                            result = stdout
+                    elif self.model == "gemini":
+                        parsed = _parse_gemini_json(stdout)
+                        if parsed is not None:
+                            result = parsed.get("response", "") or ""
+                            usage_record = _extract_gemini_usage(parsed)
                         else:
                             result = stdout
                     else:
@@ -612,6 +713,13 @@ Execute the task and update the corresponding files.
                         if parsed is not None:
                             result = parsed.get("result", "") or ""
                             usage_record = _extract_usage(parsed)
+                        else:
+                            result = stdout
+                    elif self.model == "gemini":
+                        parsed = _parse_gemini_json(stdout)
+                        if parsed is not None:
+                            result = parsed.get("response", "") or ""
+                            usage_record = _extract_gemini_usage(parsed)
                         else:
                             result = stdout
                     else:

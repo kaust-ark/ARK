@@ -9,6 +9,7 @@
 {% if account %}#SBATCH --account={{ account }}{% endif %}
 
 set -e
+trap 'rm -rf "{{ project_dir }}/.gemini" "{{ project_dir }}/.config" "{{ project_dir }}/.claude.json"' EXIT TERM INT
 
 echo "[ARK] Job started: $(date)"
 echo "[ARK] Project: {{ project_id }}"
