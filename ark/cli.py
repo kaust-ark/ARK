@@ -3294,13 +3294,20 @@ def _cmd_webapp_release(args):
             return
     else:
         print(f"  Updating prod worktree to {_c(tag, Colors.BOLD)}...")
+        # Use checkout -f to handle submodule/untracked file conflicts
+        # that can silently prevent the worktree from advancing.
         r = _sp.run(
-            ["git", "checkout", tag],
+            ["git", "checkout", "-f", tag],
             capture_output=True, text=True, cwd=prod_dir,
         )
         if r.returncode != 0:
             print(f"  {_c(f'Error: {r.stderr.strip()}', Colors.RED)}")
             return
+        # Clean leftover untracked files from previous releases
+        _sp.run(
+            ["git", "clean", "-fd"],
+            capture_output=True, text=True, cwd=prod_dir,
+        )
 
     print(f"  {_c('Prod worktree:', Colors.GREEN)} {prod_dir} → {tag}")
 
