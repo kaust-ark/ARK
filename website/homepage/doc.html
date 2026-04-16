@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documentation — ARK</title>
+  <meta name="description" content="Complete documentation for ARK — Automatic Research Kit. Installation, configuration, CLI reference, and advanced usage.">
+  <link rel="icon" href="assets/logo_ark_transparent.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* ===== Doc-specific styles ===== */
+    .doc-layout {
+      display: flex;
+      gap: 2rem;
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 6rem 1.5rem 4rem;
+    }
+
+    /* Sidebar */
+    .doc-sidebar {
+      position: sticky;
+      top: 5rem;
+      width: 240px;
+      flex-shrink: 0;
+      height: fit-content;
+      max-height: calc(100vh - 6rem);
+      overflow-y: auto;
+      padding-right: 1rem;
+    }
+    .doc-sidebar a {
+      display: block;
+      padding: .4rem .75rem;
+      font-size: .85rem;
+      color: var(--text-muted);
+      border-left: 2px solid transparent;
+      transition: all .2s;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    .doc-sidebar a:hover,
+    .doc-sidebar a.active {
+      color: var(--teal);
+      border-left-color: var(--teal);
+      background: rgba(13, 148, 136, .05);
+    }
+    .doc-sidebar .sidebar-group {
+      margin-bottom: 1.2rem;
+    }
+    .doc-sidebar .sidebar-group-title {
+      font-size: .7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-primary);
+      padding: .4rem .75rem;
+      margin-bottom: .25rem;
+    }
+
+    /* Main content */
+    .doc-content {
+      flex: 1;
+      min-width: 0;
+      max-width: 800px;
+    }
+    .doc-content h1 {
+      font-size: 2.2rem;
+      margin-bottom: 1rem;
+      padding-bottom: .75rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .doc-content h2 {
+      font-size: 1.5rem;
+      margin-top: 3rem;
+      margin-bottom: 1rem;
+      padding-bottom: .5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .doc-content h3 {
+      font-size: 1.15rem;
+      margin-top: 2rem;
+      margin-bottom: .75rem;
+    }
+    .doc-content p {
+      margin-bottom: 1rem;
+      line-height: 1.7;
+    }
+    .doc-content ul, .doc-content ol {
+      margin-bottom: 1rem;
+      padding-left: 1.5rem;
+    }
+    .doc-content li {
+      list-style: disc;
+      margin-bottom: .4rem;
+      line-height: 1.6;
+    }
+    .doc-content ol li {
+      list-style: decimal;
+    }
+    .doc-content code {
+      font-family: var(--mono);
+      font-size: .85em;
+      background: var(--card);
+      padding: .15em .4em;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .doc-content pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 1.25rem 1.5rem;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin-bottom: 1.5rem;
+      font-family: var(--mono);
+      font-size: .85rem;
+      line-height: 1.6;
+    }
+    .doc-content pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    .doc-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1.5rem;
+      font-size: .9rem;
+    }
+    .doc-content th, .doc-content td {
+      text-align: left;
+      padding: .6rem .75rem;
+      border: 1px solid var(--border);
+    }
+    .doc-content th {
+      background: var(--card);
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .doc-content .callout {
+      background: rgba(13, 148, 136, .06);
+      border-left: 3px solid var(--teal);
+      padding: 1rem 1.25rem;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      margin-bottom: 1.5rem;
+    }
+    .doc-content .callout-warn {
+      background: rgba(180, 83, 9, .06);
+      border-left-color: var(--gold);
+    }
+    .doc-content .callout strong {
+      color: var(--text-primary);
+    }
+
+    /* Mobile sidebar */
+    @media (max-width: 768px) {
+      .doc-layout { flex-direction: column; padding-top: 5rem; }
+      .doc-sidebar {
+        position: relative;
+        top: 0;
+        width: 100%;
+        max-height: none;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 1rem;
+        margin-bottom: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ===== Navbar ===== -->
+<nav class="navbar" id="navbar" style="background:rgba(248,250,252,.95);backdrop-filter:blur(12px)">
+  <div class="container">
+    <a href="index.html" class="nav-brand">
+      <img src="assets/logo_ark_transparent.png" alt="ARK logo">
+      ARK
+    </a>
+    <div class="nav-links" id="navLinks">
+      <a href="index.html#features">Features</a>
+      <a href="index.html#pipeline">Pipeline</a>
+      <a href="index.html#agents">Agents</a>
+      <a href="doc.html" style="color:var(--teal);font-weight:600">Docs</a>
+      <a href="about.html">About</a>
+      <a href="zh/doc.html" class="lang-toggle" title="切换到中文">🌐 中文</a>
+      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener" class="gh-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 00-3.8 23.38c.6.11.82-.26.82-.58v-2.16c-3.34.73-4.04-1.61-4.04-1.61a3.18 3.18 0 00-1.33-1.76c-1.09-.74.08-.73.08-.73a2.52 2.52 0 011.84 1.24 2.56 2.56 0 003.5 1 2.56 2.56 0 01.76-1.61c-2.67-.3-5.47-1.33-5.47-5.93a4.64 4.64 0 011.24-3.22 4.3 4.3 0 01.12-3.18s1-.33 3.3 1.23a11.4 11.4 0 016 0c2.3-1.56 3.3-1.23 3.3-1.23a4.3 4.3 0 01.12 3.18 4.64 4.64 0 011.24 3.22c0 4.61-2.81 5.63-5.48 5.93a2.86 2.86 0 01.82 2.22v3.29c0 .32.21.7.82.58A12 12 0 0012 .3"/></svg>
+        GitHub
+      </a>
+    </div>
+    <button class="hamburger" id="hamburger" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- ===== Doc Layout ===== -->
+<div class="doc-layout">
+
+  <!-- Sidebar -->
+  <aside class="doc-sidebar">
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">Getting Started</div>
+      <a href="#installation">Installation</a>
+      <a href="#prerequisites">Prerequisites</a>
+      <a href="#quickstart">Quick Start</a>
+    </div>
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">CLI Reference</div>
+      <a href="#ark-new">ark new</a>
+      <a href="#ark-run">ark run</a>
+      <a href="#ark-status">ark status</a>
+      <a href="#ark-monitor">ark monitor</a>
+      <a href="#ark-update">ark update</a>
+      <a href="#ark-stop">ark stop</a>
+      <a href="#ark-delete">ark delete</a>
+    </div>
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">Configuration</div>
+      <a href="#project-config">Project Config</a>
+      <a href="#venue-presets">Venue Presets</a>
+      <a href="#agent-prompts">Agent Prompts</a>
+      <a href="#hooks">Custom Hooks</a>
+    </div>
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">Pipeline</div>
+      <a href="#research-phase">Research Phase</a>
+      <a href="#development-phase">Development Phase</a>
+      <a href="#review-phase">Review Phase</a>
+      <a href="#memory-system">Memory System</a>
+    </div>
+    <div class="sidebar-group">
+      <div class="sidebar-group-title">Advanced</div>
+      <a href="#telegram-bot">Telegram Integration</a>
+      <a href="#slurm">Slurm / HPC</a>
+      <a href="#multi-model">Multi-Model Support</a>
+      <a href="#state-management">State Management</a>
+      <a href="#troubleshooting">Troubleshooting</a>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main class="doc-content">
+    <h1>Documentation</h1>
+    <p>Complete guide to using ARK — from installation to advanced configuration. ARK automates the full research lifecycle: literature survey, experiment design, execution, paper writing, and iterative review.</p>
+
+    <!-- ===== GETTING STARTED ===== -->
+    <h2 id="installation">Installation</h2>
+    <p>Clone the repository and install ARK in editable mode:</p>
+    <pre><code>git clone https://github.com/kaust-ark/ARK.git
+cd ARK
+pip install -e .</code></pre>
+
+    <p>For research phase features (Deep Research integration), install with the research extra:</p>
+    <pre><code>pip install -e ".[research]"</code></pre>
+
+    <h2 id="prerequisites">Prerequisites</h2>
+    <ul>
+      <li><strong>Python 3.9+</strong></li>
+      <li><strong>At least one AI backend</strong> — installed and authenticated:
+        <ul>
+          <li><a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank">Claude Code CLI</a> (<code>claude</code>) — recommended</li>
+          <li><a href="https://github.com/google-gemini/gemini-cli" target="_blank">Gemini CLI</a> (<code>gemini</code>)</li>
+          <li><a href="https://github.com/openai/codex" target="_blank">Codex CLI</a> (<code>codex</code>)</li>
+        </ul>
+      </li>
+      <li><strong>LaTeX toolchain</strong> (optional) — <code>pdflatex</code>, <code>bibtex</code> for PDF compilation</li>
+      <li><strong>PyYAML</strong> — installed automatically with ARK</li>
+    </ul>
+
+    <div class="callout">
+      <strong>💡 Tip:</strong> Claude Code with a Max subscription is recommended. ARK agents are very token-intensive — a single paper run can use 50k+ lines of agent output across all iterations.
+    </div>
+
+    <h2 id="quickstart">Quick Start</h2>
+    <p>Create a new project, provide your paper title and idea, then let ARK handle the rest:</p>
+    <pre><code># Create a new project (interactive wizard)
+ark new my-project
+
+# Run the full pipeline
+ark run my-project
+
+# Check progress anytime
+ark status my-project</code></pre>
+
+    <p>The <code>ark new</code> wizard will ask for:</p>
+    <ol>
+      <li><strong>Paper title</strong> — e.g., "Efficient Cache-Aware Matrix Multiplication on Modern CPUs"</li>
+      <li><strong>Research idea</strong> — a paragraph describing the core contribution and approach</li>
+      <li><strong>Target venue</strong> — NeurIPS, ICML, ICLR, ACL, IEEE, etc.</li>
+      <li><strong>Code directory</strong> — where experiment code lives</li>
+      <li><strong>Model backend</strong> — Claude, Gemini, or Codex</li>
+    </ol>
+
+    <p>You can also bootstrap from an existing proposal PDF:</p>
+    <pre><code>ark new my-project --from-pdf proposal.pdf</code></pre>
+
+    <!-- ===== CLI REFERENCE ===== -->
+    <h2 id="ark-new">ark new</h2>
+    <p>Create a new research project with an interactive wizard.</p>
+    <pre><code>ark new &lt;project-name&gt; [options]</code></pre>
+    <table>
+      <tr><th>Option</th><th>Description</th></tr>
+      <tr><td><code>--from-pdf &lt;path&gt;</code></td><td>Bootstrap project from a proposal PDF</td></tr>
+      <tr><td><code>--venue &lt;venue&gt;</code></td><td>Set target venue (e.g., neurips, icml)</td></tr>
+      <tr><td><code>--model &lt;model&gt;</code></td><td>AI backend: <code>claude</code>, <code>gemini</code>, or <code>codex</code></td></tr>
+    </table>
+    <p>This creates <code>ARK/projects/&lt;project-name&gt;/</code> with:</p>
+    <ul>
+      <li><code>config.yaml</code> — project configuration</li>
+      <li><code>hooks.py</code> — custom logic for research/figure generation</li>
+      <li><code>agents/</code> — prompt files for each agent role</li>
+    </ul>
+
+    <h2 id="ark-run">ark run</h2>
+    <p>Start the autonomous research pipeline for a project.</p>
+    <pre><code>ark run &lt;project-name&gt; [options]</code></pre>
+    <table>
+      <tr><th>Option</th><th>Description</th></tr>
+      <tr><td><code>--mode paper|research</code></td><td>Pipeline mode (default: <code>paper</code>)</td></tr>
+      <tr><td><code>--max-iterations &lt;n&gt;</code></td><td>Maximum review iterations (default: 14)</td></tr>
+      <tr><td><code>--max-days &lt;n&gt;</code></td><td>Maximum days for research mode</td></tr>
+    </table>
+
+    <div class="callout">
+      <strong>📝 Note:</strong> In <code>paper</code> mode, ARK runs the full 3-phase pipeline (research → development → review). In <code>research</code> mode, it focuses on experiment design and execution without paper writing.
+    </div>
+
+    <p>You can also invoke the orchestrator directly for more control:</p>
+    <pre><code># Paper mode with specific model and iteration limit
+python -m ark.orchestrator --project my-project --mode paper --model claude --max-iterations 20
+
+# Research mode with day limit
+python -m ark.orchestrator --project my-project --mode research --model claude --max-days 3
+
+# Background execution with logging
+nohup python -m ark.orchestrator --project my-project --mode paper --model claude \
+  > auto_research/logs/orchestrator.log 2>&1 &</code></pre>
+
+    <h2 id="ark-status">ark status</h2>
+    <p>Check the current progress of a project.</p>
+    <pre><code>ark status &lt;project-name&gt;</code></pre>
+    <p>Shows: current iteration, reviewer score, phase, cost breakdown, and recent agent actions.</p>
+
+    <h2 id="ark-monitor">ark monitor</h2>
+    <p>Real-time monitoring of the pipeline — streams agent output and state changes.</p>
+    <pre><code>ark monitor &lt;project-name&gt;</code></pre>
+
+    <h2 id="ark-update">ark update</h2>
+    <p>Send a mid-run instruction to the pipeline. Useful for steering the agents without stopping.</p>
+    <pre><code>ark update &lt;project-name&gt;
+
+# Example instructions:
+# "Focus on the related work section"
+# "Add a comparison with TransformerFAM"
+# "Increase the font size in Figure 3"</code></pre>
+
+    <h2 id="ark-stop">ark stop</h2>
+    <p>Gracefully stop a running pipeline. State is checkpointed so you can resume later.</p>
+    <pre><code>ark stop &lt;project-name&gt;</code></pre>
+
+    <h2 id="ark-delete">ark delete</h2>
+    <p>Remove a project and all its configuration.</p>
+    <pre><code>ark delete &lt;project-name&gt;</code></pre>
+
+    <div class="callout callout-warn">
+      <strong>⚠️ Warning:</strong> This deletes the project configuration under <code>ARK/projects/</code>. Your code directory and generated papers are not affected.
+    </div>
+
+    <!-- ===== CONFIGURATION ===== -->
+    <h2 id="project-config">Project Configuration</h2>
+    <p>Each project has a <code>config.yaml</code> that controls all aspects of the pipeline:</p>
+    <pre><code># ARK/projects/my-project/config.yaml
+code_dir: /home/user/my-research        # Where experiment code lives
+venue: NeurIPS                           # Target venue
+venue_format: neurips                    # LaTeX template format
+venue_pages: 9                           # Main content page limit
+
+title: "My Paper Title"
+model: claude                            # AI backend (claude/gemini/codex)
+
+# Directory structure
+latex_dir: paper                         # LaTeX source directory (relative to code_dir)
+figures_dir: paper/figures               # Generated figures
+scripts_dir: code                        # Experiment scripts
+
+# Figure generation
+create_figures_script: code/create_paper_figures.py
+
+# Quality threshold — stop when reviewer score hits this
+paper_accept_threshold: 8
+
+# Goal Anchor — keeps agents focused across iterations
+goal_anchor: |
+  ## Goal Anchor
+  **Paper Title**: My Paper Title
+  **Target Venue**: NeurIPS 2025
+  **Core Contributions**:
+  1. First contribution...
+  2. Second contribution...
+
+# Compute settings (optional)
+use_slurm: false
+slurm_job_prefix: EXP_
+conda_env: my-env
+
+# Telegram notifications (optional)
+telegram_bot_token: "YOUR_BOT_TOKEN"
+telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
+
+    <h2 id="venue-presets">Venue Presets</h2>
+    <p>ARK includes precise LaTeX geometry presets for 11+ venues, ensuring figures and tables fit perfectly:</p>
+    <table>
+      <tr><th>Venue</th><th>Format Key</th><th>Text Width</th><th>Pages</th></tr>
+      <tr><td>NeurIPS</td><td><code>neurips</code></td><td>5.5in</td><td>9</td></tr>
+      <tr><td>ICML</td><td><code>icml</code></td><td>6.75in</td><td>8</td></tr>
+      <tr><td>ICLR</td><td><code>iclr</code></td><td>6.0in</td><td>9</td></tr>
+      <tr><td>AAAI</td><td><code>aaai</code></td><td>7.0in</td><td>7</td></tr>
+      <tr><td>ACL</td><td><code>acl</code></td><td>6.3in</td><td>8</td></tr>
+      <tr><td>IEEE</td><td><code>ieee</code></td><td>7.0in</td><td>10</td></tr>
+      <tr><td>ACM SIGPLAN</td><td><code>sigplan</code></td><td>5.5in</td><td>6</td></tr>
+      <tr><td>LNCS</td><td><code>lncs</code></td><td>4.8in</td><td>12</td></tr>
+      <tr><td>USENIX</td><td><code>usenix</code></td><td>7.0in</td><td>12</td></tr>
+      <tr><td>CVPR</td><td><code>cvpr</code></td><td>6.875in</td><td>8</td></tr>
+      <tr><td>ECCV</td><td><code>eccv</code></td><td>4.8in</td><td>14</td></tr>
+    </table>
+
+    <h2 id="agent-prompts">Agent Prompts</h2>
+    <p>Each agent has a <code>.prompt</code> file under <code>projects/&lt;name&gt;/agents/</code>. You can customize these to change agent behavior:</p>
+    <table>
+      <tr><th>File</th><th>Agent</th><th>Role</th></tr>
+      <tr><td><code>reviewer.prompt</code></td><td>Reviewer</td><td>Scores the paper (1–10) and identifies specific issues</td></tr>
+      <tr><td><code>planner.prompt</code></td><td>Planner</td><td>Converts review into a prioritized YAML action plan</td></tr>
+      <tr><td><code>writer.prompt</code></td><td>Writer</td><td>Drafts and revises LaTeX sections</td></tr>
+      <tr><td><code>experimenter.prompt</code></td><td>Experimenter</td><td>Designs and runs experiments</td></tr>
+      <tr><td><code>researcher.prompt</code></td><td>Researcher</td><td>Literature survey and result analysis</td></tr>
+      <tr><td><code>validator.prompt</code></td><td>Validator</td><td>Verifies changes were correctly applied</td></tr>
+      <tr><td><code>figure_fixer.prompt</code></td><td>Visualizer</td><td>Fixes figure and plot issues</td></tr>
+      <tr><td><code>literature.prompt</code></td><td>Literature</td><td>Deep literature search and summarization</td></tr>
+      <tr><td><code>meta_debugger.prompt</code></td><td>Meta-Debugger</td><td>System-level diagnosis when pipeline stalls</td></tr>
+    </table>
+
+    <h2 id="hooks">Custom Hooks</h2>
+    <p>Each project can define a <code>hooks.py</code> for custom logic. This lets you inject project-specific behavior into the pipeline:</p>
+    <pre><code># ARK/projects/my-project/hooks.py
+
+def pre_experiment(config, state):
+    """Called before each experiment run."""
+    pass
+
+def post_experiment(config, state, results):
+    """Called after experiment completes. Process results here."""
+    pass
+
+def create_figures(config, state):
+    """Custom figure generation logic."""
+    pass</code></pre>
+
+    <!-- ===== PIPELINE ===== -->
+    <h2 id="research-phase">Phase 1: Research</h2>
+    <p>The research phase uses Deep Research to gather background knowledge:</p>
+    <ol>
+      <li>Takes your paper title and idea as input</li>
+      <li>Performs a comprehensive literature survey</li>
+      <li>Identifies related work, gaps, and positioning</li>
+      <li>Outputs a structured research summary to <code>auto_research/state/</code></li>
+    </ol>
+    <div class="callout">
+      <strong>💡 Tip:</strong> Install with <code>pip install -e ".[research]"</code> to enable the Deep Research integration. Without it, you can skip this phase and provide your own literature survey.
+    </div>
+
+    <h2 id="development-phase">Phase 2: Development</h2>
+    <p>The development phase handles experiment design and execution:</p>
+    <ol>
+      <li><strong>Planner</strong> creates an experiment plan based on the research summary</li>
+      <li><strong>Experimenter</strong> writes and submits experiment scripts (supports Slurm, local, cloud)</li>
+      <li><strong>Researcher</strong> analyzes results and identifies completeness gaps</li>
+      <li><strong>Writer</strong> produces the initial paper draft in LaTeX</li>
+    </ol>
+
+    <h2 id="review-phase">Phase 3: Review (Iterative Loop)</h2>
+    <p>The review phase is where the magic happens. Each iteration:</p>
+    <ol>
+      <li><strong>Compile</strong> — LaTeX → PDF, generate page images for visual review</li>
+      <li><strong>Review</strong> — Reviewer agent scores the paper (1–10) and writes detailed feedback</li>
+      <li><strong>Plan &amp; Execute</strong> — Planner converts feedback into tasks; writer/experimenter/researcher execute</li>
+      <li><strong>Visualize</strong> — Fix figures, recompile, validate changes</li>
+    </ol>
+
+    <p>The loop continues until:</p>
+    <ul>
+      <li>The reviewer score reaches <code>paper_accept_threshold</code> (default: 8)</li>
+      <li>The maximum iteration count is reached</li>
+      <li>You manually stop with <code>ark stop</code></li>
+    </ul>
+
+    <p>When the score threshold is reached, ARK runs one final cleanup iteration for any remaining minor issues before producing the final PDF.</p>
+
+    <h2 id="memory-system">Memory System</h2>
+    <p>ARK tracks progress across iterations to prevent loops and detect stagnation:</p>
+    <pre><code># Stored in auto_research/state/memory.yaml
+scores: [5.0, 5.5, 6.0, 6.2, 6.5, 7.0, 7.2]
+best_score: 7.2
+stagnation_count: 0</code></pre>
+
+    <h3>Score Tracking</h3>
+    <p>Maintains a history of reviewer scores (last 20 iterations). Used to measure progress and trigger interventions.</p>
+
+    <h3>Stagnation Detection</h3>
+    <p>If the score doesn't improve for several consecutive iterations, ARK:</p>
+    <ol>
+      <li>Flags the stagnation to the planner</li>
+      <li>Triggers the <strong>meta-debugger</strong> agent for system-level diagnosis</li>
+      <li>Sends a Telegram notification (if configured) requesting human intervention</li>
+    </ol>
+
+    <h3>Issue Repeat Tracking</h3>
+    <p>Counts how many times each issue reappears across reviews. If a fix keeps failing, ARK bans the ineffective strategy and tries alternative approaches.</p>
+
+    <h3>Goal Anchor</h3>
+    <p>Every agent invocation includes the Goal Anchor — a constant description of the project's core objectives. This prevents agents from drifting off-topic over many iterations.</p>
+
+    <!-- ===== ADVANCED ===== -->
+    <h2 id="telegram-bot">Telegram Integration</h2>
+    <p>ARK can send real-time notifications and receive mid-run instructions via Telegram:</p>
+
+    <h3>Setup</h3>
+    <pre><code># Interactive setup
+ark setup-bot
+
+# Or manually add to config.yaml:
+telegram_bot_token: "YOUR_BOT_TOKEN"
+telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
+
+    <h3>Features</h3>
+    <ul>
+      <li><strong>Iteration notifications</strong> — score updates after each review cycle</li>
+      <li><strong>PDF delivery</strong> — request the current paper PDF anytime</li>
+      <li><strong>Mid-run instructions</strong> — send text to steer the agents</li>
+      <li><strong>Stagnation alerts</strong> — automatic notification when progress stalls</li>
+      <li><strong>Proactive confirmations</strong> — agents ask before making risky changes</li>
+    </ul>
+
+    <h2 id="slurm">Slurm / HPC</h2>
+    <p>ARK supports running experiments on Slurm-managed HPC clusters:</p>
+    <pre><code># config.yaml
+use_slurm: true
+slurm_job_prefix: EXP_       # Prefix for job names
+conda_env: my-env             # Conda environment to activate</code></pre>
+
+    <p>When <code>use_slurm: true</code>, the experimenter agent:</p>
+    <ol>
+      <li>Generates Slurm batch scripts with appropriate resource requests</li>
+      <li>Submits jobs via <code>sbatch</code></li>
+      <li>Monitors job status with <code>squeue</code></li>
+      <li>Collects results when jobs complete</li>
+    </ol>
+
+    <p>For non-Slurm environments, experiments run locally or on any SSH-accessible server.</p>
+
+    <h2 id="multi-model">Multi-Model Support</h2>
+    <p>ARK supports three AI backends. Set the model in <code>config.yaml</code> or via CLI:</p>
+    <table>
+      <tr><th>Model</th><th>CLI</th><th>Best For</th></tr>
+      <tr><td>Claude Code</td><td><code>claude</code></td><td>Best overall quality, recommended for paper writing</td></tr>
+      <tr><td>Gemini CLI</td><td><code>gemini</code></td><td>Research phase, literature survey</td></tr>
+      <tr><td>Codex CLI</td><td><code>codex</code></td><td>Code-heavy experiments</td></tr>
+    </table>
+
+    <pre><code># Switch model for a specific run
+python -m ark.orchestrator --project my-project --model gemini</code></pre>
+
+    <h2 id="state-management">State Management</h2>
+    <p>All runtime state lives under <code>&lt;code_dir&gt;/auto_research/</code>:</p>
+    <pre><code>auto_research/
+├── state/
+│   ├── paper_state.yaml      # Current paper metadata
+│   ├── action_plan.yaml      # Current action plan from planner
+│   ├── latest_review.md      # Most recent review output
+│   ├── memory.yaml           # Score history, stagnation tracking
+│   ├── checkpoint.yaml       # Resume checkpoint
+│   └── findings.yaml         # Accumulated research findings
+└── logs/
+    └── *.log                  # Per-iteration agent logs</code></pre>
+
+    <h3>Checkpointing &amp; Resume</h3>
+    <p>ARK automatically checkpoints after each iteration. If a run is interrupted, simply run <code>ark run</code> again — it will resume from the last checkpoint.</p>
+
+    <h3>Fresh Start</h3>
+    <p>To restart from scratch, clear the state files:</p>
+    <pre><code>rm -f auto_research/state/checkpoint.yaml \
+      auto_research/state/paper_state.yaml \
+      auto_research/state/action_plan.yaml \
+      auto_research/state/latest_review.md \
+      auto_research/state/memory.yaml</code></pre>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+
+    <h3>LaTeX compilation fails</h3>
+    <p>Ensure <code>pdflatex</code> and <code>bibtex</code> are installed. On Ubuntu:</p>
+    <pre><code>sudo apt install texlive-full</code></pre>
+
+    <h3>Agent times out or fails</h3>
+    <p>Check the agent logs under <code>auto_research/logs/</code>. Common causes:</p>
+    <ul>
+      <li>Claude Code CLI not authenticated — run <code>claude</code> and complete login</li>
+      <li>Rate limiting — ARK has built-in retry with backoff</li>
+      <li>Insufficient context — try simplifying the goal anchor</li>
+    </ul>
+
+    <h3>Score stuck / stagnation</h3>
+    <p>If the reviewer score plateaus:</p>
+    <ol>
+      <li>Check <code>auto_research/state/latest_review.md</code> for the specific issues</li>
+      <li>Send a targeted instruction via <code>ark update</code> or Telegram</li>
+      <li>Consider adjusting agent prompts in <code>projects/&lt;name&gt;/agents/</code></li>
+    </ol>
+
+    <h3>Pipeline won't start</h3>
+    <ul>
+      <li>Verify <code>config.yaml</code> paths are absolute and exist</li>
+      <li>Check that the selected model CLI is installed: <code>which claude</code></li>
+      <li>Run <code>ark status &lt;project&gt;</code> for diagnostic output</li>
+    </ul>
+
+    <div class="callout" style="margin-top:3rem">
+      <strong>Need help?</strong> Open an issue on <a href="https://github.com/kaust-ark/ARK/issues" target="_blank">GitHub</a> or check the <a href="https://github.com/kaust-ark/ARK/blob/main/README.md" target="_blank">README</a> for the latest updates.
+    </div>
+  </main>
+</div>
+
+<!-- ===== Footer ===== -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-brand">
+      <img src="assets/logo_ark_transparent.png" alt="ARK">
+      ARK
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener">GitHub</a>
+      <a href="doc.html">Docs</a>
+      <a href="https://github.com/kaust-ark/ARK/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0 License</a>
+    </div>
+    <p class="footer-note">Built with <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">Claude Code</a></p>
+  </div>
+</footer>
+
+<script>
+// Navbar scroll effect
+const navbar = document.getElementById('navbar');
+window.addEventListener('scroll', () => {
+  navbar.classList.toggle('scrolled', window.scrollY > 20);
+});
+
+// Mobile hamburger
+const hamburger = document.getElementById('hamburger');
+const navLinks = document.getElementById('navLinks');
+hamburger?.addEventListener('click', () => {
+  hamburger.classList.toggle('open');
+  navLinks.classList.toggle('open');
+});
+
+// Active sidebar link tracking
+const sections = document.querySelectorAll('.doc-content h2[id], .doc-content h3[id]');
+const sidebarLinks = document.querySelectorAll('.doc-sidebar a');
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      sidebarLinks.forEach(link => link.classList.remove('active'));
+      const activeLink = document.querySelector(`.doc-sidebar a[href="#${entry.target.id}"]`);
+      if (activeLink) activeLink.classList.add('active');
+    }
+  });
+}, { rootMargin: '-80px 0px -60% 0px' });
+
+sections.forEach(section => observer.observe(section));
+</script>
+</body>
+</html>
