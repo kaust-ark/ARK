@@ -3340,6 +3340,28 @@ def _cmd_webapp_release(args):
     print(f"  Prod: {_c(f'http://0.0.0.0:{_PROD_PORT}', Colors.CYAN)}")
 
 
+def cmd_access(args):
+    """Manage the Cloudflare Access allowlist for idea2paper.org/dashboard."""
+    from ark import access as _access
+    sub = getattr(args, 'access_cmd', None)
+    try:
+        if sub == 'list' or sub is None:
+            return _access.cmd_list()
+        if sub == 'add':
+            return _access.cmd_add(args.emails)
+        if sub == 'remove':
+            return _access.cmd_remove(args.emails)
+        if sub == 'add-domain':
+            return _access.cmd_add_domain(args.domains)
+        if sub == 'remove-domain':
+            return _access.cmd_remove_domain(args.domains)
+    except RuntimeError as e:
+        print(f"{_c('Error:', Colors.RED)} {e}", file=sys.stderr)
+        return 1
+    print(f"{_c('Unknown subcommand:', Colors.RED)} {sub}", file=sys.stderr)
+    return 1
+
+
 def cmd_webapp(args):
     """Start the ARK web app (lab-facing project submission portal)."""
     subcmd = getattr(args, 'webapp_cmd', None)
@@ -4061,6 +4083,23 @@ def main():
     p_webapp.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
     p_webapp.add_argument("--daemon", action="store_true", help="Run in background (deprecated, use 'install')")
     p_webapp.set_defaults(func=cmd_webapp)
+
+    # ark access — manage the Cloudflare Access allowlist for /dashboard
+    p_access = subparsers.add_parser(
+        "access",
+        help="Manage CF Access allowlist for idea2paper.org/dashboard",
+    )
+    access_sub = p_access.add_subparsers(dest="access_cmd")
+    access_sub.add_parser("list", help="Show current allowed emails and domains")
+    p_acc_add = access_sub.add_parser("add", help="Add email(s) to allowlist")
+    p_acc_add.add_argument("emails", nargs="+", help="Email address(es)")
+    p_acc_rm = access_sub.add_parser("remove", help="Remove email(s) from allowlist")
+    p_acc_rm.add_argument("emails", nargs="+", help="Email address(es)")
+    p_acc_ad = access_sub.add_parser("add-domain", help="Add email domain (e.g. kaust.edu.sa)")
+    p_acc_ad.add_argument("domains", nargs="+", help="Domain(s), with or without leading @")
+    p_acc_rd = access_sub.add_parser("remove-domain", help="Remove email domain")
+    p_acc_rd.add_argument("domains", nargs="+", help="Domain(s)")
+    p_access.set_defaults(func=cmd_access)
 
     # ark cite-check
     p_cite_check = subparsers.add_parser("cite-check", help="Verify project citations against DBLP/CrossRef")
