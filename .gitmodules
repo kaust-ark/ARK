@@ -1,6 +1,3 @@
-[submodule "materials/references/openclaw"]
-	path = materials/references/openclaw
-	url = https://github.com/openclaw/openclaw.git
 [submodule "submodules/PaperBanana"]
 	path = submodules/PaperBanana
 	url = https://github.com/dwzhu-pku/PaperBanana.git
