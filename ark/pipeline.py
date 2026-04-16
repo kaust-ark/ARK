@@ -544,11 +544,15 @@ Notes:
         self.record_score_to_memory(score)
 
         # ── Pre-delivery checks (all hard guarantees) ──
+        # Order matters: citation verification can add [NEEDS-CHECK] markers
+        # that push the paper over the page limit, so enforce page count AFTER
+        # citation verification.
         self.log_step("Pre-delivery checks...", "progress")
         self._ensure_clearpage_before_bibliography()
         self._ensure_float_barrier()
         self.compile_latex()
         self._fix_overfull(context="pre-delivery")
+        self._run_citation_verification()
         try:
             self._enforce_page_count(context="pre-delivery")
         except QuotaExhaustedError as e:
@@ -570,14 +574,6 @@ Notes:
             )
             RateLimitCountdown(wait_time).run()
             return True  # continue to retry
-        self._run_citation_verification()
-
-        # Re-enforce page count after citation verification:
-        # [NEEDS-CHECK] markers can push the paper over the limit.
-        try:
-            self._enforce_page_count(context="post-citation")
-        except QuotaExhaustedError:
-            self.log("Post-citation page enforcement hit quota; delivering as-is", "WARN")
 
         # Send iteration summary + PDF to Telegram
         self.send_iteration_summary(score, current_score, review_output)
@@ -2009,9 +2005,12 @@ Produce the complete paper. Do not stop until all sections are written and it co
         )
 
         if draft_compiled:
+            # Order matters: run citation verification BEFORE page enforcement
+            # so [NEEDS-CHECK] markers are counted in the final page budget.
             self._ensure_float_barrier()
             self.compile_latex()
             self._fix_overfull(context="dev-phase-delivery")
+            self._run_citation_verification()
             try:
                 self._enforce_page_count(context="dev-phase-delivery")
             except QuotaExhaustedError as e:
@@ -2029,12 +2028,6 @@ Produce the complete paper. Do not stop until all sections are written and it co
                 RateLimitCountdown(wait_time).run()
                 self._quota_exhausted = False  # Reset for retry
                 self._enforce_page_count(context="dev-phase-delivery-retry")
-            self._run_citation_verification()
-            # Re-enforce page count: citation [NEEDS-CHECK] markers can push over limit
-            try:
-                self._enforce_page_count(context="dev-phase-post-citation")
-            except QuotaExhaustedError:
-                self.log("Dev-phase post-citation page enforcement hit quota; delivering as-is", "WARN")
 
         if draft_compiled and self.telegram.is_configured:
             pdf_path = self.latex_dir / "main.pdf"
