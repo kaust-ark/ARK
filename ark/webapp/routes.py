@@ -1434,7 +1434,7 @@ async def api_restart_project(project_id: str, request: Request):
         if body.get("idea"):
             project.idea = body["idea"]
             # Clear title so it gets auto-regenerated for the new idea
-            project.title = None
+            project.title = ""
         if body.get("venue"):
             project.venue = body["venue"]
         if body.get("venue_format"):
