@@ -505,6 +505,16 @@ def create_app():
 
     # ── Outer app (homepage + dashboard mount) ─────────────────────────
     outer = FastAPI(title="ARK Research Portal", lifespan=lifespan)
+
+    # Starlette's Mount matches /dashboard/ but NOT bare /dashboard (it
+    # passes empty string to the sub-app which 404s). Register a redirect
+    # BEFORE the mount so /dashboard → /dashboard/ works.
+    from fastapi.responses import RedirectResponse as _Redir
+
+    @outer.get(DASHBOARD_PREFIX)
+    async def _dashboard_redirect():
+        return _Redir(DASHBOARD_PREFIX + "/", status_code=301)
+
     outer.mount(DASHBOARD_PREFIX, dashboard)
 
     # Serve the static homepage as catch-all at /. Must be mounted LAST
