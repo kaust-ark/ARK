@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import os
 import secrets
-import socket
 from pathlib import Path
 
-from ark.paths import get_ark_root, get_config_dir
+from ark.paths import get_ark_root, get_config_dir, get_primary_ip
 
 
 def _env_file() -> Path:
     return get_config_dir() / "webapp.env"
 
 _DEFAULTS = {
-    "BASE_URL": f"http://{socket.gethostname()}:9527",
+    "BASE_URL": f"http://{get_primary_ip()}:9527",
     "EMAIL_DOMAINS": "",
     "SMTP_HOST": "smtp.gmail.com",
     "SMTP_PORT": "587",
@@ -53,14 +52,14 @@ def _load_env_file() -> dict[str, str]:
 
 def _write_default_env():
     """Create .ark/webapp.env with placeholder values on first run."""
-    hostname = socket.gethostname()
+    ip = get_primary_ip()
     _root = get_ark_root()
     _config_dir = get_config_dir()
     content = f"""\
 # ARK Web App configuration
 # Edit this file, then restart: ark webapp
 
-BASE_URL=http://{hostname}:9527
+BASE_URL=http://{ip}:9527
 
 # SMTP — required for magic link login
 SMTP_HOST=smtp.gmail.com

@@ -33,3 +33,21 @@ def get_config_dir() -> Path:
     d = get_ark_root() / ".ark"
     d.mkdir(exist_ok=True)
     return d
+
+
+def get_primary_ip() -> str:
+    """Return the IP of the interface that routes outbound traffic.
+
+    Uses socket.connect() on a UDP socket — no packet is sent, but the kernel
+    resolves the source IP for the route to 8.8.8.8. More reliable than
+    socket.gethostname() on hosts where the hostname resolves to 127.0.1.1.
+    """
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        return socket.gethostname()
+    finally:
+        s.close()

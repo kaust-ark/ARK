@@ -3067,7 +3067,8 @@ def _check_linger():
 def _cmd_webapp_install(host: str, port: int, dev: bool = False):
     """Install and start ARK webapp as a systemd user service."""
     import subprocess as _sp
-    import socket as _socket
+
+    from ark.paths import get_primary_ip
 
     # Shared data directory for both dev and prod
     data_dir = get_ark_root() / ".ark" / "data"
@@ -3111,7 +3112,6 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
             prod_env_link.symlink_to(main_env)
 
     # Environment variables for systemd service
-    hostname = _socket.gethostname()
     env_vars = {
         "ARK_WEBAPP_DB_PATH": str(db_path),
         "PROJECTS_ROOT": str(data_dir / "projects"),
@@ -3119,7 +3119,7 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
 
     if dev:
         env_vars["ARK_SESSION_COOKIE"] = "session_dev"
-        env_vars["BASE_URL"] = f"http://{hostname}:{port}"
+        env_vars["BASE_URL"] = f"http://{get_primary_ip()}:{port}"
         # Load dev-only env overrides
         dev_env_file = get_config_dir() / "webapp-dev.env"
         if not dev_env_file.exists():
