@@ -3111,14 +3111,12 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
         if main_env.exists() and not prod_env_link.exists():
             prod_env_link.symlink_to(main_env)
 
-    # Environment variables for systemd service
-    # ARK_ROOT_PATH mounts the webapp under a URL path prefix behind the CF
-    # Tunnel (idea2paper.org/dashboard/*). The strip-prefix middleware makes
-    # this transparent to the app, so BASE_URL stays a bare origin.
+    # Environment variables for systemd service.
+    # Dashboard mount prefix is hardcoded in website/dashboard/constants.py
+    # (DASHBOARD_PREFIX = "/dashboard") — no env var needed.
     env_vars = {
         "ARK_WEBAPP_DB_PATH": str(db_path),
         "PROJECTS_ROOT": str(data_dir / "projects"),
-        "ARK_ROOT_PATH": "/dashboard",
     }
 
     if dev:
@@ -3148,9 +3146,8 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
                 k, _, v = line.partition("=")
                 env_vars[k.strip()] = v.strip()
     else:
-        # Prod BASE_URL is the public origin; /dashboard prefix is added by
-        # ARK_ROOT_PATH, so anything building a full URL uses BASE_URL +
-        # ARK_ROOT_PATH + /path.
+        # Prod BASE_URL is the public origin; /dashboard prefix comes from
+        # DASHBOARD_PREFIX constant in website/dashboard/constants.py.
         env_vars["BASE_URL"] = "https://idea2paper.org"
 
     svc_path = _service_file_path(svc_name)

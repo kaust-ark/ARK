@@ -105,8 +105,9 @@ _templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
 
 def _app_base() -> str:
-    """URL path prefix, e.g. '/dashboard' or ''. Set via ARK_ROOT_PATH env."""
-    return os.environ.get("ARK_ROOT_PATH", "")
+    """URL path prefix, e.g. '/dashboard'. Sourced from constants.py."""
+    from .constants import DASHBOARD_PREFIX
+    return DASHBOARD_PREFIX
 
 
 def _home_path() -> str:
@@ -115,12 +116,11 @@ def _home_path() -> str:
 
 
 def _absolute_url(path: str) -> str:
-    """Build an external URL by combining BASE_URL + ARK_ROOT_PATH + path.
+    """Build an external URL: BASE_URL + DASHBOARD_PREFIX + path.
 
-    Used for URLs that must be delivered outside the request context:
+    Used for URLs delivered outside the browser request context:
     magic link emails, OAuth redirect URIs, Telegram notifications.
-    BASE_URL is the origin (e.g. https://idea2paper.org); _app_base is the
-    path prefix (e.g. /dashboard). `path` should start with '/'.
+    `path` should start with '/'.
     """
     return f"{get_settings().base_url}{_app_base()}{path}"
 
@@ -764,8 +764,7 @@ async def _start_project_async(
             return
         token = project.telegram_token
         chat_id = project.telegram_chat_id
-        # Build public URL honoring root_path (e.g. /dashboard)
-        url = f"{settings.base_url}{os.environ.get('ARK_ROOT_PATH', '')}/#project/{project_id}"
+        url = f"{settings.base_url}{_app_base()}/#project/{project_id}"
 
     send_telegram_notify(
         f"🛠️ <b>{_pname(project)}</b> initializing…",
@@ -843,14 +842,12 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
 
 @router.get("/", response_class=HTMLResponse, name="index")
 async def index(request: Request):
-    # app_base is the URL path prefix (e.g., "/dashboard"); empty when served
-    # without a prefix. Read from the custom scope key set by
-    # StripPathPrefixMiddleware — we avoid scope["root_path"] because that
-    # breaks Starlette's StaticFiles mount.
+    # app_base = scope["root_path"], set to "/dashboard" by Starlette's
+    # native Mount. Used by the Jinja template for APP_BASE injection.
     return _templates.TemplateResponse(
         request,
         "app.html",
-        {"app_base": request.scope.get("ark_root_path", "")},
+        {"app_base": request.scope.get("root_path", "")},
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
@@ -875,10 +872,8 @@ async def auth_send_link(request: Request):
             raise HTTPException(403, f"Email domain not allowed. Allowed: {', '.join(settings.email_domains)}")
 
     token = make_token(email, settings.secret_key)
-    # Build absolute magic-link URL from settings.base_url + ARK_ROOT_PATH.
-    # Using request.url_for would produce http://localhost:9527/... because
-    # Starlette doesn't update scope['server'] from X-Forwarded-Host, so we
-    # construct explicitly from the known-good BASE_URL origin.
+    # Build absolute URL from BASE_URL + DASHBOARD_PREFIX. request.url_for
+    # would produce http://localhost:9527/... (wrong host behind proxy).
     link = _absolute_url(f"/auth/verify?token={token}")
 
     print(f"\n  *** MAGIC LINK for {email} ***\n  {link}\n", flush=True)
