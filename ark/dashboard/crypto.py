@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 def _get_fernet(user_id: str) -> Fernet:
     """Derive a user-specific Fernet key using PBKDF2HMAC."""
-    from ark.webapp.config import get_settings
+    from ark.dashboard.config import get_settings
     settings = get_settings()
     
     # PBKDF2HMAC is a high-security key derivation function.

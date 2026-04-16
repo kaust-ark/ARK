@@ -17,7 +17,7 @@ from .jobs import poll_job, slurm_state_to_status, launch_local_job, poll_local_
 from .notify import send_completion_email, send_telegram_notify
 from .routes import router
 
-logger = logging.getLogger("ark.webapp")
+logger = logging.getLogger("ark.dashboard")
 
 _log_mtimes: dict[str, float] = {}   # project_id → last log mtime
 
@@ -445,7 +445,7 @@ async def lifespan(app: FastAPI):
     get_engine(settings.db_path)
 
     # Migrate existing project data: populate new DB columns from YAML state files
-    from ark.webapp.db import migrate_project_data
+    from ark.dashboard.db import migrate_project_data
     try:
         migrate_project_data(settings.db_path, str(settings.projects_root))
         logger.info("Project data migration completed.")

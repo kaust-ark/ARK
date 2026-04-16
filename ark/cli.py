@@ -816,7 +816,7 @@ def _setup_latex_template(code_dir: str, config: dict):
     print(f"{_c('LaTeX Template Setup', Colors.BOLD)}")
 
     # Try bundled venue_templates/ first (same as webapp)
-    from ark.webapp.templates import has_venue_template, copy_venue_template
+    from ark.dashboard.templates import has_venue_template, copy_venue_template
     downloaded = False
 
     _, required = _resolve_template_urls(venue_format)
@@ -1594,7 +1594,7 @@ def _finalize_project(name: str, project_dir: Path, config: dict,
     # ── Register project in webapp DB ──────────────────────────
     project_id = None
     try:
-        from ark.webapp.db import (resolve_db_path, get_session,
+        from ark.dashboard.db import (resolve_db_path, get_session,
                                    get_or_create_user_by_email, create_project as db_create_project)
         import getpass
         db_path = resolve_db_path()
@@ -1876,13 +1876,13 @@ def cmd_run(args):
     project_id = config.get("_project_id", "")
     if not db_path:
         try:
-            from ark.webapp.db import resolve_db_path
+            from ark.dashboard.db import resolve_db_path
             db_path = resolve_db_path()
         except Exception:
             pass
     if not project_id and db_path and Path(db_path).exists():
         try:
-            from ark.webapp.db import get_session, get_project_by_name
+            from ark.dashboard.db import get_session, get_project_by_name
             with get_session(db_path) as session:
                 p = get_project_by_name(session, name)
                 if p:
@@ -1892,7 +1892,7 @@ def cmd_run(args):
 
     # Launch orchestrator in background, preferring per-project conda env
     try:
-        from ark.webapp.jobs import (
+        from ark.dashboard.jobs import (
             find_conda_binary, project_env_ready, project_env_prefix,
         )
         conda_bin = find_conda_binary()
@@ -3357,8 +3357,8 @@ def cmd_webapp(args):
 
     try:
         import uvicorn
-        from ark.webapp import create_app
-        from ark.webapp.config import get_settings, _env_file
+        from ark.dashboard import create_app
+        from ark.dashboard.config import get_settings, _env_file
     except ImportError:
         print(f"{_c('Error:', Colors.RED)} Webapp dependencies not installed.")
         print(f"  Install with: {_c('pip install ark-research[webapp]', Colors.BOLD)}")
@@ -3428,8 +3428,8 @@ def cmd_web(args):
     def _submit(pid, mode, max_iter, user_id, con):
         """Try SLURM submit; fallback to 'local'. Returns new job_id."""
         if _sh.which("sbatch"):
-            from ark.webapp.config import get_settings
-            from ark.webapp.jobs import submit_job
+            from ark.dashboard.config import get_settings
+            from ark.dashboard.jobs import submit_job
             settings = get_settings()
             pdir = settings.projects_root / user_id / pid
             log_dir = pdir / "logs"

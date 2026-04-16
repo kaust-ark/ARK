@@ -18,7 +18,7 @@ from typing import Optional
 import os
 import subprocess
 
-logger = logging.getLogger("ark.webapp.routes")
+logger = logging.getLogger("ark.dashboard.routes")
 
 MAX_PROJECTS_PER_USER = 10
 MAX_ITER_PER_START = 3
@@ -1062,7 +1062,7 @@ async def api_save_user_settings(request: Request):
 
 
     # Run verification suite
-    from ark.webapp.utils.verify import run_verification_suite
+    from ark.dashboard.utils.verify import run_verification_suite
     settings = get_settings()
 
     # Mutual exclusion check: Anthropic API Key OR Claude CLI Session

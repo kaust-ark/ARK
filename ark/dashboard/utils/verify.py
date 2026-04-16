@@ -109,7 +109,7 @@ def verify_claude_cli(user_id: str, projects_root: Path, keys: Dict[str, str]) -
     
     try:
         # Detect version for .claude.json
-        from ark.webapp.jobs import get_claude_version
+        from ark.dashboard.jobs import get_claude_version
         version = get_claude_version()
         
         # 2. Provision session file
@@ -126,7 +126,7 @@ def verify_claude_cli(user_id: str, projects_root: Path, keys: Dict[str, str]) -
         # systemd's bare PATH doesn't include ~/.nvm/.../bin where the claude
         # CLI lives, so resolve it explicitly and enrich PATH so claude itself
         # can find node, etc.
-        from ark.webapp.jobs import find_claude_binary, build_subprocess_path
+        from ark.dashboard.jobs import find_claude_binary, build_subprocess_path
         env["PATH"] = build_subprocess_path()
         env["PYTHONNOUSERSITE"] = "1"
         # Isolate HOME so this verification can't pick up any other user's
@@ -188,7 +188,7 @@ def verify_gemini_cli(user_id: str, projects_root: Path, keys: Dict[str, str]) -
     (gemini_dir / "projects.json").write_text('{"projects":{}}')
 
     try:
-        from ark.webapp.jobs import find_gemini_binary, build_subprocess_path
+        from ark.dashboard.jobs import find_gemini_binary, build_subprocess_path
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         env["GEMINI_API_KEY"] = api_key
         env["PATH"] = build_subprocess_path()
@@ -250,7 +250,7 @@ def verify_gemini_oauth(user_id: str, projects_root: Path, keys: Dict[str, str])
     verify_dir.mkdir(parents=True, exist_ok=True)
     
     try:
-        from ark.webapp.jobs import find_gemini_binary, build_subprocess_path, provision_gemini_session
+        from ark.dashboard.jobs import find_gemini_binary, build_subprocess_path, provision_gemini_session
         env = os.environ.copy()
         env["PATH"] = build_subprocess_path()
         env["PYTHONNOUSERSITE"] = "1"

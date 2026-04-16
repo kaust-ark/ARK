@@ -5,7 +5,7 @@ setup(
     version="0.1.1",
     packages=find_packages(include=["ark*"]),
     package_data={
-        "ark": ["templates/**/*", "webapp/static/*", "webapp/slurm_template.sh"],
+        "ark": ["templates/**/*", "dashboard/static/*", "dashboard/templates/*", "dashboard/slurm_template.sh"],
     },
     install_requires=["pyyaml>=6.0"],
     extras_require={
