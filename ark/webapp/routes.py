@@ -87,7 +87,6 @@ from .jobs import (
     launch_local_job,
     project_env_prefix,
     project_env_ready,
-    provision_project_env,
     slurm_available,
     slurm_state_to_status,
     submit_job,
@@ -365,18 +364,39 @@ def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
 
 
-def _clean_project_state(project_dir: Path, keep_deep_research: bool = True, keep_figures: bool = False):
+def _substitute_agent_templates(project_dir: Path, project_id: str, title: str,
+                                 venue_name: str, venue_format: str, venue_pages: int):
+    """Copy agent prompt templates into <project_dir>/agents/, substituting
+    project-specific variables. Used by both create and restart flows.
+    """
+    agents_dir = project_dir / "agents"
+    agents_dir.mkdir(exist_ok=True)
+    templates_dir = Path(__file__).parent.parent / "templates" / "agents"
+    if not templates_dir.exists():
+        return
+    for pf in templates_dir.glob("*.prompt"):
+        content = pf.read_text()
+        content = content.replace("{PROJECT_NAME}", project_id)
+        content = content.replace("{PAPER_TITLE}", title or project_id)
+        content = content.replace("{VENUE_NAME}", venue_name)
+        content = content.replace("{VENUE_FORMAT}", venue_format or "neurips")
+        content = content.replace("{VENUE_PAGES}", str(venue_pages))
+        content = content.replace("{LATEX_DIR}", "paper")
+        content = content.replace("{FIGURES_DIR}", "paper/figures")
+        (agents_dir / pf.name).write_text(content)
+
+
+def _clean_project_state(project_dir: Path):
     """Remove all generated state/results for a fresh restart.
 
-    Preserves: config.yaml, uploaded.pdf, venue template files (.cls/.sty/.bst),
-    agent prompts, and optionally deep_research.md/pdf and paper/figures/.
+    Preserves: config.yaml, uploaded.pdf, venue template files (.cls/.sty/.bst).
+    If the caller wants to keep deep_research or figures across a restart, they
+    must copy those out before calling this function and restore them after.
     """
     # Clean auto_research/state/
     state_dir = project_dir / "auto_research" / "state"
     if state_dir.exists():
         for f in state_dir.iterdir():
-            if keep_deep_research and f.name.startswith("deep_research"):
-                continue
             if f.is_file():
                 f.unlink()
 
@@ -400,10 +420,8 @@ def _clean_project_state(project_dir: Path, keep_deep_research: bool = True, kee
         for f in paper_dir.iterdir():
             if f.is_dir():
                 if f.name == "figures":
-                    if not keep_figures:
-                        shutil.rmtree(f, ignore_errors=True)
-                        f.mkdir(exist_ok=True)
-                    # else: preserve fig_*.png, concept_figures.json, figure_manifest.json
+                    shutil.rmtree(f, ignore_errors=True)
+                    f.mkdir(exist_ok=True)
             elif f.suffix not in keep_exts:
                 f.unlink()
 
@@ -411,6 +429,11 @@ def _clean_project_state(project_dir: Path, keep_deep_research: bool = True, kee
     scripts_dir = project_dir / "scripts"
     if scripts_dir.exists():
         shutil.rmtree(scripts_dir, ignore_errors=True)
+
+    # Clean agents/ so initializer re-specializes each prompt
+    agents_dir = project_dir / "agents"
+    if agents_dir.exists():
+        shutil.rmtree(agents_dir, ignore_errors=True)
 
     # Remove .git (will be re-initialized)
     git_dir = project_dir / ".git"
@@ -618,7 +641,7 @@ def _read_paper_title(project_dir: Path) -> str:
                     return title
         except Exception:
             pass
-    # Fallback: config.yaml title (set by _generate_title_if_needed)
+    # Fallback: config.yaml title (set by pipeline _update_title_from_idea)
     cfg = project_dir / "config.yaml"
     if cfg.exists():
         try:
@@ -693,20 +716,20 @@ def _write_user_update(project_dir: Path, message: str, source: str = "webapp"):
     f.write_text(yaml.dump({"updates": updates}, allow_unicode=True))
 
 
-async def _provision_env_then_submit(
+async def _start_project_async(
     project_id: str,
     user_id: str,
     template_available: bool,
     is_admin: bool,
 ):
     """
-    Background task: clone the base conda env into <pdir>/.env, then either
-    submit the project or move it to waiting_template. Drives the project
-    through the ``initializing`` status and pushes Telegram updates.
+    Background task: notify the user the project is initializing, then either
+    transition to ``waiting_template`` or submit the pipeline job. The pipeline
+    itself now owns conda env provisioning (Research Phase Step 0), so the
+    webapp no longer blocks on cloning ``ark-base`` here.
     """
     settings = get_settings()
     pdir = _project_dir(settings, user_id, project_id)
-    base_env = settings.project_base_conda_env
 
     # Pull current Telegram credentials so we can notify on outcomes.
     with get_session(settings.db_path) as session:
@@ -718,39 +741,15 @@ async def _provision_env_then_submit(
         url = f"{settings.base_url}/#project/{project_id}"
 
     send_telegram_notify(
-        f"🛠️ <b>{_pname(project)}</b> initializing — cloning conda env "
-        f"<code>{base_env}</code>…",
+        f"🛠️ <b>{_pname(project)}</b> initializing…",
         bot_token=token, chat_id=chat_id,
     )
 
-    if not base_env:
-        # Provisioning disabled — skip env creation, behave like the legacy path.
-        success, message = True, "per-project env disabled (PROJECT_BASE_CONDA_ENV='')"
-    else:
-        success, message = await asyncio.to_thread(
-            provision_project_env, pdir, base_env,
-            pdir / "logs" / "env_provision.log",
-        )
-
-    logger.info(f"Project {project_id} env provision: success={success} msg={message}")
-
-    if not success:
-        with get_session(settings.db_path) as session:
-            project = get_project(session, project_id)
-            if project and project.status == "initializing":
-                update_project(session, project, status="failed")
-        send_telegram_notify(
-            f"❌ <b>{_pname(project)}</b> env provisioning failed: {message}",
-            bot_token=token, chat_id=chat_id,
-        )
-        return
-
-    # Env is ready — transition out of initializing.
+    # User may have stopped/deleted in between. Don't override.
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
         if not project:
             return
-        # User may have stopped/deleted while we were cloning. Don't override.
         if project.status != "initializing":
             logger.info(f"Project {project_id} no longer initializing (now {project.status}); skipping submit")
             return
@@ -758,29 +757,27 @@ async def _provision_env_then_submit(
         if not template_available:
             update_project(session, project, status="waiting_template")
             send_telegram_notify(
-                f"📦 <b>{_pname(project)}</b> env ready — {message}.\n"
-                f"Now waiting for a <b>{project.venue}</b> LaTeX template "
-                f"(reply with a .zip link).",
+                f"📦 <b>{_pname(project)}</b> waiting for a <b>{project.venue}</b> "
+                f"LaTeX template (reply with a .zip link).",
                 bot_token=token, chat_id=chat_id,
             )
             return
 
-        # Submit normally (or queue if another project is active).
         try:
             final_status = _try_submit_or_pending(
                 project, pdir, session, settings, is_admin=is_admin,
             )
         except Exception as e:
-            logger.error(f"Submit-after-provision failed for {project_id}: {e}")
+            logger.error(f"Submit failed for {project_id}: {e}")
             update_project(session, project, status="failed")
             send_telegram_notify(
-                f"❌ <b>{_pname(project)}</b> submission failed after env ready: {e}",
+                f"❌ <b>{_pname(project)}</b> submission failed: {e}",
                 bot_token=token, chat_id=chat_id,
             )
             return
 
     send_telegram_notify(
-        f"🔬 <b>{_pname(project)}</b> env ready ({message}) — {final_status}\n"
+        f"🔬 <b>{_pname(project)}</b> {final_status}\n"
         f"Venue: {project.venue} · {project.max_iterations} iter\n"
         f"<a href='{url}'>{url}</a>",
         bot_token=token, chat_id=chat_id,
@@ -1235,21 +1232,12 @@ async def api_create_project(
             (paper_dir / "figures").mkdir(exist_ok=True)
 
     # Copy agent prompt templates (with variable substitution)
-    agents_dir = pdir / "agents"
-    agents_dir.mkdir(exist_ok=True)
-    _templates_dir = Path(__file__).parent.parent / "templates" / "agents"
-    if _templates_dir.exists():
-        venue_name = venue or venue_format or "NeurIPS"
-        for _pf in _templates_dir.glob("*.prompt"):
-            _content = _pf.read_text()
-            _content = _content.replace("{PROJECT_NAME}", project_id)
-            _content = _content.replace("{PAPER_TITLE}", title or project_id)
-            _content = _content.replace("{VENUE_NAME}", venue_name)
-            _content = _content.replace("{VENUE_FORMAT}", venue_format or "neurips")
-            _content = _content.replace("{VENUE_PAGES}", str(venue_pages))
-            _content = _content.replace("{LATEX_DIR}", "paper")
-            _content = _content.replace("{FIGURES_DIR}", "paper/figures")
-            (agents_dir / _pf.name).write_text(_content)
+    _substitute_agent_templates(
+        pdir, project_id, title,
+        venue_name=venue or venue_format or "NeurIPS",
+        venue_format=venue_format,
+        venue_pages=venue_pages,
+    )
 
     # New flow: every project starts in "initializing" while we clone its
     # per-project conda env in the background. The background task then
@@ -1304,10 +1292,10 @@ async def api_create_project(
             _write_user_update(pdir, comment.strip(), source="webapp_create")
             _write_user_instructions(pdir, comment.strip(), source="webapp_create")
 
-    # Kick off env provisioning in the background. The task is responsible
-    # for sending Telegram updates and transitioning the project to its next
-    # status (queued/running/pending/waiting_template/failed).
-    asyncio.create_task(_provision_env_then_submit(
+    # Kick off submission in the background. The pipeline itself provisions
+    # the per-project conda env in Research Phase Step 0, so the webapp just
+    # transitions to queued/running/pending/waiting_template/failed.
+    asyncio.create_task(_start_project_async(
         project_id=project_id,
         user_id=user.id,
         template_available=template_available,
@@ -1449,14 +1437,46 @@ async def api_restart_project(project_id: str, request: Request):
             project.telegram_chat_id = body["telegram_chat_id"]
         project.score = 0.0
 
-        # Clean up project state for fresh restart
+        # Clean up project state for fresh restart.
+        # Copy kept files into a backup dir, wipe everything, then restore.
+        # The main pipeline then detects which artifacts still exist and skips
+        # the corresponding steps — no per-flag branches downstream.
         redo_deep_research = body.get("redo_deep_research", False)
         keep_figures = body.get("keep_figures", False)
-        _clean_project_state(
-            pdir,
-            keep_deep_research=not redo_deep_research,
-            keep_figures=keep_figures,
-        )
+        backup_dir = pdir / ".ark-restart-backup"
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir, ignore_errors=True)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        state_dir = pdir / "auto_research" / "state"
+        if not redo_deep_research and state_dir.exists():
+            for f in state_dir.glob("deep_research*"):
+                if f.is_file():
+                    shutil.copy2(f, backup_dir / f.name)
+
+        figures_src = pdir / "paper" / "figures"
+        if keep_figures and figures_src.exists():
+            shutil.copytree(figures_src, backup_dir / "figures", dirs_exist_ok=True)
+
+        _clean_project_state(pdir)
+
+        # Restore preserved artifacts from backup
+        state_dir.mkdir(parents=True, exist_ok=True)
+        for f in backup_dir.glob("deep_research*"):
+            if f.is_file():
+                shutil.move(str(f), state_dir / f.name)
+        backup_figures = backup_dir / "figures"
+        if backup_figures.exists():
+            figures_src.mkdir(parents=True, exist_ok=True)
+            for item in backup_figures.iterdir():
+                dest = figures_src / item.name
+                if dest.exists():
+                    if dest.is_dir():
+                        shutil.rmtree(dest)
+                    else:
+                        dest.unlink()
+                shutil.move(str(item), dest)
+        shutil.rmtree(backup_dir, ignore_errors=True)
 
         # Re-copy venue template (clean removed .bib/.tex template files)
         venue_fmt = body.get("venue_format") or project.venue_format or ""
@@ -1464,6 +1484,14 @@ async def api_restart_project(project_id: str, request: Request):
             paper_dir = pdir / "paper"
             paper_dir.mkdir(parents=True, exist_ok=True)
             copy_venue_template(venue_fmt, paper_dir)
+
+        # Re-substitute agent prompt templates (clean removed agents/)
+        _substitute_agent_templates(
+            pdir, project.id, project.title,
+            venue_name=project.venue or project.venue_format or "NeurIPS",
+            venue_format=project.venue_format,
+            venue_pages=project.venue_pages,
+        )
 
         # Rewrite config.yaml with updated settings
         model = body.get("model", "claude-sonnet-4-6")

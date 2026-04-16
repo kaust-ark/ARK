@@ -794,21 +794,27 @@ Notes:
 
         All sub-steps are idempotent — each checks if its output exists and skips if so.
 
+        Step 0: Setup
+            Provision per-project conda env at <project_dir>/.env (clones ark-base).
+            Idempotent: skipped if .env already exists.
+
         Step 1: Analyze Proposal
-            initializer reads uploaded PDF → idea.md + deep research query
+            initializer reads uploaded PDF / idea → idea.md (including a
+            suggested title) + deep research query. Title is parsed and
+            committed to config.yaml + DB immediately after this step so
+            Deep Research and Telegram UX have a real title.
 
         Step 2: Deep Research
             Gemini Deep Research API → deep_research.md → PDF sent to user via Telegram
 
         Step 3: Specialization
             initializer reads idea.md + deep_research.md →
-            3.1 determine title
-            3.2 generate project_context.md (web-verified)
-            3.3 specialize agent prompts (template + project knowledge → agents/ dir)
-            3.4 select skills from library
+            3.1 generate project_context.md (web-verified)
+            3.2 specialize agent prompts (template + project knowledge → agents/ dir)
+            3.3 select skills from library
 
         Step 4: Bootstrap
-            4.1 clone conda env (ark-base → .env/)
+            4.1 install builtin skills
             4.2 bootstrap citations → references.bib
         """
         self._sync_db(phase="research")
@@ -820,6 +826,27 @@ Notes:
                 f"<b>🔬 {self.display_name}</b>\nResearch Phase — analyzing proposal & building foundation...",
                 parse_mode="HTML",
             )
+
+        # ── Step 0: Setup (conda env provisioning) ──────────────────────
+        self.log_step_header(0, 4, "Setup")
+        try:
+            from ark.webapp.jobs import provision_project_env, project_env_ready
+            if not project_env_ready(self.code_dir):
+                base_env = self.config.get("base_conda_env", "ark-base")
+                self.log_step(f"Provisioning conda environment (cloning {base_env})...", "progress")
+                success, msg = provision_project_env(self.code_dir, base_env)
+                if success:
+                    self.log_step(f"Conda env ready: {msg}", "success")
+                else:
+                    # Hard fail: the whole pipeline depends on this env for
+                    # experiments. Surface the error; caller will mark failed.
+                    self.log_step(f"Conda env provisioning failed: {msg}", "error")
+                    raise RuntimeError(f"Conda env provisioning failed: {msg}")
+            else:
+                self.log_step("Conda env already exists", "success")
+        except ImportError as e:
+            self.log(f"Conda env provisioning skipped (webapp.jobs unavailable): {e}", "WARN")
+        self.log_step_header(0, 4, "Setup", "end")
 
         # ── Step 1: Analyze Proposal ────────────────────────────────────
         idea_file = self.state_dir / "idea.md"
@@ -885,6 +912,10 @@ Be thorough and faithful to the proposal.
             self.log_step_header(1, 4, "Analyze Proposal", "end")
         else:
             self.log_step("idea.md exists, skipping proposal analysis", "info")
+
+        # Commit the suggested title to config.yaml + DB now, before Deep
+        # Research, so the query and Telegram notifications use a real title.
+        self._update_title_from_idea()
 
         # ── Step 2: Deep Research ───────────────────────────────────────
         dr_file = self.state_dir / "deep_research.md"
@@ -969,20 +1000,14 @@ For EACH external system mentioned, you MUST search the web to verify:
 
 Write `auto_research/state/project_context.md` with sections:
 ## External Systems, ## Environment Setup, ## Experiment Guidance, ## Credentials & Access
-
-Also: if the current title "{self.config.get('title', '')}" is empty or a placeholder,
-write a suggested title as the first line: `# Title: <suggested title>`
 """, timeout=600)
             self.log_step("Project context generated", "success")
 
-            # 3.2: Update title from context if needed
-            self._update_title_from_context()
-
-            # 3.3: Specialize agent prompts (code-driven, one call per agent)
+            # 3.2: Specialize agent prompts (code-driven, one call per agent)
             self.log_step("Specializing agent prompts...", "progress")
             self._specialize_agent_prompts(idea_content, dr_content)
 
-            # 3.4: Select and install skills
+            # 3.3: Select and install skills
             self.log_step("Selecting skills...", "progress")
             skills_index = self._load_skills_index()
             if skills_index and "No skills" not in skills_index:
@@ -1008,26 +1033,10 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
         # ── Step 4: Bootstrap ───────────────────────────────────────────
         self.log_step_header(4, 4, "Bootstrap")
 
-        # 4.1: Conda environment
-        try:
-            from ark.webapp.jobs import provision_project_env, project_env_ready
-            if not project_env_ready(self.code_dir):
-                base_env = self.config.get("base_conda_env", "ark-base")
-                self.log_step(f"Provisioning conda environment (cloning {base_env})...", "progress")
-                success, msg = provision_project_env(self.code_dir, base_env)
-                if success:
-                    self.log_step(f"Conda env ready: {msg}", "success")
-                else:
-                    self.log_step(f"Conda env provisioning failed: {msg}", "warning")
-            else:
-                self.log_step("Conda env already exists", "success")
-        except Exception as e:
-            self.log(f"Conda env provisioning skipped: {e}", "WARN")
-
-        # 4.2: Install builtin skills (auto-inherited by all projects)
+        # 4.1: Install builtin skills (auto-inherited by all projects)
         self._install_builtin_skills()
 
-        # 4.3: Bootstrap citations
+        # 4.2: Bootstrap citations
         self._bootstrap_citations_from_deep_research()
 
         self.log_step_header(4, 4, "Bootstrap", "end")
@@ -1249,83 +1258,82 @@ for this specific project.
 
         self.log_step(f"Specialized {specialized_count}/{len(agent_focus)} agent prompts", "success")
 
-    def _update_title_from_context(self):
-        """Extract title from project_context.md if it starts with '# Title:'."""
-        ctx_file = self.state_dir / "project_context.md"
-        if not ctx_file.exists():
+    def _update_title_from_idea(self):
+        """Extract the suggested title from idea.md and commit it.
+
+        The initializer (Step 1) writes a ``### Suggested Title`` section in
+        ``auto_research/state/idea.md``. If the current project title is empty
+        or a placeholder, parse that section, update ``self.config['title']``,
+        write back to ``config.yaml``, and sync the DB. This makes the real
+        title available to Deep Research and to Telegram UX before they run.
+        """
+        idea_file = self.state_dir / "idea.md"
+        if not idea_file.exists():
             return
 
-        content = ctx_file.read_text()
-        if content.startswith("# Title:"):
-            title = content.split("\n", 1)[0].replace("# Title:", "").strip()
-            if title and not self.config.get("title"):
-                self.config["title"] = title
-                # Update config.yaml on disk
-                config_file = Path(self.code_dir).parent / "config.yaml"
-                if not config_file.exists():
-                    # Try project dir
-                    from ark.paths import get_ark_root
-                    config_file = get_ark_root() / "projects" / self.project_name / "config.yaml"
-                if config_file.exists():
-                    import yaml
-                    with open(config_file) as f:
-                        cfg = yaml.safe_load(f) or {}
-                    cfg["title"] = title
-                    with open(config_file, "w") as f:
-                        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-                    self._sync_db(title=title, name=title)
-                    self.log(f"Title updated: {title}", "INFO")
+        current = (self.config.get("title") or "").strip()
+        # Treat UUID-like or empty titles as placeholders we should overwrite.
+        is_placeholder = (
+            not current
+            or len(current) < 4
+            or re.fullmatch(r"[0-9a-fA-F-]{30,}", current) is not None
+        )
+        if not is_placeholder:
+            return
+
+        content = idea_file.read_text()
+        # Find the Suggested Title section. It may be a "### Suggested Title"
+        # header followed by one or more lines; capture the first non-empty
+        # non-instructional line.
+        m = re.search(r"^###\s+Suggested\s+Title\s*\n+(.+?)(?=^##|\Z)",
+                      content, re.MULTILINE | re.DOTALL | re.IGNORECASE)
+        if not m:
+            return
+        block = m.group(1).strip()
+        # Skip if the initializer said the current title is fine.
+        if "current title is appropriate" in block.lower():
+            return
+
+        # Take the first substantive line
+        new_title = ""
+        for line in block.splitlines():
+            line = line.strip().lstrip("#").lstrip("-").lstrip("*").strip()
+            line = line.strip("\"'")
+            # Skip obvious meta lines
+            if not line or line.lower().startswith(("title:", "suggested title")):
+                # For "Title: X" form, keep the X part
+                if ":" in line:
+                    after = line.split(":", 1)[1].strip().strip("\"'")
+                    if after and len(after) > 4:
+                        new_title = after
+                        break
+                continue
+            if len(line) < 4:
+                continue
+            new_title = line
+            break
+
+        if not new_title:
+            return
+
+        self.config["title"] = new_title
+        # Write to config.yaml on disk
+        config_path = self.code_dir / "config.yaml"
+        if config_path.exists():
+            try:
+                import yaml
+                cfg = yaml.safe_load(config_path.read_text()) or {}
+                cfg["title"] = new_title
+                config_path.write_text(
+                    yaml.dump(cfg, default_flow_style=False,
+                              allow_unicode=True, sort_keys=False)
+                )
+            except Exception as e:
+                self.log(f"Could not update config.yaml with new title: {e}", "WARN")
+        self._sync_db(title=new_title, name=new_title)
+        self.log(f"Title updated from idea.md: {new_title}", "INFO")
 
     # ==================== Citation Bootstrapping ====================
-
-    def _generate_title_if_needed(self):
-        """Auto-generate paper title from idea + venue + deep research if not provided."""
-        title = self.config.get("title", "")
-        if title:
-            return  # User provided a title, keep it
-
-        idea = self._research_idea
-        venue = self.config.get("venue", "")
-        if not idea:
-            return
-
-        # Read deep research summary for context
-        dr_file = self.state_dir / "deep_research.md"
-        dr_summary = ""
-        if dr_file.exists():
-            dr_summary = dr_file.read_text()[:4000]
-
-        self.log_step("Generating paper title...", "progress")
-        result = self.run_agent("planner", f"""Generate a concise, academic paper title for the following research.
-
-## Research Idea
-{idea[:4000]}
-
-## Target Venue
-{venue}
-
-## Background Research (if available)
-{dr_summary}
-
-Output ONLY the title — one line, no quotes, no explanation. The title should be:
-- Concise (8-15 words)
-- Descriptive of the main contribution
-- In the style of {venue or 'a top-tier ML conference'} papers
-""", timeout=120)
-
-        if result and result.strip():
-            new_title = _parse_title_from_agent_output(result)
-            if new_title and len(new_title) > 10:
-                self.config["title"] = new_title
-                self.log(f"Generated title: {new_title}", "INFO")
-                # Update config.yaml on disk
-                import yaml
-                config_path = self.code_dir / "config.yaml"
-                if config_path.exists():
-                    cfg = yaml.safe_load(config_path.read_text()) or {}
-                    cfg["title"] = new_title
-                    config_path.write_text(yaml.dump(cfg, default_flow_style=False, allow_unicode=True))
-                self._sync_db(title=new_title, name=new_title)
 
     def _bootstrap_citations_from_deep_research(self):
         """Extract paper titles from Deep Research report via LLM, then fetch BibTeX via API.
