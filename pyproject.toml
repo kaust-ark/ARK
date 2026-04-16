@@ -37,7 +37,8 @@ ark = "ark.cli:main"
 markers = ["network: tests that hit real APIs (deselect with '-m not network')"]
 
 [tool.setuptools.packages.find]
-include = ["ark*"]
+include = ["ark*", "website*"]
 
 [tool.setuptools.package-data]
-ark = ["templates/**/*", "dashboard/static/**/*", "dashboard/templates/**/*", "dashboard/slurm_template.sh"]
+ark = ["templates/**/*"]
+website = ["dashboard/static/**/*", "dashboard/templates/**/*", "dashboard/slurm_template.sh"]

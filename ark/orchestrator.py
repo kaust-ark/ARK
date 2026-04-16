@@ -241,7 +241,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
             self._db_path = None  # disable future sync attempts silently
             return
         try:
-            from ark.dashboard.db import get_session, get_project, update_project
+            from website.dashboard.db import get_session, get_project, update_project
             with get_session(self._db_path) as session:
                 project = get_project(session, self._project_id)
                 if project:
@@ -2114,7 +2114,7 @@ def main():
     db_path = args.db_path
     project_id = args.project_id
     if not db_path:
-        from ark.dashboard.db import resolve_db_path
+        from website.dashboard.db import resolve_db_path
         db_path = resolve_db_path()
 
     # Load project config to resolve code_dir if not specified
@@ -2130,7 +2130,7 @@ def main():
     # Auto-resolve project_id from DB if not provided
     if not project_id and db_path and Path(db_path).exists():
         try:
-            from ark.dashboard.db import get_session, get_project_by_name, get_project
+            from website.dashboard.db import get_session, get_project_by_name, get_project
             with get_session(db_path) as session:
                 # Try looking up by project name or by project_dir matching id
                 p = get_project_by_name(session, args.project)

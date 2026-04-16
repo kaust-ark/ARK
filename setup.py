@@ -3,9 +3,10 @@ from setuptools import setup, find_packages
 setup(
     name="ark-research",
     version="0.1.1",
-    packages=find_packages(include=["ark*"]),
+    packages=find_packages(include=["ark*", "website*"]),
     package_data={
-        "ark": ["templates/**/*", "dashboard/static/*", "dashboard/templates/*", "dashboard/slurm_template.sh"],
+        "ark": ["templates/**/*"],
+        "website": ["dashboard/static/*", "dashboard/templates/*", "dashboard/slurm_template.sh"],
     },
     install_requires=["pyyaml>=6.0"],
     extras_require={

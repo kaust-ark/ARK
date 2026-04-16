@@ -8,7 +8,7 @@ from pathlib import Path
 pytest.importorskip("cryptography", reason="webapp optional deps not installed")
 pytest.importorskip("fastapi", reason="webapp optional deps not installed")
 
-from ark.dashboard.crypto import encrypt_text, decrypt_text
+from website.dashboard.crypto import encrypt_text, decrypt_text
 
 class TestCredentialSecurity:
     """Tests for per-user credential isolation and encryption."""
@@ -71,7 +71,7 @@ class TestSlurmInjection:
         """Malicious key values must be escaped before rendering into SLURM template."""
         from jinja2 import Template
 
-        template_text = Path(__file__).parent.parent / "ark" / "dashboard" / "slurm_template.sh"
+        template_text = Path(__file__).parent.parent / "website" / "dashboard" / "slurm_template.sh"
         template = Template(template_text.read_text())
 
         malicious_keys = {
@@ -112,7 +112,7 @@ class TestDbMigration:
 
     def test_migrate_adds_column(self):
         """Column is added to an existing table missing it."""
-        from ark.dashboard.db import _migrate
+        from website.dashboard.db import _migrate
         from sqlalchemy import create_engine, text
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -141,7 +141,7 @@ class TestDbMigration:
 
     def test_migrate_idempotent(self):
         """Running migration twice does not fail."""
-        from ark.dashboard.db import _migrate
+        from website.dashboard.db import _migrate
         from sqlalchemy import create_engine, text
 
         with tempfile.TemporaryDirectory() as tmp:
