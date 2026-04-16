@@ -572,6 +572,13 @@ Notes:
             return True  # continue to retry
         self._run_citation_verification()
 
+        # Re-enforce page count after citation verification:
+        # [NEEDS-CHECK] markers can push the paper over the limit.
+        try:
+            self._enforce_page_count(context="post-citation")
+        except QuotaExhaustedError:
+            self.log("Post-citation page enforcement hit quota; delivering as-is", "WARN")
+
         # Send iteration summary + PDF to Telegram
         self.send_iteration_summary(score, current_score, review_output)
 
@@ -2023,6 +2030,11 @@ Produce the complete paper. Do not stop until all sections are written and it co
                 self._quota_exhausted = False  # Reset for retry
                 self._enforce_page_count(context="dev-phase-delivery-retry")
             self._run_citation_verification()
+            # Re-enforce page count: citation [NEEDS-CHECK] markers can push over limit
+            try:
+                self._enforce_page_count(context="dev-phase-post-citation")
+            except QuotaExhaustedError:
+                self.log("Dev-phase post-citation page enforcement hit quota; delivering as-is", "WARN")
 
         if draft_compiled and self.telegram.is_configured:
             pdf_path = self.latex_dir / "main.pdf"
