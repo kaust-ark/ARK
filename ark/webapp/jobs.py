@@ -59,6 +59,32 @@ def find_claude_binary() -> str | None:
     return None
 
 
+def find_gemini_binary() -> str | None:
+    """Locate the ``gemini`` CLI (analogous to find_claude_binary)."""
+    found = shutil.which("gemini")
+    if found:
+        return found
+    home = Path(os.path.expanduser("~"))
+    candidates: list[Path] = [
+        home / ".local" / "bin" / "gemini",
+        home / ".npm-global" / "bin" / "gemini",
+        Path("/usr/local/bin/gemini"),
+        Path("/opt/homebrew/bin/gemini"),
+    ]
+    # Check nvm for gemini as well (it's often an npm package)
+    nvm_dir = home / ".nvm" / "versions" / "node"
+    if nvm_dir.is_dir():
+        try:
+            for v in sorted(nvm_dir.iterdir(), reverse=True):
+                candidates.append(v / "bin" / "gemini")
+        except OSError:
+            pass
+    for c in candidates:
+        if c.is_file() and os.access(c, os.X_OK):
+            return str(c)
+    return None
+
+
 def build_subprocess_path(extra: list[str] | None = None) -> str:
     """
     Build a PATH string suitable for spawning ARK subprocesses (orchestrator,
@@ -72,6 +98,10 @@ def build_subprocess_path(extra: list[str] | None = None) -> str:
     claude = find_claude_binary()
     if claude:
         parts.append(str(Path(claude).parent))
+
+    gemini = find_gemini_binary()
+    if gemini:
+        parts.append(str(Path(gemini).parent))
 
     parts.append(str(home / ".local" / "bin"))
 
@@ -103,7 +133,7 @@ def find_conda_binary() -> str | None:
     if env_var and Path(env_var).is_file():
         return env_var
     home = Path(os.path.expanduser("~"))
-    for candidate in (
+    candidates = [
         home / "miniforge3" / "condabin" / "conda",
         home / "miniforge3" / "bin" / "conda",
         home / "miniconda3" / "condabin" / "conda",
@@ -111,7 +141,16 @@ def find_conda_binary() -> str | None:
         home / "anaconda3" / "condabin" / "conda",
         home / "anaconda3" / "bin" / "conda",
         Path("/opt/conda/bin/conda"),
-    ):
+    ]
+    if sys.platform == "darwin":
+        # Homebrew on Apple Silicon installs to /opt/homebrew
+        candidates += [
+            Path("/opt/homebrew/anaconda3/condabin/conda"),
+            Path("/opt/homebrew/anaconda3/bin/conda"),
+            Path("/opt/homebrew/miniforge3/condabin/conda"),
+            Path("/opt/homebrew/miniforge3/bin/conda"),
+        ]
+    for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
     return None
@@ -214,6 +253,24 @@ def get_claude_version() -> str:
     return "0.1.0"
 
 
+_GEMINI_VERSION_CACHE = None
+
+def get_gemini_version() -> str:
+    """Detect and cache the current version of the Gemini CLI."""
+    global _GEMINI_VERSION_CACHE
+    if _GEMINI_VERSION_CACHE:
+        return _GEMINI_VERSION_CACHE
+    try:
+        r = _run(["gemini", "--version"])
+        m = re.search(r"([\d\.]+)", r.stdout)
+        if m:
+            _GEMINI_VERSION_CACHE = m.group(1)
+            return _GEMINI_VERSION_CACHE
+    except Exception:
+        pass
+    return "0.1.0"
+
+
 def provision_claude_session(target_dir: Path, keys: dict[str, str]):
     """
     Writes a manual ~/.claude.json to skip onboarding.
@@ -230,6 +287,45 @@ def provision_claude_session(target_dir: Path, keys: dict[str, str]):
     target_dir.mkdir(parents=True, exist_ok=True)
     import json
     (target_dir / ".claude.json").write_text(json.dumps(config))
+
+
+def provision_gemini_session(target_dir: Path, keys: dict[str, str]):
+    """
+    Writes a manual credentials file for Gemini CLI if gemini_oauth_json is provided.
+    """
+    oauth_json = keys.get("gemini_oauth_json")
+    if not oauth_json:
+        return
+    
+    # Gemini CLI looks for credentials in ~/.gemini/oauth_creds.json
+    gemini_dir = target_dir / ".gemini"
+    gemini_dir.mkdir(parents=True, exist_ok=True)
+
+    creds_file = gemini_dir / "oauth_creds.json"
+    creds_file.write_text(oauth_json)
+    creds_file.chmod(0o600)  # Restrict to owner only
+
+    # Pre-create the project registry so the CLI's atomic write (tmp→rename) is
+    # never triggered on first run — that rename fails inside macOS temp dirs.
+    registry_file = gemini_dir / "projects.json"
+    if not registry_file.exists():
+        registry_file.write_text('{"projects":{}}')
+
+    # Write settings.json to select OAuth auth and suppress IDE nudges.
+    settings_file = gemini_dir / "settings.json"
+    settings_file.write_text(
+        '{\n'
+        '  "ide": {\n'
+        '    "hasSeenNudge": true,\n'
+        '    "enabled": true\n'
+        '  },\n'
+        '  "security": {\n'
+        '    "auth": {\n'
+        '      "selectedType": "oauth-personal"\n'
+        '    }\n'
+        '  }\n'
+        '}'
+    )
 
 
 def _auto_partition() -> str:
@@ -292,6 +388,7 @@ def submit_job(
 
     if api_keys:
         provision_claude_session(project_dir, api_keys)
+        provision_gemini_session(project_dir, api_keys)
 
     script_path = log_dir / "submit.sh"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -408,16 +505,30 @@ def launch_local_job(
 
     # Inline wrapper (uses webapp's Python — only needs subprocess + pathlib).
     # Runs orchestrator in the correct env, then writes exit code to sentinel.
+    # Also includes a signal handler to ensure sensitive credentials are cleaned up.
     wrapper = (
-        "import subprocess as _s\n"
-        f"_r = _s.run({cmd!r})\n"
-        f"open({str(exit_file)!r}, 'w').write(str(_r.returncode))\n"
-    )
+        "import subprocess as _s, signal as _sig, sys as _sys, shutil as _sh, os\n"
+        "from pathlib import Path\n"
+        "pdir = Path({project_dir!r})\n"
+        "def cleanup(*args):\n"
+        "    for d in (pdir / '.gemini', pdir / '.config', pdir / '.claude.json'):\n"
+        "        if d.is_dir(): _sh.rmtree(d, ignore_errors=True)\n"
+        "        elif d.is_file(): d.unlink(missing_ok=True)\n"
+        "    _sys.exit(0)\n"
+        "_sig.signal(_sig.SIGTERM, cleanup)\n"
+        "_sig.signal(_sig.SIGINT, cleanup)\n"
+        "try:\n"
+        "    _r = _s.run({cmd!r})\n"
+        "    open({exit_file!r}, 'w').write(str(_r.returncode))\n"
+        "finally:\n"
+        "    cleanup()\n"
+    ).format(project_dir=str(project_dir), cmd=cmd, exit_file=str(exit_file))
 
     # Prepare environment with user keys and home isolation
     env = os.environ.copy()
     if api_keys:
         provision_claude_session(project_dir, api_keys)
+        provision_gemini_session(project_dir, api_keys)
         for k, v in api_keys.items():
             if k == "claude_oauth_token":
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = v
@@ -432,6 +543,7 @@ def launch_local_job(
     env["PYTHONPATH"] = ark_code_root + ((":" + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
     env["HOME"] = str(project_dir)
     env["XDG_CONFIG_HOME"] = str(project_dir / ".config")
+    env["TMPDIR"] = str(project_dir)
     # Disable Python's pip user-site discovery so projects are completely
     # isolated — no project can read packages from /home/xinj/.local/... or
     # any other user's user-site. The cloned per-project conda env is the

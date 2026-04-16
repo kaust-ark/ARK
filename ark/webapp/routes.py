@@ -1010,6 +1010,12 @@ def _mask_key(key: str) -> str:
     return f"{key[:4]}...{key[-4:]}"
 
 
+def _mask_json(val: str) -> str:
+    if not val:
+        return ""
+    return "[JSON Config]"
+
+
 @router.get("/api/user/settings")
 async def api_get_user_settings(request: Request):
     user = _require_user(request)
@@ -1019,6 +1025,7 @@ async def api_get_user_settings(request: Request):
         "anthropic": _mask_key(keys.get("anthropic")),
         "openai": _mask_key(keys.get("openai")),
         "claude_oauth_token": _mask_key(keys.get("claude_oauth_token")),
+        "gemini_oauth_json": _mask_json(keys.get("gemini_oauth_json")),
         "has_keys": any(keys.values()),
     })
 
@@ -1033,7 +1040,8 @@ async def api_save_user_settings(request: Request):
     current_keys = old_keys.copy()
     
     # Update keys based on body
-    for field in ["gemini", "anthropic", "openai", "claude_oauth_token"]:
+    fields = ["gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json"]
+    for field in fields:
         if field not in body:
             continue
         
@@ -1045,7 +1053,10 @@ async def api_save_user_settings(request: Request):
             continue
         
         # For masked fields, only update if not a placeholder
-        if field in ["gemini", "anthropic", "openai", "claude_oauth_token"]:
+        if field == "gemini_oauth_json":
+            if val != "[JSON Config]":
+                current_keys[field] = val
+        else:
             if "..." not in val:
                 current_keys[field] = val
 
@@ -1074,12 +1085,22 @@ async def api_save_user_settings(request: Request):
         if res and not res.get("ok"):
             # Verification failed, revert to old value
             current_keys[p] = old_keys.get(p, "")
-            
+        
     # 2. Claude CLI
     claude_res = verification_results.get("claude_token")
     if claude_res and not claude_res.get("ok"):
         # Verification failed, revert Claude token
         current_keys["claude_oauth_token"] = old_keys.get("claude_oauth_token", "")
+
+    # 3. Gemini CLI (API key auth)
+    gemini_cli_res = verification_results.get("gemini_cli")
+    if gemini_cli_res and not gemini_cli_res.get("ok"):
+        current_keys["gemini"] = old_keys.get("gemini", "")
+
+    # 4. Gemini CLI (OAuth auth)
+    gemini_oauth_res = verification_results.get("gemini_oauth")
+    if gemini_oauth_res and not gemini_oauth_res.get("ok"):
+        current_keys["gemini_oauth_json"] = old_keys.get("gemini_oauth_json", "")
 
     with get_session(settings.db_path) as session:
         db_user = get_user(session, user.id)

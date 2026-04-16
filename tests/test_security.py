@@ -121,6 +121,9 @@ class TestDbMigration:
             conn.execute(
                 "CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, name TEXT)"
             )
+            conn.execute(
+                "CREATE TABLE project (id TEXT PRIMARY KEY, title TEXT)"
+            )
             conn.commit()
             conn.close()
 
@@ -146,6 +149,9 @@ class TestDbMigration:
             conn = sqlite3.connect(str(db_path))
             conn.execute(
                 "CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, encrypted_keys TEXT)"
+            )
+            conn.execute(
+                "CREATE TABLE project (id TEXT PRIMARY KEY, title TEXT)"
             )
             conn.commit()
             conn.close()

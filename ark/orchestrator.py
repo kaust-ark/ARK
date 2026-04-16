@@ -43,7 +43,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
     """Main orchestrator class composing all mixins."""
 
     def __init__(self, project: str, max_days: float = 3, max_iterations: int = 100,
-                 mode: str = "research", model: str = "claude", code_dir: str = None,
+                 mode: str = "research", model: str = None, code_dir: str = None,
                  project_dir: str = None, db_path: str = None, project_id: str = None):
         global PROJECT_DIR
 
@@ -51,7 +51,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         self.max_iterations = max_iterations
         self.iteration = 0
         self.mode = mode
-        self.model = model
+        self._model_arg = model  # Store the CLI/constructor argument
         self.project_name = project
 
         # ── DB awareness ──
@@ -73,9 +73,12 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         config_file = self.project_path / "config.yaml"
         if config_file.exists():
             with open(config_file) as f:
-                self.config = yaml.safe_load(f)
+                self.config = yaml.safe_load(f) or {}
         else:
             self.config = {}
+
+        # Resolve model: Argument > config.yaml > fallback to "claude"
+        self.model = self._model_arg or self.config.get("model") or "claude"
 
         # Set code_dir and legacy global PROJECT_DIR
         if code_dir:
@@ -231,6 +234,11 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
     def _sync_db(self, **kwargs):
         """Update project record in the webapp DB. Fail-soft: errors are logged, never raised."""
         if not self._db_path or not self._project_id:
+            return
+        try:
+            import sqlalchemy  # noqa: F401 — availability check
+        except ImportError:
+            self._db_path = None  # disable future sync attempts silently
             return
         try:
             from ark.webapp.db import get_session, get_project, update_project
@@ -2088,7 +2096,7 @@ def main():
     parser.add_argument("--mode", type=str, default="research", choices=["research", "paper", "dev"],
                         help="Mode: 'research' for experiments, 'paper' for review iterations, 'dev' for development iterations")
     parser.add_argument("--project", type=str, required=True, help="Project name (e.g., prouter)")
-    parser.add_argument("--model", type=str, default="claude", choices=["claude", "gemini", "codex"],
+    parser.add_argument("--model", type=str, default=None, choices=["claude", "gemini", "codex"],
                         help="Model backend: 'claude', 'gemini', or 'codex'")
     parser.add_argument("--max-days", type=float, default=3, help="Maximum runtime in days")
     parser.add_argument("--iterations", type=int, default=100, help="Number of iterations to run")
