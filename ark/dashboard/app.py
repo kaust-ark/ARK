@@ -78,7 +78,11 @@ async def _poll_jobs(app: FastAPI):
                         continue
 
                     pdir = settings.projects_root / p.user_id / p.id
-                    url = f"{settings.base_url}/#project/{p.id}"
+                    # Background task has no request context, so reconstruct the
+                    # public URL from BASE_URL + ARK_ROOT_PATH. BASE_URL is the
+                    # origin (https://idea2paper.org) and ARK_ROOT_PATH is the
+                    # path prefix ("/dashboard" in prod, "" for bare access).
+                    url = f"{settings.base_url}{os.environ.get('ARK_ROOT_PATH', '')}/#project/{p.id}"
 
                     # ── Local subprocess job ──────────────────────────────
                     if p.slurm_job_id.startswith("local:"):
@@ -465,8 +469,58 @@ async def lifespan(app: FastAPI):
     logger.info("ARK Webapp stopped.")
 
 
-def create_app() -> FastAPI:
+class StripPathPrefixMiddleware:
+    """ASGI middleware that strips a path prefix from incoming requests.
+
+    When ARK_ROOT_PATH=/dashboard, requests to /dashboard/api/projects arrive
+    with that full path. This middleware rewrites scope['path'] to
+    /api/projects and sets scope['root_path']=/dashboard so Starlette's
+    request.url_for() builds correct absolute URLs.
+
+    Non-prefixed requests pass through unchanged, which means the same
+    process transparently serves both http://host/ and http://host/dashboard/.
+    This is the 'dual access' property: useful for local dev (direct port)
+    while the same app is served at /dashboard in production via tunnel.
+    """
+
+    def __init__(self, app, prefix: str):
+        self.app = app
+        self.prefix = prefix
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            path = scope.get("path", "")
+            if path == self.prefix or path.startswith(self.prefix + "/"):
+                new_path = path[len(self.prefix):] or "/"
+                scope = dict(scope)
+                scope["path"] = new_path
+                # Stash prefix in a custom key. We intentionally do NOT
+                # set scope["root_path"] because Starlette's StaticFiles
+                # mount misroutes when root_path is non-empty. Handlers
+                # read this via request.scope.get("ark_root_path", "").
+                scope["ark_root_path"] = self.prefix
+                # raw_path is used by Starlette routing; must update it too
+                # or mounts (e.g., /static) won't match after prefix strip.
+                raw_path = scope.get("raw_path")
+                if raw_path is not None:
+                    prefix_bytes = self.prefix.encode("latin-1")
+                    if raw_path == prefix_bytes or raw_path.startswith(prefix_bytes + b"/"):
+                        scope["raw_path"] = raw_path[len(prefix_bytes):] or b"/"
+        await self.app(scope, receive, send)
+
+
+def create_app():
+    """Create the FastAPI app. Returns an ASGI callable.
+
+    When ARK_ROOT_PATH env var is set (e.g. /dashboard), the app is wrapped
+    with StripPathPrefixMiddleware so it serves at both / and /<prefix>.
+
+    Note: root_path is NOT passed to FastAPI() — otherwise FastAPI would
+    set scope["root_path"] on every request, breaking dual-access. The
+    middleware sets it only for requests that actually carry the prefix.
+    """
     settings = get_settings()
+    root_path = os.environ.get("ARK_ROOT_PATH", "")
 
     app = FastAPI(
         title="ARK Research Portal",
@@ -491,4 +545,8 @@ def create_app() -> FastAPI:
     static_dir = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+    # Wrap as outermost ASGI layer so it sees raw incoming paths before any
+    # FastAPI middleware/routing. Without a prefix, return the app unwrapped.
+    if root_path:
+        return StripPathPrefixMiddleware(app, prefix=root_path)
     return app

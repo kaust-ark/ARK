@@ -4,7 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ARK · Research Harness</title>
-  <link rel="icon" type="image/png" href="/static/logo.png" />
+  <script>
+    // Injected by server. APP_BASE is the URL path prefix ("/dashboard" in
+    // production, "" when served at root). All absolute in-app URLs below
+    // use APP_BASE + path so the same HTML works regardless of mount point.
+    window.APP_BASE = "{{ app_base }}";
+    const APP_BASE = window.APP_BASE;
+  </script>
+  <link rel="icon" type="image/png" href="{{ app_base }}/static/logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Cairo:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -552,9 +559,9 @@
 
 <!-- NAV -->
 <nav id="main-nav" style="display:none">
-  <a class="nav-brand" href="/#" onclick="event.preventDefault();navigate('dashboard')"><span>ARK</span> SANDS Portal</a>
+  <a class="nav-brand" href="{{ app_base }}/#" onclick="event.preventDefault();navigate('dashboard')"><span>ARK</span> SANDS Portal</a>
   <span id="nav-admin-link" style="display:none"></span>
-  <a href="/#feedback" onclick="event.preventDefault();navigate('feedback')"
+  <a href="{{ app_base }}/#feedback" onclick="event.preventDefault();navigate('feedback')"
      style="font-size:.85rem;font-weight:600;color:var(--text-second);text-decoration:none;padding:4px 10px;border-radius:6px;border:1px solid var(--border)">
     Feedback
   </a>
@@ -582,7 +589,7 @@
         <button onclick="setLang('ar')">العربية</button>
       </div>
     </div>
-    <img src="/static/logo_ark_transparent.png" alt="ARK" class="login-logo" />
+    <img src="{{ app_base }}/static/logo_ark_transparent.png" alt="ARK" class="login-logo" />
     <h1>ARK</h1>
     <p data-i18n="login_subtitle">Offload the labor. Steer the science.</p>
     <div class="login-features">
@@ -605,7 +612,7 @@
     </form>
     <div id="google-login-section" style="display:none">
       <div class="login-divider"><span data-i18n="login_or">or</span></div>
-      <button class="btn-google" id="btn-google" onclick="location.href='/auth/google'" style="display:flex">
+      <button class="btn-google" id="btn-google" onclick="location.href=APP_BASE + '/auth/google'" style="display:flex">
         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
           <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
           <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
@@ -648,7 +655,7 @@
     <div class="hero-drop-overlay" data-i18n="drop_files">📎 Drop files to attach</div>
     <div class="hero-card-header">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:2px">
-        <img src="/static/logo.png" alt="ARK" style="height:48px;width:auto;flex-shrink:0" />
+        <img src="{{ app_base }}/static/logo.png" alt="ARK" style="height:48px;width:auto;flex-shrink:0" />
         <h2 style="margin:0" data-i18n="hero_title">Build your next paper with ARK</h2>
       </div>
     </div>
@@ -1725,18 +1732,18 @@ function navigate(page, params = {}) {
   if (page === 'dashboard') {
     stopDetailStream();
     loadDashboard();
-    history.pushState({}, '', '/#dashboard');
+    history.pushState({}, '', APP_BASE + '/#dashboard');
   } else if (page === 'detail') {
     loadDetail(params.id);
     history.pushState({}, '', `/#project/${params.id}`);
   } else if (page === 'admin') {
     stopDetailStream();
     loadAdminPage();
-    history.pushState({}, '', '/#admin');
+    history.pushState({}, '', APP_BASE + '/#admin');
   } else if (page === 'feedback') {
     stopDetailStream();
     loadFeedbackPage();
-    history.pushState({}, '', '/#feedback');
+    history.pushState({}, '', APP_BASE + '/#feedback');
   }
 }
 
@@ -1745,7 +1752,7 @@ function navigate(page, params = {}) {
 // ══════════════════════════════════════════════════════
 async function checkGoogleLogin() {
   try {
-    const res = await fetch('/auth/google/enabled');
+    const res = await fetch(APP_BASE + '/auth/google/enabled');
     if (res.ok) {
       const data = await res.json();
       if (data.enabled) {
@@ -1770,7 +1777,7 @@ async function sendLoginLink(e) {
   btn.textContent = t('login_sending');
 
   try {
-    const res = await fetch('/auth/send-link', {
+    const res = await fetch(APP_BASE + '/auth/send-link', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
@@ -1798,7 +1805,7 @@ async function sendLoginLink(e) {
 //  Auth
 // ══════════════════════════════════════════════════════
 async function checkAuth() {
-  const res = await fetch('/api/me');
+  const res = await fetch(APP_BASE + '/api/me');
   const data = await res.json();
   if (!data.authenticated) {
     navigate('login');
@@ -1884,7 +1891,7 @@ function renderNavUser() {
   const el = document.getElementById('nav-user');
   el.innerHTML = `
     <span class="name">${esc(currentUser.email || currentUser.name)}</span>
-    <button class="btn-logout" onclick="location.href='/auth/logout'">${t('sign_out')}</button>
+    <button class="btn-logout" onclick="location.href=APP_BASE + '/auth/logout'">${t('sign_out')}</button>
   `;
   const adminLink = document.getElementById('nav-admin-link');
   if (adminLink) adminLink.style.display = currentUser.is_admin ? '' : 'none';
@@ -1896,7 +1903,7 @@ function renderNavUser() {
 let _adminDisabled = false;
 
 async function loadGateBanner() {
-  const res = await fetch('/api/system/status');
+  const res = await fetch(APP_BASE + '/api/system/status');
   if (!res.ok) return;
   const data = await res.json();
   _adminDisabled = data.disabled;
@@ -1932,7 +1939,7 @@ async function adminToggle() {
 
 async function adminKillAll() {
   if (!confirm(t('confirm_kill_all'))) return;
-  const res = await fetch('/api/admin/killall', {method: 'POST'});
+  const res = await fetch(APP_BASE + '/api/admin/killall', {method: 'POST'});
   if (!res.ok) { alert('Failed: ' + (await res.text())); return; }
   const data = await res.json();
   alert(t('stopped_count', data.count));
@@ -1952,7 +1959,7 @@ async function loadDashboard() {
   }
   loadAdminPanel();
   loadVenues();
-  const res = await fetch('/api/projects');
+  const res = await fetch(APP_BASE + '/api/projects');
   const projects = await res.json();
   const grid = document.getElementById('project-grid');
   const empty = document.getElementById('empty-state');
@@ -2052,7 +2059,7 @@ async function loadDetail(id) {
   detailProjectId = id;
   stopDetailStream();
 
-  const res = await fetch(`/api/projects/${id}`);
+  const res = await fetch(`${APP_BASE}/api/projects/${id}`);
   if (!res.ok) { navigate('dashboard'); return; }
   const p = await res.json();
 
@@ -2070,7 +2077,7 @@ async function loadDetail(id) {
   if (p.idea) {
     ideaEl.textContent = p.idea;
   } else if (p.has_pdf_upload) {
-    ideaEl.innerHTML = `📄 <a href="/api/projects/${esc(p.id)}/uploaded-pdf" target="_blank" style="color:var(--teal)">Uploaded PDF</a>`;
+    ideaEl.innerHTML = `📄 <a href="${APP_BASE}/api/projects/${esc(p.id)}/uploaded-pdf" target="_blank" style="color:var(--teal)">Uploaded PDF</a>`;
   } else {
     ideaEl.textContent = '—';
   }
@@ -2490,10 +2497,10 @@ function renderDetailActions(p) {
   if (p.status !== 'waiting_template') {
     const pdfReady = p.has_pdf;
     const pdfTitle = pdfReady ? '' : 'title="Available after first iteration completes"';
-    html += `<a href="/api/projects/${p.id}/pdf" target="_blank"
+    html += `<a href="${APP_BASE}/api/projects/${p.id}/pdf" target="_blank"
       class="btn-secondary ${pdfReady ? '' : 'btn-disabled'}" style="text-decoration:none"
       ${pdfTitle}>${t('view_pdf')}</a>`;
-    html += `<a href="/api/projects/${p.id}/zip"
+    html += `<a href="${APP_BASE}/api/projects/${p.id}/zip"
       class="btn-secondary ${zipReady ? '' : 'btn-disabled'}" style="text-decoration:none"
       ${zipTitle}>${t('download_zip')}</a>`;
   }
@@ -2532,7 +2539,7 @@ async function saveTitle() {
   titleEl.style.display = 'block';
   if (newTitle && newTitle !== input.dataset.original) {
     titleEl.textContent = newTitle;
-    await fetch(`/api/projects/${input.dataset.projectId}`, {
+    await fetch(`${APP_BASE}/api/projects/${input.dataset.projectId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: newTitle })
@@ -2542,13 +2549,13 @@ async function saveTitle() {
 
 async function stopProject(id) {
   if (!confirm(t('confirm_stop'))) return;
-  await fetch(`/api/projects/${id}/stop`, { method: 'POST' });
+  await fetch(`${APP_BASE}/api/projects/${id}/stop`, { method: 'POST' });
   loadDetail(id);
 }
 
 async function startProject(id) {
   if (!confirm(t('confirm_restart'))) return;
-  const res = await fetch(`/api/projects/${id}/restart`, { method: 'POST' });
+  const res = await fetch(`${APP_BASE}/api/projects/${id}/restart`, { method: 'POST' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     alert(`Failed to restart: ${err.detail || res.statusText}`);
@@ -2559,7 +2566,7 @@ async function startProject(id) {
 
 async function deleteProject(id) {
   if (!confirm(t('confirm_delete'))) return;
-  const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+  const res = await fetch(`${APP_BASE}/api/projects/${id}`, { method: 'DELETE' });
   if (!res.ok) {
     alert(`Delete failed: ${res.status} ${res.statusText}`);
     return;
@@ -2569,7 +2576,7 @@ async function deleteProject(id) {
 
 async function loadLog(id) {
   const logEl = document.getElementById('detail-log');
-  const res = await fetch(`/api/projects/${id}/log?lines=300`);
+  const res = await fetch(`${APP_BASE}/api/projects/${id}/log?lines=300`);
   const data = await res.json();
   if (data.lines && data.lines.length) {
     renderLogLines(data.lines, false);
@@ -2624,7 +2631,7 @@ function startDetailStream(id) {
       stopDetailStream();
       setProgressWidgetVisible(false);
       // One-shot fetch to refresh actions (PDF button, etc.)
-      fetch(`/api/projects/${id}`)
+      fetch(`${APP_BASE}/api/projects/${id}`)
         .then(r => r.json())
         .then(p => {
           renderDetailActions(p);
@@ -2661,7 +2668,7 @@ function openModal(id) {
 
 async function loadVenues() {
   if (venues.length) return;
-  const res = await fetch('/api/venues');
+  const res = await fetch(APP_BASE + '/api/venues');
   venues = await res.json();
   const sel = document.getElementById('hero-venue-select');
   if (!sel) return;
@@ -2857,7 +2864,7 @@ async function performLaunch(form) {
   }
 
   try {
-    const res = await fetch('/api/projects', { method: 'POST', body: fd });
+    const res = await fetch(APP_BASE + '/api/projects', { method: 'POST', body: fd });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
       alert(`Error: ${err.detail}`);
@@ -2940,7 +2947,7 @@ async function openContinueModal(id) {
   document.getElementById('continue-iter').value = '3';
 
   // Fetch project detail to pre-fill model
-  const res = await fetch(`/api/projects/${id}`);
+  const res = await fetch(`${APP_BASE}/api/projects/${id}`);
   if (res.ok) {
     const p = await res.json();
     const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6', 'claude-opus-4-6': 'claude-opus-4-6',
@@ -2965,7 +2972,7 @@ async function submitContinue() {
   const btn = document.getElementById('continue-btn');
   btn.disabled = true;
   try {
-    const res = await fetch(`/api/projects/${continueProjectId}/continue`, {
+    const res = await fetch(`${APP_BASE}/api/projects/${continueProjectId}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ additional_iterations: iter, comment, model }),
@@ -2990,7 +2997,7 @@ let restartProjectId = null;
 async function openRestartModal(id) {
   restartProjectId = id;
   // Fetch project detail to pre-fill fields
-  const res = await fetch(`/api/projects/${id}`);
+  const res = await fetch(`${APP_BASE}/api/projects/${id}`);
   if (!res.ok) { alert('Failed to load project details'); return; }
   const p = await res.json();
 
@@ -3067,7 +3074,7 @@ async function submitRestart() {
       redo_deep_research: !document.getElementById('restart-keep-dr').checked,
       keep_figures: document.getElementById('restart-keep-figures').checked,
     };
-    const res = await fetch(`/api/projects/${restartProjectId}/restart`, {
+    const res = await fetch(`${APP_BASE}/api/projects/${restartProjectId}/restart`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -3117,8 +3124,8 @@ let _adminPageDisabled = false;
 
 async function loadAdminPage() {
   const [projectsRes, statusRes] = await Promise.all([
-    fetch('/api/projects?scope=all'),
-    fetch('/api/admin/status'),
+    fetch(APP_BASE + '/api/projects?scope=all'),
+    fetch(APP_BASE + '/api/admin/status'),
   ]);
   _adminAllProjects = await projectsRes.json();
   const status = await statusRes.json();
@@ -3223,7 +3230,7 @@ function adminFilterProjects(status) {
 }
 
 async function adminEditProject(id) {
-  const res = await fetch(`/api/projects/${id}`);
+  const res = await fetch(`${APP_BASE}/api/projects/${id}`);
   if (!res.ok) { alert('Failed to load project'); return; }
   const p = await res.json();
   _editingProjectId = id;
@@ -3273,7 +3280,7 @@ async function adminSaveProject() {
   const btn = document.getElementById('admin-save-btn');
   btn.disabled = true;
   try {
-    const res = await fetch(`/api/admin/projects/${_editingProjectId}`, {
+    const res = await fetch(`${APP_BASE}/api/admin/projects/${_editingProjectId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -3293,16 +3300,16 @@ async function adminSaveProject() {
 async function adminToggleProject(id, status) {
   if (status === 'running' || status === 'queued' || status === 'pending') {
     if (!confirm(t('confirm_stop'))) return;
-    await fetch(`/api/projects/${id}/stop`, { method: 'POST' });
+    await fetch(`${APP_BASE}/api/projects/${id}/stop`, { method: 'POST' });
   } else if (status === 'stopped' || status === 'failed') {
     if (!confirm(t('confirm_restart'))) return;
-    const res = await fetch(`/api/projects/${id}/restart`, { method: 'POST' });
+    const res = await fetch(`${APP_BASE}/api/projects/${id}/restart`, { method: 'POST' });
     if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.detail || 'Failed to restart'); return; }
   } else if (status === 'done') {
     const iter = prompt('Add how many iterations? (1–10)', '3');
     if (iter === null) return;
     const n = Math.max(1, Math.min(10, parseInt(iter) || 3));
-    const res = await fetch(`/api/projects/${id}/continue`, {
+    const res = await fetch(`${APP_BASE}/api/projects/${id}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ additional_iterations: n, comment: '' }),
@@ -3314,7 +3321,7 @@ async function adminToggleProject(id, status) {
 
 async function adminForceDelete(id) {
   if (!confirm(t('confirm_delete'))) return;
-  const res = await fetch(`/api/projects/${id}`, { method: 'DELETE' });
+  const res = await fetch(`${APP_BASE}/api/projects/${id}`, { method: 'DELETE' });
   if (!res.ok) { alert(`Delete failed: ${res.status}`); return; }
   _adminAllProjects = _adminAllProjects.filter(p => p.id !== id);
   const total = document.getElementById('admin-total-count');
@@ -3342,7 +3349,7 @@ async function adminPageToggle() {
 
 async function adminPageKillAll() {
   if (!confirm(t('confirm_kill_all'))) return;
-  const res = await fetch('/api/admin/killall', { method: 'POST' });
+  const res = await fetch(APP_BASE + '/api/admin/killall', { method: 'POST' });
   if (!res.ok) { alert('Failed: ' + (await res.text())); return; }
   const data = await res.json();
   alert(t('stopped_count', data.count));
@@ -3387,7 +3394,7 @@ async function loadFeedbackPage() {
   const sel = document.getElementById('feedback-project');
   sel.innerHTML = '<option value="">— None —</option>';
   try {
-    const res = await fetch('/api/projects');
+    const res = await fetch(APP_BASE + '/api/projects');
     const projects = await res.json();
     projects.forEach(p => {
       const opt = document.createElement('option');
@@ -3403,7 +3410,7 @@ async function loadFeedbackPage() {
 async function loadFeedbackList() {
   const el = document.getElementById('feedback-list');
   try {
-    const res = await fetch('/api/feedback');
+    const res = await fetch(APP_BASE + '/api/feedback');
     const items = await res.json();
     if (!items.length) {
       el.innerHTML = '<p style="color:var(--text-muted);font-size:.9rem">No feedback yet.</p>';
@@ -3437,7 +3444,7 @@ async function submitFeedback(e) {
     const body = { message: msg };
     const pid = document.getElementById('feedback-project').value;
     if (pid) body.project_id = pid;
-    const res = await fetch('/api/feedback', {
+    const res = await fetch(APP_BASE + '/api/feedback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -3459,7 +3466,7 @@ async function submitFeedback(e) {
 async function openSettingsModal() {
   openModal('modal-settings');
   try {
-    const res = await fetch('/api/user/settings');
+    const res = await fetch(APP_BASE + '/api/user/settings');
     const data = await res.json();
     document.getElementById('settings-gemini').value = data.gemini || '';
     document.getElementById('settings-anthropic').value = data.anthropic || '';
@@ -3510,7 +3517,7 @@ async function saveUserSettings() {
     if (body.claude_oauth_token && !body.claude_oauth_token.includes('...')) document.getElementById('settings-claude_token-status').innerHTML = '⏳';
     if (body.gemini_oauth_json && !body.gemini_oauth_json.includes('...')) document.getElementById('settings-gemini_oauth-status').innerHTML = '⏳';
 
-    const res = await fetch('/api/user/settings', {
+    const res = await fetch(APP_BASE + '/api/user/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
