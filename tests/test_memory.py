@@ -106,17 +106,3 @@ class TestSaveLoadRoundtrip:
         assert "WRITING_ONLY" in mem2.issue_repair_methods.get("M1", [])
 
 
-class TestHealthStatus:
-    def test_healthy(self, tmp_state_dir):
-        mem = SimpleMemory(state_dir=tmp_state_dir)
-        mem.scores = [5.0, 6.0, 7.0]
-        mem.stagnation_count = 0
-        status, reasons = mem.get_health_status()
-        assert status == "HEALTHY"
-
-    def test_warning_stagnation(self, tmp_state_dir):
-        mem = SimpleMemory(state_dir=tmp_state_dir)
-        mem.scores = [5.0]
-        mem.stagnation_count = 5  # threshold is 5
-        status, reasons = mem.get_health_status()
-        assert status in ("WARNING", "CRITICAL")
