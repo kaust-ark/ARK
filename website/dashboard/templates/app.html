@@ -59,6 +59,7 @@
       text-decoration: none; letter-spacing: -.02em;
     }
     .nav-brand span { color: var(--text-primary); }
+    .nav-brand .brand-suffix { color: var(--teal); }
     nav .spacer { flex: 1; }
     .nav-user { display: flex; align-items: center; gap: 10px; }
     .nav-user img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
@@ -1199,7 +1200,7 @@
     </div>
 
     <div class="form-group">
-      <label>Gemini API Key</label>
+      <label>Gemini API Key <span style="color:#ef4444;font-size:.75rem">* required</span></label>
       <div style="display:flex;gap:8px;align-items:center">
         <input type="password" id="settings-gemini" placeholder="sk-..." style="flex:1" />
         <span id="settings-gemini-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
@@ -1231,7 +1232,7 @@
     </div>
 
 
-    <div class="or-divider"><span>OR</span></div>
+    <div class="or-divider"><span>CLI Session <span style="color:#ef4444;font-size:.7rem">(at least one required)</span></span></div>
 
     <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px;">
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
@@ -1844,9 +1845,9 @@ async function checkAuth() {
     });
     // Unlock iteration limits for admin
     const devIter = document.querySelector('input[name="max_dev_iterations"]');
-    if (devIter) { devIter.max = 10; devIter.value = 3; }
+    if (devIter) { devIter.max = 10; devIter.value = 1; }
     const revIter = document.querySelector('input[name="max_iterations"]');
-    if (revIter) { revIter.max = 5; revIter.value = 2; }
+    if (revIter) { revIter.max = 5; revIter.value = 1; }
   } else {
     // Non-admin: show coffee toast when clicking premium models
     document.querySelectorAll('.model-option-premium').forEach(el => {
@@ -2595,7 +2596,7 @@ function renderLogLines(lines, append = true) {
     const span = document.createElement('span');
     span.className = 'log-line' +
       (line.includes('[ARK]') || line.includes('ark.') ? ' ark' : '') +
-      (line.toLowerCase().includes('error') ? ' error' : '') +
+      (line.toLowerCase().includes('error') && !line.toLowerCase().includes('successfully') ? ' error' : '') +
       (line.toLowerCase().includes('warn') ? ' warn' : '');
     span.textContent = line + '\n';
     logEl.appendChild(span);
@@ -3239,7 +3240,7 @@ async function adminEditProject(id) {
 
   document.getElementById('edit-title').value = p.title || '';
   document.getElementById('edit-venue-pages').value = p.venue_pages || 9;
-  document.getElementById('edit-max-iter').value = p.max_iterations || 3;
+  document.getElementById('edit-max-iter').value = p.max_iterations || 1;
   document.getElementById('edit-tg-token').value = p.telegram_token || '';
   document.getElementById('edit-tg-chat').value = p.telegram_chat_id || '';
 
@@ -3273,7 +3274,7 @@ async function adminSaveProject() {
     venue: sel.value,
     venue_format: opt ? opt.dataset.format : '',
     venue_pages: parseInt(document.getElementById('edit-venue-pages').value) || 9,
-    max_iterations: parseInt(document.getElementById('edit-max-iter').value) || 3,
+    max_iterations: parseInt(document.getElementById('edit-max-iter').value) || 1,
     telegram_token: document.getElementById('edit-tg-token').value.trim(),
     telegram_chat_id: document.getElementById('edit-tg-chat').value.trim(),
     model,
@@ -3511,6 +3512,21 @@ async function saveUserSettings() {
       claude_oauth_token: document.getElementById('settings-claude-token').value.trim(),
       gemini_oauth_json: document.getElementById('settings-gemini-oauth').value.trim(),
     };
+
+    // Validate: Gemini API Key is required
+    if (!body.gemini || body.gemini.includes('...')) {
+      showToast('Gemini API Key is required', 'warn');
+      btn.disabled = false; btn.textContent = 'Verify and Save Keys';
+      return;
+    }
+    // Validate: at least one CLI session (Claude or Gemini) is required
+    const hasClaude = body.claude_oauth_token && !body.claude_oauth_token.includes('...');
+    const hasGeminiCli = body.gemini_oauth_json && !body.gemini_oauth_json.includes('...');
+    if (!hasClaude && !hasGeminiCli) {
+      showToast('At least one CLI session (Claude or Gemini) is required', 'warn');
+      btn.disabled = false; btn.textContent = 'Verify and Save Keys';
+      return;
+    }
 
     // Show wait icons for non-empty keys
     if (body.gemini && !body.gemini.includes('...')) document.getElementById('settings-gemini-status').innerHTML = '⏳';

@@ -930,6 +930,12 @@ output: NO_CONCEPT_FIGURES
         """
         import asyncio
 
+        # Set API key BEFORE importing PaperBanana — its generation_utils
+        # module calls reinitialize_clients() at import time, which reads
+        # GOOGLE_API_KEY from the environment.
+        import os
+        os.environ["GOOGLE_API_KEY"] = api_key
+
         try:
             import sys
             pb_dir = Path(__file__).parent.parent / "submodules" / "PaperBanana"
@@ -956,10 +962,6 @@ output: NO_CONCEPT_FIGURES
             self.log(f"  Using PaperBanana with reference retrieval ({data_dir})", "INFO")
         else:
             self.log(f"  Using PaperBanana without reference retrieval", "INFO")
-
-        # Configure — use env var or config for API key
-        import os
-        os.environ["GOOGLE_API_KEY"] = api_key
 
         try:
             exp_config = ExpConfig(
