@@ -102,13 +102,37 @@ section { padding: 5rem 0; }
   color: var(--text-muted); font-size: .9rem; font-weight: 500; transition: color .2s;
   position: relative;
 }
-.nav-links a:not(.gh-link):not(.lang-toggle)::after {
+.nav-links a:not(.gh-link):not(.lang-toggle):not(.lang-toggle-btn)::after {
   content: '';
   position: absolute; bottom: -2px; left: 0; width: 0; height: 2px;
   background: var(--teal);
   transition: width .3s ease;
 }
-.nav-links a:not(.gh-link):not(.lang-toggle):hover::after { width: 100%; }
+.nav-links a:not(.gh-link):not(.lang-toggle):not(.lang-toggle-btn):hover::after { width: 100%; }
+
+/* Language dropdown */
+.lang-dropdown { position: relative; }
+.lang-toggle-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: .4rem; border-radius: var(--radius-sm);
+  color: var(--text-muted); transition: color .2s;
+  background: none; border: none; cursor: pointer;
+}
+.lang-toggle-btn:hover { color: var(--teal); }
+.lang-toggle-btn svg { width: 20px; height: 20px; }
+.lang-dropdown-menu {
+  display: none; position: absolute; top: calc(100% + .5rem); right: 0;
+  background: #fff; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0,0,0,.1); min-width: 120px;
+  z-index: 1001; overflow: hidden;
+}
+.lang-dropdown-menu.open { display: block; }
+.lang-dropdown-menu a {
+  display: block; padding: .6rem 1rem; font-size: .85rem; font-weight: 500;
+  color: var(--text-muted); transition: background .15s, color .15s;
+}
+.lang-dropdown-menu a:hover { background: rgba(13,148,136,.06); color: var(--teal); }
+.lang-dropdown-menu a.active { color: var(--teal); font-weight: 600; }
 .nav-links a:hover { color: var(--text-primary); }
 .nav-links .gh-link {
   display: inline-flex; align-items: center; gap: .4rem;
@@ -549,10 +573,31 @@ section { padding: 5rem 0; }
 .loop-arrow { color: var(--teal); font-size: 1.4rem; padding: 0 .6rem; flex-shrink: 0; display: flex; align-items: center; }
 .loop-repeat { opacity: .5; font-size: 1.6rem; }
 
+/* Pipeline detail panels */
+.pipeline-details {
+  display: flex; flex-direction: column; gap: 1.5rem; margin-top: 2rem;
+}
+.phase-detail {
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 2rem;
+}
+.phase-detail-header { text-align: center; margin-bottom: 1rem; }
+.phase-detail-header h3 { margin-bottom: .4rem; }
+.phase-detail-tag {
+  display: inline-block; font-size: .75rem; font-weight: 600;
+  color: var(--teal); background: rgba(13, 148, 136, .08);
+  padding: .2rem .6rem; border-radius: 999px;
+}
+.loop-repeat-step {
+  border-color: rgba(13,148,136,.3) !important;
+  background: rgba(13,148,136,.06) !important;
+  color: var(--teal) !important;
+}
+
 /* Inline loop steps */
 .loop-steps-inline {
   display: flex; align-items: center; justify-content: center;
-  flex-wrap: nowrap; gap: .4rem;
+  flex-wrap: wrap; gap: .4rem;
   padding: 1.5rem 0 .5rem;
 }
 .loop-inline-step {
@@ -567,9 +612,17 @@ section { padding: 5rem 0; }
 .loop-inline-arr { color: var(--border); font-size: 1rem; flex-shrink: 0; }
 .loop-inline-arr.loop-repeat { color: var(--teal); opacity: .7; font-size: 1.4rem; }
 
+/* ===== About ARK ===== */
+.about-ark-content {
+  max-width: 720px; margin: 0 auto; text-align: center;
+}
+.about-ark-content p {
+  font-size: 1.1rem; line-height: 1.75; color: var(--text-muted);
+}
+
 /* ===== Agents ===== */
 .agents-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.2rem;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2rem;
 }
 .agent-card {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
@@ -1163,6 +1216,13 @@ a.paper-card-img, .paper-card-img {
   }
   .nav-links.open { display: flex; }
   .hamburger { display: flex; z-index: 1000; }
+  .lang-dropdown-menu {
+    position: static; box-shadow: none; border: none;
+    background: transparent; display: flex !important;
+    gap: 1rem; justify-content: center; min-width: auto;
+  }
+  .lang-dropdown-menu a { padding: .3rem .6rem; }
+  .lang-toggle-btn { display: none; }
   .footer .container { flex-direction: column; text-align: center; }
 }
 @media (max-width: 640px) {
