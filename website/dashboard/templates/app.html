@@ -780,7 +780,7 @@
                 <input type="radio" name="model" value="claude-sonnet-4-6" checked />
                 <span class="model-chip">Sonnet 4.6</span>
               </label>
-              <label class="model-option model-option-premium" style="opacity:.45;cursor:pointer" title="Buy Jihao a coffee to enable">
+              <label class="model-option model-option-premium" style="opacity:.45;cursor:pointer" title="Buy authors a coffee to enable">
                 <input type="radio" name="model" value="claude-opus-4-6" disabled />
                 <span class="model-chip">Opus 4.6</span>
               </label>
@@ -1853,7 +1853,7 @@ async function checkAuth() {
     document.querySelectorAll('.model-option-premium').forEach(el => {
       el.addEventListener('click', (e) => {
         e.preventDefault();
-        showToast('Buy Jihao a coffee to enable ☕', 'warn');
+        showToast('Buy authors a coffee to enable ☕', 'warn');
       });
     });
     // Non-admin: show coffee toast when trying to change iterations
@@ -1865,7 +1865,7 @@ async function checkAuth() {
           input.addEventListener(evt, (e) => {
             e.preventDefault();
             input.blur();
-            showToast('Buy Jihao a coffee to enable ☕', 'warn');
+            showToast('Buy authors a coffee to enable ☕', 'warn');
           });
         });
       }

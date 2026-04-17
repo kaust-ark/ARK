@@ -974,7 +974,7 @@ async def auth_google_callback(request: Request):
     <h2>Access Denied</h2>
     <p>Your Google account (<strong>{email}</strong>) is not authorized to access ARK.</p>
     <p>To request access, contact<br/>
-       <a href="mailto:jihao.xin@kaust.edu.sa">jihao.xin@kaust.edu.sa</a></p>
+       <a href="mailto:contact@idea2paper.org">contact@idea2paper.org</a></p>
     <a class="back" href="{_home}">← Back to login</a>
   </div>
 </body>
