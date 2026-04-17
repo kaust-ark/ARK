@@ -16,45 +16,84 @@ from ark.execution import QuotaExhaustedError
 from ark.ui import RateLimitCountdown
 
 
-# Lines that look like the model's own labels rather than the actual title.
-# These get stripped out before we accept the title.
-_TITLE_LABEL_PATTERNS = re.compile(
-    r"^\s*(generated\s+)?title\s*[:：\-]\s*$",
-    re.IGNORECASE,
-)
+# --------------- Title generation helpers ---------------
+
+_TITLE_MIN_LEN = 10
+_TITLE_MAX_LEN = 200
+_TITLE_MAX_RETRIES = 3
 
 
-def _parse_title_from_agent_output(raw: str) -> str:
+def _generate_title_via_llm(idea_text: str, timeout: int = 60) -> str:
+    """Call ``claude -p`` to generate a paper title from idea text.
+
+    Returns the title string, or "" on failure.  The prompt is tightly
+    constrained: output ONLY the title, nothing else.
     """
-    Extract a clean paper title from a planner agent's free-form output.
-
-    Models occasionally prefix the title with a label line ("Title:" or
-    "Generated title:") on its own, then put the actual title on the next
-    line — naively grabbing ``split('\\n')[0]`` would save the *label* as
-    the title (we hit this in the wild). Strategy:
-
-      1. Strip wrapping quotes/whitespace from each non-empty line.
-      2. Drop lines that are pure labels (``Title:``, ``Generated title:``).
-      3. Strip a leading inline label like ``Title: Real Paper Title``.
-      4. Return the first surviving line.
-    """
-    if not raw:
+    prompt = (
+        "You are a scientific title generator. "
+        "Given the research summary below, output EXACTLY ONE concise academic paper title.\n\n"
+        "Rules:\n"
+        "- Output ONLY the title text, nothing else\n"
+        "- No quotes, no labels, no prefixes like 'Title:'\n"
+        "- No explanation, no newlines, no markdown\n"
+        "- Between 10 and 200 characters\n\n"
+        f"Research summary:\n{idea_text[:4000]}"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    try:
+        result = subprocess.run(
+            ["claude", "--print", "-p", prompt],
+            capture_output=True, text=True, timeout=timeout, env=env,
+        )
+        if result.returncode != 0:
+            return ""
+        title = result.stdout.strip().strip('"').strip("'").strip()
+        # Strip common LLM prefix leaks
+        for prefix in ("Title:", "title:", "Title :", "Generated title:"):
+            if title.lower().startswith(prefix.lower()):
+                title = title[len(prefix):].strip().strip('"').strip("'").strip()
+        return title
+    except subprocess.TimeoutExpired:
         return ""
-    cleaned: list[str] = []
-    for line in raw.splitlines():
-        line = line.strip().strip('"').strip("'").strip()
-        if not line:
-            continue
-        # Drop a line that is *only* a label.
-        if _TITLE_LABEL_PATTERNS.match(line):
-            continue
-        # Strip an inline leading label, e.g. "Title: Foo Bar" -> "Foo Bar".
-        m = re.match(r"^(?:generated\s+)?title\s*[:：\-]\s*(.+)$", line, re.IGNORECASE)
-        if m:
-            line = m.group(1).strip().strip('"').strip("'").strip()
-        if line:
-            cleaned.append(line)
-    return cleaned[0] if cleaned else ""
+    except FileNotFoundError:
+        return ""
+
+
+def _validate_title(title: str) -> bool:
+    """Check that a title is plausible."""
+    if not title:
+        return False
+    if len(title) < _TITLE_MIN_LEN or len(title) > _TITLE_MAX_LEN:
+        return False
+    # Reject if it looks like LLM meta-output rather than a real title
+    lower = title.lower()
+    if any(phrase in lower for phrase in (
+        "here is", "i suggest", "current title", "appropriate",
+        "as requested", "certainly", "sure,",
+    )):
+        return False
+    # Must contain at least one letter
+    if not any(c.isalpha() for c in title):
+        return False
+    return True
+
+
+def _fallback_title_from_idea(idea_text: str) -> str:
+    """Deterministic fallback: extract first substantive sentence from idea text."""
+    for line in idea_text.splitlines():
+        line = line.strip().lstrip("#").lstrip("-").lstrip("*").strip()
+        if len(line) >= _TITLE_MIN_LEN and not line.startswith("```"):
+            # Truncate to first sentence or max length
+            for sep in (". ", "。", "! ", "? "):
+                idx = line.find(sep)
+                if 0 < idx < _TITLE_MAX_LEN:
+                    line = line[:idx]
+                    break
+            if len(line) > _TITLE_MAX_LEN:
+                line = line[:_TITLE_MAX_LEN - 3] + "..."
+            return line
+    # Absolute last resort
+    return idea_text[:80].strip().replace("\n", " ")
 
 
 class PipelineMixin:
@@ -65,7 +104,6 @@ class PipelineMixin:
     log_summary_box, run_agent, memory, paper_accept_threshold,
     compile_latex, pdf_to_images, _run_figure_phase, _should_skip_figure_phase,
     generate_figures, run_planning_phase, _run_execute_phase, run_planner_cycle, self_repair,
-    check_and_trigger_meta_debug,
     parse_review_score, extract_issue_ids, record_score_to_memory,
     cleanup_workspace, git_commit, save_checkpoint, send_notification,
     load_paper_state, save_paper_state, load_paper_requirements,
@@ -641,11 +679,6 @@ Notes:
                 )
                 self._asked_this_iteration = True
 
-        # Meta-Debugger check
-        meta_result = self.check_and_trigger_meta_debug()
-        if meta_result == "CONTINUE_WITH_FIX":
-            self.log("Meta-Debugger has fixed the system issue", "META")
-
         return True
 
     def run_iteration(self) -> bool:
@@ -799,7 +832,7 @@ Notes:
             Idempotent: skipped if .env already exists.
 
         Step 1: Analyze Proposal
-            initializer reads uploaded PDF / idea → idea.md (including a
+            researcher reads uploaded PDF / idea → idea.md (including a
             suggested title) + deep research query. Title is parsed and
             committed to config.yaml + DB immediately after this step so
             Deep Research and Telegram UX have a real title.
@@ -808,7 +841,7 @@ Notes:
             Gemini Deep Research API → deep_research.md → PDF sent to user via Telegram
 
         Step 3: Specialization
-            initializer reads idea.md + deep_research.md →
+            researcher reads idea.md + deep_research.md →
             3.1 generate project_context.md (web-verified)
             3.2 specialize agent prompts (template + project knowledge → agents/ dir)
             3.3 select skills from library
@@ -850,7 +883,7 @@ Notes:
 
         # ── Step 1: Analyze Proposal ────────────────────────────────────
         idea_file = self.state_dir / "idea.md"
-        dr_query = None  # Will be set by initializer output
+        dr_query = None  # Will be set by researcher output
 
         if not idea_file.exists():
             self.log_step_header(1, 4, "Analyze Proposal")
@@ -867,7 +900,7 @@ Notes:
             venue = self.config.get("venue", "")
             venue_pages = self.config.get("venue_pages", "")
 
-            dr_query = self.run_agent("initializer", f"""
+            dr_query = self.run_agent("researcher", f"""
 Analyze the project proposal and produce two outputs.
 
 ## Source Material
@@ -890,10 +923,6 @@ For each one: what it is, how it is used in this research, any details mentioned
 ### Proposed Methodology
 What experiments do the authors plan? What data? What metrics? What baselines?
 
-### Suggested Title
-If the current title "{self.config.get('title', '')}" is empty or could be improved,
-suggest a concise academic title. Otherwise write "Current title is appropriate."
-
 ## Output 2: Deep Research Query
 After writing idea.md, output a focused deep research query for Gemini.
 The query should:
@@ -913,8 +942,7 @@ Be thorough and faithful to the proposal.
         else:
             self.log_step("idea.md exists, skipping proposal analysis", "info")
 
-        # Commit the suggested title to config.yaml + DB now, before Deep
-        # Research, so the query and Telegram notifications use a real title.
+        # Generate title from idea.md via dedicated LLM call (validated + retry).
         self._update_title_from_idea()
 
         # ── Step 2: Deep Research ───────────────────────────────────────
@@ -926,7 +954,7 @@ Be thorough and faithful to the proposal.
             api_key = self.config.get("gemini_api_key", "") or get_gemini_api_key()
 
             if api_key:
-                # Extract query from initializer output, or build from idea.md
+                # Extract query from researcher output, or build from idea.md
                 query = None
                 if dr_query and "DEEP_RESEARCH_QUERY:" in dr_query:
                     query = dr_query.split("DEEP_RESEARCH_QUERY:", 1)[1].strip()
@@ -980,7 +1008,7 @@ Be thorough and faithful to the proposal.
 
             # 3.1: Generate project_context.md (web-verified)
             self.log_step("Generating project context (web-verified)...", "progress")
-            self.run_agent("initializer", f"""
+            self.run_agent("researcher", f"""
 Read the idea summary and deep research report, then generate a verified
 project context document.
 
@@ -1010,18 +1038,30 @@ Write `auto_research/state/project_context.md` with sections:
             # 3.3: Select and install skills
             self.log_step("Selecting skills...", "progress")
             skills_index = self._load_skills_index()
+            ctx_content_for_skills = ctx_file.read_text()[:4000] if ctx_file.exists() else ""
             if skills_index and "No skills" not in skills_index:
-                self.run_agent("initializer", f"""
-Select 3-8 skills from the library below that are DIRECTLY relevant to this project.
+                self.run_agent("researcher", f"""
+Select skills from the library that match techniques this project will IMPLEMENT.
 
-## Project Summary
-{idea_content[:3000]}
+## Selection Rules
+- Only select skills for methods/tools the project will BUILD or RUN code for
+- Do NOT select skills just because a topic is MENTIONED as a benchmark or baseline
+  Example: if the project EVALUATES on RL environments but does NOT train RL agents,
+  do NOT select RL training skills
+- Select 1-5 skills. Zero is acceptable if nothing matches well.
+- When in doubt, leave it out — a wrong skill pollutes the agent context
+
+## Project Context (verified)
+{ctx_content_for_skills}
+
+## Research Idea
+{idea_content[:2000]}
 
 ## Skills Library
 {skills_index[:8000]}
 
 Write `auto_research/state/selected_skills.json` containing a JSON array of
-selected skill paths. Prefer fewer, precise matches over many vague ones.
+selected skill paths (or an empty array `[]` if nothing matches).
 """, timeout=300)
             self._install_selected_skills()
             self.log_step("Specialization complete", "success")
@@ -1044,7 +1084,7 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
         self.log_section("Research Phase Complete")
 
     def _load_skills_index(self) -> str:
-        """Load the skills library index as a compact string for the initializer."""
+        """Load the skills library index as a compact string for the researcher."""
         import json
         index_path = Path(__file__).parent.parent / "skills" / "index.json"
         if not index_path.exists():
@@ -1190,7 +1230,7 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
     def _specialize_agent_prompts(self, idea_content: str, dr_content: str):
         """Specialize each agent's prompt with project-specific knowledge.
 
-        For each agent (except initializer and meta_debugger), calls the initializer
+        For each agent (except researcher itself), calls the researcher
         to generate a '## Project-Specific Knowledge' section, then appends it to
         the agent's prompt file. Verifies the append succeeded.
         """
@@ -1200,10 +1240,9 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
         # What knowledge each agent should receive
         agent_focus = {
             "experimenter": "install commands, environment setup, what experiments to run, how to use the target systems, isolation requirements",
-            "planner": "experiment directions, system capabilities, what baselines to compare, what datasets exist",
+            "planner": "experiment directions, system capabilities, what baselines to compare, what datasets exist, how to analyze results",
             "reviewer": "domain-specific review criteria, what integrity checks matter, common pitfalls in this field",
             "writer": "key terminology, contribution framing, related work positioning, anonymity requirements",
-            "researcher": "relevant literature databases, what prior work exists, key papers and benchmarks",
             "coder": "relevant frameworks, libraries, and coding patterns for this domain",
         }
 
@@ -1217,6 +1256,7 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
         for agent_name, focus in agent_focus.items():
             prompt_file = agents_dir / f"{agent_name}.prompt"
             if not prompt_file.exists():
+                self.log(f"  Agent prompt missing: {prompt_file}, cannot specialize", "WARN")
                 continue
 
             current_prompt = prompt_file.read_text()
@@ -1225,8 +1265,8 @@ selected skill paths. Prefer fewer, precise matches over many vague ones.
                 specialized_count += 1
                 continue
 
-            # Ask initializer to generate the specialization section
-            result = self.run_agent("initializer", f"""
+            # Ask researcher to generate the specialization section
+            result = self.run_agent("researcher", f"""
 Generate a "## Project-Specific Knowledge" section for the {agent_name} agent.
 
 This section will be appended to the agent's prompt to give it domain expertise
@@ -1259,20 +1299,19 @@ for this specific project.
         self.log_step(f"Specialized {specialized_count}/{len(agent_focus)} agent prompts", "success")
 
     def _update_title_from_idea(self):
-        """Extract the suggested title from idea.md and commit it.
+        """Generate a title from idea.md via LLM and commit it.
 
-        The initializer (Step 1) writes a ``### Suggested Title`` section in
-        ``auto_research/state/idea.md``. If the current project title is empty
-        or a placeholder, parse that section, update ``self.config['title']``,
-        write back to ``config.yaml``, and sync the DB. This makes the real
-        title available to Deep Research and to Telegram UX before they run.
+        Uses ``claude -p`` with a tightly constrained prompt to generate
+        the title, validates the output, retries on failure, and falls back
+        to deterministic text extraction as a last resort.  The title is
+        guaranteed to be non-empty after this method completes (or it raises).
         """
         idea_file = self.state_dir / "idea.md"
         if not idea_file.exists():
+            self.log("idea.md not found — cannot generate title", "WARN")
             return
 
         current = (self.config.get("title") or "").strip()
-        # Treat UUID-like or empty titles as placeholders we should overwrite.
         is_placeholder = (
             not current
             or len(current) < 4
@@ -1281,57 +1320,41 @@ for this specific project.
         if not is_placeholder:
             return
 
-        content = idea_file.read_text()
-        # Find the Suggested Title section. It may be a "### Suggested Title"
-        # header followed by one or more lines; capture the first non-empty
-        # non-instructional line.
-        m = re.search(r"^###\s+Suggested\s+Title\s*\n+(.+?)(?=^##|\Z)",
-                      content, re.MULTILINE | re.DOTALL | re.IGNORECASE)
-        if not m:
-            return
-        block = m.group(1).strip()
-        # Skip if the initializer said the current title is fine.
-        if "current title is appropriate" in block.lower():
+        idea_text = idea_file.read_text().strip()
+        if not idea_text:
+            self.log("idea.md is empty — cannot generate title", "WARN")
             return
 
-        # Take the first substantive line
+        # --- Attempt: LLM call with validation + retry ---
         new_title = ""
-        for line in block.splitlines():
-            line = line.strip().lstrip("#").lstrip("-").lstrip("*").strip()
-            line = line.strip("\"'")
-            # Skip obvious meta lines
-            if not line or line.lower().startswith(("title:", "suggested title")):
-                # For "Title: X" form, keep the X part
-                if ":" in line:
-                    after = line.split(":", 1)[1].strip().strip("\"'")
-                    if after and len(after) > 4:
-                        new_title = after
-                        break
-                continue
-            if len(line) < 4:
-                continue
-            new_title = line
-            break
+        for attempt in range(1, _TITLE_MAX_RETRIES + 1):
+            candidate = _generate_title_via_llm(idea_text)
+            if _validate_title(candidate):
+                new_title = candidate
+                self.log(f"Title generated via LLM (attempt {attempt}): {new_title}", "INFO")
+                break
+            self.log(
+                f"Title generation attempt {attempt}/{_TITLE_MAX_RETRIES} failed "
+                f"(got: {candidate!r})", "WARN"
+            )
 
+        # --- Fallback: deterministic extraction ---
         if not new_title:
-            return
+            new_title = _fallback_title_from_idea(idea_text)
+            self.log(f"Title fallback from idea.md text: {new_title}", "WARN")
 
+        # --- Commit to config.yaml + DB ---
         self.config["title"] = new_title
-        # Write to config.yaml on disk
         config_path = self.code_dir / "config.yaml"
         if config_path.exists():
-            try:
-                import yaml
-                cfg = yaml.safe_load(config_path.read_text()) or {}
-                cfg["title"] = new_title
-                config_path.write_text(
-                    yaml.dump(cfg, default_flow_style=False,
-                              allow_unicode=True, sort_keys=False)
-                )
-            except Exception as e:
-                self.log(f"Could not update config.yaml with new title: {e}", "WARN")
+            cfg = yaml.safe_load(config_path.read_text()) or {}
+            cfg["title"] = new_title
+            config_path.write_text(
+                yaml.dump(cfg, default_flow_style=False,
+                          allow_unicode=True, sort_keys=False)
+            )
         self._sync_db(title=new_title, name=new_title)
-        self.log(f"Title updated from idea.md: {new_title}", "INFO")
+        self.log(f"Title committed: {new_title}", "INFO")
 
     # ==================== Citation Bootstrapping ====================
 
@@ -1820,9 +1843,9 @@ system or it fails with a clear report of what is needed.
         return exp_output
 
     def _analyze_results(self, exp_output: str) -> str:
-        """Step 3: Analyze experiment results using researcher agent."""
+        """Step 3: Analyze experiment results using planner agent."""
         self.log_step_header(3, 4, "Analyze Results")
-        output = self.run_agent("researcher", f"""
+        output = self.run_agent("planner", f"""
 Analyze ALL experiment results from this dev iteration.
 
 ## What was run
@@ -1863,7 +1886,7 @@ Evaluate whether we have sufficient experimental data for the paper.
 ## Current Findings
 {findings_summary}
 
-## Researcher Analysis
+## Results Analysis
 {research_output[:4000] if research_output else "No analysis available."}
 
 ## Task
@@ -2013,8 +2036,8 @@ Produce the complete paper. Do not stop until all sections are written and it co
         )
 
         if draft_compiled:
-            # Order matters: run citation verification BEFORE page enforcement
-            # so [NEEDS-CHECK] markers are counted in the final page budget.
+            # Citation verification before page enforcement: fix bib entries
+            # and clean unused refs so page count reflects final state.
             self._ensure_float_barrier()
             self.compile_latex()
             self._fix_overfull(context="dev-phase-delivery")
@@ -2802,7 +2825,7 @@ Only use double_column for multi-panel figures (side-by-side subplots).
 
     def _run_citation_verification(self):
         """Verify references.bib, fix errors, mark NEEDS-CHECK, clean unused."""
-        from ark.citation import verify_bib, fix_bib, cleanup_unused, mark_needs_check_in_tex
+        from ark.citation import verify_bib, fix_bib, cleanup_unused
 
         bib_path = self.latex_dir / "references.bib"
         if not bib_path.exists():
@@ -2841,10 +2864,8 @@ Only use double_column for multi-panel figures (side-by-side subplots).
             # 4. Enforce critical citations — if writer dropped a MUST CITE paper, add it back
             self._enforce_critical_citations(lit_path, tex_dir)
 
-            # 5. Mark [NEEDS-CHECK] citations in tex (reads from literature.yaml)
-            marked = mark_needs_check_in_tex(bib_str, tex_dir, literature_path=lit_path)
-            if marked:
-                self.log_step(f"Marked {marked} [NEEDS-CHECK] citation(s) in tex", "success")
+            # 5. NEEDS-CHECK markers stay in References only (via fix_bib note field).
+            # Do NOT mark body text — inserting markers after \cite disrupts page count.
 
             # 6. Clean up unused entries
             removed = cleanup_unused(bib_str, tex_dir)
@@ -2852,7 +2873,7 @@ Only use double_column for multi-panel figures (side-by-side subplots).
                 self.log_step(f"Removed {len(removed)} unused citations", "success")
 
             # 7. Recompile if anything changed
-            if (results and (corrected or needs_check)) or marked or removed:
+            if (results and (corrected or needs_check)) or removed:
                 self.log_step("Recompiling after citation updates...", "progress")
                 self.compile_latex()
 

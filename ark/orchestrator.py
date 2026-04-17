@@ -240,6 +240,10 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         except ImportError:
             self._db_path = None  # disable future sync attempts silently
             return
+        # Ensure ARK root is on sys.path (pipeline chdir's to project dir)
+        ark_root = str(Path(__file__).parent.parent.absolute())
+        if ark_root not in sys.path:
+            sys.path.insert(0, ark_root)
         try:
             from website.dashboard.db import get_session, get_project, update_project
             with get_session(self._db_path) as session:
@@ -1338,8 +1342,10 @@ a {{ color: #0d9488; }}
                     self.log("YAML fix succeeded (LaTeX escape -> single quotes)", "INFO")
                     return result
                 except Exception as e2:
-                    self.log(f"YAML fix failed: {e2}, returning empty plan", "ERROR")
-                    return {"issues": []}
+                    self.log(f"YAML fix failed: {e2}", "ERROR")
+                    raise RuntimeError(
+                        f"Cannot parse action plan {self.action_plan_file}: {e2}"
+                    ) from e2
         return {"issues": []}
 
     def _save_action_plan(self, action_plan: dict):

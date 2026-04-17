@@ -39,8 +39,6 @@ class Style:
         "writer":        "\033[92m",   # Green
         "experimenter":  "\033[95m",   # Magenta
         "researcher":    "\033[95m",   # Magenta
-        "visualizer":    "\033[93m",   # Yellow
-        "meta_debugger": "\033[91m",   # Red
         "coder":         "\033[92m",   # Green
     }
 
@@ -87,8 +85,6 @@ class Icons:
         "writer":        "✏️",
         "experimenter":  "🧪",
         "researcher":    "📚",
-        "visualizer":    "🖼️",
-        "meta_debugger": "🔧",
         "coder":         "⌨️",
     }
 

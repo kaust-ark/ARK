@@ -240,14 +240,11 @@ class _BlockingCommandWatchdog:
 # during the Specialization step (Research Phase Step 3). The runtime injection of
 # project_context has been replaced by Template-Specialization architecture.
 AGENT_CONTEXT_PROFILES = {
-    "initializer":    {"memory": False, "deep_research": False, "prior_context": False, "context_files": True},
+    "researcher":     {"memory": False, "deep_research": False, "prior_context": False, "context_files": True},
     "reviewer":       {"memory": True,  "deep_research": False, "prior_context": False, "context_files": False},
     "planner":        {"memory": True,  "deep_research": False, "prior_context": True,  "context_files": False},
     "writer":         {"memory": False, "deep_research": True,  "prior_context": True,  "context_files": False},
     "experimenter":   {"memory": False, "deep_research": True,  "prior_context": False, "context_files": True},
-    "researcher":     {"memory": False, "deep_research": True,  "prior_context": False, "context_files": True},
-    "visualizer":     {"memory": False, "deep_research": False, "prior_context": False, "context_files": False},
-    "meta_debugger":  {"memory": True,  "deep_research": False, "prior_context": False, "context_files": True},
     "coder":          {"memory": False, "deep_research": False, "prior_context": True,  "context_files": False},
 }
 
@@ -295,13 +292,28 @@ class AgentMixin:
         return None
 
     def _kill_process_tree(self, pid: int):
-        """Kill a process and all its descendants."""
+        """Kill a process and all its descendants (including the process itself).
+
+        Uses SIGKILL on the entire process group (since agents run with
+        start_new_session=True, pid == pgid) to ensure no orphans survive.
+        """
+        # First try to kill the entire process group
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        # Also kill individual descendants in case pgid differs
         descendants = _get_descendant_pids(pid)
-        for child_pid in reversed(descendants):  # kill children first
+        for child_pid in reversed(descendants):
             try:
                 os.kill(child_pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 pass
+        # Kill the process itself
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     def _cleanup_cli_state(self):
         """Clean up Claude CLI state after abnormal termination (e.g. SIGHUP).
@@ -472,8 +484,7 @@ class AgentMixin:
 
         prompt_file = self.agents_dir / f"{agent_type}.prompt"
         if not prompt_file.exists():
-            self.log(f"Agent prompt not found: {prompt_file}", "ERROR")
-            return ""
+            raise FileNotFoundError(f"Agent prompt not found: {prompt_file}")
 
         base_prompt = prompt_file.read_text()
 
@@ -695,14 +706,20 @@ Execute the task and update the corresponding files.
                     watchdog.stop()
                     # Kill entire process tree (agent + all its children)
                     self._kill_process_tree(process.pid)
-                    process.kill()
                     timer.stop()
                     self.log(f"Agent {agent_type} timed out ({timeout}s)", "WARN")
-                    # Capture whatever stdout/stderr is available so the empty-run
-                    # detection + downstream `stderr` references don't NameError.
+                    # Capture whatever stdout/stderr is available.
+                    # Close pipes first to avoid blocking on dead processes.
                     try:
-                        stdout, stderr = process.communicate(timeout=10)
+                        stdout, stderr = process.communicate(timeout=5)
                     except Exception:
+                        # If communicate still blocks, force-close pipes
+                        for pipe in (process.stdout, process.stderr):
+                            if pipe:
+                                try:
+                                    pipe.close()
+                                except Exception:
+                                    pass
                         stdout, stderr = "", ""
                     stdout = stdout or ""
                     stderr = stderr or ""

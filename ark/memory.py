@@ -109,8 +109,11 @@ class SimpleMemory:
                 self.repair_effective = data.get("repair_effective")
                 # Meta-Debugger support
                 self.experiment_empty_count = data.get("experiment_empty_count", 0)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger("ark.memory").warning(
+                    "Corrupt memory.yaml (%s), starting fresh: %s", self.memory_file, e
+                )
 
     def save(self):
         """Save to file"""
@@ -591,137 +594,6 @@ class SimpleMemory:
             lines.append("")
 
         return "\n".join(lines) if len(lines) > 1 else ""
-
-    # ==================== Meta-Debugger Support ====================
-
-    def get_diagnosis_context(self) -> Dict:
-        """Generate context needed for Meta-Debugger diagnosis
-
-        Returns:
-            Dictionary containing all diagnosis-related information
-        """
-        return {
-            "scores": {
-                "current": self.scores[-1] if self.scores else 0.0,
-                "best": self.best_score,
-                "recent": self.scores[-10:] if self.scores else [],
-                "trend": self._calculate_trend(),
-            },
-            "stagnation": {
-                "count": self.stagnation_count,
-                "is_stagnating": self.is_stagnating()[0],
-                "reason": self.is_stagnating()[1],
-            },
-            "issues": {
-                "history": self.issue_history,
-                "last_issues": self.last_issues,
-                "repeat_issues": self.get_repeat_issues(threshold=3),
-                "high_repeat": self.get_repeat_issues(threshold=7),
-            },
-            "repair": {
-                "last_iteration": self.last_repair_iteration,
-                "effective": self.repair_effective,
-                "methods_used": self.issue_repair_methods,
-                "expected_changes": self.expected_changes,
-            },
-            "experiment_empty_count": getattr(self, 'experiment_empty_count', 0),
-        }
-
-    def _calculate_trend(self) -> str:
-        """Calculate score trend"""
-        if len(self.scores) < 2:
-            return "insufficient_data"
-        recent = self.scores[-5:]
-        if len(recent) < 2:
-            return "insufficient_data"
-        delta = recent[-1] - recent[0]
-        if delta > 0.3:
-            return "improving"
-        elif delta < -0.3:
-            return "declining"
-        else:
-            return "stagnant"
-
-    def get_health_status(self) -> Tuple[str, List[str]]:
-        """Get system health status
-
-        Returns:
-            (status, reasons) where status is HEALTHY, WARNING, or CRITICAL
-        """
-        reasons = []
-
-        # Check stagnation
-        is_stuck, reason = self.is_stagnating()
-        if is_stuck:
-            reasons.append(f"Stagnation: {reason}")
-
-        # Check high-repeat issues
-        high_repeat = self.get_repeat_issues(threshold=7)
-        if high_repeat:
-            issue_list = [f"{i[0]}({i[1]}x)" for i in high_repeat[:3]]
-            reasons.append(f"High repeat issues: {', '.join(issue_list)}")
-
-        # Check score decline
-        if len(self.scores) >= 2 and self.scores[-1] < self.scores[-2] - 0.3:
-            reasons.append(f"Score dropped: {self.scores[-2]:.2f} -> {self.scores[-1]:.2f}")
-
-        # Check repair effectiveness
-        effective, repair_reason = self.was_last_repair_effective()
-        if not effective and "repeating" in repair_reason.lower():
-            reasons.append(f"Repair ineffective: {repair_reason}")
-
-        # Check experiment idle runs
-        empty_count = getattr(self, 'experiment_empty_count', 0)
-        if empty_count >= 2:
-            reasons.append(f"Experiments empty: {empty_count} times")
-
-        # Determine status
-        if len(reasons) >= 3 or any("High repeat" in r for r in reasons):
-            return "CRITICAL", reasons
-        elif len(reasons) >= 1:
-            return "WARNING", reasons
-        else:
-            return "HEALTHY", []
-
-    def mark_experiment_empty(self):
-        """Mark that an experiment produced empty results"""
-        if not hasattr(self, 'experiment_empty_count'):
-            self.experiment_empty_count = 0
-        self.experiment_empty_count += 1
-        self.save()
-
-    def clear_experiment_empty(self):
-        """Clear experiment empty result count (when experiment succeeds)"""
-        self.experiment_empty_count = 0
-        self.save()
-
-    def should_trigger_meta_debug(self) -> Tuple[bool, str]:
-        """Determine whether Meta-Debugger should be triggered
-
-        Returns:
-            (should_trigger, reason)
-        """
-        # Condition 1: Stagnation
-        if self.stagnation_count >= 3:
-            return True, f"stagnation ({self.stagnation_count} iterations)"
-
-        # Condition 2: High issue repetition
-        high_repeat = self.get_repeat_issues(threshold=7)
-        if high_repeat:
-            return True, f"issue_repeat ({high_repeat[0][0]}: {high_repeat[0][1]}x)"
-
-        # Condition 3: Significant score drop
-        if len(self.scores) >= 2:
-            delta = self.scores[-1] - self.scores[-2]
-            if delta <= -0.3:
-                return True, f"score_drop ({delta:.2f})"
-
-        # Condition 4: Experiment idle runs
-        empty_count = getattr(self, 'experiment_empty_count', 0)
-        if empty_count >= 2:
-            return True, f"experiment_empty ({empty_count}x)"
-
-        return False, ""
 
     def reset(self):
         """Reset"""

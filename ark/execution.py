@@ -43,111 +43,6 @@ class ExecutionMixin:
         """Wait for experiment jobs (internal shortcut). Delegates to compute backend."""
         return self._compute_backend.wait_for_completion(max_wait_hours)
 
-    def _get_searched_lit_topics(self) -> set:
-        """Return set of literature topics already searched (from literature.yaml)."""
-        try:
-            if self.literature_file.exists():
-                data = yaml.safe_load(self.literature_file.read_text()) or {}
-                searches = data.get("searches", [])
-                if isinstance(searches, list):
-                    return {s.get("topic", "").lower().strip()
-                            for s in searches if isinstance(s, dict) and s.get("topic")}
-        except Exception:
-            pass
-        return set()
-
-    def run_literature_search(self, topics: list) -> str:
-        """Run API-first literature search on given topics.
-
-        1. Extract search queries from topics
-        2. Search academic databases (DBLP/CrossRef/arXiv/S2)
-        3. Have researcher agent select relevant papers from candidates
-        4. Fetch official BibTeX and write to references.bib
-        5. Update literature.yaml for writer reference
-        """
-        from ark.citation import (
-            search_papers, extract_search_queries, format_candidates_for_agent,
-            parse_agent_selection, fetch_bibtex, append_papers_to_bib,
-            update_literature_yaml,
-        )
-
-        self.log_step(f"Literature search (API-first): {topics}", "progress")
-
-        bib_path = str(self.latex_dir / "references.bib")
-        literature_path = str(self.literature_file)
-        paper_title = self.config.get("title", self.project_name)
-        research_idea = self.config.get("research_idea", "")
-
-        # Gather candidates from all topics
-        all_candidates = []
-        for topic in topics:
-            topic_prompts = self.config.get("literature_search_prompts", {})
-            description = topic_prompts.get(topic, topic)
-            queries = extract_search_queries(topic, description)
-            self.log_step(f"  Searching: {queries[:3]}", "progress")
-            for q in queries[:3]:
-                results = search_papers(q, max_results=10)
-                all_candidates.extend(results)
-
-        if not all_candidates:
-            self.log_step("No papers found from academic databases", "warning")
-            return ""
-
-        # Deduplicate
-        seen = set()
-        unique = []
-        for p in all_candidates:
-            key = p.doi or p.title.lower()[:60]
-            if key not in seen:
-                seen.add(key)
-                unique.append(p)
-        all_candidates = unique[:15]
-
-        self.log_step(f"  Found {len(all_candidates)} candidate papers", "progress")
-
-        # Researcher agent selects relevant papers
-        candidates_text = format_candidates_for_agent(all_candidates)
-        selection_prompt = f"""
-## Paper Background
-Title: {paper_title}
-Research idea: {research_idea}
-
-## Candidate Papers (from academic databases — all are real, verified papers)
-
-{candidates_text}
-
-## Your Task
-
-Select the papers most relevant to our research from the list above.
-
-Output format:
-SELECTED: 1, 5, 11
-[1] Reason: ... | Section: Related Work
-[5] Reason: ... | Section: Method
-[11] Reason: ... | Section: Experiments
-
-Rules:
-- ONLY select from the numbered list above
-- Do NOT suggest any papers not in the list
-- For each selected paper, explain why it is relevant and where to cite it
-"""
-        agent_output = self.run_agent("researcher", selection_prompt, timeout=900)
-
-        # Parse selection and write BibTeX
-        selected = parse_agent_selection(agent_output, all_candidates)
-        if not selected:
-            self.log_step("Researcher selected no papers", "warning")
-            return agent_output
-
-        self.log_step(f"  Researcher selected {len(selected)} papers, fetching BibTeX...", "progress")
-        added_keys = append_papers_to_bib(bib_path, selected)
-        self.log_step(f"  Added {len(added_keys)} citations to references.bib: {added_keys}", "success")
-
-        # Update literature.yaml
-        update_literature_yaml(literature_path, selected, added_keys, agent_output)
-
-        return agent_output
-
     def run_planner_cycle(self, review_output: str) -> bool:
         """Planner-driven iteration cycle (planning + execution).
 
@@ -708,13 +603,15 @@ After making all changes, you MUST verify the page count:
 
         # Loop until page count is in range.
         # Every 4 failed attempts, relax tolerance by 0.1 pages (both sides).
+        # Hard limit of 20 attempts to prevent infinite loops.
+        MAX_PAGE_ATTEMPTS = 20
         attempt = 0
         tolerance_relaxations = 0
         cur_min = min_pages
         cur_max = max_pages
         history = []  # list of {"before", "after", "action"} for feedback to LLM
 
-        while True:
+        while attempt < MAX_PAGE_ATTEMPTS:
             in_range = cur_min <= page_count <= cur_max
             if in_range:
                 if tolerance_relaxations > 0:
@@ -793,6 +690,19 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             if not page_count:
                 self.log(f"[{context}] Could not determine page count after {action}", "WARN")
                 return True
+
+            # Detect stalled progress: if page count didn't change at all, bail out
+            # instead of looping fruitlessly.
+            stall_count = sum(1 for h in history[-3:] if abs(h["after"] - h["before"]) < 0.01)
+            if stall_count >= 3:
+                self.log(f"[{context}] Page count stalled at {page_count:.1f} for 3 consecutive "
+                         f"attempts — aborting page enforcement", "ERROR")
+                return False
+
+        # Exhausted max attempts
+        self.log(f"[{context}] Page enforcement failed after {MAX_PAGE_ATTEMPTS} attempts "
+                 f"({page_count:.1f}/{venue_pages} pages)", "ERROR")
+        return False
 
     # LaTeX snippet that saves the current vertical position to the .aux file.
     # \pdfsavepos records the position at shipout; the deferred \write expands
@@ -1424,135 +1334,6 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
             self.log(f"Failed to extract bottleneck: {e}", "WARN")
 
         return "Unknown"
-
-    # ==================== Meta-Debugger ====================
-
-    def run_meta_debugger(self, trigger_reason: str) -> str:
-        """Run Meta-Debugger for system diagnosis and repair.
-
-        Returns:
-            "CONTINUE" | "CONTINUE_WITH_FIX" | "PAUSE"
-        """
-        self.log(f"Triggering Meta-Debugger: {trigger_reason}", "META")
-
-        diagnosis_ctx = self.memory.get_diagnosis_context()
-        health_status, health_reasons = self.memory.get_health_status()
-
-        ctx_summary = f"""
-## Trigger Reason
-{trigger_reason}
-
-## System Health Status
-Status: **{health_status}**
-{"Reasons: " + ", ".join(health_reasons) if health_reasons else "No anomalies"}
-
-## Score Trend
-- Current: {diagnosis_ctx['scores']['current']}/10
-- Best: {diagnosis_ctx['scores']['best']}/10
-- Trend: {diagnosis_ctx['scores']['trend']}
-- Recent: {' -> '.join(f"{s:.1f}" for s in diagnosis_ctx['scores']['recent'][-5:])}
-
-## Stagnation Status
-- Stagnation count: {diagnosis_ctx['stagnation']['count']}
-- Is stagnating: {diagnosis_ctx['stagnation']['is_stagnating']}
-- Reason: {diagnosis_ctx['stagnation']['reason']}
-
-## Issue Repetition
-- High repeat (7+ times): {diagnosis_ctx['issues']['high_repeat']}
-- Medium repeat (3+ times): {diagnosis_ctx['issues']['repeat_issues'][:5]}
-
-## Experiment Idle Runs
-- Idle run count: {diagnosis_ctx['experiment_empty_count']}
-"""
-
-        diagnosis_output = self.run_agent("meta_debugger", f"""
-{ctx_summary}
-
-Please perform a complete system diagnosis:
-
-1. **Read key state files**:
-   - auto_research/state/memory.yaml
-   - auto_research/state/action_plan.yaml
-   - auto_research/state/latest_review.md
-
-2. **Analyze recent execution logs** (check auto_research/logs/ directory)
-
-3. **Check execution consistency**:
-   - Run `git diff scripts/create_paper_figures.py` to check FIGURE_CODE tasks
-   - Run `git status` to check which files were modified
-
-4. **Identify problem patterns**:
-   - Are there cases of "correct plan but failed execution"?
-   - Is the system stuck in a "method loop"?
-   - Are strategy escalation rules being violated?
-
-5. **Generate diagnosis report** to auto_research/state/meta_diagnosis.md
-
-6. **If state issues are found, fix them directly** (ONLY these file types):
-   - Reset erroneous accumulations in memory.yaml
-   - Fix malformed action_plan.yaml
-   - Edit agent prompt files (*.prompt) to improve instructions
-
-**FORBIDDEN — do NOT modify**:
-   - Any Python source code (.py files)
-   - Any shell scripts (.sh files)
-   - Any configuration outside auto_research/state/
-
-Modifying .py files risks breaking the pipeline. If you find a Python bug,
-describe it in meta_diagnosis.md — a human will fix it.
-
-**Important**: Diagnosis must find root causes, not just symptoms. Fixes must be specific, not just suggestions.
-""", timeout=1800)
-
-        # Safety: revert any .py files the agent may have modified
-        self._revert_py_modifications()
-
-        diagnosis_file = self.state_dir / "meta_diagnosis.md"
-        if diagnosis_file.exists():
-            try:
-                diagnosis_file.read_text()
-                self.log("Meta-Debugger completed diagnosis, continuing iteration", "WARNING")
-                self.memory.load()
-                return "CONTINUE_WITH_FIX"
-            except Exception as e:
-                self.log(f"Failed to read diagnosis report: {e}", "ERROR")
-
-        return "CONTINUE"
-
-    def _revert_py_modifications(self):
-        """Revert any .py file changes made by meta-debugger.
-
-        Meta-debugger should only modify state files (.yaml, .md, .prompt).
-        If it touched .py files, revert them with git checkout.
-        """
-        try:
-            result = subprocess.run(
-                ["git", "diff", "--name-only"],
-                capture_output=True, text=True, timeout=10,
-                cwd=self.code_dir,
-            )
-            if result.returncode != 0:
-                return
-
-            changed = result.stdout.strip().split("\n") if result.stdout.strip() else []
-            py_files = [f for f in changed if f.endswith(".py")]
-            if py_files:
-                self.log(f"Meta-debugger modified .py files (forbidden): {py_files}", "WARN")
-                subprocess.run(
-                    ["git", "checkout", "--"] + py_files,
-                    capture_output=True, timeout=10,
-                    cwd=self.code_dir,
-                )
-                self.log(f"Reverted {len(py_files)} .py file(s)", "WARN")
-        except Exception as e:
-            self.log(f"Failed to check/revert .py modifications: {e}", "WARN")
-
-    def check_and_trigger_meta_debug(self) -> str:
-        """Check if Meta-Debugger should be triggered, and run it if so."""
-        should_trigger, reason = self.memory.should_trigger_meta_debug()
-        if should_trigger:
-            return self.run_meta_debugger(reason)
-        return "CONTINUE"
 
     def self_repair(self, stagnation_reason: str) -> bool:
         """Self-repair: re-plan strategy when stagnating.

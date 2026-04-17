@@ -397,7 +397,7 @@ def _substitute_agent_templates(project_dir: Path, project_id: str, title: str,
     """
     agents_dir = project_dir / "agents"
     agents_dir.mkdir(exist_ok=True)
-    templates_dir = Path(__file__).parent.parent / "templates" / "agents"
+    templates_dir = Path(__file__).parent.parent.parent / "ark" / "templates" / "agents"
     if not templates_dir.exists():
         return
     for pf in templates_dir.glob("*.prompt"):
