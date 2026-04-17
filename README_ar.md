@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/logo_ark_transparent.png" alt="ARK" width="260">
+  <img src="https://idea2paper.org/assets/logo_ark_transparent.png" alt="ARK" width="260">
 </p>
 
 <h1 align="center">ARK &mdash; مجموعة أدوات البحث الآلي</h1>
@@ -16,13 +16,13 @@
   <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/agents-8-orange.svg" alt="8 وكلاء">
+  <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 وكلاء">
   <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="+11 مؤتمر">
-  <img src="https://img.shields.io/badge/tests-115-brightgreen.svg" alt="115 اختبار">
+  <img src="https://img.shields.io/badge/tests-114-brightgreen.svg" alt="114 اختبار">
 </p>
 
 <p align="center">
-  <a href="https://kaust-ark.github.io/"><strong>الموقع</strong></a> &bull;
+  <a href="https://idea2paper.org/"><strong>الموقع</strong></a> &bull;
   <a href="#البداية-السريعة">البداية السريعة</a> &bull;
   <a href="#ark-pipeline">Pipeline</a> &bull;
   <a href="#ark-agents">Agents</a> &bull;
@@ -31,7 +31,7 @@
 
 ---
 
-يُنسّق ARK **٨ وكلاء ذكاء اصطناعي متخصصين** لتحويل فكرة بحثية إلى ورقة علمية — بحث أدبي، تجارب Slurm، صياغة LaTeX، توليد أشكال، ومراجعة تكرارية — بينما تبقى في السيطرة عبر **CLI** أو **بوابة الويب** أو **Telegram**.
+يُنسّق ARK **٦ وكلاء ذكاء اصطناعي متخصصين** لتحويل فكرة بحثية إلى ورقة علمية — تحليل المقترح، بحث أدبي، تجارب Slurm، صياغة LaTeX، ومراجعة تكرارية — بينما تبقى في السيطرة عبر **CLI** أو **لوحة التحكم** أو **Telegram**.
 
 ```
 قدّم فكرة ومؤتمرًا مستهدفًا. ARK يتولى الباقي.
@@ -40,7 +40,7 @@
 ## أوراق بحثية كتبها ARK
 
 <p align="center">
-<img src="https://kaust-ark.github.io/assets/paper-example.png" alt="ورقة MMA" width="480">
+<img src="https://idea2paper.org/assets/paper-example.png" alt="ورقة MMA" width="480">
 <br>
 <a href="https://github.com/JihaoXin/mma"><em>ضرب المصفوفات على المعالج: من البسيط إلى الفعّال</em></a>
 <br>
@@ -54,12 +54,12 @@
 يمرّ ARK بثلاث مراحل متتابعة. مرحلة المراجعة تتكرر حتى تصل الورقة إلى الدرجة المستهدفة.
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/pipeline_overview.png" alt="ARK Pipeline" width="700">
+  <img src="https://idea2paper.org/assets/pipeline_overview.png" alt="ARK Pipeline" width="700">
 </p>
 
 | المرحلة | ما يحدث |
 |:--------|:--------|
-| **Research** | خط أنابيب من ٤ خطوات: Deep Research &rarr; المُهيّئ (تمهيد البيئة والاستشهادات) &rarr; المخطط &rarr; المُجرِّب |
+| **Research** | خط أنابيب من ٥ خطوات: إعداد البيئة (conda) &rarr; تحليل المقترح (الباحث) &rarr; Deep Research (Gemini) &rarr; التخصيص (الباحث) &rarr; التمهيد (skills والاستشهادات) |
 | **Dev** | دورة تجا��ب تكرارية: تخطيط &rarr; تشغيل Slurm &rarr; تحل��ل &rarr; كتابة مسودة أولية |
 | **Review** | تجميع &rarr; مراجعة &rarr; تخطيط &rarr; تنفيذ &rarr; تحقّق، تكرار حتى الدرجة &ge; العتبة |
 
@@ -68,7 +68,7 @@
 كل تكرار في مرحلة المراجعة يمرّ بـ **٥ خطوات**:
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/review_loop.png" alt="دورة المراجعة" width="700">
+  <img src="https://idea2paper.org/assets/review_loop.png" alt="دورة المراجعة" width="700">
 </p>
 
 | الخطوة | الوصف |
@@ -86,18 +86,16 @@
 ## ARK Agents
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/architecture_overview.png" alt="بنية ARK" width="600">
+  <img src="https://idea2paper.org/assets/architecture_overview.png" alt="بنية ARK" width="600">
 </p>
 
 | الوكيل | الدور |
 |:-------|:------|
-| **Reviewer** | يُقيّم الورقة وفق معايير المؤتمر ويُنشئ مهام تحسين |
-| **Planner** | يحوّل ملاحظات المراجعة إلى خطة عمل ذات أولويات |
+| **Researcher** | يحلّل المقترح &rarr; يكتب `idea.md`؛ مسح أدبي بدعم Gemini؛ يُخصّص قوالب الوكلاء للمشروع |
+| **Reviewer** | يُقيّم الورقة وفق معايير المؤتمر ويُنشئ مهام تحسين؛ يتحقق من توافق التجارب مع المقترح |
+| **Planner** | يحوّل ملاحظات المراجعة إلى خطة عمل ذات أولويات؛ يتحقق من توافق التجارب |
 | **Writer** | يصيغ أقسام LaTeX ويُنقّحها بمراجع مُتحقَّقة عبر DBLP |
-| **Experimenter** | يصمم التجارب، يُرسل مهام Slurm، ويحلل النتائج |
-| **Researcher** | مسح أدبي عميق عبر واجهات أكاديمية (DBLP، CrossRef، Semantic Scholar) |
-| **Visualizer** | يُنشئ أشكالاً بـ Nano Banana وأبعاد لوحة مُدركة للمؤتمر |
-| **Meta-Debugger** | يكتشف التوقف، يشخّص الإخفاقات، ويُشغّل الإصلاح الذاتي |
+| **Experimenter** | يصمم التجارب، يُرسل مهام Slurm، ويحلل النتائج؛ دعم متعدد المزودين |
 | **Coder** | يكتب ويُصحّح كود التجارب وسكريبتات التحليل |
 
 ---
