@@ -900,19 +900,20 @@ async def index(request: Request):
     )
 
 
-@router.get("/share/{token}", response_class=HTMLResponse, name="share")
+@router.get("/share/{token}", name="share")
 async def share_view(token: str, request: Request):
     """Public entry point for a signed share link.
 
-    Validates the token, plants the grant in the session so subsequent read-only
-    API calls from this browser work, and renders the SPA in share mode.
+    Two token kinds:
+      - "user"    → auto-login as that user. Full webapp access, identical to
+                    what the user would see after Google/magic-link login. Hand
+                    these out as anonymous reviewer accounts and control blast
+                    radius via provider-side API spend caps.
+      - "project" → seats a read-only grant scoped to one project. Reviewer sees
+                    only that project's detail view; writes are blocked.
 
-    Two token kinds are supported:
-      - "project" → reviewer sees one specific project's detail page only.
-      - "user"    → reviewer sees that user's dashboard + every project they own.
-
-    CF Access should have a Bypass policy covering /dashboard/share/* so
-    unauthenticated reviewers reach this handler.
+    CF Access must have a Bypass policy covering /dashboard/share/* so
+    unauthenticated visitors reach this handler.
     """
     settings = get_settings()
     verified = verify_share_token(token, settings.secret_key)
@@ -930,22 +931,38 @@ async def share_view(token: str, request: Request):
         )
     kind, ident = verified
 
-    # Seat the grant. Clear any prior user login so reviewers don't accidentally
-    # act as someone else's account. The share session is read-only by design.
+    if kind == "user":
+        # Full auto-login. Clear any previous share-mode state, then seat
+        # user_id the same way /auth/verify does after magic-link success.
+        for k in ("share_token", "share_kind", "share_id", "share_project_id"):
+            request.session.pop(k, None)
+        with get_session(settings.db_path) as session:
+            user = session.get(User, ident)
+            if not user:
+                return HTMLResponse(
+                    "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
+                    "<body style='font-family:sans-serif;padding:40px;text-align:center'>"
+                    "<h2>User not found</h2><p>This share link references a user that no longer exists.</p>"
+                    "</body></html>",
+                    status_code=404,
+                )
+            request.session["user_id"] = user.id
+        return RedirectResponse(_home_path())
+
+    # kind == "project": read-only grant for one project only.
     request.session["share_token"] = token
     request.session["share_kind"] = kind
     request.session["share_id"] = ident
     request.session.pop("user_id", None)
-    request.session.pop("share_project_id", None)  # drop legacy key
-
+    request.session.pop("share_project_id", None)
     return _templates.TemplateResponse(
         request,
         "app.html",
         {
             "app_base": request.scope.get("root_path", ""),
-            "share_mode": kind,  # "project" or "user" — falsy check still works
-            "share_project_id": ident if kind == "project" else "",
-            "share_user_id": ident if kind == "user" else "",
+            "share_mode": "project",
+            "share_project_id": ident,
+            "share_user_id": "",
         },
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
