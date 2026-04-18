@@ -39,7 +39,7 @@ from starlette.requests import Request
 
 from authlib.integrations.starlette_client import OAuth as _OAuth
 
-from .auth import make_token, verify_token
+from .auth import make_token, make_share_token, verify_token, verify_share_token
 from .config import get_settings
 
 # Lazy-initialized Google OAuth client
@@ -292,6 +292,33 @@ def _require_admin(request: Request) -> User:
 def _can_access_project(user: User, project: Project) -> bool:
     """Return True if user owns the project or is admin."""
     return project.user_id == user.id or _is_admin(user)
+
+
+def _share_grant(request: Request) -> str | None:
+    """If session is a valid share-link session, return the granted project_id.
+
+    Re-verifies the share token on every call so expired/rotated tokens stop
+    working immediately (not after the 7-day session cookie expires).
+    """
+    token = request.session.get("share_token")
+    pid = request.session.get("share_project_id")
+    if not token or not pid:
+        return None
+    verified = verify_share_token(token, get_settings().secret_key)
+    if verified != pid:
+        # Token expired, signature invalid, or secret rotated — drop grant.
+        request.session.pop("share_token", None)
+        request.session.pop("share_project_id", None)
+        return None
+    return pid
+
+
+def _can_read_project(request: Request, project: Project) -> bool:
+    """Read access: owner, admin, or active share grant for this exact project."""
+    if _share_grant(request) == project.id:
+        return True
+    user = _get_current_user(request)
+    return bool(user and _can_access_project(user, project))
 
 
 def _project_dir(settings, user_id: str, project_id: str) -> Path:
@@ -847,7 +874,52 @@ async def index(request: Request):
     return _templates.TemplateResponse(
         request,
         "app.html",
-        {"app_base": request.scope.get("root_path", "")},
+        {
+            "app_base": request.scope.get("root_path", ""),
+            "share_mode": False,
+            "share_project_id": "",
+        },
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@router.get("/share/{token}", response_class=HTMLResponse, name="share")
+async def share_view(token: str, request: Request):
+    """Public entry point for a signed share link.
+
+    Validates the token, plants the grant in the session so subsequent read-only
+    API calls from this browser work, and renders the SPA in share mode.
+
+    CF Access should have a Bypass policy covering /dashboard/share/* so
+    unauthenticated reviewers reach this handler.
+    """
+    settings = get_settings()
+    pid = verify_share_token(token, settings.secret_key)
+    if not pid:
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Link invalid</title>"
+            "<style>body{font-family:sans-serif;display:flex;align-items:center;"
+            "justify-content:center;min-height:100vh;margin:0;background:#f0fdfa}"
+            ".card{background:#fff;border-radius:16px;padding:40px 48px;max-width:420px;"
+            "box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}"
+            "h2{color:#991b1b;margin-bottom:12px}p{color:#555;line-height:1.6}</style></head>"
+            "<body><div class='card'><h2>Share link invalid or expired</h2>"
+            "<p>Ask the project owner for a fresh link.</p></div></body></html>",
+            status_code=403,
+        )
+    # Seat the grant. Clear any prior user login so reviewers don't accidentally
+    # act as someone else's account. The share session is read-only by design.
+    request.session["share_token"] = token
+    request.session["share_project_id"] = pid
+    request.session.pop("user_id", None)
+    return _templates.TemplateResponse(
+        request,
+        "app.html",
+        {
+            "app_base": request.scope.get("root_path", ""),
+            "share_mode": True,
+            "share_project_id": pid,
+        },
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
@@ -1357,11 +1429,10 @@ async def api_create_project(
 
 @router.get("/api/projects/{project_id}")
 async def api_get_project(project_id: str, request: Request):
-    user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         pdir = _project_dir(settings, project.user_id, project_id)
         score = _read_project_score(pdir, project=project)
@@ -1664,11 +1735,10 @@ async def api_admin_killall(request: Request):
 
 @router.get("/api/projects/{project_id}/pdf")
 async def api_get_pdf(project_id: str, request: Request):
-    user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
     pdir = _project_dir(settings, owner_id, project_id)
@@ -1681,11 +1751,10 @@ async def api_get_pdf(project_id: str, request: Request):
 
 @router.get("/api/projects/{project_id}/uploaded-pdf")
 async def api_get_uploaded_pdf(project_id: str, request: Request):
-    user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
     pdir = _project_dir(settings, owner_id, project_id)
@@ -1698,11 +1767,10 @@ async def api_get_uploaded_pdf(project_id: str, request: Request):
 
 @router.get("/api/projects/{project_id}/zip")
 async def api_download_zip(project_id: str, request: Request):
-    user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
     pdir = _project_dir(settings, owner_id, project_id)
@@ -1756,11 +1824,10 @@ async def api_download_zip(project_id: str, request: Request):
 
 @router.get("/api/projects/{project_id}/log")
 async def api_get_log(project_id: str, request: Request, lines: int = 200):
-    user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
     pdir = _project_dir(settings, owner_id, project_id)
@@ -1787,12 +1854,11 @@ async def api_get_log(project_id: str, request: Request, lines: int = 200):
 
 @router.get("/api/projects/{project_id}/stream")
 async def api_stream_log(project_id: str, request: Request):
-    user = _require_user(request)
     settings = get_settings()
 
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
 
