@@ -294,44 +294,32 @@ def _can_access_project(user: User, project: Project) -> bool:
     return project.user_id == user.id or _is_admin(user)
 
 
-def _share_grant(request: Request) -> tuple[str, str] | None:
-    """If the session is a valid share-link session, return (kind, id).
+def _share_project_grant(request: Request) -> str | None:
+    """If the session is a valid project-share session, return the granted project_id.
 
-    kind ∈ {"project", "user"}. Re-verifies the token every call so expired or
-    rotated-secret tokens stop working immediately, not after the 7-day
-    session cookie expires.
+    Re-verifies the token every call so expired/rotated-secret tokens stop
+    working immediately instead of hanging on the 7-day session cookie.
+
+    User-share links don't seat this state — they set user_id via /share/<token>
+    and the visitor becomes that user for the duration of the normal login
+    session. Only project-share keeps a read-only grant in the session.
     """
     token = request.session.get("share_token")
     expected_kind = request.session.get("share_kind")
     expected_id = request.session.get("share_id")
-    if not token or not expected_kind or not expected_id:
+    if not token or expected_kind != "project" or not expected_id:
         return None
     verified = verify_share_token(token, get_settings().secret_key)
-    if not verified or verified != (expected_kind, expected_id):
-        # Token expired, signature invalid, or secret rotated — drop grant.
-        for k in ("share_token", "share_kind", "share_id",
-                  # Legacy keys from the pre-kind rollout; drop defensively.
-                  "share_project_id"):
+    if verified != ("project", expected_id):
+        for k in ("share_token", "share_kind", "share_id", "share_project_id"):
             request.session.pop(k, None)
         return None
-    return verified
-
-
-def _share_project_grant(request: Request) -> str | None:
-    g = _share_grant(request)
-    return g[1] if g and g[0] == "project" else None
-
-
-def _share_user_grant(request: Request) -> str | None:
-    g = _share_grant(request)
-    return g[1] if g and g[0] == "user" else None
+    return expected_id
 
 
 def _can_read_project(request: Request, project: Project) -> bool:
-    """Read access: owner, admin, project-share of this id, or user-share matching owner."""
+    """Read access: owner, admin, or a project-share grant for this exact project."""
     if _share_project_grant(request) == project.id:
-        return True
-    if _share_user_grant(request) == project.user_id:
         return True
     user = _get_current_user(request)
     return bool(user and _can_access_project(user, project))
@@ -894,7 +882,6 @@ async def index(request: Request):
             "app_base": request.scope.get("root_path", ""),
             "share_mode": False,
             "share_project_id": "",
-            "share_user_id": "",
         },
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
@@ -960,9 +947,8 @@ async def share_view(token: str, request: Request):
         "app.html",
         {
             "app_base": request.scope.get("root_path", ""),
-            "share_mode": "project",
+            "share_mode": True,
             "share_project_id": ident,
-            "share_user_id": "",
         },
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
@@ -1117,37 +1103,18 @@ async def auth_google_enabled():
 @router.get("/api/me")
 async def api_me(request: Request):
     user = _get_current_user(request)
-    if user:
-        return JSONResponse({
-            "authenticated": True,
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "picture": user.picture,
-            "is_admin": _is_admin(user),
-            "telegram_token": user.telegram_token or "",
-            "telegram_chat_id": user.telegram_chat_id or "",
-        })
-    # Share sessions: surface the granted user (read-only) so the SPA can
-    # populate the nav/dashboard as that user without enabling any writes.
-    uid = _share_user_grant(request)
-    if uid:
-        settings = get_settings()
-        with get_session(settings.db_path) as session:
-            u = session.get(User, uid)
-            if u:
-                return JSONResponse({
-                    "authenticated": True,
-                    "share_readonly": True,
-                    "id": u.id,
-                    "email": u.email,
-                    "name": u.name,
-                    "picture": u.picture,
-                    "is_admin": False,
-                    "telegram_token": "",
-                    "telegram_chat_id": "",
-                })
-    return JSONResponse({"authenticated": False})
+    if not user:
+        return JSONResponse({"authenticated": False})
+    return JSONResponse({
+        "authenticated": True,
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "picture": user.picture,
+        "is_admin": _is_admin(user),
+        "telegram_token": user.telegram_token or "",
+        "telegram_chat_id": user.telegram_chat_id or "",
+    })
 
 
 # ── user settings & keys ──────────────────────────────────────────────────────
@@ -1283,35 +1250,8 @@ async def api_save_user_settings(request: Request):
 
 @router.get("/api/projects")
 async def api_list_projects(request: Request, scope: str = "mine"):
-    # Share sessions: if this is a user-share, list that user's projects
-    # read-only. Project-share sessions never see this list (they're scoped to
-    # one project) and get 401 like any other unauthenticated caller.
-    share_uid = _share_user_grant(request)
-    settings = get_settings()
-    if share_uid:
-        with get_session(settings.db_path) as session:
-            projects = get_projects_for_user(session, share_uid)
-            user_email_cache: dict[str, str] = {}
-            result = []
-            for p in projects:
-                pdir = _project_dir(settings, p.user_id, p.id)
-                score = _read_project_score(pdir, project=p)
-                pdf = _find_pdf(pdir)
-                paper_title = _read_paper_title(pdir)
-                display_title = paper_title or p.title or ""
-                result.append({
-                    "id": p.id, "name": p.name, "title": display_title,
-                    "idea": p.idea, "venue": p.venue, "mode": p.mode,
-                    "status": p.status, "score": score,
-                    "has_pdf": pdf is not None,
-                    "has_pdf_upload": bool(p.has_pdf_upload),
-                    "slurm_job_id": p.slurm_job_id,
-                    "created_at": p.created_at.isoformat(),
-                    "updated_at": p.updated_at.isoformat(),
-                    "user_email": "",
-                })
-            return JSONResponse(result)
     user = _require_user(request)
+    settings = get_settings()
     with get_session(settings.db_path) as session:
         if scope == "all" and _is_admin(user):
             projects = get_all_projects(session)
