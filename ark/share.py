@@ -1,12 +1,19 @@
 """Generate signed share links for webapp projects or user dashboards.
 
 Share link shapes:
-  ark share create <project_id_or_name>  → one project, detail view only
-  ark share user <email>                 → one user's dashboard + all their projects
+  ark share create <project_id_or_name>  → one project, read-only detail view
+  ark share user <email>                 → auto-login as that user (full access)
 
-Reviewers open the URL (e.g. https://idea2paper.org/dashboard/share/<token>) and
-land in a read-only SPA. CF Access must have a Bypass policy for
-/dashboard/share/* so the request reaches the webapp without Google SSO.
+User-share is a shortcut for magic-link login — anyone with the URL signs in
+as the referenced account with the same privileges a normal login would give.
+Cap API spend at the provider level (OpenAI/Anthropic hard limit) before
+handing the URL out.
+
+Project-share grants read-only access to one project only, with writes
+blocked both client- and server-side.
+
+CF Access must have a Bypass policy for /dashboard/share/* so the request
+reaches the webapp without Google SSO.
 
 Tokens are signed with settings.secret_key and carry an embedded expiry.
 Rotate settings.secret_key to invalidate ALL outstanding links at once.
@@ -101,9 +108,11 @@ def cmd_user(email: str, ttl_days: int) -> int:
     print(f"Expires: in {ttl_days} days")
     print(f"URL:     {url}")
     print()
-    print("Reviewer opens this URL and sees the user's dashboard + every project")
-    print("they own (read-only). Assign/reassign projects to this user through the")
-    print("webapp or DB to control what reviewers see.")
+    print("Opening this URL LOGS THE VISITOR IN as the user above, with full")
+    print("webapp access identical to a magic-link login. They can start, stop,")
+    print("and delete projects under this account — cap API spend at the provider")
+    print("level before sharing. Assign/reassign projects through the webapp or")
+    print("DB to control what the shared account owns.")
     print("To revoke ALL outstanding share links, rotate SECRET_KEY in ~/.ark/webapp.env")
     print("and restart the webapp.")
     return 0
