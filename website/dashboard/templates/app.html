@@ -10,8 +10,11 @@
     // use APP_BASE + path so the same HTML works regardless of mount point.
     window.APP_BASE = "{{ app_base }}";
     const APP_BASE = window.APP_BASE;
-    window.SHARE_MODE = {{ 'true' if share_mode else 'false' }};
+    // SHARE_MODE is "project" | "user" | false. Any truthy value forces
+    // read-only; the specific value decides which pages are reachable.
+    window.SHARE_MODE = {% if share_mode == 'user' %}"user"{% elif share_mode %}"project"{% else %}false{% endif %};
     window.SHARE_PROJECT_ID = "{{ share_project_id }}";
+    window.SHARE_USER_ID = "{{ share_user_id }}";
   </script>
   <link rel="icon" type="image/png" href="{{ app_base }}/static/logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -558,13 +561,18 @@
     .ark-toast-item.warn { background: #92400e; }
     .ark-toast-item.show { opacity: 1; transform: translateY(0); }
 
-    /* Share mode: read-only public view via signed link. Hide nav, admin, write controls. */
+    /* Share mode: read-only public view via signed link.
+       .share-hide             — hidden in any share (write controls).
+       .share-hide-project-only — hidden only in single-project share (e.g. dashboard back button).
+       .share-hide-user-only    — hidden only in user-dashboard share (rare). */
     body.share-mode #main-nav,
     body.share-mode .share-hide { display: none !important; }
+    body.share-mode-project .share-hide-project-only { display: none !important; }
+    body.share-mode-user .share-hide-user-only { display: none !important; }
     body.share-mode #share-banner { display: block !important; }
   </style>
 </head>
-<body class="{{ 'share-mode' if share_mode else '' }}">
+<body class="{% if share_mode == 'user' %}share-mode share-mode-user{% elif share_mode %}share-mode share-mode-project{% endif %}">
 <div id="ark-toast"></div>
 
 <!-- Share-mode banner: only visible when body.share-mode -->
@@ -663,7 +671,7 @@
   </div>
 
   <!-- Hero creation card -->
-  <div class="hero-card" id="hero-card"
+  <div class="hero-card share-hide" id="hero-card"
        ondragover="heroCardDragOver(event)"
        ondragleave="heroCardDragLeave(event)"
        ondrop="heroCardDrop(event)">
@@ -848,7 +856,7 @@
 <div id="page-detail" class="page">
   <div class="detail-header">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
-      <button class="btn-secondary share-hide" onclick="navigate('dashboard')" style="padding:6px 12px;font-size:.85rem" data-i18n="back">← Back</button>
+      <button class="btn-secondary share-hide-project-only" onclick="navigate('dashboard')" style="padding:6px 12px;font-size:.85rem" data-i18n="back">← Back</button>
       <span id="detail-badge" class="badge"></span>
     </div>
   </div>
@@ -1737,11 +1745,17 @@ let logPinned = true;   // true = auto-scroll to bottom; false = user scrolled u
 //  Router
 // ══════════════════════════════════════════════════════
 function navigate(page, params = {}) {
-  // In share mode, only the detail view of the granted project is meaningful.
-  // Redirect any other navigation target (dashboard, admin, feedback, login).
-  if (window.SHARE_MODE) {
+  // In share mode, restrict which pages are reachable:
+  //   "project" share → only the detail view of that one project.
+  //   "user"    share → dashboard + detail (of any project owned by the user).
+  if (window.SHARE_MODE === 'project') {
     page = 'detail';
     params = { id: window.SHARE_PROJECT_ID };
+  } else if (window.SHARE_MODE === 'user') {
+    if (page !== 'dashboard' && page !== 'detail') {
+      page = 'dashboard';
+      params = {};
+    }
   }
 
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -3636,23 +3650,34 @@ function showToast(msg, type='') {
 // ══════════════════════════════════════════════════════
 applyI18n();
 
-if (window.SHARE_MODE && window.SHARE_PROJECT_ID) {
-  // Share-link visitors skip login entirely and land directly on the detail
-  // page. CSS hides write controls via body.share-mode .share-hide; we also
-  // intercept non-GET fetches as defense-in-depth (the server blocks them
-  // anyway since a share session has no user_id).
+if (window.SHARE_MODE) {
+  // Share-link visitors skip login entirely. CSS hides write controls via
+  // body.share-mode .share-hide; we also intercept non-GET fetches as
+  // defense-in-depth (the server blocks them anyway since a share session
+  // has no user_id).
   const _origFetch = window.fetch.bind(window);
   window.fetch = function(input, init) {
     const method = ((init && init.method) || 'GET').toUpperCase();
     if (method !== 'GET' && method !== 'HEAD') {
       return Promise.resolve(new Response(
-        JSON.stringify({detail: 'This project is in view-only share mode.'}),
+        JSON.stringify({detail: 'This link is in view-only share mode.'}),
         {status: 403, headers: {'Content-Type': 'application/json'}}
       ));
     }
     return _origFetch(input, init);
   };
-  navigate('detail', { id: window.SHARE_PROJECT_ID });
+  if (window.SHARE_MODE === 'user') {
+    // Honor a hash like #project/<id> so refreshes on a detail view keep you
+    // on that detail view; otherwise land on the user's dashboard.
+    const hash = location.hash;
+    if (hash.startsWith('#project/')) {
+      navigate('detail', { id: hash.slice(9) });
+    } else {
+      navigate('dashboard');
+    }
+  } else {
+    navigate('detail', { id: window.SHARE_PROJECT_ID });
+  }
 } else {
   checkAuth();
 }
