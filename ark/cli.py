@@ -3345,19 +3345,24 @@ def _cmd_webapp_release(args):
 
 
 def cmd_share(args):
-    """Generate signed share links for a webapp project."""
+    """Generate signed share links for a webapp project or user dashboard."""
     from ark import share as _share
     sub = getattr(args, 'share_cmd', None)
     try:
-        if sub == 'create' or sub is None:
+        if sub == 'create':
             if not getattr(args, 'project', None):
                 print("Error: ark share create <project_id_or_name>", file=sys.stderr)
                 return 1
             return _share.cmd_create(args.project, int(args.expires))
+        if sub == 'user':
+            if not getattr(args, 'email', None):
+                print("Error: ark share user <email>", file=sys.stderr)
+                return 1
+            return _share.cmd_user(args.email, int(args.expires))
     except Exception as e:
         print(f"{_c('Error:', Colors.RED)} {e}", file=sys.stderr)
         return 1
-    print(f"{_c('Unknown subcommand:', Colors.RED)} {sub}", file=sys.stderr)
+    print(f"{_c('Unknown subcommand:', Colors.RED)} {sub}  (try: create | user)", file=sys.stderr)
     return 1
 
 
@@ -4111,10 +4116,17 @@ def main():
         help="Generate signed read-only share links for a webapp project",
     )
     share_sub = p_share.add_subparsers(dest="share_cmd")
-    p_share_create = share_sub.add_parser("create", help="Generate a share URL for a project")
+    p_share_create = share_sub.add_parser("create", help="Generate a share URL for one project")
     p_share_create.add_argument("project", help="Project id or name (from webapp DB)")
     p_share_create.add_argument("--expires", default=90, type=int,
                                 help="Link lifetime in days (default: 90)")
+    p_share_user = share_sub.add_parser(
+        "user",
+        help="Generate a share URL for a user's dashboard (all their projects). Creates the user if absent.",
+    )
+    p_share_user.add_argument("email", help="User email (e.g. reviewer@idea2paper.org)")
+    p_share_user.add_argument("--expires", default=90, type=int,
+                              help="Link lifetime in days (default: 90)")
     p_share.set_defaults(func=cmd_share)
 
     # ark access — manage the Cloudflare Access allowlist for /dashboard

@@ -1,4 +1,4 @@
-"""Magic link authentication + project share tokens via itsdangerous."""
+"""Magic link authentication + project/user share tokens via itsdangerous."""
 
 from __future__ import annotations
 
@@ -26,12 +26,24 @@ _SHARE_ABS_MAX_AGE = 86400 * 3650  # 10 years — sanity ceiling; real expiry is
 
 
 def make_share_token(project_id: str, secret: str, ttl_days: int = 90) -> str:
-    payload = {"pid": project_id, "exp": int(time.time()) + int(ttl_days) * 86400}
+    """Project-scoped token — reviewer sees one project only."""
+    payload = {"kind": "project", "id": project_id, "exp": int(time.time()) + int(ttl_days) * 86400}
     return URLSafeTimedSerializer(secret).dumps(payload, salt=_SHARE_SALT)
 
 
-def verify_share_token(token: str, secret: str) -> str | None:
-    """Return the project_id if the token is valid and not expired, else None."""
+def make_user_share_token(user_id: str, secret: str, ttl_days: int = 90) -> str:
+    """User-scoped token — reviewer sees that user's dashboard + all their projects."""
+    payload = {"kind": "user", "id": user_id, "exp": int(time.time()) + int(ttl_days) * 86400}
+    return URLSafeTimedSerializer(secret).dumps(payload, salt=_SHARE_SALT)
+
+
+def verify_share_token(token: str, secret: str) -> tuple[str, str] | None:
+    """Return (kind, id) if valid and not expired, else None.
+
+    kind is 'project' or 'user'. Legacy tokens carrying {"pid": X} are still
+    accepted and mapped to ('project', X) so links generated before this
+    change keep working.
+    """
     try:
         data = URLSafeTimedSerializer(secret).loads(
             token, salt=_SHARE_SALT, max_age=_SHARE_ABS_MAX_AGE,
@@ -40,8 +52,14 @@ def verify_share_token(token: str, secret: str) -> str | None:
         return None
     if not isinstance(data, dict):
         return None
-    pid = data.get("pid")
     exp = data.get("exp", 0)
-    if not pid or not isinstance(exp, int) or exp < int(time.time()):
+    if not isinstance(exp, int) or exp < int(time.time()):
         return None
-    return pid
+    kind = data.get("kind")
+    ident = data.get("id")
+    if kind in ("project", "user") and ident:
+        return kind, ident
+    pid = data.get("pid")
+    if pid:
+        return "project", pid
+    return None
