@@ -3344,6 +3344,23 @@ def _cmd_webapp_release(args):
     print(f"  Prod: {_c(f'http://0.0.0.0:{_PROD_PORT}', Colors.CYAN)}")
 
 
+def cmd_share(args):
+    """Generate signed share links for a webapp project."""
+    from ark import share as _share
+    sub = getattr(args, 'share_cmd', None)
+    try:
+        if sub == 'create' or sub is None:
+            if not getattr(args, 'project', None):
+                print("Error: ark share create <project_id_or_name>", file=sys.stderr)
+                return 1
+            return _share.cmd_create(args.project, int(args.expires))
+    except Exception as e:
+        print(f"{_c('Error:', Colors.RED)} {e}", file=sys.stderr)
+        return 1
+    print(f"{_c('Unknown subcommand:', Colors.RED)} {sub}", file=sys.stderr)
+    return 1
+
+
 def cmd_access(args):
     """Manage the Cloudflare Access allowlist for idea2paper.org/dashboard."""
     from ark import access as _access
@@ -4087,6 +4104,18 @@ def main():
     p_webapp.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
     p_webapp.add_argument("--daemon", action="store_true", help="Run in background (deprecated, use 'install')")
     p_webapp.set_defaults(func=cmd_webapp)
+
+    # ark share — generate read-only share links for a webapp project
+    p_share = subparsers.add_parser(
+        "share",
+        help="Generate signed read-only share links for a webapp project",
+    )
+    share_sub = p_share.add_subparsers(dest="share_cmd")
+    p_share_create = share_sub.add_parser("create", help="Generate a share URL for a project")
+    p_share_create.add_argument("project", help="Project id or name (from webapp DB)")
+    p_share_create.add_argument("--expires", default=90, type=int,
+                                help="Link lifetime in days (default: 90)")
+    p_share.set_defaults(func=cmd_share)
 
     # ark access — manage the Cloudflare Access allowlist for /dashboard
     p_access = subparsers.add_parser(
