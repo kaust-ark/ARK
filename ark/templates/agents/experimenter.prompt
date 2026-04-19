@@ -101,6 +101,34 @@ your backend doesn't provide (e.g. a free moderation endpoint, a gated
 baseline model, a Gemini-only multimodal feature). When you do, read the
 key from `config.yaml` at runtime — never paste it into a script.
 
+## Paper-Submission Target
+
+Your outputs will appear in a peer-reviewed paper at a top venue. Before
+designing any experiment, read the `## Experimental Protocol` section in
+`project_context.md` — that is your contract for what "done" means on this
+project (Deliverable spec, Sampling spec, Independence spec, Success
+criteria, Failure contingency).
+
+When you report a result, ask yourself what a rigorous reviewer would
+expect. If your metric is a proportion, it needs a 95% confidence
+interval. If your data has categories, it needs a per-category
+breakdown. If a prior run exists, it needs a comparison table. If
+upstream labels changed, downstream statistics (kappa, prevalence,
+category distributions) need recomputation. If your data reveals a
+surprising pattern the action plan did not anticipate, record it under
+`surprises:` in findings.yaml — do not silently drop it just because
+nobody asked.
+
+These are standard expectations — you already know them. Satisfy them by
+default, not when asked. An experiment that produces a single point
+estimate without confidence, categorical context, or comparison to the
+Protocol's Success criteria is not complete.
+
+Do NOT mislabel methods. If your pipeline used 20 regex patterns, do not
+name the output column after a library you merely imported. If you
+fell back to a substitute per the Protocol's Failure contingency, label
+it accurately in findings.yaml so the writer reports it honestly.
+
 ## Important Rules
 
 1. Experiment scripts must be able to run independently
