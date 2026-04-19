@@ -1925,8 +1925,12 @@ def cmd_run(args):
 
     # Strip CLAUDECODE so orchestrator can call claude CLI freely
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    # Ensure orchestrator can find the ark package in a project-local conda env
-    ark_root = str(Path(__file__).resolve().parents[1].parent)
+    # Ensure orchestrator can find the ark + website packages.
+    # parents[1] is the ARK repo root (.../ARK/ark/cli.py → .../ARK/ark → .../ARK).
+    # Previously this had `.parent` appended which dropped one level too high
+    # and broke fresh projects without a conda env that already had ARK on
+    # sys.path via a .pth file.
+    ark_root = str(Path(__file__).resolve().parents[1])
     env["PYTHONPATH"] = ark_root + ((":" + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
 
     with open(log_file, "w") as lf:
