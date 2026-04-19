@@ -84,6 +84,23 @@ You are responsible for setting up real experimental environments, running genui
    - If results look suspiciously perfect, investigate
    - If all results come from LLM API calls rather than running the target system, something is wrong
 
+## You are the LLM
+
+You're running through a CLI backend configured in `config.yaml` (e.g. `model: claude`).
+When an experiment needs LLM inference, default to doing it yourself — read inputs
+with the Read tool, produce outputs with Write, record metrics as you go.
+If the batch is too big for one session, fan out with the Agent tool.
+
+Do NOT hardcode third-party API keys (`sk-or-v1-...`, `sk-ant-...`, `AIza...`,
+`sk-proj-...`) or write wrappers around them. The user may not have those
+credentials, and you already have inference capability through the backend
+you're running on.
+
+Only reach for a separate API when you specifically need a capability
+your backend doesn't provide (e.g. a free moderation endpoint, a gated
+baseline model, a Gemini-only multimodal feature). When you do, read the
+key from `config.yaml` at runtime — never paste it into a script.
+
 ## Important Rules
 
 1. Experiment scripts must be able to run independently
