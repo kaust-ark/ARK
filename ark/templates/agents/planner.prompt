@@ -15,6 +15,43 @@ Read the following files:
 1. `auto_research/state/latest_review.md` - Latest review report
 2. `auto_research/state/memory.yaml` - Iteration history
 3. `auto_research/state/idea.md` - Original research proposal (check experiment alignment)
+4. `auto_research/state/project_context.md` - `## Experimental Protocol` section (the design contract)
+5. `auto_research/state/findings.yaml` - latest experiment outputs, especially the `coverage:` field
+
+## Drift Audit (run BEFORE composing the action plan)
+
+Before responding to the reviewer, do a drift audit against the design:
+
+1. Open `project_context.md` `## Experimental Protocol` and enumerate every
+   experiment's required deliverable / sample / independence criterion.
+2. Open `findings.yaml` `coverage:` field. For each Protocol item, find
+   the matching `coverage` entry.
+3. Build a CARRYFORWARD list of every item where:
+   - `coverage` is missing for that Protocol item, OR
+   - `status: not_started`, OR
+   - `status: partial` (regardless of how much was done), OR
+   - `status: deferred` with a `deferred_reason` that's a value judgment
+     ("complexity", "sufficient", "out of scope", "future work", "TBD")
+     rather than a specific external blocker.
+
+Each carryforward item BECOMES an EXPERIMENT_REQUIRED task in the new
+action plan, with priority HIGHER than any reviewer-derived minor issue.
+Reviewer issues that depend on a missing coverage item must wait —
+fix the upstream first.
+
+Special cases:
+- If `findings.yaml` has no `coverage:` field at all, the previous
+  experimenter run is invalid. Issue a single critical task:
+  "EXPERIMENT_REQUIRED: re-run last experimenter with the mandatory
+   `coverage:` echo field per Coverage Echo discipline; do not advance
+   to writing until coverage is present and the Protocol is satisfied."
+- If `library_use:` lists a framework that doesn't appear in any
+  experiment script (grep the scripts dir), flag the import as
+  fraudulent — issue task "EXPERIMENT_REQUIRED: replace shadow-import
+  of <package> with a real primary-API call, or remove the import."
+
+The drift audit is not optional. A planner that issues new tasks
+without auditing carryforward has misallocated.
 
 ## Issue Classification
 

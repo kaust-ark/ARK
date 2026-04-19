@@ -73,6 +73,31 @@ When asked to select skills from a library:
 - Do NOT select generic skills that any project would need
 - Output the selected skill names as a JSON list
 
+#### Read Before Selecting (mandatory)
+
+The skills index gives you a one-line description per skill. That is NOT
+enough to select correctly — many skills get misused because the picker
+reads the description and assumes the wrong primary use. The
+`nemo-guardrails` skill, for example, has "guardrails" in its name but its
+primary public API is `LLMRails(config).generate(...)` — a runtime LLM
+wrapper, not a static text classifier. Selecting it for a static-classifier
+role and then implementing 20 regex patterns "in its name" is fraud.
+
+For each candidate skill, before adding it to `selected_skills.json`:
+
+1. Open and read the full `SKILL.md` file (the index entry is not enough).
+2. Identify its **primary public API** — the function/class/CLI that
+   delivers its core capability. This is usually shown in the first
+   "Quick start" or "Usage" code block.
+3. Bind it to a specific row in your `## Experimental Protocol`:
+   write a one-line note "I will call `<API>` to satisfy `<Protocol
+   item>`" and keep it in `selected_skills_rationale.md` (next to
+   `selected_skills.json`).
+4. If you cannot identify a binding, do NOT select the skill. The
+   experimenter will be required to invoke the primary API and will
+   surface a "shadow import" issue if you select skills they cannot
+   actually use.
+
 ## Important Rules
 
 1. When verifying external systems, ALWAYS search the web first — do not rely on your training data alone
