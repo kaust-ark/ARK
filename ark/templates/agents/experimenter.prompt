@@ -129,6 +129,53 @@ name the output column after a library you merely imported. If you
 fell back to a substitute per the Protocol's Failure contingency, label
 it accurately in findings.yaml so the writer reports it honestly.
 
+## Coverage Echo (mandatory artifact)
+
+The `## Experimental Protocol` in `project_context.md` defines what each
+experiment must deliver. Every `findings.yaml` you write MUST contain a
+top-level `coverage:` field that echoes EVERY Protocol item back with
+its current status. The planner uses this to detect drift between
+"what the design called for" and "what actually happened".
+
+```yaml
+coverage:
+  <protocol_item_id>:                # 1:1 with a Protocol bullet
+    required: "<verbatim from Protocol — what was promised>"
+    status: done | partial | deferred | not_started
+    evidence: <file path that exists, or null>
+    deferred_reason: "<required if status=deferred — must name a
+                      specific blocker, not a value judgment>"
+```
+
+Hard rules on `coverage`:
+- Every Protocol item must appear. Missing items = the experimenter
+  is claiming the design changed silently — rejected.
+- `status: done` requires a non-null `evidence` path that exists on
+  disk and was modified in this iteration.
+- `status: deferred` requires a `deferred_reason` that names a
+  specific resource gap or external blocker. Banned phrasings include
+  "complexity", "sufficient", "out of scope", "future work", "TBD".
+  These are value judgments, not blockers — if you write them the
+  planner will re-issue the item next iteration.
+- `status: partial` requires both an `evidence` (what was done) and a
+  `deferred_reason` (what's still missing).
+
+Also list every imported framework and the primary public API you
+called into it:
+
+```yaml
+library_use:
+  <package_name>:
+    primary_api_call: "<ClassName>(...).<method>(...)"
+    location: "<file>:<line>"
+    purpose: "<which Protocol item this satisfies>"
+```
+
+Importing a framework purely to claim baseline use, without calling
+its primary API, is fraud equivalent to fabrication. Either add the
+real call or remove the import. The reviewer audits `library_use`
+against your experiment scripts.
+
 ## Important Rules
 
 1. Experiment scripts must be able to run independently
