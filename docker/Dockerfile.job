@@ -1,0 +1,164 @@
+# =============================================================================
+# ARK Job — Docker image
+#
+# Runs a single ARK research job (orchestrator) inside the container.
+# Includes the full Python research runtime, TeX, git, and all tool deps.
+# Claude / Gemini CLIs are NOT baked in — pass OAuth tokens via env vars.
+#
+# Build (AMD64):
+#   docker build --platform linux/amd64 -f docker/Dockerfile.job -t ark-job .
+#
+# Run a job:
+#   docker run --rm \
+#     -e ANTHROPIC_API_KEY=sk-ant-... \
+#     -e OPENAI_API_KEY=sk-... \
+#     -v /host/projects:/data/projects \
+#     ark-job \
+#       --project myproject \
+#       --project-dir /data/projects/myproject \
+#       --mode research \
+#       --iterations 10
+#
+# The project directory must already exist and contain a config.yaml.
+# Mount your projects root at /data/projects (or a subdirectory per project).
+#
+# Supported env vars for LLM credentials:
+#   ANTHROPIC_API_KEY   — Anthropic API key (claude-* models via API)
+#   OPENAI_API_KEY      — OpenAI API key
+#   GEMINI_API_KEY      — Gemini API key (google-genai)
+#   CLAUDE_CODE_OAUTH_TOKEN — Claude Code CLI OAuth token (if using CLI mode)
+# =============================================================================
+
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="ARK Research Job" \
+      org.opencontainers.image.description="Full ARK research runtime for running orchestrator jobs" \
+      org.opencontainers.image.source="https://github.com/kaust-ark/ARK"
+
+# ---------------------------------------------------------------------------
+# 1. System dependencies
+#    - Full TeX distribution (targeted, ~1 GB) for PDF compilation
+#    - git + git-lfs for code repositories the orchestrator may clone
+#    - pandoc for Markdown → PDF review reports
+#    - weasyprint system libs (used for deep research PDF generation)
+#    - build-essential for compiling Python packages with C extensions
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        # TeX — targeted subset covers 99% of CS/ML paper templates
+        texlive-latex-base \
+        texlive-latex-extra \
+        texlive-latex-recommended \
+        texlive-science \
+        texlive-fonts-recommended \
+        texlive-fonts-extra \
+        texlive-bibtex-extra \
+        texlive-lang-cjk \
+        latexmk \
+        biber \
+        # Pandoc (for review report → PDF via xelatex)
+        pandoc \
+        # weasyprint system deps (Markdown → PDF for deep research)
+        libcairo2 \
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        libgdk-pixbuf-2.0-0 \
+        libffi-dev \
+        shared-mime-info \
+        # Git + LFS
+        git \
+        git-lfs \
+        # Build tools (for psutil, cryptography, etc.)
+        build-essential \
+        # Utility
+        curl \
+        wget \
+        unzip \
+    && git lfs install \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# 2. Python dependencies
+#    Install the full research stack including all packages from environment.yml
+# ---------------------------------------------------------------------------
+WORKDIR /app
+
+COPY pyproject.toml setup.py ./
+
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        # ── Research core ─────────────────────────────────
+        "google-genai>=1.55.0" \
+        "anthropic>=0.40.0" \
+        "openai>=1.0.0" \
+        # ── ARK core deps ─────────────────────────────────
+        "pyyaml>=6.0" \
+        "PyMuPDF>=1.24.0" \
+        "Pillow>=10.0.0" \
+        # ── Data science ──────────────────────────────────
+        "numpy>=1.24" \
+        "pandas>=2.0" \
+        "matplotlib>=3.7" \
+        "seaborn>=0.12" \
+        # ── PDF / document generation ─────────────────────
+        "weasyprint>=60.0" \
+        "markdown>=3.5" \
+        "pypdf>=3.0" \
+        # ── Web / HTTP ────────────────────────────────────
+        "httpx>=0.25" \
+        "requests>=2.28" \
+        # ── Webapp extras (for DB sync from orchestrator) ─
+        "fastapi>=0.104.0" \
+        "sqlmodel>=0.0.14" \
+        "uvicorn[standard]>=0.24.0" \
+        "python-dotenv>=1.0" \
+        "itsdangerous>=2.1" \
+        "cryptography>=41.0" \
+        "authlib>=1.3" \
+        "python-multipart>=0.0.6" \
+        "jinja2>=3.1" \
+        # ── Utilities ─────────────────────────────────────
+        "tenacity>=8.0" \
+        "rich>=13.0" \
+        "tqdm>=4.65" \
+        "click>=8.1" \
+        "typer>=0.9" \
+        "python-dateutil>=2.8" \
+        "filelock>=3.12" \
+        "huggingface-hub>=0.16" \
+        "json-repair>=0.1"
+
+# ---------------------------------------------------------------------------
+# 3. Install the ARK package
+# ---------------------------------------------------------------------------
+COPY ark/ ./ark/
+COPY website/ ./website/
+
+RUN pip install --no-cache-dir -e ".[research,webapp]"
+
+# ---------------------------------------------------------------------------
+# 4. Runtime environment
+# ---------------------------------------------------------------------------
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    # Force local job execution (no SLURM in a container)
+    ARK_FORCE_LOCAL=1 \
+    # Default data paths — override via -v and -e at runtime
+    PROJECTS_ROOT=/data/projects \
+    ARK_WEBAPP_DB_PATH=/data/webapp.db \
+    ARK_CONFIG_DIR=/data/.ark \
+    # PATH additions: texlive binaries are already on PATH via package install,
+    # but add /app/bin for any ark CLI scripts
+    PATH="/app/bin:/usr/local/bin:/usr/bin:/bin"
+
+# ---------------------------------------------------------------------------
+# 5. Entrypoint
+# ---------------------------------------------------------------------------
+COPY docker/entrypoint-job.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default args — override entirely when running a specific project:
+#   docker run ark-job --project myproject --project-dir /data/projects/myproject ...
+CMD ["--help"]

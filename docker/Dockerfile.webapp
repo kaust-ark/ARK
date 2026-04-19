@@ -1,0 +1,139 @@
+# =============================================================================
+# ARK Webapp — Docker image
+#
+# Serves the FastAPI dashboard + static homepage on port 9527.
+#
+# Build (AMD64):
+#   docker build --platform linux/amd64 -f docker/Dockerfile.webapp -t ark-webapp .
+#
+# Run (quick local test):
+#   docker run -p 9527:9527 \
+#     -v ark_data:/data \
+#     -e BASE_URL=http://localhost:9527 \
+#     -e SECRET_KEY=changeme \
+#     -e SMTP_HOST=smtp.gmail.com \
+#     -e SMTP_USER=you@gmail.com \
+#     -e SMTP_PASSWORD=apppassword \
+#     ark-webapp
+#
+# Or with a pre-existing webapp.env file:
+#   docker run -p 9527:9527 \
+#     -v ark_data:/data \
+#     -v $(pwd)/.ark/webapp.env:/data/.ark/webapp.env:ro \
+#     ark-webapp
+#
+# Persistent data lives at /data  (mount a named volume or bind-mount there).
+#   /data/.ark/webapp.env   — config file (optional; env vars take priority)
+#   /data/webapp.db         — SQLite database
+#   /data/projects/         — per-project directories
+# =============================================================================
+
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="ARK Research Portal (webapp)" \
+      org.opencontainers.image.description="FastAPI dashboard + static homepage for ARK" \
+      org.opencontainers.image.source="https://github.com/kaust-ark/ARK"
+
+# ---------------------------------------------------------------------------
+# 1. System dependencies
+#    - weasyprint needs cairo, pango, gdk-pixbuf, libffi
+#    - git is needed by the orchestrator when it submits local jobs
+#    - git-lfs handles any large-file assets tracked via LFS
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        # weasyprint / PDF generation
+        libcairo2 \
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        libgdk-pixbuf-2.0-0 \
+        libffi-dev \
+        shared-mime-info \
+        # git (orchestrator subprocesses may need it)
+        git \
+        git-lfs \
+        # curl for health-check
+        curl \
+    && git lfs install \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# 2. Python dependencies
+#    Install in a separate layer so code changes don't bust the pip cache.
+# ---------------------------------------------------------------------------
+WORKDIR /app
+
+# Copy only the files needed to resolve dependencies first
+COPY pyproject.toml setup.py ./
+
+# Install webapp extras + all pip packages from environment.yml
+# We install from pyproject.toml extras so the version pins stay in one place.
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        # Core webapp deps (from pyproject.toml [webapp])
+        "fastapi>=0.104.0" \
+        "uvicorn[standard]>=0.24.0" \
+        "sqlmodel>=0.0.14" \
+        "authlib>=1.3" \
+        "httpx>=0.25" \
+        "python-multipart>=0.0.6" \
+        "jinja2>=3.1" \
+        "python-dotenv>=1.0" \
+        "itsdangerous>=2.1" \
+        "cryptography>=41.0" \
+        "markdown>=3.5" \
+        "weasyprint>=60.0" \
+        # Research runtime (needed for DB sync + orchestrator helpers)
+        "google-genai>=1.55.0" \
+        "anthropic>=0.40.0" \
+        # Utility deps
+        "pyyaml>=6.0" \
+        "PyMuPDF>=1.24.0" \
+        "Pillow>=10.0.0" \
+        "requests>=2.28" \
+        "tenacity>=8.0" \
+        "rich>=13.0"
+
+# ---------------------------------------------------------------------------
+# 3. Install the ARK package itself (editable-style: all source copied in)
+# ---------------------------------------------------------------------------
+COPY ark/ ./ark/
+COPY website/ ./website/
+
+# Install as a proper package so `import ark` and `import website` work
+RUN pip install --no-cache-dir -e ".[webapp]"
+
+# ---------------------------------------------------------------------------
+# 4. Runtime configuration
+# ---------------------------------------------------------------------------
+# All persistent data (DB, projects, config) live under /data.
+# Docker volume or bind-mount should be attached at /data.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    # Tell the webapp where to store its DB and projects
+    ARK_WEBAPP_DB_PATH=/data/webapp.db \
+    PROJECTS_ROOT=/data/projects \
+    # ARK root is the /app directory (where pyproject.toml lives)
+    # The config dir is resolved as <ARK_ROOT>/.ark → /app/.ark by default,
+    # but we redirect it to /data/.ark so config persists across restarts.
+    ARK_CONFIG_DIR=/data/.ark \
+    # Default BASE_URL — override at runtime for your actual hostname/domain
+    BASE_URL=http://localhost:9527
+
+# Expose the webapp port
+EXPOSE 9527
+
+# ---------------------------------------------------------------------------
+# 5. Entrypoint
+# ---------------------------------------------------------------------------
+# We use a small shell entrypoint to:
+#   a) ensure /data directories exist (volume may be empty on first run)
+#   b) create a minimal webapp.env stub if none was mounted, so the app
+#      can boot without an error — real values come from env vars.
+COPY docker/entrypoint-webapp.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default: start the webapp on 0.0.0.0:9527
+CMD ["--host", "0.0.0.0", "--port", "9527"]

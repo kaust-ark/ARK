@@ -1,0 +1,97 @@
+# =============================================================================
+# ARK — docker-compose.yml
+#
+# Starts the webapp with a persistent named volume for the database,
+# config, and project data.
+#
+# Quick start:
+#   docker compose up --build
+#
+# With custom config:
+#   cp .ark/webapp.env.example .ark/webapp.env   # edit first
+#   docker compose up --build
+#
+# View logs:
+#   docker compose logs -f webapp
+# =============================================================================
+
+services:
+  webapp:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.webapp
+    image: ark-webapp:latest
+    container_name: ark-webapp
+    restart: unless-stopped
+    ports:
+      - "9527:9527"
+    volumes:
+      # Persistent data: DB, projects, and config all live here.
+      # On first run this volume is empty; the entrypoint script
+      # bootstraps the directory structure automatically.
+      - ark_data:/data
+      # Optional: mount a pre-configured webapp.env from the host.
+      # Comment this out if you pass everything via environment: below.
+      # - ../.ark/webapp.env:/data/.ark/webapp.env:ro
+    environment:
+      # ── Required: set your actual values here or in a .env file ──────────
+      BASE_URL: "http://localhost:9527"    # Public URL users click in emails
+      SECRET_KEY: ""                       # Generate: python -c "import secrets; print(secrets.token_hex(32))"
+      # ── SMTP for magic-link login ─────────────────────────────────────────
+      SMTP_HOST: "smtp.gmail.com"
+      SMTP_PORT: "587"
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
+      SMTP_FROM: "ark@localhost"
+      # ── Access control ───────────────────────────────────────────────────
+      ALLOWED_EMAILS: ""      # comma-separated, e.g. "alice@lab.edu,bob@lab.edu"
+      EMAIL_DOMAINS: ""       # or restrict by domain: "kaust.edu.sa"
+      ADMIN_EMAILS: ""        # admins can kill all jobs
+      # ── Google OAuth (optional) ──────────────────────────────────────────
+      GOOGLE_CLIENT_ID: ""
+      GOOGLE_CLIENT_SECRET: ""
+      # ── Paths (backed by the named volume above) ─────────────────────────
+      ARK_WEBAPP_DB_PATH: "/data/webapp.db"
+      PROJECTS_ROOT: "/data/projects"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9527/dashboard/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+# =============================================================================
+# To also run a one-off research job alongside the webapp, use:
+#
+#   docker compose run --rm job \
+#     --project myproject \
+#     --project-dir /data/projects/<user-id>/myproject \
+#     --mode research \
+#     --iterations 10
+#
+# Uncomment the service below to make `docker compose run job ...` available.
+# =============================================================================
+#
+#  job:
+#    platform: linux/amd64
+#    build:
+#      context: ..
+#      dockerfile: docker/Dockerfile.job
+#    image: ark-job:latest
+#    volumes:
+#      - ark_data:/data
+#    environment:
+#      ANTHROPIC_API_KEY: ""
+#      OPENAI_API_KEY: ""
+#      GEMINI_API_KEY: ""
+#      ARK_WEBAPP_DB_PATH: "/data/webapp.db"
+#      PROJECTS_ROOT: "/data/projects"
+#    # Job containers exit when done — don't restart them
+#    restart: "no"
+#    profiles:
+#      - job
+
+volumes:
+  ark_data:
+    name: ark_data
