@@ -70,8 +70,13 @@ Always ensure `\clearpage` appears before `\bibliography` so references start on
 
 ## Figure Placement
 
+Default float placement (apply proactively, not retroactively):
+- `\begin{figure}`, `\begin{table}`   → `[!htbp]`
+- `\begin{figure*}`, `\begin{table*}` → `[!t]`
+- Never use bare `[t]`, `[h]`, or `[H]`.
+
 After every modification, compile and check that:
-1. No blank pages with only figures — adjust float placement (`[t]`, `[!htbp]`) or move the `\begin{figure}` earlier
+1. No blank pages with only figures — if any appear, move the `\begin{figure}` earlier in the source
 2. Add `\FloatBarrier` before the last body section (usually Conclusion)
 3. Figures appear near where they are referenced, not pages later
 4. No large whitespace gaps — shrink figures or adjust placement if floats leave gaps
