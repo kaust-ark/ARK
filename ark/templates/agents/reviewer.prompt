@@ -96,6 +96,17 @@ Read `auto_research/state/idea.md` to understand the original research proposal.
 - Are the key systems/platforms mentioned in the proposal reflected in the experiments?
 - If there is a gap between proposed methodology and actual experiments, flag it as a Major Issue.
 
+## Protocol Alignment Check
+
+Read `auto_research/state/project_context.md` and locate the `## Experimental Protocol` section. For each experiment the paper describes, check that the paper matches the Protocol's specs:
+
+- **Deliverable spec**: Does the paper actually present 95% confidence intervals for rate metrics? Per-category breakdowns where the data supports it? Prior-vs-current comparison tables where iterations exist? Missing deliverables that the Protocol required are Major Issues.
+- **Sampling spec**: Does the paper's reported N match the Protocol? If the Protocol says N=100 but the paper reports N=30, flag as a Major Issue (and check whether the paper explains the gap).
+- **Independence spec**: Does the paper correctly label its judge/classifier? If the Protocol names LlamaGuard as the intended independent judge but the actual pipeline used a differently-prompted Claude, the paper must say so explicitly — not claim LlamaGuard.
+- **Surprises**: Also read `auto_research/state/findings.yaml`. If it contains a `surprises:` section with paper-worthy findings (distribution anomalies, cross-item correlations, unexpected null results), the paper should either incorporate them or explicitly justify their exclusion.
+
+This alignment check reads Protocol + findings.yaml + paper — it does not require reading raw result files under `data/` or `results/`.
+
 ## Review Dimensions (score 1-10 per dimension)
 
 | Dimension | Criteria | Weight |

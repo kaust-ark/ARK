@@ -25,10 +25,40 @@ When asked to analyze a project proposal:
 When asked to specialize the project:
 - Read idea.md and deep_research.md
 - Search the web to verify every external system mentioned (do NOT guess from name alone)
-- Generate project_context.md with verified install commands, experiment guidance, and credentials
+- Generate project_context.md with verified install commands, experiment guidance, credentials, and an Experimental Protocol section (see 2.1)
 - Determine the project title if not set
 - Customize agent prompts with project-specific knowledge
 - Select relevant skills from the skills library
+
+### 2.1 Experimental Protocol (required section of project_context.md)
+
+`project_context.md` MUST include a `## Experimental Protocol` section. For each experiment in the idea's methodology, specify:
+
+- **Deliverable spec** — what artifacts this experiment must produce for paper submission. Rates/proportions need 95% CI; categorical data needs per-category breakdowns; iterative runs need prior-vs-current comparison tables. List these explicitly; do not assume the experimenter will infer them.
+
+- **Sampling spec with rationale** — N for each sub-phase and why. Do NOT copy N from prior literature without questioning the constraint: the most common reason for small N in prior work is paid-API cost, which does not apply when the default backend is a local CLI the agent is already running on. Default to full-corpus evaluation; if you subsample, state the resource constraint explicitly.
+
+- **Independence spec** — when the design calls for cross-validation or an independent judge, name the specific judge and explain what makes it independent from the primary method. If the planned judge is unavailable (e.g., gated model without access), list acceptable substitutes in order of preference, with a note that the paper must label the actual judge used — not silently report the unavailable one.
+
+- **Success criteria** — an experiment is not complete when it merely produces numbers. It is complete when it satisfies the full Deliverable spec and passes an honesty check: the method actually invoked matches the method named, and downstream statistics are recomputed when upstream labels change.
+
+- **Failure contingency** — if required resources (credentials, models, data access) are unavailable, what is the acceptable fallback and how must the paper label it?
+
+Derive these from the idea's methodology. Each project's Protocol is different — no boilerplate.
+
+**Example of the depth expected** (illustrative — for a hallucination-detection benchmark, not a template to copy):
+
+> **Deliverable**: precision/recall/F1 on all 2,000 claim-response pairs with 95% Clopper-Pearson CI; per-category table across 7 claim types; comparison table against the reference detector from prior work; confusion matrix; raw per-pair JSONL for reproducibility.
+>
+> **Sampling**: N=2,000 full corpus. Prior work used N=300 due to GPT-4 API cost — does not apply here (local CLI, no marginal cost). Inter-annotator-agreement sub-experiment reuses the same 2,000 pairs with 3 independent judges.
+>
+> **Independence**: Primary detector = fine-tuned DeBERTa. Independent judge = claude-cli with a deliberately distinct rubric ("would you cite this claim in an academic paper without further verification?" rather than "is this claim hallucinated?") — same content surface, different framing. Upgrade to Mistral-family FactScore if HF access appears later.
+>
+> **Success**: All 2,000 pairs scored by both detector and independent judge; F1 with CI reported; per-category table complete with no silent category collapse (N<20 must be flagged or merged with explanation); pair-level JSONL saved; any inter-judge disagreement >10% surfaced in the paper's Limitations.
+>
+> **Failure contingency**: If DeBERTa checkpoint inaccessible, fall back to the retrieval-based baseline and label the paper's primary method accordingly — do not claim DeBERTa if the pipeline actually ran the fallback.
+
+Notice the depth: specific N, specific method names, specific thresholds (N<20, disagreement >10%), specific substitution rules. Each sub-spec answers "what exactly, and what if not?" — not "something about the topic."
 
 ### 3. Citation Bootstrapping
 When asked to extract citations from a research report:
