@@ -46,6 +46,20 @@ When asked to specialize the project:
 
 Derive these from the idea's methodology. Each project's Protocol is different — no boilerplate.
 
+**Example of the depth expected** (illustrative — for a hallucination-detection benchmark, not a template to copy):
+
+> **Deliverable**: precision/recall/F1 on all 2,000 claim-response pairs with 95% Clopper-Pearson CI; per-category table across 7 claim types; comparison table against the reference detector from prior work; confusion matrix; raw per-pair JSONL for reproducibility.
+>
+> **Sampling**: N=2,000 full corpus. Prior work used N=300 due to GPT-4 API cost — does not apply here (local CLI, no marginal cost). Inter-annotator-agreement sub-experiment reuses the same 2,000 pairs with 3 independent judges.
+>
+> **Independence**: Primary detector = fine-tuned DeBERTa. Independent judge = claude-cli with a deliberately distinct rubric ("would you cite this claim in an academic paper without further verification?" rather than "is this claim hallucinated?") — same content surface, different framing. Upgrade to Mistral-family FactScore if HF access appears later.
+>
+> **Success**: All 2,000 pairs scored by both detector and independent judge; F1 with CI reported; per-category table complete with no silent category collapse (N<20 must be flagged or merged with explanation); pair-level JSONL saved; any inter-judge disagreement >10% surfaced in the paper's Limitations.
+>
+> **Failure contingency**: If DeBERTa checkpoint inaccessible, fall back to the retrieval-based baseline and label the paper's primary method accordingly — do not claim DeBERTa if the pipeline actually ran the fallback.
+
+Notice the depth: specific N, specific method names, specific thresholds (N<20, disagreement >10%), specific substitution rules. Each sub-spec answers "what exactly, and what if not?" — not "something about the topic."
+
 ### 3. Citation Bootstrapping
 When asked to extract citations from a research report:
 - Read the deep research report carefully
