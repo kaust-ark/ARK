@@ -135,7 +135,7 @@ class MockController:
                     "output_tokens": 50,
                 },
                 "modelUsage": {
-                    "claude-opus-4-6[1m]": {
+                    "claude-opus-4-7[1m]": {
                         "inputTokens": 100,
                         "outputTokens": 50,
                         "cacheReadInputTokens": 800,
@@ -728,7 +728,7 @@ class TestIntegration:
                 assert stat["cache_read_tokens"] == 800
                 assert stat["cache_creation_tokens"] == 200
                 assert stat["cost_usd"] == controller.json_cost_per_call
-                assert stat["model"] == "claude-opus-4-6[1m]"
+                assert stat["model"] == "claude-opus-4-7[1m]"
 
         # cost_report.yaml is written live and aggregates correctly
         report_path = orch.state_dir / "cost_report.yaml"

@@ -797,8 +797,8 @@
                 <span class="model-chip">Sonnet 4.6</span>
               </label>
               <label class="model-option model-option-premium" style="opacity:.45;cursor:pointer" title="Buy authors a coffee to enable">
-                <input type="radio" name="model" value="claude-opus-4-6" disabled />
-                <span class="model-chip">Opus 4.6</span>
+                <input type="radio" name="model" value="claude-opus-4-7" disabled />
+                <span class="model-chip">Opus 4.7</span>
               </label>
               <label class="model-option model-option-admin" title="Admin only" style="display:none">
                 <input type="radio" name="model" value="claude-haiku-4-5" />
@@ -1030,7 +1030,7 @@
         <label>Model</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap" id="continue-model-options">
           <label class="model-option"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span></label>
-          <label class="model-option continue-model-admin" style="display:none"><input type="radio" name="continue-model" value="claude-opus-4-6" /><span class="model-chip">Opus 4.6</span></label>
+          <label class="model-option continue-model-admin" style="display:none"><input type="radio" name="continue-model" value="claude-opus-4-7" /><span class="model-chip">Opus 4.7</span></label>
           <label class="model-option continue-model-admin" style="display:none"><input type="radio" name="continue-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
           <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="continue-model" value="gemini" disabled /><span class="model-chip">Gemini</span></label>
           <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="continue-model" value="gpt" disabled /><span class="model-chip">GPT</span></label>
@@ -1079,7 +1079,7 @@
       <label>Model</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="restart-model-options">
         <label class="model-option"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span></label>
-        <label class="model-option restart-model-admin" style="display:none"><input type="radio" name="restart-model" value="claude-opus-4-6" /><span class="model-chip">Opus 4.6</span></label>
+        <label class="model-option restart-model-admin" style="display:none"><input type="radio" name="restart-model" value="claude-opus-4-7" /><span class="model-chip">Opus 4.7</span></label>
         <label class="model-option restart-model-admin" style="display:none"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
         <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="restart-model" value="gemini" disabled /><span class="model-chip">Gemini</span></label>
         <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="restart-model" value="gpt" disabled /><span class="model-chip">GPT</span></label>
@@ -1170,8 +1170,8 @@
           <span class="model-chip">Sonnet 4.6</span>
         </label>
         <label class="model-option">
-          <input type="radio" name="edit-model" value="claude-opus-4-6" />
-          <span class="model-chip">Opus 4.6</span>
+          <input type="radio" name="edit-model" value="claude-opus-4-7" />
+          <span class="model-chip">Opus 4.7</span>
         </label>
         <label class="model-option">
           <input type="radio" name="edit-model" value="claude-haiku-4-5" />
@@ -2979,9 +2979,10 @@ async function openContinueModal(id) {
   const res = await fetch(`${APP_BASE}/api/projects/${id}`);
   if (res.ok) {
     const p = await res.json();
-    const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6', 'claude-opus-4-6': 'claude-opus-4-6',
-                       'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini', 'sonnet': 'claude-sonnet-4-6',
-                       'opus': 'claude-opus-4-6', 'haiku': 'claude-haiku-4-5' };
+    const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6',
+                       'claude-opus-4-7': 'claude-opus-4-7', 'claude-opus-4-6': 'claude-opus-4-7',
+                       'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini',
+                       'sonnet': 'claude-sonnet-4-6', 'opus': 'claude-opus-4-7', 'haiku': 'claude-haiku-4-5' };
     const modelVal = modelMap[p.model] || 'claude-sonnet-4-6';
     document.querySelectorAll('input[name="continue-model"]').forEach(r => {
       r.checked = (r.value === modelVal);
@@ -3054,9 +3055,10 @@ async function openRestartModal(id) {
   document.getElementById('restart-venue-pages').value = p.venue_pages || 9;
 
   // Set model radio
-  const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6', 'claude-opus-4-6': 'claude-opus-4-6',
-                     'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini', 'sonnet': 'claude-sonnet-4-6',
-                     'opus': 'claude-opus-4-6', 'haiku': 'claude-haiku-4-5' };
+  const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6',
+                     'claude-opus-4-7': 'claude-opus-4-7', 'claude-opus-4-6': 'claude-opus-4-7',
+                     'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini',
+                     'sonnet': 'claude-sonnet-4-6', 'opus': 'claude-opus-4-7', 'haiku': 'claude-haiku-4-5' };
   const modelVal = modelMap[p.model] || 'claude-sonnet-4-6';
   document.querySelectorAll('input[name="restart-model"]').forEach(r => {
     r.checked = (r.value === modelVal);

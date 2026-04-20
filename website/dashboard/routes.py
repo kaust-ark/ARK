@@ -373,10 +373,13 @@ Output ONLY the summary, no preamble.
 
 def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude-sonnet-4-6"):
     """Write config.yaml that ark orchestrator will read."""
-    # Map webapp model value to orchestrator model backend
+    # Map webapp model value to orchestrator model backend.
+    # Legacy "claude-opus-4-6" kept for backward-compat with older project DB rows;
+    # current UI only exposes opus-4-7 / sonnet-4-6 / haiku-4-5.
     MODEL_MAP = {
         "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
-        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
+        "claude-opus-4-7": ("claude", "claude-opus-4-7"),
+        "claude-opus-4-6": ("claude", "claude-opus-4-7"),  # legacy alias → 4.7
         "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
         "gemini": ("gemini", ""),
     }
@@ -1391,10 +1394,12 @@ async def api_create_project(
     # transitions it to either waiting_template or runs _try_submit_or_pending.
     initial_status = "initializing"
 
-    # Map model to backend + variant for DB
+    # Map model to backend + variant for DB.
+    # Legacy "claude-opus-4-6" kept as alias in case an older client posts it.
     MODEL_MAP = {
         "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
-        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
+        "claude-opus-4-7": ("claude", "claude-opus-4-7"),
+        "claude-opus-4-6": ("claude", "claude-opus-4-7"),  # legacy alias → 4.7
         "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
         "gemini": ("gemini", ""),
     }
