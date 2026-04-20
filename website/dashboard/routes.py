@@ -21,7 +21,9 @@ import subprocess
 logger = logging.getLogger("website.dashboard.routes")
 
 MAX_PROJECTS_PER_USER = 10
-MAX_ITER_PER_START = 3
+MAX_ITER_PER_START = 5
+MAX_CONCURRENT_PER_USER = 3
+MAX_CONCURRENT_GLOBAL = 10
 from ark.paths import get_ark_root as _get_ark_root
 _DISABLED_FLAG = None  # lazy
 
@@ -850,7 +852,11 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
         _sel(Project).where(Project.status.in_(["queued", "running"]))
         .where(Project.id != project.id)
     ).all()
-    if active and not is_admin:
+    user_active = [p for p in active if p.user_id == project.user_id]
+    if not is_admin and (
+        len(user_active) >= MAX_CONCURRENT_PER_USER
+        or len(active) >= MAX_CONCURRENT_GLOBAL
+    ):
         update_project(session, project, status="pending")
         return "pending"
     
@@ -1307,8 +1313,8 @@ async def api_create_project(
     venue_format: str = Form("neurips"),
     venue_pages: int = Form(9),
     mode: str = Form("paper"),
-    max_iterations: int = Form(2),
-    max_dev_iterations: int = Form(3),
+    max_iterations: int = Form(1),
+    max_dev_iterations: int = Form(1),
     pdf_file: Optional[UploadFile] = File(None),
     template_zip: Optional[UploadFile] = File(None),
     model: str = Form("claude-sonnet-4-6"),
@@ -1324,9 +1330,13 @@ async def api_create_project(
         user_projects = get_projects_for_user(_s, user.id)
         if len(user_projects) >= MAX_PROJECTS_PER_USER:
             raise HTTPException(400, f"Max {MAX_PROJECTS_PER_USER} projects per user.")
-        active = [p for p in user_projects if p.status in ("queued", "running", "pending", "initializing")]
-        if active and not _is_admin(user):
-            raise HTTPException(400, "You already have an active project. Wait for it to finish.")
+        active = [p for p in user_projects if p.status in ("queued", "running", "initializing")]
+        if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
+            raise HTTPException(
+                400,
+                f"You already have {len(active)} active projects. "
+                f"Max {MAX_CONCURRENT_PER_USER} concurrent — wait for one to finish.",
+            )
             
         # Check for configured keys
         db_user = get_user(_s, user.id)
@@ -1564,9 +1574,13 @@ async def api_restart_project(project_id: str, request: Request):
         if project.status not in ("stopped", "failed", "done"):
             raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
         active = [p for p in get_projects_for_user(session, project.user_id)
-                  if p.status in ("queued", "running", "pending", "initializing") and p.id != project_id]
-        if active and not _is_admin(user):
-            raise HTTPException(400, "You already have an active project.")
+                  if p.status in ("queued", "running", "initializing") and p.id != project_id]
+        if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
+            raise HTTPException(
+                400,
+                f"You already have {len(active)} active projects. "
+                f"Max {MAX_CONCURRENT_PER_USER} concurrent.",
+            )
         pdir = _project_dir(settings, project.user_id, project_id)
 
         # Update project fields from request body
@@ -1581,7 +1595,7 @@ async def api_restart_project(project_id: str, request: Request):
         if "venue_pages" in body:
             project.venue_pages = int(body["venue_pages"])
         if "max_iterations" in body:
-            project.max_iterations = max(1, min(3, int(body["max_iterations"])))
+            project.max_iterations = max(1, min(MAX_ITER_PER_START, int(body["max_iterations"])))
         if "telegram_token" in body:
             project.telegram_token = body["telegram_token"]
         if "telegram_chat_id" in body:
@@ -1702,9 +1716,13 @@ async def api_continue_project(project_id: str, request: Request):
         if project.status not in ("done", "stopped", "failed"):
             raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
         active = [p for p in get_projects_for_user(session, project.user_id)
-                  if p.status in ("queued", "running", "pending", "initializing") and p.id != project_id]
-        if active and not _is_admin(user):
-            raise HTTPException(400, "You already have an active project.")
+                  if p.status in ("queued", "running", "initializing") and p.id != project_id]
+        if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
+            raise HTTPException(
+                400,
+                f"You already have {len(active)} active projects. "
+                f"Max {MAX_CONCURRENT_PER_USER} concurrent.",
+            )
         new_max = project.max_iterations + additional
         update_project(session, project, max_iterations=new_max)
         pdir = _project_dir(settings, project.user_id, project_id)

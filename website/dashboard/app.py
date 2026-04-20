@@ -28,36 +28,60 @@ def _pname(p) -> str:
 
 
 def _advance_pending_queue(session, settings):
-    """If no project is globally active (queued/running), submit the oldest pending one."""
-    from .db import update_project, Project
+    """Promote the oldest pending project whose owner has room and global cap allows.
+
+    Respects MAX_CONCURRENT_PER_USER and MAX_CONCURRENT_GLOBAL from routes.
+    Keeps looping until no more slots are available.
+    """
+    from .db import update_project, Project, get_user
+    from .routes import (
+        _get_user_keys,
+        MAX_CONCURRENT_PER_USER,
+        MAX_CONCURRENT_GLOBAL,
+    )
     from sqlmodel import select
-    active = session.exec(
-        select(Project).where(Project.status.in_(["queued", "running"]))
-    ).all()
-    if active:
-        return
-    pending = session.exec(
-        select(Project).where(Project.status == "pending")
-        .order_by(Project.created_at.asc())
-    ).first()
-    if not pending:
-        return
-    from .jobs import submit_job, slurm_available
-    pdir = settings.projects_root / pending.user_id / pending.id
-    log_dir = pdir / "logs"
-    log_dir.mkdir(exist_ok=True)
-    try:
-        if slurm_available():
-            job_id = submit_job(pending.id, pending.mode, pending.max_iterations,
-                                pdir, log_dir, settings)
-            update_project(session, pending, status="queued", slurm_job_id=job_id)
-        else:
-            job_id = launch_local_job(pending.id, pending.mode, pending.max_iterations,
-                                      pdir, log_dir, settings)
-            update_project(session, pending, status="running", slurm_job_id=job_id)
-        logger.info(f"Queue advance: {pending.id} → job {job_id}")
-    except Exception as e:
-        logger.error(f"Queue advance failed {pending.id}: {e}")
+
+    while True:
+        active = session.exec(
+            select(Project).where(Project.status.in_(["queued", "running"]))
+        ).all()
+        if len(active) >= MAX_CONCURRENT_GLOBAL:
+            return
+        per_user: dict[str, int] = {}
+        for p in active:
+            per_user[p.user_id] = per_user.get(p.user_id, 0) + 1
+
+        pending_list = session.exec(
+            select(Project).where(Project.status == "pending")
+            .order_by(Project.created_at.asc())
+        ).all()
+        pending = next(
+            (p for p in pending_list
+             if per_user.get(p.user_id, 0) < MAX_CONCURRENT_PER_USER),
+            None,
+        )
+        if not pending:
+            return
+
+        from .jobs import submit_job, slurm_available
+        pdir = settings.projects_root / pending.user_id / pending.id
+        log_dir = pdir / "logs"
+        log_dir.mkdir(exist_ok=True)
+        user_obj = get_user(session, pending.user_id)
+        api_keys = _get_user_keys(user_obj) if user_obj else {}
+        try:
+            if slurm_available():
+                job_id = submit_job(pending.id, pending.mode, pending.max_iterations,
+                                    pdir, log_dir, settings, api_keys=api_keys)
+                update_project(session, pending, status="queued", slurm_job_id=job_id)
+            else:
+                job_id = launch_local_job(pending.id, pending.mode, pending.max_iterations,
+                                          pdir, log_dir, settings, api_keys=api_keys)
+                update_project(session, pending, status="running", slurm_job_id=job_id)
+            logger.info(f"Queue advance: {pending.id} → job {job_id}")
+        except Exception as e:
+            logger.error(f"Queue advance failed {pending.id}: {e}")
+            return
 _stuck_alerted: set[str] = set()     # project_ids already sent stuck alert
 _tg_offsets: dict[str, int] = {}     # project_id → last Telegram update_id seen
 STUCK_MINUTES = 60
