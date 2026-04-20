@@ -1,28 +1,55 @@
 ---
 name: runtime-sandbox
-description: Containerized isolation for runtime experiments. Use when the project needs to execute foreign/untrusted/heavy code (third-party agent frameworks, malicious test inputs, GPU model serving) under reproducible isolation, especially when sandbox is named in the Experimental Protocol or when GPU access via slurm is required.
-tags: [system, infrastructure, sandbox, apptainer, slurm, gpu, runtime, isolation]
+description: Containerized isolation via Apptainer for reproducible experiments. Use whenever the project executes third-party code (agent frameworks, browser agents, codegen tools, benchmark harnesses), runs GPU workloads via Slurm on a shared cluster, needs a reproducible runtime environment for paper claims, or isolates untrusted/adversarial inputs from the host. Broadly applicable to measurement, benchmark, and systems papers — not only to malicious-code experiments.
+tags: [system, infrastructure, sandbox, apptainer, slurm, gpu, runtime, isolation, reproducibility, third-party-execution, benchmarking]
 ---
 
 # Runtime Sandbox
 
 ## When to Use
 
-Select this skill when the Experimental Protocol calls for any of:
+Select this skill when the Experimental Protocol involves any of the
+following — these cover a broad class of measurement, benchmark, and
+systems papers, not only adversarial/malicious experiments:
 
-- **Sandboxed execution** — running malicious code, untrusted skills,
-  third-party agent frameworks (OpenClaw, AutoGPT, LangChain agents) that
-  may interact with the filesystem / network in ways that should be
-  isolated from the host
-- **GPU access via Slurm** — submitting model-serving workloads (Ollama,
-  vLLM, etc.) to compute nodes (V100/A100/H100)
-- **Reproducible runtime evaluation** — paper claims that say "evaluated in
-  a sandboxed environment" or "deployed on GPU node"
-- **Runtime-overhead measurement** — comparing latency with vs. without an
-  intercepting layer
+- **Executing third-party code you don't fully control** — any agent
+  framework (OpenClaw, AutoGPT, LangChain, browser-use, AutoGen, codegen
+  agents), any benchmark harness that shells out, any evaluation that
+  invokes external CLIs. Sandbox keeps the host clean and makes the run
+  reproducible across machines.
+- **GPU workloads via Slurm** — model serving (Ollama, vLLM, TGI), training,
+  large-scale inference. On HPC clusters Docker is typically unavailable;
+  Apptainer is the standard rootless alternative with native `--nv` GPU
+  passthrough.
+- **Reproducibility claims in the paper** — anything saying "evaluated in
+  a containerized environment", "deployed on node X", "runs on pinned
+  dependency set", or "reproducible via this .sif". The reviewer expects
+  the artifact to boot elsewhere and reproduce the numbers.
+- **Shared-home / NFS clusters** — when `$HOME` is shared across nodes,
+  containerization prevents cross-user env pollution and makes per-project
+  Python/Node/CUDA versions independent.
+- **Untrusted or adversarial inputs** — malicious skills, jailbreak
+  corpora, adversarial prompts, red-team payloads. Isolation is defense
+  in depth on top of any software-level firewall.
+- **Runtime-overhead measurement** — comparing latency with vs. without
+  an intercepting / instrumentation layer.
 
-If the Protocol does not call for any of these, do not select this skill —
-prefer running on the host directly.
+## When NOT to Use
+
+Skip this skill (prefer running on the host directly) when all of the
+following hold:
+
+- The experiment is pure data analysis on local files (pandas / numpy /
+  statsmodels) with no third-party agent execution
+- No GPU or Slurm involvement
+- No paper claim of "sandboxed" / "containerized" / "deployed on X"
+- No third-party CLI being invoked whose side effects could leak into
+  the host
+
+If any one of the "When to Use" cases applies, prefer this skill over
+bare-host execution. The apptainer build is a one-time 20–30 min cost
+that pays back in reproducibility and host hygiene for the rest of the
+project.
 
 ## Why Apptainer (not Docker)
 

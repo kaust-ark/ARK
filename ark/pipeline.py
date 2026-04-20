@@ -1084,21 +1084,68 @@ selected skill paths (or an empty array `[]` if nothing matches).
         self.log_section("Research Phase Complete")
 
     def _load_skills_index(self) -> str:
-        """Load the skills library index as a compact string for the researcher."""
+        """Load the skills index (library + builtin) as a compact string for the researcher.
+
+        Library skills come from skills/index.json (the curated catalog) and
+        must be explicitly selected into selected_skills.json to be installed.
+        Builtin skills live under skills/builtin/ and are auto-installed in
+        every project — they're ambient capabilities. Researcher still needs
+        to see them here so the Experimental Protocol can plan to invoke them
+        and bind them in selected_skills_rationale.md.
+        """
         import json
-        index_path = Path(__file__).parent.parent / "skills" / "index.json"
-        if not index_path.exists():
-            return "No skills library available."
-        try:
-            with open(index_path) as f:
-                skills = json.load(f)
-            lines = []
-            for s in skills:
-                tags = ", ".join(s.get("tags", [])[:3])
-                lines.append(f"- {s['name']}: {s['description'][:80]} [{tags}] @ {s['path']}")
-            return "\n".join(lines)
-        except Exception:
-            return "Skills index could not be loaded."
+        skills_root = Path(__file__).parent.parent / "skills"
+        lines = []
+
+        # Library skills (must be explicitly selected)
+        index_path = skills_root / "index.json"
+        if index_path.exists():
+            try:
+                with open(index_path) as f:
+                    skills = json.load(f)
+                if skills:
+                    lines.append("### Library skills (select by adding path to selected_skills.json)")
+                    for s in skills:
+                        tags = ", ".join(s.get("tags", [])[:3])
+                        lines.append(f"- {s['name']}: {s['description'][:80]} [{tags}] @ {s['path']}")
+            except Exception:
+                pass
+
+        # Builtin skills (auto-installed; still document rationale when used)
+        builtin_dir = skills_root / "builtin"
+        if builtin_dir.exists():
+            builtin_entries = []
+            for skill_dir in sorted(builtin_dir.iterdir()):
+                skill_md = skill_dir / "SKILL.md"
+                if not (skill_dir.is_dir() and skill_md.exists()):
+                    continue
+                try:
+                    text = skill_md.read_text()
+                    # Parse minimal YAML frontmatter (name/description/tags)
+                    if text.startswith("---"):
+                        end = text.find("---", 3)
+                        if end > 0:
+                            fm = text[3:end]
+                            import yaml as _yaml
+                            meta = _yaml.safe_load(fm) or {}
+                            name = meta.get("name", skill_dir.name)
+                            desc = (meta.get("description") or "").strip().replace("\n", " ")
+                            tags = ", ".join((meta.get("tags") or [])[:3])
+                            builtin_entries.append(
+                                f"- {name}: {desc[:120]} [{tags}] @ {skill_dir}"
+                            )
+                except Exception:
+                    continue
+            if builtin_entries:
+                if lines:
+                    lines.append("")
+                lines.append(
+                    "### Builtin skills (auto-installed in every project — still bind "
+                    "in selected_skills_rationale.md when a Protocol item will rely on them)"
+                )
+                lines.extend(builtin_entries)
+
+        return "\n".join(lines) if lines else "No skills available."
 
     def _install_selected_skills(self):
         """Copy selected skills to the project directory."""
