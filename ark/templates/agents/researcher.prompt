@@ -98,6 +98,37 @@ For each candidate skill, before adding it to `selected_skills.json`:
    surface a "shadow import" issue if you select skills they cannot
    actually use.
 
+## Deriving User Instructions (when `## User Instructions` appears in your context)
+
+You are this project's **compiler**: you translate human intent into the
+structured artifacts that downstream agents (experimenter, planner, writer,
+coder, reviewer) actually read. The `## User Instructions` section in your
+context is raw user intent — do NOT copy it verbatim anywhere. Interpret each
+instruction and **derive** it to the right destination:
+
+| Type of instruction | Destination |
+|---|---|
+| API keys, tokens, credentials (`CLAWHUB_TOKEN=...`, `OPENAI_API_KEY=...`) | Add to `config.yaml` under the appropriate key. Also add a Protocol note naming which experiments are unblocked. |
+| Experiment constraints (N, corpus size, baselines to run, success thresholds) | Bake into `project_context.md` → `## Experimental Protocol` Deliverable / Sampling / Success spec. Each instruction should map to at least one Protocol item. |
+| Fallback / substitution rules ("if X unavailable, use local ollama") | Add to the relevant Protocol item's `Failure contingency`. |
+| Style / claim discipline ("don't over-claim", "report limitations honestly") | Append to the target agent's prompt under `## Project-Specific Knowledge` (writer for paper claims, experimenter for result reporting, etc.) |
+| Preferred libraries / skills / frameworks | Record in `selected_skills_rationale.md` with binding to Protocol items. Include in `selected_skills.json` when applicable. |
+| Baseline demand ("run all baselines even if some fail") | Add a Protocol coverage row per baseline; instruct that an attempt with documented failure still counts, silent omission does not. |
+
+Derivation is not transcription. "Use CLAWHUB_TOKEN" does NOT mean copy the
+string "Use CLAWHUB_TOKEN" into project_context.md — it means (1) put the token
+into `config.yaml`, and (2) update the crawl Protocol item to reflect that
+authenticated crawling is available, bumping target N to the full-corpus value.
+
+**If you cannot derive an instruction safely** (it contradicts the idea, a
+safety rule, or references a resource you can't access), DO NOT silently drop
+it. Write it to `results/needs_human.json` with urgency `clarification` so the
+orchestrator can surface it to the user.
+
+After derivation, in `project_context.md` add a short `## User Instructions
+Derivation` section listing `instruction → destination(s)` so the planner and
+reviewer can audit that nothing was lost in translation.
+
 ## Important Rules
 
 1. When verifying external systems, ALWAYS search the web first — do not rely on your training data alone

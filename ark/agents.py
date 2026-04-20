@@ -239,17 +239,23 @@ class _BlockingCommandWatchdog:
 # Note: project-specific knowledge is now written directly into agent prompt files
 # during the Specialization step (Research Phase Step 3). The runtime injection of
 # project_context has been replaced by Template-Specialization architecture.
+# `user_instructions`: inject auto_research/state/user_instructions.yaml as its own
+# section, independent of memory. Only researcher gets this — it acts as the
+# "compiler" that derives user intent into config.yaml / project_context.md /
+# customized agent prompts. Downstream agents pick up the derived artifacts via
+# their normal channels (prior_context, context_files). Ongoing instructions
+# added mid-run are still surfaced to planner/reviewer via memory.goal_anchor.
 AGENT_CONTEXT_PROFILES = {
-    "researcher":     {"memory": False, "deep_research": False, "prior_context": False, "context_files": True},
-    "reviewer":       {"memory": True,  "deep_research": False, "prior_context": False, "context_files": False},
-    "planner":        {"memory": True,  "deep_research": False, "prior_context": True,  "context_files": False},
-    "writer":         {"memory": False, "deep_research": True,  "prior_context": True,  "context_files": False},
-    "experimenter":   {"memory": False, "deep_research": True,  "prior_context": False, "context_files": True},
-    "coder":          {"memory": False, "deep_research": False, "prior_context": True,  "context_files": False},
+    "researcher":     {"memory": False, "deep_research": False, "prior_context": False, "context_files": True,  "user_instructions": True},
+    "reviewer":       {"memory": True,  "deep_research": False, "prior_context": False, "context_files": False, "user_instructions": False},
+    "planner":        {"memory": True,  "deep_research": False, "prior_context": True,  "context_files": False, "user_instructions": False},
+    "writer":         {"memory": False, "deep_research": True,  "prior_context": True,  "context_files": False, "user_instructions": False},
+    "experimenter":   {"memory": False, "deep_research": True,  "prior_context": False, "context_files": True,  "user_instructions": False},
+    "coder":          {"memory": False, "deep_research": False, "prior_context": True,  "context_files": False, "user_instructions": False},
 }
 
 # Default profile for unknown agent types (conservative: include everything)
-_DEFAULT_PROFILE = {"memory": True, "deep_research": True, "prior_context": True, "context_files": True}
+_DEFAULT_PROFILE = {"memory": True, "deep_research": True, "prior_context": True, "context_files": True, "user_instructions": False}
 
 
 class AgentMixin:
@@ -499,6 +505,42 @@ class AgentMixin:
             history_context = self.memory.get_context_for_agent(agent_type)
             if history_context:
                 context_sections.append(f"## Iteration History (Memory)\n\n{history_context}")
+
+        # User Instructions — user intent captured at launch / restart / continue.
+        # Only agents marked `user_instructions: True` (currently researcher) see this
+        # directly; researcher derives the content into config.yaml, project_context.md,
+        # and customized agent prompts so downstream agents pick it up naturally.
+        if profile.get("user_instructions"):
+            ui_file = self.state_dir / "user_instructions.yaml"
+            if ui_file.exists():
+                try:
+                    ui_data = yaml.safe_load(ui_file.read_text()) or {}
+                    entries = ui_data.get("instructions", []) or []
+                    messages = [e.get("message", "").strip() for e in entries if e.get("message")]
+                    if messages:
+                        rendered = "\n".join(f"- {m}" for m in messages)
+                        context_sections.append(
+                            "## User Instructions (from launch form / webapp)\n\n"
+                            "The user submitted the following guidance. You are the project's\n"
+                            "compiler — do NOT copy these instructions verbatim into downstream\n"
+                            "artifacts. Instead, interpret intent and derive each instruction\n"
+                            "into the appropriate destination so downstream agents pick it up\n"
+                            "through their normal channels:\n\n"
+                            "- API keys / tokens → write to `config.yaml`\n"
+                            "- Experiment constraints (N, baselines, success criteria) →\n"
+                            "  bake into `project_context.md` → `## Experimental Protocol`\n"
+                            "- Style / claim discipline (e.g. \"don't over-claim\") →\n"
+                            "  append to the target agent's `## Project-Specific Knowledge`\n"
+                            "- Preferred libraries / skills → record rationale in\n"
+                            "  `selected_skills_rationale.md`\n"
+                            "- Fallback rules → add to Protocol `Failure contingency`\n\n"
+                            "If an instruction cannot be safely derived (e.g. it contradicts\n"
+                            "the idea or a safety rule), surface it in `needs_human.json`\n"
+                            "rather than silently ignoring it.\n\n"
+                            f"{rendered}"
+                        )
+                except Exception as e:
+                    self.log(f"Could not read user_instructions.yaml: {e}", "WARN")
 
         # Prior context from previous agent
         if profile["prior_context"] and prior_context:
