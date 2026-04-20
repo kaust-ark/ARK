@@ -60,6 +60,20 @@ Every quantitative claim in the paper must be traceable to a real result file:
 3. **If a result doesn't exist**, do not write the claim. Instead, leave a LaTeX comment: `% TODO: result not available — needs experiment`
 4. **Do NOT describe experiments that weren't run**. If `results/` is empty or contains only simulated data, do not write an Experiments section that claims real results were obtained.
 
+## Internal Artifact Discipline (MANDATORY)
+
+ARK's internal files are **data sources, not paper templates**. This includes:
+`findings.yaml`, `config.yaml`, `project_context.md`, anything under
+`auto_research/state/`, `action_plan.yaml`, `coverage:` blocks,
+protocol YAML, etc. When referencing their content in the paper:
+
+1. **Never expose internal filenames or path fragments.** The paper must not contain phrases like "per `findings.yaml`", "recorded in `config.yaml`", "as stated in `auto_research/state/...`", "the artifact records", or similar. These are implementation details; readers do not know what `findings.yaml` is.
+2. **Never copy identifier-style tokens verbatim.** Tokens like `metadata_text_signal`, `deferred_reason`, `not_run`, `static_pattern_classifier`, `Protocol threshold`, `coverage.status = partial`, or any `snake_case`/`CamelCase` that only appears in ARK's state machinery must be rewritten as ordinary academic prose ("the metadata text signal", "the deferred rationale", "the static pattern classifier", "the 80\% preservation threshold", etc.).
+3. **Never wrap internal-sourced text in `\begin{quote}\small\itshape ... \end{quote}`.** That formatting signals "raw log quote" to reviewers and looks unprofessional; it is the single strongest tell that a limitation block was auto-generated from `findings.yaml` without rewriting.
+4. **Always rewrite for an external reader.** When a limitation, caveat, or scope restriction comes from an internal artifact, translate: who did what, why this bound exists, what future work would lift it. Do not preserve internal framing just because it was there.
+
+This discipline applies to every section, not just Limitations. If you catch yourself pasting text that contains any of the above markers, rewrite before proceeding.
+
 ## Page Limit — {VENUE_PAGES} pages
 
 The paper body (excluding references and appendix) must not exceed **{VENUE_PAGES} pages** (desk rejection). The last page should be at least 70% filled.
@@ -79,13 +93,30 @@ When a reviewer or planner task adds supplementary content, prefer placing it in
 
 ## Figure Placement
 
-Default float placement (apply proactively, not retroactively):
-- `\begin{figure}`, `\begin{table}`   → `[!htbp]`
-- `\begin{figure*}`, `\begin{table*}` → `[!t]`
+The authoritative source for how a figure should be placed is
+`{FIGURES_DIR}/figure_manifest.json`. Each entry carries two fields the
+writer must honor:
+
+- `placement`:
+  - `single_column` → `\begin{figure}[!htbp]` + `\includegraphics[width=\columnwidth]`
+  - `full_width`    → `\begin{figure*}[tb]` + `\includegraphics[width=\textwidth]`
+- `scalable`:
+  - `true`  → the figure is a bitmap (PaperBanana / Nano-Banana output); `\includegraphics[width=0.9\textwidth]` etc. is safe when compressing
+  - `false` → the figure is a matplotlib vector PDF with baked-in fonts; **never** resize it via `\includegraphics` because the text glyphs shrink to illegible sizes. If a smaller rendering is needed, open the plotting script in `scripts/create_paper_figures.py`, reduce `figsize`, and re-run the script.
+
+**Before writing any `\includegraphics`, read the manifest entry for
+that file and use the matching environment.** The `_list_available_figures`
+output included with your task already surfaces `placement` and
+`scalable` for every figure — use it rather than guessing.
+
+Float placement options:
+- Single-column `figure`/`table`: use `[!htbp]` (here → top → bottom → float page)
+- Full-width `figure*`/`table*`: use `[!tb]` (top or bottom — `[!t]` alone is too restrictive and traps column flow when multiple full-width floats queue up on the same page)
 - Never use bare `[t]`, `[h]`, or `[H]`.
 
 After every modification, compile and check that:
 1. No blank pages with only figures — if any appear, move the `\begin{figure}` earlier in the source
-2. Add `\FloatBarrier` before the last body section (usually Conclusion)
+2. Do **NOT** add `\FloatBarrier` yourself. ARK's post-processing inserts exactly one in the correct position (before the last body section). A manually-added second barrier traps column flow and leaves large whitespace gaps.
 3. Figures appear near where they are referenced, not pages later
-4. No large whitespace gaps — shrink figures or adjust placement if floats leave gaps
+4. No large whitespace gaps — if a figure's `placement` in the manifest disagrees with the environment you used, fix the environment, not the figure
+5. Every AI concept figure listed in the manifest must be referenced by `\includegraphics` somewhere in `main.tex` — generating them cost real compute, dropping them silently is the regression that produced 275KB concept-figure-less PDFs

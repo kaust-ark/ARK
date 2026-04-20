@@ -486,33 +486,14 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
             try:
                 execute_ok = False
                 if action_plan:
+                    # _run_execute_phase always invokes the real _run_writing_phase
+                    # now (see execution.py). If it returns False, that means the
+                    # writing phase itself underperformed (e.g., <5 lines changed);
+                    # the prior hardcoded "fallback writer" here has been removed
+                    # because its impoverished prompt was silently deleting AI
+                    # concept figures. Let the next review iteration react instead.
                     execute_ok = self._run_execute_phase(action_plan, planner_output)
                     self._check_human_intervention(stage="Execute")
-
-                if not execute_ok and not self._quota_exhausted:
-                    self.log_step("Execute incomplete, using fallback writer", "warning")
-                    req_str = ""
-                    if paper_requirements:
-                        quality_reqs = paper_requirements.get("quality_requirements", [])
-                        if quality_reqs:
-                            req_str = "\n\nKey quality requirements:\n" + "\n".join(f"- {r}" for r in quality_reqs)
-
-                    self.run_agent(
-                        "writer",
-                        f"""Please read the latest review report auto_research/state/latest_review.md,
-and improve the paper based on the review comments:
-
-1. First address all Major Issues
-2. Then address Minor Issues
-3. Improve figure quality and information density
-4. Ensure compliance with EuroMLSys two-column format (6 pages for body, unlimited for references and appendix)
-
-Notes:
-- Keep the core contributions of the paper unchanged
-- Ensure LaTeX compiles successfully after each improvement
-- Update report.md to keep it in sync{req_str}""",
-                        timeout=3600,
-                    )
             except Exception as e:
                 self.log(f"Execute phase failed: {e}", "ERROR")
 
@@ -524,7 +505,7 @@ Notes:
                 _ok = False
             self.notify_progress(
                 "Execute",
-                "completed" if _ok else "incomplete (fallback writer used)",
+                "completed" if _ok else "incomplete",
                 level="done" if _ok else "warn",
             )
 
@@ -2661,17 +2642,95 @@ Only use double_column for multi-panel figures (side-by-side subplots).
             self.log(f"Coder agent did not create {script_rel}", "WARN")
 
     def _list_available_figures(self) -> str:
-        """List all figures in paper/figures/ with their type (AI concept vs matplotlib)."""
+        """List all figures in paper/figures/ with placement, scalability,
+        and inclusion status — surfaces `figure_manifest.json` to the writer.
+
+        Four pieces of information per figure:
+          - source (matplotlib / paperbanana / nano_banana / manual)
+          - placement (single_column vs full_width → figure vs figure*)
+          - scalable (whether \\includegraphics resize is safe — no for
+            matplotlib vector-with-text, yes for AI bitmaps)
+          - referenced-in-main.tex (surface AI figures the writer has
+            silently dropped; this is the exact regression that produced
+            the 275KB concept-figure-less PDFs).
+        """
         if not self.figures_dir.exists():
             return "No figures generated yet."
+
+        from ark.figure_manifest import load_manifest, AI_SOURCES
+        manifest = load_manifest(self.figures_dir)
+        manifest_figs = manifest.get("figures", {})
+
+        # Read main.tex once so we can cheaply check "is this figure referenced?"
+        main_tex_path = self.latex_dir / "main.tex"
+        tex_content = ""
+        if main_tex_path.exists():
+            try:
+                tex_content = main_tex_path.read_text()
+            except OSError:
+                tex_content = ""
+
         lines = []
+        missing_ai_figs = []
         for f in sorted(self.figures_dir.iterdir()):
             if f.suffix not in (".png", ".pdf"):
                 continue
             size_kb = f.stat().st_size // 1024
-            # AI concept figures are typically >150KB (PaperBanana/Gemini output)
-            fig_type = "AI concept diagram — DO NOT recreate" if size_kb > 150 else "matplotlib statistical plot"
-            lines.append(f"- {f.name} ({size_kb}KB, {fig_type})")
+
+            info = manifest_figs.get(f.name, {})
+            source = info.get("source")
+            # Source → is_ai (authoritative from manifest; legacy heuristic
+            # if file isn't registered yet)
+            if source in AI_SOURCES:
+                is_ai = True
+            elif source:
+                is_ai = False
+            else:
+                is_ai = size_kb > 150  # legacy heuristic
+
+            # Placement (figure vs figure*)
+            placement = info.get("placement")
+            if placement is None:
+                # Legacy entry or missing — infer from size: AI figures
+                # and large matplotlib plots default to full_width.
+                placement = "full_width" if size_kb > 150 else "single_column"
+            latex_env = r"\begin{figure*}[tb] / \textwidth" if placement == "full_width" \
+                        else r"\begin{figure}[!htbp] / \columnwidth"
+
+            # Scalable (\\includegraphics resize safe?)
+            scalable = info.get("scalable")
+            if scalable is None:
+                scalable = is_ai  # matplotlib default false, AI default true
+            scale_note = "safe to resize" if scalable \
+                         else "DO NOT resize via \\includegraphics (regenerate with smaller figsize instead)"
+
+            # Reference check: does main.tex \\includegraphics this stem?
+            stem = f.stem
+            is_referenced = bool(tex_content) and (stem in tex_content)
+
+            if is_ai:
+                if is_referenced:
+                    tag_prefix = "AI concept diagram (already referenced)"
+                else:
+                    tag_prefix = "AI concept diagram — ⚠ MISSING FROM main.tex — MUST add \\includegraphics"
+                    missing_ai_figs.append(f.name)
+            else:
+                tag_prefix = "matplotlib statistical plot"
+
+            lines.append(
+                f"- {f.name} ({size_kb}KB, {tag_prefix}; "
+                f"placement={placement} → use {latex_env}; {scale_note})"
+            )
+
+        if missing_ai_figs:
+            lines.append("")
+            lines.append(
+                "**CRITICAL**: The AI concept figures marked MISSING above exist on "
+                "disk but are NOT currently referenced in main.tex. Generating them "
+                "cost real compute — DO NOT leave them unused. Add "
+                "\\includegraphics for each one using the placement shown."
+            )
+
         return "\n".join(lines) if lines else "No figures generated yet."
 
     def _send_dev_phase_telegram(self, event: str, current: int, total: int):

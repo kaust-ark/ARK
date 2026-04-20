@@ -825,6 +825,24 @@ Execute the task and update the corresponding files.
                         self._agent_empty_count += 1
                         break  # no point retrying, quota won't recover soon
 
+                    # Wall-clock timeout that produced nothing: skip retry. Rerunning
+                    # the same prompt for another full timeout window is cargo-cult —
+                    # if the first run hung long enough to hit the cap with zero
+                    # output, the second almost always does the same. This is the
+                    # path that wasted 2 hours on safeclaw-v2 E3.
+                    #
+                    # (elapsed is computed as int(time.time() - start_time); allow
+                    # a small slack below `timeout` to absorb timer jitter.)
+                    hit_wall_clock = elapsed >= max(timeout - 5, 0)
+                    if hit_wall_clock:
+                        self.log(
+                            f"  Empty-run coincided with wall-clock timeout ({elapsed}s ≈ {timeout}s) — "
+                            f"skipping retry; rerunning the same prompt is unlikely to help",
+                            "WARN",
+                        )
+                        self._agent_empty_count += 1
+                        break
+
                     if attempt < MAX_RETRIES:
                         timer.stop()
                         backoff = 30 * attempt

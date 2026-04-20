@@ -587,11 +587,17 @@ class CompilerMixin:
             # Restore any AI-generated files overwritten by the script
             restore_protected(self.figures_dir, backups, log_fn=self.log)
 
-            # Register matplotlib outputs in manifest
+            # Register matplotlib outputs in manifest. Pass figures_dir so
+            # register_figure can read the actual PDF width (in inches) from
+            # disk — that width is what decides placement single vs full,
+            # which is what the writer reads to pick figure vs figure*.
             for fig_file in self.figures_dir.glob("fig*"):
                 if fig_file.suffix in (".pdf", ".png", ".jpg"):
                     if fig_file.name not in manifest.get("figures", {}):
-                        register_figure(manifest, fig_file.name, "matplotlib")
+                        register_figure(
+                            manifest, fig_file.name, "matplotlib",
+                            figures_dir=self.figures_dir,
+                        )
                     elif manifest["figures"][fig_file.name].get("source") == "matplotlib":
                         pass  # Already registered
             save_manifest(self.figures_dir, manifest)
@@ -905,7 +911,18 @@ output: NO_CONCEPT_FIGURES
             if ok:
                 generated += 1
                 self.log(f"  Generated: {output_path.name}", "INFO")
-                register_figure(manifest, output_path.name, source)
+                # Pass the authoritative placement (from concept_figures.json)
+                # and actual rendered width through to the manifest, so the
+                # writer and compression skill don't have to infer from
+                # pixel count — AI PNG pixel dimensions are a model choice,
+                # not a physical paper measurement.
+                register_figure(
+                    manifest, output_path.name, source,
+                    figures_dir=self.figures_dir,
+                    width_in=fig_width,
+                    placement=placement,
+                    # scalable defaults to True for AI sources (bitmap)
+                )
                 save_manifest(self.figures_dir, manifest)
             else:
                 self.log(f"  Failed: {name}", "WARN")
