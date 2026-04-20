@@ -68,6 +68,15 @@ Before making changes, check the current page count. Refer to the **page-adjustm
 
 Always ensure `\clearpage` appears before `\bibliography` so references start on a new page.
 
+## Appendix Usage
+
+Use `\appendix` proactively when content genuinely belongs there, rather than only as a last-resort overflow dump:
+
+- **Belongs in appendix**: full proofs/derivations, extended ablation tables, hyperparameter sweeps, prompt templates, implementation/config details, additional qualitative examples, dataset statistics beyond a summary
+- **Belongs in body**: problem statement, core method, headline results, primary ablation, key analysis/discussion
+
+When a reviewer or planner task adds supplementary content, prefer placing it in `\appendix` over cutting body text — the body-page limit excludes the appendix. Do NOT create an empty or single-paragraph appendix just to have one.
+
 ## Figure Placement
 
 Default float placement (apply proactively, not retroactively):

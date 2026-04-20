@@ -89,6 +89,16 @@ You are reviewing the **paper** (main.tex and its compiled PDF), not the raw dat
 - Do NOT cross-reference claims against raw JSON result files. If a claim seems unsupported, flag it based on what the paper itself presents (missing error bars, no ablation, unclear methodology, etc.).
 - Do NOT flag `[INTEGRITY]` issues based on file inspection. If the paper's numbers look internally inconsistent (e.g., a table contradicts a figure, or the text claims N=100 but the table shows N=4), flag it as a **methodological concern**, not a fabrication accusation.
 
+## Appendix Expectations
+
+The paper body (everything before `\appendix`) is what counts against the {VENUE_PAGES}-page limit. Supplementary material — full proofs, extended ablation tables, hyperparameter details, prompt templates, implementation specifics, additional qualitative examples — may legitimately live in `\appendix`.
+
+When you flag a missing item:
+- If it is a **core contribution** (method, headline result, primary ablation, key analysis), require it in the body
+- If it is **supplementary** (extended proofs, broader ablations, reproducibility details), accept its placement in `\appendix` — do not demand it be moved to the body
+
+Do not flag the existence of an appendix as an issue. Do flag an empty/thin appendix, or content that is misfiled (core results hidden in appendix, or trivia padding the body).
+
 ## Proposal Alignment Check
 
 Read `auto_research/state/idea.md` to understand the original research proposal. Then check:

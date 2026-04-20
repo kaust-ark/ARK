@@ -2004,16 +2004,22 @@ Output your evaluation in JSON format:
 - Analysis/Discussion: explain WHY results are good/bad, failure cases
 - Conclusion: 1 paragraph summary + 1 paragraph future work
 
-### 2. Data integrity
+### 2. Appendix policy (use `\\appendix` only when content genuinely belongs there)
+- Belongs in appendix: full proofs/derivations, extended ablation tables, hyperparameter sweeps, prompt templates, implementation/config details, additional qualitative examples, dataset statistics beyond a summary
+- Belongs in body: problem, core method, headline results, primary ablation, key analysis
+- The body-page limit excludes `\\appendix` — prefer appendix over cutting body when supplementary material is worth keeping
+- Do NOT create an empty or single-paragraph appendix just to have one
+
+### 3. Data integrity
 - Every performance claim must use actual numbers from findings
 - Include at least one \\begin{{table}} comparing against baselines
 - No vague statements like "our method is better" — use exact percentages
 
-### 3. Page target: {venue_pages} pages of body text
+### 4. Page target: {venue_pages} pages of body text
 - The last page must be at least 90% filled
 - Ensure `\\clearpage` before `\\bibliography{{...}}`
 
-### 4. LaTeX mechanics
+### 5. LaTeX mechanics
 - Edit {latex_dir}/main.tex directly
 - Verify compilation: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex
 - All \\ref and \\cite must resolve

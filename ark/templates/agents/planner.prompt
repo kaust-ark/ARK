@@ -82,8 +82,10 @@ The venue enforces a strict **{VENUE_PAGES}-page limit** for body text (excludin
 4. For any remaining task, explicitly instruct: "Do NOT add new content. Revise existing text only."
 
 **If the paper is currently AT or UNDER the page limit:**
-1. For any task that adds content (new sections, new experiments, new figures), require the writer to **cut equivalent content elsewhere** to stay within budget
-2. Always include this instruction in the task action: "Ensure the paper stays within {VENUE_PAGES} pages after your changes."
+1. For any task that adds content, classify it first:
+   - **Core contribution** (main method, headline result, primary ablation, key analysis): require the writer to cut equivalent body content to stay within budget
+   - **Supplementary** (full proofs, extended ablations, hyperparameter details, prompt templates, implementation specifics, additional qualitative examples): instruct the writer to place it in `\appendix` — the body-page limit excludes the appendix, so no body cut is required
+2. Always include this instruction in the task action: "Ensure the body (excluding `\appendix` and references) stays within {VENUE_PAGES} pages after your changes."
 
 ## Strategy Escalation Rules
 
