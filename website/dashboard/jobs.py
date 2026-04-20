@@ -612,3 +612,174 @@ def cancel_local_job(pid: int) -> bool:
         return True
     except Exception:
         return False
+
+
+# ── Kubernetes (EKS) Job ───────────────────────────────────────────────────────
+
+def _s3_client(settings, aws_access_key_id=None, aws_secret_access_key=None):
+    import boto3
+    kwargs = {}
+    if settings.k8s_s3_region:
+        kwargs["region_name"] = settings.k8s_s3_region
+    if aws_access_key_id:
+        kwargs["aws_access_key_id"] = aws_access_key_id
+        kwargs["aws_secret_access_key"] = aws_secret_access_key
+    return boto3.client("s3", **kwargs)
+
+def upload_project_to_s3(project_dir: Path, bucket: str, s3_prefix: str,
+                          s3, exclude_patterns=(".env", "__pycache__", "*.pyc")) -> None:
+    """Upload project directory to S3. Skips virtualenvs and bytecode."""
+    import fnmatch
+    for local_path in project_dir.rglob("*"):
+        if local_path.is_dir():
+            continue
+        rel = local_path.relative_to(project_dir)
+        rel_str = str(rel)
+        if any(fnmatch.fnmatch(p, pat) for p in rel.parts for pat in exclude_patterns):
+            continue
+        s3_key = f"{s3_prefix}/{rel_str}"
+        s3.upload_file(str(local_path), bucket, s3_key)
+
+def download_results_from_s3(project_dir: Path, bucket: str, s3_prefix: str,
+                               s3) -> None:
+    """Download results from S3 back into the local project directory."""
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=s3_prefix + "/"):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            rel = key[len(s3_prefix) + 1:]   # strip prefix + leading slash
+            if not rel:
+                continue
+            local_path = project_dir / rel
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            s3.download_file(bucket, key, str(local_path))
+
+def cleanup_s3_job(bucket: str, s3_prefix: str, s3) -> None:
+    """Delete S3 objects for a completed job to avoid unbounded storage growth."""
+    paginator = s3.get_paginator("list_objects_v2")
+    keys = []
+    for page in paginator.paginate(Bucket=bucket, Prefix=s3_prefix + "/"):
+        keys.extend({"Key": o["Key"]} for o in page.get("Contents", []))
+    if keys:
+        s3.delete_objects(Bucket=bucket, Delete={"Objects": keys})
+
+def launch_k8s_job(
+    project_id: str,
+    mode: str,
+    max_iterations: int,
+    project_dir: Path,
+    log_dir: Path,
+    settings,
+    api_keys: dict[str, str] = None,
+    kubeconfig_b64: str | None = None,
+) -> str:
+    """
+    Upload project to S3, then submit an ARK orchestrator as a Kubernetes Job.
+    Returns 'k8s:{namespace}/{job-name}'.
+    """
+    import re, time
+    from ark.compute import _build_k8s_client, KubernetesBackend
+
+    if not settings.k8s_s3_bucket:
+        raise RuntimeError("K8S_S3_BUCKET must be configured for k8s job submission")
+
+    # DNS-valid job name: [a-z0-9-], max 63 chars
+    ts_hex = format(int(time.time()), "x")[-8:]
+    job_name = f"ark-{project_id[:8].lower()}-{ts_hex}"
+    job_name = re.sub(r"[^a-z0-9-]", "-", job_name)
+    namespace = settings.k8s_namespace
+
+    # Build S3 prefix for this job: ark-jobs/{job_name}/
+    s3_input_prefix = f"{settings.k8s_s3_prefix}/{job_name}/input"
+    s3_output_prefix = f"{settings.k8s_s3_prefix}/{job_name}/output"
+
+    # Upload project to S3 before creating the Job
+    aws_key = (api_keys or {}).get("aws_access_key_id")
+    aws_secret = (api_keys or {}).get("aws_secret_access_key")
+    s3 = _s3_client(settings, aws_key, aws_secret)
+    upload_project_to_s3(project_dir, settings.k8s_s3_bucket, s3_input_prefix, s3)
+
+    # Env vars injected into the job pod
+    env_vars = {
+        "ARK_FORCE_LOCAL": "1",
+        "ARK_S3_BUCKET": settings.k8s_s3_bucket,
+        "ARK_S3_INPUT_PREFIX": s3_input_prefix,
+        "ARK_S3_OUTPUT_PREFIX": s3_output_prefix,
+        "ARK_PROJECT_ID": project_id,
+        "ARK_MODE": mode,
+        "ARK_MAX_ITERATIONS": str(max_iterations),
+    }
+    if settings.k8s_s3_region:
+        env_vars["AWS_DEFAULT_REGION"] = settings.k8s_s3_region
+    if api_keys:
+        key_map = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "gemini": "GEMINI_API_KEY",
+            "claude_oauth_token": "CLAUDE_CODE_OAUTH_TOKEN",
+            "aws_access_key_id": "AWS_ACCESS_KEY_ID",
+            "aws_secret_access_key": "AWS_SECRET_ACCESS_KEY",
+        }
+        for src, dst in key_map.items():
+            if src in api_keys:
+                env_vars[dst] = api_keys[src]
+
+    batch_v1, _ = _build_k8s_client(kubeconfig_b64)
+
+    compute_cfg = {
+        "type": "kubernetes",
+        "namespace": namespace,
+        "job_name": job_name,
+        "image": settings.k8s_job_image,
+        "service_account": settings.k8s_service_account,
+        "cpu_request": settings.k8s_cpu_request,
+        "cpu_limit": settings.k8s_cpu_limit,
+        "memory_request": settings.k8s_memory_request,
+        "memory_limit": settings.k8s_memory_limit,
+        "gpu_count": settings.k8s_gpu_count,
+        "node_selector": settings.k8s_node_selector,
+        "tolerations": settings.k8s_tolerations,
+        "env_vars": env_vars,
+        "project_id": project_id,
+        "mode": mode,
+        "max_iterations": max_iterations,
+        # s3_input_prefix stored in job metadata so poll can download on completion
+        "s3_output_prefix": s3_output_prefix,
+    }
+
+    backend = KubernetesBackend(
+        config={"compute_backend": compute_cfg},
+        project_name=project_id,
+        code_dir=project_dir,
+        k8s_client=batch_v1,
+    )
+    backend.setup()
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    # Encode s3_output_prefix into the job ID so _poll_jobs can download results
+    # Format: k8s:{namespace}/{job-name}@{s3_output_prefix}
+    return f"k8s:{namespace}/{job_name}@{s3_output_prefix}"
+
+def poll_k8s_job(namespace: str, job_name: str,
+                 kubeconfig_b64: str | None = None) -> str:
+    """Return RUNNING, COMPLETED, or FAILED for a k8s Job."""
+    from ark.compute import _build_k8s_client, _poll_k8s_job_status
+    try:
+        batch_v1, _ = _build_k8s_client(kubeconfig_b64)
+        return _poll_k8s_job_status(batch_v1, namespace, job_name)
+    except Exception:
+        return "UNKNOWN"
+
+def cancel_k8s_job(namespace: str, job_name: str,
+                   kubeconfig_b64: str | None = None) -> bool:
+    from ark.compute import _build_k8s_client
+    try:
+        batch_v1, _ = _build_k8s_client(kubeconfig_b64)
+        batch_v1.delete_namespaced_job(
+            name=job_name,
+            namespace=namespace,
+            body={"propagationPolicy": "Foreground"},
+        )
+        return True
+    except Exception:
+        return False

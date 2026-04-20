@@ -826,7 +826,18 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
 
     log_dir = pdir / "logs"
     log_dir.mkdir(exist_ok=True)
-    if slurm_available():
+    if settings.k8s_enabled and settings.k8s_job_image:
+        kubeconfig_b64 = api_keys.get("k8s_kubeconfig_b64") or None
+        from .jobs import launch_k8s_job
+        job_id = launch_k8s_job(
+            project.id, project.mode, project.max_iterations,
+            pdir, log_dir, settings,
+            api_keys=api_keys,
+            kubeconfig_b64=kubeconfig_b64,
+        )
+        update_project(session, project, status="running", slurm_job_id=job_id)
+        return "running"
+    elif slurm_available():
         job_id = submit_job(project.id, project.mode, project.max_iterations,
                             pdir, log_dir, settings, api_keys=api_keys)
         update_project(session, project, status="queued", slurm_job_id=job_id)
@@ -1048,6 +1059,12 @@ def _mask_json(val: str) -> str:
     return "[JSON Config]"
 
 
+def _mask_kubeconfig(val: str) -> str:
+    if not val:
+        return ""
+    return "[Kubeconfig]"
+
+
 @router.get("/api/user/settings")
 async def api_get_user_settings(request: Request):
     user = _require_user(request)
@@ -1058,6 +1075,8 @@ async def api_get_user_settings(request: Request):
         "openai": _mask_key(keys.get("openai")),
         "claude_oauth_token": _mask_key(keys.get("claude_oauth_token")),
         "gemini_oauth_json": _mask_json(keys.get("gemini_oauth_json")),
+        "k8s_kubeconfig_b64": _mask_kubeconfig(keys.get("k8s_kubeconfig_b64")),
+        "k8s_configured": bool(keys.get("k8s_kubeconfig_b64")),
         "has_keys": any(keys.values()),
     })
 
@@ -1072,7 +1091,7 @@ async def api_save_user_settings(request: Request):
     current_keys = old_keys.copy()
     
     # Update keys based on body
-    fields = ["gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json"]
+    fields = ["gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json", "k8s_kubeconfig_b64"]
     for field in fields:
         if field not in body:
             continue
@@ -1087,6 +1106,9 @@ async def api_save_user_settings(request: Request):
         # For masked fields, only update if not a placeholder
         if field == "gemini_oauth_json":
             if val != "[JSON Config]":
+                current_keys[field] = val
+        elif field == "k8s_kubeconfig_b64":
+            if val != "[Kubeconfig]":
                 current_keys[field] = val
         else:
             if "..." not in val:
@@ -1437,7 +1459,19 @@ async def api_stop_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         if project.slurm_job_id:
-            if project.slurm_job_id.startswith("local:"):
+            if project.slurm_job_id.startswith("k8s:"):
+                rest = project.slurm_job_id[len("k8s:"):]
+                # handle @s3_output_prefix
+                at_idx = rest.find("@")
+                if at_idx != -1:
+                    rest = rest[:at_idx]
+                parts = rest.split("/", 1)
+                if len(parts) == 2:
+                    from .jobs import cancel_k8s_job
+                    u = get_user(session, user.id)
+                    keys = _get_user_keys(u) if u else {}
+                    cancel_k8s_job(parts[0], parts[1], keys.get("k8s_kubeconfig_b64"))
+            elif project.slurm_job_id.startswith("local:"):
                 pid_str = project.slurm_job_id[len("local:"):]
                 if pid_str.isdigit():
                     cancel_local_job(int(pid_str))
@@ -1577,7 +1611,19 @@ async def api_delete_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         if project.slurm_job_id:
-            if project.slurm_job_id.startswith("local:"):
+            if project.slurm_job_id.startswith("k8s:"):
+                rest = project.slurm_job_id[len("k8s:"):]
+                # handle @s3_output_prefix
+                at_idx = rest.find("@")
+                if at_idx != -1:
+                    rest = rest[:at_idx]
+                parts = rest.split("/", 1)
+                if len(parts) == 2:
+                    from .jobs import cancel_k8s_job
+                    u = get_user(session, user.id)
+                    keys = _get_user_keys(u) if u else {}
+                    cancel_k8s_job(parts[0], parts[1], keys.get("k8s_kubeconfig_b64"))
+            elif project.slurm_job_id.startswith("local:"):
                 pid_str = project.slurm_job_id[len("local:"):]
                 if pid_str.isdigit():
                     cancel_local_job(int(pid_str))
@@ -1623,7 +1669,23 @@ async def api_continue_project(project_id: str, request: Request):
 @router.get("/api/system/status")
 async def api_system_status():
     """Public endpoint — returns webapp gate state (no auth required)."""
-    return JSONResponse({"disabled": _disabled_flag().exists()})
+    settings = get_settings()
+    k8s_status = {"enabled": settings.k8s_enabled}
+    if settings.k8s_enabled:
+        k8s_status.update({
+            "namespace": settings.k8s_namespace,
+            "image": settings.k8s_job_image,
+            "auth_mode": settings.k8s_auth_mode,
+        })
+        try:
+            from ark.compute import _build_k8s_client
+            _, core_v1 = _build_k8s_client()
+            core_v1.read_namespace(name=settings.k8s_namespace)
+            k8s_status["connected"] = True
+        except Exception as e:
+            k8s_status["connected"] = False
+            k8s_status["error"] = str(e)[:120]
+    return JSONResponse({"disabled": _disabled_flag().exists(), "k8s": k8s_status})
 
 
 @router.get("/api/admin/status")
@@ -1659,7 +1721,19 @@ async def api_admin_killall(request: Request):
         ).all()
         for p in active:
             if p.slurm_job_id:
-                if p.slurm_job_id.startswith("local:"):
+                if p.slurm_job_id.startswith("k8s:"):
+                    rest = p.slurm_job_id[len("k8s:"):]
+                    # handle @s3_output_prefix
+                    at_idx = rest.find("@")
+                    if at_idx != -1:
+                        rest = rest[:at_idx]
+                    parts = rest.split("/", 1)
+                    if len(parts) == 2:
+                        from .jobs import cancel_k8s_job
+                        u = get_user(session, p.user_id)
+                        keys = _get_user_keys(u) if u else {}
+                        cancel_k8s_job(parts[0], parts[1], keys.get("k8s_kubeconfig_b64"))
+                elif p.slurm_job_id.startswith("local:"):
                     pid_str = p.slurm_job_id[len("local:"):]
                     if pid_str.isdigit():
                         cancel_local_job(int(pid_str))

@@ -226,6 +226,7 @@
     .badge-stopped           { background: #f1f5f9; color: #64748b; }
     .badge-waiting_template  { background: #fce7f3; color: #9d174d; }
     .badge-pending           { background: #e0e7ff; color: #3730a3; }
+    .badge-k8s               { background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
     .project-venue { font-size: .82rem; color: var(--text-second); margin-bottom: 10px; }
     .score-bar { height: 6px; background: var(--card); border-radius: 3px; overflow: hidden; }
     .score-fill { height: 100%; background: linear-gradient(90deg, var(--teal), var(--teal-light)); border-radius: 3px; transition: width .5s ease; }
@@ -1280,6 +1281,27 @@
       </div>
     </div>
 
+    <!-- KUBERNETES COMPUTE -->
+    <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px; margin-top:16px;">
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#0ea5e9"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span style="font-weight:600; font-size:.95rem">Kubernetes Compute (EKS)</span>
+      </div>
+      <div style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#0369a1">
+        <strong style="display:block; margin-bottom:4px">Provisioning</strong>
+        <p style="margin:0">Upload your <code style="background:#e0f2fe; padding:2px 4px; border-radius:4px; font-family:monospace">kubeconfig</code> (base64 encoded) to allow the webapp to create and manage ARK jobs on your cluster.</p>
+      </div>
+
+      <div class="form-group" style="margin-bottom:0">
+        <label style="font-size:.75rem">Kubeconfig (Base64)</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <textarea id="settings-k8s-kubeconfig" placeholder="Paste base64-encoded kubeconfig here..." style="flex:1; font-family:monospace; font-size:.8rem; min-height:80px;"></textarea>
+          <span id="settings-k8s_kubeconfig-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+        </div>
+        <div id="status-k8s-configured" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
+      </div>
+    </div>
+
     <div class="modal-footer">
       <button class="btn-secondary" onclick="closeModal('modal-settings')">Close</button>
       <button class="btn-primary" id="settings-save-btn" onclick="saveUserSettings()">Verify and Save Keys</button>
@@ -1989,6 +2011,7 @@ function renderProjectCard(p) {
       <div class="project-card-header">
         <div class="project-name">${esc(p.title || p.name)}</div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          ${p.slurm_job_id && p.slurm_job_id.startsWith('k8s:') ? '<span class="badge badge-k8s" title="Kubernetes Compute">k8s</span>' : ''}
           <span class="badge badge-${p.status}">${statusLabel}</span>
           <button class="btn-delete-card" title="Delete"
             onclick="event.stopPropagation();deleteProject('${p.id}')">×</button>
@@ -3476,18 +3499,20 @@ async function openSettingsModal() {
     
     document.getElementById('settings-claude-token').value = data.claude_oauth_token || '';
     document.getElementById('settings-gemini-oauth').value = data.gemini_oauth_json || '';
+    document.getElementById('settings-k8s-kubeconfig').value = data.k8s_kubeconfig_b64 || '';
 
     document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
     document.getElementById('status-claude-token').textContent = data.claude_oauth_token ? 'Current: ' + data.claude_oauth_token : '';
     document.getElementById('status-gemini-oauth').textContent = data.gemini_oauth_json ? 'Current: [JSON Config]' : '';
+    document.getElementById('status-k8s-configured').textContent = data.k8s_configured ? 'Current: [Kubeconfig Active]' : 'No Kubeconfig';
   } catch(e) {}
 }
 
 async function saveUserSettings() {
   const btn = document.getElementById('settings-save-btn');
-  const providers = ['gemini', 'gemini_cli', 'anthropic', 'openai', 'claude_token', 'gemini_oauth'];
+  const providers = ['gemini', 'gemini_cli', 'anthropic', 'openai', 'claude_token', 'gemini_oauth', 'k8s_kubeconfig'];
   
   // Clear previous statuses
   providers.forEach(p => {
@@ -3510,6 +3535,7 @@ async function saveUserSettings() {
       openai: document.getElementById('settings-openai').value.trim(),
       claude_oauth_token: document.getElementById('settings-claude-token').value.trim(),
       gemini_oauth_json: document.getElementById('settings-gemini-oauth').value.trim(),
+      k8s_kubeconfig_b64: document.getElementById('settings-k8s-kubeconfig').value.trim(),
     };
 
     // Show wait icons for non-empty keys
@@ -3518,6 +3544,7 @@ async function saveUserSettings() {
     if (body.openai && !body.openai.includes('...')) document.getElementById('settings-openai-status').innerHTML = '⏳';
     if (body.claude_oauth_token && !body.claude_oauth_token.includes('...')) document.getElementById('settings-claude_token-status').innerHTML = '⏳';
     if (body.gemini_oauth_json && !body.gemini_oauth_json.includes('...')) document.getElementById('settings-gemini_oauth-status').innerHTML = '⏳';
+    if (body.k8s_kubeconfig_b64 && !body.k8s_kubeconfig_b64.includes('...')) document.getElementById('settings-k8s_kubeconfig-status').innerHTML = '⏳';
 
     const res = await fetch(APP_BASE + '/api/user/settings', {
       method: 'POST',

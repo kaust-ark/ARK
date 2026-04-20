@@ -47,7 +47,21 @@ def _advance_pending_queue(session, settings):
     log_dir = pdir / "logs"
     log_dir.mkdir(exist_ok=True)
     try:
-        if slurm_available():
+        if settings.k8s_enabled and settings.k8s_job_image:
+            from .routes import _get_user_keys
+            from .db import get_user
+            u = get_user(session, pending.user_id)
+            keys = _get_user_keys(u) if u else {}
+            kubeconfig_b64 = keys.get("k8s_kubeconfig_b64") or None
+            from .jobs import launch_k8s_job
+            job_id = launch_k8s_job(
+                pending.id, pending.mode, pending.max_iterations,
+                pdir, log_dir, settings,
+                api_keys=keys,
+                kubeconfig_b64=kubeconfig_b64,
+            )
+            update_project(session, pending, status="running", slurm_job_id=job_id)
+        elif slurm_available():
             job_id = submit_job(pending.id, pending.mode, pending.max_iterations,
                                 pdir, log_dir, settings)
             update_project(session, pending, status="queued", slurm_job_id=job_id)
@@ -155,7 +169,82 @@ async def _poll_jobs(app: FastAPI):
                                         _stuck_alerted.add(p.id)
                         continue
 
-                    # ── SLURM job ─────────────────────────────────────────
+                    # ── Kubernetes job ────────────────────────────────────
+                    if p.slurm_job_id.startswith("k8s:"):
+                        rest = p.slurm_job_id[len("k8s:"):]
+                        # Format: {namespace}/{job_name}@{s3_output_prefix}
+                        s3_prefix = ""
+                        if "@" in rest:
+                            rest, s3_prefix = rest.split("@", 1)
+                        parts = rest.split("/", 1)
+                        if len(parts) != 2:
+                            continue
+                        ns, jname = parts
+                        
+                        from .routes import _get_user_keys
+                        u = get_user(session, p.user_id)
+                        keys = _get_user_keys(u) if u else {}
+                        kubeconfig_b64 = keys.get("k8s_kubeconfig_b64") or None
+                        
+                        from .jobs import poll_k8s_job
+                        k8s_state = poll_k8s_job(ns, jname, kubeconfig_b64=kubeconfig_b64)
+                        
+                        # Map k8s state to webapp status
+                        if k8s_state == "RUNNING":
+                            new_status = "running"
+                        elif k8s_state == "COMPLETED":
+                            new_status = "done"
+                        elif k8s_state in ("FAILED", "CANCELLED"):
+                            new_status = "failed" if k8s_state == "FAILED" else "stopped"
+                        else:
+                            continue
+                            
+                        if new_status != p.status:
+                            if new_status == "done" and s3_prefix:
+                                try:
+                                    logger.info(f"K8s job {jname} COMPLETED. Downloading results from {s3_prefix}")
+                                    from .jobs import _s3_client, download_results_from_s3, cleanup_s3_job
+                                    aws_key = keys.get("aws_access_key_id")
+                                    aws_secret = keys.get("aws_secret_access_key")
+                                    s3 = _s3_client(settings, aws_key, aws_secret)
+                                    download_results_from_s3(pdir, settings.k8s_s3_bucket, s3_prefix, s3)
+                                    if settings.k8s_s3_cleanup:
+                                        # Also cleanup the input prefix if possible. 
+                                        # Or just the whole job prefix.
+                                        job_prefix = s3_prefix[:s3_prefix.rfind("/output")]
+                                        cleanup_s3_job(settings.k8s_s3_bucket, job_prefix, s3)
+                                except Exception as e:
+                                    logger.error(f"Failed to download k8s results for {p.id}: {e}")
+                                    new_status = "failed"
+                            
+                            update_project(session, p, status=new_status)
+                            logger.info(f"K8s project {p.id}: {p.status} → {new_status}")
+                            if new_status in ("done", "failed", "stopped"):
+                                _advance_pending_queue(session, settings)
+                                if new_status == "done":
+                                    score = 0.0
+                                    ps = pdir / "auto_research" / "state" / "paper_state.yaml"
+                                    if ps.exists():
+                                        import yaml as _yaml
+                                        d = _yaml.safe_load(ps.read_text()) or {}
+                                        score = float(d.get("current_score", 0))
+                                    send_telegram_notify(
+                                        f"✅ <b>{_pname(p)}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
+                                        bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                                    )
+                                    if u:
+                                        pdf_files = sorted((pdir / "paper").glob("*.pdf"), 
+                                                           key=lambda x: x.stat().st_mtime, reverse=True)
+                                        pdf_path = str(pdf_files[0]) if pdf_files else None
+                                        send_completion_email(settings, user.email, _pname(p), score, pdf_path, url)
+                                else:
+                                    send_telegram_notify(
+                                        f"❌ <b>{_pname(p)}</b> {new_status}\n<a href='{url}'>{url}</a>",
+                                        bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                                    )
+                            _log_mtimes.pop(p.id, None)
+                            _stuck_alerted.discard(p.id)
+                        continue
                     slurm_state = poll_job(p.slurm_job_id)
                     new_status = slurm_state_to_status(slurm_state)
 
@@ -444,6 +533,18 @@ async def lifespan(app: FastAPI):
         pass
     # Now create engine + tables (ORM will see the migrated schema)
     get_engine(settings.db_path)
+
+    # Kubernetes namespace check
+    if settings.k8s_enabled:
+        try:
+            from ark.compute import _build_k8s_client
+            _, core_v1 = _build_k8s_client()
+            ns_list = core_v1.list_namespace().items
+            if not any(ns.metadata.name == settings.k8s_namespace for ns in ns_list):
+                logger.info(f"Creating Kubernetes namespace: {settings.k8s_namespace}")
+                core_v1.create_namespace(body={"metadata": {"name": settings.k8s_namespace}})
+        except Exception as e:
+            logger.warning(f"Kubernetes auto-setup failed (non-fatal): {e}")
 
     # Migrate existing project data: populate new DB columns from YAML state files
     from website.dashboard.db import migrate_project_data

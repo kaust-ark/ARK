@@ -80,6 +80,8 @@ class ComputeBackend(ABC):
             return CloudBackend(config, project_name, code_dir, log_fn)
         elif backend_type == "custom":
             return CustomBackend(config, project_name, code_dir, log_fn)
+        elif backend_type == "kubernetes":
+            return KubernetesBackend(config, project_name, code_dir, log_fn)
         else:
             raise ValueError(f"Unknown compute backend: {backend_type}")
 
@@ -725,3 +727,196 @@ General settings:
                     self.log("Found recent results")
                     return True
         return True
+
+
+# ============================================================
+#  Kubernetes (EKS) Backend
+# ============================================================
+
+def _build_k8s_client(kubeconfig_b64: str | None = None):
+    """
+    Build a kubernetes (BatchV1Api, CoreV1Api) tuple.
+    Priority: explicit kubeconfig_b64 > in-cluster config (IRSA) > ~/.kube/config.
+    """
+    from kubernetes import client as k8s_client_lib, config as k8s_config
+    if kubeconfig_b64:
+        import base64, tempfile, os
+        raw = base64.b64decode(kubeconfig_b64).decode()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(raw)
+            tmp_path = f.name
+        try:
+            k8s_config.load_kube_config(config_file=tmp_path)
+        finally:
+            os.unlink(tmp_path)
+    else:
+        try:
+            k8s_config.load_incluster_config()   # pod-mounted SA token (IRSA)
+        except k8s_config.ConfigException:
+            k8s_config.load_kube_config()        # dev: ~/.kube/config
+    return (
+        k8s_client_lib.BatchV1Api(),
+        k8s_client_lib.CoreV1Api(),
+    )
+
+
+def _poll_k8s_job_status(batch_v1, namespace: str, job_name: str) -> str:
+    """Return RUNNING, COMPLETED, or FAILED."""
+    try:
+        job = batch_v1.read_namespaced_job(name=job_name, namespace=namespace)
+    except Exception:
+        return "UNKNOWN"
+    for c in (job.status.conditions or []):
+        if c.type == "Complete" and c.status == "True":
+            return "COMPLETED"
+        if c.type == "Failed" and c.status == "True":
+            return "FAILED"
+    return "RUNNING"
+
+
+class KubernetesBackend(ComputeBackend):
+    """Run ARK orchestrator as a Kubernetes Job (EKS MVP, platform-agnostic)."""
+
+    def __init__(self, config: dict, project_name: str, code_dir: Path,
+                 log_fn=None, k8s_client=None):
+        super().__init__(config, project_name, code_dir, log_fn)
+        self._batch_v1 = k8s_client   # pre-built BatchV1Api; injected by webapp
+        cc = self._compute_config
+        self.namespace: str = cc.get("namespace", "ark-jobs")
+        self.job_name: str = cc.get("job_name", "")
+        self.image: str = cc.get("image", "")
+        self.pvc_name: str = cc.get("pvc_name", "ark-data-pvc")
+        self.service_account: str = cc.get("service_account", "")
+        self.cpu_request: str = cc.get("cpu_request", "2")
+        self.cpu_limit: str = cc.get("cpu_limit", "4")
+        self.memory_request: str = cc.get("memory_request", "8Gi")
+        self.memory_limit: str = cc.get("memory_limit", "16Gi")
+        self.gpu_count: int = int(cc.get("gpu_count", 0))
+        self.node_selector: dict = cc.get("node_selector", {})
+        self.tolerations: list = cc.get("tolerations", [])
+        self.env_vars: dict = cc.get("env_vars", {})
+        self.project_dir: Path = Path(cc.get("project_dir", str(code_dir)))
+
+    def setup(self) -> dict:
+        if not self.job_name:
+            raise RuntimeError("job_name must be set before calling setup()")
+        if not self.image:
+            raise RuntimeError("K8S_JOB_IMAGE is not configured")
+        if not self._batch_v1:
+            raise RuntimeError("Kubernetes client not initialised")
+
+        job = self._build_job_manifest()
+        self._batch_v1.create_namespaced_job(namespace=self.namespace, body=job)
+        self.log(f"K8s Job created: {self.namespace}/{self.job_name}")
+        return {"k8s_job": f"{self.namespace}/{self.job_name}"}
+
+    def _build_job_manifest(self):
+        from kubernetes import client as V1
+
+        resources = V1.V1ResourceRequirements(
+            requests={"cpu": self.cpu_request, "memory": self.memory_request},
+            limits={"cpu": self.cpu_limit, "memory": self.memory_limit},
+        )
+        if self.gpu_count > 0:
+            resources.requests["nvidia.com/gpu"] = str(self.gpu_count)
+            resources.limits["nvidia.com/gpu"] = str(self.gpu_count)
+
+        env = []
+        for k, v in self.env_vars.items():
+            env.append(V1.V1EnvVar(name=k, value=v))
+
+        # Volumes: only needed for co-located EFS optimization; default path uses S3
+        volumes, mounts = [], []
+        pvc_name = self._compute_config.get("pvc_name", "")
+        if pvc_name:
+            volumes.append(V1.V1Volume(
+                name="ark-data",
+                persistent_volume_claim=V1.V1PersistentVolumeClaimVolumeSource(
+                    claim_name=pvc_name,
+                ),
+            ))
+            mounts.append(V1.V1VolumeMount(name="ark-data", mount_path="/data"))
+
+        container = V1.V1Container(
+            name="ark-orchestrator",
+            image=self.image,
+            # No args: all config is via env vars consumed by job-entrypoint.sh
+            env=env,
+            resources=resources,
+            volume_mounts=mounts or None,
+            image_pull_policy="Always",
+        )
+
+        pod_spec = V1.V1PodSpec(
+            restart_policy="Never",     # Jobs must not auto-restart; webapp handles retries
+            containers=[container],
+            volumes=volumes or None,
+            service_account_name=self.service_account or None,
+            node_selector=self.node_selector or None,
+            tolerations=[
+                V1.V1Toleration(**t) for t in self.tolerations
+            ] if self.tolerations else None,
+        )
+
+        job_spec = V1.V1JobSpec(
+            template=V1.V1PodTemplateSpec(
+                metadata=V1.V1ObjectMeta(
+                    labels={"app": "ark-job", "ark-project": self.project_name[:48]},
+                ),
+                spec=pod_spec,
+            ),
+            backoff_limit=0,                  # Never retry; return FAILED immediately
+            ttl_seconds_after_finished=3600,  # auto-cleanup pods after 1h
+        )
+
+        return V1.V1Job(
+            api_version="batch/v1",
+            kind="Job",
+            metadata=V1.V1ObjectMeta(
+                name=self.job_name,
+                namespace=self.namespace,
+                labels={"managed-by": "ark-webapp"},
+            ),
+            spec=job_spec,
+        )
+
+    def get_agent_instructions(self) -> str:
+        return (
+            f"## Compute Environment: Kubernetes (EKS)\\n\\n"
+            f"Running inside k8s Job pod {self.job_name} (namespace: {self.namespace}).\\n"
+            f"ARK_FORCE_LOCAL=1 — run all experiments directly, no sbatch/srun.\\n"
+            f"Project data is on shared EFS at /data/projects/. Write results to results/."
+        )
+
+    def wait_for_completion(self, max_wait_hours: float = 4) -> bool:
+        import time
+        max_wait = max_wait_hours * 3600
+        start = time.time()
+        while time.time() - start < max_wait:
+            status = _poll_k8s_job_status(self._batch_v1, self.namespace, self.job_name)
+            if status == "COMPLETED":
+                return True
+            if status == "FAILED":
+                return False
+            time.sleep(30)
+        self.log(f"K8s job wait timeout after {max_wait_hours}h", "WARN")
+        return False
+
+    def collect_results(self) -> bool:
+        sentinel = self.project_dir / "auto_research" / "state" / "paper_state.yaml"
+        if not sentinel.exists():
+            self.log("paper_state.yaml not found — results may be incomplete", "WARN")
+        return True   # non-fatal; webapp renders whatever exists
+
+    def teardown(self):
+        if not self.job_name or not self._batch_v1:
+            return
+        try:
+            self._batch_v1.delete_namespaced_job(
+                name=self.job_name,
+                namespace=self.namespace,
+                body={"propagationPolicy": "Foreground"},  # also deletes pods
+            )
+            self.log(f"K8s Job {self.job_name} deleted")
+        except Exception as e:
+            self.log(f"Failed to delete K8s Job {self.job_name}: {e}", "WARN")

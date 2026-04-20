@@ -20,6 +20,8 @@ setup(
             "jinja2>=3.1",
             "python-dotenv>=1.0",
             "itsdangerous>=2.1",
+            "kubernetes>=28.0",
+            "boto3>=1.34",
         ],
     },
     entry_points={

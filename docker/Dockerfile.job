@@ -126,7 +126,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
         "python-dateutil>=2.8" \
         "filelock>=3.12" \
         "huggingface-hub>=0.16" \
-        "json-repair>=0.1"
+        "json-repair>=0.1" \
+        "awscli>=1.32.0" \
+        "boto3>=1.34.0"
 
 # ---------------------------------------------------------------------------
 # 3. Install the ARK package
@@ -154,10 +156,10 @@ ENV PYTHONUNBUFFERED=1 \
 # ---------------------------------------------------------------------------
 # 5. Entrypoint
 # ---------------------------------------------------------------------------
-COPY docker/entrypoint-job.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY docker/job-entrypoint.sh /job-entrypoint.sh
+RUN chmod +x /job-entrypoint.sh
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/job-entrypoint.sh"]
 
 # Default args — override entirely when running a specific project:
 #   docker run ark-job --project myproject --project-dir /data/projects/myproject ...

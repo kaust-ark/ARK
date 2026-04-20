@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ark-job-sa
+  namespace: ark-jobs
+  annotations:
+    # Replace with your IAM Role ARN (e.g. arn:aws:iam::123456789012:role/ark-job-role)
+    # eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ark-job-role
+  namespace: ark-jobs
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ark-job-rolebinding
+  namespace: ark-jobs
+subjects:
+  - kind: ServiceAccount
+    name: ark-job-sa
+    namespace: ark-jobs
+roleRef:
+  kind: Role
+  name: ark-job-role
+  apiGroup: rbac.authorization.k8s.io

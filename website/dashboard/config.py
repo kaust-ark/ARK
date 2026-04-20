@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import json
 from pathlib import Path
 
 from ark.paths import get_ark_root, get_config_dir, get_primary_ip
@@ -35,6 +36,24 @@ _DEFAULTS = {
     "PROJECT_BASE_CONDA_ENV": "ark-base",
     "GOOGLE_CLIENT_ID": "",
     "GOOGLE_CLIENT_SECRET": "",
+    # Kubernetes compute plane (EKS MVP)
+    "K8S_ENABLED": "false",          # "true" to activate; overrides local/slurm
+    "K8S_NAMESPACE": "ark-jobs",     # namespace where Job objects are created
+    "K8S_JOB_IMAGE": "",             # e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com/ark-job:latest
+    "K8S_PVC_NAME": "ark-data-pvc",  # EFS PVC that provides /data to both webapp and job pods
+    "K8S_SERVICE_ACCOUNT": "",       # k8s ServiceAccount for IRSA (empty = no SA annotation)
+    "K8S_CPU_REQUEST": "2",
+    "K8S_CPU_LIMIT": "4",
+    "K8S_MEMORY_REQUEST": "8Gi",
+    "K8S_MEMORY_LIMIT": "16Gi",
+    "K8S_GPU_COUNT": "0",            # >0 adds nvidia.com/gpu resource request
+    "K8S_NODE_SELECTOR": "",         # JSON: {"node.kubernetes.io/lifecycle": "spot"}
+    "K8S_TOLERATIONS": "",           # JSON array of toleration objects
+    "K8S_AUTH_MODE": "auto",         # "auto" | "irsa" | "kubeconfig"
+    # S3 transfer bridge (required when webapp and cluster are in different environments)
+    "K8S_S3_BUCKET": "",             # bucket for project upload/results download
+    "K8S_S3_PREFIX": "ark-jobs",     # key prefix inside the bucket
+    "K8S_S3_REGION": "",             # override region if bucket is in a different region than the cluster
 }
 
 
@@ -91,6 +110,12 @@ DB_PATH={_root / '.ark' / 'data' / 'webapp.db'}
 SLURM_PARTITION=
 SLURM_ACCOUNT=
 SLURM_CONDA_ENV=ark-base
+
+# Kubernetes compute plane
+# K8S_ENABLED=false
+# K8S_NAMESPACE=ark-jobs
+# K8S_JOB_IMAGE=
+# K8S_S3_BUCKET=
 """
     _env_file().write_text(content)
     print(f"Created config: {_env_file()}")
@@ -138,6 +163,23 @@ class Settings:
 
         self.google_client_id: str = merged.get("GOOGLE_CLIENT_ID", "")
         self.google_client_secret: str = merged.get("GOOGLE_CLIENT_SECRET", "")
+
+        self.k8s_enabled: bool = merged.get("K8S_ENABLED", "false").lower() == "true"
+        self.k8s_namespace: str = merged.get("K8S_NAMESPACE", "ark-jobs")
+        self.k8s_job_image: str = merged.get("K8S_JOB_IMAGE", "")
+        self.k8s_pvc_name: str = merged.get("K8S_PVC_NAME", "ark-data-pvc")
+        self.k8s_service_account: str = merged.get("K8S_SERVICE_ACCOUNT", "")
+        self.k8s_cpu_request: str = merged.get("K8S_CPU_REQUEST", "2")
+        self.k8s_cpu_limit: str = merged.get("K8S_CPU_LIMIT", "4")
+        self.k8s_memory_request: str = merged.get("K8S_MEMORY_REQUEST", "8Gi")
+        self.k8s_memory_limit: str = merged.get("K8S_MEMORY_LIMIT", "16Gi")
+        self.k8s_gpu_count: int = int(merged.get("K8S_GPU_COUNT", "0"))
+        self.k8s_node_selector: dict = json.loads(merged.get("K8S_NODE_SELECTOR", "{}") or "{}")
+        self.k8s_tolerations: list = json.loads(merged.get("K8S_TOLERATIONS", "[]") or "[]")
+        self.k8s_auth_mode: str = merged.get("K8S_AUTH_MODE", "auto")
+        self.k8s_s3_bucket: str = merged.get("K8S_S3_BUCKET", "")
+        self.k8s_s3_prefix: str = merged.get("K8S_S3_PREFIX", "ark-jobs")
+        self.k8s_s3_region: str = merged.get("K8S_S3_REGION", "")
 
         self.projects_root.mkdir(parents=True, exist_ok=True)
 
