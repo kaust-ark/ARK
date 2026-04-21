@@ -1022,15 +1022,27 @@ Write `auto_research/state/project_context.md` with sections:
             ctx_content_for_skills = ctx_file.read_text()[:4000] if ctx_file.exists() else ""
             if skills_index and "No skills" not in skills_index:
                 self.run_agent("researcher", f"""
-Select skills from the library that match techniques this project will IMPLEMENT.
+Select skills from the library that will be useful across this project —
+implementation, paper writing, reviewing, and any supporting phase.
 
 ## Selection Rules
-- Only select skills for methods/tools the project will BUILD or RUN code for
-- Do NOT select skills just because a topic is MENTIONED as a benchmark or baseline
-  Example: if the project EVALUATES on RL environments but does NOT train RL agents,
-  do NOT select RL training skills
-- Select 1-5 skills. Zero is acceptable if nothing matches well.
-- When in doubt, leave it out — a wrong skill pollutes the agent context
+- Select skills for methods/tools/frameworks the project will actually BUILD,
+  RUN, or WRITE ABOUT. Implementation skills, training/eval frameworks, writing
+  and venue-specific skills, citation/figure/plot skills — all in scope.
+- Do NOT select skills just because a topic is MENTIONED as a benchmark or
+  baseline. Example: if the project EVALUATES on RL environments but does NOT
+  train RL agents, do NOT select RL training skills.
+- No hard cap on count — select every skill that will meaningfully apply.
+  Zero is acceptable if nothing matches.
+- When in doubt, leave it out — a wrong skill pollutes the agent context.
+
+## How to Explore
+The Skills Library section below gives you paths, not the full catalog.
+Use Read/Glob/Grep:
+- Read the master index JSON for the flat catalog (name, description, tags, path)
+- Glob category directories for structure
+- Read specific SKILL.md files (frontmatter + body) before committing to a skill
+Do NOT rely on prior knowledge of the library — always check current state.
 
 ## Project Context (verified)
 {ctx_content_for_skills}
@@ -1039,11 +1051,13 @@ Select skills from the library that match techniques this project will IMPLEMENT
 {idea_content[:2000]}
 
 ## Skills Library
-{skills_index[:8000]}
+{skills_index}
 
 Write `auto_research/state/selected_skills.json` containing a JSON array of
-selected skill paths (or an empty array `[]` if nothing matches).
-""", timeout=300)
+selected skill paths (or an empty array `[]` if nothing matches). Also write
+`auto_research/state/selected_skills_rationale.md` with a short rationale per
+selected skill (why it matches, which phase will use it).
+""", timeout=600)
             self._install_selected_skills()
             self.log_step("Specialization complete", "success")
 
@@ -1065,32 +1079,56 @@ selected skill paths (or an empty array `[]` if nothing matches).
         self.log_section("Research Phase Complete")
 
     def _load_skills_index(self) -> str:
-        """Load the skills index (library + builtin) as a compact string for the researcher.
+        """Return navigation pointers for the skills library.
 
-        Library skills come from skills/index.json (the curated catalog) and
-        must be explicitly selected into selected_skills.json to be installed.
+        We do NOT flatten the full catalog into the prompt. The researcher
+        agent has Read/Glob/Grep and can explore categories on demand —
+        surfacing only library paths plus per-category counts keeps the
+        planning prompt small and avoids signal loss from truncation.
+
         Builtin skills live under skills/builtin/ and are auto-installed in
-        every project — they're ambient capabilities. Researcher still needs
-        to see them here so the Experimental Protocol can plan to invoke them
-        and bind them in selected_skills_rationale.md.
+        every project. The researcher still sees them here so the
+        Experimental Protocol can plan to invoke them and bind them in
+        selected_skills_rationale.md.
         """
         import json
+        import collections
         skills_root = Path(__file__).parent.parent / "skills"
         lines = []
 
-        # Library skills (must be explicitly selected)
         index_path = skills_root / "index.json"
-        if index_path.exists():
+        library_path = skills_root / "library"
+        if index_path.exists() and library_path.exists():
+            category_counts = collections.Counter()
             try:
                 with open(index_path) as f:
-                    skills = json.load(f)
-                if skills:
-                    lines.append("### Library skills (select by adding path to selected_skills.json)")
-                    for s in skills:
-                        tags = ", ".join(s.get("tags", [])[:3])
-                        lines.append(f"- {s['name']}: {s['description'][:80]} [{tags}] @ {s['path']}")
+                    for entry in json.load(f):
+                        path = entry.get("path", "")
+                        if "/library/" not in path:
+                            continue
+                        suffix = path.split("/library/", 1)[1]
+                        parts = suffix.split("/")
+                        # Group by <library>/<first-subdir> so AI-Research categories
+                        # (01-model-architecture, …) and scientific-skills domains
+                        # are distinguishable.
+                        key = f"{parts[0]}/{parts[1]}" if len(parts) >= 2 else parts[0]
+                        category_counts[key] += 1
             except Exception:
                 pass
+
+            lines.append("### Skill Library")
+            lines.append(f"- Master index (JSON with name, description, tags, path for every skill): `{index_path}`")
+            lines.append(f"- Library root (browse by directory): `{library_path}`")
+            if category_counts:
+                lines.append("")
+                lines.append("Categories available (count of skills per category):")
+                for cat, n in sorted(category_counts.items()):
+                    lines.append(f"- `{cat}/` ({n} skills)")
+            lines.append("")
+            lines.append(
+                "Use Read/Glob/Grep to explore. Read the master index for the flat catalog; "
+                "Read individual SKILL.md files for full instructions before selecting."
+            )
 
         # Builtin skills (auto-installed; still document rationale when used)
         builtin_dir = skills_root / "builtin"
