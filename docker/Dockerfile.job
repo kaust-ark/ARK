@@ -1,0 +1,163 @@
+# =============================================================================
+# ARK Job — Docker image
+#
+# Runs a single ARK research job (orchestrator) inside the container.
+# Includes the full Python research runtime, TeX, git, and all tool deps.
+# Claude / Gemini CLIs are NOT baked in — pass OAuth tokens via env vars.
+#
+# Build (AMD64):
+#   docker build --platform linux/amd64 -f docker/Dockerfile.job -t ark-job .
+#
+# Run a job:
+#   docker run --rm \
+#     -e ANTHROPIC_API_KEY=sk-ant-... \
+#     -e OPENAI_API_KEY=sk-... \
+#     -v /host/projects:/data/projects \
+#     ark-job \
+#       --project myproject \
+#       --project-dir /data/projects/myproject \
+#       --mode research \
+#       --iterations 10
+#
+# The project directory must already exist and contain a config.yaml.
+# Mount your projects root at /data/projects (or a subdirectory per project).
+#
+# Supported env vars for LLM credentials:
+#   ANTHROPIC_API_KEY   — Anthropic API key (claude-* models via API)
+#   OPENAI_API_KEY      — OpenAI API key
+#   GEMINI_API_KEY      — Gemini API key (google-genai)
+#   CLAUDE_CODE_OAUTH_TOKEN — Claude Code CLI OAuth token (if using CLI mode)
+# =============================================================================
+
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="ARK Research Job" \
+      org.opencontainers.image.description="Full ARK research runtime for running orchestrator jobs" \
+      org.opencontainers.image.source="https://github.com/kaust-ark/ARK"
+
+# ---------------------------------------------------------------------------
+# 1. System dependencies
+#    - Full TeX distribution (targeted, ~1 GB) for PDF compilation
+#    - git + git-lfs for code repositories the orchestrator may clone
+#    - pandoc for Markdown → PDF review reports
+#    - weasyprint system libs (used for deep research PDF generation)
+#    - build-essential for compiling Python packages with C extensions
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        # TeX — targeted subset covers 99% of CS/ML paper templates
+        texlive-latex-base \
+        texlive-latex-extra \
+        texlive-latex-recommended \
+        texlive-science \
+        texlive-fonts-recommended \
+        texlive-fonts-extra \
+        texlive-bibtex-extra \
+        texlive-lang-cjk \
+        latexmk \
+        biber \
+        # Pandoc (for review report → PDF via xelatex)
+        pandoc \
+        # weasyprint system deps (Markdown → PDF for deep research)
+        libcairo2 \
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        libgdk-pixbuf-2.0-0 \
+        libffi-dev \
+        shared-mime-info \
+        # Git + LFS
+        git \
+        git-lfs \
+        # Build tools (for psutil, cryptography, etc.)
+        build-essential \
+        # Utility
+        curl \
+        wget \
+        unzip \
+    && git lfs install \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# 1.5. Conda Environment
+#      Install Miniforge and create the ark-base environment that the
+#      orchestrator clones for per-project isolation.
+# ---------------------------------------------------------------------------
+COPY environment.yml /app/
+RUN set -x && \
+    ARCH=$(uname -m) && \
+    case "$ARCH" in \
+        x86_64)  MINIFORGE_ARCH="x86_64" ;; \
+        aarch64) MINIFORGE_ARCH="aarch64" ;; \
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;; \
+    esac && \
+    wget -qO /tmp/miniforge.sh "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${MINIFORGE_ARCH}.sh" \
+    && bash /tmp/miniforge.sh -b -p /opt/conda \
+    && rm /tmp/miniforge.sh \
+    && ln -s /opt/conda/bin/conda /usr/local/bin/conda \
+    && conda env create -f /app/environment.yml
+
+# ---------------------------------------------------------------------------
+# 1.7. Node.js & Claude CLI
+#      Required for agents to use the Claude Code interface.
+# ---------------------------------------------------------------------------
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# 2. Install the ARK package
+#    We install directly into the ark-base environment. This ensures that
+#    the orchestrator and the cloned project environments share the same
+#    base research stack dependencies.
+# ---------------------------------------------------------------------------
+WORKDIR /app
+
+# Create a non-root user and set up permissions
+RUN useradd -m -s /bin/bash ark && \
+    mkdir -p /data/projects /data/.ark && \
+    chown -R ark:ark /app /data /opt/conda
+
+# Copy the full source
+COPY --chown=ark:ark ark/ ./ark/
+COPY --chown=ark:ark website/ ./website/
+COPY --chown=ark:ark pyproject.toml setup.py ./
+
+USER ark
+
+# Install the ARK package into the ark-base conda environment
+RUN conda run -n ark-base pip install --no-cache-dir -e ".[research,webapp]"
+
+# ---------------------------------------------------------------------------
+# 3. Runtime environment
+# ---------------------------------------------------------------------------
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    # Force local job execution (no SLURM in a container)
+    ARK_FORCE_LOCAL=1 \
+    # Point everything at the ark-base conda environment
+    CONDA_DEFAULT_ENV=ark-base \
+    # Default data paths — override via -v and -e at runtime
+    PROJECTS_ROOT=/data/projects \
+    ARK_WEBAPP_DB_PATH=/data/webapp.db \
+    ARK_CONFIG_DIR=/data/.ark \
+    # PATH additions: Priority given to the ark-base env, then system bins
+    PATH="/opt/conda/envs/ark-base/bin:/app/bin:/usr/local/bin:/usr/bin:/bin"
+
+# ---------------------------------------------------------------------------
+# 5. Entrypoint
+# ---------------------------------------------------------------------------
+COPY docker/entrypoint-job.sh /entrypoint.sh
+# Note: we need to be root to chmod /entrypoint.sh if it was copied with root ownership,
+# but since it's copied from the host and we just switched USER, it might be tricky.
+# Actually, let's switch back to root temporarily for the entrypoint setup or do it before USER ark.
+USER root
+RUN chmod +x /entrypoint.sh
+USER ark
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default args — override entirely when running a specific project:
+#   docker run ark-job --project myproject --project-dir /data/projects/myproject ...
+CMD ["--help"]

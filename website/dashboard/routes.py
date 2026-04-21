@@ -878,6 +878,14 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
         return "running"
 
 
+# ── health probe ─────────────────────────────────────────────────────────────
+
+@router.get("/health", include_in_schema=False)
+async def health():
+    """Liveness probe — no auth required. Used by Docker / k8s healthchecks."""
+    return JSONResponse({"ok": True})
+
+
 # ── pages ─────────────────────────────────────────────────────────────────────
 
 @router.get("/", response_class=HTMLResponse, name="index")

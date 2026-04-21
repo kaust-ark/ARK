@@ -1,0 +1,62 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ── ARK runtime / secrets ─────────────────────────────────────
+# Never bake runtime data or credentials into the image.
+# Mount /data at runtime instead.
+.ark/
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+ark_webapp/
+projects/
+ark_web_projects/
+
+# ── Git ────────────────────────────────────────────────────────
+.git/
+.gitmodules
+.gitignore
+.github/
+
+# ── Large binary assets (homepage) ───────────────────────────
+# PDFs and large PNGs in the static homepage are hundreds of MB;
+# exclude them from the webapp image context — they should be
+# served from a CDN or volume in production.
+website/homepage/assets/papers/
+website/homepage/assets/*.png
+website/homepage/assets/*.jpg
+
+# ── Dev / research materials ──────────────────────────────────
+materials/
+submodules/
+skills/library/
+venue_templates/
+tests/
+
+# ── OS ────────────────────────────────────────────────────────
+.DS_Store
+.nfs*
+*.tmp
+*.pptx
+
+# ── Docs (not needed in image) ────────────────────────────────
+ARCHITECTURE*.md
+README*.md
+TODO*.md
+*.md
+cloud_support_implementation_plan.md
