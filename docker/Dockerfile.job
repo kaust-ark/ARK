@@ -78,88 +78,82 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# 2. Python dependencies
-#    Install the full research stack including all packages from environment.yml
+# 1.5. Conda Environment
+#      Install Miniforge and create the ark-base environment that the
+#      orchestrator clones for per-project isolation.
 # ---------------------------------------------------------------------------
 WORKDIR /app
-
-COPY pyproject.toml setup.py ./
-
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
-        # ── Research core ─────────────────────────────────
-        "google-genai>=1.55.0" \
-        "anthropic>=0.40.0" \
-        "openai>=1.0.0" \
-        # ── ARK core deps ─────────────────────────────────
-        "pyyaml>=6.0" \
-        "PyMuPDF>=1.24.0" \
-        "Pillow>=10.0.0" \
-        # ── Data science ──────────────────────────────────
-        "numpy>=1.24" \
-        "pandas>=2.0" \
-        "matplotlib>=3.7" \
-        "seaborn>=0.12" \
-        # ── PDF / document generation ─────────────────────
-        "weasyprint>=60.0" \
-        "markdown>=3.5" \
-        "pypdf>=3.0" \
-        # ── Web / HTTP ────────────────────────────────────
-        "httpx>=0.25" \
-        "requests>=2.28" \
-        # ── Webapp extras (for DB sync from orchestrator) ─
-        "fastapi>=0.104.0" \
-        "sqlmodel>=0.0.14" \
-        "uvicorn[standard]>=0.24.0" \
-        "python-dotenv>=1.0" \
-        "itsdangerous>=2.1" \
-        "cryptography>=41.0" \
-        "authlib>=1.3" \
-        "python-multipart>=0.0.6" \
-        "jinja2>=3.1" \
-        # ── Utilities ─────────────────────────────────────
-        "tenacity>=8.0" \
-        "rich>=13.0" \
-        "tqdm>=4.65" \
-        "click>=8.1" \
-        "typer>=0.9" \
-        "python-dateutil>=2.8" \
-        "filelock>=3.12" \
-        "huggingface-hub>=0.16" \
-        "json-repair>=0.1" \
-        "awscli>=1.32.0" \
-        "boto3>=1.34.0"
+COPY environment.yml /app/
+RUN set -x && \
+    ARCH=$(uname -m) && \
+    case "$ARCH" in \
+        x86_64)  MINIFORGE_ARCH="x86_64" ;; \
+        aarch64) MINIFORGE_ARCH="aarch64" ;; \
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;; \
+    esac && \
+    wget -qO /tmp/miniforge.sh "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-${MINIFORGE_ARCH}.sh" \
+    && bash /tmp/miniforge.sh -b -p /opt/conda \
+    && rm /tmp/miniforge.sh \
+    && ln -s /opt/conda/bin/conda /usr/local/bin/conda \
+    && conda env create -f /app/environment.yml
 
 # ---------------------------------------------------------------------------
-# 3. Install the ARK package
+# 1.7. Node.js & Claude CLI
+#      Required for agents to use the Claude Code interface.
 # ---------------------------------------------------------------------------
-COPY ark/ ./ark/
-COPY website/ ./website/
-
-RUN pip install --no-cache-dir -e ".[research,webapp]"
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g @anthropic-ai/claude-code \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
-# 4. Runtime environment
+# 2. Install the ARK package
+#    We install directly into the ark-base environment. This ensures that
+#    the orchestrator and the cloned project environments share the same
+#    base research stack dependencies.
+# ---------------------------------------------------------------------------
+# Create a non-root user and set up permissions
+RUN useradd -m -s /bin/bash ark && \
+    mkdir -p /data/projects /data/.ark && \
+    chown -R ark:ark /app /data /opt/conda
+
+# Copy the full source
+COPY --chown=ark:ark ark/ ./ark/
+COPY --chown=ark:ark website/ ./website/
+COPY --chown=ark:ark pyproject.toml setup.py ./
+
+USER ark
+
+# Install the ARK package into the ark-base conda environment
+RUN conda run -n ark-base pip install --no-cache-dir -e ".[research,webapp]"
+
+# ---------------------------------------------------------------------------
+# 3. Runtime environment
 # ---------------------------------------------------------------------------
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     # Force local job execution (no SLURM in a container)
     ARK_FORCE_LOCAL=1 \
+    # Point everything at the ark-base conda environment
+    CONDA_DEFAULT_ENV=ark-base \
     # Default data paths — override via -v and -e at runtime
     PROJECTS_ROOT=/data/projects \
     ARK_WEBAPP_DB_PATH=/data/webapp.db \
     ARK_CONFIG_DIR=/data/.ark \
-    # PATH additions: texlive binaries are already on PATH via package install,
-    # but add /app/bin for any ark CLI scripts
-    PATH="/app/bin:/usr/local/bin:/usr/bin:/bin"
+    # PATH additions: Priority given to the ark-base env, then system bins
+    PATH="/opt/conda/envs/ark-base/bin:/app/bin:/usr/local/bin:/usr/bin:/bin"
 
 # ---------------------------------------------------------------------------
 # 5. Entrypoint
 # ---------------------------------------------------------------------------
-COPY docker/job-entrypoint.sh /job-entrypoint.sh
-RUN chmod +x /job-entrypoint.sh
+COPY docker/entrypoint-job.sh /entrypoint.sh
+# Note: we need to be root to chmod /entrypoint.sh if it was copied with root ownership,
+USER root
+RUN chmod +x /entrypoint.sh
+USER ark
 
-ENTRYPOINT ["/job-entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
 
 # Default args — override entirely when running a specific project:
 #   docker run ark-job --project myproject --project-dir /data/projects/myproject ...

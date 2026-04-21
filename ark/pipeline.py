@@ -486,33 +486,14 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
             try:
                 execute_ok = False
                 if action_plan:
+                    # _run_execute_phase always invokes the real _run_writing_phase
+                    # now (see execution.py). If it returns False, that means the
+                    # writing phase itself underperformed (e.g., <5 lines changed);
+                    # the prior hardcoded "fallback writer" here has been removed
+                    # because its impoverished prompt was silently deleting AI
+                    # concept figures. Let the next review iteration react instead.
                     execute_ok = self._run_execute_phase(action_plan, planner_output)
                     self._check_human_intervention(stage="Execute")
-
-                if not execute_ok and not self._quota_exhausted:
-                    self.log_step("Execute incomplete, using fallback writer", "warning")
-                    req_str = ""
-                    if paper_requirements:
-                        quality_reqs = paper_requirements.get("quality_requirements", [])
-                        if quality_reqs:
-                            req_str = "\n\nKey quality requirements:\n" + "\n".join(f"- {r}" for r in quality_reqs)
-
-                    self.run_agent(
-                        "writer",
-                        f"""Please read the latest review report auto_research/state/latest_review.md,
-and improve the paper based on the review comments:
-
-1. First address all Major Issues
-2. Then address Minor Issues
-3. Improve figure quality and information density
-4. Ensure compliance with EuroMLSys two-column format (6 pages for body, unlimited for references and appendix)
-
-Notes:
-- Keep the core contributions of the paper unchanged
-- Ensure LaTeX compiles successfully after each improvement
-- Update report.md to keep it in sync{req_str}""",
-                        timeout=3600,
-                    )
             except Exception as e:
                 self.log(f"Execute phase failed: {e}", "ERROR")
 
@@ -524,7 +505,7 @@ Notes:
                 _ok = False
             self.notify_progress(
                 "Execute",
-                "completed" if _ok else "incomplete (fallback writer used)",
+                "completed" if _ok else "incomplete",
                 level="done" if _ok else "warn",
             )
 
@@ -1084,21 +1065,68 @@ selected skill paths (or an empty array `[]` if nothing matches).
         self.log_section("Research Phase Complete")
 
     def _load_skills_index(self) -> str:
-        """Load the skills library index as a compact string for the researcher."""
+        """Load the skills index (library + builtin) as a compact string for the researcher.
+
+        Library skills come from skills/index.json (the curated catalog) and
+        must be explicitly selected into selected_skills.json to be installed.
+        Builtin skills live under skills/builtin/ and are auto-installed in
+        every project — they're ambient capabilities. Researcher still needs
+        to see them here so the Experimental Protocol can plan to invoke them
+        and bind them in selected_skills_rationale.md.
+        """
         import json
-        index_path = Path(__file__).parent.parent / "skills" / "index.json"
-        if not index_path.exists():
-            return "No skills library available."
-        try:
-            with open(index_path) as f:
-                skills = json.load(f)
-            lines = []
-            for s in skills:
-                tags = ", ".join(s.get("tags", [])[:3])
-                lines.append(f"- {s['name']}: {s['description'][:80]} [{tags}] @ {s['path']}")
-            return "\n".join(lines)
-        except Exception:
-            return "Skills index could not be loaded."
+        skills_root = Path(__file__).parent.parent / "skills"
+        lines = []
+
+        # Library skills (must be explicitly selected)
+        index_path = skills_root / "index.json"
+        if index_path.exists():
+            try:
+                with open(index_path) as f:
+                    skills = json.load(f)
+                if skills:
+                    lines.append("### Library skills (select by adding path to selected_skills.json)")
+                    for s in skills:
+                        tags = ", ".join(s.get("tags", [])[:3])
+                        lines.append(f"- {s['name']}: {s['description'][:80]} [{tags}] @ {s['path']}")
+            except Exception:
+                pass
+
+        # Builtin skills (auto-installed; still document rationale when used)
+        builtin_dir = skills_root / "builtin"
+        if builtin_dir.exists():
+            builtin_entries = []
+            for skill_dir in sorted(builtin_dir.iterdir()):
+                skill_md = skill_dir / "SKILL.md"
+                if not (skill_dir.is_dir() and skill_md.exists()):
+                    continue
+                try:
+                    text = skill_md.read_text()
+                    # Parse minimal YAML frontmatter (name/description/tags)
+                    if text.startswith("---"):
+                        end = text.find("---", 3)
+                        if end > 0:
+                            fm = text[3:end]
+                            import yaml as _yaml
+                            meta = _yaml.safe_load(fm) or {}
+                            name = meta.get("name", skill_dir.name)
+                            desc = (meta.get("description") or "").strip().replace("\n", " ")
+                            tags = ", ".join((meta.get("tags") or [])[:3])
+                            builtin_entries.append(
+                                f"- {name}: {desc[:120]} [{tags}] @ {skill_dir}"
+                            )
+                except Exception:
+                    continue
+            if builtin_entries:
+                if lines:
+                    lines.append("")
+                lines.append(
+                    "### Builtin skills (auto-installed in every project — still bind "
+                    "in selected_skills_rationale.md when a Protocol item will rely on them)"
+                )
+                lines.extend(builtin_entries)
+
+        return "\n".join(lines) if lines else "No skills available."
 
     def _install_selected_skills(self):
         """Copy selected skills to the project directory."""
@@ -2004,16 +2032,22 @@ Output your evaluation in JSON format:
 - Analysis/Discussion: explain WHY results are good/bad, failure cases
 - Conclusion: 1 paragraph summary + 1 paragraph future work
 
-### 2. Data integrity
+### 2. Appendix policy (use `\\appendix` only when content genuinely belongs there)
+- Belongs in appendix: full proofs/derivations, extended ablation tables, hyperparameter sweeps, prompt templates, implementation/config details, additional qualitative examples, dataset statistics beyond a summary
+- Belongs in body: problem, core method, headline results, primary ablation, key analysis
+- The body-page limit excludes `\\appendix` — prefer appendix over cutting body when supplementary material is worth keeping
+- Do NOT create an empty or single-paragraph appendix just to have one
+
+### 3. Data integrity
 - Every performance claim must use actual numbers from findings
 - Include at least one \\begin{{table}} comparing against baselines
 - No vague statements like "our method is better" — use exact percentages
 
-### 3. Page target: {venue_pages} pages of body text
+### 4. Page target: {venue_pages} pages of body text
 - The last page must be at least 90% filled
 - Ensure `\\clearpage` before `\\bibliography{{...}}`
 
-### 4. LaTeX mechanics
+### 5. LaTeX mechanics
 - Edit {latex_dir}/main.tex directly
 - Verify compilation: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex
 - All \\ref and \\cite must resolve
@@ -2608,17 +2642,95 @@ Only use double_column for multi-panel figures (side-by-side subplots).
             self.log(f"Coder agent did not create {script_rel}", "WARN")
 
     def _list_available_figures(self) -> str:
-        """List all figures in paper/figures/ with their type (AI concept vs matplotlib)."""
+        """List all figures in paper/figures/ with placement, scalability,
+        and inclusion status — surfaces `figure_manifest.json` to the writer.
+
+        Four pieces of information per figure:
+          - source (matplotlib / paperbanana / nano_banana / manual)
+          - placement (single_column vs full_width → figure vs figure*)
+          - scalable (whether \\includegraphics resize is safe — no for
+            matplotlib vector-with-text, yes for AI bitmaps)
+          - referenced-in-main.tex (surface AI figures the writer has
+            silently dropped; this is the exact regression that produced
+            the 275KB concept-figure-less PDFs).
+        """
         if not self.figures_dir.exists():
             return "No figures generated yet."
+
+        from ark.figure_manifest import load_manifest, AI_SOURCES
+        manifest = load_manifest(self.figures_dir)
+        manifest_figs = manifest.get("figures", {})
+
+        # Read main.tex once so we can cheaply check "is this figure referenced?"
+        main_tex_path = self.latex_dir / "main.tex"
+        tex_content = ""
+        if main_tex_path.exists():
+            try:
+                tex_content = main_tex_path.read_text()
+            except OSError:
+                tex_content = ""
+
         lines = []
+        missing_ai_figs = []
         for f in sorted(self.figures_dir.iterdir()):
             if f.suffix not in (".png", ".pdf"):
                 continue
             size_kb = f.stat().st_size // 1024
-            # AI concept figures are typically >150KB (PaperBanana/Gemini output)
-            fig_type = "AI concept diagram — DO NOT recreate" if size_kb > 150 else "matplotlib statistical plot"
-            lines.append(f"- {f.name} ({size_kb}KB, {fig_type})")
+
+            info = manifest_figs.get(f.name, {})
+            source = info.get("source")
+            # Source → is_ai (authoritative from manifest; legacy heuristic
+            # if file isn't registered yet)
+            if source in AI_SOURCES:
+                is_ai = True
+            elif source:
+                is_ai = False
+            else:
+                is_ai = size_kb > 150  # legacy heuristic
+
+            # Placement (figure vs figure*)
+            placement = info.get("placement")
+            if placement is None:
+                # Legacy entry or missing — infer from size: AI figures
+                # and large matplotlib plots default to full_width.
+                placement = "full_width" if size_kb > 150 else "single_column"
+            latex_env = r"\begin{figure*}[tb] / \textwidth" if placement == "full_width" \
+                        else r"\begin{figure}[!htbp] / \columnwidth"
+
+            # Scalable (\\includegraphics resize safe?)
+            scalable = info.get("scalable")
+            if scalable is None:
+                scalable = is_ai  # matplotlib default false, AI default true
+            scale_note = "safe to resize" if scalable \
+                         else "DO NOT resize via \\includegraphics (regenerate with smaller figsize instead)"
+
+            # Reference check: does main.tex \\includegraphics this stem?
+            stem = f.stem
+            is_referenced = bool(tex_content) and (stem in tex_content)
+
+            if is_ai:
+                if is_referenced:
+                    tag_prefix = "AI concept diagram (already referenced)"
+                else:
+                    tag_prefix = "AI concept diagram — ⚠ MISSING FROM main.tex — MUST add \\includegraphics"
+                    missing_ai_figs.append(f.name)
+            else:
+                tag_prefix = "matplotlib statistical plot"
+
+            lines.append(
+                f"- {f.name} ({size_kb}KB, {tag_prefix}; "
+                f"placement={placement} → use {latex_env}; {scale_note})"
+            )
+
+        if missing_ai_figs:
+            lines.append("")
+            lines.append(
+                "**CRITICAL**: The AI concept figures marked MISSING above exist on "
+                "disk but are NOT currently referenced in main.tex. Generating them "
+                "cost real compute — DO NOT leave them unused. Add "
+                "\\includegraphics for each one using the placement shown."
+            )
+
         return "\n".join(lines) if lines else "No figures generated yet."
 
     def _send_dev_phase_telegram(self, event: str, current: int, total: int):

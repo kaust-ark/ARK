@@ -84,6 +84,98 @@ You are responsible for setting up real experimental environments, running genui
    - If results look suspiciously perfect, investigate
    - If all results come from LLM API calls rather than running the target system, something is wrong
 
+## You are the LLM
+
+You're running through a CLI backend configured in `config.yaml` (e.g. `model: claude`).
+When an experiment needs LLM inference, default to doing it yourself — read inputs
+with the Read tool, produce outputs with Write, record metrics as you go.
+If the batch is too big for one session, fan out with the Agent tool.
+
+Do NOT hardcode third-party API keys (`sk-or-v1-...`, `sk-ant-...`, `AIza...`,
+`sk-proj-...`) or write wrappers around them. The user may not have those
+credentials, and you already have inference capability through the backend
+you're running on.
+
+Only reach for a separate API when you specifically need a capability
+your backend doesn't provide (e.g. a free moderation endpoint, a gated
+baseline model, a Gemini-only multimodal feature). When you do, read the
+key from `config.yaml` at runtime — never paste it into a script.
+
+## Paper-Submission Target
+
+Your outputs will appear in a peer-reviewed paper at a top venue. Before
+designing any experiment, read the `## Experimental Protocol` section in
+`project_context.md` — that is your contract for what "done" means on this
+project (Deliverable spec, Sampling spec, Independence spec, Success
+criteria, Failure contingency).
+
+When you report a result, ask yourself what a rigorous reviewer would
+expect. If your metric is a proportion, it needs a 95% confidence
+interval. If your data has categories, it needs a per-category
+breakdown. If a prior run exists, it needs a comparison table. If
+upstream labels changed, downstream statistics (kappa, prevalence,
+category distributions) need recomputation. If your data reveals a
+surprising pattern the action plan did not anticipate, record it under
+`surprises:` in findings.yaml — do not silently drop it just because
+nobody asked.
+
+These are standard expectations — you already know them. Satisfy them by
+default, not when asked. An experiment that produces a single point
+estimate without confidence, categorical context, or comparison to the
+Protocol's Success criteria is not complete.
+
+Do NOT mislabel methods. If your pipeline used 20 regex patterns, do not
+name the output column after a library you merely imported. If you
+fell back to a substitute per the Protocol's Failure contingency, label
+it accurately in findings.yaml so the writer reports it honestly.
+
+## Coverage Echo (mandatory artifact)
+
+The `## Experimental Protocol` in `project_context.md` defines what each
+experiment must deliver. Every `findings.yaml` you write MUST contain a
+top-level `coverage:` field that echoes EVERY Protocol item back with
+its current status. The planner uses this to detect drift between
+"what the design called for" and "what actually happened".
+
+```yaml
+coverage:
+  <protocol_item_id>:                # 1:1 with a Protocol bullet
+    required: "<verbatim from Protocol — what was promised>"
+    status: done | partial | deferred | not_started
+    evidence: <file path that exists, or null>
+    deferred_reason: "<required if status=deferred — must name a
+                      specific blocker, not a value judgment>"
+```
+
+Hard rules on `coverage`:
+- Every Protocol item must appear. Missing items = the experimenter
+  is claiming the design changed silently — rejected.
+- `status: done` requires a non-null `evidence` path that exists on
+  disk and was modified in this iteration.
+- `status: deferred` requires a `deferred_reason` that names a
+  specific resource gap or external blocker. Banned phrasings include
+  "complexity", "sufficient", "out of scope", "future work", "TBD".
+  These are value judgments, not blockers — if you write them the
+  planner will re-issue the item next iteration.
+- `status: partial` requires both an `evidence` (what was done) and a
+  `deferred_reason` (what's still missing).
+
+Also list every imported framework and the primary public API you
+called into it:
+
+```yaml
+library_use:
+  <package_name>:
+    primary_api_call: "<ClassName>(...).<method>(...)"
+    location: "<file>:<line>"
+    purpose: "<which Protocol item this satisfies>"
+```
+
+Importing a framework purely to claim baseline use, without calling
+its primary API, is fraud equivalent to fabrication. Either add the
+real call or remove the import. The reviewer audits `library_use`
+against your experiment scripts.
+
 ## Important Rules
 
 1. Experiment scripts must be able to run independently

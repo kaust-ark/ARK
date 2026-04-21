@@ -385,10 +385,34 @@ Please read auto_research/state/latest_review.md and regenerate.
                 with self._action_plan_lock:
                     self._save_action_plan(action_plan)
 
-        lit_issues = [i for i in issues if i.get("type") == "LITERATURE_REQUIRED" and i.get("status", "pending") == "pending"]
-        exp_issues_pending = [i for i in issues if i.get("type") == "EXPERIMENT_REQUIRED" and i.get("status", "pending") == "pending"]
+        # Multi-round scheduler. An experiment issue can be reset to "pending"
+        # from inside _run_experiment_task (e.g. when a human responds to an
+        # intervention request). The old single-shot ThreadPoolExecutor would
+        # leave that issue stranded because all futures were submitted up front
+        # — this is exactly what stranded E5 on safeclaw-v2. Each round
+        # re-scans the action plan and submits anything still pending.
+        MAX_SCHEDULE_ROUNDS = 3
+        for round_idx in range(1, MAX_SCHEDULE_ROUNDS + 1):
+            if self._quota_exhausted:
+                self.log_step("Quota exhausted, stopping schedule rounds", "warning")
+                break
 
-        if lit_issues or exp_issues_pending:
+            lit_issues = [i for i in issues if i.get("type") == "LITERATURE_REQUIRED" and i.get("status", "pending") == "pending"]
+            exp_issues_pending = [i for i in issues if i.get("type") == "EXPERIMENT_REQUIRED" and i.get("status", "pending") == "pending"]
+
+            if not lit_issues and not exp_issues_pending:
+                if round_idx > 1:
+                    self.log_step(f"All issues drained after round {round_idx - 1}", "info")
+                break
+
+            if round_idx > 1:
+                self.log_step(
+                    f"Round {round_idx}/{MAX_SCHEDULE_ROUNDS}: "
+                    f"{len(exp_issues_pending)} experiment(s) + {len(lit_issues)} literature still pending "
+                    f"(likely reset by human intervention)",
+                    "progress",
+                )
+
             with ThreadPoolExecutor(max_workers=2) as executor:
                 futures = []
                 if lit_issues:
@@ -406,20 +430,40 @@ Please read auto_research/state/latest_review.md and regenerate.
                     except Exception as e:
                         self.log(f"Parallel task error: {e}", "ERROR")
 
-        # Step 3: Check all experiments done
-        all_experiments_done = all(
-            issue.get("status") in ["completed", "failed", "skipped"]
-            for issue in issues
-            if issue.get("type") == "EXPERIMENT_REQUIRED"
-        )
+        # If we used up all rounds and issues are still pending, log it clearly.
+        still_pending_exp = [i.get("id") for i in issues if i.get("type") == "EXPERIMENT_REQUIRED" and i.get("status", "pending") == "pending"]
+        if still_pending_exp:
+            self.log_step(
+                f"{len(still_pending_exp)} experiment(s) still pending after {MAX_SCHEDULE_ROUNDS} rounds: {still_pending_exp}",
+                "warning",
+            )
 
-        if all_experiments_done:
-            self.log_step("Experiments done, starting writing phase...", "progress")
-            writing_ok = self._run_writing_phase(action_plan, prior_context=planner_output)
-            return writing_ok
+        # Step 3: Always run the writing phase, even if some experiments are
+        # still pending or failed. Reasoning:
+        #   - _run_writing_phase only emits writer tasks for EXPERIMENT_REQUIRED
+        #     issues whose status == "completed" (see _run_writing_phase:900),
+        #     so partial failure is already handled correctly.
+        #   - WRITING_ONLY tasks (reviewer-driven revisions) are independent of
+        #     experiment status and must still be applied.
+        #   - The old early-return here fed a hardcoded "fallback writer" in
+        #     pipeline.py with an impoverished prompt (no figure list, wrong
+        #     venue) that silently deleted already-generated concept figures.
+        #     Going through the real writing phase keeps the proper prompt.
+        incomplete_exp = [
+            i.get("id") for i in issues
+            if i.get("type") == "EXPERIMENT_REQUIRED"
+            and i.get("status", "pending") not in ("completed", "failed", "skipped")
+        ]
+        if incomplete_exp:
+            self.log_step(
+                f"Writing phase proceeding with {len(incomplete_exp)} experiment(s) still incomplete "
+                f"({incomplete_exp}); only their review-driven writing tasks will run",
+                "warning",
+            )
+        else:
+            self.log_step("All experiments resolved, starting writing phase...", "progress")
 
-        self.log_step("Some experiments incomplete", "warning")
-        return False
+        return self._run_writing_phase(action_plan, prior_context=planner_output)
 
     def _run_experiment_task(self, issue: dict, action_plan: dict):
         """Execute a single experiment issue. No retry loop — next iteration handles retries."""
@@ -493,7 +537,29 @@ After running the experiment:
         finally:
             self._compute_backend.teardown()
 
-        # 5. Check if experimenter requested human intervention
+        # 5. Guard against run_agent empty return (timeout / API failure / crash).
+        #    Without this check, the fall-through at step 7 would happily mark the
+        #    issue as "completed" even though experimenter produced zero output —
+        #    this is the exact path that caused E3 on safeclaw-v2 to claim success
+        #    after 2 hours of silence. Treat empty output as a hard failure; next
+        #    review iteration's planner can decide whether to reschedule.
+        if not (exp_output or "").strip():
+            self.log_step(
+                f"Experimenter produced no output for {issue.get('id')} — marking failed",
+                "error",
+            )
+            issue["status"] = "failed"
+            issue["failure_reason"] = (
+                "experimenter returned empty output (timeout / API failure / crash)"
+            )
+            if lock:
+                with lock:
+                    self._save_action_plan(action_plan)
+            else:
+                self._save_action_plan(action_plan)
+            return
+
+        # 6. Check if experimenter requested human intervention
         human_responded = self._check_human_intervention(
             stage=f"Experiment {issue.get('id')}"
         )
@@ -508,7 +574,7 @@ After running the experiment:
                 self._save_action_plan(action_plan)
             return  # Will be retried in next pass
 
-        # 6. Mark done — reviewer in next iteration decides if more work needed
+        # 7. Mark done — reviewer in next iteration decides if more work needed
         issue["status"] = "completed"
         if lock:
             with lock:
@@ -623,13 +689,20 @@ After making all changes, you MUST verify the page count:
 
             attempt += 1
 
-            # Every 4 attempts, relax tolerance
+            # Every 4 attempts, relax the MIN bound only. The venue page
+            # limit is a hard ceiling — desk rejection is worse than a
+            # sparse last page — so `cur_max` is never relaxed above
+            # `max_pages`. This matches the docstring above and matches
+            # page-adjustment skill's "Never exceed the venue page limit"
+            # rule. Only the "last page ≥ 70% filled" convention gets
+            # progressively looser to let under-target papers pass.
             if attempt > 0 and attempt % 4 == 0:
                 tolerance_relaxations += 1
                 cur_min = min_pages - tolerance_relaxations * 0.1
-                cur_max = max_pages + tolerance_relaxations * 0.1
-                self.log(f"[{context}] Relaxing tolerance (round {tolerance_relaxations}): "
-                         f"new range {cur_min:.2f}–{cur_max:.1f}", "WARN")
+                # cur_max stays pinned at max_pages regardless of relaxation
+                self.log(f"[{context}] Relaxing MIN tolerance (round {tolerance_relaxations}): "
+                         f"new range {cur_min:.2f}–{cur_max:.1f} "
+                         f"(max stays at hard ceiling {max_pages})", "WARN")
                 # Re-check with relaxed tolerance before another agent call
                 continue
 
@@ -768,10 +841,16 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             self.log(f"Failed to inject \\clearpage: {e}", "WARN")
 
     def _ensure_float_barrier(self):
-        """Ensure \\FloatBarrier before the last \\section in main.tex.
+        """Enforce exactly one \\FloatBarrier in the body, right before the
+        last body \\section. Any other \\FloatBarrier in the body is removed.
+        Also ensures \\usepackage{placeins} is in the preamble.
 
-        Prevents figures from floating past the last section (e.g., Conclusion)
-        into blank pages. Also ensures \\usepackage{placeins} is in preamble.
+        Rationale: writer agents have been observed to add \\FloatBarrier in
+        the middle of the body (e.g. before an Analysis section). A stray
+        barrier there traps column flow — pending floats (a following
+        \\begin{table*}) block further text from entering the current page's
+        right column, and the page ships half-empty. This routine collapses
+        to the single canonical position so the injection is idempotent.
         """
         main_tex = self.latex_dir / "main.tex"
         if not main_tex.exists():
@@ -795,27 +874,49 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 if pos != -1 and pos < body_end:
                     body_end = pos
 
-            # Find all \section positions in body only (not appendix, not \subsection)
             body_content = content[:body_end]
+            tail = content[body_end:]
+
+            # Must have at least 2 body \section to make "before last section" meaningful
             sections = list(_re.finditer(r'(?<!sub)\\section\{', body_content))
             if len(sections) < 2:
                 main_tex.write_text(content)
                 return
 
-            # Last body section position
-            last_sec = sections[-1]
+            # Strip every existing \FloatBarrier (plus its trailing whitespace /
+            # newline) from the body. Matching \\FloatBarrier not followed by a
+            # letter keeps us from eating any hypothetical \FloatBarrierFoo.
+            barrier_re = _re.compile(r'\\FloatBarrier(?![A-Za-z])\s*\n?')
+            existing = barrier_re.findall(body_content)
+            removed = len(existing)
+            if removed:
+                body_content = barrier_re.sub('', body_content)
 
-            # Check if \FloatBarrier already before it
-            before = content[max(0, last_sec.start() - 30):last_sec.start()]
-            if '\\FloatBarrier' in before:
-                main_tex.write_text(content)
-                return
+            # Recompute the last-section position after the stripping.
+            sections = list(_re.finditer(r'(?<!sub)\\section\{', body_content))
+            last_sec_start = sections[-1].start()
 
-            # Insert \FloatBarrier before last \section
-            insert_pos = last_sec.start()
-            content = content[:insert_pos] + '\\FloatBarrier\n' + content[insert_pos:]
+            # Insert exactly one \FloatBarrier right before the last body section.
+            body_content = (
+                body_content[:last_sec_start]
+                + '\\FloatBarrier\n'
+                + body_content[last_sec_start:]
+            )
+            content = body_content + tail
             main_tex.write_text(content)
-            self.log(f"Injected \\FloatBarrier before last section", "INFO")
+
+            if removed == 0:
+                self.log("Injected \\FloatBarrier before last body section", "INFO")
+            elif removed == 1:
+                # Single existing barrier normalized to canonical position
+                # (may be a no-op in steady state). Stay quiet to avoid log spam.
+                pass
+            else:
+                self.log(
+                    f"Normalized \\FloatBarrier: removed {removed} stray copies, "
+                    f"kept one before the last body section",
+                    "INFO",
+                )
         except Exception as e:
             self.log(f"Failed to inject FloatBarrier: {e}", "WARN")
 

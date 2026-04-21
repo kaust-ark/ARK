@@ -17,11 +17,12 @@ ARK runs three phases in sequence:
 │                        ARK Pipeline                             │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  Phase 1: Research (4-step)                                     │
-│  ┌──────────────┐  ┌─────────────┐  ┌─────────┐  ┌──────────┐ │
-│  │Deep Research  │─▶│ Initializer │─▶│ Planner │─▶│Experiment│ │
-│  │(Gemini)       │  │(bootstrap)  │  │(plan)   │  │(run)     │ │
-│  └──────────────┘  └─────────────┘  └─────────┘  └──────────┘ │
+│  Phase 1: Research (5-step)                                     │
+│  ┌────────┐  ┌──────────┐  ┌─────────────┐  ┌──────────┐  ┌──────────┐ │
+│  │ Setup  │─▶│ Analyze  │─▶│Deep Research│─▶│Specializ.│─▶│Bootstrap │ │
+│  │(conda) │  │ Proposal │  │  (Gemini)   │  │(researcher│  │(skills + │ │
+│  │        │  │(researcher│  │             │  │           │  │citations)│ │
+│  └────────┘  └──────────┘  └─────────────┘  └──────────┘  └──────────┘ │
 │                                                                 │
 │  Phase 2: Dev                                                   │
 │  ┌───────────────────────────────────────────────────────┐     │
@@ -41,14 +42,15 @@ ARK runs three phases in sequence:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Research Phase (4-step pipeline)
+### Research Phase (5-step pipeline)
 
-| Step | Agent | What Happens |
-|:-----|:------|:-------------|
-| 1 | Deep Research | Gemini literature survey, background knowledge gathering |
-| 2 | Initializer | Bootstrap conda env, install builtin skills, prepare citations |
-| 3 | Planner | Generate initial research plan from survey results |
-| 4 | Experimenter | Run first round of experiments based on plan |
+| Step | Agent/Tool | What Happens |
+|:-----|:-----------|:-------------|
+| 0 | — | **Setup**: provision per-project conda env (clones ark-base; idempotent) |
+| 1 | Researcher | **Analyze Proposal**: read uploaded PDF or idea → write `idea.md` (summary, methodology, systems); output Deep Research query; parse and commit paper title |
+| 2 | Gemini | **Deep Research**: literature survey → `deep_research.md`; PDF sent to user via Telegram |
+| 3 | Researcher | **Specialization**: generate `project_context.md` (web-verified); specialize agent prompt templates for the project; select relevant skills (0–5) |
+| 4 | — | **Bootstrap**: install builtin skills; bootstrap citations → `references.bib` |
 
 ### Review Loop
 
@@ -116,18 +118,19 @@ Modular instruction sets loaded at runtime:
 | **figure-integrity** | Validates figures match actual data |
 | **page-adjustment** | Content density control within page limits |
 
-Skills are auto-installed during pipeline bootstrap (Research Phase Step 2).
+Skills are auto-installed during pipeline bootstrap (Research Phase Step 4).
 
-### 5. Environment Isolation (`webapp/jobs.py`)
+### 5. Environment Isolation (`website/dashboard/jobs.py`)
 
 Each project gets a sandboxed conda env:
 
 - `provision_project_env()` clones base env to `<project>/.env/`
 - `project_env_ready()` checks if env exists
 - Orchestrator runs with `HOME=<project_dir>`, `PYTHONNOUSERSITE=1`
-- Both CLI (`ark run`) and Web Portal auto-detect and use the project env
+- Both CLI (`ark run`) and Dashboard auto-detect and use the project env
+- Pipeline bootstraps the env as **Step 0** of the Research Phase (hard fail if provisioning fails)
 
-### 6. State Management (`webapp/db.py`)
+### 6. State Management (`website/dashboard/db.py`)
 
 SQLite is the source of truth for project config and status:
 
@@ -136,18 +139,15 @@ SQLite is the source of truth for project config and status:
 - CLI and webapp read/write the same DB
 - YAML files under `auto_research/state/` are for per-agent runtime state only
 
-## Agent List (9 agents)
+## Agent List (6 agents)
 
 | Agent | Role |
 |-------|------|
-| initializer | Bootstraps project: conda env, skills, citations |
-| reviewer | Reviews and scores the paper |
-| planner | Analyzes issues, generates action plan (paper & dev modes) |
-| experimenter | Designs, runs, and analyzes experiments |
-| researcher | Literature search and experimental result analysis |
-| writer | Writes/revises paper sections |
-| visualizer | Checks and fixes figure/table quality |
-| meta_debugger | System-level diagnosis |
+| researcher | Analyzes proposal → `idea.md`; literature survey; specializes agent prompts and selects skills |
+| reviewer | Reviews and scores the paper; checks experiment alignment against proposal |
+| planner | Analyzes issues, generates action plan (paper & dev modes); verifies experiment alignment |
+| writer | Writes/revises paper sections with DBLP-verified citations |
+| experimenter | Designs, runs, and analyzes experiments; multi-provider API fallback |
 | coder | Implements code changes (dev mode) |
 
 ## File Structure
@@ -156,31 +156,33 @@ SQLite is the source of truth for project config and status:
 ARK/
 ├── ark/
 │   ├── orchestrator.py      # Main loop (mixin-based)
-│   ├── pipeline.py          # Research phase 4-step pipeline
+│   ├── pipeline.py          # Research phase 5-step pipeline
 │   ├── memory.py            # Score tracking, issue dedup, stagnation
-│   ├── agents.py            # Agent invocation
+│   ├── agents.py            # Agent invocation (Claude + Gemini CLI)
 │   ├── execution.py         # Agent execution and skill injection
-│   ├── cli.py               # CLI commands (ark new/run/status/...)
+│   ├── cli.py               # CLI commands (ark new/run/status/access/...)
+│   ├── access.py            # Cloudflare Access allowlist management
 │   ├── compiler.py          # LaTeX compilation
 │   ├── citation.py          # DBLP/CrossRef citation verification
 │   ├── deep_research.py     # Gemini Deep Research integration
 │   ├── telegram.py          # Telegram notifications + human intervention
 │   ├── compute.py           # Slurm/cloud compute backends
-│   ├── templates/agents/    # Agent prompt templates
-│   │   ├── initializer.prompt
-│   │   ├── reviewer.prompt
-│   │   ├── planner.prompt
-│   │   ├── experimenter.prompt
-│   │   ├── researcher.prompt
-│   │   ├── writer.prompt
-│   │   ├── visualizer.prompt
-│   │   └── coder.prompt
-│   └── webapp/
-│       ├── app.py           # Flask app
-│       ├─�� db.py            # SQLite models + state management
-│       ├── jobs.py          # Job launch, conda env provisioning
-│       ├── routes.py        # API routes + SSE
-│       └── static/app.html  # SPA frontend
+│   └── templates/agents/    # Agent prompt templates
+│       ├── researcher.prompt
+│       ├── reviewer.prompt
+│       ├── planner.prompt
+│       ├── experimenter.prompt
+│       ├── writer.prompt
+│       └── coder.prompt
+├── website/
+│   ├── dashboard/           # FastAPI dashboard (served at /dashboard)
+│   │   ├── app.py           # FastAPI app + lifespan (also mounts homepage)
+│   │   ├── db.py            # SQLite models + state management
+│   │   ├── jobs.py          # Job launch, conda env provisioning
+│   │   ├── routes.py        # API routes + SSE
+│   │   ├── constants.py     # DASHBOARD_PREFIX and shared constants
+│   │   └── static/          # SPA frontend assets
+│   └── homepage/            # Static homepage files (served at /)
 ├── skills/
 │   ├── index.json           # Skill registry
 │   └── builtin/             # Built-in skills
@@ -190,11 +192,15 @@ ARK/
 │       ├── figure-integrity/
 │       └── page-adjustment/
 ├── venue_templates/         # LaTeX templates per venue
-├── tests/                   # 115 tests
+├── tests/                   # 114 tests
 └── projects/                # Per-project directories (gitignored)
 ```
 
-## Deprecated
+## Deprecated / Removed
 
 - `events.py` — Event-driven system (replaced by Planner-based decisions)
 - Complex Memory tracking (issues, effective_actions, failed_attempts) — simplified
+- `initializer` agent — merged into `researcher` (Analyze Proposal step)
+- `visualizer` agent — removed (dead code, never called in pipeline)
+- `meta_debugger` agent — removed (could diagnose but not act; replaced by pipeline-level stall detection)
+- `ark/webapp/` Python module — moved to `website/dashboard/`

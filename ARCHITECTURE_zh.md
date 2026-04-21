@@ -17,11 +17,11 @@ ARK 按三个阶段依次执行：
 │                        ARK Pipeline                             │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  阶段 1：Research（4 步）                                        │
-│  ┌──────────────┐  ┌─────────────┐  ┌─────────┐  ┌──────────┐ │
-│  │Deep Research  │─▶│ 初始化器     │─▶│ 规划器   │─▶│ 实验者   │ │
-│  │(Gemini)       │  │(引导)        │  │(规划)    │  │(运行)    │ │
-│  └──────────────┘  └─────────────┘  └─────────┘  └──────────┘ │
+│  阶段 1：Research（5 步）                                        │
+│  ┌──────┐  ┌──────────┐  ┌─────────────┐  ┌──────────┐  ┌──────────┐ │
+│  │ 配置 │─▶│ 分析提案 │─▶│Deep Research│─▶│ 专项化   │─▶│ 引导启动 │ │
+│  │conda │  │ (研究员) │  │  (Gemini)   │  │ (研究员) │  │skills+引用│ │
+│  └──────┘  └──────────┘  └─────────────┘  └──────────┘  └──────────┘ │
 │                                                                 │
 │  阶段 2：Dev                                                     │
 │  ┌───────────────────────────────────────────────────────┐     │
@@ -41,14 +41,15 @@ ARK 按三个阶段依次执行：
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Research 阶段（4 步流水线）
+### Research 阶段（5 步流水线）
 
-| 步骤 | 智能体 | 执行内容 |
-|:-----|:-------|:---------|
-| 1 | Deep Research | Gemini 文献调研，背景知识收集 |
-| 2 | 初始化器 | 引导 conda 环境、安装 builtin skills、准备引用 |
-| 3 | 规划器 | 根据调研结果生成初始研究计划 |
-| 4 | 实验者 | 根据计划运行第一轮实验 |
+| 步骤 | 智能体/工具 | 执行内容 |
+|:-----|:------------|:---------|
+| 0 | — | **配置**：配置项目级 conda 环境（克隆 ark-base；幂等操作） |
+| 1 | 研究员 | **分析提案**：读取上传 PDF 或创意 → 写入 `idea.md`（摘要、方法、系统）；输出 Deep Research 查询；解析并提交论文标题 |
+| 2 | Gemini | **Deep Research**：文献综述 → `deep_research.md`；通过 Telegram 将 PDF 发送给用户 |
+| 3 | 研究员 | **专项化**：生成 `project_context.md`（网页验证）；为项目定制智能体提示模板；选择相关 skills（0–5 个） |
+| 4 | — | **引导启动**：安装 builtin skills；引导引用 → `references.bib` |
 
 ### Review 循环
 
@@ -116,18 +117,19 @@ class Orchestrator(ResearchMixin, DevMixin, ReviewMixin, FigureMixin, BaseMixin)
 | **figure-integrity** | 验证图表与实际数据匹配 |
 | **page-adjustment** | 页面限制内的内容密度控制 |
 
-Skills 在流水线引导阶段（Research 阶段第 2 步）自动安装。
+Skills 在流水线引导阶段（Research 阶段第 4 步）自动安装。
 
-### 5. 环境隔离 (`webapp/jobs.py`)
+### 5. 环境隔离 (`website/dashboard/jobs.py`)
 
 每个项目获得沙盒化的 conda 环境：
 
 - `provision_project_env()` 将基础环境克隆到 `<project>/.env/`
 - `project_env_ready()` 检查环境是否存在
 - Orchestrator 以 `HOME=<project_dir>`, `PYTHONNOUSERSITE=1` 运行
-- CLI (`ark run`) 和 Web 门户均自动检测并使用项目环境
+- CLI (`ark run`) 和 Dashboard 均自动检测并使用项目环境
+- 流水线在 Research 阶段第 0 步强制引导 conda 环境（失败则硬报错）
 
-### 6. 状态管理 (`webapp/db.py`)
+### 6. 状态管理 (`website/dashboard/db.py`)
 
 SQLite 是项目配置和状态的唯一真相来源：
 
@@ -136,18 +138,15 @@ SQLite 是项目配置和状态的唯一真相来源：
 - CLI 和 webapp 读写同一个数据库
 - `auto_research/state/` 下的 YAML 文件仅用于智能体运行时状态
 
-## 智能体列表（9 个）
+## 智能体列表（6 个）
 
-| 智���体 | 职责 |
+| 智能体 | 职责 |
 |:-------|:-----|
-| 初始化器 | 项目引导：conda 环境、skills、引用 |
-| 审稿人 | 评审和评分论文 |
-| 规划器 | 分析问题，生成行动计划（论文和开发模式） |
-| 实验者 | 设计、运行和分析实验 |
-| 研究员 | 文献检索和实验结果分析 |
-| 写作者 | 撰写/修改论文章节 |
-| 可视化器 | 检查和修复图表质量 |
-| 元调试器 | 系统级诊断 |
+| 研究员 | 分析提案 → `idea.md`；文献综述；为项目定制智能体提示模板并选择 skills |
+| 审稿人 | 评审和评分论文；检查实验与提案的一致性 |
+| 规划器 | 分析问题，生成行动计划（论文和开发模式）；验证实验一致性 |
+| 写作者 | 撰写/修改论文章节，引用经 DBLP 验证 |
+| 实验者 | 设计、运行和分析实验；多提供商 API 回退 |
 | 编码器 | 实现代码更改（开发模式） |
 
 ## 文件结构
@@ -156,31 +155,33 @@ SQLite 是项目配置和状态的唯一真相来源：
 ARK/
 ├── ark/
 │   ├── orchestrator.py      # 主循环（基于 Mixin）
-│   ├── pipeline.py          # Research 阶段 4 步流水线
+│   ├── pipeline.py          # Research 阶段 5 步流水线
 │   ├── memory.py            # 分数追踪、问题去重、停滞检测
-│   ├── agents.py            # 智能体调用
+│   ├── agents.py            # 智能体调用（Claude + Gemini CLI）
 │   ├── execution.py         # 智能体执行和 skill 注入
-│   ├── cli.py               # CLI 命令 (ark new/run/status/...)
+│   ├── cli.py               # CLI 命令 (ark new/run/status/access/...)
+│   ├── access.py            # Cloudflare Access 访问列表管理
 │   ├── compiler.py          # LaTeX 编译
 │   ├── citation.py          # DBLP/CrossRef 引用验证
 │   ├── deep_research.py     # Gemini Deep Research 集成
 │   ├── telegram.py          # Telegram 通知 + 人工干预
 │   ├── compute.py           # Slurm/云计算后端
-│   ├── templates/agents/    # 智能体提示模板
-│   │   ├── initializer.prompt
-│   │   ├── reviewer.prompt
-│   │   ├── planner.prompt
-│   │   ├── experimenter.prompt
-│   │   ├── researcher.prompt
-│   │   ├── writer.prompt
-│   │   ├── visualizer.prompt
-│   │   └── coder.prompt
-│   └── webapp/
-│       ├── app.py           # Flask 应用
-│       ├── db.py            # SQLite 模型 + 状态管理
-│       ├── jobs.py          # 任务启动、conda 环境配置
-│       ├── routes.py        # API 路由 + SSE
-│       └── static/app.html  # SPA 前端
+│   └── templates/agents/    # 智能体提示模板
+│       ├── researcher.prompt
+│       ├── reviewer.prompt
+│       ├── planner.prompt
+│       ├── experimenter.prompt
+│       ├── writer.prompt
+│       └── coder.prompt
+├── website/
+│   ├── dashboard/           # FastAPI Dashboard（挂载在 /dashboard）
+│   │   ├── app.py           # FastAPI 应用 + lifespan（同时挂载主页）
+│   │   ├── db.py            # SQLite 模型 + 状态管理
+│   │   ├── jobs.py          # 任务启动、conda 环境配置
+│   │   ├── routes.py        # API 路由 + SSE
+│   │   ├── constants.py     # DASHBOARD_PREFIX 等共享常量
+│   │   └── static/          # SPA 前端资源
+│   └── homepage/            # 静态主页文件（挂载在 /）
 ├── skills/
 │   ├── index.json           # Skill 注册表
 │   └── builtin/             # 内置 skills
@@ -190,11 +191,15 @@ ARK/
 │       ├── figure-integrity/
 │       └── page-adjustment/
 ├── venue_templates/         # 每会议 LaTeX 模板
-├── tests/                   # 115 个测试
+├── tests/                   # 114 个测试
 └── projects/                # 项目目录（gitignored）
 ```
 
-## 已弃用
+## 已弃用 / 已删除
 
 - `events.py` — 事件驱动系统（已被规划器决策替代）
 - 复杂的记忆追踪（issues, effective_actions, failed_attempts）— 已简化
+- `initializer` 智能体 — 已合并到 `researcher`（分析提案步骤）
+- `visualizer` 智能体 — 已删除（死代码，流水线中从未调用）
+- `meta_debugger` 智能体 — 已删除（只能诊断无法行动；由流水线级停滞检测替代）
+- `ark/webapp/` Python 模块 — 已迁移到 `website/dashboard/`

@@ -96,8 +96,7 @@ Your ARK research project <b>{project_name}</b> has finished!
 <p>— ARK Automatic Research Kit</p>
 """
 
-    import socket as _socket
-    from_addr = f"ark@{_socket.gethostname()}.kaust.edu.sa"
+    from_addr = getattr(settings, "smtp_from", "") or "contact@idea2paper.org"
     msg = MIMEMultipart()
     msg["From"] = from_addr
     msg["To"] = to_email
@@ -118,14 +117,16 @@ Your ARK research project <b>{project_name}</b> has finished!
             )
             msg.attach(part)
 
-    relay = "ciuxrelay.kaust.edu.sa"
-    try:
-        with smtplib.SMTP(relay, 25, timeout=10) as server:
-            server.sendmail(from_addr, to_email, msg.as_string())
-        logger.info(f"Completion email sent to {to_email} for project '{project_name}'")
-        return True
-    except Exception as e:
-        logger.warning(f"Relay failed ({e}), trying SMTP auth…")
+    # Try relay if explicitly configured
+    relay = getattr(settings, "smtp_relay", "")
+    if relay:
+        try:
+            with smtplib.SMTP(relay, 25, timeout=10) as server:
+                server.sendmail(from_addr, to_email, msg.as_string())
+            logger.info(f"Completion email sent via relay to {to_email} for project '{project_name}'")
+            return True
+        except Exception as e:
+            logger.warning(f"Relay failed ({e}), trying SMTP auth…")
 
     try:
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
@@ -163,7 +164,6 @@ def _sendmail_fallback(from_addr: str, to_email: str, msg_str: str) -> bool:
 
 def send_welcome_email(settings, to_email: str, user_name: str, base_url: str) -> bool:
     """Send a one-time welcome email to a new ARK user. Returns True on success."""
-    import socket as _socket
     from email.utils import formatdate, make_msgid
     from email.mime.image import MIMEImage
 
@@ -184,11 +184,10 @@ What ARK does:
 
 Get started: {base_url}
 
-ARK is built by the research team at KAUST. We are actively iterating
-and would love your feedback. Just reply to this email or reach out at
-jihao.xin@kaust.edu.sa.
+We are actively iterating and would love your feedback. Just reply to
+this email or reach out at contact@idea2paper.org.
 
--- ARK Research Portal, KAUST
+-- ARK Team
 """
 
     html = f"""\
@@ -265,21 +264,19 @@ jihao.xin@kaust.edu.sa.
 
     <!-- About us -->
     <p style="margin:0 0 16px;color:#333;font-size:15px;line-height:1.7;">
-      ARK is built by the research team at
-      <strong>King Abdullah University of Science and Technology (KAUST)</strong>.
       We&rsquo;re actively iterating on the platform and would love your feedback.
     </p>
     <p style="margin:0 0 8px;color:#333;font-size:15px;line-height:1.7;">
       Found a bug? Have an idea? Just reply to this email or reach out at
-      <a href="mailto:jihao.xin@kaust.edu.sa" style="color:#0d9488;text-decoration:none;font-weight:600;">
-        jihao.xin@kaust.edu.sa</a>.
+      <a href="mailto:contact@idea2paper.org" style="color:#0d9488;text-decoration:none;font-weight:600;">
+        contact@idea2paper.org</a>.
     </p>
   </td></tr>
 
   <!-- Footer -->
   <tr><td style="background:#f8fffe;padding:24px 44px;border-top:1px solid #e0f2f1;">
     <p style="margin:0;color:#999;font-size:12px;line-height:1.5;text-align:center;">
-      ARK &mdash; Automatic Research Kit &bull; KAUST<br/>
+      ARK &mdash; Automatic Research Kit<br/>
       You received this email because you signed up for ARK.
     </p>
   </td></tr>
@@ -291,10 +288,7 @@ jihao.xin@kaust.edu.sa.
 </html>
 """
 
-    relay_domain = getattr(settings, "smtp_relay", "") or "ciuxrelay.kaust.edu.sa"
-    relay_host = relay_domain
-    relay_domain = relay_domain.split(".", 1)[-1]
-    from_addr = getattr(settings, "smtp_from", "") or f"ark@{_socket.gethostname()}.{relay_domain}"
+    from_addr = getattr(settings, "smtp_from", "") or "contact@idea2paper.org"
 
     # Build: multipart/mixed → multipart/alternative (plain + related(html + logo))
     msg = MIMEMultipart("alternative")
@@ -311,21 +305,23 @@ jihao.xin@kaust.edu.sa.
         html_related.attach(logo)
     msg.attach(html_related)
 
-    msg["From"] = f"ARK Research Portal <{from_addr}>"
+    msg["From"] = f"ARK Team <{from_addr}>"
     msg["To"] = to_email
     msg["Subject"] = subject
     msg["Date"] = formatdate(localtime=True)
-    msg["Message-ID"] = make_msgid(domain=f"{_socket.gethostname()}.{relay_domain}")
+    msg["Message-ID"] = make_msgid(domain="idea2paper.org")
     msg_str = msg.as_string()
 
-    # Try KAUST relay first
-    try:
-        with smtplib.SMTP(relay_host, 25, timeout=10) as server:
-            server.sendmail(from_addr, to_email, msg_str)
-        logger.info(f"Welcome email sent via relay to {to_email}")
-        return True
-    except Exception as e:
-        logger.warning(f"Relay failed ({e}), trying SMTP auth...")
+    # Try relay if explicitly configured
+    relay = getattr(settings, "smtp_relay", "")
+    if relay:
+        try:
+            with smtplib.SMTP(relay, 25, timeout=10) as server:
+                server.sendmail(from_addr, to_email, msg_str)
+            logger.info(f"Welcome email sent via relay to {to_email}")
+            return True
+        except Exception as e:
+            logger.warning(f"Relay failed ({e}), trying SMTP auth...")
 
     # Try SMTP with auth
     if settings.smtp_user and settings.smtp_password:
@@ -352,10 +348,7 @@ def send_magic_link_email(settings, to_email: str, link: str) -> bool:
 <p>If you did not request this, ignore this email.</p>
 <p>— ARK Automatic Research Kit</p>
 """
-    import socket as _socket
-    relay_domain = getattr(settings, "smtp_relay", "") or "ciuxrelay.kaust.edu.sa"
-    relay_domain = relay_domain.split(".", 1)[-1]  # ciuxrelay.kaust.edu.sa → kaust.edu.sa
-    from_addr = f"ark@{_socket.gethostname()}.{relay_domain}"
+    from_addr = getattr(settings, "smtp_from", "") or "contact@idea2paper.org"
     msg = MIMEMultipart()
     msg["From"] = from_addr
     msg["To"] = to_email
@@ -363,15 +356,16 @@ def send_magic_link_email(settings, to_email: str, link: str) -> bool:
     msg.attach(MIMEText(body, "html"))
     msg_str = msg.as_string()
 
-    # Try KAUST relay (no auth, port 25) first if configured
-    relay = getattr(settings, "smtp_relay", "") or "ciuxrelay.kaust.edu.sa"
-    try:
-        with smtplib.SMTP(relay, 25, timeout=10) as server:
-            server.sendmail(from_addr, to_email, msg_str)
-        logger.info(f"Magic link email sent via relay ({relay}) to {to_email}")
-        return True
-    except Exception as e:
-        logger.warning(f"Relay failed ({e}), trying SMTP auth…")
+    # Try relay if explicitly configured
+    relay = getattr(settings, "smtp_relay", "")
+    if relay:
+        try:
+            with smtplib.SMTP(relay, 25, timeout=10) as server:
+                server.sendmail(from_addr, to_email, msg_str)
+            logger.info(f"Magic link email sent via relay ({relay}) to {to_email}")
+            return True
+        except Exception as e:
+            logger.warning(f"Relay failed ({e}), trying SMTP auth…")
 
     # Try SMTP with auth
     if settings.smtp_user and settings.smtp_password:

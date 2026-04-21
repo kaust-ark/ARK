@@ -1925,8 +1925,12 @@ def cmd_run(args):
 
     # Strip CLAUDECODE so orchestrator can call claude CLI freely
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    # Ensure orchestrator can find the ark package in a project-local conda env
-    ark_root = str(Path(__file__).resolve().parents[1].parent)
+    # Ensure orchestrator can find the ark + website packages.
+    # parents[1] is the ARK repo root (.../ARK/ark/cli.py → .../ARK/ark → .../ARK).
+    # Previously this had `.parent` appended which dropped one level too high
+    # and broke fresh projects without a conda env that already had ARK on
+    # sys.path via a .pth file.
+    ark_root = str(Path(__file__).resolve().parents[1])
     env["PYTHONPATH"] = ark_root + ((":" + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
 
     with open(log_file, "w") as lf:
@@ -3344,6 +3348,28 @@ def _cmd_webapp_release(args):
     print(f"  Prod: {_c(f'http://0.0.0.0:{_PROD_PORT}', Colors.CYAN)}")
 
 
+def cmd_share(args):
+    """Generate signed share links for a webapp project or user dashboard."""
+    from ark import share as _share
+    sub = getattr(args, 'share_cmd', None)
+    try:
+        if sub == 'create':
+            if not getattr(args, 'project', None):
+                print("Error: ark share create <project_id_or_name>", file=sys.stderr)
+                return 1
+            return _share.cmd_create(args.project, int(args.expires))
+        if sub == 'user':
+            if not getattr(args, 'email', None):
+                print("Error: ark share user <email>", file=sys.stderr)
+                return 1
+            return _share.cmd_user(args.email, int(args.expires))
+    except Exception as e:
+        print(f"{_c('Error:', Colors.RED)} {e}", file=sys.stderr)
+        return 1
+    print(f"{_c('Unknown subcommand:', Colors.RED)} {sub}  (try: create | user)", file=sys.stderr)
+    return 1
+
+
 def cmd_access(args):
     """Manage the Cloudflare Access allowlist for idea2paper.org/dashboard."""
     from ark import access as _access
@@ -4087,6 +4113,25 @@ def main():
     p_webapp.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
     p_webapp.add_argument("--daemon", action="store_true", help="Run in background (deprecated, use 'install')")
     p_webapp.set_defaults(func=cmd_webapp)
+
+    # ark share — generate read-only share links for a webapp project
+    p_share = subparsers.add_parser(
+        "share",
+        help="Generate signed read-only share links for a webapp project",
+    )
+    share_sub = p_share.add_subparsers(dest="share_cmd")
+    p_share_create = share_sub.add_parser("create", help="Generate a share URL for one project")
+    p_share_create.add_argument("project", help="Project id or name (from webapp DB)")
+    p_share_create.add_argument("--expires", default=90, type=int,
+                                help="Link lifetime in days (default: 90)")
+    p_share_user = share_sub.add_parser(
+        "user",
+        help="Generate a share URL for a user's dashboard (all their projects). Creates the user if absent.",
+    )
+    p_share_user.add_argument("email", help="User email (e.g. reviewer@idea2paper.org)")
+    p_share_user.add_argument("--expires", default=90, type=int,
+                              help="Link lifetime in days (default: 90)")
+    p_share.set_defaults(func=cmd_share)
 
     # ark access — manage the Cloudflare Access allowlist for /dashboard
     p_access = subparsers.add_parser(

@@ -1783,7 +1783,7 @@ a {{ color: #0d9488; }}
 
         # Fallback: email
         try:
-            email = self.config.get("notification_email", "jihao.xin@kaust.edu.sa")
+            email = self.config.get("notification_email", "contact@idea2paper.org")
             subprocess.run(
                 ["mail", "-s", f"[{self.project_name.upper()}] {subject}", email],
                 input=full_message,

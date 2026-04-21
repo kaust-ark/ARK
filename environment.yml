@@ -31,12 +31,14 @@ dependencies:
   - wheel=0.46.3=pyhd8ed1ab_0
   - zstd=1.5.7=hb78ec9c_6
   - pip:
+      - awscli==1.32.0
+      - boto3==1.34.0
+      - kubernetes==32.0.1
       - aiofiles==25.1.0
       - annotated-doc==0.0.4
       - annotated-types==0.7.0
       - anthropic==0.94.1
       - anyio==4.13.0
-      - ark-research==0.2.0
       - authlib==1.6.10
       - brotli==1.2.0
       - certifi==2026.2.25

@@ -15,6 +15,43 @@ Read the following files:
 1. `auto_research/state/latest_review.md` - Latest review report
 2. `auto_research/state/memory.yaml` - Iteration history
 3. `auto_research/state/idea.md` - Original research proposal (check experiment alignment)
+4. `auto_research/state/project_context.md` - `## Experimental Protocol` section (the design contract)
+5. `auto_research/state/findings.yaml` - latest experiment outputs, especially the `coverage:` field
+
+## Drift Audit (run BEFORE composing the action plan)
+
+Before responding to the reviewer, do a drift audit against the design:
+
+1. Open `project_context.md` `## Experimental Protocol` and enumerate every
+   experiment's required deliverable / sample / independence criterion.
+2. Open `findings.yaml` `coverage:` field. For each Protocol item, find
+   the matching `coverage` entry.
+3. Build a CARRYFORWARD list of every item where:
+   - `coverage` is missing for that Protocol item, OR
+   - `status: not_started`, OR
+   - `status: partial` (regardless of how much was done), OR
+   - `status: deferred` with a `deferred_reason` that's a value judgment
+     ("complexity", "sufficient", "out of scope", "future work", "TBD")
+     rather than a specific external blocker.
+
+Each carryforward item BECOMES an EXPERIMENT_REQUIRED task in the new
+action plan, with priority HIGHER than any reviewer-derived minor issue.
+Reviewer issues that depend on a missing coverage item must wait —
+fix the upstream first.
+
+Special cases:
+- If `findings.yaml` has no `coverage:` field at all, the previous
+  experimenter run is invalid. Issue a single critical task:
+  "EXPERIMENT_REQUIRED: re-run last experimenter with the mandatory
+   `coverage:` echo field per Coverage Echo discipline; do not advance
+   to writing until coverage is present and the Protocol is satisfied."
+- If `library_use:` lists a framework that doesn't appear in any
+  experiment script (grep the scripts dir), flag the import as
+  fraudulent — issue task "EXPERIMENT_REQUIRED: replace shadow-import
+  of <package> with a real primary-API call, or remove the import."
+
+The drift audit is not optional. A planner that issues new tasks
+without auditing carryforward has misallocated.
 
 ## Issue Classification
 
@@ -45,8 +82,10 @@ The venue enforces a strict **{VENUE_PAGES}-page limit** for body text (excludin
 4. For any remaining task, explicitly instruct: "Do NOT add new content. Revise existing text only."
 
 **If the paper is currently AT or UNDER the page limit:**
-1. For any task that adds content (new sections, new experiments, new figures), require the writer to **cut equivalent content elsewhere** to stay within budget
-2. Always include this instruction in the task action: "Ensure the paper stays within {VENUE_PAGES} pages after your changes."
+1. For any task that adds content, classify it first:
+   - **Core contribution** (main method, headline result, primary ablation, key analysis): require the writer to cut equivalent body content to stay within budget
+   - **Supplementary** (full proofs, extended ablations, hyperparameter details, prompt templates, implementation specifics, additional qualitative examples): instruct the writer to place it in `\appendix` — the body-page limit excludes the appendix, so no body cut is required
+2. Always include this instruction in the task action: "Ensure the body (excluding `\appendix` and references) stays within {VENUE_PAGES} pages after your changes."
 
 ## Strategy Escalation Rules
 
@@ -62,6 +101,7 @@ When creating EXPERIMENT_REQUIRED tasks:
 - If the experimenter needs credentials or access that isn't available, note this explicitly in the action field so the system can request them from the user
 - **Do NOT include fallback evaluation methods** in the task description. If the real system is required, say so — do not suggest "use LLM-as-judge if unavailable" or "fall back to text comparison". The experimenter will request human help if installation fails.
 - If a previous iteration's experiment was marked "blocked" or "completed_fallback", escalate it: the task MUST note that prior attempts failed to use the real system and the experimenter MUST retry installation before doing anything else
+- **Sample sizes must trace to the Experimental Protocol.** Read `auto_research/state/project_context.md`'s `## Experimental Protocol` section. If you propose an N (for a baseline sample, a judge sample, a sub-experiment), it should match the Protocol's Sampling spec. Do NOT copy N from prior literature or from reviewer comments without checking — most "small N" (N=30, N=50) in prior work was driven by paid-API cost that does not apply when the default inference backend is a local CLI. If you believe the Protocol's N is wrong for this iteration, update the Protocol first, do not silently override in the action plan.
 
 ## Output Format
 

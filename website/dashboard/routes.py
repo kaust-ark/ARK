@@ -21,7 +21,9 @@ import subprocess
 logger = logging.getLogger("website.dashboard.routes")
 
 MAX_PROJECTS_PER_USER = 10
-MAX_ITER_PER_START = 3
+MAX_ITER_PER_START = 5
+MAX_CONCURRENT_PER_USER = 3
+MAX_CONCURRENT_GLOBAL = 10
 from ark.paths import get_ark_root as _get_ark_root
 _DISABLED_FLAG = None  # lazy
 
@@ -39,7 +41,7 @@ from starlette.requests import Request
 
 from authlib.integrations.starlette_client import OAuth as _OAuth
 
-from .auth import make_token, verify_token
+from .auth import make_token, make_share_token, verify_token, verify_share_token
 from .config import get_settings
 
 # Lazy-initialized Google OAuth client
@@ -294,6 +296,37 @@ def _can_access_project(user: User, project: Project) -> bool:
     return project.user_id == user.id or _is_admin(user)
 
 
+def _share_project_grant(request: Request) -> str | None:
+    """If the session is a valid project-share session, return the granted project_id.
+
+    Re-verifies the token every call so expired/rotated-secret tokens stop
+    working immediately instead of hanging on the 7-day session cookie.
+
+    User-share links don't seat this state — they set user_id via /share/<token>
+    and the visitor becomes that user for the duration of the normal login
+    session. Only project-share keeps a read-only grant in the session.
+    """
+    token = request.session.get("share_token")
+    expected_kind = request.session.get("share_kind")
+    expected_id = request.session.get("share_id")
+    if not token or expected_kind != "project" or not expected_id:
+        return None
+    verified = verify_share_token(token, get_settings().secret_key)
+    if verified != ("project", expected_id):
+        for k in ("share_token", "share_kind", "share_id", "share_project_id"):
+            request.session.pop(k, None)
+        return None
+    return expected_id
+
+
+def _can_read_project(request: Request, project: Project) -> bool:
+    """Read access: owner, admin, or a project-share grant for this exact project."""
+    if _share_project_grant(request) == project.id:
+        return True
+    user = _get_current_user(request)
+    return bool(user and _can_access_project(user, project))
+
+
 def _project_dir(settings, user_id: str, project_id: str) -> Path:
     return settings.projects_root / user_id / project_id
 
@@ -342,10 +375,13 @@ Output ONLY the summary, no preamble.
 
 def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude-sonnet-4-6"):
     """Write config.yaml that ark orchestrator will read."""
-    # Map webapp model value to orchestrator model backend
+    # Map webapp model value to orchestrator model backend.
+    # Legacy "claude-opus-4-6" kept for backward-compat with older project DB rows;
+    # current UI only exposes opus-4-7 / sonnet-4-6 / haiku-4-5.
     MODEL_MAP = {
         "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
-        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
+        "claude-opus-4-7": ("claude", "claude-opus-4-7"),
+        "claude-opus-4-6": ("claude", "claude-opus-4-7"),  # legacy alias → 4.7
         "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
         "gemini": ("gemini", ""),
     }
@@ -816,7 +852,11 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
         _sel(Project).where(Project.status.in_(["queued", "running"]))
         .where(Project.id != project.id)
     ).all()
-    if active and not is_admin:
+    user_active = [p for p in active if p.user_id == project.user_id]
+    if not is_admin and (
+        len(user_active) >= MAX_CONCURRENT_PER_USER
+        or len(active) >= MAX_CONCURRENT_GLOBAL
+    ):
         update_project(session, project, status="pending")
         return "pending"
     
@@ -866,7 +906,78 @@ async def index(request: Request):
     return _templates.TemplateResponse(
         request,
         "app.html",
-        {"app_base": request.scope.get("root_path", "")},
+        {
+            "app_base": request.scope.get("root_path", ""),
+            "share_mode": False,
+            "share_project_id": "",
+        },
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@router.get("/share/{token}", name="share")
+async def share_view(token: str, request: Request):
+    """Public entry point for a signed share link.
+
+    Two token kinds:
+      - "user"    → auto-login as that user. Full webapp access, identical to
+                    what the user would see after Google/magic-link login. Hand
+                    these out as anonymous reviewer accounts and control blast
+                    radius via provider-side API spend caps.
+      - "project" → seats a read-only grant scoped to one project. Reviewer sees
+                    only that project's detail view; writes are blocked.
+
+    CF Access must have a Bypass policy covering /dashboard/share/* so
+    unauthenticated visitors reach this handler.
+    """
+    settings = get_settings()
+    verified = verify_share_token(token, settings.secret_key)
+    if not verified:
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Link invalid</title>"
+            "<style>body{font-family:sans-serif;display:flex;align-items:center;"
+            "justify-content:center;min-height:100vh;margin:0;background:#f0fdfa}"
+            ".card{background:#fff;border-radius:16px;padding:40px 48px;max-width:420px;"
+            "box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}"
+            "h2{color:#991b1b;margin-bottom:12px}p{color:#555;line-height:1.6}</style></head>"
+            "<body><div class='card'><h2>Share link invalid or expired</h2>"
+            "<p>Ask the project owner for a fresh link.</p></div></body></html>",
+            status_code=403,
+        )
+    kind, ident = verified
+
+    if kind == "user":
+        # Full auto-login. Clear any previous share-mode state, then seat
+        # user_id the same way /auth/verify does after magic-link success.
+        for k in ("share_token", "share_kind", "share_id", "share_project_id"):
+            request.session.pop(k, None)
+        with get_session(settings.db_path) as session:
+            user = session.get(User, ident)
+            if not user:
+                return HTMLResponse(
+                    "<!DOCTYPE html><html><head><meta charset='utf-8'></head>"
+                    "<body style='font-family:sans-serif;padding:40px;text-align:center'>"
+                    "<h2>User not found</h2><p>This share link references a user that no longer exists.</p>"
+                    "</body></html>",
+                    status_code=404,
+                )
+            request.session["user_id"] = user.id
+        return RedirectResponse(_home_path())
+
+    # kind == "project": read-only grant for one project only.
+    request.session["share_token"] = token
+    request.session["share_kind"] = kind
+    request.session["share_id"] = ident
+    request.session.pop("user_id", None)
+    request.session.pop("share_project_id", None)
+    return _templates.TemplateResponse(
+        request,
+        "app.html",
+        {
+            "app_base": request.scope.get("root_path", ""),
+            "share_mode": True,
+            "share_project_id": ident,
+        },
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
@@ -993,7 +1104,7 @@ async def auth_google_callback(request: Request):
     <h2>Access Denied</h2>
     <p>Your Google account (<strong>{email}</strong>) is not authorized to access ARK.</p>
     <p>To request access, contact<br/>
-       <a href="mailto:jihao.xin@kaust.edu.sa">jihao.xin@kaust.edu.sa</a></p>
+       <a href="mailto:contact@idea2paper.org">contact@idea2paper.org</a></p>
     <a class="back" href="{_home}">← Back to login</a>
   </div>
 </body>
@@ -1232,8 +1343,8 @@ async def api_create_project(
     venue_format: str = Form("neurips"),
     venue_pages: int = Form(9),
     mode: str = Form("paper"),
-    max_iterations: int = Form(2),
-    max_dev_iterations: int = Form(3),
+    max_iterations: int = Form(1),
+    max_dev_iterations: int = Form(1),
     pdf_file: Optional[UploadFile] = File(None),
     template_zip: Optional[UploadFile] = File(None),
     model: str = Form("claude-sonnet-4-6"),
@@ -1249,9 +1360,13 @@ async def api_create_project(
         user_projects = get_projects_for_user(_s, user.id)
         if len(user_projects) >= MAX_PROJECTS_PER_USER:
             raise HTTPException(400, f"Max {MAX_PROJECTS_PER_USER} projects per user.")
-        active = [p for p in user_projects if p.status in ("queued", "running", "pending", "initializing")]
-        if active and not _is_admin(user):
-            raise HTTPException(400, "You already have an active project. Wait for it to finish.")
+        active = [p for p in user_projects if p.status in ("queued", "running", "initializing")]
+        if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
+            raise HTTPException(
+                400,
+                f"You already have {len(active)} active projects. "
+                f"Max {MAX_CONCURRENT_PER_USER} concurrent — wait for one to finish.",
+            )
             
         # Check for configured keys
         db_user = get_user(_s, user.id)
@@ -1319,10 +1434,12 @@ async def api_create_project(
     # transitions it to either waiting_template or runs _try_submit_or_pending.
     initial_status = "initializing"
 
-    # Map model to backend + variant for DB
+    # Map model to backend + variant for DB.
+    # Legacy "claude-opus-4-6" kept as alias in case an older client posts it.
     MODEL_MAP = {
         "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
-        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
+        "claude-opus-4-7": ("claude", "claude-opus-4-7"),
+        "claude-opus-4-6": ("claude", "claude-opus-4-7"),  # legacy alias → 4.7
         "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
         "gemini": ("gemini", ""),
     }
@@ -1387,11 +1504,10 @@ async def api_create_project(
 
 @router.get("/api/projects/{project_id}")
 async def api_get_project(project_id: str, request: Request):
-    user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         pdir = _project_dir(settings, project.user_id, project_id)
         score = _read_project_score(pdir, project=project)
@@ -1500,9 +1616,13 @@ async def api_restart_project(project_id: str, request: Request):
         if project.status not in ("stopped", "failed", "done"):
             raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
         active = [p for p in get_projects_for_user(session, project.user_id)
-                  if p.status in ("queued", "running", "pending", "initializing") and p.id != project_id]
-        if active and not _is_admin(user):
-            raise HTTPException(400, "You already have an active project.")
+                  if p.status in ("queued", "running", "initializing") and p.id != project_id]
+        if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
+            raise HTTPException(
+                400,
+                f"You already have {len(active)} active projects. "
+                f"Max {MAX_CONCURRENT_PER_USER} concurrent.",
+            )
         pdir = _project_dir(settings, project.user_id, project_id)
 
         # Update project fields from request body
@@ -1517,7 +1637,7 @@ async def api_restart_project(project_id: str, request: Request):
         if "venue_pages" in body:
             project.venue_pages = int(body["venue_pages"])
         if "max_iterations" in body:
-            project.max_iterations = max(1, min(3, int(body["max_iterations"])))
+            project.max_iterations = max(1, min(MAX_ITER_PER_START, int(body["max_iterations"])))
         if "telegram_token" in body:
             project.telegram_token = body["telegram_token"]
         if "telegram_chat_id" in body:
@@ -1650,9 +1770,13 @@ async def api_continue_project(project_id: str, request: Request):
         if project.status not in ("done", "stopped", "failed"):
             raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
         active = [p for p in get_projects_for_user(session, project.user_id)
-                  if p.status in ("queued", "running", "pending", "initializing") and p.id != project_id]
-        if active and not _is_admin(user):
-            raise HTTPException(400, "You already have an active project.")
+                  if p.status in ("queued", "running", "initializing") and p.id != project_id]
+        if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
+            raise HTTPException(
+                400,
+                f"You already have {len(active)} active projects. "
+                f"Max {MAX_CONCURRENT_PER_USER} concurrent.",
+            )
         new_max = project.max_iterations + additional
         update_project(session, project, max_iterations=new_max)
         pdir = _project_dir(settings, project.user_id, project_id)
@@ -1746,11 +1870,10 @@ async def api_admin_killall(request: Request):
 
 @router.get("/api/projects/{project_id}/pdf")
 async def api_get_pdf(project_id: str, request: Request):
-    user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
     pdir = _project_dir(settings, owner_id, project_id)
@@ -1763,11 +1886,10 @@ async def api_get_pdf(project_id: str, request: Request):
 
 @router.get("/api/projects/{project_id}/uploaded-pdf")
 async def api_get_uploaded_pdf(project_id: str, request: Request):
-    user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
     pdir = _project_dir(settings, owner_id, project_id)
@@ -1780,11 +1902,10 @@ async def api_get_uploaded_pdf(project_id: str, request: Request):
 
 @router.get("/api/projects/{project_id}/zip")
 async def api_download_zip(project_id: str, request: Request):
-    user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
     pdir = _project_dir(settings, owner_id, project_id)
@@ -1838,11 +1959,10 @@ async def api_download_zip(project_id: str, request: Request):
 
 @router.get("/api/projects/{project_id}/log")
 async def api_get_log(project_id: str, request: Request, lines: int = 200):
-    user = _require_user(request)
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
     pdir = _project_dir(settings, owner_id, project_id)
@@ -1869,12 +1989,11 @@ async def api_get_log(project_id: str, request: Request, lines: int = 200):
 
 @router.get("/api/projects/{project_id}/stream")
 async def api_stream_log(project_id: str, request: Request):
-    user = _require_user(request)
     settings = get_settings()
 
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_access_project(user, project):
+        if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
 
