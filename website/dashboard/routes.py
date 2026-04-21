@@ -1910,6 +1910,33 @@ async def api_download_zip(project_id: str, request: Request):
                 if f.is_file() and f.suffix in {".csv", ".json", ".txt", ".yaml", ".tsv"}:
                     zf.write(f, f.relative_to(pdir))
 
+        # sandbox_live/ — live-agent / firewall reproducibility bundle.
+        # Include source, policy, scenarios, skill bodies, container definition.
+        # Exclude: venvs, caches, slurm outputs, debug dumps, log spam.
+        sandbox_dir = pdir / "sandbox_live"
+        if sandbox_dir.exists():
+            sandbox_exts = {".py", ".sh", ".co", ".jsonl", ".md",
+                            ".yaml", ".toml", ".def", ".txt"}
+            sandbox_skip_dirs = {"litellm_venv", "__pycache__",
+                                 "cl_debug", "local_out"}
+            for f in sandbox_dir.rglob("*"):
+                if not f.is_file():
+                    continue
+                rel = f.relative_to(pdir)
+                parts = set(rel.parts)
+                if parts & sandbox_skip_dirs:
+                    continue
+                # slurm_out_* subdirectories (one per run) — exclude
+                if any(p.startswith("slurm_out_") for p in rel.parts):
+                    continue
+                # slurm .out / .err at any depth, and bare .log files
+                if f.name.startswith("slurm_") and f.suffix in {".out", ".err"}:
+                    continue
+                if f.suffix == ".log":
+                    continue
+                if f.suffix in sandbox_exts:
+                    zf.write(f, rel)
+
         # config + key state files
         for rel in (
             "config.yaml",
