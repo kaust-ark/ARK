@@ -697,10 +697,15 @@ if __name__ == "__main__":
     parser.add_argument("--width", type=float, default=3.333, help="Column width in inches")
     args = parser.parse_args()
 
-    # Read context from file if specified
+    # Read context from file if specified. Gemini 2.x handles large contexts
+    # natively — we don't pre-truncate here. generate_figure_pipeline calls
+    # Gemini, which does not have a Read tool, so the context must travel as
+    # a string. If cost or latency becomes a problem, gate at call time with
+    # an explicit, generous cap, not a silent 5000-char slice that drops the
+    # second half of a finding.
     context = args.context
     if args.context_file:
-        context = Path(args.context_file).read_text()[:5000]
+        context = Path(args.context_file).read_text()
 
     def log_fn(msg, level="INFO"):
         print(f"[{level}] {msg}")
