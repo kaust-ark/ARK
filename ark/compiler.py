@@ -743,24 +743,26 @@ class CompilerMixin:
         venue = self.config.get("venue", "")
 
         # ── Phase 2: Gather context for planner ──
-        idea = self.config.get("research_idea", "") or self.config.get("idea", "")
         title = self.config.get("title", "")
         findings_file = self.state_dir / "findings.yaml" if hasattr(self, 'state_dir') else None
         dr_file = self.state_dir / "deep_research.md" if hasattr(self, 'state_dir') else None
-
-        paper_context = f"Paper title: {title}\n\n"
-        if idea:
-            paper_context += f"Research idea:\n{idea[:4000]}\n\n"
-        if findings_file and findings_file.exists():
-            paper_context += f"Experiment findings:\n{findings_file.read_text()[:3000]}\n\n"
-        if dr_file and dr_file.exists():
-            paper_context += f"Background research:\n{dr_file.read_text()[:4000]}\n"
-
         main_tex = self.latex_dir / "main.tex"
+
+        source_lines = [f"Paper title: {title}", f"Venue: {venue}", "",
+                        "## Source Material (MANDATORY — Read in full before planning)"]
+        source_lines.append("- `idea.md` — research idea")
+        if dr_file and dr_file.exists():
+            source_lines.append("- `auto_research/state/deep_research.md` — background research")
+        if findings_file and findings_file.exists():
+            source_lines.append("- `auto_research/state/findings.yaml` — experiment findings")
         if main_tex.exists():
-            tex_content = main_tex.read_text()
-            if len(tex_content) > 1000:
-                paper_context += f"\nCurrent paper content:\n{tex_content[:2000]}\n"
+            main_tex_rel = main_tex.relative_to(self.code_dir) if main_tex.is_relative_to(self.code_dir) else main_tex
+            source_lines.append(f"- `{main_tex_rel}` — current paper draft (if already written)")
+        source_lines.append("")
+        source_lines.append("Use Read to load each file in full. Do NOT guess at the research content —")
+        source_lines.append("concept figures only make sense when grounded in what the paper actually claims.")
+
+        paper_context = "\n".join(source_lines)
 
         # ── Phase 3: Run planner agent ──
         figures_dir_rel = self.figures_dir.relative_to(self.code_dir) if self.figures_dir.is_relative_to(self.code_dir) else self.figures_dir
@@ -769,7 +771,7 @@ AI-generated for this paper. These are architecture diagrams, system overviews, 
 mechanism diagrams — NOT data plots (bar charts, line charts etc. are handled separately).
 
 ## Research Context
-{paper_context[:5000]}
+{paper_context}
 
 ## Your Task
 Identify 1-3 concept figures that would best illustrate this research. Every paper needs at least
