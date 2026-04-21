@@ -984,24 +984,24 @@ Be thorough and faithful to the proposal.
         if not ctx_file.exists():
             self.log_step_header(3, 4, "Specialization")
 
-            idea_content = idea_file.read_text()[:8000] if idea_file.exists() else ""
-            dr_content = dr_file.read_text()[:12000] if dr_file.exists() else ""
-
             # 3.1: Generate project_context.md (web-verified)
             self.log_step("Generating project context (web-verified)...", "progress")
-            self.run_agent("researcher", f"""
+            self.run_agent("researcher", """
 Read the idea summary and deep research report, then generate a verified
 project context document.
 
-## idea.md
-{idea_content}
+## Source Material (MANDATORY — Read in full before writing)
+- `idea.md` — the research idea (user-authored)
+- `auto_research/state/deep_research.md` — the Gemini Deep Research report
 
-## Deep Research Report
-{dr_content}
+Use your Read tool to load BOTH files in full. Do NOT skim or guess their
+contents — writing the context document without consulting them produces
+hallucinated systems and broken install instructions.
 
 ## Your Task
 
-For EACH external system mentioned, you MUST search the web to verify:
+For EACH external system mentioned in those files, you MUST search the web
+to verify:
 - What it actually is (do NOT guess from name)
 - Official URL and repository
 - Correct install command (MUST be project-isolated — never global installs)
@@ -1014,12 +1014,11 @@ Write `auto_research/state/project_context.md` with sections:
 
             # 3.2: Specialize agent prompts (code-driven, one call per agent)
             self.log_step("Specializing agent prompts...", "progress")
-            self._specialize_agent_prompts(idea_content, dr_content)
+            self._specialize_agent_prompts()
 
             # 3.3: Select and install skills
             self.log_step("Selecting skills...", "progress")
             skills_index = self._load_skills_index()
-            ctx_content_for_skills = ctx_file.read_text()[:4000] if ctx_file.exists() else ""
             if skills_index and "No skills" not in skills_index:
                 self.run_agent("researcher", f"""
 Select skills from the library that will be useful across this project —
@@ -1053,11 +1052,12 @@ Do NOT rely on prior knowledge of the library — always check current state.
 Do NOT add a skill to selected_skills.json without having Read its SKILL.md
 in this session.
 
-## Project Context (verified)
-{ctx_content_for_skills}
+## Source Material (MANDATORY — Read before selecting)
+- `auto_research/state/project_context.md` — verified external systems, env setup, experiment guidance
+- `idea.md` — the raw research idea
 
-## Research Idea
-{idea_content[:2000]}
+Read both files to understand what this project will actually build, run, and
+write about. Selection must be grounded in those files, not in the catalog.
 
 ## Skills Library
 {skills_index}
@@ -1302,16 +1302,17 @@ selected skill (why it matches, which phase will use it).
         needs_file.unlink(missing_ok=True)
         return reply is not None
 
-    def _specialize_agent_prompts(self, idea_content: str, dr_content: str):
+    def _specialize_agent_prompts(self):
         """Specialize each agent's prompt with project-specific knowledge.
 
         For each agent (except researcher itself), calls the researcher
         to generate a '## Project-Specific Knowledge' section, then appends it to
         the agent's prompt file. Verifies the append succeeded.
-        """
-        ctx_file = self.state_dir / "project_context.md"
-        ctx_content = ctx_file.read_text()[:6000] if ctx_file.exists() else ""
 
+        The researcher agent has Read access and is instructed to load
+        ``auto_research/state/project_context.md`` itself — we no longer
+        pre-load or truncate the context into the prompt.
+        """
         # What knowledge each agent should receive
         agent_focus = {
             "experimenter": "install commands, environment setup, what experiments to run, how to use the target systems, isolation requirements",
@@ -1347,8 +1348,11 @@ Generate a "## Project-Specific Knowledge" section for the {agent_name} agent.
 This section will be appended to the agent's prompt to give it domain expertise
 for this specific project.
 
-## Project Context
-{ctx_content[:4000]}
+## Project Context (MANDATORY — Read before composing the section)
+Use Read to load `auto_research/state/project_context.md` in full. It has
+the verified external systems, install commands, environment setup, and
+experiment guidance for this project. Ground the specialization section
+in what that file actually says — do not guess.
 
 ## Focus Areas for {agent_name}
 {focus}
@@ -1453,12 +1457,13 @@ for this specific project.
         self.log_step("Extracting citations from Deep Research report...", "progress")
 
         # Step 1: LLM extracts paper titles from the report
-        report_text = deep_research_file.read_text()
-        # Truncate if very long to stay within context limits
-        if len(report_text) > 15000:
-            report_text = report_text[:15000] + "\n\n... (truncated)"
+        extract_prompt = """Extract ALL academic papers mentioned in the Deep Research report.
 
-        extract_prompt = f"""Read the following research report and extract ALL academic papers mentioned in it.
+## Source Material (MANDATORY — Read in full before extracting)
+- `auto_research/state/deep_research.md` — the report
+
+Use Read to load the file in full. Do NOT work from memory or a partial read —
+missing the second half means missing half the citations.
 
 For each paper, return a JSON object with these fields:
 - "title": the paper's actual full title
@@ -1469,8 +1474,8 @@ For each paper, return a JSON object with these fields:
 
 Return a JSON array. Example:
 [
-  {{"title": "Attention Is All You Need", "authors": "Vaswani", "year": 2017, "query": "Attention Is All You Need Vaswani 2017", "context": "Introduces the Transformer architecture based solely on attention mechanisms, replacing recurrence and convolutions."}},
-  {{"title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding", "authors": "Devlin", "year": 2019, "query": "BERT Pre-training Deep Bidirectional Transformers Devlin 2019", "context": "Proposes bidirectional pre-training for language representations, achieving SOTA on multiple NLP benchmarks."}}
+  {"title": "Attention Is All You Need", "authors": "Vaswani", "year": 2017, "query": "Attention Is All You Need Vaswani 2017", "context": "Introduces the Transformer architecture based solely on attention mechanisms, replacing recurrence and convolutions."},
+  {"title": "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding", "authors": "Devlin", "year": 2019, "query": "BERT Pre-training Deep Bidirectional Transformers Devlin 2019", "context": "Proposes bidirectional pre-training for language representations, achieving SOTA on multiple NLP benchmarks."}
 ]
 
 Rules:
@@ -1481,10 +1486,6 @@ Rules:
 - Do NOT include book titles, dataset names, or tool names
 - Do NOT invent papers not mentioned in the report
 - If no papers are mentioned, return []
-
-## Research Report
-
-{report_text}
 """
         agent_output = self.run_agent("researcher", extract_prompt, timeout=300)
 
@@ -1716,12 +1717,11 @@ Rules:
         """Steps 1-4: Iterative experiment planning, execution, analysis, and evaluation.
 
         Loops until experiments are sufficient or max iterations reached.
-        """
-        deep_research_file = self.state_dir / "deep_research.md"
-        deep_research_ctx = ""
-        if deep_research_file.exists():
-            deep_research_ctx = deep_research_file.read_text()[:8000]
 
+        Each step's agent is instructed to Read source files (deep_research.md,
+        experiment_plan.yaml, results/, findings.yaml) directly — we do not
+        pre-load or pass truncated content through the call chain.
+        """
         findings_summary = self._load_findings_summary()
 
         for dev_iter in range(start_iter + 1, max_dev_iters + 1):
@@ -1734,20 +1734,18 @@ Rules:
             self._send_dev_phase_telegram("iteration", dev_iter, max_dev_iters)
 
             # Step 1: Plan experiments
-            plan_output = self._plan_experiments(dev_iter, max_dev_iters,
-                                                  research_idea, deep_research_ctx,
-                                                  findings_summary)
+            self._plan_experiments(dev_iter, max_dev_iters, research_idea,
+                                   findings_summary)
 
             # Step 2: Run experiments
-            exp_output = self._run_experiments(dev_iter, max_dev_iters, plan_output)
+            self._run_experiments(dev_iter, max_dev_iters)
 
             # Step 3: Analyze results
-            research_output = self._analyze_results(exp_output)
+            self._analyze_results()
 
             # Step 4: Evaluate completeness
             findings_summary = self._load_findings_summary()
-            sufficient = self._evaluate_completeness(research_idea, findings_summary,
-                                                      research_output)
+            sufficient = self._evaluate_completeness(research_idea, findings_summary)
 
             if sufficient:
                 self.log_step("Experiments sufficient, proceeding to initial draft", "success")
@@ -1756,8 +1754,7 @@ Rules:
             self.log_step(f"Dev iter {dev_iter}: more experiments needed", "warning")
 
     def _plan_experiments(self, dev_iter: int, max_dev_iters: int,
-                          research_idea: str, deep_research_ctx: str,
-                          findings_summary: str) -> str:
+                          research_idea: str, findings_summary: str) -> str:
         """Step 1: Plan experiments using planner agent."""
         self.log_step_header(1, 4, "Plan Experiments")
         venue_pages = int(self.config.get("venue_pages", 9) or 9)
@@ -1785,13 +1782,13 @@ You are planning experiments for a research project. This is Dev Phase iteration
 ## Research Idea
 {research_idea}
 
-## Deep Research Context
-{deep_research_ctx[:6000] if deep_research_ctx else "No deep research available yet."}
+## Source Material (MANDATORY — Read before planning)
+- `auto_research/state/deep_research.md` — full Gemini Deep Research report
+- `auto_research/state/project_context.md` — verified external systems + install hints
 
-## Project-Specific Context
-Read auto_research/state/project_context.md for verified information about what
-external systems this project requires and how to install them. Use this as your
-primary source for the required_systems section — do not re-derive from deep research.
+Use Read to load both files in full. Ground your experiment plan — especially
+the `required_systems` section — in those files. Do NOT guess from memory, and
+do NOT re-derive systems already listed in project_context.md.
 
 ## Current Findings
 {findings_summary if findings_summary else "No experiments run yet."}
@@ -1837,8 +1834,7 @@ IMPORTANT: If the research idea describes a specific platform, framework, or sys
         self.log_step_header(1, 4, "Plan Experiments", "end")
         return output
 
-    def _run_experiments(self, dev_iter: int, max_dev_iters: int,
-                         plan_output: str) -> str:
+    def _run_experiments(self, dev_iter: int, max_dev_iters: int) -> str:
         """Step 2: Run experiments using experimenter agent + compute backend."""
         self.log_step_header(2, 4, "Run Experiments")
         self._send_dev_phase_telegram("experiments", dev_iter, max_dev_iters)
@@ -1850,11 +1846,10 @@ IMPORTANT: If the research idea describes a specific platform, framework, or sys
             exp_output = self.run_agent("experimenter", f"""
 Execute ALL planned experiments for this dev iteration.
 
-## Experiment Plan
-Read auto_research/state/experiment_plan.yaml for the full plan.
-
-## Previous Planner Output
-{plan_output[:4000] if plan_output else "See experiment_plan.yaml"}
+## Experiment Plan (MANDATORY — Read before running)
+Use Read to load `auto_research/state/experiment_plan.yaml` in full. It
+contains the required_systems and every experiment definition. Do NOT
+proceed without having consulted it.
 
 {compute_instructions}
 
@@ -1917,14 +1912,19 @@ system or it fails with a clear report of what is needed.
         self.log_step_header(2, 4, "Run Experiments", "end")
         return exp_output
 
-    def _analyze_results(self, exp_output: str) -> str:
+    def _analyze_results(self) -> str:
         """Step 3: Analyze experiment results using planner agent."""
         self.log_step_header(3, 4, "Analyze Results")
         output = self.run_agent("planner", f"""
 Analyze ALL experiment results from this dev iteration.
 
-## What was run
-{exp_output[:4000] if exp_output else "Check results/ directory for new files."}
+## Source Material (MANDATORY — Read before analyzing)
+- `auto_research/state/experiment_plan.yaml` — what the plan claimed would run
+- every file under `results/` — actual experiment outputs (use Glob + Read)
+- `auto_research/state/findings.yaml` — accumulated prior findings (if any)
+
+Use Read/Glob to inspect the result files directly. Do NOT rely on a
+summary — verify each experiment's outputs against the plan.
 
 ## Task
 1. Check all result files in results/ directory
@@ -1947,8 +1947,8 @@ findings:
         self.log_step_header(3, 4, "Analyze Results", "end")
         return output
 
-    def _evaluate_completeness(self, research_idea: str, findings_summary: str,
-                                research_output: str) -> bool:
+    def _evaluate_completeness(self, research_idea: str,
+                                findings_summary: str) -> bool:
         """Step 4: Evaluate if experiments are sufficient to write paper."""
         self.log_step_header(4, 4, "Evaluate Completeness")
 
@@ -1961,8 +1961,10 @@ Evaluate whether we have sufficient experimental data for the paper.
 ## Current Findings
 {findings_summary}
 
-## Results Analysis
-{research_output[:4000] if research_output else "No analysis available."}
+## Source Material (MANDATORY — Read before deciding)
+- `auto_research/state/findings.yaml` — full findings record (not just the summary above)
+- files under `results/` — raw experiment outputs
+- `auto_research/state/experiment_plan.yaml` — what was planned
 
 ## Task
 Determine if the experiments are sufficient to write a complete paper:
@@ -2594,7 +2596,6 @@ Produce the complete paper. Do not stop until all sections are written and it co
         self.log_step("Creating plotting script from experiment results...", "progress")
 
         # Gather context for the coder agent
-        findings = self._load_findings_summary()
         result_files = sorted(
             f.name for f in results_dir.iterdir()
             if f.suffix in (".json", ".csv", ".txt") and f.stat().st_size > 0
@@ -2603,18 +2604,10 @@ Produce the complete paper. Do not stop until all sections are written and it co
             self.log("No data files in results/, skipping", "INFO")
             return
 
-        # Read a sample of result data for context
-        data_samples = []
-        for fname in result_files[:5]:
-            fpath = results_dir / fname
-            try:
-                content = fpath.read_text()[:1000]
-                data_samples.append(f"### {fname}\n```\n{content}\n```")
-            except Exception:
-                pass
-
         # Ensure script directory exists
         script_path.parent.mkdir(parents=True, exist_ok=True)
+
+        results_rel = results_dir.relative_to(self.code_dir) if results_dir.is_relative_to(self.code_dir) else results_dir
 
         self.run_agent("coder", f"""Create a Python plotting script that generates publication-quality
 statistical figures from the experiment results in this project.
@@ -2623,14 +2616,17 @@ statistical figures from the experiment results in this project.
 Save the script to: {script_rel}
 The script must be self-contained and runnable with: python {script_rel}
 
-## Data files in results/ directory:
+## Source Material (MANDATORY — Read before writing)
+- `{results_rel}/` — raw experiment result files (use Glob + Read on each one)
+- `auto_research/state/findings.yaml` — accumulated findings summary
+- `auto_research/state/experiment_plan.yaml` — what the experiments were supposed to measure
+
+Files currently present in `{results_rel}/`:
 {chr(10).join(f'- {f}' for f in result_files)}
 
-## Sample data (first 1000 chars of each):
-{chr(10).join(data_samples)}
-
-## Experiment findings summary:
-{findings[:3000]}
+Read each one to understand its schema before designing plots. Do NOT guess
+the data shape — a plot that assumes the wrong columns produces a blank or
+mislabeled figure.
 
 ## CRITICAL: Figure Config (read this FIRST)
 {figures_dir}/figure_config.json contains the EXACT dimensions from the LaTeX template.
