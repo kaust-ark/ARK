@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Request Access — ARK</title>
+  <meta name="description" content="Request access to the ARK dashboard.">
+  <link rel="icon" href="assets/logo_ark_transparent.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .ra-hero {
+      padding: 8rem 1.5rem 2rem;
+      text-align: center;
+    }
+    .ra-hero h1 {
+      font-size: clamp(1.8rem, 3.5vw, 2.5rem);
+      margin-bottom: 1rem;
+    }
+    .ra-hero p {
+      max-width: 560px;
+      margin: 0 auto;
+      font-size: 1.05rem;
+      line-height: 1.7;
+      color: var(--text-muted);
+    }
+    .ra-form {
+      max-width: 560px;
+      margin: 2rem auto 4rem;
+      padding: 2rem;
+      background: var(--bg-card, #fff);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    .ra-form label {
+      display: block;
+      font-weight: 600;
+      margin: 1rem 0 .4rem;
+      font-size: .9rem;
+    }
+    .ra-form label .req { color: var(--teal); }
+    .ra-form input, .ra-form textarea {
+      width: 100%;
+      padding: .75rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 1rem;
+      box-sizing: border-box;
+      transition: border-color .15s;
+    }
+    .ra-form input:focus, .ra-form textarea:focus {
+      outline: none;
+      border-color: var(--teal);
+    }
+    .ra-form textarea { resize: vertical; min-height: 120px; }
+    .ra-submit {
+      width: 100%;
+      padding: .9rem 1rem;
+      margin-top: 1.5rem;
+      background: var(--teal);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: filter .15s;
+    }
+    .ra-submit:hover:not(:disabled) { filter: brightness(1.1); }
+    .ra-submit:disabled { opacity: .5; cursor: not-allowed; }
+    .ra-note {
+      margin-top: 1rem;
+      font-size: .85rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    .ra-result {
+      margin-top: 1rem;
+      padding: 1rem;
+      border-radius: 8px;
+      font-size: .95rem;
+      display: none;
+    }
+    .ra-result.success { display: block; background: #e6f7f1; color: #0a6f4a; border: 1px solid #9de0c3; }
+    .ra-result.error { display: block; background: #fdeaea; color: #8a1f1f; border: 1px solid #f0b4b4; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar" id="navbar" style="background:rgba(248,250,252,.95);backdrop-filter:blur(12px)">
+  <div class="container">
+    <a href="index.html" class="nav-brand">
+      <img src="assets/logo_ark_transparent.png" alt="ARK" style="height:32px;vertical-align:middle;margin-right:.5rem">ARK
+    </a>
+    <div class="nav-links" id="navLinks">
+      <a href="index.html#pipeline">Pipeline</a>
+      <a href="doc.html">Docs</a>
+      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener" class="gh-link">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<section class="ra-hero">
+  <h1 class="gradient-text">Request Access</h1>
+  <p>
+    ARK is currently in invite-only beta. Tell us a bit about yourself and we'll get back to you.
+    Or email us directly at <a href="mailto:contact@idea2paper.org">contact@idea2paper.org</a>.
+  </p>
+</section>
+
+<form class="ra-form" id="raForm" onsubmit="return submitForm(event)">
+  <label>Your email <span class="req">*</span></label>
+  <input type="email" name="email" required autocomplete="email" placeholder="you@example.com">
+
+  <label>Your name</label>
+  <input type="text" name="name" autocomplete="name" placeholder="Jane Doe">
+
+  <label>Affiliation</label>
+  <input type="text" name="affiliation" autocomplete="organization" placeholder="University / Company / Lab">
+
+  <label>What would you use ARK for?</label>
+  <textarea name="purpose" placeholder="Briefly describe your research area or intended use."></textarea>
+
+  <button class="ra-submit" type="submit" id="raSubmit">Send request</button>
+  <div class="ra-result" id="raResult"></div>
+  <p class="ra-note">We typically respond within a few days.</p>
+</form>
+
+<script>
+async function submitForm(e) {
+  e.preventDefault();
+  const form = document.getElementById('raForm');
+  const btn = document.getElementById('raSubmit');
+  const result = document.getElementById('raResult');
+  const data = Object.fromEntries(new FormData(form).entries());
+
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  result.className = 'ra-result';
+  result.textContent = '';
+
+  try {
+    const res = await fetch('/api/request-access', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(data),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok) {
+      result.className = 'ra-result success';
+      result.textContent = json.message || 'Thanks — your request was sent. We\'ll be in touch.';
+      form.querySelectorAll('input, textarea').forEach(el => el.value = '');
+      btn.textContent = 'Sent';
+    } else {
+      result.className = 'ra-result error';
+      result.textContent = json.detail || json.message || `Something went wrong (HTTP ${res.status}).`;
+      btn.disabled = false;
+      btn.textContent = 'Send request';
+    }
+  } catch (err) {
+    result.className = 'ra-result error';
+    result.textContent = 'Network error. Please try again or email contact@idea2paper.org.';
+    btn.disabled = false;
+    btn.textContent = 'Send request';
+  }
+  return false;
+}
+</script>
+
+</body>
+</html>
