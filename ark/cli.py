@@ -3349,7 +3349,7 @@ def _cmd_webapp_release(args):
 
 
 def cmd_share(args):
-    """Generate signed share links for a webapp project or user dashboard."""
+    """Generate share links for a webapp project or user dashboard."""
     from ark import share as _share
     sub = getattr(args, 'share_cmd', None)
     try:
@@ -3357,16 +3357,31 @@ def cmd_share(args):
             if not getattr(args, 'project', None):
                 print("Error: ark share create <project_id_or_name>", file=sys.stderr)
                 return 1
-            return _share.cmd_create(args.project, int(args.expires))
+            return _share.cmd_create(args.project, int(args.expires),
+                                     alias=getattr(args, 'alias', None))
         if sub == 'user':
             if not getattr(args, 'email', None):
                 print("Error: ark share user <email>", file=sys.stderr)
                 return 1
-            return _share.cmd_user(args.email, int(args.expires))
+            return _share.cmd_user(args.email, int(args.expires),
+                                   alias=getattr(args, 'alias', None))
+        if sub == 'alias':
+            alias_sub = getattr(args, 'alias_cmd', None)
+            if alias_sub == 'list' or alias_sub is None:
+                return _share.cmd_alias_list()
+            if alias_sub == 'delete':
+                if not getattr(args, 'alias_name', None):
+                    print("Error: ark share alias delete <name>", file=sys.stderr)
+                    return 1
+                return _share.cmd_alias_delete(args.alias_name)
+            print(f"{_c('Unknown alias subcommand:', Colors.RED)} {alias_sub}  "
+                  "(try: list | delete)", file=sys.stderr)
+            return 1
     except Exception as e:
         print(f"{_c('Error:', Colors.RED)} {e}", file=sys.stderr)
         return 1
-    print(f"{_c('Unknown subcommand:', Colors.RED)} {sub}  (try: create | user)", file=sys.stderr)
+    print(f"{_c('Unknown subcommand:', Colors.RED)} {sub}  "
+          "(try: create | user | alias)", file=sys.stderr)
     return 1
 
 
@@ -4114,16 +4129,19 @@ def main():
     p_webapp.add_argument("--daemon", action="store_true", help="Run in background (deprecated, use 'install')")
     p_webapp.set_defaults(func=cmd_webapp)
 
-    # ark share — generate read-only share links for a webapp project
+    # ark share — generate share links for a webapp project or user
     p_share = subparsers.add_parser(
         "share",
-        help="Generate signed read-only share links for a webapp project",
+        help="Generate read-only share links for a webapp project or user",
     )
     share_sub = p_share.add_subparsers(dest="share_cmd")
     p_share_create = share_sub.add_parser("create", help="Generate a share URL for one project")
     p_share_create.add_argument("project", help="Project id or name (from webapp DB)")
     p_share_create.add_argument("--expires", default=90, type=int,
                                 help="Link lifetime in days (default: 90)")
+    p_share_create.add_argument("--alias", default=None,
+                                help="Register a short URL alias (e.g. 'icml') pointing at this "
+                                     "share. The alias lives in the DB with the same expiry.")
     p_share_user = share_sub.add_parser(
         "user",
         help="Generate a share URL for a user's dashboard (all their projects). Creates the user if absent.",
@@ -4131,6 +4149,17 @@ def main():
     p_share_user.add_argument("email", help="User email (e.g. reviewer@idea2paper.org)")
     p_share_user.add_argument("--expires", default=90, type=int,
                               help="Link lifetime in days (default: 90)")
+    p_share_user.add_argument("--alias", default=None,
+                              help="Register a short URL alias (e.g. 'icml') pointing at this "
+                                   "share. The alias lives in the DB with the same expiry.")
+    p_share_alias = share_sub.add_parser(
+        "alias",
+        help="Manage short-URL aliases registered with --alias",
+    )
+    alias_sub = p_share_alias.add_subparsers(dest="alias_cmd")
+    alias_sub.add_parser("list", help="List all registered aliases and where they point")
+    p_alias_del = alias_sub.add_parser("delete", help="Revoke an alias by name")
+    p_alias_del.add_argument("alias_name", help="Alias to delete (e.g. 'icml')")
     p_share.set_defaults(func=cmd_share)
 
     # ark access — manage the Cloudflare Access allowlist for /dashboard
