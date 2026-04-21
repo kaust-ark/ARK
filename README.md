@@ -247,6 +247,108 @@ python -m ark.orchestrator --project mma --mode dev
 
 ---
 
+## Docker Usage
+
+### Architecture Requirements
+
+> [!IMPORTANT]
+> The ARK research runtime depends on scientific libraries that are most stable on x86_64. If you are building on an **Apple Silicon (M1/M2/M3)** Mac, you must build for the `linux/amd64` platform.
+>
+> All ARK Dockerfiles and the `docker-compose.yml` are configured to force `linux/amd64` by default.
+
+### Running with Docker Compose
+
+The easiest way to run the ARK Web Portal is using `docker-compose`. From the root of the project:
+
+```bash
+# Start the web portal (builds the image automatically for amd64)
+docker compose -f docker/docker-compose.yml up --build -d
+```
+
+The web portal will be accessible at `http://localhost:9527`. All databases, configurations, and project data are persisted automatically in a Docker named volume (`ark_data`).
+
+To view the live logs for the web portal:
+```bash
+docker compose -f docker/docker-compose.yml logs -f webapp
+```
+
+### Configuration
+
+To customize the web portal configuration (e.g., setting up SMTP for magic-link logins or OAuth):
+
+```bash
+# Create a custom config
+cp .ark/webapp.env.example .ark/webapp.env
+# Edit .ark/webapp.env with your credentials
+```
+Then uncomment the environment volume mapping in `docker/docker-compose.yml` under the `webapp` service:
+```yaml
+      - ../.ark/webapp.env:/data/.ark/webapp.env:ro
+```
+
+### Running Individual Jobs
+
+You can run isolated research jobs alongside the web app using the ARK job container. Uncomment the `job` service in `docker/docker-compose.yml`, then run:
+
+```bash
+docker compose -f docker/docker-compose.yml run --rm job \
+  --project myproject \
+  --project-dir /data/projects/<user-id>/myproject \
+  --mode research \
+  --iterations 10
+```
+
+*Note: You must pass your required API keys (e.g., `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) as environment variables.*
+
+### Running Standalone Containers (Directly)
+
+If you prefer to run the containers manually without Docker Compose:
+
+#### 1. Build the Images (Force amd64)
+```bash
+# Build Web Portal
+docker build --platform linux/amd64 -f docker/Dockerfile.webapp -t ark-webapp .
+
+# Build Job Container
+docker build --platform linux/amd64 -f docker/Dockerfile.job -t ark-job .
+```
+
+#### 2. Run the Web Portal
+```bash
+docker run -d --name ark-webapp \
+  --platform linux/amd64 \
+  -p 9527:9527 \
+  -v ark_data:/data \
+  ark-webapp
+```
+
+#### 3. Run a Research Job
+```bash
+docker run --rm -it \
+  --platform linux/amd64 \
+  -v ark_data:/data \
+  -e ANTHROPIC_API_KEY="sk-ant-..." \
+  ark-job \
+  --project myproject \
+  --project-dir /data/projects/myproject \
+  --mode research
+```
+
+### Pushing to Google Cloud Platform (GCP)
+
+ARK includes a script to build and push images to Google Artifact Registry or GCR.
+
+```bash
+# Push to Artifact Registry (recommended)
+./docker/push-gcp.sh --project [PROJECT_ID] --region [REGION] --repo [REPO] --build
+
+# Push to Legacy Container Registry (gcr.io)
+./docker/push-gcp.sh --project [PROJECT_ID] --legacy --build
+```
+The `--build` flag automatically builds the images for `linux/amd64` even when running on macOS.
+
+---
+
 ## Telegram Integration
 
 ```bash

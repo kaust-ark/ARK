@@ -36,7 +36,6 @@ dependencies:
       - annotated-types==0.7.0
       - anthropic==0.94.1
       - anyio==4.13.0
-      - ark-research==0.2.0
       - authlib==1.6.10
       - brotli==1.2.0
       - certifi==2026.2.25
