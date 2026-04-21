@@ -801,6 +801,10 @@
                 <span class="model-chip">Opus 4.7</span>
               </label>
               <label class="model-option">
+                <input type="radio" name="model" value="claude-opus-4-6" />
+                <span class="model-chip">Opus 4.6</span>
+              </label>
+              <label class="model-option">
                 <input type="radio" name="model" value="claude-haiku-4-5" />
                 <span class="model-chip">Haiku 4.5</span>
               </label>
@@ -1031,6 +1035,7 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap" id="continue-model-options">
           <label class="model-option"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6 <span style="opacity:.6;font-weight:400">· default</span></span></label>
           <label class="model-option"><input type="radio" name="continue-model" value="claude-opus-4-7" /><span class="model-chip">Opus 4.7</span></label>
+          <label class="model-option"><input type="radio" name="continue-model" value="claude-opus-4-6" /><span class="model-chip">Opus 4.6</span></label>
           <label class="model-option"><input type="radio" name="continue-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
           <label class="model-option"><input type="radio" name="continue-model" value="gemini" /><span class="model-chip">Gemini</span></label>
           <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="continue-model" value="gpt" disabled /><span class="model-chip">GPT</span></label>
@@ -1080,6 +1085,7 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="restart-model-options">
         <label class="model-option"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6 <span style="opacity:.6;font-weight:400">· default</span></span></label>
         <label class="model-option"><input type="radio" name="restart-model" value="claude-opus-4-7" /><span class="model-chip">Opus 4.7</span></label>
+        <label class="model-option"><input type="radio" name="restart-model" value="claude-opus-4-6" /><span class="model-chip">Opus 4.6</span></label>
         <label class="model-option"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
         <label class="model-option"><input type="radio" name="restart-model" value="gemini" /><span class="model-chip">Gemini</span></label>
         <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="restart-model" value="gpt" disabled /><span class="model-chip">GPT</span></label>
@@ -1172,6 +1178,10 @@
         <label class="model-option">
           <input type="radio" name="edit-model" value="claude-opus-4-7" />
           <span class="model-chip">Opus 4.7</span>
+        </label>
+        <label class="model-option">
+          <input type="radio" name="edit-model" value="claude-opus-4-6" />
+          <span class="model-chip">Opus 4.6</span>
         </label>
         <label class="model-option">
           <input type="radio" name="edit-model" value="claude-haiku-4-5" />
@@ -2949,7 +2959,7 @@ async function openContinueModal(id) {
   if (res.ok) {
     const p = await res.json();
     const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6',
-                       'claude-opus-4-7': 'claude-opus-4-7', 'claude-opus-4-6': 'claude-opus-4-7',
+                       'claude-opus-4-7': 'claude-opus-4-7', 'claude-opus-4-6': 'claude-opus-4-6',
                        'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini',
                        'sonnet': 'claude-sonnet-4-6', 'opus': 'claude-opus-4-7', 'haiku': 'claude-haiku-4-5' };
     const modelVal = modelMap[p.model] || 'claude-sonnet-4-6';
@@ -3022,7 +3032,7 @@ async function openRestartModal(id) {
 
   // Set model radio
   const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6',
-                     'claude-opus-4-7': 'claude-opus-4-7', 'claude-opus-4-6': 'claude-opus-4-7',
+                     'claude-opus-4-7': 'claude-opus-4-7', 'claude-opus-4-6': 'claude-opus-4-6',
                      'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini',
                      'sonnet': 'claude-sonnet-4-6', 'opus': 'claude-opus-4-7', 'haiku': 'claude-haiku-4-5' };
   const modelVal = modelMap[p.model] || 'claude-sonnet-4-6';
