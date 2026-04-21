@@ -1032,17 +1032,26 @@ implementation, paper writing, reviewing, and any supporting phase.
 - Do NOT select skills just because a topic is MENTIONED as a benchmark or
   baseline. Example: if the project EVALUATES on RL environments but does NOT
   train RL agents, do NOT select RL training skills.
-- No hard cap on count — select every skill that will meaningfully apply.
+- Typical project picks 3–10 skills. More than 15 is almost always
+  over-selection — each extra skill pollutes every downstream agent's context.
   Zero is acceptable if nothing matches.
-- When in doubt, leave it out — a wrong skill pollutes the agent context.
+- When in doubt, leave it out.
 
-## How to Explore
-The Skills Library section below gives you paths, not the full catalog.
-Use Read/Glob/Grep:
-- Read the master index JSON for the flat catalog (name, description, tags, path)
-- Glob category directories for structure
-- Read specific SKILL.md files (frontmatter + body) before committing to a skill
+## How to Explore (MANDATORY)
+The Skills Library section below gives you paths, not the full catalog. The
+index's descriptions are TRUNCATED — you MUST inspect the actual SKILL.md
+before committing to any skill.
+
+Required procedure:
+1. Read the master index JSON to see every skill's name/path
+2. Glob category directories as needed to understand structure
+3. For EACH candidate skill, Read its SKILL.md (frontmatter + body) to verify
+   it matches the project — do not rely on the index's truncated description
+4. Only after step 3 passes, add the path to selected_skills.json
+
 Do NOT rely on prior knowledge of the library — always check current state.
+Do NOT add a skill to selected_skills.json without having Read its SKILL.md
+in this session.
 
 ## Project Context (verified)
 {ctx_content_for_skills}
