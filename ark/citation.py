@@ -57,7 +57,7 @@ class VerificationResult:
 #  Constants
 # ═══════════════════════════════════════════════════════════
 
-_CROSSREF_MAILTO = "jihao.xin@kaust.edu.sa"
+_CROSSREF_MAILTO = "contact@idea2paper.org"
 _REQUEST_TIMEOUT = 15  # seconds
 _DBLP_DELAY = 0.3      # polite delay between DBLP requests
 _CROSSREF_DELAY = 0.2
@@ -72,7 +72,7 @@ _SIMILARITY_THRESHOLD = 0.82
 def _http_get(url: str, headers: dict | None = None, timeout: int = _REQUEST_TIMEOUT) -> str | None:
     """Simple HTTP GET, returns response body or None on error."""
     req = urllib.request.Request(url, headers=headers or {})
-    req.add_header("User-Agent", "ARK-Research/0.1 (mailto:jihao.xin@kaust.edu.sa)")
+    req.add_header("User-Agent", f"ARK-Research/0.1 (mailto:{_CROSSREF_MAILTO})")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read().decode("utf-8", errors="replace")

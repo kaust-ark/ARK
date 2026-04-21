@@ -20,7 +20,7 @@ _DEFAULTS = {
     "SMTP_USER": "",
     "SMTP_PASSWORD": "",
     "SMTP_RELAY": "",
-    "SMTP_FROM": "ark@localhost",
+    "SMTP_FROM": "contact@idea2paper.org",
     "PROJECTS_ROOT": "",  # resolved lazily
     "SECRET_KEY": secrets.token_hex(32),
     "DB_PATH": "",  # resolved lazily
@@ -67,7 +67,7 @@ SMTP_PORT=587
 SMTP_USER=
 SMTP_PASSWORD=
 SMTP_RELAY=
-SMTP_FROM=ark@localhost
+SMTP_FROM=contact@idea2paper.org
 
 # Allowed emails (comma-separated). If set, only these addresses can log in.
 ALLOWED_EMAILS=

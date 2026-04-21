@@ -36,6 +36,9 @@ ark_web_projects
 .ark/
 ark_webapp/
 
+# Claude Code worktrees/session state (local only)
+.claude/
+
 # Temp
 *.tmp
 *.pptx

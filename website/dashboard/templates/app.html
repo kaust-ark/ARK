@@ -10,6 +10,11 @@
     // use APP_BASE + path so the same HTML works regardless of mount point.
     window.APP_BASE = "{{ app_base }}";
     const APP_BASE = window.APP_BASE;
+    // Truthy when the SPA is rendered as a read-only project-share view.
+    // User-share links don't use this path — they redirect to /dashboard/
+    // with user_id seated, identical to a normal login.
+    window.SHARE_MODE = {{ 'true' if share_mode else 'false' }};
+    window.SHARE_PROJECT_ID = "{{ share_project_id }}";
   </script>
   <link rel="icon" type="image/png" href="{{ app_base }}/static/logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -59,6 +64,7 @@
       text-decoration: none; letter-spacing: -.02em;
     }
     .nav-brand span { color: var(--text-primary); }
+    .nav-brand .brand-suffix { color: var(--teal); }
     nav .spacer { flex: 1; }
     .nav-user { display: flex; align-items: center; gap: 10px; }
     .nav-user img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
@@ -554,10 +560,21 @@
     .ark-toast-item { padding: 10px 22px; border-radius: 10px; font-size: .9rem; background: #1e293b; color: #fff; opacity: 0; transform: translateY(-8px); transition: all .3s; pointer-events: auto; }
     .ark-toast-item.warn { background: #92400e; }
     .ark-toast-item.show { opacity: 1; transform: translateY(0); }
+
+    /* Project-share mode: read-only public view via signed link.
+       .share-hide is hidden in share mode (nav, write controls, create form). */
+    body.share-mode #main-nav,
+    body.share-mode .share-hide { display: none !important; }
+    body.share-mode #share-banner { display: block !important; }
   </style>
 </head>
-<body>
+<body class="{{ 'share-mode' if share_mode else '' }}">
 <div id="ark-toast"></div>
+
+<!-- Share-mode banner: only visible when body.share-mode -->
+<div id="share-banner" style="display:none;position:sticky;top:0;z-index:1000;background:linear-gradient(90deg,#0d9488,#14b8a6);color:#fff;padding:10px 16px;text-align:center;font-size:.88rem;font-weight:500;letter-spacing:.01em;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+  <span data-i18n="share_banner">You are viewing a shared project in read-only mode.</span>
+</div>
 
 <!-- NAV -->
 <nav id="main-nav" style="display:none">
@@ -650,7 +667,7 @@
   </div>
 
   <!-- Hero creation card -->
-  <div class="hero-card" id="hero-card"
+  <div class="hero-card share-hide" id="hero-card"
        ondragover="heroCardDragOver(event)"
        ondragleave="heroCardDragLeave(event)"
        ondrop="heroCardDrop(event)">
@@ -777,13 +794,13 @@
             <div style="display:flex;gap:8px;flex-wrap:wrap" id="model-options">
               <label class="model-option">
                 <input type="radio" name="model" value="claude-sonnet-4-6" checked />
-                <span class="model-chip">Sonnet 4.6</span>
+                <span class="model-chip">Sonnet 4.6 <span style="opacity:.6;font-weight:400">· default</span></span>
               </label>
-              <label class="model-option model-option-premium" style="opacity:.45;cursor:pointer" title="Buy Jihao a coffee to enable">
-                <input type="radio" name="model" value="claude-opus-4-6" disabled />
-                <span class="model-chip">Opus 4.6</span>
+              <label class="model-option">
+                <input type="radio" name="model" value="claude-opus-4-7" />
+                <span class="model-chip">Opus 4.7</span>
               </label>
-              <label class="model-option model-option-admin" title="Admin only" style="display:none">
+              <label class="model-option">
                 <input type="radio" name="model" value="claude-haiku-4-5" />
                 <span class="model-chip">Haiku 4.5</span>
               </label>
@@ -800,11 +817,11 @@
           <div style="display:flex;gap:16px;margin-top:12px">
             <div class="hero-adv-field" style="flex:1">
               <label>Max Dev Iterations</label>
-              <input type="number" name="max_dev_iterations" value="1" min="1" max="1" />
+              <input type="number" name="max_dev_iterations" value="1" min="1" max="5" />
             </div>
             <div class="hero-adv-field" style="flex:1">
               <label>Max Review Iterations</label>
-              <input type="number" name="max_iterations" value="1" min="1" max="1" />
+              <input type="number" name="max_iterations" value="1" min="1" max="5" />
             </div>
           </div>
         </div>
@@ -835,7 +852,7 @@
 <div id="page-detail" class="page">
   <div class="detail-header">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
-      <button class="btn-secondary" onclick="navigate('dashboard')" style="padding:6px 12px;font-size:.85rem" data-i18n="back">← Back</button>
+      <button class="btn-secondary share-hide" onclick="navigate('dashboard')" style="padding:6px 12px;font-size:.85rem" data-i18n="back">← Back</button>
       <span id="detail-badge" class="badge"></span>
     </div>
   </div>
@@ -848,7 +865,7 @@
            onblur="saveTitle()" onkeydown="if(event.key==='Enter')this.blur();if(event.key==='Escape'){this.value=this.dataset.original;this.blur()}" />
   </div>
 
-  <div class="detail-actions" id="detail-actions"></div>
+  <div class="detail-actions share-hide" id="detail-actions"></div>
 
   <div id="detail-queue-pos" style="display:none;margin-bottom:12px;padding:10px 14px;
     background:#e0e7ff;border-radius:8px;color:#3730a3;font-size:.9rem;font-weight:500"></div>
@@ -1006,16 +1023,16 @@
     <h3 data-i18n="continue_project">Continue Project</h3>
     <div class="form-row">
       <div class="form-group" style="flex:1">
-        <label data-i18n-html="additional_iterations_label">Additional iterations <span style="color:var(--text-muted);font-weight:400">(max 3)</span></label>
-        <input type="number" id="continue-iter" value="3" min="1" max="3" style="width:80px" />
+        <label data-i18n-html="additional_iterations_label">Additional iterations <span style="color:var(--text-muted);font-weight:400">(max 5)</span></label>
+        <input type="number" id="continue-iter" value="1" min="1" max="5" style="width:80px" />
       </div>
       <div class="form-group" style="flex:2">
         <label>Model</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap" id="continue-model-options">
-          <label class="model-option"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span></label>
-          <label class="model-option continue-model-admin" style="display:none"><input type="radio" name="continue-model" value="claude-opus-4-6" /><span class="model-chip">Opus 4.6</span></label>
-          <label class="model-option continue-model-admin" style="display:none"><input type="radio" name="continue-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
-          <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="continue-model" value="gemini" disabled /><span class="model-chip">Gemini</span></label>
+          <label class="model-option"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6 <span style="opacity:.6;font-weight:400">· default</span></span></label>
+          <label class="model-option"><input type="radio" name="continue-model" value="claude-opus-4-7" /><span class="model-chip">Opus 4.7</span></label>
+          <label class="model-option"><input type="radio" name="continue-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
+          <label class="model-option"><input type="radio" name="continue-model" value="gemini" /><span class="model-chip">Gemini</span></label>
           <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="continue-model" value="gpt" disabled /><span class="model-chip">GPT</span></label>
         </div>
       </div>
@@ -1053,7 +1070,7 @@
       </div>
       <div class="form-group" style="flex:1">
         <label>Max iterations</label>
-        <input type="number" id="restart-max-iter" value="3" min="1" max="3" style="width:80px" />
+        <input type="number" id="restart-max-iter" value="1" min="1" max="5" style="width:80px" />
       </div>
     </div>
     <input type="hidden" id="restart-venue-format" />
@@ -1061,10 +1078,10 @@
     <div class="form-group">
       <label>Model</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="restart-model-options">
-        <label class="model-option"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span></label>
-        <label class="model-option restart-model-admin" style="display:none"><input type="radio" name="restart-model" value="claude-opus-4-6" /><span class="model-chip">Opus 4.6</span></label>
-        <label class="model-option restart-model-admin" style="display:none"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
-        <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="restart-model" value="gemini" disabled /><span class="model-chip">Gemini</span></label>
+        <label class="model-option"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6 <span style="opacity:.6;font-weight:400">· default</span></span></label>
+        <label class="model-option"><input type="radio" name="restart-model" value="claude-opus-4-7" /><span class="model-chip">Opus 4.7</span></label>
+        <label class="model-option"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
+        <label class="model-option"><input type="radio" name="restart-model" value="gemini" /><span class="model-chip">Gemini</span></label>
         <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="restart-model" value="gpt" disabled /><span class="model-chip">GPT</span></label>
       </div>
     </div>
@@ -1142,7 +1159,7 @@
       </div>
       <div class="form-group">
         <label data-i18n="max_iterations">Max Iterations</label>
-        <input type="number" id="edit-max-iter" min="1" max="20" />
+        <input type="number" id="edit-max-iter" min="1" max="5" />
       </div>
     </div>
     <div class="form-group">
@@ -1153,8 +1170,8 @@
           <span class="model-chip">Sonnet 4.6</span>
         </label>
         <label class="model-option">
-          <input type="radio" name="edit-model" value="claude-opus-4-6" />
-          <span class="model-chip">Opus 4.6</span>
+          <input type="radio" name="edit-model" value="claude-opus-4-7" />
+          <span class="model-chip">Opus 4.7</span>
         </label>
         <label class="model-option">
           <input type="radio" name="edit-model" value="claude-haiku-4-5" />
@@ -1199,9 +1216,9 @@
     </div>
 
     <div class="form-group">
-      <label>Gemini API Key</label>
+      <label>Gemini API Key <span style="color:#ef4444;font-size:.75rem">* required</span></label>
       <div style="display:flex;gap:8px;align-items:center">
-        <input type="password" id="settings-gemini" placeholder="sk-..." style="flex:1" />
+        <input type="password" id="settings-gemini" placeholder="AIza..." style="flex:1" />
         <span id="settings-gemini-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
       </div>
       <div style="display:flex; justify-content:space-between; margin-top:2px; font-size:.7rem;">
@@ -1210,33 +1227,11 @@
       </div>
     </div>
 
-    
-    <div class="form-group">
-      <label>Anthropic API Key</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="password" id="settings-anthropic" placeholder="sk-ant-..." style="flex:1" />
-        <span id="settings-anthropic-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
-      </div>
-      <div id="status-anthropic" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
-    </div>
-
-
-    <div class="form-group">
-      <label>OpenAI API Key</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="password" id="settings-openai" placeholder="sk-..." style="flex:1" />
-        <span id="settings-openai-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
-      </div>
-      <div id="status-openai" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
-    </div>
-
-
-    <div class="or-divider"><span>OR</span></div>
-
     <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px;">
       <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#d946ef"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         <span style="font-weight:600; font-size:.95rem">Claude CLI Session (Headless)</span>
+        <span style="color:#ef4444;font-size:.7rem;margin-left:auto">* required</span>
       </div>
       <div style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#9a3412">
         <strong style="display:block; margin-bottom:4px">How to get these?</strong>
@@ -1245,7 +1240,6 @@
           <li>Copy the token and paste it below.</li>
         </ol>
       </div>
-
 
       <div class="form-group" style="margin-bottom:0">
         <label style="font-size:.75rem">OAuth Token (sk-ant-oat01-...)</label>
@@ -1257,26 +1251,53 @@
       </div>
     </div>
 
-    <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px; margin-top:16px;">
-      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#0d9488"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span style="font-weight:600; font-size:.95rem">Gemini CLI Session (Headless)</span>
-      </div>
-      <div style="background:#f0fdfa; border:1px solid #99f6e4; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#0f766e">
-        <strong style="display:block; margin-bottom:4px">How to get these?</strong>
-        <ol style="padding-left:16px; margin:0">
-          <li>On your local PC, run: <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">gemini auth login</code></li>
-          <li>Copy the contents of <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">~/.gemini/oauth_creds.json</code> and paste it below.</li>
-        </ol>
-      </div>
-
-      <div class="form-group" style="margin-bottom:0">
-        <label style="font-size:.75rem">OAuth JSON (~/.gemini/oauth_creds.json)</label>
-        <div style="display:flex;gap:8px;align-items:center">
-          <textarea id="settings-gemini-oauth" placeholder='{"client_id": "...", "client_secret": "...", ...}' style="flex:1; font-family:monospace; font-size:.8rem; min-height:80px;"></textarea>
-          <span id="settings-gemini_oauth-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+    <div class="hero-advanced" style="margin-top:16px">
+      <button type="button" class="hero-advanced-toggle" id="settings-advanced-toggle"
+              aria-expanded="false" onclick="toggleSettingsAdvanced()">
+        <span class="adv-arrow">▶</span> Advanced <span style="color:var(--text-muted);font-weight:400">(optional)</span>
+      </button>
+      <div class="hero-advanced-body" id="settings-advanced-body">
+        <div class="form-group">
+          <label>Anthropic API Key <span style="color:var(--text-muted);font-weight:400;font-size:.75rem">(optional)</span></label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="password" id="settings-anthropic" placeholder="sk-ant-..." style="flex:1" />
+            <span id="settings-anthropic-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+          </div>
+          <div id="status-anthropic" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
         </div>
-        <div id="status-gemini-oauth" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
+
+        <div class="form-group">
+          <label>OpenAI API Key <span style="color:var(--text-muted);font-weight:400;font-size:.75rem">(optional)</span></label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="password" id="settings-openai" placeholder="sk-..." style="flex:1" />
+            <span id="settings-openai-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+          </div>
+          <div id="status-openai" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
+        </div>
+
+        <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px;">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#0d9488"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span style="font-weight:600; font-size:.95rem">Gemini CLI Session (Headless)</span>
+            <span style="color:var(--text-muted);font-weight:400;font-size:.7rem;margin-left:auto">(optional)</span>
+          </div>
+          <div style="background:#f0fdfa; border:1px solid #99f6e4; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#0f766e">
+            <strong style="display:block; margin-bottom:4px">How to get these?</strong>
+            <ol style="padding-left:16px; margin:0">
+              <li>On your local PC, run: <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">gemini auth login</code></li>
+              <li>Copy the contents of <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">~/.gemini/oauth_creds.json</code> and paste it below.</li>
+            </ol>
+          </div>
+
+          <div class="form-group" style="margin-bottom:0">
+            <label style="font-size:.75rem">OAuth JSON (~/.gemini/oauth_creds.json)</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <textarea id="settings-gemini-oauth" placeholder='{"client_id": "...", "client_secret": "...", ...}' style="flex:1; font-family:monospace; font-size:.8rem; min-height:80px;"></textarea>
+              <span id="settings-gemini_oauth-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+            </div>
+            <div id="status-gemini-oauth" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1338,6 +1359,7 @@ const TRANSLATIONS = {
     empty_state: 'No projects yet — start by delegating your first research labor above.',
     // detail
     back: '← Back',
+    share_banner: 'You are viewing a shared project in read-only mode.',
     score: 'Score', project_info: 'Project Info',
     cost: 'Cost', no_cost_data: 'No cost data yet.',
     title: 'Title', idea: 'Idea',
@@ -1374,7 +1396,7 @@ const TRANSLATIONS = {
     step_plan2: 'Plan', step_execute: 'Execute', step_validate: 'Validate',
     // continue modal
     continue_project: 'Continue Project',
-    additional_iterations_label: 'Additional iterations <span style="color:var(--text-muted);font-weight:400">(max 3)</span>',
+    additional_iterations_label: 'Additional iterations <span style="color:var(--text-muted);font-weight:400">(max 5)</span>',
     instructions_comments_label: 'Instructions / Comments <span style="color:var(--text-muted);font-weight:400">(optional)</span>',
     placeholder_continue_comment: 'e.g. Add ablation study for X, improve Figure 3, address reviewer concern about Y…',
     cancel: 'Cancel', continue_btn: '▶ Continue',
@@ -1453,6 +1475,7 @@ const TRANSLATIONS = {
     your_projects: 'مشاريعك',
     empty_state: 'لا مشاريع بعد — ابدأ بتفويض مهمتك البحثية الأولى أعلاه.',
     back: '← رجوع',
+    share_banner: 'أنت تشاهد مشروعًا مُشاركًا في وضع القراءة فقط.',
     score: 'الدرجة', project_info: 'معلومات المشروع',
     cost: 'التكلفة', no_cost_data: 'لا توجد بيانات تكلفة بعد.',
     title: 'العنوان', idea: 'الفكرة',
@@ -1484,7 +1507,7 @@ const TRANSLATIONS = {
     step_compile: 'تجميع', step_review: 'مراجعة',
     step_plan2: 'تخطيط', step_execute: 'تنفيذ', step_validate: 'تحقق',
     continue_project: 'متابعة المشروع',
-    additional_iterations_label: 'تكرارات إضافية <span style="color:var(--text-muted);font-weight:400">(الحد الأقصى 3)</span>',
+    additional_iterations_label: 'تكرارات إضافية <span style="color:var(--text-muted);font-weight:400">(الحد الأقصى 5)</span>',
     instructions_comments_label: 'تعليمات / ملاحظات <span style="color:var(--text-muted);font-weight:400">(اختياري)</span>',
     placeholder_continue_comment: 'مثال: أضف دراسة استئصالية لـ X، حسّن الشكل 3، عالج ملاحظة المراجع حول Y…',
     cancel: 'إلغاء', continue_btn: '▶ متابعة',
@@ -1556,6 +1579,7 @@ const TRANSLATIONS = {
     your_projects: '我的项目',
     empty_state: '暂无项目 — 在上方开始你的第一个研究任务。',
     back: '← 返回',
+    share_banner: '您正在以只读模式查看一个共享项目。',
     score: '评分', project_info: '项目信息',
     cost: '消耗', no_cost_data: '暂无消耗数据。',
     title: '标题', idea: '研究想法',
@@ -1587,7 +1611,7 @@ const TRANSLATIONS = {
     step_compile: '编译', step_review: '审阅',
     step_plan2: '计划', step_execute: '执行', step_validate: '验证',
     continue_project: '继续项目',
-    additional_iterations_label: '追加迭代次数 <span style="color:var(--text-muted);font-weight:400">（最多 3 次）</span>',
+    additional_iterations_label: '追加迭代次数 <span style="color:var(--text-muted);font-weight:400">（最多 5 次）</span>',
     instructions_comments_label: '说明 / 备注 <span style="color:var(--text-muted);font-weight:400">（可选）</span>',
     placeholder_continue_comment: '例如：添加 X 的消融实验，改进图 3，回应审稿人对 Y 的意见…',
     cancel: '取消', continue_btn: '▶ 继续',
@@ -1721,13 +1745,19 @@ let logPinned = true;   // true = auto-scroll to bottom; false = user scrolled u
 //  Router
 // ══════════════════════════════════════════════════════
 function navigate(page, params = {}) {
+  // Project-share forces the visitor onto that project's detail view only.
+  if (window.SHARE_MODE) {
+    page = 'detail';
+    params = { id: window.SHARE_PROJECT_ID };
+  }
+
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById(`page-${page}`).classList.add('active');
 
   if (page === 'login') {
     document.getElementById('main-nav').style.display = 'none';
     checkGoogleLogin();
-  } else {
+  } else if (!window.SHARE_MODE) {
     document.getElementById('main-nav').style.display = 'flex';
   }
 
@@ -1826,50 +1856,7 @@ async function checkAuth() {
     if (el && !el.value) el.value = data.telegram_chat_id;
   }
 
-  // Show admin-only model options if user is admin
-  if (currentUser.is_admin) {
-    document.querySelectorAll('.model-option-admin').forEach(el => {
-      el.style.display = '';
-      const input = el.querySelector('input');
-      if (input) input.disabled = false;
-    });
-    // Unlock premium models for admin
-    document.querySelectorAll('.model-option-premium').forEach(el => {
-      el.style.opacity = '';
-      el.style.cursor = '';
-      el.title = '';
-      el.classList.add('model-option-admin');
-      const input = el.querySelector('input');
-      if (input) input.disabled = false;
-    });
-    // Unlock iteration limits for admin
-    const devIter = document.querySelector('input[name="max_dev_iterations"]');
-    if (devIter) { devIter.max = 10; devIter.value = 3; }
-    const revIter = document.querySelector('input[name="max_iterations"]');
-    if (revIter) { revIter.max = 5; revIter.value = 2; }
-  } else {
-    // Non-admin: show coffee toast when clicking premium models
-    document.querySelectorAll('.model-option-premium').forEach(el => {
-      el.addEventListener('click', (e) => {
-        e.preventDefault();
-        showToast('Buy Jihao a coffee to enable ☕', 'warn');
-      });
-    });
-    // Non-admin: show coffee toast when trying to change iterations
-    ['max_dev_iterations', 'max_iterations'].forEach(name => {
-      const input = document.querySelector(`input[name="${name}"]`);
-      if (input) {
-        input.style.cursor = 'pointer';
-        ['click', 'focus', 'mousedown', 'keydown'].forEach(evt => {
-          input.addEventListener(evt, (e) => {
-            e.preventDefault();
-            input.blur();
-            showToast('Buy Jihao a coffee to enable ☕', 'warn');
-          });
-        });
-      }
-    });
-  }
+  // Model and iteration pickers are unlocked for all users (self-provisioned keys).
 
   // Route based on hash
   const hash = location.hash;
@@ -2523,6 +2510,7 @@ function renderDetailActions(p) {
 }
 
 function startEditTitle(el) {
+  if (window.SHARE_MODE) return;  // read-only in share mode
   const input = document.getElementById('detail-title-input');
   input.value = el.textContent;
   input.dataset.original = el.textContent;
@@ -2595,7 +2583,7 @@ function renderLogLines(lines, append = true) {
     const span = document.createElement('span');
     span.className = 'log-line' +
       (line.includes('[ARK]') || line.includes('ark.') ? ' ark' : '') +
-      (line.toLowerCase().includes('error') ? ' error' : '') +
+      (line.toLowerCase().includes('error') && !line.toLowerCase().includes('successfully') ? ' error' : '') +
       (line.toLowerCase().includes('warn') ? ' warn' : '');
     span.textContent = line + '\n';
     logEl.appendChild(span);
@@ -2797,6 +2785,14 @@ function toggleHeroAdvanced() {
   body.classList.toggle('open', !expanded);
 }
 
+function toggleSettingsAdvanced() {
+  const btn = document.getElementById('settings-advanced-toggle');
+  const body = document.getElementById('settings-advanced-body');
+  const expanded = btn.getAttribute('aria-expanded') === 'true';
+  btn.setAttribute('aria-expanded', String(!expanded));
+  body.classList.toggle('open', !expanded);
+}
+
 // ══════════════════════════════════════════════════════
 //  Hero form — submit
 // ══════════════════════════════════════════════════════
@@ -2946,29 +2942,27 @@ let continueProjectId = null;
 async function openContinueModal(id) {
   continueProjectId = id;
   document.getElementById('continue-comment').value = '';
-  document.getElementById('continue-iter').value = '3';
+  document.getElementById('continue-iter').value = '1';
 
   // Fetch project detail to pre-fill model
   const res = await fetch(`${APP_BASE}/api/projects/${id}`);
   if (res.ok) {
     const p = await res.json();
-    const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6', 'claude-opus-4-6': 'claude-opus-4-6',
-                       'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini', 'sonnet': 'claude-sonnet-4-6',
-                       'opus': 'claude-opus-4-6', 'haiku': 'claude-haiku-4-5' };
+    const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6',
+                       'claude-opus-4-7': 'claude-opus-4-7', 'claude-opus-4-6': 'claude-opus-4-7',
+                       'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini',
+                       'sonnet': 'claude-sonnet-4-6', 'opus': 'claude-opus-4-7', 'haiku': 'claude-haiku-4-5' };
     const modelVal = modelMap[p.model] || 'claude-sonnet-4-6';
     document.querySelectorAll('input[name="continue-model"]').forEach(r => {
       r.checked = (r.value === modelVal);
     });
-  }
-  if (currentUser && currentUser.is_admin) {
-    document.querySelectorAll('.continue-model-admin').forEach(el => el.style.display = '');
   }
 
   document.getElementById('modal-continue').classList.add('open');
 }
 
 async function submitContinue() {
-  const iter = Math.max(1, Math.min(3, parseInt(document.getElementById('continue-iter').value) || 3));
+  const iter = Math.max(1, Math.min(5, parseInt(document.getElementById('continue-iter').value) || 1));
   const comment = document.getElementById('continue-comment').value.trim();
   const model = ([...document.querySelectorAll('input[name="continue-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-4-6';
   const btn = document.getElementById('continue-btn');
@@ -3027,17 +3021,14 @@ async function openRestartModal(id) {
   document.getElementById('restart-venue-pages').value = p.venue_pages || 9;
 
   // Set model radio
-  const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6', 'claude-opus-4-6': 'claude-opus-4-6',
-                     'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini', 'sonnet': 'claude-sonnet-4-6',
-                     'opus': 'claude-opus-4-6', 'haiku': 'claude-haiku-4-5' };
+  const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6',
+                     'claude-opus-4-7': 'claude-opus-4-7', 'claude-opus-4-6': 'claude-opus-4-7',
+                     'claude-haiku-4-5': 'claude-haiku-4-5', 'gemini': 'gemini',
+                     'sonnet': 'claude-sonnet-4-6', 'opus': 'claude-opus-4-7', 'haiku': 'claude-haiku-4-5' };
   const modelVal = modelMap[p.model] || 'claude-sonnet-4-6';
   document.querySelectorAll('input[name="restart-model"]').forEach(r => {
     r.checked = (r.value === modelVal);
   });
-  // Show admin model options if user is admin
-  if (currentUser && currentUser.is_admin) {
-    document.querySelectorAll('.restart-model-admin').forEach(el => el.style.display = '');
-  }
 
   // Deep research checkbox
   const drSection = document.getElementById('restart-deep-research-section');
@@ -3068,7 +3059,7 @@ async function submitRestart() {
       venue: document.getElementById('restart-venue').value,
       venue_format: document.getElementById('restart-venue-format').value,
       venue_pages: parseInt(document.getElementById('restart-venue-pages').value) || 9,
-      max_iterations: Math.max(1, Math.min(3, parseInt(document.getElementById('restart-max-iter').value) || 3)),
+      max_iterations: Math.max(1, Math.min(5, parseInt(document.getElementById('restart-max-iter').value) || 1)),
       model: ([...document.querySelectorAll('input[name="restart-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-4-6',
       telegram_token: document.getElementById('restart-tg-token').value.trim(),
       telegram_chat_id: document.getElementById('restart-tg-chatid').value.trim(),
@@ -3239,7 +3230,7 @@ async function adminEditProject(id) {
 
   document.getElementById('edit-title').value = p.title || '';
   document.getElementById('edit-venue-pages').value = p.venue_pages || 9;
-  document.getElementById('edit-max-iter').value = p.max_iterations || 3;
+  document.getElementById('edit-max-iter').value = p.max_iterations || 1;
   document.getElementById('edit-tg-token').value = p.telegram_token || '';
   document.getElementById('edit-tg-chat').value = p.telegram_chat_id || '';
 
@@ -3273,7 +3264,7 @@ async function adminSaveProject() {
     venue: sel.value,
     venue_format: opt ? opt.dataset.format : '',
     venue_pages: parseInt(document.getElementById('edit-venue-pages').value) || 9,
-    max_iterations: parseInt(document.getElementById('edit-max-iter').value) || 3,
+    max_iterations: parseInt(document.getElementById('edit-max-iter').value) || 1,
     telegram_token: document.getElementById('edit-tg-token').value.trim(),
     telegram_chat_id: document.getElementById('edit-tg-chat').value.trim(),
     model,
@@ -3308,9 +3299,9 @@ async function adminToggleProject(id, status) {
     const res = await fetch(`${APP_BASE}/api/projects/${id}/restart`, { method: 'POST' });
     if (!res.ok) { const e = await res.json().catch(() => ({})); alert(e.detail || 'Failed to restart'); return; }
   } else if (status === 'done') {
-    const iter = prompt('Add how many iterations? (1–10)', '3');
+    const iter = prompt('Add how many iterations? (1–5)', '1');
     if (iter === null) return;
-    const n = Math.max(1, Math.min(10, parseInt(iter) || 3));
+    const n = Math.max(1, Math.min(5, parseInt(iter) || 1));
     const res = await fetch(`${APP_BASE}/api/projects/${id}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3482,6 +3473,15 @@ async function openSettingsModal() {
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
     document.getElementById('status-claude-token').textContent = data.claude_oauth_token ? 'Current: ' + data.claude_oauth_token : '';
     document.getElementById('status-gemini-oauth').textContent = data.gemini_oauth_json ? 'Current: [JSON Config]' : '';
+
+    // Auto-expand Advanced if any optional field is already set
+    const advBtn = document.getElementById('settings-advanced-toggle');
+    const advBody = document.getElementById('settings-advanced-body');
+    const hasAdv = data.anthropic || data.openai || data.gemini_oauth_json;
+    if (advBtn && advBody && hasAdv) {
+      advBtn.setAttribute('aria-expanded', 'true');
+      advBody.classList.add('open');
+    }
   } catch(e) {}
 }
 
@@ -3511,6 +3511,20 @@ async function saveUserSettings() {
       claude_oauth_token: document.getElementById('settings-claude-token').value.trim(),
       gemini_oauth_json: document.getElementById('settings-gemini-oauth').value.trim(),
     };
+
+    // Validate: Gemini API Key is required
+    if (!body.gemini || body.gemini.includes('...')) {
+      showToast('Gemini API Key is required', 'warn');
+      btn.disabled = false; btn.textContent = 'Verify and Save Keys';
+      return;
+    }
+    // Validate: Claude CLI Session is required
+    const hasClaude = body.claude_oauth_token && !body.claude_oauth_token.includes('...');
+    if (!hasClaude) {
+      showToast('Claude CLI Session is required', 'warn');
+      btn.disabled = false; btn.textContent = 'Verify and Save Keys';
+      return;
+    }
 
     // Show wait icons for non-empty keys
     if (body.gemini && !body.gemini.includes('...')) document.getElementById('settings-gemini-status').innerHTML = '⏳';
@@ -3596,7 +3610,27 @@ function showToast(msg, type='') {
 //  Boot
 // ══════════════════════════════════════════════════════
 applyI18n();
-checkAuth();
+
+if (window.SHARE_MODE) {
+  // Project-share visitors skip login and land directly on the detail page.
+  // CSS hides write controls via body.share-mode .share-hide; we also
+  // intercept non-GET fetches as defense-in-depth — the server blocks them
+  // too since a project-share session has no user_id.
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    const method = ((init && init.method) || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') {
+      return Promise.resolve(new Response(
+        JSON.stringify({detail: 'This link is in view-only share mode.'}),
+        {status: 403, headers: {'Content-Type': 'application/json'}}
+      ));
+    }
+    return _origFetch(input, init);
+  };
+  navigate('detail', { id: window.SHARE_PROJECT_ID });
+} else {
+  checkAuth();
+}
 </script>
 </body>
 </html>

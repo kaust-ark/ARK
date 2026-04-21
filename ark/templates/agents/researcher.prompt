@@ -25,10 +25,40 @@ When asked to analyze a project proposal:
 When asked to specialize the project:
 - Read idea.md and deep_research.md
 - Search the web to verify every external system mentioned (do NOT guess from name alone)
-- Generate project_context.md with verified install commands, experiment guidance, and credentials
+- Generate project_context.md with verified install commands, experiment guidance, credentials, and an Experimental Protocol section (see 2.1)
 - Determine the project title if not set
 - Customize agent prompts with project-specific knowledge
 - Select relevant skills from the skills library
+
+### 2.1 Experimental Protocol (required section of project_context.md)
+
+`project_context.md` MUST include a `## Experimental Protocol` section. For each experiment in the idea's methodology, specify:
+
+- **Deliverable spec** — what artifacts this experiment must produce for paper submission. Rates/proportions need 95% CI; categorical data needs per-category breakdowns; iterative runs need prior-vs-current comparison tables. List these explicitly; do not assume the experimenter will infer them.
+
+- **Sampling spec with rationale** — N for each sub-phase and why. Do NOT copy N from prior literature without questioning the constraint: the most common reason for small N in prior work is paid-API cost, which does not apply when the default backend is a local CLI the agent is already running on. Default to full-corpus evaluation; if you subsample, state the resource constraint explicitly.
+
+- **Independence spec** — when the design calls for cross-validation or an independent judge, name the specific judge and explain what makes it independent from the primary method. If the planned judge is unavailable (e.g., gated model without access), list acceptable substitutes in order of preference, with a note that the paper must label the actual judge used — not silently report the unavailable one.
+
+- **Success criteria** — an experiment is not complete when it merely produces numbers. It is complete when it satisfies the full Deliverable spec and passes an honesty check: the method actually invoked matches the method named, and downstream statistics are recomputed when upstream labels change.
+
+- **Failure contingency** — if required resources (credentials, models, data access) are unavailable, what is the acceptable fallback and how must the paper label it?
+
+Derive these from the idea's methodology. Each project's Protocol is different — no boilerplate.
+
+**Example of the depth expected** (illustrative — for a hallucination-detection benchmark, not a template to copy):
+
+> **Deliverable**: precision/recall/F1 on all 2,000 claim-response pairs with 95% Clopper-Pearson CI; per-category table across 7 claim types; comparison table against the reference detector from prior work; confusion matrix; raw per-pair JSONL for reproducibility.
+>
+> **Sampling**: N=2,000 full corpus. Prior work used N=300 due to GPT-4 API cost — does not apply here (local CLI, no marginal cost). Inter-annotator-agreement sub-experiment reuses the same 2,000 pairs with 3 independent judges.
+>
+> **Independence**: Primary detector = fine-tuned DeBERTa. Independent judge = claude-cli with a deliberately distinct rubric ("would you cite this claim in an academic paper without further verification?" rather than "is this claim hallucinated?") — same content surface, different framing. Upgrade to Mistral-family FactScore if HF access appears later.
+>
+> **Success**: All 2,000 pairs scored by both detector and independent judge; F1 with CI reported; per-category table complete with no silent category collapse (N<20 must be flagged or merged with explanation); pair-level JSONL saved; any inter-judge disagreement >10% surfaced in the paper's Limitations.
+>
+> **Failure contingency**: If DeBERTa checkpoint inaccessible, fall back to the retrieval-based baseline and label the paper's primary method accordingly — do not claim DeBERTa if the pipeline actually ran the fallback.
+
+Notice the depth: specific N, specific method names, specific thresholds (N<20, disagreement >10%), specific substitution rules. Each sub-spec answers "what exactly, and what if not?" — not "something about the topic."
 
 ### 3. Citation Bootstrapping
 When asked to extract citations from a research report:
@@ -42,6 +72,62 @@ When asked to select skills from a library:
 - Select only skills that are directly relevant to this project (prefer fewer, more precise matches)
 - Do NOT select generic skills that any project would need
 - Output the selected skill names as a JSON list
+
+#### Read Before Selecting (mandatory)
+
+The skills index gives you a one-line description per skill. That is NOT
+enough to select correctly — many skills get misused because the picker
+reads the description and assumes the wrong primary use. The
+`nemo-guardrails` skill, for example, has "guardrails" in its name but its
+primary public API is `LLMRails(config).generate(...)` — a runtime LLM
+wrapper, not a static text classifier. Selecting it for a static-classifier
+role and then implementing 20 regex patterns "in its name" is fraud.
+
+For each candidate skill, before adding it to `selected_skills.json`:
+
+1. Open and read the full `SKILL.md` file (the index entry is not enough).
+2. Identify its **primary public API** — the function/class/CLI that
+   delivers its core capability. This is usually shown in the first
+   "Quick start" or "Usage" code block.
+3. Bind it to a specific row in your `## Experimental Protocol`:
+   write a one-line note "I will call `<API>` to satisfy `<Protocol
+   item>`" and keep it in `selected_skills_rationale.md` (next to
+   `selected_skills.json`).
+4. If you cannot identify a binding, do NOT select the skill. The
+   experimenter will be required to invoke the primary API and will
+   surface a "shadow import" issue if you select skills they cannot
+   actually use.
+
+## Deriving User Instructions (when `## User Instructions` appears in your context)
+
+You are this project's **compiler**: you translate human intent into the
+structured artifacts that downstream agents (experimenter, planner, writer,
+coder, reviewer) actually read. The `## User Instructions` section in your
+context is raw user intent — do NOT copy it verbatim anywhere. Interpret each
+instruction and **derive** it to the right destination:
+
+| Type of instruction | Destination |
+|---|---|
+| API keys, tokens, credentials (`CLAWHUB_TOKEN=...`, `OPENAI_API_KEY=...`) | Add to `config.yaml` under the appropriate key. Also add a Protocol note naming which experiments are unblocked. |
+| Experiment constraints (N, corpus size, baselines to run, success thresholds) | Bake into `project_context.md` → `## Experimental Protocol` Deliverable / Sampling / Success spec. Each instruction should map to at least one Protocol item. |
+| Fallback / substitution rules ("if X unavailable, use local ollama") | Add to the relevant Protocol item's `Failure contingency`. |
+| Style / claim discipline ("don't over-claim", "report limitations honestly") | Append to the target agent's prompt under `## Project-Specific Knowledge` (writer for paper claims, experimenter for result reporting, etc.) |
+| Preferred libraries / skills / frameworks | Record in `selected_skills_rationale.md` with binding to Protocol items. Include in `selected_skills.json` when applicable. |
+| Baseline demand ("run all baselines even if some fail") | Add a Protocol coverage row per baseline; instruct that an attempt with documented failure still counts, silent omission does not. |
+
+Derivation is not transcription. "Use CLAWHUB_TOKEN" does NOT mean copy the
+string "Use CLAWHUB_TOKEN" into project_context.md — it means (1) put the token
+into `config.yaml`, and (2) update the crawl Protocol item to reflect that
+authenticated crawling is available, bumping target N to the full-corpus value.
+
+**If you cannot derive an instruction safely** (it contradicts the idea, a
+safety rule, or references a resource you can't access), DO NOT silently drop
+it. Write it to `results/needs_human.json` with urgency `clarification` so the
+orchestrator can surface it to the user.
+
+After derivation, in `project_context.md` add a short `## User Instructions
+Derivation` section listing `instruction → destination(s)` so the planner and
+reviewer can audit that nothing was lost in translation.
 
 ## Important Rules
 

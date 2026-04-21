@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ARK — 自动科研套件</title>
-  <meta name="description" content="把重复劳动交给系统，把研究方向掌握在你手里。ARK 通过多个专业 AI Agent 协同完成实验、写作与迭代。">
+  <meta name="description" content="把重复劳动交给系统，把研究方向掌握在你手里。ARK 通过 6 个专业 AI Agent 协同完成实验、写作与迭代。">
   <meta property="og:title" content="ARK — 自动科研套件">
   <meta property="og:description" content="活儿交出去，方向握手里。">
   <meta property="og:image" content="https://idea2paper.org/assets/social-preview.png">
@@ -27,18 +27,23 @@
   <div class="container">
     <a href="#" class="nav-brand">ARK</a>
     <div class="nav-links" id="navLinks">
-      <a href="#compare">为什么选择 ARK</a>
-      <a href="#papers">论文</a>
-      <a href="#pipeline">Pipeline</a>
-      <a href="#agents">Agents</a>
+      <a href="/dashboard">Dashboard</a>
       <a href="doc.html">文档</a>
-      <a href="about.html">关于</a>
-      <a href="../index.html" class="lang-toggle" title="Switch to English">EN</a>
-      <a href="../ar/index.html" class="lang-toggle" title="التبديل إلى العربية">العربية</a>
+      <a href="#about">关于</a>
       <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener" class="gh-link">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 00-3.8 23.38c.6.11.82-.26.82-.58v-2.16c-3.34.73-4.04-1.61-4.04-1.61a3.18 3.18 0 00-1.33-1.76c-1.09-.74.08-.73.08-.73a2.52 2.52 0 011.84 1.24 2.56 2.56 0 003.5 1 2.56 2.56 0 01.76-1.61c-2.67-.3-5.47-1.33-5.47-5.93a4.64 4.64 0 011.24-3.22 4.3 4.3 0 01.12-3.18s1-.33 3.3 1.23a11.4 11.4 0 016 0c2.3-1.56 3.3-1.23 3.3-1.23a4.3 4.3 0 01.12 3.18 4.64 4.64 0 011.24 3.22c0 4.61-2.81 5.63-5.48 5.93a2.86 2.86 0 01.82 2.22v3.29c0 .32.21.7.82.58A12 12 0 0012 .3"/></svg>
         GitHub
       </a>
+      <div class="lang-dropdown">
+        <button class="lang-toggle-btn" aria-label="Language">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+        </button>
+        <div class="lang-dropdown-menu">
+          <a href="../index.html">English</a>
+          <a href="index.html" class="active">中文</a>
+          <a href="../ar/index.html">العربية</a>
+        </div>
+      </div>
     </div>
     <button class="hamburger" id="hamburger" aria-label="Menu">
       <span></span><span></span><span></span>
@@ -54,48 +59,27 @@
     <div class="hero-content">
       <img src="../assets/logo_ark_transparent.png" alt="ARK" class="hero-logo">
       <h1 class="gradient-text">Automatic Research Kit</h1>
-      <p class="hero-accent">Offload the Labour. Steer the Science.</p>
       <div class="hero-cta">
         <div class="hero-cta-row">
           <a href="/dashboard" class="btn btn-primary">
-            🚀 启动项目
+            🚀 启动 ARK 项目
           </a>
         </div>
       </div>
-      <p class="hero-subtitle">自动化科研框架，将想法转化为论文——文献调研、Slurm 实验、图表生成、LaTeX 撰写与迭代审稿——随时通过网页或 Telegram 掌控全局。</p>
+      <p class="hero-accent">Offload the Labour. Steer the Science.</p>
     </div>
   </div>
 </section>
 
-<!-- ===== ARK vs Others ===== -->
-<section id="compare">
+<!-- ===== About ARK ===== -->
+<section id="about">
   <div class="container">
     <div style="text-align:center">
-      <p class="section-label reveal">为什么选择 ARK</p>
-      <h2 class="section-title reveal">全面自动化，全面掌控</h2>
+      <p class="section-label reveal">关于 ARK</p>
+      <h2 class="section-title reveal">从想法到论文，全自动</h2>
     </div>
-
-    <div class="comparison-split">
-      <div class="comparison-col comparison-col--other">
-        <div class="comparison-col-header">其他工具</div>
-        <ul>
-          <li><strong>自动化漂移</strong><br>无人监督运行，中途无法纠偏。</li>
-          <li><strong>排版混乱</strong><br>布局错乱、LaTeX 报错，需大量人工修复。</li>
-          <li><strong>引用幻觉</strong><br>LLM 编造看似合理但不存在的参考文献。</li>
-          <li><strong>图片质量低</strong><br>默认样式、尺寸失控，无视栏宽和页面约束。</li>
-          <li><strong>配置繁琐</strong><br>需手动配置环境、调整依赖，上手门槛高。</li>
-        </ul>
-      </div>
-      <div class="comparison-col comparison-col--ark">
-        <div class="comparison-col-header">ARK</div>
-        <ul>
-          <li><strong>人机协同</strong><br>关键决策点暂停，随时通过 Telegram 或网页介入。</li>
-          <li><strong>出版级排版</strong><br>硬编码 LaTeX + 会议模板（NeurIPS、ACL、IEEE……）。</li>
-          <li><strong>引用验证</strong><br>每条引用经 DBLP API 验证，杜绝虚假文献。</li>
-          <li><strong>精准控图</strong><br>Paper Banana + 会议画布尺寸、栏宽、字号精确匹配。</li>
-          <li><strong>一键启动</strong><br>网页端一键运行，零配置开箱即用。</li>
-        </ul>
-      </div>
+    <div class="about-ark-content reveal">
+      <p>ARK（Automatic Research Kit）是一个从想法到论文的科研自动化服务。给它一个研究想法和目标会议——ARK 负责文献调研、实验设计、代码执行、图表生成、LaTeX 撰写和迭代修改。六个专业 AI Agent 通过结构化流程协作，您可以随时通过 Web Dashboard 或 Telegram 掌控每一个关键节点。</p>
     </div>
   </div>
 </section>
@@ -201,6 +185,39 @@
 </section>
 
 
+<!-- ===== ARK vs Others ===== -->
+<section id="compare">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">为什么选择 ARK</p>
+      <h2 class="section-title reveal">全面自动化，全面掌控</h2>
+    </div>
+
+    <div class="comparison-split">
+      <div class="comparison-col comparison-col--other">
+        <div class="comparison-col-header">其他工具</div>
+        <ul>
+          <li><strong>自动化漂移</strong><br>无人监督运行，中途无法纠偏。</li>
+          <li><strong>排版混乱</strong><br>布局错乱、LaTeX 报错，需大量人工修复。</li>
+          <li><strong>引用幻觉</strong><br>LLM 编造看似合理但不存在的参考文献。</li>
+          <li><strong>图片质量低</strong><br>默认样式、尺寸失控，无视栏宽和页面约束。</li>
+          <li><strong>配置繁琐</strong><br>需手动配置环境、调整依赖，上手门槛高。</li>
+        </ul>
+      </div>
+      <div class="comparison-col comparison-col--ark">
+        <div class="comparison-col-header">ARK</div>
+        <ul>
+          <li><strong>人机协同</strong><br>关键决策点暂停，随时通过 Telegram 或网页介入。</li>
+          <li><strong>出版级排版</strong><br>硬编码 LaTeX + 会议模板（NeurIPS、ACL、IEEE……）。</li>
+          <li><strong>引用验证</strong><br>每条引用经 DBLP API 验证，杜绝虚假文献。</li>
+          <li><strong>精准控图</strong><br>Paper Banana + 会议画布尺寸、栏宽、字号精确匹配。</li>
+          <li><strong>一键启动</strong><br>网页端一键运行，零配置开箱即用。</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ===== Pipeline ===== -->
 <section id="pipeline">
   <div class="container">
@@ -251,21 +268,60 @@
       </div>
     </div>
 
-    <div class="review-loop" id="reviewLoop">
-      <div class="review-loop-header reveal">
-        <p class="section-label" style="margin-bottom:.3rem">审稿循环</p>
-        <h3 class="review-loop-title">每轮迭代 5 步</h3>
+    <div class="pipeline-details">
+      <div class="phase-detail reveal" id="phaseDetail1">
+        <div class="phase-detail-header">
+          <h3>研究阶段</h3>
+        </div>
+        <div class="loop-steps-inline">
+          <span class="loop-inline-step"><span class="loop-step-icon">⚙️</span> 环境搭建</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">📖</span> 分析提案</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">🔬</span> 深度调研</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">🎯</span> 特化定制</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">📚</span> 引用引导</span>
+        </div>
       </div>
-      <div class="loop-steps-inline reveal">
-        <span class="loop-inline-step"><span class="loop-step-icon">📄</span> 编译</span>
-        <span class="loop-inline-arr">&rarr;</span>
-        <span class="loop-inline-step"><span class="loop-step-icon">🔍</span> 审稿</span>
-        <span class="loop-inline-arr">&rarr;</span>
-        <span class="loop-inline-step"><span class="loop-step-icon">📋</span> 规划</span>
-        <span class="loop-inline-arr">&rarr;</span>
-        <span class="loop-inline-step"><span class="loop-step-icon">⚡</span> 执行</span>
-        <span class="loop-inline-arr">&rarr;</span>
-        <span class="loop-inline-step"><span class="loop-step-icon">✅</span> 验证</span>
+
+      <div class="phase-detail reveal" id="phaseDetail2">
+        <div class="phase-detail-header">
+          <h3>开发阶段</h3>
+          <span class="phase-detail-tag">迭代式</span>
+        </div>
+        <div class="loop-steps-inline">
+          <span class="loop-inline-step"><span class="loop-step-icon">📋</span> 规划实验</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">🧪</span> 执行实验</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">📊</span> 分析结果</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">✅</span> 完整性评估</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">📈</span> 生成图表</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">✍️</span> 撰写初稿</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">📦</span> 交付</span>
+        </div>
+      </div>
+
+      <div class="phase-detail reveal" id="phaseDetail3">
+        <div class="phase-detail-header">
+          <h3>审稿阶段</h3>
+          <span class="phase-detail-tag">循环至分数 &ge; 阈值</span>
+        </div>
+        <div class="loop-steps-inline">
+          <span class="loop-inline-step"><span class="loop-step-icon">🔍</span> 审稿</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">📋</span> 规划</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step"><span class="loop-step-icon">⚡</span> 执行</span>
+          <span class="loop-inline-arr">&rarr;</span>
+          <span class="loop-inline-step loop-repeat-step"><span class="loop-step-icon">↻</span> 循环</span>
+        </div>
       </div>
     </div>
   </div>
@@ -277,71 +333,45 @@
     <div style="text-align:center">
       <p class="section-label reveal">认识团队</p>
       <h2 class="section-title reveal">ARK Agents</h2>
-      <p class="section-subtitle reveal">八个专家 Agent，通过共享状态和结构化交接协作。</p>
+      <p class="section-subtitle reveal">六个专家 Agent，通过共享状态和结构化交接协作。</p>
     </div>
     <div class="agents-grid">
-      <div class="agent-card agent-reviewer reveal stagger-1">
-        <div class="agent-icon">
-          <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
-        </div>
-        <div class="agent-info"><h3>Reviewer</h3><p>按会议标准给论文打分，生成改进任务。</p></div>
-      </div>
-      <div class="agent-card agent-planner reveal stagger-2">
-        <div class="agent-icon">
-          <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-        </div>
-        <div class="agent-info"><h3>Planner</h3><p>将审稿意见转化为含实验和写作任务的行动计划。</p></div>
-      </div>
-      <div class="agent-card agent-writer reveal stagger-3">
-        <div class="agent-icon">
-          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-        </div>
-        <div class="agent-info"><h3>Writer</h3><p>撰写和打磨 LaTeX 章节，引用经 DBLP 验证。</p></div>
-      </div>
-      <div class="agent-card agent-experimenter reveal stagger-4">
-        <div class="agent-icon">
-          <svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-        </div>
-        <div class="agent-info"><h3>Experimenter</h3><p>设计实验、提交 Slurm 任务、分析结果。</p></div>
-      </div>
-      <div class="agent-card agent-researcher reveal stagger-5">
+      <div class="agent-card agent-researcher reveal stagger-1">
         <div class="agent-icon">
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </div>
-        <div class="agent-info"><h3>Researcher</h3><p>深度文献调研，通过学术 API 发现空白、搜集证据。</p></div>
+        <div class="agent-info"><h3>Researcher</h3><p>分析提案，生成深度调研查询，引导引用。</p></div>
       </div>
-      <div class="agent-card agent-visualizer reveal stagger-6">
+      <div class="agent-card agent-reviewer reveal stagger-2">
         <div class="agent-icon">
-          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
         </div>
-        <div class="agent-info"><h3>Visualizer</h3><p>基于 Paper Banana 和会议画布尺寸生成出版级图表。</p></div>
+        <div class="agent-info"><h3>Reviewer</h3><p>逐页评估论文，在多个维度上打分。</p></div>
       </div>
-      <div class="agent-card agent-debugger reveal stagger-7">
+      <div class="agent-card agent-planner reveal stagger-3">
         <div class="agent-icon">
-          <svg viewBox="0 0 24 24"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
         </div>
-        <div class="agent-info"><h3>Meta-Debugger</h3><p>识别流程停滞、诊断故障，触发自修复。</p></div>
+        <div class="agent-info"><h3>Planner</h3><p>分类问题，创建修复任务，规划实验。</p></div>
       </div>
-      <div class="agent-card agent-coder reveal stagger-8">
+      <div class="agent-card agent-writer reveal stagger-4">
+        <div class="agent-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </div>
+        <div class="agent-info"><h3>Writer</h3><p>修改 LaTeX 论文和 Python 绘图脚本。</p></div>
+      </div>
+      <div class="agent-card agent-experimenter reveal stagger-5">
+        <div class="agent-icon">
+          <svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+        </div>
+        <div class="agent-info"><h3>Experimenter</h3><p>运行真实实验，收集并分析结果。</p></div>
+      </div>
+      <div class="agent-card agent-coder reveal stagger-6">
         <div class="agent-icon">
           <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         </div>
-        <div class="agent-info"><h3>Coder</h3><p>编写和调试实验代码与分析脚本。</p></div>
+        <div class="agent-info"><h3>Coder</h3><p>编写生产代码、测试和维护代码质量。</p></div>
       </div>
-    </div>
-  </div>
-</section>
-
-<!-- ===== Team ===== -->
-<section id="team">
-  <div class="container">
-    <div style="text-align:center">
-      <p class="section-label reveal">我们是谁</p>
-      <h2 class="section-title reveal">KAUST SANDS Lab 出品</h2>
-    </div>
-    <div class="team-content reveal">
-      <p>ARK 由 <strong style="color:var(--text-primary)">KAUST（阿卜杜拉国王科技大学）SANDS Lab</strong> 开发。</p>
-      <a href="https://sands.kaust.edu.sa/" target="_blank" rel="noopener" class="btn btn-outline">访问 SANDS Lab</a>
     </div>
   </div>
 </section>

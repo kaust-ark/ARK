@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/logo_ark_transparent.png" alt="ARK" width="260">
+  <img src="https://idea2paper.org/assets/logo_ark_transparent.png" alt="ARK" width="260">
 </p>
 
 <h1 align="center">ARK &mdash; Automatic Research Kit</h1>
@@ -16,13 +16,13 @@
   <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/agents-8-orange.svg" alt="8 Agents">
+  <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 Agents">
   <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
-  <img src="https://img.shields.io/badge/tests-115-brightgreen.svg" alt="115 Tests">
+  <img src="https://img.shields.io/badge/tests-114-brightgreen.svg" alt="114 Tests">
 </p>
 
 <p align="center">
-  <a href="https://kaust-ark.github.io/"><strong>Website</strong></a> &bull;
+  <a href="https://idea2paper.org/"><strong>Website</strong></a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#ark-pipeline">Pipeline</a> &bull;
   <a href="#ark-agents">Agents</a> &bull;
@@ -31,7 +31,7 @@
 
 ---
 
-ARK orchestrates **8 specialized AI agents** to turn a research idea into a paper &mdash; literature search, Slurm experiments, LaTeX drafting, figure generation, and iterative peer review &mdash; while you stay in control via **CLI**, **Web Portal**, or **Telegram**.
+ARK orchestrates **6 specialized AI agents** to turn a research idea into a paper &mdash; proposal analysis, literature search, Slurm experiments, LaTeX drafting, and iterative peer review &mdash; while you stay in control via **CLI**, **Dashboard**, or **Telegram**.
 
 ```
 Give it an idea and a venue. ARK handles the rest.
@@ -40,7 +40,7 @@ Give it an idea and a venue. ARK handles the rest.
 ## Papers Written by ARK
 
 <p align="center">
-<img src="https://kaust-ark.github.io/assets/paper-example.png" alt="MMA Paper" width="480">
+<img src="https://idea2paper.org/assets/paper-example.png" alt="MMA Paper" width="480">
 <br>
 <a href="https://github.com/JihaoXin/mma"><em>CPU Matrix Multiplication: From Naive to Efficient</em></a>
 <br>
@@ -54,12 +54,12 @@ Give it an idea and a venue. ARK handles the rest.
 ARK runs three phases in sequence. The Review phase loops until the paper reaches the target score.
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/pipeline_overview.png" alt="ARK Pipeline" width="700">
+  <img src="https://idea2paper.org/assets/pipeline_overview.png" alt="ARK Pipeline" width="700">
 </p>
 
 | Phase | What Happens |
 |:------|:-------------|
-| **Research** | 4-step pipeline: Deep Research &rarr; Initializer (bootstrap env &amp; citations) &rarr; Planner &rarr; Experimenter |
+| **Research** | 5-step pipeline: Setup (conda env) &rarr; Analyze Proposal (researcher) &rarr; Deep Research (Gemini) &rarr; Specialization (researcher) &rarr; Bootstrap (skills &amp; citations) |
 | **Dev** | Iterative experiment cycle: plan &rarr; run on Slurm &rarr; analyze &rarr; write initial draft |
 | **Review** | Compile &rarr; Review &rarr; Plan &rarr; Execute &rarr; Validate, repeating until score &ge; threshold |
 
@@ -68,7 +68,7 @@ ARK runs three phases in sequence. The Review phase loops until the paper reache
 Each iteration of the Review phase runs **5 steps**:
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/review_loop.png" alt="Review Loop" width="700">
+  <img src="https://idea2paper.org/assets/review_loop.png" alt="Review Loop" width="700">
 </p>
 
 | Step | Description |
@@ -86,18 +86,16 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 ## ARK Agents
 
 <p align="center">
-  <img src="https://kaust-ark.github.io/assets/architecture_overview.png" alt="ARK Architecture" width="600">
+  <img src="https://idea2paper.org/assets/architecture_overview.png" alt="ARK Architecture" width="600">
 </p>
 
 | Agent | Role |
 |:------|:-----|
+| **Researcher** | Analyzes proposal &rarr; writes `idea.md`; Gemini-backed literature survey; specializes agent prompts for the project |
 | **Reviewer** | Scores the paper against venue standards, generates improvement tasks |
-| **Planner** | Turns review feedback into a prioritized action plan |
+| **Planner** | Turns review feedback into a prioritized action plan; analyzes Dev-phase results |
 | **Writer** | Drafts and refines LaTeX sections with DBLP-verified references |
 | **Experimenter** | Designs experiments, submits Slurm jobs, analyzes results |
-| **Researcher** | Deep literature survey via academic APIs (DBLP, CrossRef, Semantic Scholar) |
-| **Visualizer** | Generates figures with Nano Banana and venue-aware canvas geometry |
-| **Meta-Debugger** | Detects stalls, diagnoses failures, triggers self-repair |
 | **Coder** | Writes and debugs experiment code and analysis scripts |
 
 ---
@@ -195,17 +193,22 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 | `ark delete <name>` | Remove project entirely |
 | `ark setup-bot` | Configure Telegram bot |
 | `ark list` | List all projects with status |
-| `ark webapp install` | Install web portal service |
+| `ark webapp install` | Install web dashboard service |
+| `ark access list` | Show Dashboard Cloudflare Access allowlist |
+| `ark access add <email>` | Add email(s) to CF Access allowlist |
+| `ark access remove <email>` | Remove email(s) from CF Access allowlist |
+| `ark access add-domain <domain>` | Add email domain rule to CF Access |
+| `ark access remove-domain <domain>` | Remove email domain rule from CF Access |
 
 ---
 
-## Web Portal
+## Dashboard
 
-ARK includes a web-based portal for managing projects, viewing scores, and steering agents. The portal shows **live phase badges** (Research / Dev / Review), per-project conda env status, and real-time cost tracking.
+ARK includes a web-based dashboard for managing projects, viewing scores, and steering agents. The dashboard shows **live phase badges** (Research / Dev / Review), per-project conda env status, and real-time cost tracking. It is served from a single FastAPI process that also hosts the homepage &mdash; one port, one systemd unit.
 
 ### Configuration
 
-The web app is configured via `webapp.env` located in your ARK config directory (default: `.ark/webapp.env` in the project root). This file is created automatically on the first run of `ark webapp`.
+The dashboard is configured via `webapp.env` located in your ARK config directory (default: `.ark/webapp.env` in the project root). This file is created automatically on the first run of `ark webapp`.
 
 #### Authentication & Access
 - **SMTP**: Required for "Magic Link" login. Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASSWORD`.
@@ -216,11 +219,11 @@ The web app is configured via `webapp.env` located in your ARK config directory 
 
 | Command | Description |
 |:--------|:------------|
-| `ark webapp` | Start the app in the foreground (useful for debugging). |
+| `ark webapp` | Start the dashboard in the foreground (useful for debugging). |
 | `ark webapp release` | Tag the current code and deploy to the production worktree. |
 | `ark webapp install [--dev]` | Install and start as a `systemd` user service. |
 | `ark webapp status` | Show status of the systemd service. |
-| `ark webapp restart` | Restart the webapp service. |
+| `ark webapp restart` | Restart the dashboard service. |
 | `ark webapp logs [-f]` | View or tail service logs. |
 
 <details>
@@ -367,8 +370,7 @@ What you get:
 ## Requirements
 
 - **Python 3.9+** with `pyyaml` and `PyMuPDF`
-- [**Claude Code**](https://docs.anthropic.com/en/docs/claude-code) CLI installed and authenticated
-- **Claude Max subscription recommended** &mdash; very token-intensive
+- **Agent CLI**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended, Claude Max subscription) **or** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; selectable per project
 - Optional: LaTeX (`pdflatex` + `bibtex`), Slurm, `google-genai` for AI figures
 
 ```bash

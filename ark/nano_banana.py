@@ -8,8 +8,8 @@ Supports two modes:
   - Pipeline: generate_figure_pipeline() — Planner → Stylist → Visualizer → Critic loop
 
 Models:
-  - flash: gemini-3.1-flash-image-preview  (fast, free 500/day)
-  - pro:   gemini-3-pro-image-preview       (highest quality, $0.13/img)
+  - flash: gemini-3.1-flash-image-preview  (fast, image generation)
+  - pro:   gemini-3-pro-image-preview       (highest quality, image generation)
 """
 
 import json
@@ -31,8 +31,8 @@ IMAGE_MODELS = {
 }
 
 TEXT_MODELS = {
-    "flash": "gemini-2.5-flash",
-    "pro": "gemini-2.5-pro",
+    "flash": "gemini-flash-latest",
+    "pro": "gemini-pro-latest",
 }
 
 # Legacy alias
@@ -78,7 +78,7 @@ def _call_gemini_text(client, model_id: str, prompt: str, image_bytes: bytes = N
 
     Args:
         client: google.genai.Client instance
-        model_id: Text model ID (e.g. "gemini-2.5-flash")
+        model_id: Text model ID (e.g. "gemini-flash-latest")
         prompt: Text prompt
         image_bytes: Optional PNG image bytes for multimodal (Critic) calls
 

@@ -53,6 +53,17 @@ navLinks.querySelectorAll('a').forEach(link => {
   link.addEventListener('click', () => navLinks.classList.remove('open'));
 });
 
+/* ===== Language Dropdown Toggle ===== */
+const langBtn = document.querySelector('.lang-toggle-btn');
+const langMenu = document.querySelector('.lang-dropdown-menu');
+if (langBtn && langMenu) {
+  langBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    langMenu.classList.toggle('open');
+  });
+  document.addEventListener('click', () => langMenu.classList.remove('open'));
+}
+
 /* ===== Smooth scroll with offset for sticky navbar ===== */
 document.querySelectorAll('a[href^="#"]').forEach(a => {
   a.addEventListener('click', e => {
@@ -101,62 +112,7 @@ function createParticles() {
 }
 createParticles();
 
-/* ===== Terminal Typing Effect (Enhanced) ===== */
-const terminalLines = [
-  { type: 'prompt', text: '$ ' },
-  { type: 'command', text: 'git clone https://github.com/kaust-ark/ARK.git && cd ARK', delay: 25 },
-  { type: 'output', text: '\n  Cloning into \'ARK\'...\n\n', delay: 8 },
-  { type: 'prompt', text: '$ ' },
-  { type: 'command', text: 'pip install -e .', delay: 35 },
-  { type: 'output', text: '\n  Successfully installed ark-research-0.1.0\n\n', delay: 8 },
-  { type: 'prompt', text: '$ ' },
-  { type: 'command', text: 'ark new mma', delay: 35 },
-  { type: 'output', text: '\n  Project name: mma', delay: 8 },
-  { type: 'output', text: '\n  Research idea: CPU Matrix Multiplication', delay: 8 },
-  { type: 'output', text: '\n  Venue: neurips', delay: 8 },
-  { type: 'output', text: '\n  Config: projects/mma/config.yaml\n\n', delay: 8 },
-  { type: 'prompt', text: '$ ' },
-  { type: 'command', text: 'ark run mma', delay: 35 },
-  { type: 'output', text: '\n  Starting ARK pipeline...', delay: 8 },
-  { type: 'output', text: '\n  [Phase 1/3] Research      \u2713', delay: 8 },
-  { type: 'output', text: '\n  [Phase 2/3] Development   \u2713', delay: 8 },
-  { type: 'output', text: '\n  [Phase 3/3] Review        \u2713', delay: 8 },
-  { type: 'output', text: '\n\n  ', delay: 8 },
-  { type: 'highlight', text: '\u2605 Final score: 7.2/10', delay: 25 },
-  { type: 'output', text: '\n  PDF: auto_research/output/mma.pdf\n', delay: 8 },
-];
-
-function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-
-async function typeTerminal() {
-  const body = document.getElementById('terminalBody');
-  if (!body) return;
-  body.innerHTML = '';
-
-  for (const line of terminalLines) {
-    const span = document.createElement('span');
-    span.className = line.type;
-    body.appendChild(span);
-
-    for (const char of line.text) {
-      span.textContent += char;
-      await sleep(line.delay || 25);
-    }
-  }
-
-  const cursor = document.createElement('span');
-  cursor.className = 'cursor';
-  body.appendChild(cursor);
-}
-
-// Start typing when hero is visible
-const heroObserver = new IntersectionObserver((entries) => {
-  if (entries[0].isIntersecting) {
-    setTimeout(typeTerminal, 600);
-    heroObserver.disconnect();
-  }
-}, { threshold: 0.3 });
-heroObserver.observe(document.getElementById('hero'));
+/* (Terminal typing effect removed — no longer used) */
 
 /* ===== Animated Counter ===== */
 function animateCounters() {
@@ -227,31 +183,7 @@ const pipelineObserver = new IntersectionObserver((entries) => {
 const pipelineEl = document.getElementById('pipelinePhases');
 if (pipelineEl) pipelineObserver.observe(pipelineEl);
 
-/* ===== Review Loop Sequential Highlight ===== */
-function animateReviewLoop() {
-  const steps = document.querySelectorAll('.loop-step');
-  let currentStep = 0;
-
-  function highlightNext() {
-    steps.forEach(s => s.classList.remove('active'));
-    if (steps[currentStep]) {
-      steps[currentStep].classList.add('active');
-    }
-    currentStep = (currentStep + 1) % steps.length;
-  }
-
-  highlightNext();
-  setInterval(highlightNext, 2000);
-}
-
-const loopObserver = new IntersectionObserver((entries) => {
-  if (entries[0].isIntersecting) {
-    animateReviewLoop();
-    loopObserver.disconnect();
-  }
-}, { threshold: 0.3 });
-const reviewLoop = document.getElementById('reviewLoop');
-if (reviewLoop) loopObserver.observe(reviewLoop);
+/* (Review loop animation removed — replaced by pipeline detail panels) */
 
 /* ===== Paper Card Tilt Effect ===== */
 document.querySelectorAll('[data-tilt]').forEach(card => {
