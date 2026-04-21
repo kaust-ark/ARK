@@ -390,7 +390,3 @@ NeurIPS &bull; ICML &bull; ICLR &bull; AAAI &bull; ACL &bull; IEEE &bull; ACM SI
 ## License
 
 [Apache 2.0](LICENSE)
-
-<p align="center">
-  <sub>Built by <a href="https://sands.kaust.edu.sa/">SANDS Lab, KAUST</a></sub>
-</p>

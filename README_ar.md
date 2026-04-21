@@ -284,7 +284,3 @@ NeurIPS &bull; ICML &bull; ICLR &bull; AAAI &bull; ACL &bull; IEEE &bull; ACM SI
 ## الرخصة
 
 [Apache 2.0](LICENSE)
-
-<p align="center">
-  <sub>بُني في <a href="https://sands.kaust.edu.sa/">مختبر SANDS، جامعة الملك عبدالله للعلوم والتقنية</a></sub>
-</p>
