@@ -11,7 +11,10 @@ run had nothing to build from.
 
 from pathlib import Path
 
+import pytest
 import yaml
+
+pytest.importorskip("fastapi", reason="webapp optional deps not installed")
 
 
 def _setup_custom_template_project(pdir: Path):
