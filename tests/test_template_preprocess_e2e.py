@@ -116,6 +116,19 @@ class TestRealTemplateE2E:
         ):
             assert required in out, f"{required!r} missing from sanitized main.tex"
 
+    def test_preprocess_strips_appendix_instruction_prose(self, fake_uploaded_paper):
+        preprocess_custom_template(fake_uploaded_paper)
+        out = (fake_uploaded_paper / "main.tex").read_text()
+        # The NeurIPS template's appendix "Technical appendices" section is
+        # example prose, not paper content — must not survive.
+        assert "Technical appendices with additional results" not in out
+        assert "optional reading" not in out
+        assert "\\section{Technical appendices and supplementary material}" not in out
+        # But the \appendix command and \input{checklist.tex} must both
+        # remain so the NeurIPS checklist section still renders.
+        assert "\\appendix" in out
+        assert "\\input{checklist.tex}" in out
+
     def test_preprocess_balanced_braces(self, fake_uploaded_paper):
         """After preprocessing, the tex file should have balanced braces.
         A structurally broken file would crash pdflatex downstream.

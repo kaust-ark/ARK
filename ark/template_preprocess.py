@@ -146,10 +146,17 @@ def sanitize_tex_metadata(src: str) -> tuple[str, dict]:
     new_src, author_was = _clear_command_body(src, "author", placeholder="")
     if author_was is not None:
         # Author blocks can be long (authors + affiliations + emails).  Keep
-        # just the first line for the manifest so reviewers can see what was
-        # stripped without blowing up the yaml.
-        first_line = author_was.strip().splitlines()[0] if author_was.strip() else ""
-        detected["author_placeholder"] = first_line[:200]
+        # just the first meaningful line for the manifest — the NeurIPS
+        # template opens with ``\author{%`` so ``first non-empty line`` would
+        # pick the ``%`` comment.  Filter those out.
+        excerpt = ""
+        for line in author_was.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("%"):
+                continue
+            excerpt = stripped
+            break
+        detected["author_placeholder"] = excerpt[:200]
         src = new_src
 
     new_src, abs_was = _clear_abstract_env(src, placeholder=_ABSTRACT_SENTINEL)
@@ -217,6 +224,49 @@ def detect_boilerplate_span(src: str) -> Optional[tuple[int, int]]:
     return start, end
 
 
+# Appendix-region end-markers.  ``\input{checklist.tex}`` is the NeurIPS
+# mandatory self-review section and must survive intact.  ``\end{document}``
+# is the last resort when the template has no checklist.
+_APPENDIX_END_MARKERS = (
+    r"\input{",
+    r"\include{",
+    r"\end{document}",
+)
+
+
+def detect_appendix_boilerplate_span(src: str) -> Optional[tuple[int, int]]:
+    """Return the offsets of the instruction prose that typically follows
+    ``\\appendix`` in venue templates (e.g. NeurIPS's "Technical appendices
+    and supplementary material" section with its "optional reading" blurb).
+
+    Span boundaries:
+
+    * ``start`` — immediately after ``\\appendix``.
+    * ``end``   — immediately before the first ``\\input{...}`` /
+      ``\\include{...}`` (checklist, supplementary) or ``\\end{document}``.
+
+    Returns ``None`` if the template has no ``\\appendix`` or no end-marker
+    after it.
+    """
+    marker = r"\appendix"
+    idx = src.find(marker)
+    if idx < 0:
+        return None
+    start = idx + len(marker)
+
+    end = -1
+    for em in _APPENDIX_END_MARKERS:
+        i = src.find(em, start)
+        if i < 0:
+            continue
+        if end < 0 or i < end:
+            end = i
+    if end < 0:
+        return None
+
+    return start, end
+
+
 # ---------------------------------------------------------------------------
 #  Step 3 — boilerplate replacement
 # ---------------------------------------------------------------------------
@@ -253,6 +303,25 @@ def stub_out_boilerplate(src: str, span: tuple[int, int]) -> str:
     """Replace ``src[span[0]:span[1]]`` with an empty section skeleton."""
     start, end = span
     return src[:start] + _WRITER_SCAFFOLD + src[end:]
+
+
+_APPENDIX_SCAFFOLD = """
+
+% [ARK: template appendix instructions removed by preprocess_custom_template]
+% Populate this region with supplementary material (full proofs, extended
+% ablations, hyperparameter sweeps, etc.) only when it genuinely belongs in
+% an appendix.  Leave this region minimal if you have no such content.
+
+"""
+
+
+def stub_out_appendix_boilerplate(src: str, span: tuple[int, int]) -> str:
+    """Replace the template's appendix instruction prose (everything between
+    ``\\appendix`` and the first ``\\input``/``\\end{document}``) with a
+    small scaffold the writer can expand or leave near-empty.
+    """
+    start, end = span
+    return src[:start] + _APPENDIX_SCAFFOLD + src[end:]
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +408,7 @@ def build_manifest(
     paper_dir: Path,
     venue_hint: str = "",
     removed_headers: Optional[list[str]] = None,
+    appendix_removed_chars: int = 0,
 ) -> dict:
     """Assemble the template_manifest.yaml payload.
 
@@ -346,6 +416,10 @@ def build_manifest(
     *before* it was stubbed out.  Pass it explicitly from the orchestrator;
     extracting from ``sanitized_src`` after stubbing would surface the writer
     skeleton's own headers instead.
+
+    ``appendix_removed_chars`` — number of characters stripped between
+    ``\\appendix`` and the first ``\\input``/``\\end{document}``.  0 when
+    the template has no appendix boilerplate.
     """
     manifest: dict = {
         "source": "user_uploaded_zip",
@@ -369,6 +443,8 @@ def build_manifest(
             "Structural markers not found — boilerplate was NOT removed. "
             "The writer must manually delete any template instruction prose."
         )
+    if appendix_removed_chars > 0:
+        manifest["appendix_boilerplate_removed_chars"] = appendix_removed_chars
     return manifest
 
 
@@ -485,6 +561,16 @@ def preprocess_custom_template(paper_dir: Path, venue_hint: str = "") -> dict:
         )
         sanitized_src = stub_out_boilerplate(sanitized_src, boilerplate_span)
 
+    # Second pass: stub out the template's appendix instruction prose.
+    # Must run AFTER the main boilerplate stub so offsets aren't invalidated
+    # mid-edit — detect_appendix_boilerplate_span runs on the now-stubbed
+    # source and finds \appendix (which is preserved, not touched above).
+    appendix_span = detect_appendix_boilerplate_span(sanitized_src)
+    appendix_removed_chars = 0
+    if appendix_span is not None:
+        appendix_removed_chars = appendix_span[1] - appendix_span[0]
+        sanitized_src = stub_out_appendix_boilerplate(sanitized_src, appendix_span)
+
     main_tex.write_text(sanitized_src)
 
     manifest = build_manifest(
@@ -495,6 +581,7 @@ def preprocess_custom_template(paper_dir: Path, venue_hint: str = "") -> dict:
         paper_dir=paper_dir,
         venue_hint=venue_hint,
         removed_headers=removed_headers,
+        appendix_removed_chars=appendix_removed_chars,
     )
     write_template_manifest(paper_dir, manifest)
     return manifest

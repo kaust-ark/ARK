@@ -19,10 +19,12 @@ from ark.template_preprocess import (
     _TITLE_SENTINEL,
     _ABSTRACT_SENTINEL,
     build_manifest,
+    detect_appendix_boilerplate_span,
     detect_boilerplate_span,
     preprocess_custom_template,
     render_custom_template_notes,
     sanitize_tex_metadata,
+    stub_out_appendix_boilerplate,
     stub_out_boilerplate,
     write_template_manifest,
 )
@@ -188,6 +190,80 @@ class TestStubOutBoilerplate:
         assert "TO BE WRITTEN" in out
         # References section boundary preserved
         assert "\\section*{References}" in out
+
+
+# ---------------------------------------------------------------------------
+#  Appendix boilerplate (second-pass)
+# ---------------------------------------------------------------------------
+
+class TestDetectAppendixBoilerplateSpan:
+    def test_finds_span_between_appendix_and_checklist_input(self):
+        src = (
+            "\\appendix\n"
+            "\\section{Technical appendices}\n"
+            "Template appendix instructions go here.\n"
+            "\\input{checklist.tex}\n"
+            "\\end{document}\n"
+        )
+        span = detect_appendix_boilerplate_span(src)
+        assert span is not None
+        start, end = span
+        removed = src[start:end]
+        assert "Technical appendices" in removed
+        assert "Template appendix instructions" in removed
+        # Must not swallow the \input{checklist.tex} line
+        assert "\\input{checklist.tex}" not in removed
+
+    def test_returns_none_when_no_appendix(self):
+        src = "\\section{Body}\nNo appendix marker.\n\\end{document}\n"
+        assert detect_appendix_boilerplate_span(src) is None
+
+    def test_falls_back_to_end_of_document_when_no_input(self):
+        src = (
+            "\\appendix\n"
+            "Template instruction text.\n"
+            "\\end{document}\n"
+        )
+        span = detect_appendix_boilerplate_span(src)
+        assert span is not None
+        start, end = span
+        # \end{document} should NOT be inside the removed region
+        assert "\\end{document}" not in src[start:end]
+        assert "Template instruction text" in src[start:end]
+
+    def test_handles_include_too(self):
+        src = (
+            "\\appendix\n"
+            "Appendix filler.\n"
+            "\\include{checklist}\n"
+        )
+        span = detect_appendix_boilerplate_span(src)
+        assert span is not None
+        start, end = span
+        assert "\\include{checklist}" not in src[start:end]
+
+
+class TestStubOutAppendixBoilerplate:
+    def test_replaces_span_preserves_checklist_input(self):
+        src = (
+            "\\appendix\n"
+            "\\section{Technical appendices}\n"
+            "Template appendix boilerplate text.\n"
+            "\\input{checklist.tex}\n"
+            "\\end{document}\n"
+        )
+        span = detect_appendix_boilerplate_span(src)
+        assert span is not None
+        out = stub_out_appendix_boilerplate(src, span)
+        # Appendix boilerplate removed
+        assert "Template appendix boilerplate text" not in out
+        assert "\\section{Technical appendices}" not in out
+        # Structural scaffolding preserved
+        assert "\\appendix" in out
+        assert "\\input{checklist.tex}" in out
+        assert "\\end{document}" in out
+        # Writer guidance inserted
+        assert "template appendix instructions removed" in out.lower()
 
 
 # ---------------------------------------------------------------------------
