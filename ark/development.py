@@ -293,6 +293,28 @@ class DevMixin:
         test_results = dev_state.get("last_test_results", {})
         review_scores = dev_state.get("code_review_scores", [])
 
+        review_file = self.state_dir / "code_review.md"
+        review_md = ""
+        if review_file.exists():
+            try:
+                review_md = review_file.read_text()
+            except Exception as e:
+                self.log(f"Could not read code_review.md: {e}", "WARN")
+
+        if review_md:
+            latest_score = review_scores[-1]["score"] if review_scores else "?"
+            review_section = (
+                f"Latest score: {latest_score}/10 "
+                f"(threshold: {self.code_review_threshold}/10)\n"
+                f"Full review is available in Prior Agent Output above "
+                f"(also on disk at auto_research/state/code_review.md).\n\n"
+                "You MUST translate each reviewer issue (C1, C2, ...) into a pending "
+                "task with a concrete, actionable description. Fixing review issues "
+                "takes priority over new feature work."
+            )
+        else:
+            review_section = "(No reviews yet.)"
+
         prompt = f"""Analyze the current development state and plan coding tasks.
 
 ## Project Spec
@@ -310,7 +332,7 @@ class DevMixin:
 {yaml.dump(test_results, default_flow_style=False, allow_unicode=True) if test_results else '(No tests run yet.)'}
 
 ## Code Review Feedback
-{yaml.dump(review_scores[-1], default_flow_style=False, allow_unicode=True) if review_scores else '(No reviews yet.)'}
+{review_section}
 
 ## Instructions
 1. Read auto_research/state/dev_state.yaml for full context
@@ -321,7 +343,9 @@ class DevMixin:
 6. Save updated state to auto_research/state/dev_state.yaml
 """
 
-        self._last_planner_output = self.run_agent("planner", prompt, timeout=1200)
+        self._last_planner_output = self.run_agent(
+            "planner", prompt, timeout=1200, prior_context=review_md,
+        )
 
         # Reload dev_state (agent may have modified it)
         dev_state = self.load_dev_state()
