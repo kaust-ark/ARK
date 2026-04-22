@@ -523,6 +523,14 @@ def render_custom_template_notes(paper_dir: Path) -> str:
         lines.append("")
 
     lines.append(
+        "The sanitized main.tex may still contain template residue (e.g. "
+        "example reference entries in the References section, unanswered "
+        "questions in the checklist). The `TO BE WRITTEN` markers are your "
+        "primary targets, but scan the whole file and treat anything that "
+        "looks like placeholder prose as editable."
+    )
+    lines.append("")
+    lines.append(
         "Full preprocessing record: `paper/template_manifest.yaml`. Read it "
         "if you need details about what was detected."
     )

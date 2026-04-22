@@ -429,6 +429,15 @@ class TestRenderCustomTemplateNotes:
         assert "Introduction" in out
         assert "Submission of papers" in out
 
+    def test_notes_warn_about_residue(self, tmp_path):
+        """The prompt must nudge the writer to treat surviving template
+        prose (example references, unanswered checklist questions) as
+        placeholder content — not as already-written paper content."""
+        write_template_manifest(tmp_path, {"detected_placeholders": {}})
+        out = render_custom_template_notes(tmp_path)
+        assert "residue" in out.lower()
+        assert "TO BE WRITTEN" in out
+
     def test_warning_flag_surfaces_when_markers_missing(self, tmp_path):
         manifest = {
             "boilerplate_removed": None,
