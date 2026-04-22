@@ -316,6 +316,19 @@ class CloudBackend(ComputeBackend):
         # Persist instance state for crash recovery
         self._state_file = self.code_dir / "auto_research" / "state" / "cloud_instance.yaml"
 
+    def _resource_labels(self) -> dict:
+        """Labels to apply to all cloud resources for lifecycle management."""
+        import re
+        owner = self._compute_config.get("owner", "")
+        # Sanitize for GCP label constraints (lowercase, alphanumeric/hyphens only)
+        safe_owner = re.sub(r"[^a-z0-9\-]", "-", owner.lower())[:63].strip("-")
+        safe_project = re.sub(r"[^a-z0-9\-]", "-", self.project_name.lower())[:63].strip("-")
+        return {
+            "managed-by": "ark",
+            "project": safe_project,
+            "owner": safe_owner or "unknown",
+        }
+
     # ── Provisioning ──
 
     def setup(self) -> dict:
@@ -364,6 +377,10 @@ class CloudBackend(ComputeBackend):
         }
 
     def _provision_aws(self):
+        labels = self._resource_labels()
+        tag_specs = "ResourceType=instance,Tags=[" + ",".join(
+            f"{{Key={k},Value={v}}}" for k, v in labels.items()
+        ) + "]"
         cmd = [
             "aws", "ec2", "run-instances",
             "--image-id", self.image_id,
@@ -371,6 +388,7 @@ class CloudBackend(ComputeBackend):
             "--key-name", self.ssh_key_name,
             "--region", self.region,
             "--count", "1",
+            "--tag-specifications", tag_specs,
             "--output", "json",
         ]
         sg = self._compute_config.get("security_group")
@@ -405,12 +423,15 @@ class CloudBackend(ComputeBackend):
 
     def _provision_gcp(self):
         instance_name = f"ark-{self.project_name}-{int(time.time()) % 10000}"
+        labels = self._resource_labels()
+        labels_str = ",".join(f"{k}={v}" for k, v in labels.items())
         cmd = [
             "gcloud", "compute", "instances", "create", instance_name,
             "--zone", self.region,
             "--machine-type", self.instance_type,
             "--image-family", self.image_id,
             "--image-project", "deeplearning-platform-release",
+            "--labels", labels_str,
             "--format", "json",
         ]
         accelerator = self._compute_config.get("accelerator_type")
@@ -440,12 +461,14 @@ class CloudBackend(ComputeBackend):
     def _provision_azure(self):
         rg = self._compute_config.get("resource_group", f"ark-{self.project_name}")
         instance_name = f"ark-{self.project_name}-{int(time.time()) % 10000}"
+        labels = self._resource_labels()
 
         # Ensure resource group exists
         subprocess.run([
             "az", "group", "create",
             "--name", rg,
             "--location", self.region,
+            "--tags", *[f"{k}={v}" for k, v in labels.items()],
         ], capture_output=True, timeout=60)
 
         cmd = [
@@ -457,6 +480,7 @@ class CloudBackend(ComputeBackend):
             "--image", self.image_id,
             "--admin-username", self.ssh_user,
             "--ssh-key-values", os.path.expanduser(self.ssh_key_path) + ".pub",
+            "--tags", *[f"{k}={v}" for k, v in labels.items()],
             "--output", "json",
         ]
 

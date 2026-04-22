@@ -536,6 +536,19 @@ def launch_local_job(
                 # Standard LLM keys
                 env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
                 env[env_key] = v
+            elif k in ("aws_access_key_id", "aws_secret_access_key", "aws_default_region"):
+                env[k.upper()] = v
+            elif k == "gcp_service_account_json":
+                # For GCP, we write the JSON to a file and set GOOGLE_APPLICATION_CREDENTIALS
+                gcp_creds_path = project_dir / ".gcp_credentials.json"
+                gcp_creds_path.write_text(v)
+                gcp_creds_path.chmod(0o600)
+                env["GOOGLE_APPLICATION_CREDENTIALS"] = str(gcp_creds_path)
+                # Also set standard GCP env vars if available in keys/settings
+                if keys.get("gcp_project"):
+                     env["GOOGLE_CLOUD_PROJECT"] = keys["gcp_project"]
+            elif k.startswith("azure_"):
+                env[k.upper()] = v
     
     # Ensure the orchestrator can find the ark package even when running
     # inside a project-local conda env that doesn't have ark installed.
@@ -565,6 +578,23 @@ def launch_local_job(
         )
 
     return f"local:{proc.pid}"
+
+
+def launch_cloud_job(
+    project_id: str,
+    mode: str,
+    max_iterations: int,
+    project_dir: Path,
+    log_dir: Path,
+    settings,
+    api_keys: dict[str, str] = None,
+) -> str:
+    """Launch orchestrator locally to manage a cloud VM. Returns 'cloud:{pid}'."""
+    job_id = launch_local_job(
+        project_id, mode, max_iterations, project_dir, log_dir, settings, api_keys
+    )
+    # job_id is 'local:{pid}', change to 'cloud:{pid}'
+    return job_id.replace("local:", "cloud:")
 
 
 def poll_local_job(pid: int, log_dir: Path) -> str:

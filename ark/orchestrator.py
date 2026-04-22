@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Optional, List
 import re
 import threading
+import signal
 
 # ARK package root (where projects/ lives)
 ARK_ROOT = Path(__file__).parent.parent.absolute()
@@ -2115,6 +2116,12 @@ def main():
     parser.add_argument("--project-id", type=str, default=None,
                         help="Project UUID in the webapp DB")
     args = parser.parse_args()
+    
+    # Handle termination signals
+    def signal_handler(sig, frame):
+        print(f"\nTermination signal {sig} received. cleaning up...", file=sys.stderr)
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     # Resolve DB path: explicit arg > env > webapp.env > default
     db_path = args.db_path

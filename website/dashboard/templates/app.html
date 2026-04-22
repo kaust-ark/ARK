@@ -1298,6 +1298,57 @@
             <div id="status-gemini-oauth" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
           </div>
         </div>
+        <!-- CLOUD COMPUTE (Optional) -->
+        <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--card-border)">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--teal)"><path d="M17.5 19a3.5 3.5 0 0 0 0-7h-1.5a1 1 0 0 1-1-1 7 7 0 1 0-11.8 4.5"/><path d="M12 13v8"/><path d="m8 17 4 4 4-4"/></svg>
+            <span style="font-weight:700; font-size:.9rem; text-transform:uppercase; letter-spacing:.05em">Cloud Compute <span style="color:var(--text-muted);font-weight:400;text-transform:none">(Optional)</span></span>
+          </div>
+
+          <!-- AWS -->
+          <div class="form-group">
+            <label style="font-size:.75rem">AWS Access Key ID</label>
+            <input type="password" id="settings-aws-access-key-id" placeholder="AKIA..." />
+          </div>
+          <div class="form-group">
+            <label style="font-size:.75rem">AWS Secret Access Key</label>
+            <input type="password" id="settings-aws-secret-access-key" placeholder="wJalr..." />
+          </div>
+          <div class="form-group">
+            <label style="font-size:.75rem">AWS Region</label>
+            <input type="text" id="settings-aws-default-region" placeholder="us-east-1" />
+          </div>
+
+          <!-- GCP -->
+          <div class="or-divider" style="margin:16px 0">OR</div>
+          <div class="form-group">
+            <label style="font-size:.75rem">GCP Service Account JSON</label>
+            <textarea id="settings-gcp-service-account-json" placeholder='{"type": "service_account", ...}' style="font-family:monospace; font-size:.8rem; min-height:80px;"></textarea>
+          </div>
+          <div class="form-group">
+            <label style="font-size:.75rem">GCP Project ID</label>
+            <input type="text" id="settings-gcp-project" placeholder="my-research-project" />
+          </div>
+
+          <!-- Azure -->
+          <div class="or-divider" style="margin:16px 0">OR</div>
+          <div class="form-group">
+            <label style="font-size:.75rem">Azure Client ID</label>
+            <input type="password" id="settings-azure-client-id" />
+          </div>
+          <div class="form-group">
+            <label style="font-size:.75rem">Azure Client Secret</label>
+            <input type="password" id="settings-azure-client-secret" />
+          </div>
+          <div class="form-group">
+            <label style="font-size:.75rem">Azure Tenant ID</label>
+            <input type="password" id="settings-azure-tenant-id" />
+          </div>
+          <div class="form-group">
+            <label style="font-size:.75rem">Azure Subscription ID</label>
+            <input type="password" id="settings-azure-subscription-id" />
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1982,7 +2033,10 @@ function renderProjectCard(p) {
         </div>
       </div>
       ${idea ? `<div class="project-idea">${idea}</div>` : ''}
-      <div class="project-venue">${esc(p.venue)}</div>
+      <div class="project-venue">
+        ${esc(p.venue || 'General')}
+        ${p.environment ? ` · <span style="color:var(--teal);font-weight:600">${esc(p.environment)}</span>` : ''}
+      </div>
       <div class="score-bar"><div class="score-fill" style="width:${pct}%"></div></div>
       <div class="score-label">${t('score_label', score)}</div>
     </div>`;
@@ -3468,6 +3522,16 @@ async function openSettingsModal() {
     document.getElementById('settings-claude-token').value = data.claude_oauth_token || '';
     document.getElementById('settings-gemini-oauth').value = data.gemini_oauth_json || '';
 
+    document.getElementById('settings-aws-access-key-id').value = data.aws_access_key_id || '';
+    document.getElementById('settings-aws-secret-access-key').value = data.aws_secret_access_key || '';
+    document.getElementById('settings-aws-default-region').value = data.aws_default_region || '';
+    document.getElementById('settings-gcp-service-account-json').value = data.gcp_service_account_json || '';
+    document.getElementById('settings-gcp-project').value = data.gcp_project || '';
+    document.getElementById('settings-azure-client-id').value = data.azure_client_id || '';
+    document.getElementById('settings-azure-client-secret').value = data.azure_client_secret || '';
+    document.getElementById('settings-azure-tenant-id').value = data.azure_tenant_id || '';
+    document.getElementById('settings-azure-subscription-id').value = data.azure_subscription_id || '';
+
     document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
@@ -3477,7 +3541,7 @@ async function openSettingsModal() {
     // Auto-expand Advanced if any optional field is already set
     const advBtn = document.getElementById('settings-advanced-toggle');
     const advBody = document.getElementById('settings-advanced-body');
-    const hasAdv = data.anthropic || data.openai || data.gemini_oauth_json;
+    const hasAdv = data.anthropic || data.openai || data.gemini_oauth_json || data.aws_access_key_id || data.gcp_service_account_json || data.azure_client_id;
     if (advBtn && advBody && hasAdv) {
       advBtn.setAttribute('aria-expanded', 'true');
       advBody.classList.add('open');
@@ -3510,6 +3574,15 @@ async function saveUserSettings() {
       openai: document.getElementById('settings-openai').value.trim(),
       claude_oauth_token: document.getElementById('settings-claude-token').value.trim(),
       gemini_oauth_json: document.getElementById('settings-gemini-oauth').value.trim(),
+      aws_access_key_id: document.getElementById('settings-aws-access-key-id').value.trim(),
+      aws_secret_access_key: document.getElementById('settings-aws-secret-access-key').value.trim(),
+      aws_default_region: document.getElementById('settings-aws-default-region').value.trim(),
+      gcp_service_account_json: document.getElementById('settings-gcp-service-account-json').value.trim(),
+      gcp_project: document.getElementById('settings-gcp-project').value.trim(),
+      azure_client_id: document.getElementById('settings-azure-client-id').value.trim(),
+      azure_client_secret: document.getElementById('settings-azure-client-secret').value.trim(),
+      azure_tenant_id: document.getElementById('settings-azure-tenant-id').value.trim(),
+      azure_subscription_id: document.getElementById('settings-azure-subscription-id').value.trim(),
     };
 
     // Validate: Gemini API Key is required

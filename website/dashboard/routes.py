@@ -86,7 +86,9 @@ from .crypto import encrypt_text, decrypt_text
 from .jobs import (
     cancel_job,
     cancel_local_job,
+    launch_cloud_job,
     launch_local_job,
+    poll_local_job,
     project_env_prefix,
     project_env_ready,
     slurm_available,
@@ -373,7 +375,7 @@ Output ONLY the summary, no preamble.
     return raw_text[:8000]
 
 
-def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude-sonnet-4-6"):
+def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude-sonnet-4-6", compute_backend: dict = None):
     """Write config.yaml that ark orchestrator will read."""
     # Map webapp model value to orchestrator model backend.
     # Legacy "claude-opus-4-6" kept for backward-compat with older project DB rows;
@@ -406,6 +408,8 @@ def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude
         "figure_generation": "nano_banana",
         "nano_banana_model": "pro",
     }
+    if compute_backend:
+        config["compute_backend"] = compute_backend
     if project.telegram_token:
         config["telegram_bot_token"] = project.telegram_token
     if project.telegram_chat_id:
@@ -424,6 +428,47 @@ def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude
     config["goal_anchor"] = "\n".join(anchor_parts)
     config_path = project_dir / "config.yaml"
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
+
+
+def _build_cloud_config(user_obj, settings, per_project_overrides=None) -> dict | None:
+    """Return compute_backend dict if cloud is configured, else None."""
+    provider = settings.cloud_provider  # "" means disabled
+    if not provider:
+        return None
+    keys = _get_user_keys(user_obj)
+    # Validate that required credentials exist for this provider
+    if provider == "aws" and not keys.get("aws_access_key_id"):
+        return None
+    if provider == "gcp" and not keys.get("gcp_service_account_json"):
+        return None
+    if provider == "azure" and not keys.get("azure_subscription_id"):
+        return None
+
+    owner_email = getattr(user_obj, "email", "") or ""
+    cfg = {
+        "type": "cloud",
+        "provider": provider,
+        "region": settings.cloud_region,
+        "instance_type": settings.cloud_instance_type,
+        "image_id": settings.cloud_image_id,
+        "ssh_key_name": settings.cloud_ssh_key_name,
+        "ssh_key_path": settings.cloud_ssh_key_path,
+        "ssh_user": settings.cloud_ssh_user,
+        "conda_env": settings.cloud_conda_env,
+        "owner": owner_email,
+    }
+    if provider == "aws" and settings.cloud_security_group:
+        cfg["security_group"] = settings.cloud_security_group
+    if provider == "gcp":
+        cfg["gcp_project"] = keys.get("gcp_project") or settings.cloud_gcp_project
+        if settings.cloud_gcp_zone:
+            cfg["region"] = settings.cloud_gcp_zone  # GCP uses zone, not region
+    if provider == "azure":
+        cfg["resource_group"] = settings.cloud_azure_resource_group
+        cfg["location"] = settings.cloud_azure_location
+    if per_project_overrides:
+        cfg.update(per_project_overrides)
+    return cfg
 
 
 def _substitute_agent_templates(project_dir: Path, project_id: str, title: str,
@@ -866,6 +911,13 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
 
     log_dir = pdir / "logs"
     log_dir.mkdir(exist_ok=True)
+    
+    if settings.cloud_provider:
+        job_id = launch_cloud_job(project.id, project.mode, project.max_iterations,
+                                  pdir, log_dir, settings, api_keys=api_keys)
+        update_project(session, project, status="running", slurm_job_id=job_id)
+        return "running"
+
     if slurm_available():
         job_id = submit_job(project.id, project.mode, project.max_iterations,
                             pdir, log_dir, settings, api_keys=api_keys)
@@ -1169,6 +1221,15 @@ async def api_get_user_settings(request: Request):
         "openai": _mask_key(keys.get("openai")),
         "claude_oauth_token": _mask_key(keys.get("claude_oauth_token")),
         "gemini_oauth_json": _mask_json(keys.get("gemini_oauth_json")),
+        "aws_access_key_id": _mask_key(keys.get("aws_access_key_id")),
+        "aws_secret_access_key": _mask_key(keys.get("aws_secret_access_key")),
+        "aws_default_region": keys.get("aws_default_region") or "",
+        "gcp_service_account_json": _mask_json(keys.get("gcp_service_account_json")),
+        "gcp_project": keys.get("gcp_project") or "",
+        "azure_subscription_id": _mask_key(keys.get("azure_subscription_id")),
+        "azure_tenant_id": _mask_key(keys.get("azure_tenant_id")),
+        "azure_client_id": _mask_key(keys.get("azure_client_id")),
+        "azure_client_secret": _mask_key(keys.get("azure_client_secret")),
         "has_keys": any(keys.values()),
     })
 
@@ -1183,7 +1244,12 @@ async def api_save_user_settings(request: Request):
     current_keys = old_keys.copy()
     
     # Update keys based on body
-    fields = ["gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json"]
+    fields = [
+        "gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
+        "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
+        "gcp_service_account_json", "gcp_project",
+        "azure_subscription_id", "azure_tenant_id", "azure_client_id", "azure_client_secret"
+    ]
     for field in fields:
         if field not in body:
             continue
@@ -1196,7 +1262,7 @@ async def api_save_user_settings(request: Request):
             continue
         
         # For masked fields, only update if not a placeholder
-        if field == "gemini_oauth_json":
+        if field in ("gemini_oauth_json", "gcp_service_account_json"):
             if val != "[JSON Config]":
                 current_keys[field] = val
         else:
@@ -1456,7 +1522,8 @@ async def api_create_project(
                     db_user.telegram_chat_id = telegram_chat_id
                 session.add(db_user)
                 session.commit()
-        _write_config_yaml(pdir, project, model=model)
+        cloud_cfg = _build_cloud_config(db_user or user, settings)
+        _write_config_yaml(pdir, project, model=model, compute_backend=cloud_cfg)
 
         if comment.strip():
             _write_user_update(pdir, comment.strip(), source="webapp_create")
@@ -1521,7 +1588,7 @@ async def api_get_project(project_id: str, request: Request):
             "telegram_token": project.telegram_token,
             "telegram_chat_id": project.telegram_chat_id,
             "has_deep_research": (pdir / "auto_research" / "state" / "deep_research.md").exists(),
-            "environment": "ROCS Testbed" if project.slurm_job_id and not project.slurm_job_id.startswith("local") else "Local",
+            "environment": "ROCS Testbed" if project.slurm_job_id and not project.slurm_job_id.startswith(("local", "cloud")) else ("Cloud" if project.slurm_job_id and project.slurm_job_id.startswith("cloud") else "Local"),
             "conda_env": conda_env_display,
             "conda_env_ready": env_ready,
             "created_at": project.created_at.isoformat(),
@@ -1553,8 +1620,9 @@ async def api_stop_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         if project.slurm_job_id:
-            if project.slurm_job_id.startswith("local:"):
-                pid_str = project.slurm_job_id[len("local:"):]
+            if project.slurm_job_id.startswith(("local:", "cloud:")):
+                prefix = "local:" if project.slurm_job_id.startswith("local:") else "cloud:"
+                pid_str = project.slurm_job_id[len(prefix):]
                 if pid_str.isdigit():
                     cancel_local_job(int(pid_str))
             else:
@@ -1668,7 +1736,8 @@ async def api_restart_project(project_id: str, request: Request):
 
         # Rewrite config.yaml with updated settings
         model = body.get("model", "claude-sonnet-4-6")
-        _write_config_yaml(pdir, project, model=model)
+        cloud_cfg = _build_cloud_config(user, settings)
+        _write_config_yaml(pdir, project, model=model, compute_backend=cloud_cfg)
 
         # Write instructions if provided
         comment = body.get("comment", "").strip()
@@ -1697,8 +1766,9 @@ async def api_delete_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         if project.slurm_job_id:
-            if project.slurm_job_id.startswith("local:"):
-                pid_str = project.slurm_job_id[len("local:"):]
+            if project.slurm_job_id.startswith(("local:", "cloud:")):
+                prefix = "local:" if project.slurm_job_id.startswith("local:") else "cloud:"
+                pid_str = project.slurm_job_id[len(prefix):]
                 if pid_str.isdigit():
                     cancel_local_job(int(pid_str))
             else:
@@ -1736,7 +1806,8 @@ async def api_continue_project(project_id: str, request: Request):
         pdir = _project_dir(settings, project.user_id, project_id)
         # Use requested model, or fall back to existing
         model = body.get("model") or _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
-        _write_config_yaml(pdir, project, model=model)
+        cloud_cfg = _build_cloud_config(user, settings)
+        _write_config_yaml(pdir, project, model=model, compute_backend=cloud_cfg)
         if comment:
             _write_user_update(pdir, comment, source="webapp_continue")
             _write_user_instructions(pdir, comment, source="webapp_continue")
@@ -1746,8 +1817,16 @@ async def api_continue_project(project_id: str, request: Request):
 
 @router.get("/api/system/status")
 async def api_system_status():
-    """Public endpoint — returns webapp gate state (no auth required)."""
-    return JSONResponse({"disabled": _disabled_flag().exists()})
+    """Public endpoint — returns webapp gate state and cloud info (no auth required)."""
+    settings = get_settings()
+    return JSONResponse({
+        "disabled": _disabled_flag().exists(),
+        "cloud": {
+            "enabled": bool(settings.cloud_provider),
+            "provider": settings.cloud_provider,
+            "region": settings.cloud_region,
+        }
+    })
 
 
 @router.get("/api/admin/status")
@@ -1783,8 +1862,9 @@ async def api_admin_killall(request: Request):
         ).all()
         for p in active:
             if p.slurm_job_id:
-                if p.slurm_job_id.startswith("local:"):
-                    pid_str = p.slurm_job_id[len("local:"):]
+                if p.slurm_job_id.startswith(("local:", "cloud:")):
+                    prefix = "local:" if p.slurm_job_id.startswith("local:") else "cloud:"
+                    pid_str = p.slurm_job_id[len(prefix):]
                     if pid_str.isdigit():
                         cancel_local_job(int(pid_str))
                 else:

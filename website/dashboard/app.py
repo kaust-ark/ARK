@@ -105,9 +105,10 @@ async def _poll_jobs(app: FastAPI):
                     from .constants import DASHBOARD_PREFIX
                     url = f"{settings.base_url}{DASHBOARD_PREFIX}/#project/{p.id}"
 
-                    # ── Local subprocess job ──────────────────────────────
-                    if p.slurm_job_id.startswith("local:"):
-                        pid_str = p.slurm_job_id[len("local:"):]
+                    # ── Local / Cloud subprocess job ──────────────────────
+                    if p.slurm_job_id.startswith(("local:", "cloud:")):
+                        prefix = "local:" if p.slurm_job_id.startswith("local:") else "cloud:"
+                        pid_str = p.slurm_job_id[len(prefix):]
                         if not pid_str.isdigit():
                             continue
                         pid = int(pid_str)
