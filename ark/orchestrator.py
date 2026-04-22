@@ -1489,11 +1489,27 @@ a {{ color: #0d9488; }}
             yaml.dump(action_plan, f, default_flow_style=False, allow_unicode=True)
 
     def _load_findings_summary(self) -> str:
-        """Load findings.yaml summary."""
+        """Load findings.yaml summary.
+
+        Tolerates malformed YAML by degrading to a note rather than
+        crashing the plan phase. A previous experimenter run may have
+        emitted ``library_use:`` mid-list (see experimenter.prompt
+        layout guidance); that file should still not prevent downstream
+        agents from running — planner can proceed from the review alone.
+        """
         if self.findings_file.exists():
-            with open(self.findings_file) as f:
-                findings = yaml.safe_load(f) or {}
-            return yaml.dump(findings, allow_unicode=True)[:500]
+            try:
+                with open(self.findings_file) as f:
+                    findings = yaml.safe_load(f) or {}
+                return yaml.dump(findings, allow_unicode=True)[:500]
+            except yaml.YAMLError as e:
+                self.log(
+                    f"findings.yaml is malformed ({type(e).__name__}); "
+                    f"planner will proceed without it. Fix the file to "
+                    f"restore evidence-aware planning.",
+                    "WARN",
+                )
+                return f"[findings.yaml unparseable: {e.__class__.__name__}]"
         return "No findings yet"
 
     # ========== Review Parsing ==========
