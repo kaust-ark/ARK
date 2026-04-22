@@ -95,3 +95,27 @@ class TestCleanProjectStateCustomTemplate:
         _clean_project_state(tmp_path)
         assert figs.exists()
         assert not (figs / "stale.pdf").exists()
+
+    def test_preserves_user_instructions(self, tmp_path):
+        """user_instructions.yaml is a user input, not generated state.
+        Wiping it on restart silently loses what the user typed at project
+        creation if they don't re-type it in the restart dialog."""
+        from website.dashboard.routes import _clean_project_state
+
+        state = tmp_path / "auto_research" / "state"
+        state.mkdir(parents=True)
+        (state / "user_instructions.yaml").write_text(yaml.dump({
+            "instructions": [
+                {"message": "focus on efficiency benchmarks",
+                 "source": "webapp_create",
+                 "timestamp": "2026-04-22T10:00:00"},
+            ],
+        }))
+        # Also write some regenerable state that SHOULD be wiped.
+        (state / "findings.yaml").write_text("findings: []\n")
+
+        _clean_project_state(tmp_path)
+
+        assert (state / "user_instructions.yaml").exists(), \
+            "user_instructions.yaml must survive restart"
+        assert not (state / "findings.yaml").exists()

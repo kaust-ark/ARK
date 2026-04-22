@@ -505,11 +505,15 @@ def _clean_project_state(project_dir: Path):
     If the caller wants to keep deep_research or figures across a restart, they
     must copy those out before calling this function and restore them after.
     """
-    # Clean auto_research/state/
+    # Clean auto_research/state/ — but keep user-supplied inputs. These
+    # are not generated state; treating them as such silently loses the
+    # instructions the user typed at project creation when they restart
+    # without re-typing them.
     state_dir = project_dir / "auto_research" / "state"
+    _state_keep = {"user_instructions.yaml"}
     if state_dir.exists():
         for f in state_dir.iterdir():
-            if f.is_file():
+            if f.is_file() and f.name not in _state_keep:
                 f.unlink()
 
     # Clean auto_research/logs/
