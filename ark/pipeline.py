@@ -1522,6 +1522,17 @@ in what that file actually says — do not guess.
         venue_pages = self.config.get("venue_pages", 9)
         latex_dir = self.config.get("latex_dir", "paper")
         figures_dir = self.config.get("figures_dir", f"{latex_dir}/figures")
+
+        # Custom-template notes: empty string for projects without a
+        # template_manifest.yaml so the placeholder doesn't leak into the
+        # rendered prompt.
+        try:
+            from ark.template_preprocess import render_custom_template_notes
+            custom_notes = render_custom_template_notes(self.latex_dir)
+        except Exception as e:
+            self.log(f"Failed to render custom template notes: {e}", "WARN")
+            custom_notes = ""
+
         subs = {
             "{PROJECT_NAME}": project_id,
             "{PAPER_TITLE}": title or project_id,
@@ -1530,6 +1541,7 @@ in what that file actually says — do not guess.
             "{VENUE_PAGES}": str(venue_pages),
             "{LATEX_DIR}": latex_dir,
             "{FIGURES_DIR}": figures_dir,
+            "{CUSTOM_TEMPLATE_NOTES}": custom_notes,
         }
         try:
             for pf in templates_dir.glob("*.prompt"):
