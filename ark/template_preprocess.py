@@ -387,6 +387,37 @@ _DEFAULT_SECTIONS = [
 ]
 
 
+# Map .sty / .cls filename prefixes to a venue name known by
+# ``ark.latex_geometry.get_geometry``. Order matters: first match wins, so
+# put more specific patterns first.
+_VENUE_FILE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^neurips", re.IGNORECASE), "neurips"),
+    (re.compile(r"^iclr", re.IGNORECASE), "iclr"),
+    (re.compile(r"^icml", re.IGNORECASE), "icml"),
+    (re.compile(r"^(?:acl|emnlp|naacl)", re.IGNORECASE), "acl"),
+    (re.compile(r"^IEEE", re.IGNORECASE), "ieee"),
+    (re.compile(r"^acmart", re.IGNORECASE), "acmart-sigplan"),
+    (re.compile(r"^sigplan", re.IGNORECASE), "sigplan"),
+    (re.compile(r"^llncs|^lncs", re.IGNORECASE), "lncs"),
+    (re.compile(r"^usenix", re.IGNORECASE), "usenix"),
+)
+
+
+def detect_venue_format(paper_dir: Path) -> Optional[str]:
+    """Detect a known venue name by inspecting ``.sty`` / ``.cls`` filenames.
+
+    Returns the venue key (e.g. ``"neurips"``, ``"icml"``) suitable for
+    passing to ``ark.latex_geometry.get_geometry``, or ``None`` if no
+    pattern matched. Pure filename inspection — never reads file contents.
+    """
+    for ext in (".sty", ".cls"):
+        for path in sorted(paper_dir.glob(f"*{ext}")):
+            for pattern, venue in _VENUE_FILE_PATTERNS:
+                if pattern.match(path.name):
+                    return venue
+    return None
+
+
 def _extract_section_headers(tex: str) -> list[str]:
     """Return the ``\\section{...}`` and ``\\section*{...}`` titles in ``tex``.
 
@@ -424,6 +455,7 @@ def build_manifest(
     manifest: dict = {
         "source": "user_uploaded_zip",
         "venue_hint": venue_hint or "unknown",
+        "detected_venue_format": detect_venue_format(paper_dir),
         "detected_placeholders": detected_placeholders,
         "constraints": _detect_constraints(paper_dir, original_src),
         "writer_instructions": {

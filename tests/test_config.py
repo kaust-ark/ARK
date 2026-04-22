@@ -43,6 +43,41 @@ class TestGetGeometry:
         geo2 = get_geometry("neurips")
         assert geo2["columnwidth_in"] == 5.5
 
+    def test_custom_consults_manifest(self, tmp_path):
+        """For a user-uploaded custom template, read detected_venue_format
+        from template_manifest.yaml instead of silently using acmart-sigplan.
+        """
+        import yaml
+        (tmp_path / "template_manifest.yaml").write_text(yaml.dump({
+            "detected_venue_format": "neurips",
+        }))
+        geo = get_geometry("custom", paper_dir=tmp_path)
+        assert geo["columnwidth_in"] == 5.5
+        assert geo["columns"] == 1
+
+    def test_custom_falls_through_when_manifest_missing(self, tmp_path):
+        # No manifest → acmart-sigplan fallback (historical behaviour).
+        geo = get_geometry("custom", paper_dir=tmp_path)
+        assert geo["columnwidth_in"] == 3.333
+
+    def test_custom_falls_through_when_detection_unknown(self, tmp_path):
+        # Manifest has no detected_venue_format (detection failed) → fallback.
+        import yaml
+        (tmp_path / "template_manifest.yaml").write_text(yaml.dump({
+            "detected_venue_format": None,
+        }))
+        geo = get_geometry("custom", paper_dir=tmp_path)
+        assert geo["columnwidth_in"] == 3.333
+
+    def test_known_venue_ignores_paper_dir(self, tmp_path):
+        # Manifest shouldn't override an explicit, recognized venue_format.
+        import yaml
+        (tmp_path / "template_manifest.yaml").write_text(yaml.dump({
+            "detected_venue_format": "acmart-sigplan",
+        }))
+        geo = get_geometry("neurips", paper_dir=tmp_path)
+        assert geo["columnwidth_in"] == 5.5
+
 
 class TestMatplotlibRcParams:
     def test_font_size(self):

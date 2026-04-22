@@ -698,7 +698,7 @@ After making all changes, you MUST verify the page count:
         # Double-column: min = N - 0.15 (half a page = one column)
         from ark.latex_geometry import get_geometry
         venue_format = self.config.get("venue_format", "")
-        geo = get_geometry(venue_format) if venue_format else {}
+        geo = get_geometry(venue_format, paper_dir=self.latex_dir) if venue_format else {}
         columns = geo.get("columns", 1)
 
         if columns >= 2:

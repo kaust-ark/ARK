@@ -550,7 +550,7 @@ class CompilerMixin:
             venue_name = self.config.get("venue", "").lower()
             venue = venue_name if venue_name else "acmart-sigplan"
 
-        geo = get_geometry(venue)
+        geo = get_geometry(venue, paper_dir=self.latex_dir)
         config_path = self.figures_dir / "figure_config.json"
         write_figure_config(geo, config_path)
         self.log(f"Figure config generated: {config_path} (column={geo['columnwidth_in']}in, font={geo['font_size_pt']}pt)", "INFO")
@@ -853,7 +853,7 @@ output: NO_CONCEPT_FIGURES
 
         from ark.latex_geometry import get_geometry
         venue_format = self.config.get("venue_format", venue)
-        geo = get_geometry(venue_format) if venue_format else {"columnwidth_in": 3.333}
+        geo = get_geometry(venue_format, paper_dir=self.latex_dir) if venue_format else {"columnwidth_in": 3.333}
 
         columns = geo.get("columns", 1)
         col_w = geo.get("columnwidth_in", 3.333)

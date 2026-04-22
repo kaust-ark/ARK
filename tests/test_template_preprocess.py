@@ -21,6 +21,7 @@ from ark.template_preprocess import (
     build_manifest,
     detect_appendix_boilerplate_span,
     detect_boilerplate_span,
+    detect_venue_format,
     preprocess_custom_template,
     render_custom_template_notes,
     sanitize_tex_metadata,
@@ -453,3 +454,58 @@ class TestRenderCustomTemplateNotes:
     def test_corrupt_manifest_returns_empty(self, tmp_path):
         (tmp_path / "template_manifest.yaml").write_text("!@#$%^&*(\ninvalid: [")
         assert render_custom_template_notes(tmp_path) == ""
+
+
+# ---------------------------------------------------------------------------
+#  detect_venue_format — recognize venue from .sty / .cls filenames
+# ---------------------------------------------------------------------------
+
+class TestDetectVenueFormat:
+    """Without this, custom NeurIPS uploads silently get acmart-sigplan's
+    2-column 3.33in geometry and figures come out at the wrong size."""
+
+    def _touch(self, paper_dir: Path, name: str):
+        paper_dir.mkdir(parents=True, exist_ok=True)
+        (paper_dir / name).write_text("")
+
+    def test_neurips_style_file(self, tmp_path):
+        self._touch(tmp_path, "neurips_2026.sty")
+        assert detect_venue_format(tmp_path) == "neurips"
+
+    def test_icml_style_file(self, tmp_path):
+        self._touch(tmp_path, "icml2025.sty")
+        assert detect_venue_format(tmp_path) == "icml"
+
+    def test_iclr_wins_over_generic_letters(self, tmp_path):
+        # iclr templates sometimes ship alongside an unrelated .sty; make sure
+        # the iclr prefix is recognized regardless of sibling files.
+        self._touch(tmp_path, "iclr2025_conference.sty")
+        self._touch(tmp_path, "fancyhdr.sty")
+        assert detect_venue_format(tmp_path) == "iclr"
+
+    def test_ieee_class_file(self, tmp_path):
+        self._touch(tmp_path, "IEEEtran.cls")
+        assert detect_venue_format(tmp_path) == "ieee"
+
+    def test_returns_none_when_no_match(self, tmp_path):
+        self._touch(tmp_path, "fancyhdr.sty")
+        self._touch(tmp_path, "amsmath.sty")
+        assert detect_venue_format(tmp_path) is None
+
+    def test_returns_none_on_empty_dir(self, tmp_path):
+        assert detect_venue_format(tmp_path) is None
+
+    def test_manifest_records_detected_venue(self, tmp_path):
+        """End-to-end: running preprocess on a NeurIPS-looking template
+        writes detected_venue_format='neurips' into the manifest."""
+        self._touch(tmp_path, "neurips_2026.sty")
+        (tmp_path / "main.tex").write_text(
+            "\\documentclass{article}\n"
+            "\\title{Placeholder}\n"
+            "\\begin{document}\n\\maketitle\n"
+            "\\bibliography{refs}\n"
+            "\\end{document}\n"
+        )
+        preprocess_custom_template(tmp_path, venue_hint="custom")
+        manifest = yaml.safe_load((tmp_path / "template_manifest.yaml").read_text())
+        assert manifest["detected_venue_format"] == "neurips"
