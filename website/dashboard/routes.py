@@ -525,15 +525,26 @@ def _clean_project_state(project_dir: Path):
             shutil.rmtree(d, ignore_errors=True)
             d.mkdir(exist_ok=True)
 
-    # Clean paper/ — keep venue template files, remove generated content
+    # Clean paper/ — keep venue template files, remove generated content.
+    # When a user-uploaded template was preprocessed (template_manifest.yaml
+    # present), also keep .tex/.bib/manifest: those are the uploaded skeleton,
+    # not generated content. api_restart_project re-runs preprocess afterwards
+    # to strip any writer-filled prose back to clean stubs. Without this,
+    # restart on a custom-template project leaves paper/ with only .sty files
+    # and the next run fails to find main.tex.
     paper_dir = project_dir / "paper"
     if paper_dir.exists():
+        custom_template = (paper_dir / "template_manifest.yaml").exists()
         keep_exts = {".cls", ".sty", ".bst"}
+        if custom_template:
+            keep_exts |= {".tex", ".bib"}
         for f in paper_dir.iterdir():
             if f.is_dir():
                 if f.name == "figures":
                     shutil.rmtree(f, ignore_errors=True)
                     f.mkdir(exist_ok=True)
+            elif f.name == "template_manifest.yaml":
+                continue
             elif f.suffix not in keep_exts:
                 f.unlink()
 
@@ -1729,12 +1740,22 @@ async def api_restart_project(project_id: str, request: Request):
                 shutil.move(str(item), dest)
         shutil.rmtree(backup_dir, ignore_errors=True)
 
-        # Re-copy venue template (clean removed .bib/.tex template files)
+        # Re-copy venue template (clean removed .bib/.tex template files).
+        # For custom templates the uploaded skeleton was preserved by
+        # _clean_project_state above; re-run preprocess to strip any
+        # writer-filled prose back to empty section stubs so the next run
+        # starts from the same baseline as the initial upload.
         venue_fmt = body.get("venue_format") or project.venue_format or ""
+        paper_dir = pdir / "paper"
         if venue_fmt and venue_fmt != "custom":
-            paper_dir = pdir / "paper"
             paper_dir.mkdir(parents=True, exist_ok=True)
             copy_venue_template(venue_fmt, paper_dir)
+        elif venue_fmt == "custom" and (paper_dir / "template_manifest.yaml").exists():
+            try:
+                from ark.template_preprocess import preprocess_custom_template
+                preprocess_custom_template(paper_dir, venue_hint="custom")
+            except Exception as e:
+                logger.warning(f"Custom template re-preprocess on restart failed: {e}")
 
         # Re-substitute agent prompt templates (clean removed agents/)
         _substitute_agent_templates(
