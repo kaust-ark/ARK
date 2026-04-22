@@ -132,6 +132,168 @@ def _fallback_title_from_idea(idea_text: str) -> str:
     return idea_text[:80].strip().replace("\n", " ")
 
 
+# --------------- HITL (human-in-the-loop) helpers ---------------
+#
+# Agents write ``results/needs_human.json`` when they hit a blocker
+# they cannot resolve autonomously. ``_check_human_intervention`` (on
+# PipelineMixin) reads it, routes it through the shared
+# ``ask_user_decision`` Telegram UI, and persists the decision so a
+# later iteration can honour it without re-asking. The module-level
+# helpers here handle the pure-data concerns (schema coercion, history
+# append, decision accumulator) so they are trivial to unit-test.
+
+_HITL_OPTION_PAREN_RE = re.compile(
+    r"\(([a-z])\)\s*([^()]+?)(?=\(\w\)|$)", re.IGNORECASE,
+)
+_HITL_TRAILING_CONJUNCTION_RE = re.compile(
+    r"(?:[,;.\s]*\b(?:or|and)\b\s*)+$", re.IGNORECASE,
+)
+
+
+def _clean_option_title(text: str) -> str:
+    s = str(text).strip()
+    s = _HITL_TRAILING_CONJUNCTION_RE.sub("", s).rstrip(",;. ")
+    return s
+
+
+def _coerce_hitl_options(raw: dict) -> list:
+    """Return a canonical [{id, title, consequence}] list.
+
+    Accepts the structured ``options[]`` format plus two legacy shapes
+    (``operator_action_needed`` as a ``(a)/(b)/(c)`` sentence, or
+    ``needed_items`` as a list of strings). Empty result means the
+    agent wrote a free-form help request and we have nothing numbered
+    to surface."""
+    options = raw.get("options")
+    if isinstance(options, list) and options and all(isinstance(o, dict) for o in options):
+        return [
+            {"id": str(o.get("id") or i),
+             "title": str(o.get("title") or "").strip(),
+             "consequence": str(o.get("consequence") or "").strip()}
+            for i, o in enumerate(options, 1)
+        ]
+
+    legacy = raw.get("operator_action_needed") or raw.get("needed_items") or ""
+    if isinstance(legacy, list):
+        return [
+            {"id": str(i),
+             "title": _clean_option_title(item),
+             "consequence": ""}
+            for i, item in enumerate(legacy, 1)
+            if str(item).strip()
+        ]
+    if isinstance(legacy, str) and legacy.strip():
+        matches = _HITL_OPTION_PAREN_RE.findall(legacy)
+        if matches:
+            return [
+                {"id": str(idx + 1),
+                 "title": _clean_option_title(text),
+                 "consequence": ""}
+                for idx, (_, text) in enumerate(matches)
+            ]
+        return [{"id": "1",
+                 "title": _clean_option_title(legacy),
+                 "consequence": ""}]
+    return []
+
+
+def _normalise_needs_human(raw: dict) -> dict:
+    """Coerce a ``needs_human.json`` payload into a stable shape.
+
+    Tolerates the legacy free-form schema (``operator_action_needed`` /
+    ``needed_items`` / ``commands_tried`` / ``error_output``) as well
+    as the structured schema documented in experimenter.prompt
+    (``options[]`` with ``title`` + ``consequence`` per option)."""
+    evidence = raw.get("evidence") or {}
+    if isinstance(evidence, str):
+        evidence = {"freeform": evidence}
+    elif not isinstance(evidence, dict):
+        evidence = {}
+    if "tested_commands" not in evidence:
+        if raw.get("commands_tried"):
+            evidence["tested_commands"] = list(raw["commands_tried"])
+        elif raw.get("tested_cmd"):
+            evidence["tested_commands"] = [raw["tested_cmd"]]
+    if "error_output" not in evidence and raw.get("error_output"):
+        evidence["error_output"] = raw["error_output"]
+
+    return {
+        "summary": str(raw.get("summary") or raw.get("reason") or "").strip(),
+        "stage": str(raw.get("stage") or raw.get("phase") or "").strip(),
+        "what_failed": str(raw.get("what_failed") or raw.get("details") or "").strip(),
+        "evidence": evidence,
+        "options": _coerce_hitl_options(raw),
+        "default_option": str(raw.get("default_option") or "").strip(),
+        "timeout_minutes": int(raw.get("timeout_minutes") or 60),
+    }
+
+
+def _hitl_slug(s: str, max_len: int = 80) -> str:
+    s = re.sub(r"[^a-zA-Z0-9_]+", "_", s).strip("_").lower()
+    return s[:max_len] or "anon"
+
+
+def _append_hitl_history(code_dir: Path, req: dict, reply,
+                         chosen, decision_text: str,
+                         stage_label: str) -> Path:
+    """Append a Q+A entry to ``results/needs_human_history.jsonl``."""
+    history = code_dir / "results" / "needs_human_history.jsonl"
+    history.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "stage": stage_label,
+        "request": req,
+        "reply": reply,
+        "chosen_option": chosen,
+        "decision_text": decision_text,
+    }
+    with history.open("a") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return history
+
+
+def _update_hitl_decisions(state_dir: Path, req: dict, chosen,
+                           decision_text: str, stage_label: str) -> Path:
+    """Write ``auto_research/state/hitl_decisions.yaml`` — the
+    accumulator agents consult at the start of subsequent iterations
+    so they honour a prior decision instead of re-asking.
+
+    Record id is a slug of ``stage :: summary`` so the *same* blocker
+    surfacing twice updates the existing record rather than piling up
+    duplicates."""
+    path = state_dir / "hitl_decisions.yaml"
+    data: dict = {}
+    if path.exists():
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+        except Exception:
+            data = {}
+    decisions = data.get("decisions", [])
+    decision_id = _hitl_slug(f"{stage_label}::{req.get('summary','')}")
+    record = {
+        "id": decision_id,
+        "timestamp": datetime.now().isoformat(),
+        "stage": stage_label,
+        "summary": req.get("summary"),
+        "chosen_option": chosen,
+        "free_text": None if chosen else (decision_text or None),
+    }
+
+    replaced = False
+    for i, d in enumerate(decisions):
+        if isinstance(d, dict) and d.get("id") == decision_id:
+            decisions[i] = record
+            replaced = True
+            break
+    if not replaced:
+        decisions.append(record)
+
+    data["decisions"] = decisions
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    return path
+
+
 class PipelineMixin:
     """Mixin providing the top-level pipeline orchestration.
 
@@ -1293,79 +1455,130 @@ selected skill (why it matches, which phase will use it).
             self.log_step(f"Builtin skills installed: {', '.join(installed)}", "success")
 
     def _check_human_intervention(self, stage: str = "") -> bool:
-        """Check if an agent requested human intervention via needs_human.json.
+        """Handle an agent's ``results/needs_human.json`` blocker.
 
-        If the file exists and urgency is "blocking", sends a Telegram notification
-        and blocks until the user responds. Returns True if human responded (caller
-        should re-run the blocked work), False otherwise.
+        The payload is normalised, routed through ``ask_user_decision``
+        (main's shared Telegram decision UI — unified header, numbered
+        options with a Custom escape, timeout default, ``/bind`` aware),
+        and the resolution is persisted to both an append-only history
+        log and the ``hitl_decisions.yaml`` accumulator that agents read
+        at the start of subsequent iterations.
+
+        Returns True if a decision was made (caller should retry the
+        blocked work), False on timeout with no default / no telegram.
         """
-        import json
         needs_file = Path(self.code_dir) / "results" / "needs_human.json"
         if not needs_file.exists():
             return False
-
         try:
-            with open(needs_file) as f:
-                request = json.load(f)
-        except Exception:
+            raw = json.loads(needs_file.read_text())
+        except Exception as e:
+            self.log(f"needs_human.json unreadable, skipping HITL: {e}", "WARN")
+            needs_file.unlink(missing_ok=True)
             return False
 
-        summary = request.get("summary", "Agent needs help")
-        details = request.get("details", "")
-        urgency = request.get("urgency", "blocking")
-        timeout_min = request.get("timeout_minutes", 60)
-        needed_items = request.get("needed_items", [])
-        commands_tried = request.get("commands_tried", [])
-        error_output = request.get("error_output", "")
+        req = _normalise_needs_human(raw)
+        self.log(
+            f"Human intervention requested: {req['summary'] or '(no summary)'}",
+            "WARN",
+        )
 
-        self.log(f"Human intervention requested [{urgency}]: {summary}", "WARN")
+        # Derive ask_user_decision inputs from the normalised request.
+        options = [o["title"] or o["id"] for o in req["options"]]
+        option_details = [o["consequence"] for o in req["options"]]
+        if not options:
+            # Agent wrote a free-form help request with no numbered
+            # options. Offer a minimal two-option shape so the user has
+            # something to pick — ask_user_decision auto-appends a
+            # Custom slot so free-text is always possible too.
+            options = ["Continue without action", "Pause and wait for me"]
+            option_details = [
+                "Skip the blocker and let downstream work proceed as best-effort.",
+                "Hold until you reply with guidance.",
+            ]
 
-        # Build Telegram message
-        items_text = ""
-        if needed_items:
-            items_text = "\n".join(
-                f"  • <code>{item.get('key', '?')}</code>: {item.get('purpose', '')}"
-                for item in needed_items
+        background = []
+        if req["stage"]:
+            background.append(f"Stage: {req['stage']}")
+        if req["what_failed"]:
+            background.append(f"What failed: {req['what_failed'][:400]}")
+        for cmd in (req["evidence"].get("tested_commands") or [])[:4]:
+            if isinstance(cmd, dict):
+                c = cmd.get("cmd") or cmd.get("command") or ""
+                rc = cmd.get("exit_code")
+                background.append(
+                    f"Tested: {str(c)[:120]}"
+                    + (f" (exit {rc})" if rc is not None else "")
+                )
+            else:
+                background.append(f"Tested: {str(cmd)[:120]}")
+        err = req["evidence"].get("error_output")
+        if err:
+            background.append(f"Error: {str(err)[:300]}")
+
+        # Map "3" → 0-indexed int for ask_user_decision.
+        default_idx = 0
+        if req["default_option"] and req["options"]:
+            for i, o in enumerate(req["options"]):
+                if o["id"] == req["default_option"]:
+                    default_idx = i
+                    break
+
+        question = req["summary"] or f"Agent blocked at {stage or 'unknown stage'}"
+
+        idx, reply = self.ask_user_decision(
+            question,
+            options,
+            timeout=req["timeout_minutes"] * 60,
+            default=default_idx,
+            what_happened=req["summary"],
+            background=background,
+            option_details=option_details,
+            phase="needs_human",
+        )
+
+        # Resolve: numeric pick → chosen option; free text → user_update
+        # (already injected by ask_user_decision); timeout → nothing new.
+        chosen = None
+        decision_text = ""
+        if 0 <= idx < len(req["options"]):
+            chosen = req["options"][idx]
+            decision_text = f"Selected option {chosen['id']}: {chosen['title']}"
+            if chosen["consequence"]:
+                decision_text += f" (consequence: {chosen['consequence']})"
+            # ask_user_decision only injects on free text; propagate the
+            # numeric decision into user_updates.yaml too so planner /
+            # reviewer memory sees it in the usual channel.
+            try:
+                self.inject_user_update(decision_text)
+            except Exception:
+                pass
+            self.log(f"HITL decision: {decision_text[:120]}", "INFO")
+        elif reply:
+            decision_text = reply.strip()
+            self.log(f"HITL free-text reply: {decision_text[:120]}", "INFO")
+        else:
+            self.log(
+                f"No HITL reply after {req['timeout_minutes']}min — "
+                f"experiments remain blocked.",
+                "WARN",
             )
 
-        tg_msg = (
-            f"{self.tg_header('🚤')}\n"
-            f"🚨 <b>Blocked — needs help</b>\n\n"
-            f"<b>Stage:</b> {stage}\n"
-            f"<b>Issue:</b> {summary}\n"
-        )
-        if items_text:
-            tg_msg += f"\n<b>Needed:</b>\n{items_text}\n"
-        if commands_tried:
-            tg_msg += f"\n<b>Commands tried:</b>\n"
-            for cmd in commands_tried[:5]:
-                tg_msg += f"  <code>{cmd[:80]}</code>\n"
-        if error_output:
-            tg_msg += f"\n<b>Error:</b>\n<pre>{error_output[:300]}</pre>\n"
-        if details:
-            tg_msg += f"\n{details[:400]}\n"
-        tg_msg += f"\n⏳ Waiting up to {timeout_min} min for your reply..."
+        try:
+            _append_hitl_history(
+                Path(self.code_dir), req, reply, chosen, decision_text, stage,
+            )
+        except Exception as e:
+            self.log(f"needs_human_history.jsonl append failed: {e}", "WARN")
+        try:
+            _update_hitl_decisions(
+                Path(self.state_dir), req, chosen, decision_text, stage,
+            )
+        except Exception as e:
+            self.log(f"hitl_decisions.yaml update failed: {e}", "WARN")
 
-        reply = None
-        if self.telegram.is_configured:
-            reply = self.telegram.ask(tg_msg, timeout=timeout_min * 60)
-
-            if reply:
-                # Save user response
-                response_file = Path(self.code_dir) / "results" / "human_response.json"
-                with open(response_file, "w") as f:
-                    json.dump({"reply": reply, "stage": stage,
-                               "original_request": summary}, f, indent=2)
-                self.inject_user_update(reply)
-                self.log(f"User responded: {reply[:100]}", "INFO")
-            else:
-                self.log(f"No response after {timeout_min}min — experiments remain blocked.", "WARN")
-        else:
-            self.log(f"Telegram not configured — experiments remain blocked.", "WARN")
-
-        # Remove the request file so it doesn't trigger again
         needs_file.unlink(missing_ok=True)
-        return reply is not None
+        return bool(reply) or chosen is not None
 
     def _specialize_agent_prompts(self):
         """Specialize each agent's prompt with project-specific knowledge.

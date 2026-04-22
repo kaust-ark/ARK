@@ -21,30 +21,41 @@ Write a JSON file to `results/needs_human.json` with this format:
 
 ```json
 {
-  "type": "credential | installation | environment | decision | access",
-  "urgency": "blocking",
-  "summary": "One-line description of what is needed",
-  "details": "Full explanation including exact error messages from failed attempts",
-  "commands_tried": ["git clone ...", "npm install ..."],
-  "error_output": "Paste the actual error output here",
-  "needed_items": [
-    {
-      "key": "ANTHROPIC_API_KEY",
-      "provider": "Anthropic",
-      "purpose": "LLM inference for semantic analysis",
-      "affected_experiments": ["exp2", "exp3"]
-    }
+  "urgency": "blocker",
+  "summary": "One-line description of what is blocked and why",
+  "stage": "Phase label / pipeline step where this surfaced",
+  "what_failed": "Exact command or condition that reproduces the blocker",
+  "evidence": {
+    "tested_commands": [
+      {"cmd": "pip install foo", "exit_code": 1, "output": "…"}
+    ],
+    "error_output": "<truncated stderr if useful>"
+  },
+  "options": [
+    {"id": "1",
+     "title": "Provide API key ANTHROPIC_API_KEY",
+     "consequence": "Unblocks exp2/exp3; user pastes the key"},
+    {"id": "2",
+     "title": "Defer these experiments to next iteration",
+     "consequence": "Pipeline continues without them; paper claims weakened"}
   ],
+  "default_option": "2",
   "timeout_minutes": 60
 }
 ```
+
+Each option is an action the **user** can take. The framework renders a
+numbered Telegram menu; the user's reply is mapped back to the option
+(or treated as free-text guidance if they write prose).
 
 ## After Writing the Request
 
 - **STOP all work that depends on the missing resource.** Do not continue with alternative methods.
 - Do NOT design your own workaround, fallback, or LLM-based substitute.
-- The pipeline will notify the user via Telegram and wait for a response.
-- If the user responds, their input will be available in `results/human_response.json`.
+- The pipeline notifies the user via Telegram and waits for a response.
+- The user's decision lands in `auto_research/state/hitl_decisions.yaml`.
+  Read this file before retrying any previously-blocked experiment;
+  if the decision was "deferred", mark it deferred and do not retry.
 - Mark affected experiments as `"status": "blocked"` — not "completed_fallback" or "degraded".
 
 ## Critical Rules

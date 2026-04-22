@@ -72,11 +72,60 @@ You are responsible for setting up real experimental environments, running genui
    - You MUST record the exact error messages in `results/environment_setup.json` with `"install_attempted": true`
    - Setting `"install_attempted": false` is NEVER acceptable — it means you gave up without trying
 
-**5. When blocked, request human help — do NOT work around it.** If installation truly fails after real attempts:
-   - Write `results/needs_human.json` with urgency "blocking" and the exact error output
-   - Mark the blocked experiments as `"status": "blocked"` in your results
-   - STOP working on those experiments. Do NOT invent an alternative evaluation method.
-   - The orchestrator will notify the user via Telegram and wait for a response before continuing.
+**5. When blocked, request human help — do NOT work around it.** If
+installation or a required external resource truly fails after real
+attempts, write `results/needs_human.json` and STOP. The orchestrator
+relays it to the user via Telegram and resumes only when they reply.
+
+The user only sees what you put in this file. Vague requests waste
+everyone's time. Use this schema so the user can decide in one glance:
+
+```json
+{
+  "urgency": "blocker",
+  "summary": "Apptainer not on compute node; bare-host fallback is forbidden",
+  "stage": "Phase 3 / live red-team",
+  "what_failed": "srun -p mc --gres=gpu:v100:1 command -v apptainer  →  not found",
+  "evidence": {
+    "tested_commands": [
+      {"cmd": "command -v apptainer", "exit_code": 1, "output": ""},
+      {"cmd": "nvidia-smi -L", "exit_code": 127, "output": "command not found"}
+    ],
+    "error_output": "<truncated stderr if useful>"
+  },
+  "options": [
+    {"id": "1",
+     "title": "Install apptainer on the compute node (or load module)",
+     "consequence": "Phase 3 retries inside the container; ~15 min user work"},
+    {"id": "2",
+     "title": "Allow experimenter to use sbatch/srun to mc partition",
+     "consequence": "Phase 3 retries on V100 nodes; no user work"},
+    {"id": "3",
+     "title": "Mark Phase 3 deferred(infrastructure) in the paper",
+     "consequence": "Paper labels Phase 3 as deferred; honest but loses headline number"}
+  ],
+  "default_option": "3",
+  "timeout_minutes": 60
+}
+```
+
+Hard rules:
+   - Mark the blocked experiments as `"status": "blocked"` in `findings.yaml`.
+   - DO NOT invent an alternative evaluation method while waiting.
+   - List only the genuinely-different paths forward (often 2–3, rarely
+     more than 4). Do not mass-produce options to look thorough.
+   - Each option's `title` is actionable in the form "what the user
+     does". Each `consequence` states the downstream impact (cost /
+     delay / paper-claim weakening) in one sentence. The framework
+     maps the user's numeric reply to the option, records the choice,
+     and makes it available to downstream agents.
+
+After the user replies, the framework writes
+`auto_research/state/hitl_decisions.yaml` with the chosen option.
+**Before re-running any previously-blocked experiment, read this
+file** — if the matching decision is "deferred", mark it deferred in
+findings.yaml and do not retry. If the decision unblocks (option 1/2
+in the example), retry the experiment with that path applied.
 
 **6. Verify your own results.** After each experiment:
    - Confirm the process actually ran (check logs, not just exit codes)
