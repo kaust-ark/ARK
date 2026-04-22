@@ -9,9 +9,18 @@ Target venue: {VENUE_NAME} ({VENUE_FORMAT} template, {VENUE_PAGES} pages of body
 
 - After completing the review, please save the full review report to:
   `auto_research/state/latest_review.md`
-- **Ignore `[NEEDS-CHECK]` citation markers** in the bibliography. These are managed by
-  an automated citation verification system and will be resolved separately. Do NOT
-  flag them as issues in your review.
+- **Do not review citations.** An automated citation pipeline (verification, de-duplication,
+  `[NEEDS-CHECK]` resolution, and bibliography repair) runs separately and owns this entire
+  axis. In your review, do NOT flag:
+  - missing citations for claims,
+  - suspected-wrong citation keys,
+  - `[NEEDS-CHECK]` markers,
+  - bibliography formatting / ordering / duplicates,
+  - or "this citation does not precisely support this sentence" style mismatches.
+
+  If a claim is unsupported by evidence in the paper *itself* (e.g. a numeric threshold
+  with no derivation anywhere in the text), that is a substance issue — flag it as
+  *evidence/derivation*, not as a citation issue. Treat the bibliography as opaque.
 
 This file will be read by the Writer Agent to improve the paper.
 

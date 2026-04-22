@@ -225,6 +225,31 @@ its primary API, is fraud equivalent to fabrication. Either add the
 real call or remove the import. The reviewer audits `library_use`
 against your experiment scripts.
 
+**Top-level layout (critical — must parse as valid YAML).**
+`coverage:`, `findings:`, and `library_use:` are all **top-level**
+keys — siblings, not nested. Emit each block complete before starting
+the next one. Do NOT interleave them. The whole file must look like:
+
+```yaml
+coverage:
+  <item>: {...}
+  ...
+
+findings:
+  - id: f1
+    ...
+  - id: f2
+    ...
+
+library_use:
+  <package>: {...}
+  ...
+```
+
+Splicing `library_use:` in the middle of the `findings:` list (between
+list items) produces invalid YAML and silently breaks downstream
+validators. Always finish the `findings:` list first.
+
 ## Metric Provenance (quote the raw file)
 
 Every finding that carries `metrics:` must also carry two fields so
