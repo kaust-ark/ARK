@@ -23,6 +23,42 @@ _TITLE_MAX_LEN = 200
 _TITLE_MAX_RETRIES = 3
 
 
+# Match the start of an active (non-commented) ``\title`` command, positioning
+# the regex right before the opening ``{``. Active means the line is not a
+# ``%`` comment; we verify this by requiring only whitespace before ``\title``.
+_ACTIVE_TITLE_RE = re.compile(r'^(?P<indent>[ \t]*)\\title\s*(?=\{)', re.MULTILINE)
+
+
+def _replace_latex_title(src: str, new_title: str) -> str:
+    """Replace the first active ``\\title{...}`` in LaTeX source.
+
+    Walks balanced braces (respecting ``\\{``/``\\}`` escapes) so titles
+    containing nested LaTeX commands like ``\\title{A \\emph{note}}`` are
+    handled correctly. Commented-out occurrences (lines starting with ``%``)
+    are skipped. Returns ``src`` unchanged if no active ``\\title`` is found.
+    """
+    for m in _ACTIVE_TITLE_RE.finditer(src):
+        brace_start = m.end()
+        if brace_start >= len(src) or src[brace_start] != '{':
+            continue
+        depth = 1
+        i = brace_start + 1
+        while i < len(src) and depth > 0:
+            ch = src[i]
+            if ch == '\\' and i + 1 < len(src):
+                i += 2
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+            i += 1
+        if depth == 0:
+            # src[brace_start] == '{', src[i-1] == '}' — replace the body.
+            return src[:brace_start + 1] + new_title + src[i - 1:]
+    return src
+
+
 def _generate_title_via_llm(idea_text: str, timeout: int = 60) -> str:
     """Call ``claude -p`` to generate a paper title from idea text.
 
@@ -1428,12 +1464,82 @@ in what that file actually says — do not guess.
         if config_path.exists():
             cfg = yaml.safe_load(config_path.read_text()) or {}
             cfg["title"] = new_title
+            # Fill in the empty ``**Paper Title**:`` slot in goal_anchor if the
+            # project was created before the title existed. Don't clobber a
+            # goal_anchor that already carries a real title.
+            goal = cfg.get("goal_anchor") or ""
+            if goal:
+                cfg["goal_anchor"] = re.sub(
+                    r'(\*\*Paper Title\*\*:[ \t]*)(\n|$)',
+                    lambda m: f"{m.group(1)}{new_title}{m.group(2)}",
+                    goal,
+                    count=1,
+                )
             config_path.write_text(
                 yaml.dump(cfg, default_flow_style=False,
                           allow_unicode=True, sort_keys=False)
             )
         self._sync_db(title=new_title, name=new_title)
         self.log(f"Title committed: {new_title}", "INFO")
+
+        # --- Propagate title to paper/main.tex and agent prompts ---
+        self._sync_paper_metadata(new_title)
+
+    def _sync_paper_metadata(self, title: str):
+        """Push the canonical title into ``paper/main.tex`` and agent prompts.
+
+        Called after ``_update_title_from_idea`` commits a new title, so the
+        LaTeX ``\\title{...}`` and the writer/reviewer prompts all agree with
+        ``config.yaml``. Without this sync, templates ship with their own
+        placeholder title (e.g. ``Formatting Instructions For NeurIPS 2026``)
+        which would otherwise survive the whole pipeline.
+        """
+        # 1. Rewrite \title{...} in the main LaTeX file.
+        main_tex = self.latex_dir / "main.tex"
+        if main_tex.exists():
+            try:
+                src = main_tex.read_text()
+                new_src = _replace_latex_title(src, title)
+                if new_src != src:
+                    main_tex.write_text(new_src)
+                    self.log(f"Synced \\title{{}} in main.tex → {title}", "INFO")
+            except Exception as e:
+                self.log(f"Failed to sync main.tex title: {e}", "WARN")
+
+        # 2. Re-render agent prompts from templates so {PAPER_TITLE} is current.
+        templates_dir = Path(__file__).parent / "templates" / "agents"
+        agents_dir = self.agents_dir
+        if not (templates_dir.exists() and agents_dir.exists()):
+            return
+        project_id = self._project_id or self.project_name
+        venue_format = self.config.get("venue_format") or "neurips"
+        venue_name = (
+            self.config.get("venue")
+            or self.config.get("venue_name")
+            or venue_format
+            or "NeurIPS"
+        )
+        venue_pages = self.config.get("venue_pages", 9)
+        latex_dir = self.config.get("latex_dir", "paper")
+        figures_dir = self.config.get("figures_dir", f"{latex_dir}/figures")
+        subs = {
+            "{PROJECT_NAME}": project_id,
+            "{PAPER_TITLE}": title or project_id,
+            "{VENUE_NAME}": venue_name,
+            "{VENUE_FORMAT}": venue_format,
+            "{VENUE_PAGES}": str(venue_pages),
+            "{LATEX_DIR}": latex_dir,
+            "{FIGURES_DIR}": figures_dir,
+        }
+        try:
+            for pf in templates_dir.glob("*.prompt"):
+                content = pf.read_text()
+                for placeholder, value in subs.items():
+                    content = content.replace(placeholder, value)
+                (agents_dir / pf.name).write_text(content)
+            self.log(f"Refreshed {len(list(templates_dir.glob('*.prompt')))} agent prompts with new title", "INFO")
+        except Exception as e:
+            self.log(f"Failed to refresh agent prompts: {e}", "WARN")
 
     # ==================== Citation Bootstrapping ====================
 
@@ -2803,15 +2909,42 @@ Only use double_column for multi-panel figures (side-by-side subplots).
         readers never see a partial file. Aggregates real token & USD fields
         when the claude JSON envelope was parsed; falls back to character
         counts otherwise.
+
+        Merges with any raw_stats already on disk so restarts don't clobber
+        cost history — each orchestrator process starts with an empty
+        in-memory ``_agent_stats``, but the persisted ledger is the union.
         """
         if not self._agent_stats:
             return
+
+        report_path = self.state_dir / "cost_report.yaml"
+
+        # Merge in any previously persisted raw_stats. Dedup by
+        # (timestamp, agent_type); in-memory wins on collision.
+        existing_raw = []
+        if report_path.exists():
+            try:
+                prev = yaml.safe_load(report_path.read_text()) or {}
+                existing_raw = prev.get("raw_stats") or []
+            except Exception:
+                existing_raw = []
+
+        in_memory_keys = {
+            (s.get("timestamp"), s.get("agent_type"))
+            for s in self._agent_stats
+        }
+        merged_stats = [
+            s for s in existing_raw
+            if (s.get("timestamp"), s.get("agent_type")) not in in_memory_keys
+        ]
+        merged_stats.extend(self._agent_stats)
+        merged_stats.sort(key=lambda s: s.get("timestamp") or "")
 
         # Aggregate per agent type. Each bucket carries both legacy char-count
         # fields (for backwards compat with telegram_daemon / older tests) and
         # the new token + cost fields populated from claude JSON output.
         by_type = {}
-        for stat in self._agent_stats:
+        for stat in merged_stats:
             atype = stat["agent_type"]
             if atype not in by_type:
                 by_type[atype] = {
@@ -2854,10 +2987,9 @@ Only use double_column for multi-panel figures (side-by-side subplots).
             "total_cache_read_tokens": total_cache_read_tokens,
             "total_cache_creation_tokens": total_cache_creation_tokens,
             "per_agent": by_type,
-            "raw_stats": self._agent_stats[-100:],  # Keep last 100 entries
+            "raw_stats": merged_stats[-100:],  # Keep last 100 entries
         }
 
-        report_path = self.state_dir / "cost_report.yaml"
         tmp_path = report_path.with_suffix(".yaml.tmp")
         try:
             with open(tmp_path, "w") as f:
