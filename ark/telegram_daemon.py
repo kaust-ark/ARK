@@ -141,6 +141,93 @@ class TelegramDaemon:
             return lower
         return None
 
+    # ── Bind Commands ─────────────────────────────────────
+
+    def _handle_bind_command(self, text: str) -> bool:
+        """Handle ``/bind <name>``, ``/release``, ``/bound`` commands.
+
+        Returns True if the message was a bind command (and therefore
+        should not be routed to any project).
+
+        The bound-project model pins every non-prefixed user message to a
+        single project so the user doesn't have to prefix their replies
+        when multiple projects share the same bot. Explicit prefix routing
+        (``safeclaw pdf``) still works even when a binding is active, but
+        *only* for projects other than the bound one — they temporarily
+        override the pin for that one message.
+        """
+        stripped = text.strip()
+        lower = stripped.lower()
+
+        if lower == "/bound":
+            state = self._load_state()
+            bound = state.get("bound_project")
+            if bound:
+                active = state.get("active_projects", {})
+                status = "🟢 running" if bound in active else "⏸ stopped"
+                self._send(
+                    f"🔗 Bound to <b>{bound}</b> ({status}).\n"
+                    f"Use <code>/release</code> to unpin, or "
+                    f"<code>/bind &lt;name&gt;</code> to switch.",
+                    parse_mode="HTML",
+                )
+            else:
+                self._send(
+                    "No project is bound. Messages route by heuristic "
+                    "(prefix → single project → last sender).\n"
+                    "Pin one with <code>/bind &lt;name&gt;</code>.",
+                    parse_mode="HTML",
+                )
+            return True
+
+        if lower == "/release":
+            state = self._load_state()
+            prev = state.get("bound_project")
+            state["bound_project"] = None
+            self._save_state(state)
+            if prev:
+                self._send(
+                    f"🔓 Released <b>{prev}</b>. Routing falls back to "
+                    f"heuristics.",
+                    parse_mode="HTML",
+                )
+            else:
+                self._send("No project was bound.")
+            return True
+
+        if lower.startswith("/bind"):
+            parts = stripped.split(maxsplit=1)
+            state = self._load_state()
+            registered = state.get("registered_projects", [])
+            if len(parts) < 2:
+                names = ", ".join(f"<code>{p}</code>" for p in sorted(registered))
+                self._send(
+                    f"Usage: <code>/bind &lt;name&gt;</code>\n"
+                    f"Registered: {names or '(none)'}",
+                    parse_mode="HTML",
+                )
+                return True
+            target = parts[1].strip()
+            if target not in registered:
+                self._send(
+                    f"Project <b>{target}</b> is not registered. "
+                    f"Run <code>ark run {target}</code> first.",
+                    parse_mode="HTML",
+                )
+                return True
+            state["bound_project"] = target
+            self._save_state(state)
+            active = state.get("active_projects", {})
+            status = "🟢 running" if target in active else "⏸ stopped"
+            self._send(
+                f"🔗 Bound to <b>{target}</b> ({status}). Every message "
+                f"now routes here until <code>/release</code>.",
+                parse_mode="HTML",
+            )
+            return True
+
+        return False
+
     def _handle_model_command(self, text: str) -> bool:
         """Handle /model commands. Returns True if handled."""
         text_lower = text.strip().lower()
@@ -196,6 +283,8 @@ class TelegramDaemon:
         # Handle global commands before project routing
         if self._handle_model_command(text):
             return
+        if self._handle_bind_command(text):
+            return
 
         state = self._load_state()
         active = state.get("active_projects", {})
@@ -215,7 +304,10 @@ class TelegramDaemon:
         text_stripped = text.strip()
         text_lower = text_stripped.lower()
 
-        # Rule 1: Prefix match — "safeclaw pdf" → safeclaw
+        # Rule 1: Explicit prefix — "safeclaw pdf" → safeclaw.
+        # Highest priority even when a bind is active, so the user can
+        # temporarily poke another project (e.g. ask for its PDF) without
+        # releasing the binding.
         target = None
         remainder = text_stripped
         for project_name in all_projects:
@@ -229,31 +321,42 @@ class TelegramDaemon:
                 break
 
         if not target:
-            # Rule 2: Waiting project
+            # Rule 2: Bound project — pinned via /bind, overrides heuristics.
+            bound = state.get("bound_project")
+            if bound and bound in all_projects:
+                target = bound
+            elif bound and bound not in all_projects:
+                # Stale binding (project deregistered). Clear it silently.
+                state["bound_project"] = None
+                self._save_state(state)
+
+        if not target:
+            # Rule 3: Waiting project (orchestrator blocked on a decision)
             waiting = state.get("waiting_project")
             if waiting and waiting in active:
                 target = waiting
 
         if not target:
-            # Rule 3: Single project
+            # Rule 4: Single project
             if len(all_projects) == 1:
                 target = all_projects[0]
 
         if not target:
-            # Rule 4: Last sender
+            # Rule 5: Last sender
             last = state.get("last_sender")
             if last and last in all_projects:
                 target = last
 
         if not target:
-            # Rule 5: Ambiguous
-            names = ", ".join(sorted(all_projects))
+            # Rule 6: Ambiguous
             statuses = []
             for p in sorted(all_projects):
                 s = "🟢 running" if p in active else "⏸ stopped"
                 statuses.append(f"  <b>{p}</b> — {s}")
             self._send(
-                "Which project?\n" + "\n".join(statuses) + "\n\nPrefix your message with the project name.",
+                "Which project?\n" + "\n".join(statuses)
+                + "\n\nPrefix your message with the project name, or "
+                "<code>/bind &lt;name&gt;</code> to pin one.",
                 parse_mode="HTML",
             )
             return
@@ -830,11 +933,13 @@ def deregister_project(project_name: str) -> list:
                 active = state.get("active_projects", {})
                 active.pop(project_name, None)
 
-                # Clean up sender/waiting refs
+                # Clean up sender/waiting/bound refs
                 if state.get("waiting_project") == project_name:
                     state["waiting_project"] = None
                 if state.get("last_sender") == project_name:
                     state["last_sender"] = None
+                if state.get("bound_project") == project_name:
+                    state["bound_project"] = None
 
                 with open(state_file, "w") as f:
                     yaml.dump(state, f, default_flow_style=False, allow_unicode=True)

@@ -873,7 +873,8 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
 
         if self.telegram.is_configured:
             self.telegram.send(
-                f"<b>🔬 {self.display_name}</b>\nResearch Phase — analyzing proposal & building foundation...",
+                f"{self.tg_header('🚤')}\n"
+                f"🔬 <b>Research Phase started</b> — analyzing proposal & building foundation...",
                 parse_mode="HTML",
             )
 
@@ -884,13 +885,19 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
             if not project_env_ready(self.code_dir):
                 base_env = self.config.get("base_conda_env", "ark-base")
                 self.log_step(f"Provisioning conda environment (cloning {base_env})...", "progress")
+                self.notify_progress(
+                    "Env setup", f"cloning base env <code>{base_env}</code>...",
+                    level="working",
+                )
                 success, msg = provision_project_env(self.code_dir, base_env)
                 if success:
                     self.log_step(f"Conda env ready: {msg}", "success")
+                    self.notify_progress("Env ready", f"{msg}", level="done")
                 else:
                     # Hard fail: the whole pipeline depends on this env for
                     # experiments. Surface the error; caller will mark failed.
                     self.log_step(f"Conda env provisioning failed: {msg}", "error")
+                    self.notify_progress("Env setup failed", f"{msg}", level="warn")
                     raise RuntimeError(f"Conda env provisioning failed: {msg}")
             else:
                 self.log_step("Conda env already exists", "success")
@@ -1047,13 +1054,20 @@ Write `auto_research/state/project_context.md` with sections:
 ## External Systems, ## Environment Setup, ## Experiment Guidance, ## Credentials & Access
 """, timeout=600)
             self.log_step("Project context generated", "success")
+            self.notify_progress("Project context", "ready", level="done")
 
             # 3.2: Specialize agent prompts (code-driven, one call per agent)
             self.log_step("Specializing agent prompts...", "progress")
+            self.notify_progress(
+                "Agent prompts", "specializing for this project...", level="working"
+            )
             self._specialize_agent_prompts()
 
             # 3.3: Select and install skills
             self.log_step("Selecting skills...", "progress")
+            self.notify_progress(
+                "Skills", "picking from library...", level="working"
+            )
             skills_index = self._load_skills_index()
             if skills_index and "No skills" not in skills_index:
                 self.run_agent("researcher", f"""
@@ -1103,8 +1117,14 @@ selected skill paths (or an empty array `[]` if nothing matches). Also write
 `auto_research/state/selected_skills_rationale.md` with a short rationale per
 selected skill (why it matches, which phase will use it).
 """, timeout=600)
-            self._install_selected_skills()
+            n_skills = self._install_selected_skills()
             self.log_step("Specialization complete", "success")
+            if isinstance(n_skills, int) and n_skills >= 0:
+                self.notify_progress(
+                    "Skills installed", f"{n_skills} skill(s) loaded", level="done"
+                )
+            else:
+                self.notify_progress("Skills installed", "ready", level="done")
 
             self.log_step_header(3, 4, "Specialization", "end")
         else:
@@ -1122,6 +1142,12 @@ selected skill (why it matches, which phase will use it).
         self.log_step_header(4, 4, "Bootstrap", "end")
 
         self.log_section("Research Phase Complete")
+        if self.telegram.is_configured:
+            self.telegram.send(
+                f"{self.tg_header('🚤')}\n"
+                f"🏁 <b>Research Phase complete</b> → moving to Dev Phase",
+                parse_mode="HTML",
+            )
 
     def _load_skills_index(self) -> str:
         """Return navigation pointers for the skills library.
@@ -1211,19 +1237,19 @@ selected skill (why it matches, which phase will use it).
 
         return "\n".join(lines) if lines else "No skills available."
 
-    def _install_selected_skills(self):
-        """Copy selected skills to the project directory."""
+    def _install_selected_skills(self) -> int:
+        """Copy selected skills to the project directory. Returns count installed."""
         import json
         selected_file = self.state_dir / "selected_skills.json"
         if not selected_file.exists():
-            return
+            return 0
 
         try:
             with open(selected_file) as f:
                 selected_paths = json.load(f)
 
             if not isinstance(selected_paths, list):
-                return
+                return 0
 
             skills_dest = Path(self.code_dir) / ".claude" / "skills"
             skills_dest.mkdir(parents=True, exist_ok=True)
@@ -1240,8 +1266,10 @@ selected skill (why it matches, which phase will use it).
 
             if installed:
                 self.log_step(f"Installed {len(installed)} skills: {', '.join(installed)}", "success")
+            return len(installed)
         except Exception as e:
             self.log(f"Skills installation failed: {e}", "WARN")
+            return 0
 
     def _install_builtin_skills(self):
         """Copy ARK builtin skills to the project's .claude/skills/ directory."""
@@ -1301,7 +1329,8 @@ selected skill (why it matches, which phase will use it).
             )
 
         tg_msg = (
-            f"🚨 <b>{self.display_name}</b> — blocked, needs help\n\n"
+            f"{self.tg_header('🚤')}\n"
+            f"🚨 <b>Blocked — needs help</b>\n\n"
             f"<b>Stage:</b> {stage}\n"
             f"<b>Issue:</b> {summary}\n"
         )
@@ -1481,6 +1510,13 @@ in what that file actually says — do not guess.
             )
         self._sync_db(title=new_title, name=new_title)
         self.log(f"Title committed: {new_title}", "INFO")
+        # The header in every future Telegram message will now show the
+        # real title — drop the cache so display_name picks it up.
+        try:
+            self._invalidate_display_name()
+        except Exception:
+            pass
+        self.notify_progress("Title generated", new_title[:80], level="done")
 
         # --- Propagate title to paper/main.tex and agent prompts ---
         self._sync_paper_metadata(new_title)
@@ -1646,6 +1682,11 @@ Rules:
         found = len(result.found_keys)
         missing = len(result.needs_check)
         self.log_step(f"Citation bootstrap: {found}/{total} found, {missing} needs-check", "success")
+        self.notify_progress(
+            "Citations bootstrapped",
+            f"{found}/{total} resolved, {missing} needs-check",
+            level="done" if missing == 0 else "warn",
+        )
 
     def _parse_title_list(self, agent_output: str) -> list:
         """Parse a JSON array of paper titles from LLM output.
@@ -2895,21 +2936,29 @@ Only use double_column for multi-panel figures (side-by-side subplots).
         return "\n".join(lines) if lines else "No figures generated yet."
 
     def _send_dev_phase_telegram(self, event: str, current: int, total: int):
-        """Send dev phase notifications to Telegram."""
+        """Send dev phase notifications to Telegram.
+
+        Every message carries the unified ``🚤 ARK Project-<id5> | <title>``
+        header so the user can tell which project pinged them even when
+        multiple projects share the bot.
+        """
         if not self.telegram.is_configured:
             return
         try:
-            name = self.display_name
+            header = self.tg_header("🚤")
             if event == "start":
-                self.telegram.send(f"<b>⚙️ {name}</b>\nDev Phase — max {total} iterations", parse_mode="HTML")
+                body = f"⚙️ <b>Dev Phase started</b> — up to {total} iterations"
             elif event == "iteration":
-                self.telegram.send(f"🔬 Dev {current}/{total}: Planning experiments...")
+                body = f"🔬 <b>Dev {current}/{total}</b> — planning experiments..."
             elif event == "experiments":
-                self.telegram.send(f"🧪 Dev {current}/{total}: Running experiments...")
+                body = f"🧪 <b>Dev {current}/{total}</b> — running experiments..."
             elif event == "writing":
-                self.telegram.send(f"✏️ Dev done → Writing initial draft...")
+                body = f"✏️ <b>Dev done</b> → writing initial draft..."
             elif event == "complete":
-                self.telegram.send(f"<b>✅ {name}</b> — Dev Phase Complete → Review", parse_mode="HTML")
+                body = f"✅ <b>Dev Phase complete</b> → moving to review"
+            else:
+                return
+            self.telegram.send(f"{header}\n{body}", parse_mode="HTML")
         except Exception:
             pass
 
