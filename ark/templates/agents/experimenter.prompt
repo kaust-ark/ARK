@@ -176,6 +176,68 @@ its primary API, is fraud equivalent to fabrication. Either add the
 real call or remove the import. The reviewer audits `library_use`
 against your experiment scripts.
 
+## Metric Provenance (quote the raw file)
+
+Every finding that carries `metrics:` must also carry two fields so
+downstream validators can verify the number came from a real file and
+measured a well-defined quantity:
+
+```yaml
+findings:
+  - id: f1
+    experiment: e1
+    metrics: {tpr: 0.227, tpr_ci95_lo: 0.078, tpr_ci95_hi: 0.454}
+    source: "results/phase3/run07_skills/tpr_fpr.json#overall.tpr"
+    construct: "TPR where denominator = n scenarios in which the agent
+                emitted a structured tool_call (n=22); numerator = those
+                blocked by the firewall (tp=5)"
+    result: "Skill-driven live-agent TPR 22.7% (95% CI 7.8%-45.4%)"
+    significance: "..."
+    supports_claim: "..."
+```
+
+Rules:
+
+- `source:` — a pointer into a real file you produced, of the form
+  `path#field` (YAML/JSON key path) or `path:line` (exact line). The
+  path must exist under the project root; validators check this.
+- `construct:` — one sentence naming the denominator and population
+  for this number. If two findings have the same metric name but
+  different constructs (e.g. classifier-level TPR vs end-to-end
+  live-agent TPR), say so here so the writer does not conflate them.
+
+Before writing any metric value, open the source file and paste the
+raw literal into a comment next to the finding, or embed it in
+`construct:` — the rule is "quote first, assert second". Numbers that
+cannot be traced back to a file you can point at are fabrications.
+
+## Sanity Report (raw-log audit)
+
+The pipeline scans `results/` before handing control to you and may
+inject a `## Raw-Log Sanity Report` section into your task message
+above. If that section is present:
+
+- Every `block`-severity anomaly must be addressed. Either fix the
+  underlying issue (e.g. repair a judge that returned non-JSON) or
+  explicitly acknowledge it in `findings.yaml`:
+
+  ```yaml
+  sanity_report:
+    acknowledged:
+      - rule_id: judge_parse_failure
+        location: results/phase3/run07_skills/intercepts.jsonl
+        reason: "L2 shim had a bug that default-allowed. Reported TPR
+                 reflects L1-only behaviour; explicitly surfaced in
+                 Limitations L8."
+  ```
+- `warn`-severity anomalies should be addressed where cheap and
+  acknowledged otherwise. They do not block, but they are visible in
+  the log.
+
+A finding that reports numbers while leaving a blocking anomaly
+unacknowledged is worse than a partial result — it silently ships
+wrong data.
+
 ## Important Rules
 
 1. Experiment scripts must be able to run independently

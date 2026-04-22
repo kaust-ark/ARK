@@ -542,6 +542,11 @@ def create_app():
 
     outer.mount(DASHBOARD_PREFIX, dashboard)
 
+    # Public /api/request-access endpoint — must be registered BEFORE the
+    # homepage catch-all mount, otherwise StaticFiles swallows it.
+    from .request_access import router as request_access_router
+    outer.include_router(request_access_router)
+
     # Serve the static homepage as catch-all at /. Must be mounted LAST
     # so /dashboard/* matches first. html=True serves index.html for
     # directory URLs (/, /zh/, /ar/).

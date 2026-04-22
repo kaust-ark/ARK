@@ -83,6 +83,27 @@ class Feedback(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ShareAlias(SQLModel, table=True):
+    """Short URL alias for a share link.
+
+    Lets operators hand out `/dashboard/share/icml` instead of a long signed
+    token. The alias resolves to the same (kind, ident) payload a signed
+    token would carry. Expiry is enforced per row; delete the row to revoke.
+    """
+    alias: str = Field(primary_key=True)   # validated against ALIAS_PATTERN
+    kind: str                              # "project" | "user"
+    ident: str                             # project.id or user.id
+    expires_at: datetime                   # absolute UTC expiry
+    created_by: str = ""                   # admin user_id who minted it, or "cli"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# Conservative slug regex: lowercase alphanumeric start, then dash/underscore/alnum.
+# Bounded to 2–64 chars. Chosen to avoid collision with signed tokens (which
+# contain "." separators) and to keep the URL easy to share aloud.
+ALIAS_PATTERN = r"^[a-z0-9][a-z0-9_-]{1,63}$"
+
+
 _engine = None
 
 
@@ -358,6 +379,45 @@ def migrate_project_data(db_path: str, projects_root: str = ""):
                 session.add(p)
 
         session.commit()
+
+
+# ── share alias helpers ────────────────────────────────────────────────────
+
+def get_share_alias(session: Session, alias: str) -> Optional[ShareAlias]:
+    return session.get(ShareAlias, alias)
+
+
+def list_share_aliases(session: Session) -> list[ShareAlias]:
+    return list(session.exec(select(ShareAlias).order_by(ShareAlias.created_at.desc())).all())
+
+
+def upsert_share_alias(session: Session, alias: str, kind: str, ident: str,
+                       expires_at: datetime, created_by: str = "") -> ShareAlias:
+    """Insert or replace an alias row. Overwriting is intentional — the CLI
+    treats `--alias foo` as "point foo at this target"."""
+    existing = session.get(ShareAlias, alias)
+    if existing:
+        existing.kind = kind
+        existing.ident = ident
+        existing.expires_at = expires_at
+        if created_by:
+            existing.created_by = created_by
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing
+    row = ShareAlias(alias=alias, kind=kind, ident=ident,
+                     expires_at=expires_at, created_by=created_by)
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row
+
+
+def delete_share_alias(session: Session, alias: str) -> int:
+    result = session.exec(delete(ShareAlias).where(ShareAlias.alias == alias))
+    session.commit()
+    return result.rowcount
 
 
 def get_project_by_name(session: Session, name: str) -> Optional[Project]:

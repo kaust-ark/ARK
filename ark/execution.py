@@ -10,6 +10,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
 
+from ark.quality import raw_log_sanity, format_for_prompt
+from ark.findings_schema import validate_findings, format_violations_for_log
+
 
 class QuotaExhaustedError(Exception):
     """Raised when page count enforcement fails due to quota exhaustion."""
@@ -508,6 +511,20 @@ Please read auto_research/state/latest_review.md and regenerate.
             )
             self.log(f"WARNING: Experiment references missing paths: {missing_paths}", "WARN")
 
+        # Gate B (pre-run): surface raw-log anomalies from prior runs so the
+        # experimenter can address them before writing findings.yaml. This
+        # catches silent failures like "LLM judge default-allowed on every
+        # call" that otherwise slip into summary JSON unnoticed.
+        prior_anomalies = raw_log_sanity(self.code_dir / "results")
+        prior_anomaly_section = format_for_prompt(prior_anomalies)
+        if prior_anomalies:
+            block_count = sum(1 for a in prior_anomalies if a.severity == "block")
+            self.log_step(
+                f"raw-log sanity: {len(prior_anomalies)} anomalies in results/ "
+                f"({block_count} blocking) — surfacing to experimenter",
+                "warning" if block_count else "info",
+            )
+
         try:
             # 2. Experimenter runs the experiment (includes result analysis)
             exp_output = self.run_agent("experimenter", f"""
@@ -519,6 +536,7 @@ Issue context:
 - Description: {issue.get('description', 'N/A')}
 {file_existence_warning}
 {compute_instructions}
+{prior_anomaly_section}
 
 After running the experiment:
 1. Check whether the experiment completed successfully (no OOM, no errors)
@@ -536,6 +554,32 @@ After running the experiment:
 
         finally:
             self._compute_backend.teardown()
+
+        # Gate B (post-run): re-scan results after the new run, validate
+        # findings.yaml against the augmented schema (source / construct).
+        # Everything is warn-level — we log but do not block the pipeline
+        # while agents learn the new discipline.
+        post_anomalies = raw_log_sanity(self.code_dir / "results")
+        if post_anomalies:
+            self.log_step(
+                f"raw-log sanity (post-run): {len(post_anomalies)} anomalies "
+                f"({sum(1 for a in post_anomalies if a.severity == 'block')} blocking)",
+                "warning",
+            )
+            for a in post_anomalies:
+                self.log(f"  [{a.severity}] {a.rule_id} @ {a.location}: {a.message}", "WARN")
+        findings_path = getattr(self, "findings_file", None)
+        if findings_path:
+            violations = validate_findings(Path(findings_path), project_root=self.code_dir)
+            if violations:
+                self.log_step(
+                    f"findings.yaml validation: {len(violations)} issue(s) "
+                    "(warn-only for now; see log)",
+                    "warning",
+                )
+                rendered = format_violations_for_log(violations)
+                if rendered:
+                    self.log(rendered, "WARN")
 
         # 5. Guard against run_agent empty return (timeout / API failure / crash).
         #    Without this check, the fall-through at step 7 would happily mark the

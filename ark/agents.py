@@ -550,29 +550,27 @@ class AgentMixin:
             )
             context_sections.append(f"## Prior Agent Output\n\n{pc}")
 
-        # Deep Research report
-        if profile["deep_research"]:
-            deep_research_file = self.state_dir / "deep_research.md"
-            if deep_research_file.exists():
-                try:
-                    dr_content = deep_research_file.read_text()
-                    if len(dr_content) > 8000:
-                        dr_content = dr_content[:8000] + "\n\n... (truncated, see full report in auto_research/state/deep_research.md)"
-                    context_sections.append(
-                        f"## Deep Research Background\n\n"
-                        f"Below is background research from Gemini Deep Research:\n\n{dr_content}"
-                    )
-                except Exception:
-                    pass
+        # Deep Research report — the file path is surfaced in the Context
+        # Files section below; we do NOT inject the report body here. Agents
+        # have Read and can load the full report on demand, avoiding the
+        # signal loss that came from truncating an 8000-char slice into every
+        # agent's system prompt.
 
         # Context file references
-        if profile["context_files"]:
+        if profile["context_files"] or profile["deep_research"]:
+            dr_line = ""
+            if profile["deep_research"]:
+                dr_line = (
+                    "- auto_research/state/deep_research.md - Gemini Deep Research "
+                    "background report (Read in full when researching related work,\n"
+                    "  baselines, or technical background — do not skim)\n"
+                )
             context_sections.append(
                 "## Context Files\n\n"
                 "Please read the following files for context (if they exist):\n"
                 "- auto_research/state/research_state.yaml - Current research state\n"
                 "- auto_research/state/findings.yaml - Existing findings\n"
-                "- auto_research/state/deep_research.md - Deep Research background report\n"
+                f"{dr_line}"
                 "- auto_research/state/project_context.md - Project requirements and setup\n"
                 "- report.md - Research report\n"
                 "- results/ directory - Experiment results"

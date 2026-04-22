@@ -40,13 +40,40 @@ Give it an idea and a venue. ARK handles the rest.
 
 ## Papers Written by ARK
 
-<p align="center">
-<img src="https://idea2paper.org/assets/paper-example.png" alt="MMA Paper" width="480">
+<table align="center">
+<tr>
+<td align="center" width="50%">
+<a href="https://idea2paper.org/assets/papers/marco.pdf"><img src="https://idea2paper.org/assets/paper-marco.png" alt="MARCO" width="320"></a>
 <br>
-<a href="https://github.com/JihaoXin/mma"><em>CPU Matrix Multiplication: From Naive to Efficient</em></a>
+<strong>MARCO: Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</strong>
 <br>
-<sub>NeurIPS format &bull; 6 pages &bull; 14 iterations</sub>
-</p>
+<sub>Template: EuroMLSys</sub>
+</td>
+<td align="center" width="50%">
+<a href="https://idea2paper.org/assets/papers/heteroserve.pdf"><img src="https://idea2paper.org/assets/paper-heteroserve.png" alt="HeteroServe" width="320"></a>
+<br>
+<strong>HeteroServe: Capability-Weighted Batch Scheduling for Heterogeneous GPU Clusters in LLM Inference</strong>
+<br>
+<sub>Template: ICML</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+<a href="https://idea2paper.org/assets/papers/tierkv.pdf"><img src="https://idea2paper.org/assets/paper-tierkv.png" alt="TierKV" width="320"></a>
+<br>
+<strong>TierKV: Prefetch-Aware Memory Tiering for KV Cache in LLM Serving</strong>
+<br>
+<sub>Template: NeurIPS</sub>
+</td>
+<td align="center" width="50%">
+<a href="https://idea2paper.org/assets/papers/gac.pdf"><img src="https://idea2paper.org/assets/paper-gac.png" alt="GAC" width="320"></a>
+<br>
+<strong>Why Smaller Is Slower: Dimensional Misalignment in Compressed Large Language Models</strong>
+<br>
+<sub>Template: ICLR</sub>
+</td>
+</tr>
+</table>
 
 ---
 
@@ -617,7 +644,3 @@ NeurIPS &bull; ICML &bull; ICLR &bull; AAAI &bull; ACL &bull; IEEE &bull; ACM SI
 ## License
 
 [Apache 2.0](LICENSE)
-
-<p align="center">
-  <sub>Built by <a href="https://sands.kaust.edu.sa/">SANDS Lab, KAUST</a></sub>
-</p>

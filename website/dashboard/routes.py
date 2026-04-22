@@ -68,6 +68,7 @@ def _get_google_oauth() -> _OAuth | None:
 from .db import (
     Feedback,
     Project,
+    ShareAlias,
     User,
     create_feedback,
     create_project,
@@ -79,6 +80,7 @@ from .db import (
     get_project,
     get_projects_for_user,
     get_session,
+    get_share_alias,
     get_user,
     update_project,
 )
@@ -301,17 +303,37 @@ def _can_access_project(user: User, project: Project) -> bool:
 def _share_project_grant(request: Request) -> str | None:
     """If the session is a valid project-share session, return the granted project_id.
 
-    Re-verifies the token every call so expired/rotated-secret tokens stop
+    Re-verifies the grant every call so expired/rotated-secret tokens stop
     working immediately instead of hanging on the 7-day session cookie.
 
-    User-share links don't seat this state — they set user_id via /share/<token>
+    Supports two session shapes:
+      - signed token: session carries `share_token` (a JWT-like string). We
+        verify it against the current secret_key every call.
+      - alias: session carries `share_alias`. We re-read the DB row every
+        call so deleting or expiring the alias revokes live sessions.
+
+    User-share links don't seat this state — they set user_id via /share/<ref>
     and the visitor becomes that user for the duration of the normal login
     session. Only project-share keeps a read-only grant in the session.
     """
-    token = request.session.get("share_token")
     expected_kind = request.session.get("share_kind")
     expected_id = request.session.get("share_id")
-    if not token or expected_kind != "project" or not expected_id:
+    if expected_kind != "project" or not expected_id:
+        return None
+
+    alias = request.session.get("share_alias")
+    if alias:
+        with get_session(get_settings().db_path) as session:
+            row = get_share_alias(session, alias)
+            if (row and row.kind == "project" and row.ident == expected_id
+                    and row.expires_at > datetime.utcnow()):
+                return expected_id
+        for k in ("share_alias", "share_kind", "share_id", "share_project_id"):
+            request.session.pop(k, None)
+        return None
+
+    token = request.session.get("share_token")
+    if not token:
         return None
     verified = verify_share_token(token, get_settings().secret_key)
     if verified != ("project", expected_id):
@@ -378,12 +400,10 @@ Output ONLY the summary, no preamble.
 def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude-sonnet-4-6", compute_backend: dict = None):
     """Write config.yaml that ark orchestrator will read."""
     # Map webapp model value to orchestrator model backend.
-    # Legacy "claude-opus-4-6" kept for backward-compat with older project DB rows;
-    # current UI only exposes opus-4-7 / sonnet-4-6 / haiku-4-5.
     MODEL_MAP = {
         "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
         "claude-opus-4-7": ("claude", "claude-opus-4-7"),
-        "claude-opus-4-6": ("claude", "claude-opus-4-7"),  # legacy alias → 4.7
+        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
         "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
         "gemini": ("gemini", ""),
     }
@@ -407,6 +427,11 @@ def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude
         "figures_dir": "paper/figures",
         "figure_generation": "nano_banana",
         "nano_banana_model": "pro",
+        # Webapp projects are multi-tenant; do NOT auto-create a GitHub repo
+        # under the host user's gh account for every new project. Git is still
+        # initialized locally so writer-diff verification and commit history
+        # work within the project directory.
+        "auto_github_remote": False,
     }
     if compute_backend:
         config["compute_backend"] = compute_backend
@@ -958,9 +983,17 @@ async def index(request: Request):
 
 @router.get("/share/{token}", name="share")
 async def share_view(token: str, request: Request):
-    """Public entry point for a signed share link.
+    """Public entry point for a share link.
 
-    Two token kinds:
+    The `token` path segment is either:
+      - a short alias registered in the ShareAlias table (e.g. "icml"), or
+      - a full signed token produced by make_share_token / make_user_share_token.
+
+    Alias lookup runs first because it's cheap and lets us revoke by deleting
+    the row. If the segment isn't a known alias, fall back to signed-token
+    verification so legacy long URLs keep working.
+
+    Two kinds of share, regardless of how they were resolved:
       - "user"    → auto-login as that user. Full webapp access, identical to
                     what the user would see after Google/magic-link login. Hand
                     these out as anonymous reviewer accounts and control blast
@@ -972,8 +1005,23 @@ async def share_view(token: str, request: Request):
     unauthenticated visitors reach this handler.
     """
     settings = get_settings()
-    verified = verify_share_token(token, settings.secret_key)
-    if not verified:
+    kind: str | None = None
+    ident: str | None = None
+    alias_name: str | None = None
+
+    with get_session(settings.db_path) as session:
+        row = get_share_alias(session, token)
+        if row:
+            if row.expires_at > datetime.utcnow():
+                kind, ident, alias_name = row.kind, row.ident, row.alias
+            # Expired alias falls through to the invalid-link response below.
+
+    if kind is None:
+        verified = verify_share_token(token, settings.secret_key)
+        if verified:
+            kind, ident = verified
+
+    if kind is None or ident is None:
         return HTMLResponse(
             "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Link invalid</title>"
             "<style>body{font-family:sans-serif;display:flex;align-items:center;"
@@ -985,12 +1033,11 @@ async def share_view(token: str, request: Request):
             "<p>Ask the project owner for a fresh link.</p></div></body></html>",
             status_code=403,
         )
-    kind, ident = verified
 
     if kind == "user":
         # Full auto-login. Clear any previous share-mode state, then seat
         # user_id the same way /auth/verify does after magic-link success.
-        for k in ("share_token", "share_kind", "share_id", "share_project_id"):
+        for k in ("share_token", "share_alias", "share_kind", "share_id", "share_project_id"):
             request.session.pop(k, None)
         with get_session(settings.db_path) as session:
             user = session.get(User, ident)
@@ -1006,7 +1053,14 @@ async def share_view(token: str, request: Request):
         return RedirectResponse(_home_path())
 
     # kind == "project": read-only grant for one project only.
-    request.session["share_token"] = token
+    # Session carries either the alias or the signed token so the grant can
+    # be re-verified on every request (see _share_project_grant).
+    if alias_name:
+        request.session["share_alias"] = alias_name
+        request.session.pop("share_token", None)
+    else:
+        request.session["share_token"] = token
+        request.session.pop("share_alias", None)
     request.session["share_kind"] = kind
     request.session["share_id"] = ident
     request.session.pop("user_id", None)
@@ -1479,11 +1533,10 @@ async def api_create_project(
     initial_status = "initializing"
 
     # Map model to backend + variant for DB.
-    # Legacy "claude-opus-4-6" kept as alias in case an older client posts it.
     MODEL_MAP = {
         "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
         "claude-opus-4-7": ("claude", "claude-opus-4-7"),
-        "claude-opus-4-6": ("claude", "claude-opus-4-7"),  # legacy alias → 4.7
+        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
         "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
         "gemini": ("gemini", ""),
     }
@@ -1941,6 +1994,33 @@ async def api_download_zip(project_id: str, request: Request):
             for f in results_dir.rglob("*"):
                 if f.is_file() and f.suffix in {".csv", ".json", ".txt", ".yaml", ".tsv"}:
                     zf.write(f, f.relative_to(pdir))
+
+        # sandbox_live/ — live-agent / firewall reproducibility bundle.
+        # Include source, policy, scenarios, skill bodies, container definition.
+        # Exclude: venvs, caches, slurm outputs, debug dumps, log spam.
+        sandbox_dir = pdir / "sandbox_live"
+        if sandbox_dir.exists():
+            sandbox_exts = {".py", ".sh", ".co", ".jsonl", ".md",
+                            ".yaml", ".toml", ".def", ".txt"}
+            sandbox_skip_dirs = {"litellm_venv", "__pycache__",
+                                 "cl_debug", "local_out"}
+            for f in sandbox_dir.rglob("*"):
+                if not f.is_file():
+                    continue
+                rel = f.relative_to(pdir)
+                parts = set(rel.parts)
+                if parts & sandbox_skip_dirs:
+                    continue
+                # slurm_out_* subdirectories (one per run) — exclude
+                if any(p.startswith("slurm_out_") for p in rel.parts):
+                    continue
+                # slurm .out / .err at any depth, and bare .log files
+                if f.name.startswith("slurm_") and f.suffix in {".out", ".err"}:
+                    continue
+                if f.suffix == ".log":
+                    continue
+                if f.suffix in sandbox_exts:
+                    zf.write(f, rel)
 
         # config + key state files
         for rel in (

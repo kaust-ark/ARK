@@ -1517,14 +1517,23 @@ a {{ color: #0d9488; }}
     # ========== Git ==========
 
     def _ensure_git_repo(self):
-        """Ensure code_dir is a git repo with a GitHub remote. Idempotent."""
+        """Ensure code_dir is a git repo with (optionally) a GitHub remote. Idempotent.
+
+        Detection uses the literal ``<code_dir>/.git`` marker rather than
+        ``git rev-parse --git-dir``, because the latter walks up the filesystem
+        and returns success if any ancestor is a repo. Webapp projects live at
+        ``<ARK root>/.ark/data/projects/<user>/<id>/`` — an ancestor of that
+        path is the ARK source repo, so the walk-up check silently skipped
+        init and left every downstream ``git diff`` / ``git commit`` broken.
+
+        GitHub-remote creation is gated on ``auto_github_remote`` (default
+        True to preserve existing CLI behaviour). Webapp projects set this to
+        False so every new project doesn't silently become a private repo
+        under the host user's gh account.
+        """
         code_dir = self.code_dir
-        # Already a git repo?
-        check = subprocess.run(
-            ["git", "rev-parse", "--git-dir"],
-            capture_output=True, text=True, cwd=code_dir, timeout=10,
-        )
-        if check.returncode != 0:
+        # Already a git repo rooted at code_dir? (NOT an ancestor repo)
+        if not (Path(code_dir) / ".git").exists():
             # git init
             subprocess.run(["git", "init"], cwd=code_dir, capture_output=True, timeout=30)
             # Create .gitignore if missing
@@ -1536,6 +1545,9 @@ a {{ color: #0d9488; }}
                 )
                 subprocess.run(["git", "add", ".gitignore"], cwd=code_dir, capture_output=True, timeout=10)
             self.log("Git: initialized repository", "INFO")
+
+        if not self.config.get("auto_github_remote", True):
+            return
 
         # Check for remote
         remote = subprocess.run(
