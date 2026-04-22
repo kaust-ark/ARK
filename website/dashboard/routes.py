@@ -229,6 +229,20 @@ def _extract_and_validate_template(zip_bytes: bytes, paper_dir: Path) -> str | N
     if not (paper_dir / "references.bib").exists():
         (paper_dir / "references.bib").write_text("")
 
+    # Preprocess the template: strip venue placeholder title/author/abstract
+    # and replace the instructional body with empty section stubs.  Emits
+    # paper/template_manifest.yaml so the writer agent knows which sections
+    # to populate and which files to preserve.
+    try:
+        from ark.template_preprocess import preprocess_custom_template
+        preprocess_custom_template(paper_dir, venue_hint="custom")
+    except Exception as e:
+        logger.exception("Template preprocessing failed")
+        return (
+            f"Template preprocessing failed: {e}\n\n"
+            f"Please check that main.tex is a valid LaTeX file and re-upload."
+        )
+
     # Try compilation (quick pdflatex pass — just check for fatal errors)
     try:
         result = subprocess.run(
@@ -461,6 +475,16 @@ def _substitute_agent_templates(project_dir: Path, project_id: str, title: str,
     templates_dir = Path(__file__).parent.parent.parent / "ark" / "templates" / "agents"
     if not templates_dir.exists():
         return
+
+    # Custom-template notes: pulled from paper/template_manifest.yaml if the
+    # preprocessor emitted one.  For non-custom projects this is the empty
+    # string so the placeholder doesn't leak through.
+    try:
+        from ark.template_preprocess import render_custom_template_notes
+        custom_notes = render_custom_template_notes(project_dir / "paper")
+    except Exception:
+        custom_notes = ""
+
     for pf in templates_dir.glob("*.prompt"):
         content = pf.read_text()
         content = content.replace("{PROJECT_NAME}", project_id)
@@ -470,6 +494,7 @@ def _substitute_agent_templates(project_dir: Path, project_id: str, title: str,
         content = content.replace("{VENUE_PAGES}", str(venue_pages))
         content = content.replace("{LATEX_DIR}", "paper")
         content = content.replace("{FIGURES_DIR}", "paper/figures")
+        content = content.replace("{CUSTOM_TEMPLATE_NOTES}", custom_notes)
         (agents_dir / pf.name).write_text(content)
 
 
