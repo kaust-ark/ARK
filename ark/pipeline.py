@@ -1675,6 +1675,10 @@ in what that file actually says — do not guess.
             or re.fullmatch(r"[0-9a-fA-F-]{30,}", current) is not None
         )
         if not is_placeholder:
+            # Title already committed, but main.tex / agent prompts may have
+            # drifted (e.g. restart after template preprocess stubs the title
+            # to "ARK Pending Title"). Sync is idempotent and cheap.
+            self._sync_paper_metadata(current)
             return
 
         idea_text = idea_file.read_text().strip()

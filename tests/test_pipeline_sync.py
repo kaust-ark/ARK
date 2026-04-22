@@ -355,3 +355,44 @@ class TestUpdateTitleEndToEnd:
         writer_prompt = sync_stub.agents_dir / "writer.prompt"
         assert writer_prompt.exists()
         assert generated in writer_prompt.read_text()
+
+    def test_committed_title_still_syncs_drifted_main_tex(self, sync_stub, tmp_path):
+        """Restart-after-preprocess scenario: config.yaml already carries the
+        real title but main.tex was stubbed to "ARK Pending Title" by
+        template_preprocess. _update_title_from_idea must still push the
+        committed title into main.tex instead of short-circuiting.
+        """
+        from ark.pipeline import PipelineMixin
+
+        state_dir = sync_stub.code_dir / "auto_research" / "state"
+        state_dir.mkdir(parents=True)
+        sync_stub.state_dir = state_dir
+        (state_dir / "idea.md").write_text("Some idea text.\n")
+
+        committed = "Compute-Aware Deployment of World Models"
+        sync_stub.config = {
+            **sync_stub.config,
+            "title": committed,
+        }
+
+        # main.tex drifted from config — this is what preprocess leaves behind.
+        main_tex = sync_stub.latex_dir / "main.tex"
+        main_tex.write_text(
+            "\\documentclass{article}\n"
+            "\\title{ARK Pending Title}\n"
+            "\\begin{document}\n"
+        )
+
+        sync_stub._update_title_from_idea = (
+            PipelineMixin._update_title_from_idea.__get__(sync_stub)
+        )
+        sync_stub._sync_db = MagicMock()
+
+        # LLM must NOT be called — we already have a title, just need to sync.
+        with patch("ark.pipeline._generate_title_via_llm") as llm:
+            sync_stub._update_title_from_idea()
+            llm.assert_not_called()
+
+        out = main_tex.read_text()
+        assert f"\\title{{{committed}}}" in out
+        assert "ARK Pending Title" not in out
