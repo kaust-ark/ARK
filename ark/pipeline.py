@@ -1219,6 +1219,12 @@ Write `auto_research/state/project_context.md` with sections:
             self.notify_progress("Project context", "ready", level="done")
 
             # 3.2: Specialize agent prompts (code-driven, one call per agent)
+            # First refresh the template base for any already-specialized
+            # project — fixes a staleness bug where prompt template edits
+            # in ark/ never reached a project that had already been
+            # specialized on an earlier run. See _sync_agent_prompt_bases
+            # docstring for the preservation logic.
+            self._sync_agent_prompt_bases()
             self.log_step("Specializing agent prompts...", "progress")
             self.notify_progress(
                 "Agent prompts", "specializing for this project...", level="working"
@@ -1579,6 +1585,86 @@ selected skill (why it matches, which phase will use it).
 
         needs_file.unlink(missing_ok=True)
         return bool(reply) or chosen is not None
+
+    def _sync_agent_prompt_bases(self):
+        """Refresh the base template of each per-project agent prompt,
+        preserving any specialization addendum that was appended below.
+
+        Per-project prompts live at ``<project>/agents/<agent>.prompt``.
+        They are seeded from ``ark/templates/agents/`` at project creation
+        (or webapp restart) and then ``_specialize_agent_prompts`` appends
+        a ``## Project-Specific Knowledge`` section. Without this sync,
+        any edit to the template in ``ark/`` is invisible to an existing
+        project on Continue — the per-project prompt was frozen at the
+        version that shipped when the project was specialized.
+
+        Strategy: split each existing prompt at the specialization marker,
+        re-read the (now-edited) template, re-apply variable substitutions
+        using values extracted from the current prompt, then concat the
+        addendum. If no addendum is present yet, skip — the prompt hasn't
+        been specialized on this project yet and the seeding code owns it.
+        """
+        agents_dir = getattr(self, "agents_dir", None)
+        if not agents_dir or not agents_dir.exists():
+            return
+        templates_dir = Path(__file__).parent / "templates" / "agents"
+        if not templates_dir.exists():
+            return
+
+        MARKER = "## Project-Specific Knowledge"
+
+        # Values to re-substitute come from config (same values the webapp
+        # used at seeding time). Fall back to whatever we can infer.
+        title = self.config.get("title") or self.config.get("project") or ""
+        venue_name = (
+            self.config.get("venue")
+            or self.config.get("venue_format")
+            or "NeurIPS"
+        )
+        venue_format = self.config.get("venue_format") or "neurips"
+        venue_pages = str(self.config.get("venue_pages", 9))
+        project_id = self.config.get("project") or getattr(self, "project_id", "")
+
+        try:
+            from ark.template_preprocess import render_custom_template_notes
+            custom_notes = render_custom_template_notes(
+                Path(self.code_dir) / "paper"
+            )
+        except Exception:
+            custom_notes = ""
+
+        refreshed = 0
+        for tpl_path in templates_dir.glob("*.prompt"):
+            per_path = agents_dir / tpl_path.name
+            if not per_path.exists():
+                continue
+            per = per_path.read_text()
+            if MARKER not in per:
+                # Prompt hasn't been specialized yet for this project.
+                # Let the regular seeding + specialization path handle it.
+                continue
+            addendum = per[per.index(MARKER):]
+            base = tpl_path.read_text()
+            for k, v in {
+                "{PROJECT_NAME}": project_id,
+                "{PAPER_TITLE}": title or project_id,
+                "{VENUE_NAME}": venue_name,
+                "{VENUE_FORMAT}": venue_format,
+                "{VENUE_PAGES}": venue_pages,
+                "{LATEX_DIR}": "paper",
+                "{FIGURES_DIR}": "paper/figures",
+                "{CUSTOM_TEMPLATE_NOTES}": custom_notes,
+            }.items():
+                base = base.replace(k, v)
+            new_content = base.rstrip() + "\n\n" + addendum
+            if new_content != per:
+                per_path.write_text(new_content)
+                refreshed += 1
+        if refreshed:
+            self.log(
+                f"Refreshed {refreshed} agent prompt base(s) from templates",
+                "INFO",
+            )
 
     def _specialize_agent_prompts(self):
         """Specialize each agent's prompt with project-specific knowledge.
