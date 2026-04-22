@@ -425,6 +425,11 @@ def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude
         "figures_dir": "paper/figures",
         "figure_generation": "nano_banana",
         "nano_banana_model": "pro",
+        # Webapp projects are multi-tenant; do NOT auto-create a GitHub repo
+        # under the host user's gh account for every new project. Git is still
+        # initialized locally so writer-diff verification and commit history
+        # work within the project directory.
+        "auto_github_remote": False,
     }
     if project.telegram_token:
         config["telegram_bot_token"] = project.telegram_token
