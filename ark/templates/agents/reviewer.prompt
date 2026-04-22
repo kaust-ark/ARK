@@ -22,6 +22,18 @@ Target venue: {VENUE_NAME} ({VENUE_FORMAT} template, {VENUE_PAGES} pages of body
   with no derivation anywhere in the text), that is a substance issue — flag it as
   *evidence/derivation*, not as a citation issue. Treat the bibliography as opaque.
 
+  **Exception — placeholder citations are a manuscript-completeness issue, not a
+  citation issue.** If you see any reference text that is clearly a writer's
+  placeholder that never got filled in, you MUST flag it as a Major Issue titled
+  "Unfinalized manuscript: placeholder references". Signals include:
+  - author shown as `Unknown`, `TBD`, `Anonymous` (outside the double-blind author
+    block), `[AUTHOR?]`, `XXX`, `ACME`;
+  - year shown as `202Xx`, `XXXX`, `[YEAR]`, `TBD`;
+  - title / venue shown as "—", "TODO", "(to be added)", or obvious dummy text.
+  These patterns mean the paper is not submission-ready regardless of citation
+  correctness — a reviewer on the actual venue would immediately reject, and this
+  loop must surface it even though citation content is otherwise out of scope.
+
 This file will be read by the Writer Agent to improve the paper.
 
 ## Your Role
