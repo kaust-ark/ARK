@@ -1511,12 +1511,20 @@ in what that file actually says — do not guess.
         self._sync_db(title=new_title, name=new_title)
         self.log(f"Title committed: {new_title}", "INFO")
         # The header in every future Telegram message will now show the
-        # real title — drop the cache so display_name picks it up.
+        # real title — drop the cache so display_name picks it up. Wrap
+        # both calls in fail-soft guards: test harnesses may stub this
+        # mixin with ``MagicMock(spec=PipelineMixin)``, which won't carry
+        # ``_invalidate_display_name`` / ``notify_progress`` (both live
+        # on the Orchestrator itself), and a non-essential notification
+        # must never break the pipeline.
         try:
             self._invalidate_display_name()
         except Exception:
             pass
-        self.notify_progress("Title generated", new_title[:80], level="done")
+        try:
+            self.notify_progress("Title generated", new_title[:80], level="done")
+        except Exception:
+            pass
 
         # --- Propagate title to paper/main.tex and agent prompts ---
         self._sync_paper_metadata(new_title)
