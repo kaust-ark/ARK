@@ -698,7 +698,7 @@ After making all changes, you MUST verify the page count:
         # Double-column: min = N - 0.15 (half a page = one column)
         from ark.latex_geometry import get_geometry
         venue_format = self.config.get("venue_format", "")
-        geo = get_geometry(venue_format) if venue_format else {}
+        geo = get_geometry(venue_format, paper_dir=self.latex_dir) if venue_format else {}
         columns = geo.get("columns", 1)
 
         if columns >= 2:
@@ -1112,6 +1112,7 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
             self.log_step(f"Processing {len(figure_tasks)} FIGURE_CODE_REQUIRED tasks (modifying Python code)", "progress")
 
             figure_instructions = []
+            target_files_all: set[str] = set()
             for task in figure_tasks:
                 task_id = task.get("id", "")
                 task_title = task.get("title", "")
@@ -1130,6 +1131,26 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
                     if "modification" in action:
                         modification = action["modification"]
 
+                target_files_all.add(target_file)
+
+                # Discover actual function names present in the target script so
+                # writer doesn't have to guess. Hardcoding function names here
+                # (as we used to) only works for one specific past project.
+                available_functions = []
+                try:
+                    tf_path = Path(self.code_dir) / target_file
+                    if tf_path.exists():
+                        import re as _re
+                        for m in _re.finditer(r"^def\s+(fig\w+)\s*\(", tf_path.read_text(), _re.M):
+                            available_functions.append(m.group(1))
+                except Exception:
+                    pass
+                fn_hint = (
+                    "Functions defined in this script: " + ", ".join(available_functions)
+                    if available_functions
+                    else "Inspect the script to find the function that emits this figure."
+                )
+
                 figure_instructions.append(f"""
 ### {task_id}: {task_title}
 
@@ -1144,7 +1165,7 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
 
 **Action steps**:
 1. Use the Read tool to read {target_file}
-2. Find the corresponding function (e.g., fig3_palu_distribution)
+2. Locate the function that produces this figure. {fn_hint}
 3. Use the Edit tool to modify matplotlib parameters (figsize, fontsize, tight_layout, etc.)
 4. Confirm that the modified code has correct syntax
 5. Do not run the script (the system will run it automatically)
@@ -1154,11 +1175,13 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
             _style_path = Path(__file__).parent / "templates" / "style_guides" / "academic_plot_style.md"
             _plot_style = _style_path.read_text() if _style_path.exists() else ""
 
-            self.run_agent("writer", f"""
-## CRITICAL TASK: Modify Python plotting scripts (not LaTeX!)
+            self.run_agent("coder", f"""
+## Task: Modify existing Python plotting scripts
 
-You received {len(figure_tasks)} FIGURE_CODE_REQUIRED tasks.
-These tasks require modifying **Python code**, not LaTeX files!
+You received {len(figure_tasks)} FIGURE_CODE_REQUIRED tasks. Each task is
+a *modification* to a function already present in the script — not a
+request to invent a new figure from scratch and not a request to edit
+LaTeX. The writer agent does LaTeX; you own the Python.
 
 {''.join(figure_instructions)}
 
@@ -1166,42 +1189,55 @@ These tasks require modifying **Python code**, not LaTeX files!
 
 {_plot_style}
 
-## Tool usage requirements
-- Must use the Read tool to read {target_file}
-- Must use the Edit tool to modify code
-- Do not use Bash to run scripts (the system will run them automatically)
+## Hard rules (violating any of these is worse than doing nothing)
+- Only modify the target .py file. Do NOT edit main.tex, the bibliography,
+  or anything outside `scripts/`.
+- If the target function does not exist in the script, STOP. Report
+  "target function X not found in Y" in your response and leave the
+  file unchanged. Do NOT invent a new function or fabricate data.
+- If the change you would need to make requires new data that isn't
+  already in the script or in `results/`, STOP and report. Do NOT
+  hardcode synthetic data.
+- Do NOT run the script — the system re-runs it automatically after
+  your edit.
 
-## Function name reference
-- Figure 1: fig1_overview
-- Figure 2: fig2_sdpa_latency
-- Figure 3: fig3_palu_distribution
-- Figure 4: fig4_root_cause
-- Figure 5: fig5_repair_tradeoff
-- Figure 6: fig6_e2e_performance
+## Follow-ups for the writer (optional, end of your response)
+If your Python edit changes the figure's identity (e.g. you split a
+panel into two subplots), the paper may need a caption / ref update
+in main.tex. List those as a short "LaTeX follow-ups needed:" block
+at the end of your response. DO NOT edit main.tex yourself — the
+writer agent will pick those up in a later task.
 
-## Verification
-After modifications, ensure:
-1. Python syntax is correct (no indentation errors, brackets match)
-2. matplotlib parameters are reasonable (figsize, fontsize, etc.)
-3. File paths are correct ({latex_dir_name}/figures/*.pdf)
+## Tool usage
+- Read each target .py file before editing it.
+- Use Edit for small changes; Write only for complete rewrites of a
+  single function body.
 """, timeout=1800, prior_context=prior_context)
 
             if self._quota_exhausted:
                 self.log("Aborting writing phase: API quota exhausted", "ERROR")
                 return False
 
-            # Verify Python script was modified
+            # Verify Python scripts were modified — across ALL target files,
+            # not just the last one from the loop.
             self.log_step("Verifying Python code changes...", "progress")
             try:
                 result = subprocess.run(
-                    ["git", "diff", "--name-only", target_file],
+                    ["git", "diff", "--name-only"],
                     capture_output=True, text=True, cwd=self.code_dir
                 )
-                if target_file in result.stdout:
-                    self.log_step("Python code modified successfully", "success")
+                changed = set(result.stdout.splitlines())
+                touched = sorted(target_files_all & changed)
+                if touched:
+                    self.log_step(f"Python code modified: {', '.join(touched)}", "success")
                 else:
                     self.log_step("WARNING: FIGURE_CODE_REQUIRED task but Python not modified!", "error")
-                    self.log("This indicates Writer agent did not correctly execute the task.", "WARN")
+                    self.log(
+                        f"Expected changes in one of: {sorted(target_files_all)}. "
+                        f"Writer may have targeted the wrong file, or the existing "
+                        f"code already satisfied the request.",
+                        "WARN",
+                    )
             except Exception as e:
                 self.log(f"Verification failed: {e}", "WARN")
 

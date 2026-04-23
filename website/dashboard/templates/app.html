@@ -2173,10 +2173,20 @@ function navigate(page, params = {}) {
   if (page === 'dashboard') {
     stopDetailStream();
     loadDashboard();
-    history.pushState({}, '', APP_BASE + '/#dashboard');
+    // APP_BASE + "/" is enough — dashboard is the default route, so the
+    // "#dashboard" hash we used to append is noise and clutters the URL
+    // users copy/paste. The hash router at route() treats "no hash" as
+    // dashboard already.
+    history.pushState({}, '', APP_BASE + '/');
   } else if (page === 'detail') {
     loadDetail(params.id);
-    history.pushState({}, '', APP_BASE + `/#project/${params.id}`);
+    // APP_BASE is REQUIRED — without it a project URL on dev
+    // (/dev/dashboard/...) collapses to idea2paper.org/#project/...
+    // which the CF tunnel routes to the prod webapp, so refresh or
+    // copy-paste of the URL lands users on a different environment
+    // than the one they were browsing. Same issue on prod (hitting
+    // "/" returns the homepage, not the dashboard app).
+    history.pushState({}, '', `${APP_BASE}/#project/${params.id}`);
   } else if (page === 'admin') {
     stopDetailStream();
     loadAdminPage();

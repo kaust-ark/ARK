@@ -131,20 +131,40 @@ VENUE_ALIASES = {
 }
 
 
-def get_geometry(venue_format: str) -> dict:
+def get_geometry(venue_format: str, paper_dir=None) -> dict:
     """Get page geometry for a venue format.
 
     Args:
-        venue_format: Venue name or format string (e.g. "sigplan", "ieee", "neurips")
+        venue_format: Venue name or format string (e.g. "sigplan", "ieee", "neurips").
+        paper_dir: Optional project ``paper/`` directory. When ``venue_format``
+            is unknown (notably ``"custom"`` from user uploads), consult
+            ``template_manifest.yaml`` for ``detected_venue_format`` written
+            by ``preprocess_custom_template``. Without this, custom NeurIPS
+            uploads silently get acmart-sigplan's 2-column 3.33in geometry.
 
     Returns:
         Dict with columnwidth_in, textwidth_in, font_size_pt, etc.
     """
-    key = venue_format.lower().strip()
+    key = (venue_format or "").lower().strip()
     key = VENUE_ALIASES.get(key, key)
     if key in VENUE_PRESETS:
         return dict(VENUE_PRESETS[key])
-    # Default to acmart-sigplan if unknown
+
+    if paper_dir is not None:
+        try:
+            import yaml
+            from pathlib import Path
+            manifest_path = Path(paper_dir) / "template_manifest.yaml"
+            if manifest_path.exists():
+                data = yaml.safe_load(manifest_path.read_text()) or {}
+                detected = (data.get("detected_venue_format") or "").lower().strip()
+                detected = VENUE_ALIASES.get(detected, detected)
+                if detected in VENUE_PRESETS:
+                    return dict(VENUE_PRESETS[detected])
+        except Exception:
+            pass
+
+    # Fall back to acmart-sigplan if unknown
     return dict(VENUE_PRESETS["acmart-sigplan"])
 
 

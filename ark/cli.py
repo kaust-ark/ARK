@@ -3441,7 +3441,7 @@ def cmd_webapp(args):
 
     try:
         import uvicorn
-        from website.dashboard import create_app
+        from website.dashboard.app import create_app
         from website.dashboard.config import get_settings, _env_file
     except ImportError:
         print(f"{_c('Error:', Colors.RED)} Webapp dependencies not installed.")

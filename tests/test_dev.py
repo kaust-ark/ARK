@@ -255,6 +255,92 @@ class TestLoadSpec:
         assert spec == ""
 
 
+class TestReviewFeedbackLoop:
+    """Verify that the dev planner consumes the latest code review, not just its score.
+
+    This is the review->planning closure: without it, dev multi-round has no
+    mechanism to act on reviewer-identified issues (only on test failures).
+    """
+
+    def test_planner_receives_review_as_prior_context(self, mock_dev_orchestrator):
+        orch = mock_dev_orchestrator
+        review_file = orch.state_dir / "code_review.md"
+        review_md = (
+            "# Code Review -- Iteration 1\n\n"
+            "## Score: 6/10\n\n"
+            "## Issues\n"
+            "### C1. Missing error handling in parser\n"
+            "Parser crashes on malformed input.\n"
+        )
+        review_file.write_text(review_md)
+        orch.save_dev_state({
+            "spec_loaded": True, "spec": "S",
+            "tasks": [{"id": "T1", "status": "completed"}],
+            "code_review_scores": [{"iteration": 1, "score": 6}],
+            "last_test_results": {"passed": 1, "failed": 0, "errors": 0},
+        })
+
+        with patch.object(orch, "run_agent", return_value="") as mock_run:
+            orch._run_dev_planning_phase(orch.load_dev_state())
+
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        assert kwargs.get("prior_context") == review_md, \
+            "full review markdown must be passed as prior_context"
+        prompt = args[1] if len(args) >= 2 else kwargs["task"]
+        assert "auto_research/state/code_review.md" in prompt, \
+            "prompt must point planner at the review file"
+        assert "C1" in prompt or "reviewer issue" in prompt.lower(), \
+            "prompt must instruct planner to translate review issues into tasks"
+
+    def test_planner_handles_missing_review(self, mock_dev_orchestrator):
+        orch = mock_dev_orchestrator
+        assert not (orch.state_dir / "code_review.md").exists()
+        orch.save_dev_state({
+            "spec_loaded": True, "spec": "S", "tasks": [],
+            "code_review_scores": [], "last_test_results": {},
+        })
+
+        with patch.object(orch, "run_agent", return_value="") as mock_run:
+            orch._run_dev_planning_phase(orch.load_dev_state())
+
+        mock_run.assert_called_once()
+        kwargs = mock_run.call_args.kwargs
+        assert kwargs.get("prior_context") == "", \
+            "no review file → prior_context must be empty"
+        args, _ = mock_run.call_args
+        prompt = args[1] if len(args) >= 2 else kwargs["task"]
+        assert "No reviews yet" in prompt
+
+    def test_prompt_drops_old_score_only_dump(self, mock_dev_orchestrator):
+        """Regression: prompt must NOT surface only the score dict as 'Code Review Feedback'.
+
+        The old code did `yaml.dump(review_scores[-1])`, which told the planner
+        the feedback WAS just {iteration, score, timestamp}. The review content
+        (issues to fix) was never surfaced. This test locks in the fix.
+        """
+        orch = mock_dev_orchestrator
+        (orch.state_dir / "code_review.md").write_text(
+            "## Score: 6/10\n### C1. Fix X\n"
+        )
+        orch.save_dev_state({
+            "spec_loaded": True, "spec": "",
+            "tasks": [{"id": "T1", "status": "completed"}],
+            "code_review_scores": [
+                {"iteration": 1, "score": 6, "timestamp": "2026-04-22T00:00:00"},
+            ],
+            "last_test_results": {},
+        })
+
+        with patch.object(orch, "run_agent", return_value="") as mock_run:
+            orch._run_dev_planning_phase(orch.load_dev_state())
+
+        args, kwargs = mock_run.call_args
+        prompt = args[1] if len(args) >= 2 else kwargs["task"]
+        assert "timestamp: '2026-04-22" not in prompt, \
+            "regression: prompt should not dump the score-dict as the review"
+
+
 class TestCodeReviewThreshold:
     def test_default_threshold(self, mock_dev_orchestrator):
         assert mock_dev_orchestrator.code_review_threshold == 7

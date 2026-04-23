@@ -7,6 +7,12 @@ import yaml
 from pathlib import Path
 
 
+GEMINI_IMAGE_ASPECT_RATIOS = frozenset({
+    "1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1",
+    "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9",
+})
+
+
 class CompilerMixin:
     """Mixin providing LaTeX compilation and figure management.
 
@@ -544,7 +550,7 @@ class CompilerMixin:
             venue_name = self.config.get("venue", "").lower()
             venue = venue_name if venue_name else "acmart-sigplan"
 
-        geo = get_geometry(venue)
+        geo = get_geometry(venue, paper_dir=self.latex_dir)
         config_path = self.figures_dir / "figure_config.json"
         write_figure_config(geo, config_path)
         self.log(f"Figure config generated: {config_path} (column={geo['columnwidth_in']}in, font={geo['font_size_pt']}pt)", "INFO")
@@ -847,7 +853,7 @@ output: NO_CONCEPT_FIGURES
 
         from ark.latex_geometry import get_geometry
         venue_format = self.config.get("venue_format", venue)
-        geo = get_geometry(venue_format) if venue_format else {"columnwidth_in": 3.333}
+        geo = get_geometry(venue_format, paper_dir=self.latex_dir) if venue_format else {"columnwidth_in": 3.333}
 
         columns = geo.get("columns", 1)
         col_w = geo.get("columnwidth_in", 3.333)
@@ -872,13 +878,19 @@ output: NO_CONCEPT_FIGURES
             # Determine aspect ratio and width based on placement
             if columns == 1:
                 fig_width = text_w
-                aspect_ratio = "16:10"
+                aspect_ratio = "16:9"
             elif placement == "full_width":
                 fig_width = text_w
                 aspect_ratio = "21:9"
             else:
                 fig_width = col_w
                 aspect_ratio = "4:3"
+
+            if aspect_ratio not in GEMINI_IMAGE_ASPECT_RATIOS:
+                raise ValueError(
+                    f"Illegal aspect_ratio {aspect_ratio!r} for Gemini image API; "
+                    f"must be one of {sorted(GEMINI_IMAGE_ASPECT_RATIOS)}"
+                )
 
             self.log(f"  Generating: {name} (placement={placement}, {fig_width:.1f}in, ratio={aspect_ratio})...", "INFO")
 

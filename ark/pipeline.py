@@ -23,6 +23,42 @@ _TITLE_MAX_LEN = 200
 _TITLE_MAX_RETRIES = 3
 
 
+# Match the start of an active (non-commented) ``\title`` command, positioning
+# the regex right before the opening ``{``. Active means the line is not a
+# ``%`` comment; we verify this by requiring only whitespace before ``\title``.
+_ACTIVE_TITLE_RE = re.compile(r'^(?P<indent>[ \t]*)\\title\s*(?=\{)', re.MULTILINE)
+
+
+def _replace_latex_title(src: str, new_title: str) -> str:
+    """Replace the first active ``\\title{...}`` in LaTeX source.
+
+    Walks balanced braces (respecting ``\\{``/``\\}`` escapes) so titles
+    containing nested LaTeX commands like ``\\title{A \\emph{note}}`` are
+    handled correctly. Commented-out occurrences (lines starting with ``%``)
+    are skipped. Returns ``src`` unchanged if no active ``\\title`` is found.
+    """
+    for m in _ACTIVE_TITLE_RE.finditer(src):
+        brace_start = m.end()
+        if brace_start >= len(src) or src[brace_start] != '{':
+            continue
+        depth = 1
+        i = brace_start + 1
+        while i < len(src) and depth > 0:
+            ch = src[i]
+            if ch == '\\' and i + 1 < len(src):
+                i += 2
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+            i += 1
+        if depth == 0:
+            # src[brace_start] == '{', src[i-1] == '}' — replace the body.
+            return src[:brace_start + 1] + new_title + src[i - 1:]
+    return src
+
+
 def _generate_title_via_llm(idea_text: str, timeout: int = 60) -> str:
     """Call ``claude -p`` to generate a paper title from idea text.
 
@@ -94,6 +130,168 @@ def _fallback_title_from_idea(idea_text: str) -> str:
             return line
     # Absolute last resort
     return idea_text[:80].strip().replace("\n", " ")
+
+
+# --------------- HITL (human-in-the-loop) helpers ---------------
+#
+# Agents write ``results/needs_human.json`` when they hit a blocker
+# they cannot resolve autonomously. ``_check_human_intervention`` (on
+# PipelineMixin) reads it, routes it through the shared
+# ``ask_user_decision`` Telegram UI, and persists the decision so a
+# later iteration can honour it without re-asking. The module-level
+# helpers here handle the pure-data concerns (schema coercion, history
+# append, decision accumulator) so they are trivial to unit-test.
+
+_HITL_OPTION_PAREN_RE = re.compile(
+    r"\(([a-z])\)\s*([^()]+?)(?=\(\w\)|$)", re.IGNORECASE,
+)
+_HITL_TRAILING_CONJUNCTION_RE = re.compile(
+    r"(?:[,;.\s]*\b(?:or|and)\b\s*)+$", re.IGNORECASE,
+)
+
+
+def _clean_option_title(text: str) -> str:
+    s = str(text).strip()
+    s = _HITL_TRAILING_CONJUNCTION_RE.sub("", s).rstrip(",;. ")
+    return s
+
+
+def _coerce_hitl_options(raw: dict) -> list:
+    """Return a canonical [{id, title, consequence}] list.
+
+    Accepts the structured ``options[]`` format plus two legacy shapes
+    (``operator_action_needed`` as a ``(a)/(b)/(c)`` sentence, or
+    ``needed_items`` as a list of strings). Empty result means the
+    agent wrote a free-form help request and we have nothing numbered
+    to surface."""
+    options = raw.get("options")
+    if isinstance(options, list) and options and all(isinstance(o, dict) for o in options):
+        return [
+            {"id": str(o.get("id") or i),
+             "title": str(o.get("title") or "").strip(),
+             "consequence": str(o.get("consequence") or "").strip()}
+            for i, o in enumerate(options, 1)
+        ]
+
+    legacy = raw.get("operator_action_needed") or raw.get("needed_items") or ""
+    if isinstance(legacy, list):
+        return [
+            {"id": str(i),
+             "title": _clean_option_title(item),
+             "consequence": ""}
+            for i, item in enumerate(legacy, 1)
+            if str(item).strip()
+        ]
+    if isinstance(legacy, str) and legacy.strip():
+        matches = _HITL_OPTION_PAREN_RE.findall(legacy)
+        if matches:
+            return [
+                {"id": str(idx + 1),
+                 "title": _clean_option_title(text),
+                 "consequence": ""}
+                for idx, (_, text) in enumerate(matches)
+            ]
+        return [{"id": "1",
+                 "title": _clean_option_title(legacy),
+                 "consequence": ""}]
+    return []
+
+
+def _normalise_needs_human(raw: dict) -> dict:
+    """Coerce a ``needs_human.json`` payload into a stable shape.
+
+    Tolerates the legacy free-form schema (``operator_action_needed`` /
+    ``needed_items`` / ``commands_tried`` / ``error_output``) as well
+    as the structured schema documented in experimenter.prompt
+    (``options[]`` with ``title`` + ``consequence`` per option)."""
+    evidence = raw.get("evidence") or {}
+    if isinstance(evidence, str):
+        evidence = {"freeform": evidence}
+    elif not isinstance(evidence, dict):
+        evidence = {}
+    if "tested_commands" not in evidence:
+        if raw.get("commands_tried"):
+            evidence["tested_commands"] = list(raw["commands_tried"])
+        elif raw.get("tested_cmd"):
+            evidence["tested_commands"] = [raw["tested_cmd"]]
+    if "error_output" not in evidence and raw.get("error_output"):
+        evidence["error_output"] = raw["error_output"]
+
+    return {
+        "summary": str(raw.get("summary") or raw.get("reason") or "").strip(),
+        "stage": str(raw.get("stage") or raw.get("phase") or "").strip(),
+        "what_failed": str(raw.get("what_failed") or raw.get("details") or "").strip(),
+        "evidence": evidence,
+        "options": _coerce_hitl_options(raw),
+        "default_option": str(raw.get("default_option") or "").strip(),
+        "timeout_minutes": int(raw.get("timeout_minutes") or 60),
+    }
+
+
+def _hitl_slug(s: str, max_len: int = 80) -> str:
+    s = re.sub(r"[^a-zA-Z0-9_]+", "_", s).strip("_").lower()
+    return s[:max_len] or "anon"
+
+
+def _append_hitl_history(code_dir: Path, req: dict, reply,
+                         chosen, decision_text: str,
+                         stage_label: str) -> Path:
+    """Append a Q+A entry to ``results/needs_human_history.jsonl``."""
+    history = code_dir / "results" / "needs_human_history.jsonl"
+    history.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "timestamp": datetime.now().isoformat(),
+        "stage": stage_label,
+        "request": req,
+        "reply": reply,
+        "chosen_option": chosen,
+        "decision_text": decision_text,
+    }
+    with history.open("a") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return history
+
+
+def _update_hitl_decisions(state_dir: Path, req: dict, chosen,
+                           decision_text: str, stage_label: str) -> Path:
+    """Write ``auto_research/state/hitl_decisions.yaml`` — the
+    accumulator agents consult at the start of subsequent iterations
+    so they honour a prior decision instead of re-asking.
+
+    Record id is a slug of ``stage :: summary`` so the *same* blocker
+    surfacing twice updates the existing record rather than piling up
+    duplicates."""
+    path = state_dir / "hitl_decisions.yaml"
+    data: dict = {}
+    if path.exists():
+        try:
+            data = yaml.safe_load(path.read_text()) or {}
+        except Exception:
+            data = {}
+    decisions = data.get("decisions", [])
+    decision_id = _hitl_slug(f"{stage_label}::{req.get('summary','')}")
+    record = {
+        "id": decision_id,
+        "timestamp": datetime.now().isoformat(),
+        "stage": stage_label,
+        "summary": req.get("summary"),
+        "chosen_option": chosen,
+        "free_text": None if chosen else (decision_text or None),
+    }
+
+    replaced = False
+    for i, d in enumerate(decisions):
+        if isinstance(d, dict) and d.get("id") == decision_id:
+            decisions[i] = record
+            replaced = True
+            break
+    if not replaced:
+        decisions.append(record)
+
+    data["decisions"] = decisions
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
+    return path
 
 
 class PipelineMixin:
@@ -837,7 +1035,8 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
 
         if self.telegram.is_configured:
             self.telegram.send(
-                f"<b>🔬 {self.display_name}</b>\nResearch Phase — analyzing proposal & building foundation...",
+                f"{self.tg_header('🚤')}\n"
+                f"🔬 <b>Research Phase started</b> — analyzing proposal & building foundation...",
                 parse_mode="HTML",
             )
 
@@ -848,11 +1047,17 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
             if not project_env_ready(self.code_dir):
                 base_env = self.config.get("base_conda_env", "ark-base")
                 self.log_step(f"Provisioning conda environment (cloning {base_env})...", "progress")
+                self.notify_progress(
+                    "Env setup", f"cloning base env <code>{base_env}</code>...",
+                    level="working",
+                )
                 success, msg = provision_project_env(self.code_dir, base_env)
                 if success:
                     self.log_step(f"Conda env ready: {msg}", "success")
+                    self.notify_progress("Env ready", f"{msg}", level="done")
                 else:
                     self.log_step(f"Conda env provisioning failed: {msg}", "error")
+                    self.notify_progress("Env setup failed", f"{msg}", level="warn")
                     raise RuntimeError(f"Conda env provisioning failed: {msg}")
             else:
                 self.log_step("Conda env already exists", "success")
@@ -1009,13 +1214,26 @@ Write `auto_research/state/project_context.md` with sections:
 ## External Systems, ## Environment Setup, ## Experiment Guidance, ## Credentials & Access
 """, timeout=600)
             self.log_step("Project context generated", "success")
+            self.notify_progress("Project context", "ready", level="done")
 
             # 3.2: Specialize agent prompts (code-driven, one call per agent)
+            # First refresh the template base for any already-specialized
+            # project — fixes a staleness bug where prompt template edits
+            # in ark/ never reached a project that had already been
+            # specialized on an earlier run. See _sync_agent_prompt_bases
+            # docstring for the preservation logic.
+            self._sync_agent_prompt_bases()
             self.log_step("Specializing agent prompts...", "progress")
+            self.notify_progress(
+                "Agent prompts", "specializing for this project...", level="working"
+            )
             self._specialize_agent_prompts()
 
             # 3.3: Select and install skills
             self.log_step("Selecting skills...", "progress")
+            self.notify_progress(
+                "Skills", "picking from library...", level="working"
+            )
             skills_index = self._load_skills_index()
             if skills_index and "No skills" not in skills_index:
                 self.run_agent("researcher", f"""
@@ -1065,8 +1283,14 @@ selected skill paths (or an empty array `[]` if nothing matches). Also write
 `auto_research/state/selected_skills_rationale.md` with a short rationale per
 selected skill (why it matches, which phase will use it).
 """, timeout=600)
-            self._install_selected_skills()
+            n_skills = self._install_selected_skills()
             self.log_step("Specialization complete", "success")
+            if isinstance(n_skills, int) and n_skills >= 0:
+                self.notify_progress(
+                    "Skills installed", f"{n_skills} skill(s) loaded", level="done"
+                )
+            else:
+                self.notify_progress("Skills installed", "ready", level="done")
 
             self.log_step_header(3, 4, "Specialization", "end")
         else:
@@ -1084,6 +1308,12 @@ selected skill (why it matches, which phase will use it).
         self.log_step_header(4, 4, "Bootstrap", "end")
 
         self.log_section("Research Phase Complete")
+        if self.telegram.is_configured:
+            self.telegram.send(
+                f"{self.tg_header('🚤')}\n"
+                f"🏁 <b>Research Phase complete</b> → moving to Dev Phase",
+                parse_mode="HTML",
+            )
 
     def _load_skills_index(self) -> str:
         """Return navigation pointers for the skills library.
@@ -1173,19 +1403,19 @@ selected skill (why it matches, which phase will use it).
 
         return "\n".join(lines) if lines else "No skills available."
 
-    def _install_selected_skills(self):
-        """Copy selected skills to the project directory."""
+    def _install_selected_skills(self) -> int:
+        """Copy selected skills to the project directory. Returns count installed."""
         import json
         selected_file = self.state_dir / "selected_skills.json"
         if not selected_file.exists():
-            return
+            return 0
 
         try:
             with open(selected_file) as f:
                 selected_paths = json.load(f)
 
             if not isinstance(selected_paths, list):
-                return
+                return 0
 
             skills_dest = Path(self.code_dir) / ".claude" / "skills"
             skills_dest.mkdir(parents=True, exist_ok=True)
@@ -1202,8 +1432,10 @@ selected skill (why it matches, which phase will use it).
 
             if installed:
                 self.log_step(f"Installed {len(installed)} skills: {', '.join(installed)}", "success")
+            return len(installed)
         except Exception as e:
             self.log(f"Skills installation failed: {e}", "WARN")
+            return 0
 
     def _install_builtin_skills(self):
         """Copy ARK builtin skills to the project's .claude/skills/ directory."""
@@ -1227,78 +1459,210 @@ selected skill (why it matches, which phase will use it).
             self.log_step(f"Builtin skills installed: {', '.join(installed)}", "success")
 
     def _check_human_intervention(self, stage: str = "") -> bool:
-        """Check if an agent requested human intervention via needs_human.json.
+        """Handle an agent's ``results/needs_human.json`` blocker.
 
-        If the file exists and urgency is "blocking", sends a Telegram notification
-        and blocks until the user responds. Returns True if human responded (caller
-        should re-run the blocked work), False otherwise.
+        The payload is normalised, routed through ``ask_user_decision``
+        (main's shared Telegram decision UI — unified header, numbered
+        options with a Custom escape, timeout default, ``/bind`` aware),
+        and the resolution is persisted to both an append-only history
+        log and the ``hitl_decisions.yaml`` accumulator that agents read
+        at the start of subsequent iterations.
+
+        Returns True if a decision was made (caller should retry the
+        blocked work), False on timeout with no default / no telegram.
         """
-        import json
         needs_file = Path(self.code_dir) / "results" / "needs_human.json"
         if not needs_file.exists():
             return False
-
         try:
-            with open(needs_file) as f:
-                request = json.load(f)
-        except Exception:
+            raw = json.loads(needs_file.read_text())
+        except Exception as e:
+            self.log(f"needs_human.json unreadable, skipping HITL: {e}", "WARN")
+            needs_file.unlink(missing_ok=True)
             return False
 
-        summary = request.get("summary", "Agent needs help")
-        details = request.get("details", "")
-        urgency = request.get("urgency", "blocking")
-        timeout_min = request.get("timeout_minutes", 60)
-        needed_items = request.get("needed_items", [])
-        commands_tried = request.get("commands_tried", [])
-        error_output = request.get("error_output", "")
+        req = _normalise_needs_human(raw)
+        self.log(
+            f"Human intervention requested: {req['summary'] or '(no summary)'}",
+            "WARN",
+        )
 
-        self.log(f"Human intervention requested [{urgency}]: {summary}", "WARN")
+        # Derive ask_user_decision inputs from the normalised request.
+        options = [o["title"] or o["id"] for o in req["options"]]
+        option_details = [o["consequence"] for o in req["options"]]
+        if not options:
+            # Agent wrote a free-form help request with no numbered
+            # options. Offer a minimal two-option shape so the user has
+            # something to pick — ask_user_decision auto-appends a
+            # Custom slot so free-text is always possible too.
+            options = ["Continue without action", "Pause and wait for me"]
+            option_details = [
+                "Skip the blocker and let downstream work proceed as best-effort.",
+                "Hold until you reply with guidance.",
+            ]
 
-        # Build Telegram message
-        items_text = ""
-        if needed_items:
-            items_text = "\n".join(
-                f"  • <code>{item.get('key', '?')}</code>: {item.get('purpose', '')}"
-                for item in needed_items
+        background = []
+        if req["stage"]:
+            background.append(f"Stage: {req['stage']}")
+        if req["what_failed"]:
+            background.append(f"What failed: {req['what_failed'][:400]}")
+        for cmd in (req["evidence"].get("tested_commands") or [])[:4]:
+            if isinstance(cmd, dict):
+                c = cmd.get("cmd") or cmd.get("command") or ""
+                rc = cmd.get("exit_code")
+                background.append(
+                    f"Tested: {str(c)[:120]}"
+                    + (f" (exit {rc})" if rc is not None else "")
+                )
+            else:
+                background.append(f"Tested: {str(cmd)[:120]}")
+        err = req["evidence"].get("error_output")
+        if err:
+            background.append(f"Error: {str(err)[:300]}")
+
+        # Map "3" → 0-indexed int for ask_user_decision.
+        default_idx = 0
+        if req["default_option"] and req["options"]:
+            for i, o in enumerate(req["options"]):
+                if o["id"] == req["default_option"]:
+                    default_idx = i
+                    break
+
+        question = req["summary"] or f"Agent blocked at {stage or 'unknown stage'}"
+
+        idx, reply = self.ask_user_decision(
+            question,
+            options,
+            timeout=req["timeout_minutes"] * 60,
+            default=default_idx,
+            what_happened=req["summary"],
+            background=background,
+            option_details=option_details,
+            phase="needs_human",
+        )
+
+        # Resolve: numeric pick → chosen option; free text → user_update
+        # (already injected by ask_user_decision); timeout → nothing new.
+        chosen = None
+        decision_text = ""
+        if 0 <= idx < len(req["options"]):
+            chosen = req["options"][idx]
+            decision_text = f"Selected option {chosen['id']}: {chosen['title']}"
+            if chosen["consequence"]:
+                decision_text += f" (consequence: {chosen['consequence']})"
+            # ask_user_decision only injects on free text; propagate the
+            # numeric decision into user_updates.yaml too so planner /
+            # reviewer memory sees it in the usual channel.
+            try:
+                self.inject_user_update(decision_text)
+            except Exception:
+                pass
+            self.log(f"HITL decision: {decision_text[:120]}", "INFO")
+        elif reply:
+            decision_text = reply.strip()
+            self.log(f"HITL free-text reply: {decision_text[:120]}", "INFO")
+        else:
+            self.log(
+                f"No HITL reply after {req['timeout_minutes']}min — "
+                f"experiments remain blocked.",
+                "WARN",
             )
 
-        tg_msg = (
-            f"🚨 <b>{self.display_name}</b> — blocked, needs help\n\n"
-            f"<b>Stage:</b> {stage}\n"
-            f"<b>Issue:</b> {summary}\n"
-        )
-        if items_text:
-            tg_msg += f"\n<b>Needed:</b>\n{items_text}\n"
-        if commands_tried:
-            tg_msg += f"\n<b>Commands tried:</b>\n"
-            for cmd in commands_tried[:5]:
-                tg_msg += f"  <code>{cmd[:80]}</code>\n"
-        if error_output:
-            tg_msg += f"\n<b>Error:</b>\n<pre>{error_output[:300]}</pre>\n"
-        if details:
-            tg_msg += f"\n{details[:400]}\n"
-        tg_msg += f"\n⏳ Waiting up to {timeout_min} min for your reply..."
+        try:
+            _append_hitl_history(
+                Path(self.code_dir), req, reply, chosen, decision_text, stage,
+            )
+        except Exception as e:
+            self.log(f"needs_human_history.jsonl append failed: {e}", "WARN")
+        try:
+            _update_hitl_decisions(
+                Path(self.state_dir), req, chosen, decision_text, stage,
+            )
+        except Exception as e:
+            self.log(f"hitl_decisions.yaml update failed: {e}", "WARN")
 
-        reply = None
-        if self.telegram.is_configured:
-            reply = self.telegram.ask(tg_msg, timeout=timeout_min * 60)
-
-            if reply:
-                # Save user response
-                response_file = Path(self.code_dir) / "results" / "human_response.json"
-                with open(response_file, "w") as f:
-                    json.dump({"reply": reply, "stage": stage,
-                               "original_request": summary}, f, indent=2)
-                self.inject_user_update(reply)
-                self.log(f"User responded: {reply[:100]}", "INFO")
-            else:
-                self.log(f"No response after {timeout_min}min — experiments remain blocked.", "WARN")
-        else:
-            self.log(f"Telegram not configured — experiments remain blocked.", "WARN")
-
-        # Remove the request file so it doesn't trigger again
         needs_file.unlink(missing_ok=True)
-        return reply is not None
+        return bool(reply) or chosen is not None
+
+    def _sync_agent_prompt_bases(self):
+        """Refresh the base template of each per-project agent prompt,
+        preserving any specialization addendum that was appended below.
+
+        Per-project prompts live at ``<project>/agents/<agent>.prompt``.
+        They are seeded from ``ark/templates/agents/`` at project creation
+        (or webapp restart) and then ``_specialize_agent_prompts`` appends
+        a ``## Project-Specific Knowledge`` section. Without this sync,
+        any edit to the template in ``ark/`` is invisible to an existing
+        project on Continue — the per-project prompt was frozen at the
+        version that shipped when the project was specialized.
+
+        Strategy: split each existing prompt at the specialization marker,
+        re-read the (now-edited) template, re-apply variable substitutions
+        using values extracted from the current prompt, then concat the
+        addendum. If no addendum is present yet, skip — the prompt hasn't
+        been specialized on this project yet and the seeding code owns it.
+        """
+        agents_dir = getattr(self, "agents_dir", None)
+        if not agents_dir or not agents_dir.exists():
+            return
+        templates_dir = Path(__file__).parent / "templates" / "agents"
+        if not templates_dir.exists():
+            return
+
+        MARKER = "## Project-Specific Knowledge"
+
+        # Values to re-substitute come from config (same values the webapp
+        # used at seeding time). Fall back to whatever we can infer.
+        title = self.config.get("title") or self.config.get("project") or ""
+        venue_name = (
+            self.config.get("venue")
+            or self.config.get("venue_format")
+            or "NeurIPS"
+        )
+        venue_format = self.config.get("venue_format") or "neurips"
+        venue_pages = str(self.config.get("venue_pages", 9))
+        project_id = self.config.get("project") or getattr(self, "project_id", "")
+
+        try:
+            from ark.template_preprocess import render_custom_template_notes
+            custom_notes = render_custom_template_notes(
+                Path(self.code_dir) / "paper"
+            )
+        except Exception:
+            custom_notes = ""
+
+        refreshed = 0
+        for tpl_path in templates_dir.glob("*.prompt"):
+            per_path = agents_dir / tpl_path.name
+            if not per_path.exists():
+                continue
+            per = per_path.read_text()
+            if MARKER not in per:
+                # Prompt hasn't been specialized yet for this project.
+                # Let the regular seeding + specialization path handle it.
+                continue
+            addendum = per[per.index(MARKER):]
+            base = tpl_path.read_text()
+            for k, v in {
+                "{PROJECT_NAME}": project_id,
+                "{PAPER_TITLE}": title or project_id,
+                "{VENUE_NAME}": venue_name,
+                "{VENUE_FORMAT}": venue_format,
+                "{VENUE_PAGES}": venue_pages,
+                "{LATEX_DIR}": "paper",
+                "{FIGURES_DIR}": "paper/figures",
+                "{CUSTOM_TEMPLATE_NOTES}": custom_notes,
+            }.items():
+                base = base.replace(k, v)
+            new_content = base.rstrip() + "\n\n" + addendum
+            if new_content != per:
+                per_path.write_text(new_content)
+                refreshed += 1
+        if refreshed:
+            self.log(
+                f"Refreshed {refreshed} agent prompt base(s) from templates",
+                "INFO",
+            )
 
     def _specialize_agent_prompts(self):
         """Specialize each agent's prompt with project-specific knowledge.
@@ -1395,6 +1759,10 @@ in what that file actually says — do not guess.
             or re.fullmatch(r"[0-9a-fA-F-]{30,}", current) is not None
         )
         if not is_placeholder:
+            # Title already committed, but main.tex / agent prompts may have
+            # drifted (e.g. restart after template preprocess stubs the title
+            # to "ARK Pending Title"). Sync is idempotent and cheap.
+            self._sync_paper_metadata(current)
             return
 
         idea_text = idea_file.read_text().strip()
@@ -1426,12 +1794,109 @@ in what that file actually says — do not guess.
         if config_path.exists():
             cfg = yaml.safe_load(config_path.read_text()) or {}
             cfg["title"] = new_title
+            # Fill in the empty ``**Paper Title**:`` slot in goal_anchor if the
+            # project was created before the title existed. Don't clobber a
+            # goal_anchor that already carries a real title.
+            goal = cfg.get("goal_anchor") or ""
+            if goal:
+                cfg["goal_anchor"] = re.sub(
+                    r'(\*\*Paper Title\*\*:[ \t]*)(\n|$)',
+                    lambda m: f"{m.group(1)}{new_title}{m.group(2)}",
+                    goal,
+                    count=1,
+                )
             config_path.write_text(
                 yaml.dump(cfg, default_flow_style=False,
                           allow_unicode=True, sort_keys=False)
             )
         self._sync_db(title=new_title, name=new_title)
         self.log(f"Title committed: {new_title}", "INFO")
+        # The header in every future Telegram message will now show the
+        # real title — drop the cache so display_name picks it up. Wrap
+        # both calls in fail-soft guards: test harnesses may stub this
+        # mixin with ``MagicMock(spec=PipelineMixin)``, which won't carry
+        # ``_invalidate_display_name`` / ``notify_progress`` (both live
+        # on the Orchestrator itself), and a non-essential notification
+        # must never break the pipeline.
+        try:
+            self._invalidate_display_name()
+        except Exception:
+            pass
+        try:
+            self.notify_progress("Title generated", new_title[:80], level="done")
+        except Exception:
+            pass
+
+        # --- Propagate title to paper/main.tex and agent prompts ---
+        self._sync_paper_metadata(new_title)
+
+    def _sync_paper_metadata(self, title: str):
+        """Push the canonical title into ``paper/main.tex`` and agent prompts.
+
+        Called after ``_update_title_from_idea`` commits a new title, so the
+        LaTeX ``\\title{...}`` and the writer/reviewer prompts all agree with
+        ``config.yaml``. Without this sync, templates ship with their own
+        placeholder title (e.g. ``Formatting Instructions For NeurIPS 2026``)
+        which would otherwise survive the whole pipeline.
+        """
+        # 1. Rewrite \title{...} in the main LaTeX file.
+        main_tex = self.latex_dir / "main.tex"
+        if main_tex.exists():
+            try:
+                src = main_tex.read_text()
+                new_src = _replace_latex_title(src, title)
+                if new_src != src:
+                    main_tex.write_text(new_src)
+                    self.log(f"Synced \\title{{}} in main.tex → {title}", "INFO")
+            except Exception as e:
+                self.log(f"Failed to sync main.tex title: {e}", "WARN")
+
+        # 2. Re-render agent prompts from templates so {PAPER_TITLE} is current.
+        templates_dir = Path(__file__).parent / "templates" / "agents"
+        agents_dir = self.agents_dir
+        if not (templates_dir.exists() and agents_dir.exists()):
+            return
+        project_id = self._project_id or self.project_name
+        venue_format = self.config.get("venue_format") or "neurips"
+        venue_name = (
+            self.config.get("venue")
+            or self.config.get("venue_name")
+            or venue_format
+            or "NeurIPS"
+        )
+        venue_pages = self.config.get("venue_pages", 9)
+        latex_dir = self.config.get("latex_dir", "paper")
+        figures_dir = self.config.get("figures_dir", f"{latex_dir}/figures")
+
+        # Custom-template notes: empty string for projects without a
+        # template_manifest.yaml so the placeholder doesn't leak into the
+        # rendered prompt.
+        try:
+            from ark.template_preprocess import render_custom_template_notes
+            custom_notes = render_custom_template_notes(self.latex_dir)
+        except Exception as e:
+            self.log(f"Failed to render custom template notes: {e}", "WARN")
+            custom_notes = ""
+
+        subs = {
+            "{PROJECT_NAME}": project_id,
+            "{PAPER_TITLE}": title or project_id,
+            "{VENUE_NAME}": venue_name,
+            "{VENUE_FORMAT}": venue_format,
+            "{VENUE_PAGES}": str(venue_pages),
+            "{LATEX_DIR}": latex_dir,
+            "{FIGURES_DIR}": figures_dir,
+            "{CUSTOM_TEMPLATE_NOTES}": custom_notes,
+        }
+        try:
+            for pf in templates_dir.glob("*.prompt"):
+                content = pf.read_text()
+                for placeholder, value in subs.items():
+                    content = content.replace(placeholder, value)
+                (agents_dir / pf.name).write_text(content)
+            self.log(f"Refreshed {len(list(templates_dir.glob('*.prompt')))} agent prompts with new title", "INFO")
+        except Exception as e:
+            self.log(f"Failed to refresh agent prompts: {e}", "WARN")
 
     # ==================== Citation Bootstrapping ====================
 
@@ -1465,8 +1930,11 @@ missing the second half means missing half the citations.
 
 For each paper, return a JSON object with these fields:
 - "title": the paper's actual full title
-- "authors": first author surname (e.g. "Vaswani")
-- "year": publication year as integer (e.g. 2017)
+- "authors": first author surname (e.g. "Vaswani"). If the report does NOT name
+  an author, leave this as an empty string `""` — NEVER write "Unknown", "TBD",
+  "Anonymous", or any other placeholder. Placeholder names get written verbatim
+  into the bibliography and a reviewer will treat them as an unfinished manuscript.
+- "year": publication year as integer (e.g. 2017). Use 0 if the year is not given.
 - "query": a search query to find it (title + author + year)
 - "context": a 1-2 sentence summary of what the report says about this paper (what it does, why it matters)
 
@@ -1526,6 +1994,11 @@ Rules:
         found = len(result.found_keys)
         missing = len(result.needs_check)
         self.log_step(f"Citation bootstrap: {found}/{total} found, {missing} needs-check", "success")
+        self.notify_progress(
+            "Citations bootstrapped",
+            f"{found}/{total} resolved, {missing} needs-check",
+            level="done" if missing == 0 else "warn",
+        )
 
     def _parse_title_list(self, agent_output: str) -> list:
         """Parse a JSON array of paper titles from LLM output.
@@ -2775,21 +3248,29 @@ Only use double_column for multi-panel figures (side-by-side subplots).
         return "\n".join(lines) if lines else "No figures generated yet."
 
     def _send_dev_phase_telegram(self, event: str, current: int, total: int):
-        """Send dev phase notifications to Telegram."""
+        """Send dev phase notifications to Telegram.
+
+        Every message carries the unified ``🚤 ARK Project-<id5> | <title>``
+        header so the user can tell which project pinged them even when
+        multiple projects share the bot.
+        """
         if not self.telegram.is_configured:
             return
         try:
-            name = self.display_name
+            header = self.tg_header("🚤")
             if event == "start":
-                self.telegram.send(f"<b>⚙️ {name}</b>\nDev Phase — max {total} iterations", parse_mode="HTML")
+                body = f"⚙️ <b>Dev Phase started</b> — up to {total} iterations"
             elif event == "iteration":
-                self.telegram.send(f"🔬 Dev {current}/{total}: Planning experiments...")
+                body = f"🔬 <b>Dev {current}/{total}</b> — planning experiments..."
             elif event == "experiments":
-                self.telegram.send(f"🧪 Dev {current}/{total}: Running experiments...")
+                body = f"🧪 <b>Dev {current}/{total}</b> — running experiments..."
             elif event == "writing":
-                self.telegram.send(f"✏️ Dev done → Writing initial draft...")
+                body = f"✏️ <b>Dev done</b> → writing initial draft..."
             elif event == "complete":
-                self.telegram.send(f"<b>✅ {name}</b> — Dev Phase Complete → Review", parse_mode="HTML")
+                body = f"✅ <b>Dev Phase complete</b> → moving to review"
+            else:
+                return
+            self.telegram.send(f"{header}\n{body}", parse_mode="HTML")
         except Exception:
             pass
 
@@ -2801,15 +3282,42 @@ Only use double_column for multi-panel figures (side-by-side subplots).
         readers never see a partial file. Aggregates real token & USD fields
         when the claude JSON envelope was parsed; falls back to character
         counts otherwise.
+
+        Merges with any raw_stats already on disk so restarts don't clobber
+        cost history — each orchestrator process starts with an empty
+        in-memory ``_agent_stats``, but the persisted ledger is the union.
         """
         if not self._agent_stats:
             return
+
+        report_path = self.state_dir / "cost_report.yaml"
+
+        # Merge in any previously persisted raw_stats. Dedup by
+        # (timestamp, agent_type); in-memory wins on collision.
+        existing_raw = []
+        if report_path.exists():
+            try:
+                prev = yaml.safe_load(report_path.read_text()) or {}
+                existing_raw = prev.get("raw_stats") or []
+            except Exception:
+                existing_raw = []
+
+        in_memory_keys = {
+            (s.get("timestamp"), s.get("agent_type"))
+            for s in self._agent_stats
+        }
+        merged_stats = [
+            s for s in existing_raw
+            if (s.get("timestamp"), s.get("agent_type")) not in in_memory_keys
+        ]
+        merged_stats.extend(self._agent_stats)
+        merged_stats.sort(key=lambda s: s.get("timestamp") or "")
 
         # Aggregate per agent type. Each bucket carries both legacy char-count
         # fields (for backwards compat with telegram_daemon / older tests) and
         # the new token + cost fields populated from claude JSON output.
         by_type = {}
-        for stat in self._agent_stats:
+        for stat in merged_stats:
             atype = stat["agent_type"]
             if atype not in by_type:
                 by_type[atype] = {
@@ -2852,10 +3360,9 @@ Only use double_column for multi-panel figures (side-by-side subplots).
             "total_cache_read_tokens": total_cache_read_tokens,
             "total_cache_creation_tokens": total_cache_creation_tokens,
             "per_agent": by_type,
-            "raw_stats": self._agent_stats[-100:],  # Keep last 100 entries
+            "raw_stats": merged_stats[-100:],  # Keep last 100 entries
         }
 
-        report_path = self.state_dir / "cost_report.yaml"
         tmp_path = report_path.with_suffix(".yaml.tmp")
         try:
             with open(tmp_path, "w") as f:
@@ -2897,8 +3404,18 @@ Only use double_column for multi-panel figures (side-by-side subplots).
         if self._should_run_research_phase():
             self._run_research_phase()
 
-        # max_iterations is per-run: adjust to be relative to resumed iteration
-        max_iteration_target = self.iteration + self.max_iterations
+        # max_iterations is the CUMULATIVE cap across the project's
+        # lifetime (that's what the webapp's Continue API stores: it
+        # adds the user's requested +N to the project's existing total
+        # and writes the sum back to DB).  Treat it as the absolute
+        # upper bound on self.iteration — not an increment.
+        #
+        # Bug that motivated this: treating max_iterations as per-run
+        # meant a user who asked "continue +3" after iter=5 actually
+        # got +8 iterations (target = 5 + 8 = 13) because DB already
+        # held the cumulative total. Display ("Iteration 11/8") was
+        # the visible tell.
+        max_iteration_target = max(self.max_iterations, self.iteration)
 
         try:
             # Paper mode: run Dev Phase first if needed

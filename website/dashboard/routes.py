@@ -236,6 +236,20 @@ def _extract_and_validate_template(zip_bytes: bytes, paper_dir: Path) -> str | N
     if not (paper_dir / "references.bib").exists():
         (paper_dir / "references.bib").write_text("")
 
+    # Preprocess the template: strip venue placeholder title/author/abstract
+    # and replace the instructional body with empty section stubs.  Emits
+    # paper/template_manifest.yaml so the writer agent knows which sections
+    # to populate and which files to preserve.
+    try:
+        from ark.template_preprocess import preprocess_custom_template
+        preprocess_custom_template(paper_dir, venue_hint="custom")
+    except Exception as e:
+        logger.exception("Template preprocessing failed")
+        return (
+            f"Template preprocessing failed: {e}\n\n"
+            f"Please check that main.tex is a valid LaTeX file and re-upload."
+        )
+
     # Try compilation (quick pdflatex pass — just check for fatal errors)
     try:
         result = subprocess.run(
@@ -598,6 +612,16 @@ def _substitute_agent_templates(project_dir: Path, project_id: str, title: str,
     templates_dir = Path(__file__).parent.parent.parent / "ark" / "templates" / "agents"
     if not templates_dir.exists():
         return
+
+    # Custom-template notes: pulled from paper/template_manifest.yaml if the
+    # preprocessor emitted one.  For non-custom projects this is the empty
+    # string so the placeholder doesn't leak through.
+    try:
+        from ark.template_preprocess import render_custom_template_notes
+        custom_notes = render_custom_template_notes(project_dir / "paper")
+    except Exception:
+        custom_notes = ""
+
     for pf in templates_dir.glob("*.prompt"):
         content = pf.read_text()
         content = content.replace("{PROJECT_NAME}", project_id)
@@ -607,6 +631,7 @@ def _substitute_agent_templates(project_dir: Path, project_id: str, title: str,
         content = content.replace("{VENUE_PAGES}", str(venue_pages))
         content = content.replace("{LATEX_DIR}", "paper")
         content = content.replace("{FIGURES_DIR}", "paper/figures")
+        content = content.replace("{CUSTOM_TEMPLATE_NOTES}", custom_notes)
         (agents_dir / pf.name).write_text(content)
 
 
@@ -617,11 +642,15 @@ def _clean_project_state(project_dir: Path):
     If the caller wants to keep deep_research or figures across a restart, they
     must copy those out before calling this function and restore them after.
     """
-    # Clean auto_research/state/
+    # Clean auto_research/state/ — but keep user-supplied inputs. These
+    # are not generated state; treating them as such silently loses the
+    # instructions the user typed at project creation when they restart
+    # without re-typing them.
     state_dir = project_dir / "auto_research" / "state"
+    _state_keep = {"user_instructions.yaml"}
     if state_dir.exists():
         for f in state_dir.iterdir():
-            if f.is_file():
+            if f.is_file() and f.name not in _state_keep:
                 f.unlink()
 
     # Clean auto_research/logs/
@@ -637,15 +666,26 @@ def _clean_project_state(project_dir: Path):
             shutil.rmtree(d, ignore_errors=True)
             d.mkdir(exist_ok=True)
 
-    # Clean paper/ — keep venue template files, remove generated content
+    # Clean paper/ — keep venue template files, remove generated content.
+    # When a user-uploaded template was preprocessed (template_manifest.yaml
+    # present), also keep .tex/.bib/manifest: those are the uploaded skeleton,
+    # not generated content. api_restart_project re-runs preprocess afterwards
+    # to strip any writer-filled prose back to clean stubs. Without this,
+    # restart on a custom-template project leaves paper/ with only .sty files
+    # and the next run fails to find main.tex.
     paper_dir = project_dir / "paper"
     if paper_dir.exists():
+        custom_template = (paper_dir / "template_manifest.yaml").exists()
         keep_exts = {".cls", ".sty", ".bst"}
+        if custom_template:
+            keep_exts |= {".tex", ".bib"}
         for f in paper_dir.iterdir():
             if f.is_dir():
                 if f.name == "figures":
                     shutil.rmtree(f, ignore_errors=True)
                     f.mkdir(exist_ok=True)
+            elif f.name == "template_manifest.yaml":
+                continue
             elif f.suffix not in keep_exts:
                 f.unlink()
 
@@ -1924,12 +1964,22 @@ async def api_restart_project(project_id: str, request: Request):
                 shutil.move(str(item), dest)
         shutil.rmtree(backup_dir, ignore_errors=True)
 
-        # Re-copy venue template (clean removed .bib/.tex template files)
+        # Re-copy venue template (clean removed .bib/.tex template files).
+        # For custom templates the uploaded skeleton was preserved by
+        # _clean_project_state above; re-run preprocess to strip any
+        # writer-filled prose back to empty section stubs so the next run
+        # starts from the same baseline as the initial upload.
         venue_fmt = body.get("venue_format") or project.venue_format or ""
+        paper_dir = pdir / "paper"
         if venue_fmt and venue_fmt != "custom":
-            paper_dir = pdir / "paper"
             paper_dir.mkdir(parents=True, exist_ok=True)
             copy_venue_template(venue_fmt, paper_dir)
+        elif venue_fmt == "custom" and (paper_dir / "template_manifest.yaml").exists():
+            try:
+                from ark.template_preprocess import preprocess_custom_template
+                preprocess_custom_template(paper_dir, venue_hint="custom")
+            except Exception as e:
+                logger.warning(f"Custom template re-preprocess on restart failed: {e}")
 
         # Re-substitute agent prompt templates (clean removed agents/)
         _substitute_agent_templates(

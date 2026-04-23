@@ -273,7 +273,7 @@ def _run_planner(client, text_model_id: str, figure_name: str, caption: str,
 - Figure name: {figure_name}
 - Caption: {caption}
 - Target venue: {venue or 'top-tier academic conference (NeurIPS/ICML level)'}
-- Target width: {column_width_in:.1f} inches, landscape aspect ratio (~16:10)
+- Target width: {column_width_in:.1f} inches, landscape aspect ratio (~16:9)
 
 ## Paper Context
 {paper_context[:3000]}
@@ -592,7 +592,7 @@ ABSOLUTE PROHIBITIONS:
 - NO heavy black outlines or borders. Use thin, subtle strokes.
 - NO 3D effects, gradients, or textures (unless encoding data dimensionality)
 - NO drop shadows (flat design, not material design)
-- Proportions: landscape, aspect ratio ~16:10, width ~{column_width_in:.1f} inches
+- Proportions: landscape, aspect ratio ~16:9, width ~{column_width_in:.1f} inches
 - Background: white or off-white (#FAFAFA)"""
 
         # Generate image

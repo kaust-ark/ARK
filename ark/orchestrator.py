@@ -221,14 +221,75 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         self._artifact_threads: list[threading.Thread] = []
         self._artifact_threads_lock = threading.Lock()
 
+    @staticmethod
+    def _looks_like_uuid(value: str) -> bool:
+        """True if the string is a bare UUID-ish identifier (hex + dashes).
+
+        Used so the Telegram UX never shows a raw 36-char UUID to the user;
+        it falls back to the compact ``Project-<id5>`` form instead.
+        """
+        if not value:
+            return False
+        v = value.strip()
+        # Canonical UUID (8-4-4-4-12) or bare hex slab
+        if len(v) >= 30:
+            stripped = v.replace("-", "").replace("_", "")
+            if stripped and all(c in "0123456789abcdefABCDEF" for c in stripped):
+                return True
+        return False
+
+    @property
+    def short_id(self) -> str:
+        """First 5 hex-ish chars of project_id/project_name for compact headers.
+
+        Target format: ``Project-d9b7f`` for UUID ``d9b7fab8-b466-40ba-...``.
+        Falls back to ``?????`` if no identifier is available.
+        """
+        pid = (self._project_id or self.project_name or "").strip()
+        if not pid:
+            return "?????"
+        compact = pid.replace("-", "").replace("_", "")
+        return compact[:5] if compact else pid[:5]
+
     @property
     def display_name(self) -> str:
-        """Human-readable project name: title from config, else project slug."""
+        """Human-readable project name.
+
+        Prefers an actual title from config; falls back to ``Project-<id5>``
+        so the user never sees a raw UUID in Telegram.
+        """
         if self._display_name is None:
-            title = self.config.get("title") or ""
-            name = self.config.get("name") or ""
-            self._display_name = title or name or self.project_name
+            title = (self.config.get("title") or "").strip()
+            name = (self.config.get("name") or "").strip()
+            if title and not self._looks_like_uuid(title):
+                self._display_name = title
+            elif name and not self._looks_like_uuid(name):
+                self._display_name = name
+            else:
+                self._display_name = f"Project-{self.short_id}"
         return self._display_name
+
+    def _invalidate_display_name(self):
+        """Clear the cached display name so the next read picks up a new title."""
+        self._display_name = None
+
+    def tg_header(self, emoji: str = "🚤") -> str:
+        """Unified Telegram message header.
+
+        Format: ``{emoji} <b>ARK Project-<id5></b> | <title>`` when a real
+        title is known, else just the ``ARK Project-<id5>`` part. Every
+        outgoing Telegram message should start with this line so the user
+        can scan which project a ping belongs to at a glance.
+        """
+        import html as _html
+        short = self.short_id
+        title = (self.config.get("title") or "").strip()
+        if title and not self._looks_like_uuid(title):
+            return (
+                f"{emoji} <b>ARK Project-{_html.escape(short)}</b>"
+                f" | {_html.escape(title)}"
+            )
+        return f"{emoji} <b>ARK Project-{_html.escape(short)}</b>"
 
     # ========== DB Sync ==========
 
@@ -284,11 +345,19 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         def _on_error(error_msg):
             self.log(f"Deep Research failed: {error_msg}", "WARN")
             if self.telegram.is_configured:
-                self.telegram.send(f"Deep Research failed: {error_msg[:200]}")
+                self.telegram.send(
+                    f"{self.tg_header('🚤')}\n"
+                    f"⚠️ <b>Deep Research failed</b>\n{error_msg[:200]}",
+                    parse_mode="HTML",
+                )
 
         self.log("Starting Deep Research in background...", "INFO")
         if self.telegram.is_configured:
-            self.telegram.send("Deep Research started in background (5-20 min)...")
+            self.telegram.send(
+                f"{self.tg_header('🚤')}\n"
+                f"🔎 <b>Deep Research started</b> (Gemini, ~5-20 min)",
+                parse_mode="HTML",
+            )
 
         self._deep_research_thread = run_deep_research_async(
             config=self.config,
@@ -303,7 +372,11 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         if not self.telegram.is_configured:
             return
         try:
-            self.telegram.send("Deep Research completed!")
+            self.telegram.send(
+                f"{self.tg_header('🚤')}\n"
+                f"✅ <b>Deep Research completed</b> — sending report...",
+                parse_mode="HTML",
+            )
             # Convert markdown to PDF for better readability
             pdf_path = self._convert_md_to_pdf(report_path)
             if pdf_path:
@@ -476,13 +549,20 @@ a {{ color: #0d9488; }}
         title = self.config.get("title", self.project_name)
         venue = self.config.get("venue", "")
         goal = self.config.get("goal_anchor", "")
+        short = self.short_id
 
-        identity = f'You are ARK Bot, the assistant for project "{self.project_name}"'
-        if title and title != self.project_name:
+        # Identity: always include the short id so the user can disambiguate
+        # between projects that share a bot even when titles are not yet set.
+        identity = f'You are ARK Bot for Project-{short}'
+        if title and title != self.project_name and not self._looks_like_uuid(title):
             identity += f' ("{title}")'
         if venue:
             identity += f', targeting {venue}'
-        identity += ". You are a Telegram chatbot that monitors and manages this research pipeline. You know the project inside out."
+        identity += (
+            ". You are the Telegram-facing interface of an ARK research "
+            "pipeline that is currently running. You know the project's "
+            "state and can inject user directives into it."
+        )
 
         lines = [
             identity,
@@ -497,13 +577,26 @@ a {{ color: #0d9488; }}
             "- Use standard Markdown: **bold**, *italic*, `code`. Keep it simple.",
             "- Use the conversation history to understand follow-up questions. If the user refers to something from a previous message, use context to answer coherently.",
             "",
-            "CAPABILITIES:",
-            "- If the user wants the paper PDF, add on a new line at the end: [SEND_PDF]",
-            "- Two ways to inject directives into the pipeline (add on a new line at the end):",
-            "  [ACTION: ...] — one-time directive for the current/next iteration only (e.g. 'skip experiments this round', 'rerun figure 3')",
-            "  [INSTRUCTION: ...] — persistent rule that must be followed in ALL future iterations (e.g. 'always use PyTorch', 'crawl real data from website X', 'use 2 GPUs')",
-            "- Choose [ACTION] for temporary/situational requests, [INSTRUCTION] for lasting rules about how to do the research.",
+            "WHAT YOU CAN DO (if the user asks):",
+            "- Explain what the pipeline is doing right now, what the latest score is, what went wrong, what's blocking.",
+            "- Send the paper PDF on request.",
+            "- Inject one-time course-corrections for the current/next iteration.",
+            "- Save persistent rules the pipeline must follow from now on.",
+            "",
+            "CAPABILITY TAGS (add on a new line at the very end of your reply; do NOT mention the tags in the prose):",
+            "- [SEND_PDF] — attach the latest compiled paper PDF.",
+            "- [ACTION: one-sentence directive] — one-time directive for the current/next iteration "
+            "(e.g. \"skip experiments this round\", \"regenerate figure 3\").",
+            "- [INSTRUCTION: one-sentence rule] — persistent rule that applies to ALL future iterations "
+            "(e.g. \"always use PyTorch\", \"crawl real data from website X\").",
+            "",
+            "GUARDRAILS (do NOT violate):",
+            "- Pick [ACTION] for temporary/situational requests, [INSTRUCTION] for lasting rules.",
             "- NEVER add either tag for: status queries, simple acknowledgments (ok, proceed, continue, 好的, 继续, 收到), or confirmations of what's already happening.",
+            "- For destructive-sounding requests (\"delete everything\", \"wipe state\", \"force-reset\"), "
+            "do NOT emit a tag on the first reply. Ask the user to confirm in plain words first, and only emit a tag after they explicitly confirm in the next message.",
+            "- You cannot edit config.yaml, paper_state.yaml, or any code directly. If the user asks for a config change "
+            "(e.g. \"set max_iterations to 30\"), express it as an [INSTRUCTION] the pipeline can honour.",
         ]
 
         if goal:
@@ -608,10 +701,21 @@ a {{ color: #0d9488; }}
         self.log(f"Telegram agent responded ({len(response)} chars){tag_info}", "INFO")
 
     def _gather_telegram_agent_context(self) -> str:
-        """Collect project state for the Telegram agent's system prompt."""
+        """Collect project state for the Telegram agent's system prompt.
+
+        The agent runs as a separate Claude process so it cannot inspect
+        in-memory orchestrator state — everything we want it to reason
+        about has to be flattened into this block. Keep each section
+        bounded so the prompt stays small.
+        """
         lines = []
-        lines.append(f"Project: {self.project_name}")
-        lines.append(f"Mode: {self.mode} | Iteration: {self.iteration}/{self.max_iterations}")
+        lines.append(f"Project ID: {self.project_name} (short: {self.short_id})")
+        title = (self.config.get("title") or "").strip()
+        if title and not self._looks_like_uuid(title):
+            lines.append(f"Title: {title}")
+        lines.append(
+            f"Mode: {self.mode} | Iteration: {self.iteration}/{self.max_iterations}"
+        )
 
         try:
             score = getattr(self, '_last_score', 0)
@@ -623,6 +727,18 @@ a {{ color: #0d9488; }}
                 lines.append(f"Score history: {[f'{s:.1f}' for s in recent_scores]}")
         except Exception:
             pass
+
+        # Cost so the user can ask "how much have we spent"
+        cost_file = self.state_dir / "cost_report.yaml"
+        if cost_file.exists():
+            try:
+                with open(cost_file) as f:
+                    cost = yaml.safe_load(f) or {}
+                total = cost.get("total_cost_usd") or cost.get("total_cost")
+                if total:
+                    lines.append(f"Cost so far: ${float(total):.2f}")
+            except Exception:
+                pass
 
         goal = self.config.get("goal_anchor", "")
         if goal:
@@ -640,8 +756,26 @@ a {{ color: #0d9488; }}
         if plan_file.exists():
             lines.append(f"\nCurrent Action Plan:\n{plan_file.read_text()[:400]}")
 
+        # Pending user_updates.yaml entries not yet consumed — so the agent
+        # knows what directives the pipeline is about to pick up.
         try:
-            log_lines = [l for l in self.log_file.read_text().splitlines() if l.strip()][-20:]
+            updates_file = self.state_dir / "user_updates.yaml"
+            if updates_file.exists():
+                with open(updates_file) as f:
+                    udata = yaml.safe_load(f) or {}
+                pending = [u for u in udata.get("updates", []) if not u.get("consumed")]
+                if pending:
+                    lines.append(
+                        "\nPending directives (queued, not yet consumed):\n"
+                        + "\n".join(f"- {u.get('message', '')}" for u in pending[-5:])
+                    )
+        except Exception:
+            pass
+
+        # Expanded log window so the agent can tell the user what the
+        # pipeline is actually doing right now, not just a stale snapshot.
+        try:
+            log_lines = [l for l in self.log_file.read_text().splitlines() if l.strip()][-40:]
             lines.append(f"\nRecent Log:\n" + "\n".join(log_lines))
         except Exception:
             pass
@@ -851,9 +985,10 @@ a {{ color: #0d9488; }}
             if parts:
                 issue_summary = " | ".join(parts)
 
-        # Build compact message
+        # Build compact message with the unified header so multi-project
+        # users can tell which project the score belongs to.
         lines = [
-            f"<b>{self.display_name}</b>",
+            self.tg_header("🚤"),
             f"━━━ #{self.iteration}  {score_line} ━━━",
             f"Target: {self.paper_accept_threshold}/10 | {gap_line}",
         ]
@@ -1355,11 +1490,27 @@ a {{ color: #0d9488; }}
             yaml.dump(action_plan, f, default_flow_style=False, allow_unicode=True)
 
     def _load_findings_summary(self) -> str:
-        """Load findings.yaml summary."""
+        """Load findings.yaml summary.
+
+        Tolerates malformed YAML by degrading to a note rather than
+        crashing the plan phase. A previous experimenter run may have
+        emitted ``library_use:`` mid-list (see experimenter.prompt
+        layout guidance); that file should still not prevent downstream
+        agents from running — planner can proceed from the review alone.
+        """
         if self.findings_file.exists():
-            with open(self.findings_file) as f:
-                findings = yaml.safe_load(f) or {}
-            return yaml.dump(findings, allow_unicode=True)[:500]
+            try:
+                with open(self.findings_file) as f:
+                    findings = yaml.safe_load(f) or {}
+                return yaml.dump(findings, allow_unicode=True)[:500]
+            except yaml.YAMLError as e:
+                self.log(
+                    f"findings.yaml is malformed ({type(e).__name__}); "
+                    f"planner will proceed without it. Fix the file to "
+                    f"restore evidence-aware planning.",
+                    "WARN",
+                )
+                return f"[findings.yaml unparseable: {e.__class__.__name__}]"
         return "No findings yet"
 
     # ========== Review Parsing ==========
@@ -1736,17 +1887,22 @@ a {{ color: #0d9488; }}
             else:
                 resume_info = "Starting fresh"
 
+        import html as _html
+        header = self.tg_header("🚤")
         lines = [
+            header,
+            f"<i>🚀 starting {_html.escape(self.mode)} mode</i>",
             f"━━━━━━━━━━━━━━━━━━━━━",
-            f"🚀  {self.project_name}  |  {self.mode} mode",
-            f"{resume_info}",
+            _html.escape(resume_info),
         ]
         if score_info:
-            lines.append(score_info.rstrip())
-        lines.append(f"Target: {self.paper_accept_threshold}/10  |  Max {self.max_iterations} iter")
+            lines.append(_html.escape(score_info.rstrip()))
+        lines.append(
+            f"Target: {self.paper_accept_threshold}/10  |  Max {self.max_iterations} iter"
+        )
         lines.append(f"━━━━━━━━━━━━━━━━━━━━━")
 
-        self.telegram.send_raw("\n".join(lines))
+        self.telegram.send_raw("\n".join(lines), parse_mode="HTML")
 
     def send_notification(self, subject: str, message: str, priority: str = "normal"):
         """Send notification via Telegram (primary) and email (fallback).
@@ -1812,14 +1968,16 @@ a {{ color: #0d9488; }}
     def _status_block(self) -> str:
         """Compact 3-4 line status header used by every important message.
 
-        Pulls from already-cached state (no new I/O on the hot path).
-        Output is Telegram HTML.
+        First line is the unified ``🚤 ARK Project-<id5> | <title>`` header,
+        so the user can always tell which project a message belongs to. The
+        meta line underneath carries mode + iteration counter. Pulls from
+        already-cached state (no new I/O on the hot path). Output is
+        Telegram HTML.
         """
-        import html as _html
-        name = _html.escape(self.display_name or self.project_name)
         mode = self.mode or "?"
         max_iter = self.max_iterations or 0
-        line1 = f"<b>{name}</b> · {mode} · iter {self.iteration}/{max_iter}"
+        line1 = self.tg_header("🚤")
+        meta = f"<i>{mode} · iter {self.iteration}/{max_iter}</i>"
 
         score_line = ""
         trend_line = ""
@@ -1853,7 +2011,7 @@ a {{ color: #0d9488; }}
             except Exception:
                 pass
 
-        lines = [line1]
+        lines = [line1, meta]
         if score_line:
             lines.append(score_line)
         if trend_line:
@@ -1912,7 +2070,7 @@ a {{ color: #0d9488; }}
             self.log(f"notify_progress failed: {e}", "WARN")
 
     def ask_user_decision(self, question: str, options: list = None,
-                          timeout: int = 900, default: int = 0,
+                          timeout: int = 600, default: int = 0,
                           *, what_happened: str = "",
                           background: list = None,
                           option_details: list = None,
@@ -1925,6 +2083,10 @@ a {{ color: #0d9488; }}
         `option_details`, `phase`) opt in to the rich format. A "Custom"
         escape option is always appended automatically so the user is never
         forced into a canned choice.
+
+        Default timeout is 10 minutes so the pipeline doesn't block the user
+        for too long when they're away; override per-project with the
+        ``telegram_decision_timeout`` config key.
 
         Returns (idx, reply_text). If the user typed a number, idx is that
         index and reply_text is the raw reply. If the user typed free text,
