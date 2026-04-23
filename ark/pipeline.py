@@ -1932,8 +1932,11 @@ missing the second half means missing half the citations.
 
 For each paper, return a JSON object with these fields:
 - "title": the paper's actual full title
-- "authors": first author surname (e.g. "Vaswani")
-- "year": publication year as integer (e.g. 2017)
+- "authors": first author surname (e.g. "Vaswani"). If the report does NOT name
+  an author, leave this as an empty string `""` — NEVER write "Unknown", "TBD",
+  "Anonymous", or any other placeholder. Placeholder names get written verbatim
+  into the bibliography and a reviewer will treat them as an unfinished manuscript.
+- "year": publication year as integer (e.g. 2017). Use 0 if the year is not given.
 - "query": a search query to find it (title + author + year)
 - "context": a 1-2 sentence summary of what the report says about this paper (what it does, why it matters)
 

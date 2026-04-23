@@ -1064,7 +1064,12 @@ def _write_needs_check_to_bib(bib_path: str, titles: list[str],
             cite_key = f"{base_key}{counter}"
             counter += 1
 
-        # Build entry with whatever info we have
+        # Build entry with whatever info we have. Placeholder values like
+        # "Unknown" / "TBD" / "Anonymous" are worse than silence — the
+        # reviewer treats them as an unfinished-manuscript signal and will
+        # surface them as a submission-blocking issue. Skip them.
+        if author.strip().lower() in {"", "unknown", "tbd", "anonymous", "anon", "n/a", "na"}:
+            author = ""
         fields = [f"  title = {{{title}}}"]
         if author:
             fields.append(f"  author = {{{author} et al.}}")
