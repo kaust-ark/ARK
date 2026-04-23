@@ -285,6 +285,7 @@
       text-align: center; cursor: pointer; transition: all .15s; background: var(--bg);
     }
     .file-drop:hover, .file-drop.drag { border-color: var(--teal); background: #f0fdfa; }
+    #custom-tpl-drop.drag-over { border-color: var(--teal) !important; background: #f0fdfa; color: var(--teal); }
     .file-drop .icon { font-size: 2rem; margin-bottom: 8px; }
     .file-drop p { font-size: .9rem; color: var(--text-second); }
     .file-drop small { color: var(--text-muted); font-size: .8rem; }
@@ -409,18 +410,7 @@
       position: relative; overflow: hidden;
       border-top: 4px solid var(--teal);
     }
-    .hero-card.drag-over { box-shadow: 0 0 0 3px var(--teal), var(--shadow-lg); }
     .hero-card.gate-disabled { opacity: .65; pointer-events: none; }
-    .hero-drop-overlay {
-      display: none; position: absolute; inset: 0;
-      background: rgba(13,148,136,.08);
-      border: 3px dashed var(--teal);
-      border-radius: 14px;
-      align-items: center; justify-content: center;
-      font-size: 1.5rem; font-weight: 700; color: var(--teal);
-      z-index: 10; pointer-events: none;
-    }
-    .hero-card.drag-over .hero-drop-overlay { display: flex; }
     .hero-card-header { margin-bottom: 24px; }
     .hero-card-header h2 { font-size: 1.45rem; font-weight: 700; margin-bottom: 4px; }
     .hero-card-header p { font-size: .9rem; color: var(--text-second); }
@@ -688,12 +678,14 @@
     </div>
   </div>
 
-  <!-- Hero creation card -->
+  <!-- Hero creation card.
+       Dragover/drop intercept prevents the browser's default "navigate to
+       file" when a user misses a real drop target. Actual receiving is
+       done only by #idea-box and #custom-tpl-drop — those handlers call
+       stopPropagation so we never route a file here. -->
   <div class="hero-card share-hide" id="hero-card"
-       ondragover="heroCardDragOver(event)"
-       ondragleave="heroCardDragLeave(event)"
-       ondrop="heroCardDrop(event)">
-    <div class="hero-drop-overlay" data-i18n="drop_files">📎 Drop files to attach</div>
+       ondragover="event.preventDefault()"
+       ondrop="event.preventDefault()">
     <div class="hero-card-header">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:2px">
         <img src="{{ app_base }}/static/logo.png" alt="ARK" style="height:48px;width:auto;flex-shrink:0" />
@@ -755,9 +747,9 @@
           <div style="flex:1;">
             <label style="font-size:13px;font-weight:600;color:var(--text-muted);">Template ZIP</label>
             <div id="custom-tpl-drop"
-                 ondragover="event.preventDefault();this.classList.add('drag-over')"
+                 ondragover="event.preventDefault();event.stopPropagation();this.classList.add('drag-over')"
                  ondragleave="this.classList.remove('drag-over')"
-                 ondrop="event.preventDefault();this.classList.remove('drag-over');customTplSelected(event.dataTransfer.files[0])"
+                 ondrop="event.preventDefault();event.stopPropagation();this.classList.remove('drag-over');customTplSelected(event.dataTransfer.files[0])"
                  onclick="document.getElementById('custom-tpl-input').click()"
                  style="margin-top:4px;border:2px dashed var(--border);border-radius:10px;padding:14px 16px;
                         cursor:pointer;text-align:center;color:var(--text-muted);font-size:13px;
@@ -1758,8 +1750,6 @@ const TRANSLATIONS = {
     score_label: 'Score: %s/10',
     // date
     just_now: 'just now', minutes_ago: '%dm ago', hours_ago: '%dh ago', days_ago: '%dd ago',
-    // drop overlay
-    drop_files: '📎 Drop files to attach',
     chars: '%d chars',
     enabled: 'Enabled',
     disabled: 'Disabled',
@@ -1863,7 +1853,6 @@ const TRANSLATIONS = {
     filter_pending: 'معلّق',
     score_label: 'الدرجة: %s/10',
     just_now: 'الآن', minutes_ago: 'منذ %d دقيقة', hours_ago: 'منذ %d ساعة', days_ago: 'منذ %d يوم',
-    drop_files: '📎 اسحب الملفات للإرفاق',
     chars: '%d حرف',
     enabled: 'مفعّل',
     disabled: 'معطّل',
@@ -1967,7 +1956,6 @@ const TRANSLATIONS = {
     filter_pending: '待处理',
     score_label: '评分：%s/10',
     just_now: '刚刚', minutes_ago: '%d 分钟前', hours_ago: '%d 小时前', days_ago: '%d 天前',
-    drop_files: '📎 拖拽文件到此处',
     chars: '%d 字符',
     enabled: '已启用',
     disabled: '已禁用',
@@ -3175,25 +3163,9 @@ function customTplSelected(file) {
 // ══════════════════════════════════════════════════════
 let selectedFiles = [];
 
-function heroCardDragOver(e) {
-  e.preventDefault();
-  document.getElementById('hero-card').classList.add('drag-over');
-}
-function heroCardDragLeave(e) {
-  if (!e.currentTarget.contains(e.relatedTarget)) {
-    document.getElementById('hero-card').classList.remove('drag-over');
-  }
-}
-function heroCardDrop(e) {
-  e.preventDefault();
-  document.getElementById('hero-card').classList.remove('drag-over');
-  heroAddFiles(e.dataTransfer.files);
-}
-
 function ideaBoxDragOver(e) {
   e.preventDefault(); e.stopPropagation();
   document.getElementById('idea-box').classList.add('drag-over');
-  document.getElementById('hero-card').classList.remove('drag-over'); // suppress card overlay
 }
 function ideaBoxDragLeave(e) {
   if (!e.currentTarget.contains(e.relatedTarget)) {
