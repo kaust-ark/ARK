@@ -539,6 +539,20 @@ def create_app():
     async def _dashboard_redirect():
         return _Redir(DASHBOARD_PREFIX + "/", status_code=301)
 
+    # When dashboard is mounted under a parent prefix (e.g. "/dev/dashboard"),
+    # also redirect the parent to the dashboard. This lets idea2paper.org/dev/
+    # reach the dev dashboard without the user having to spell out the full
+    # /dev/dashboard/ path.
+    _parent = DASHBOARD_PREFIX.rsplit("/", 1)[0]  # "/dev/dashboard" → "/dev"
+    if _parent and _parent != DASHBOARD_PREFIX:
+        @outer.get(_parent)
+        async def _parent_redirect():
+            return _Redir(DASHBOARD_PREFIX + "/", status_code=301)
+
+        @outer.get(_parent + "/")
+        async def _parent_slash_redirect():
+            return _Redir(DASHBOARD_PREFIX + "/", status_code=301)
+
     outer.mount(DASHBOARD_PREFIX, dashboard)
 
     # Public /api/request-access endpoint — must be registered BEFORE the
