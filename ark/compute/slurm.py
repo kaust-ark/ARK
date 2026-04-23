@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from .base import ComputeBackend
 
 
@@ -76,6 +77,25 @@ class SlurmBackend(ComputeBackend):
 
         return ctx
 
+    def _is_rocs_testbed(self) -> bool:
+        """Detect the SANDS Lab / KAUST ROCS testbed by its node naming.
+
+        We look for nodes matching `mcnode*` in `sinfo -h -N -o %N`. This
+        is cheap (one subprocess call) and specific enough to avoid false
+        positives on IBEX or other KAUST clusters.
+        """
+        try:
+            r = subprocess.run(
+                ["sinfo", "-h", "-N", "-o", "%N"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if r.returncode != 0:
+                return False
+            nodes = r.stdout.split()
+            return any(n.startswith("mcnode") for n in nodes)
+        except Exception:
+            return False
+
     def get_agent_instructions(self) -> str:
         template_section = ""
         if self.slurm_template:
@@ -87,6 +107,67 @@ class SlurmBackend(ComputeBackend):
                     f"```\n{path.read_text()}\n```"
                 )
 
+        # Cluster-specific guidance. The ROCS checklist is inlined (not just
+        # referenced) because a full SKILL.md Read is an extra tool call the
+        # experimenter may skip; we want the *most-forgotten* rules — the
+        # --login shebang and the GPU --gres line — to land in the prompt
+        # unconditionally. The skill file carries deep reference material.
+        cluster_section = ""
+        if self._is_rocs_testbed():
+            # Absolute path to the master skill copy — always readable by
+            # the experimenter regardless of whether the researcher
+            # selected it via selected_skills.json.
+            skill_path = (
+                Path(__file__).parent.parent.parent
+                / "skills" / "library" / "hpc"
+                / "rocs-testbed-slurm" / "SKILL.md"
+            )
+            cluster_section = f"""
+
+## Cluster: SANDS Lab ROCS Testbed (KAUST)
+
+This cluster has GPUs on the `mc` partition, but **SLURM only gives you a
+GPU if you explicitly request one via `--gres`**. A sbatch script that
+omits `--gres` runs on a GPU-equipped node with `torch.cuda.is_available()
+== False` — silent CPU fallback, 20–100× slowdown, often triggering the
+pipeline's wait-timeout. The experimenter run on 2026-04-23 lost an entire
+iteration to exactly this mistake.
+
+**Non-negotiable rules for every sbatch script:**
+
+1. Shebang MUST be `#!/bin/bash --login` (otherwise `mamba activate` / `conda activate` silently no-ops)
+2. If the code trains a NN / uses PyTorch / JAX / TensorFlow: include `#SBATCH --gres=gpu:<type>:1`
+3. Pick the weakest GPU that works: **P100 > V100 > A100** (prefer p100 unless model truly needs more)
+4. If NOT using GPU: OMIT `--gres=gpu` entirely (don't burn quota)
+5. Always set `--time=...` (never default)
+
+**Canonical GPU sbatch skeleton:**
+```bash
+#!/bin/bash --login
+#SBATCH --job-name={self.job_prefix}experiment_1
+#SBATCH --partition=mc
+#SBATCH --time=04:00:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --gres=gpu:v100:1
+#SBATCH --output=results/<exp_dir>/slurm_%j.out
+#SBATCH --error=results/<exp_dir>/slurm_%j.err
+
+set -e
+conda activate {self.conda_env}
+python scripts/train.py
+```
+
+**QoS caps (normal):** A100=2, P100=8, V100=8 concurrent. For jobs >3 days
+use `--qos=spot` (preemptible, checkpoint via SIGUSR1).
+
+**Watchdog:** jobs with <15% GPU utilization for 2 consecutive hours are
+auto-cancelled. If the code is CPU-bound, drop the GPU request.
+
+**Full reference** (A100 PCI vs SXM constraints, DeepSpeed multi-node
+template, preemption signal handlers, `jobstats`/`ninfo`/`ginfo` usage):
+`{skill_path}` — Read this before writing non-trivial sbatch scripts."""
+
         return f"""## Compute Environment: Slurm HPC
 
 Use Slurm to submit GPU jobs. Key settings:
@@ -97,7 +178,7 @@ Use Slurm to submit GPU jobs. Key settings:
 Submit jobs using `sbatch`. Name all jobs with prefix `{self.job_prefix}` so the
 system can track them (e.g., `#SBATCH --job-name={self.job_prefix}experiment_1`).
 
-Save all results to the `results/` directory.{template_section}"""
+Save all results to the `results/` directory.{cluster_section}{template_section}"""
 
     def _query_target_jobs(self) -> tuple[list[tuple[str, str]], int]:
         """Query squeue for jobs owned by this user.
