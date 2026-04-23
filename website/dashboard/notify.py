@@ -40,7 +40,13 @@ def _telegram_creds():
 
 
 def send_telegram_notify(text: str, bot_token: str = None, chat_id: str = None) -> bool:
-    """Send a Telegram message. Returns True on success."""
+    """Send a Telegram message. Returns True on success.
+
+    Uses a permissive TLS context to tolerate self-signed certs in the
+    outbound TLS chain (seen on some KAUST-interior networks). Same
+    relaxation that ark.telegram.TelegramBot.send_document applies.
+    """
+    import ssl
     token = bot_token or None
     if not token or not chat_id:
         return False
@@ -51,8 +57,11 @@ def send_telegram_notify(text: str, bot_token: str = None, chat_id: str = None) 
         data=payload.encode(),
         headers={"Content-Type": "application/json"},
     )
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as r:
             return r.status == 200
     except Exception as e:
         logger.warning(f"Telegram notify failed: {e}")
@@ -66,6 +75,51 @@ def send_telegram_login_link(link: str) -> bool:
     )
 
 
+def send_telegram_document(file_path: str, caption: str = "",
+                            bot_token: str = None, chat_id: str = None) -> bool:
+    """Upload a file (typically PDF) to Telegram. Returns True on success.
+
+    Mirrors the validator in ark.telegram.TelegramBot.send_document:
+    file must exist, be at least 1KB, and (if caption is provided)
+    caption is truncated to Telegram's 1024 char cap.
+    """
+    import ssl, uuid
+    token = bot_token or None
+    if not token or not chat_id:
+        return False
+    p = Path(file_path)
+    if not p.exists() or p.stat().st_size < 1024:
+        return False
+    data = p.read_bytes()
+    safe_caption = (caption or "")[:1020]
+    boundary = uuid.uuid4().hex
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n',
+        f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{safe_caption}\r\n',
+        f'--{boundary}\r\nContent-Disposition: form-data; name="parse_mode"\r\n\r\nHTML\r\n',
+        f'--{boundary}\r\nContent-Disposition: form-data; name="document"; filename="{p.name}"\r\nContent-Type: application/octet-stream\r\n\r\n',
+    ]
+    body = "".join(parts).encode() + data + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendDocument",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=60, context=ctx) as r:
+            result = json.loads(r.read().decode("utf-8"))
+        if not result.get("ok"):
+            logger.warning(f"Telegram sendDocument failed: {result.get('description')}")
+            return False
+        return True
+    except Exception as e:
+        logger.warning(f"Telegram sendDocument error: {e}")
+        return False
+
+
 # ── Email ─────────────────────────────────────────────────────────────────────
 
 def send_completion_email(
@@ -75,47 +129,206 @@ def send_completion_email(
     score: float,
     pdf_path: str | None,
     project_url: str,
+    extra_pdf_paths: list[str] | None = None,
 ) -> bool:
-    """Send a project completion email. Returns True on success."""
+    """Send a project completion email. Returns True on success.
+
+    ``pdf_path`` is the primary attachment (typically paper/main.pdf).
+    ``extra_pdf_paths`` holds additional PDFs like the summary report;
+    each is attached after the primary one in list order.
+    """
+    from email.utils import formatdate, make_msgid
+    from email.mime.image import MIMEImage
+
     if not (settings.smtp_user and settings.smtp_password):
         logger.warning("SMTP credentials not configured — skipping email.")
         return False
 
-    subject = f"[ARK] '{project_name}' finished — score {score:.1f}/10"
+    logo_path = Path(__file__).parent / "static" / "logo_ark_transparent.png"
 
-    body = f"""\
-Your ARK research project <b>{project_name}</b> has finished!
+    subject = f"[ARK] '{project_name}' finished — {score:.1f}/10"
 
-<ul>
-  <li><b>Score:</b> {score:.1f} / 10</li>
-  <li><b>Dashboard:</b> <a href="{project_url}">{project_url}</a></li>
-</ul>
+    has_paper = bool(pdf_path and Path(pdf_path).exists())
+    has_summary = bool(
+        extra_pdf_paths
+        and any(p and Path(p).exists() for p in extra_pdf_paths)
+    )
 
-{"<p>The PDF is attached below.</p>" if pdf_path else ""}
+    # Rating badge, mirrors reviewer's score bands roughly.
+    if score >= 8:
+        rating_label, rating_color = "Accept", "#0d9488"
+    elif score >= 6.5:
+        rating_label, rating_color = "Weak Accept", "#0d9488"
+    elif score >= 5:
+        rating_label, rating_color = "Borderline", "#b08800"
+    else:
+        rating_label, rating_color = "Needs Work", "#b03a3a"
 
-<p>— ARK Automatic Research Kit</p>
+    # ── Plain-text fallback ──────────────────────────────────────────
+    plain_lines = [
+        f"Your ARK project '{project_name}' finished.",
+        "",
+        f"Score: {score:.1f} / 10  ({rating_label})",
+        f"Dashboard: {project_url}",
+        "",
+    ]
+    if has_paper or has_summary:
+        plain_lines.append("Attached:")
+        if has_paper:
+            plain_lines.append("  - Paper PDF (the submission-ready manuscript)")
+        if has_summary:
+            plain_lines.append("  - Run summary PDF (what landed, what didn't, next steps)")
+        plain_lines.append("")
+    plain_lines.append("-- ARK Team")
+    plain = "\n".join(plain_lines)
+
+    # ── HTML ─────────────────────────────────────────────────────────
+    attachment_cards = ""
+    if has_paper:
+        attachment_cards += """\
+<tr>
+  <td style="padding:12px 16px;background:#f0fdfa;border-radius:10px;border-left:4px solid #0d9488;">
+    <p style="margin:0;color:#134e4a;font-size:14px;line-height:1.6;">
+      <strong style="color:#0d9488;">Paper PDF</strong><br/>
+      Compiled manuscript, ready for reviewer eyes.
+    </p>
+  </td>
+</tr>
+<tr><td style="height:10px;"></td></tr>
+"""
+    if has_summary:
+        attachment_cards += """\
+<tr>
+  <td style="padding:12px 16px;background:#f0fdfa;border-radius:10px;border-left:4px solid #0d9488;">
+    <p style="margin:0;color:#134e4a;font-size:14px;line-height:1.6;">
+      <strong style="color:#0d9488;">Run Summary PDF</strong><br/>
+      What the idea asked for, what landed, what didn&rsquo;t, unresolved reviewer concerns, and recommended next steps.
+    </p>
+  </td>
+</tr>
+<tr><td style="height:10px;"></td></tr>
+"""
+
+    from html import escape as _esc
+    html = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#f0fdfa;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdfa;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- Banner -->
+  <tr><td bgcolor="#0d9488" style="background:#0d9488;background:linear-gradient(135deg,#0d9488 0%,#134e4a 100%);padding:40px 40px 36px;text-align:center;">
+    <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px;"><tr>
+      <td><img src="cid:ark_logo" alt="ARK" height="52" style="display:block;" /></td>
+      <td style="padding-left:14px;color:#ccfbf1;font-size:38px;font-weight:300;letter-spacing:6px;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;">ARK</td>
+    </tr></table>
+    <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.3px;">
+      Project Finished
+    </h1>
+    <p style="margin:10px 0 0;color:#ccfbf1;font-size:14px;">
+      {_esc(project_name)}
+    </p>
+  </td></tr>
+
+  <!-- Score strip -->
+  <tr><td style="padding:28px 44px 10px;text-align:center;">
+    <div style="display:inline-block;padding:6px 14px;border-radius:999px;background:{rating_color};color:#fff;font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">{rating_label}</div>
+    <p style="margin:14px 0 0;color:#111;font-size:42px;font-weight:700;line-height:1;">{score:.1f}<span style="color:#888;font-size:18px;font-weight:500;"> / 10</span></p>
+  </td></tr>
+
+  <!-- Body -->
+  <tr><td style="padding:20px 44px 10px;">
+    <p style="margin:0 0 20px;color:#333;font-size:15px;line-height:1.7;">
+      Your ARK project just finished its review loop. The manuscript and a
+      run-summary report are attached below &mdash; the summary walks through
+      what the idea asked for, what landed in the paper, what was deferred
+      or blocked, and a short list of recommended next steps.
+    </p>
+
+    <!-- Attachment cards -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 10px;">
+      {attachment_cards}
+    </table>
+
+    <!-- CTA Button -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 6px;">
+      <tr><td align="center">
+        <a href="{project_url}" style="display:inline-block;background:#0d9488;color:#fff;
+           font-size:15px;font-weight:600;padding:14px 36px;border-radius:8px;
+           text-decoration:none;letter-spacing:0.3px;">
+          Open Dashboard
+        </a>
+      </td></tr>
+    </table>
+
+    <p style="margin:20px 0 0;color:#555;font-size:13px;line-height:1.7;">
+      Reply to this email or reach out at
+      <a href="mailto:contact@idea2paper.org" style="color:#0d9488;text-decoration:none;font-weight:600;">contact@idea2paper.org</a>
+      if something in the summary looks off.
+    </p>
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="background:#f8fffe;padding:22px 44px;border-top:1px solid #e0f2f1;">
+    <p style="margin:0;color:#999;font-size:12px;line-height:1.5;text-align:center;">
+      ARK &mdash; Automatic Research Kit<br/>
+      You received this email because a project you submitted just finished.
+    </p>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
 """
 
     from_addr = getattr(settings, "smtp_from", "") or "contact@idea2paper.org"
-    msg = MIMEMultipart()
-    msg["From"] = from_addr
+
+    # multipart/mixed (for attachments) → multipart/alternative (plain + related(html + logo))
+    msg = MIMEMultipart("mixed")
+    alt = MIMEMultipart("alternative")
+    alt.attach(MIMEText(plain, "plain"))
+
+    html_related = MIMEMultipart("related")
+    html_related.attach(MIMEText(html, "html"))
+    if logo_path.exists():
+        with open(logo_path, "rb") as f:
+            logo = MIMEImage(f.read(), _subtype="png")
+        logo.add_header("Content-ID", "<ark_logo>")
+        logo.add_header("Content-Disposition", "inline", filename="logo.png")
+        html_related.attach(logo)
+    alt.attach(html_related)
+    msg.attach(alt)
+
+    msg["From"] = f"ARK Team <{from_addr}>"
     msg["To"] = to_email
     msg["Subject"] = subject
-    msg.attach(MIMEText(body, "html"))
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain="idea2paper.org")
 
-    # Attach PDF if it exists
-    if pdf_path:
-        pdf_file = Path(pdf_path)
-        if pdf_file.exists():
-            with open(pdf_file, "rb") as f:
-                part = MIMEBase("application", "octet-stream")
-                part.set_payload(f.read())
-            encoders.encode_base64(part)
-            part.add_header(
-                "Content-Disposition",
-                f'attachment; filename="{pdf_file.name}"',
-            )
-            msg.attach(part)
+    def _attach(path_str: str | None):
+        if not path_str:
+            return
+        p = Path(path_str)
+        if not p.exists():
+            return
+        with open(p, "rb") as f:
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(f.read())
+        encoders.encode_base64(part)
+        part.add_header(
+            "Content-Disposition",
+            f'attachment; filename="{p.name}"',
+        )
+        msg.attach(part)
+
+    _attach(pdf_path)
+    for extra in (extra_pdf_paths or []):
+        _attach(extra)
 
     # Try relay if explicitly configured
     relay = getattr(settings, "smtp_relay", "")
