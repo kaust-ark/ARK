@@ -43,4 +43,6 @@ ark_webapp/
 *.tmp
 *.pptx
 # Third-party skill libraries (cloned locally, not committed)
-skills/library/
+skills/library/*
+# …except site-specific skills we author in-tree (cluster/deployment refs)
+!skills/library/hpc/
