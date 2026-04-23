@@ -1567,11 +1567,6 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
     if goal_anchor:
         config["goal_anchor"] = goal_anchor
 
-    # Dev mode config from PDF spec
-    if pdf_spec.get("coding_tasks"):
-        config["mode"] = "dev"
-        config["test_command"] = "pytest -v"
-        config["code_review_threshold"] = 7
     if hasattr(args, 'from_pdf') and args.from_pdf:
         config["spec_pdf"] = os.path.abspath(args.from_pdf)
     if pdf_instructions:
@@ -1675,32 +1670,6 @@ def _finalize_project(name: str, project_dir: Path, config: dict,
     os.makedirs(state_dir, exist_ok=True)
     os.makedirs(os.path.join(code_dir, "auto_research", "logs"), exist_ok=True)
 
-    # Seed dev_state.yaml from PDF spec (if coding tasks were extracted)
-    if pdf_spec.get("coding_tasks"):
-        dev_state = {
-            "spec_loaded": True,
-            "spec": pdf_spec.get("raw_text", "")[:5000],
-            "current_phase": "planning",
-            "tasks": [
-                {
-                    "id": f"T{i+1}",
-                    "title": task,
-                    "description": task,
-                    "status": "pending",
-                    "priority": "medium",
-                    "depends_on": [],
-                }
-                for i, task in enumerate(pdf_spec["coding_tasks"])
-            ],
-            "test_history": [],
-            "code_review_scores": [],
-            "last_test_results": {},
-        }
-        dev_state_file = os.path.join(state_dir, "dev_state.yaml")
-        with open(dev_state_file, "w") as f:
-            yaml.dump(dev_state, f, default_flow_style=False, allow_unicode=True)
-        print(f"  {_c('Dev plan seeded:', Colors.GREEN)} {len(pdf_spec['coding_tasks'])} tasks from PDF")
-
     # Create symlink to auto_research under projects/<name>/
     ensure_project_symlinks(project_dir, code_dir)
 
@@ -1713,10 +1682,7 @@ def _finalize_project(name: str, project_dir: Path, config: dict,
     print(f"  {_c('╔' + '═' * w + '╗', Colors.GREEN)}")
     print(f"  {_c('║', Colors.GREEN)}  {_c('✓', Colors.GREEN)}  Project {_c(repr(name), Colors.BOLD)} created!{' ' * max(0, w - 18 - len(name))} {_c('║', Colors.GREEN)}")
     print(f"  {_c('╠' + '═' * w + '╣', Colors.GREEN)}")
-    if config.get("mode") == "dev":
-        run_cmd = f"ark run {name} --mode dev"
-    else:
-        run_cmd = f"ark run {name}"
+    run_cmd = f"ark run {name}"
     lines = [
         (run_cmd, "Start project"),
         (f"ark config {name}", "Edit config"),
@@ -1837,7 +1803,7 @@ def cmd_run(args):
 
     code_dir = config.get("code_dir", str(get_ark_root().parent))
     model = args.model or config.get("model", "claude")
-    mode = args.mode or config.get("mode", "paper")
+    mode = "paper"  # only mode supported; flag kept for slurm-script compat
     max_iterations = args.iterations or 3
     max_days = args.max_days or 3
 
@@ -4033,8 +3999,10 @@ def main():
     # ark run
     p_run = subparsers.add_parser("run", help="Run project orchestrator in the background")
     p_run.add_argument("project", help="Project name")
-    p_run.add_argument("--mode", choices=["paper", "research", "dev"], default=None,
-                       help="Mode: paper (review loop), research (experiment loop), or dev (development loop)")
+    # --mode retained (choices=['paper']) for backward-compatible scripts;
+    # only the paper pipeline is supported now.
+    p_run.add_argument("--mode", choices=["paper"], default=None,
+                       help=argparse.SUPPRESS)
     p_run.add_argument("--model", choices=["claude", "gemini", "codex"], default=None,
                        help="AI model backend")
     p_run.add_argument("--iterations", type=int, default=None, help="Number of iterations to run")

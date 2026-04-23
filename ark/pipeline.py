@@ -860,29 +860,6 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
 
         return True
 
-    def run_iteration(self) -> bool:
-        """Execute one research iteration. Returns whether to continue."""
-        if hasattr(self.hooks, 'run_research_iteration'):
-            return self.hooks.run_research_iteration(self)
-
-        self.iteration += 1
-        self.log(f"\n{'='*60}")
-        self.log(f"Iteration {self.iteration} started at {datetime.now()}")
-        self.log(f"{'='*60}\n")
-
-        state = self.load_state()
-        phase = self.get_current_phase(state)
-        self.log(f"Current phase: {phase}")
-
-        if phase == "completed":
-            self.log("All phases completed!")
-            self.send_notification("Research Completed", "All research phases have been completed!")
-            return False
-
-        self.log("No research iteration logic defined in hooks.py", "WARN")
-        return False
-        # Dead code removed (was unreachable after return False)
-
     def check_dependencies(self):
         """Check that required CLI tools are available."""
         model_tools = {
@@ -906,9 +883,8 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
                 self.log("Error: 'codex' command not found. Please install Codex CLI and ensure it is available in PATH.", "ERROR")
             sys.exit(1)
 
-        # Check LaTeX tools in paper mode
-        if self.mode == "paper":
-            self._check_latex_dependencies()
+        # Paper mode always needs LaTeX tools.
+        self._check_latex_dependencies()
 
     def _check_latex_dependencies(self):
         """Check pdflatex and bibtex availability. Offer install if missing."""
@@ -3418,21 +3394,15 @@ Only use double_column for multi-panel figures (side-by-side subplots).
         max_iteration_target = max(self.max_iterations, self.iteration)
 
         try:
-            # Paper mode: run Dev Phase first if needed
-            if self.mode == "paper" and self._should_run_dev_phase():
+            # Dev Phase first, if not already done in a prior run.
+            if self._should_run_dev_phase():
                 self._run_dev_phase()
 
             while (
                 datetime.now() < self.max_end_time
                 and self.iteration < max_iteration_target
             ):
-                if self.mode == "paper":
-                    should_continue = self.run_paper_iteration()
-                elif self.mode == "dev":
-                    should_continue = self.run_dev_iteration()
-                else:
-                    should_continue = self.run_iteration()
-
+                should_continue = self.run_paper_iteration()
                 if not should_continue:
                     break
 
@@ -3451,40 +3421,16 @@ Only use double_column for multi-panel figures (side-by-side subplots).
 
         # End summary
         self.log("", "RAW")
-        if self.mode == "paper":
-            paper_state = self.load_paper_state()
-            final_score = paper_state.get('current_score', 0)
-            status = paper_state.get('status', 'unknown')
-            self.log_section(f"{self.project_name.upper()} Finished  |  Score: {final_score}/10  |  Status: {status.upper()}")
-            if status not in ("accepted",):
-                self.send_notification(
-                    f"{self.project_name.upper()} Finished",
-                    f"Score: {final_score}/10 (target: {self.paper_accept_threshold}/10)\n"
-                    f"Iterations: {self.iteration} | Status: {status}\n\n"
-                    f"Reply with a new direction →\nauto-applied on next ark run",
-                    priority="critical",
-                )
-        elif self.mode == "dev":
-            dev_state = self.load_dev_state()
-            tasks = dev_state.get("tasks", [])
-            completed = len([t for t in tasks if t.get("status") == "completed"])
-            total = len(tasks)
-            review_scores = dev_state.get("code_review_scores", [])
-            latest_review = review_scores[-1]["score"] if review_scores else 0
-            self.log_section(f"{self.project_name.upper()} Dev Finished  |  Tasks: {completed}/{total}  |  Review: {latest_review}/10")
+        paper_state = self.load_paper_state()
+        final_score = paper_state.get('current_score', 0)
+        status = paper_state.get('status', 'unknown')
+        self.log_section(f"{self.project_name.upper()} Finished  |  Score: {final_score}/10  |  Status: {status.upper()}")
+        if status not in ("accepted",):
             self.send_notification(
-                f"{self.project_name.upper()} Dev Finished",
-                f"Tasks: {completed}/{total} | Review: {latest_review}/10\n"
-                f"Iterations: {self.iteration}\n\n"
-                f"Reply: next steps / 'paper' / 'done'",
-                priority="critical",
-            )
-        else:
-            self.log_section(f"{self.project_name.upper()} Finished  |  Iterations: {self.iteration}")
-            self.send_notification(
-                f"{self.project_name.upper()} Research Completed",
-                f"Iterations: {self.iteration}\n\n"
-                f"Reply: next steps / 'done'",
+                f"{self.project_name.upper()} Finished",
+                f"Score: {final_score}/10 (target: {self.paper_accept_threshold}/10)\n"
+                f"Iterations: {self.iteration} | Status: {status}\n\n"
+                f"Reply with a new direction →\nauto-applied on next ark run",
                 priority="critical",
             )
         self.log(f"Total iterations: {self.iteration}", "RAW")

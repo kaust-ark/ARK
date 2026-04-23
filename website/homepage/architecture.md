@@ -15,7 +15,6 @@ ARK uses a **mixin-based** architecture. The `Orchestrator` class inherits from 
 | `compiler.py` | ~440 | **CompilerMixin** — pdflatex + bibtex compilation, PDF-to-PNG via PyMuPDF, figure pipeline |
 | `execution.py` | ~960 | **ExecutionMixin** — planner cycle, experiment loop, writing phase, meta-debugger, self-repair |
 | `pipeline.py` | ~950 | **PipelineMixin** — top-level run loop, 4-step paper iteration, cost tracking |
-| `development.py` | ~730 | **DevMixin** — development mode (plan → code → test → review), test runner |
 | `memory.py` | ~710 | Score history, stagnation detection, goal anchor, issue-repeat tracking, meta-reflection |
 | `compute.py` | ~720 | Compute backend ABC + Slurm, Local, AWS, GCP, Azure, Custom backends |
 | `cli.py` | ~3030 | CLI entrypoint — 13 commands, 9-step interactive wizard |
@@ -36,7 +35,6 @@ ARK/
 │   ├── compiler.py          # CompilerMixin — LaTeX, PDF, figures
 │   ├── execution.py         # ExecutionMixin — planning, experiments, writing
 │   ├── pipeline.py          # PipelineMixin — run loop, cost tracking
-│   ├── development.py       # DevMixin — dev mode (code + test loop)
 │   ├── memory.py            # Score tracking, stagnation, issue memory
 │   ├── compute.py           # Compute backends (Slurm, Local, Cloud)
 │   ├── cli.py               # CLI entrypoint (ark command)

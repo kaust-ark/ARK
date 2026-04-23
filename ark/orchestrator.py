@@ -3,11 +3,7 @@
 ARK (Automatic Research Kit) - Automated Research Orchestrator
 
 Usage:
-    # Research mode (experiments + analysis)
-    python -m ark.orchestrator --project myproject --mode research --max-days 3
-
-    # Paper mode (review + improve iterations)
-    python -m ark.orchestrator --project myproject --mode paper --iterations 10
+    python -m ark.orchestrator --project myproject --iterations 10
 """
 from __future__ import annotations
 
@@ -37,21 +33,24 @@ from ark.agents import AgentMixin
 from ark.compiler import CompilerMixin
 from ark.execution import ExecutionMixin
 from ark.pipeline import PipelineMixin
-from ark.development import DevMixin
 
 
-class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, DevMixin):
+class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
     """Main orchestrator class composing all mixins."""
 
     def __init__(self, project: str, max_days: float = 3, max_iterations: int = 100,
-                 mode: str = "research", model: str = None, code_dir: str = None,
-                 project_dir: str = None, db_path: str = None, project_id: str = None):
+                 model: str = None, code_dir: str = None,
+                 project_dir: str = None, db_path: str = None, project_id: str = None,
+                 mode: str = "paper"):
         global PROJECT_DIR
 
         self.max_end_time = datetime.now() + timedelta(days=max_days)
         self.max_iterations = max_iterations
         self.iteration = 0
-        self.mode = mode
+        # Mode is now always "paper" but kept on self for back-compat with any
+        # call-site that still reads it. The DB schema retains the field for
+        # historical projects; new creates always write "paper".
+        self.mode = "paper" if not mode else mode
         self._model_arg = model  # Store the CLI/constructor argument
         self.project_name = project
 
@@ -116,7 +115,6 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         self.action_plan_file = self.state_dir / "action_plan.yaml"
         self.latest_review_file = self.state_dir / "latest_review.md"
         self.literature_file = self.state_dir / "literature.yaml"
-        self.dev_state_file = self.state_dir / "dev_state.yaml"
 
         # Ensure directories exist
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -131,12 +129,9 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
         # Paper acceptance threshold
         self.paper_accept_threshold = self.config.get("paper_accept_threshold", 8)
 
-        # Dev mode threshold
-        self.code_review_threshold = self.config.get("code_review_threshold", 7)
-
         # Logging setup
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.log_file = self.log_dir / f"{self.project_name}_{mode}_{self.run_id}.log"
+        self.log_file = self.log_dir / f"{self.project_name}_paper_{self.run_id}.log"
         self._cleanup_old_logs(keep=5)
 
         # Token stats
@@ -1176,7 +1171,7 @@ a {{ color: #0d9488; }}
             return True
 
         try:
-            if self.mode == "paper" and self.paper_state_file.exists():
+            if self.paper_state_file.exists():
                 state = self.load_paper_state()
                 reviews = state.get("reviews", [])
                 if reviews:
@@ -1185,14 +1180,6 @@ a {{ color: #0d9488; }}
                         self.iteration = last_iter
                         self.log(f"Resumed from paper_state: iteration={self.iteration}", "INFO")
                         return True
-            elif self.mode == "research" and self.state_file.exists():
-                with open(self.state_file) as f:
-                    state = yaml.safe_load(f) or {}
-                last_iter = state.get("current_iteration", {}).get("number", 0)
-                if last_iter > 0:
-                    self.iteration = last_iter
-                    self.log(f"Resumed from research_state: iteration={self.iteration}", "INFO")
-                    return True
         except Exception as e:
             self.log(f"Error resuming from state files: {e}", "WARN")
 
@@ -1851,47 +1838,41 @@ a {{ color: #0d9488; }}
         resume_info = "From scratch"
         score_info = ""
 
-        if self.mode == "paper":
-            paper_state = self.load_paper_state()
-            current_score = paper_state.get("current_score", 0)
-            reviews = paper_state.get("reviews", [])
-            status = paper_state.get("status", "running")
+        paper_state = self.load_paper_state()
+        current_score = paper_state.get("current_score", 0)
+        reviews = paper_state.get("reviews", [])
+        status = paper_state.get("status", "running")
 
-            if self.iteration > 0:
-                # Resuming
-                checkpoint = self.load_checkpoint()
-                completed_step = checkpoint.get("completed_step", 0)
-                step_name = checkpoint.get("completed_step_name", "")
-                if completed_step > 0 and completed_step < 5:
-                    resume_info = f"Resume iter {self.iteration + 1}, step {completed_step + 1}/5 ({step_name} done)"
-                else:
-                    resume_info = f"Resume from iter {self.iteration + 1}"
-
-                if current_score > 0:
-                    gap = self.paper_accept_threshold - current_score
-                    recent = [r.get("score", 0) for r in reviews[-5:]]
-                    trend = " → ".join(f"{s:.1f}" for s in recent) if recent else ""
-                    score_info = f"Score: {current_score}/10 | Gap: {gap:.1f}\n"
-                    if trend:
-                        score_info += f"History: {trend}\n"
-
-                    # Stagnation warning
-                    stag = getattr(self.memory, 'stagnation_count', 0)
-                    if stag >= 2:
-                        score_info += f"⚠️ Stagnation: {stag} rounds\n"
+        if self.iteration > 0:
+            # Resuming
+            checkpoint = self.load_checkpoint()
+            completed_step = checkpoint.get("completed_step", 0)
+            step_name = checkpoint.get("completed_step_name", "")
+            if completed_step > 0 and completed_step < 5:
+                resume_info = f"Resume iter {self.iteration + 1}, step {completed_step + 1}/5 ({step_name} done)"
             else:
-                resume_info = "Starting fresh"
-        elif self.mode == "dev":
-            if self.iteration > 0:
                 resume_info = f"Resume from iter {self.iteration + 1}"
-            else:
-                resume_info = "Starting fresh"
+
+            if current_score > 0:
+                gap = self.paper_accept_threshold - current_score
+                recent = [r.get("score", 0) for r in reviews[-5:]]
+                trend = " → ".join(f"{s:.1f}" for s in recent) if recent else ""
+                score_info = f"Score: {current_score}/10 | Gap: {gap:.1f}\n"
+                if trend:
+                    score_info += f"History: {trend}\n"
+
+                # Stagnation warning
+                stag = getattr(self.memory, 'stagnation_count', 0)
+                if stag >= 2:
+                    score_info += f"⚠️ Stagnation: {stag} rounds\n"
+        else:
+            resume_info = "Starting fresh"
 
         import html as _html
         header = self.tg_header("🚤")
         lines = [
             header,
-            f"<i>🚀 starting {_html.escape(self.mode)} mode</i>",
+            f"<i>🚀 starting paper mode</i>",
             f"━━━━━━━━━━━━━━━━━━━━━",
             _html.escape(resume_info),
         ]
@@ -1982,34 +1963,33 @@ a {{ color: #0d9488; }}
         score_line = ""
         trend_line = ""
         stag_line = ""
-        if self.mode == "paper":
-            try:
-                paper_state = self.load_paper_state()
-                current_score = paper_state.get("current_score", 0) or 0
-                if current_score:
-                    gap = self.paper_accept_threshold - current_score
-                    score_line = (
-                        f"Score <b>{current_score}/10</b> → target "
-                        f"{self.paper_accept_threshold}/10 (gap {gap:.1f})"
-                    )
+        try:
+            paper_state = self.load_paper_state()
+            current_score = paper_state.get("current_score", 0) or 0
+            if current_score:
+                gap = self.paper_accept_threshold - current_score
+                score_line = (
+                    f"Score <b>{current_score}/10</b> → target "
+                    f"{self.paper_accept_threshold}/10 (gap {gap:.1f})"
+                )
 
-                # Recent score trend (last 5)
-                reviews = paper_state.get("reviews") or []
-                recent = [r.get("score", 0) for r in reviews[-5:]]
-                if len(recent) >= 2:
-                    trend_line = "Recent: " + " → ".join(f"{s:.1f}" for s in recent)
+            # Recent score trend (last 5)
+            reviews = paper_state.get("reviews") or []
+            recent = [r.get("score", 0) for r in reviews[-5:]]
+            if len(recent) >= 2:
+                trend_line = "Recent: " + " → ".join(f"{s:.1f}" for s in recent)
 
-                # Stagnation: explain the rule inline so the user understands.
-                # The memory module uses MIN_PROGRESS_DELTA=0.3 and
-                # STAGNATION_THRESHOLD=5 — see ark/memory.py.
-                stag = getattr(self.memory, "stagnation_count", 0)
-                if stag >= 2:
-                    stag_line = (
-                        f"⚠️ Stagnation: <b>{stag}/5</b> rounds without "
-                        f"≥0.3 score gain (self-repair triggers at 5)"
-                    )
-            except Exception:
-                pass
+            # Stagnation: explain the rule inline so the user understands.
+            # The memory module uses MIN_PROGRESS_DELTA=0.3 and
+            # STAGNATION_THRESHOLD=5 — see ark/memory.py.
+            stag = getattr(self.memory, "stagnation_count", 0)
+            if stag >= 2:
+                stag_line = (
+                    f"⚠️ Stagnation: <b>{stag}/5</b> rounds without "
+                    f"≥0.3 score gain (self-repair triggers at 5)"
+                )
+        except Exception:
+            pass
 
         lines = [line1, meta]
         if score_line:
@@ -2023,10 +2003,8 @@ a {{ color: #0d9488; }}
     def _polish_ctx(self, kind: str, phase: str = "") -> dict:
         """Context dict passed to Haiku polish (small + privacy-light)."""
         try:
-            current_score = 0
-            if self.mode == "paper":
-                ps = self.load_paper_state()
-                current_score = ps.get("current_score", 0) or 0
+            ps = self.load_paper_state()
+            current_score = ps.get("current_score", 0) or 0
         except Exception:
             current_score = 0
         return {
@@ -2274,8 +2252,10 @@ a {{ color: #0d9488; }}
 
 def main():
     parser = argparse.ArgumentParser(description="ARK Automated Research Orchestrator")
-    parser.add_argument("--mode", type=str, default="research", choices=["research", "paper", "dev"],
-                        help="Mode: 'research' for experiments, 'paper' for review iterations, 'dev' for development iterations")
+    # `--mode` accepted for backward compatibility with existing slurm
+    # scripts that pass `--mode paper`; there is only one mode now.
+    parser.add_argument("--mode", type=str, default="paper", choices=["paper"],
+                        help=argparse.SUPPRESS)
     parser.add_argument("--project", type=str, required=True, help="Project name (e.g., prouter)")
     parser.add_argument("--model", type=str, default=None, choices=["claude", "gemini", "codex"],
                         help="Model backend: 'claude', 'gemini', or 'codex'")
