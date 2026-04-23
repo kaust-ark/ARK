@@ -137,7 +137,7 @@ iteration to exactly this mistake.
 
 1. Shebang MUST be `#!/bin/bash --login` (otherwise `mamba activate` / `conda activate` silently no-ops)
 2. If the code trains a NN / uses PyTorch / JAX / TensorFlow: include `#SBATCH --gres=gpu:<type>:1`
-3. Pick the weakest GPU that works: **P100 > V100 > A100** (prefer p100 unless model truly needs more)
+3. Pick the weakest GPU that works: **V100 > A100** (prefer V100 unless model truly needs more; do not use p100)
 4. If NOT using GPU: OMIT `--gres=gpu` entirely (don't burn quota)
 5. Always set `--time=...` (never default)
 
@@ -158,7 +158,7 @@ conda activate {self.conda_env}
 python scripts/train.py
 ```
 
-**QoS caps (normal):** A100=2, P100=8, V100=8 concurrent. For jobs >3 days
+**QoS caps (normal):** A100=2, V100=8 concurrent. For jobs >3 days
 use `--qos=spot` (preemptible, checkpoint via SIGUSR1).
 
 **Watchdog:** jobs with <15% GPU utilization for 2 consecutive hours are

@@ -1,6 +1,6 @@
 ---
 name: rocs-testbed-slurm
-description: How to submit SLURM jobs on the SANDS Lab ROCS testbed cluster (KAUST). Covers GPU GRES selection (p100/v100/a100), QoS caps, conda env activation, multi-node DeepSpeed, preemptible spot jobs, and the watchdog that kills jobs with <15% GPU utilization. Use for any project whose compute_backend is slurm and whose cluster nodes are named `mcnode*`.
+description: How to submit SLURM jobs on the SANDS Lab ROCS testbed cluster (KAUST). Covers GPU GRES selection (v100/a100 — p100 is off-policy), QoS caps, conda env activation, multi-node DeepSpeed, preemptible spot jobs, and the watchdog that kills jobs with <15% GPU utilization. Use for any project whose compute_backend is slurm and whose cluster nodes are named `mcnode*`.
 tags: [hpc, slurm, rocs-testbed, kaust, gpu, sbatch, conda, mamba]
 source: https://sands.kaust.edu.sa/internal/rocs-testbed/slurm-environment/
 ---
@@ -13,7 +13,7 @@ This is the SANDS Lab / KAUST internal cluster. Head node `mcmgt01`, compute nod
 
 1. **Always use `#!/bin/bash --login`** (or `-l`) as the shebang. Without `--login`, `mamba activate` / `conda activate` silently no-ops and the job runs against system Python.
 2. **Request GPU explicitly via `--gres`** when the code trains a neural network, runs PyTorch/JAX/TensorFlow, or otherwise benefits from CUDA. Submitting to the `mc` partition without `--gres` gets you a CPU-only allocation on a GPU-equipped node — wasted machine-time and badly slow training.
-3. **Pick the weakest GPU that works**: **P100 > V100 > A100** (prefer P100). Only escalate to A100 if the model/batch-size genuinely requires it.
+3. **Pick the weakest GPU that works**: **V100 > A100** (prefer V100). Only escalate to A100 if the model/batch-size genuinely requires it. **Do not use P100** — it exists on the cluster but this project's policy is V100 minimum.
 4. **Set `--time` conservatively**. Max job length is 14 days; interactive sessions cap at 4h. Jobs with `--time` > 3 days will soon need to be preemptible.
 5. **Don't push GPU utilization below 15%** — any GPU in the job running at <15% for 1h triggers a warning email; 2h consecutive triggers automatic cancellation.
 
@@ -27,7 +27,7 @@ This is the SANDS Lab / KAUST internal cluster. Head node `mcmgt01`, compute nod
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --gres=gpu:v100:1              # ← or p100:1 for lightweight, a100:1 if you truly need
+#SBATCH --gres=gpu:v100:1              # ← V100 minimum; use a100:1 only if you truly need
 #SBATCH --output=results/<exp_dir>/slurm_%j.out
 #SBATCH --error=results/<exp_dir>/slurm_%j.err
 
@@ -59,15 +59,16 @@ mamba activate <project_env>
 python scripts/backtest.py
 ```
 
-**Do NOT include `--gres=gpu:...` when you don't use GPU** — it burns one of your QoS quota slots (A100=2, V100=8, P100=8) and blocks a neighbor's real GPU job.
+**Do NOT include `--gres=gpu:...` when you don't use GPU** — it burns one of your QoS quota slots (A100=2, V100=8) and blocks a neighbor's real GPU job.
 
 ## GPU selection guide
 
 | GPU | When to use | Quota (normal QoS) |
 |---|---|---|
-| `p100` | Classical ML, small NN (<50M params), GRU/LSTM, short training runs | 8 |
-| `v100` | Most deep-learning work, moderate-size models (≤200M), mixed-precision | 8 |
+| `v100` | **Default** — classical ML, GRU/LSTM, most deep-learning work, moderate-size models (≤200M), mixed-precision | 8 |
 | `a100` | Large models (>500M), long training (days), high-memory batches | **2** |
+
+> **Note:** `p100` nodes exist on the cluster (`mcnode01`, `mcnode02`) but are **not in our allowed GPU set** — V100 is the floor. If `sinfo` / `ginfo` shows only P100s free, wait for V100 instead of falling back.
 
 For A100 specifically, add `--constraint=gpu_a100_80gb` or `gpu_a100_40gb` to pin memory capacity, and `--constraint=gpu_sxm` if you need multi-GPU NVLink (PCI A100 inter-GPU bandwidth is ~3× slower, and per-card ~10% slower than SXM).
 
@@ -79,7 +80,7 @@ For A100 specifically, add `--constraint=gpu_a100_80gb` or `gpu_a100_40gb` to pi
 
 ## QoS and preemption
 
-- Default QoS = `normal`. Caps: A100=2, P100=8, V100=8 per user (concurrent).
+- Default QoS = `normal`. Caps: A100=2, V100=8 per user (concurrent). P100 has a cap of 8 but is off-policy for this project.
 - Low-priority QoS = `spot` — no caps, but preemptible by normal-QoS jobs.
 - To run a long (>3 day) job, use `--qos=spot` with a checkpoint-and-resume signal handler:
 
@@ -181,7 +182,7 @@ After a job starts, check:
 
 ```bash
 scontrol show job <jobid> | grep -E "TRES|NodeList"
-# Expect: gres/gpu:v100=1  (or p100/a100)
+# Expect: gres/gpu:v100=1  (or a100)
 # If you see only cpu= and mem=, you forgot --gres
 ```
 

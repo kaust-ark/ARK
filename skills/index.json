@@ -49,7 +49,7 @@
   },
   {
     "name": "rocs-testbed-slurm",
-    "description": "How to submit SLURM jobs on the SANDS Lab ROCS testbed cluster (KAUST). Covers GPU GRES selection (p100/v100/a100), QoS caps, conda env activation, multi-node DeepSpeed, preemptible spot jobs, and the watchdog that kills jobs with <15% GPU utilization. Use for any project whose compute_backend is slurm and whose cluster nodes are named `mcnode*`.",
+    "description": "How to submit SLURM jobs on the SANDS Lab ROCS testbed cluster (KAUST). Covers GPU GRES selection (v100/a100 \u2014 p100 is off-policy), QoS caps, conda env activation, multi-node DeepSpeed, preemptible spot jobs, and the watchdog that kills jobs with <15% GPU utilization. Use for any project whose compute_backend is slurm and whose cluster nodes are named `mcnode*`.",
     "tags": [
       "hpc",
       "slurm",
