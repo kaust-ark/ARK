@@ -39,20 +39,23 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from starlette.requests import Request
 
-from authlib.integrations.starlette_client import OAuth as _OAuth
-
-from .auth import make_token, make_share_token, verify_token, verify_share_token
-from .config import get_settings
-
 # Lazy-initialized Google OAuth client
-_google_oauth: _OAuth | None = None
+_google_oauth = None
 
 
-def _get_google_oauth() -> _OAuth | None:
+def _get_google_oauth():
     """Return authlib OAuth client if Google credentials are configured."""
     global _google_oauth
     if _google_oauth is not None:
         return _google_oauth
+    
+    # Lazy import to avoid webapp-only dependency in CLI/orchestrator environments
+    try:
+        from authlib.integrations.starlette_client import OAuth as _OAuth
+    except ImportError:
+        logger.warning("authlib not installed, Google login unavailable")
+        return None
+
     settings = get_settings()
     if not settings.google_client_id or not settings.google_client_secret:
         return None
@@ -65,6 +68,7 @@ def _get_google_oauth() -> _OAuth | None:
         client_kwargs={"scope": "openid email profile"},
     )
     return _google_oauth
+from .config import get_settings
 from .db import (
     Feedback,
     Project,
@@ -88,7 +92,9 @@ from .crypto import encrypt_text, decrypt_text
 from .jobs import (
     cancel_job,
     cancel_local_job,
+    launch_cloud_job,
     launch_local_job,
+    poll_local_job,
     project_env_prefix,
     project_env_ready,
     slurm_available,
@@ -96,6 +102,7 @@ from .jobs import (
     submit_job,
 )
 from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email
+from .auth import make_token, verify_token, verify_share_token
 from .templates import copy_venue_template, has_venue_template
 
 router = APIRouter()
@@ -409,7 +416,7 @@ Output ONLY the summary, no preamble.
     return raw_text[:8000]
 
 
-def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude-sonnet-4-6"):
+def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, settings, model: str = "claude-sonnet-4-6"):
     """Write config.yaml that ark orchestrator will read."""
     # Map webapp model value to orchestrator model backend.
     MODEL_MAP = {
@@ -439,12 +446,39 @@ def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude
         "figures_dir": "paper/figures",
         "figure_generation": "nano_banana",
         "nano_banana_model": "pro",
-        # Webapp projects are multi-tenant; do NOT auto-create a GitHub repo
-        # under the host user's gh account for every new project. Git is still
-        # initialized locally so writer-diff verification and commit history
-        # work within the project directory.
         "auto_github_remote": False,
     }
+
+    # Resolve per-project compute backend config
+    chosen = project.compute_backend or "local"
+    if chosen.startswith("cloud"):
+        per_project: dict = {}
+        if getattr(project, "cloud_overrides", None):
+            try:
+                per_project = json.loads(project.cloud_overrides)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        compute_cfg = _build_cloud_config(
+            user_obj, settings,
+            per_project_overrides=per_project,
+            provider_override=_parse_cloud_provider(chosen),
+        )
+        if compute_cfg:
+            # Write SSH private key content to a per-project file so it never
+            # ends up as raw text in config.yaml.
+            if compute_cfg.get("ssh_private_key"):
+                key_file = project_dir / ".gcp_ssh_key"
+                key_file.write_text(compute_cfg.pop("ssh_private_key"))
+                key_file.chmod(0o600)
+                compute_cfg["ssh_key_path"] = str(key_file)
+            config["compute_backend"] = compute_cfg
+    elif chosen == "slurm":
+        config["compute_backend"] = {
+            "type": "slurm",
+            "job_prefix": f"{project.name.upper()[:8]}_",
+            "conda_env": settings.slurm_conda_env or "ark-base",
+        }
+    # "local" defaults to orchestrator's internal default if omitted entirely
     if project.telegram_token:
         config["telegram_bot_token"] = project.telegram_token
     if project.telegram_chat_id:
@@ -463,6 +497,109 @@ def _write_config_yaml(project_dir: Path, project: Project, model: str = "claude
     config["goal_anchor"] = "\n".join(anchor_parts)
     config_path = project_dir / "config.yaml"
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
+
+
+def _parse_cloud_provider(compute_backend: str) -> str:
+    """Extract provider from 'cloud:gcp' style values; returns '' for plain 'cloud'."""
+    if compute_backend and compute_backend.startswith("cloud:"):
+        return compute_backend[6:]
+    return ""
+
+
+_CLOUD_PROVIDER_LABELS = {"gcp": "GCP", "aws": "AWS", "azure": "Azure"}
+
+def _cloud_env_label(compute_backend: str) -> str:
+    provider = _parse_cloud_provider(compute_backend or "")
+    suffix = _CLOUD_PROVIDER_LABELS.get(provider, "")
+    return f"Cloud ({suffix})" if suffix else "Cloud"
+
+
+def _build_cloud_config(user_obj, settings, per_project_overrides=None, provider_override: str = "") -> dict | None:
+    """Return compute_backend dict if cloud is configured, else None."""
+    keys = _get_user_keys(user_obj)
+    provider = provider_override or settings.cloud_provider  # "" means disabled globally
+    if not provider:
+        # Try to infer provider from user keys
+        if keys.get("gcp_service_account_json"):
+            provider = "gcp"
+        elif keys.get("aws_access_key_id"):
+            provider = "aws"
+        elif keys.get("azure_subscription_id"):
+            provider = "azure"
+
+    if not provider:
+        return None
+
+    # Validate that required credentials exist for this provider
+    if provider == "aws" and not keys.get("aws_access_key_id"):
+        return None
+    if provider == "gcp" and not keys.get("gcp_service_account_json"):
+        return None
+    if provider == "azure" and not keys.get("azure_subscription_id"):
+        return None
+
+    owner_email = getattr(user_obj, "email", "") or ""
+    cfg = {
+        "type": "cloud",
+        "provider": provider,
+        "region": settings.cloud_region,
+        "instance_type": settings.cloud_instance_type,
+        "image_id": settings.cloud_image_id,
+        "ssh_key_name": settings.cloud_ssh_key_name,
+        "ssh_key_path": settings.cloud_ssh_key_path,
+        "ssh_user": settings.cloud_ssh_user,
+        "conda_env": settings.cloud_conda_env,
+        "owner": owner_email,
+    }
+
+    # GCP-specific zone handling: GCP uses 'zone' while AWS uses 'region'.
+    # If the user is using GCP, and no specific zone is set, use us-central1-a.
+    if provider == "gcp":
+        if settings.cloud_gcp_zone:
+            cfg["region"] = settings.cloud_gcp_zone
+        elif not cfg["region"] or cfg["region"] == "us-east-1":
+            cfg["region"] = "us-central1-a"
+        # Only set a default machine type if none is provided via global settings/keys,
+        # AND only if we aren't about to overide it with a per-project accelerator.
+        accel_ovr = (per_project_overrides or {}).get("accelerator_type")
+        if not cfg["instance_type"] and not accel_ovr:
+            cfg["instance_type"] = "n4-standard-2"
+        
+        cfg["gcp_project"] = keys.get("gcp_project") or settings.cloud_gcp_project
+        if keys.get("gcp_service_account_json"):
+            cfg["gcp_service_account_json"] = keys["gcp_service_account_json"]
+
+    if provider == "aws" and settings.cloud_security_group:
+        cfg["security_group"] = settings.cloud_security_group
+
+    if provider == "azure":
+        cfg["resource_group"] = settings.cloud_azure_resource_group
+        cfg["location"] = settings.cloud_azure_location
+
+    # User-level GCP overrides (stored in encrypted_keys, higher priority than system defaults)
+    if provider == "gcp":
+        if keys.get("gcp_zone"):
+            cfg["region"] = keys["gcp_zone"]
+        if keys.get("gcp_instance_type"):
+            cfg["instance_type"] = keys["gcp_instance_type"]
+        if keys.get("gcp_image_family"):
+            cfg["image_id"] = keys["gcp_image_family"]
+        if keys.get("gcp_image_project"):
+            cfg["image_project"] = keys["gcp_image_project"]
+        if keys.get("gcp_ssh_user"):
+            cfg["ssh_user"] = keys["gcp_ssh_user"]
+        if keys.get("gcp_conda_env"):
+            cfg["conda_env"] = keys["gcp_conda_env"]
+        if keys.get("gcp_ssh_private_key"):
+            cfg["ssh_private_key"] = keys["gcp_ssh_private_key"]
+        if keys.get("gcp_network"):
+            cfg["network"] = keys["gcp_network"]
+        if keys.get("gcp_subnet"):
+            cfg["subnet"] = keys["gcp_subnet"]
+
+    if per_project_overrides:
+        cfg.update(per_project_overrides)
+    return cfg
 
 
 def _substitute_agent_templates(project_dir: Path, project_id: str, title: str,
@@ -901,8 +1038,8 @@ async def _start_project_async(
                 project, pdir, session, settings, is_admin=is_admin,
             )
         except Exception as e:
-            logger.error(f"Submit failed for {project_id}: {e}")
-            update_project(session, project, status="failed")
+            logger.error(f"Submit failed for {project_id}: {e}", exc_info=True)
+            update_project(session, project, status="failed", error_message=str(e))
             send_telegram_notify(
                 f"❌ <b>{_pname(project)}</b> submission failed: {e}",
                 bot_token=token, chat_id=chat_id,
@@ -937,12 +1074,35 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
 
     log_dir = pdir / "logs"
     log_dir.mkdir(exist_ok=True)
-    if slurm_available():
+    
+    backend = project.compute_backend or "local"
+
+    if backend.startswith("cloud"):
+        per_project: dict = {}
+        if project.cloud_overrides:
+            try:
+                per_project = json.loads(project.cloud_overrides)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        cloud_cfg = _build_cloud_config(user_obj, settings, per_project_overrides=per_project, provider_override=_parse_cloud_provider(backend))
+        if not cloud_cfg:
+             logger.warning(f"Cloud selected for {project.id} but not configured. Falling back to local.")
+             job_id = launch_local_job(project.id, project.mode, project.max_iterations,
+                                       pdir, log_dir, settings, api_keys=api_keys)
+             update_project(session, project, status="running", slurm_job_id=job_id)
+             return "running"
+        job_id = launch_cloud_job(project.id, project.mode, project.max_iterations,
+                                  pdir, log_dir, settings, api_keys=api_keys)
+        update_project(session, project, status="running", slurm_job_id=job_id)
+        return "running"
+
+    if backend == "slurm" and slurm_available():
         job_id = submit_job(project.id, project.mode, project.max_iterations,
                             pdir, log_dir, settings, api_keys=api_keys)
         update_project(session, project, status="queued", slurm_job_id=job_id)
         return "queued"
     else:
+        # "local" or fallback for slurm
         job_id = launch_local_job(project.id, project.mode, project.max_iterations,
                                   pdir, log_dir, settings, api_keys=api_keys)
         update_project(session, project, status="running", slurm_job_id=job_id)
@@ -1263,13 +1423,46 @@ def _mask_json(val: str) -> str:
 async def api_get_user_settings(request: Request):
     user = _require_user(request)
     keys = _get_user_keys(user)
+    settings = get_settings()
+    # Build list of cloud providers available to this user (credentials present + validated)
+    available_providers = []
+    for p in ("gcp", "aws", "azure"):
+        cfg = _build_cloud_config(user, settings, provider_override=p)
+        if cfg:
+            available_providers.append(p)
+    # If no explicit provider credentials but system cloud_provider is set, try that too
+    if not available_providers and settings.cloud_provider:
+        cfg = _build_cloud_config(user, settings)
+        if cfg:
+            available_providers.append(settings.cloud_provider)
     return JSONResponse({
         "gemini": _mask_key(keys.get("gemini")),
         "anthropic": _mask_key(keys.get("anthropic")),
         "openai": _mask_key(keys.get("openai")),
         "claude_oauth_token": _mask_key(keys.get("claude_oauth_token")),
         "gemini_oauth_json": _mask_json(keys.get("gemini_oauth_json")),
+        "aws_access_key_id": _mask_key(keys.get("aws_access_key_id")),
+        "aws_secret_access_key": _mask_key(keys.get("aws_secret_access_key")),
+        "aws_default_region": keys.get("aws_default_region") or "",
+        "gcp_service_account_json": _mask_json(keys.get("gcp_service_account_json")),
+        "gcp_project": keys.get("gcp_project") or "",
+        # Per-user GCP compute settings (override system defaults)
+        "gcp_zone": keys.get("gcp_zone") or settings.cloud_gcp_zone or "",
+        "gcp_instance_type": keys.get("gcp_instance_type") or settings.cloud_instance_type or "",
+        "gcp_image_family": keys.get("gcp_image_family") or settings.cloud_image_id or "",
+        "gcp_image_project": keys.get("gcp_image_project") or "",
+        "gcp_ssh_user": keys.get("gcp_ssh_user") or settings.cloud_ssh_user or "ubuntu",
+        "gcp_conda_env": keys.get("gcp_conda_env") or settings.cloud_conda_env or "ark",
+        "gcp_network": keys.get("gcp_network") or settings.cloud_network or "",
+        "gcp_subnet": keys.get("gcp_subnet") or settings.cloud_subnet or "",
+        "gcp_ssh_private_key": "[PRIVATE KEY]" if keys.get("gcp_ssh_private_key") else "",
+        "azure_subscription_id": _mask_key(keys.get("azure_subscription_id")),
+        "azure_tenant_id": _mask_key(keys.get("azure_tenant_id")),
+        "azure_client_id": _mask_key(keys.get("azure_client_id")),
+        "azure_client_secret": _mask_key(keys.get("azure_client_secret")),
         "has_keys": any(keys.values()),
+        "cloud_available": bool(available_providers),
+        "cloud_providers": available_providers,
     })
 
 
@@ -1283,23 +1476,34 @@ async def api_save_user_settings(request: Request):
     current_keys = old_keys.copy()
     
     # Update keys based on body
-    fields = ["gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json"]
+    fields = [
+        "gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
+        "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
+        "gcp_service_account_json", "gcp_project",
+        "gcp_zone", "gcp_instance_type", "gcp_image_family", "gcp_image_project",
+        "gcp_ssh_user", "gcp_conda_env", "gcp_ssh_private_key",
+        "gcp_network", "gcp_subnet",
+        "azure_subscription_id", "azure_tenant_id", "azure_client_id", "azure_client_secret"
+    ]
     for field in fields:
         if field not in body:
             continue
-        
+
         val = (body.get(field) or "").strip()
-        
+
         if not val:
-            # User explicitly cleared the field
             current_keys[field] = ""
             continue
-        
-        # For masked fields, only update if not a placeholder
-        if field == "gemini_oauth_json":
+
+        # JSON/key blob fields: skip placeholder sentinels
+        if field in ("gemini_oauth_json", "gcp_service_account_json"):
             if val != "[JSON Config]":
                 current_keys[field] = val
+        elif field == "gcp_ssh_private_key":
+            if val != "[PRIVATE KEY]":
+                current_keys[field] = val
         else:
+            # Plain text / API key fields: skip masked placeholders
             if "..." not in val:
                 current_keys[field] = val
 
@@ -1406,7 +1610,9 @@ async def api_list_projects(request: Request, scope: str = "mine"):
                 "slurm_job_id": p.slurm_job_id,
                 "created_at": p.created_at.isoformat(),
                 "updated_at": p.updated_at.isoformat(),
+                "compute_backend": p.compute_backend,
                 "user_email": user_email_cache.get(p.user_id, ""),
+                "error_message": p.error_message or "",
             }
             result.append(d)
         return JSONResponse(result)
@@ -1429,9 +1635,12 @@ async def api_create_project(
     telegram_token: str = Form(""),
     telegram_chat_id: str = Form(""),
     comment: str = Form(""),
+    compute_backend: str = Form("local"),
+    cloud_overrides: str = Form(""),
 ):
     user = _require_user(request)
     _check_webapp_enabled()
+
     max_iterations = min(max_iterations, MAX_ITER_PER_START)
     settings = get_settings()
     with get_session(settings.db_path) as _s:
@@ -1451,6 +1660,11 @@ async def api_create_project(
         keys = _get_user_keys(db_user) if db_user else {}
         if not any(keys.values()):
             raise HTTPException(400, "Please configure at least one API key or link your Claude account in Settings first.")
+
+        if compute_backend.startswith("cloud"):
+            cloud_cfg = _build_cloud_config(db_user or user, settings, provider_override=_parse_cloud_provider(compute_backend))
+            if not cloud_cfg:
+                raise HTTPException(status_code=400, detail="Cloud compute is not configured. Please use local compute or add cloud credentials in Settings.")
 
     # Generate project ID: full UUID
     project_id = str(uuid.uuid4())
@@ -1536,6 +1750,8 @@ async def api_create_project(
             max_iterations=max_iterations,
             max_dev_iterations=max_dev_iterations,
             mode=mode,
+            compute_backend=compute_backend,
+            cloud_overrides=cloud_overrides or "",
             status=initial_status,
             has_pdf_upload=has_pdf_upload,
             telegram_token=telegram_token,
@@ -1555,7 +1771,7 @@ async def api_create_project(
                     db_user.telegram_chat_id = telegram_chat_id
                 session.add(db_user)
                 session.commit()
-        _write_config_yaml(pdir, project, model=model)
+        _write_config_yaml(pdir, project, db_user or user, settings, model=model)
 
         if comment.strip():
             _write_user_update(pdir, comment.strip(), source="webapp_create")
@@ -1620,12 +1836,15 @@ async def api_get_project(project_id: str, request: Request):
             "telegram_token": project.telegram_token,
             "telegram_chat_id": project.telegram_chat_id,
             "has_deep_research": (pdir / "auto_research" / "state" / "deep_research.md").exists(),
-            "environment": "ROCS Testbed" if project.slurm_job_id and not project.slurm_job_id.startswith("local") else "Local",
+            "environment": "ROCS Testbed" if project.slurm_job_id and not project.slurm_job_id.startswith(("local", "cloud")) else (_cloud_env_label(project.compute_backend) if project.slurm_job_id and project.slurm_job_id.startswith("cloud") else "Local"),
             "conda_env": conda_env_display,
             "conda_env_ready": env_ready,
             "created_at": project.created_at.isoformat(),
             "updated_at": project.updated_at.isoformat(),
             "cost_report": _read_cost_report(pdir, project=project),
+            "compute_backend": project.compute_backend,
+            "cloud_overrides": project.cloud_overrides or "",
+            "error_message": project.error_message or "",
         })
 
 
@@ -1652,8 +1871,9 @@ async def api_stop_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         if project.slurm_job_id:
-            if project.slurm_job_id.startswith("local:"):
-                pid_str = project.slurm_job_id[len("local:"):]
+            if project.slurm_job_id.startswith(("local:", "cloud:")):
+                prefix = "local:" if project.slurm_job_id.startswith("local:") else "cloud:"
+                pid_str = project.slurm_job_id[len(prefix):]
                 if pid_str.isdigit():
                     cancel_local_job(int(pid_str))
             else:
@@ -1777,7 +1997,19 @@ async def api_restart_project(project_id: str, request: Request):
 
         # Rewrite config.yaml with updated settings
         model = body.get("model", "claude-sonnet-4-6")
-        _write_config_yaml(pdir, project, model=model)
+        new_backend = body.get("compute_backend")
+        if new_backend:
+             if new_backend.startswith("cloud"):
+                  overrides = body.get("cloud_overrides") or {}
+                  if not _build_cloud_config(user, settings, per_project_overrides=overrides, provider_override=_parse_cloud_provider(new_backend)):
+                       raise HTTPException(400, "Cloud compute not configured.")
+             update_project(session, project, compute_backend=new_backend)
+        new_cloud_overrides = body.get("cloud_overrides")
+        if new_cloud_overrides is not None:
+            val = json.dumps(new_cloud_overrides) if isinstance(new_cloud_overrides, dict) else (new_cloud_overrides or "")
+            update_project(session, project, cloud_overrides=val)
+
+        _write_config_yaml(pdir, project, user, settings, model=model)
 
         # Write instructions if provided
         comment = body.get("comment", "").strip()
@@ -1806,8 +2038,9 @@ async def api_delete_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         if project.slurm_job_id:
-            if project.slurm_job_id.startswith("local:"):
-                pid_str = project.slurm_job_id[len("local:"):]
+            if project.slurm_job_id.startswith(("local:", "cloud:")):
+                prefix = "local:" if project.slurm_job_id.startswith("local:") else "cloud:"
+                pid_str = project.slurm_job_id[len(prefix):]
                 if pid_str.isdigit():
                     cancel_local_job(int(pid_str))
             else:
@@ -1845,7 +2078,19 @@ async def api_continue_project(project_id: str, request: Request):
         pdir = _project_dir(settings, project.user_id, project_id)
         # Use requested model, or fall back to existing
         model = body.get("model") or _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
-        _write_config_yaml(pdir, project, model=model)
+        new_backend = body.get("compute_backend")
+        if new_backend:
+             if new_backend.startswith("cloud"):
+                  overrides = body.get("cloud_overrides") or {}
+                  if not _build_cloud_config(user, settings, per_project_overrides=overrides, provider_override=_parse_cloud_provider(new_backend)):
+                       raise HTTPException(400, "Cloud compute not configured.")
+             update_project(session, project, compute_backend=new_backend)
+        new_cloud_overrides = body.get("cloud_overrides")
+        if new_cloud_overrides is not None:
+            val = json.dumps(new_cloud_overrides) if isinstance(new_cloud_overrides, dict) else (new_cloud_overrides or "")
+            update_project(session, project, cloud_overrides=val)
+
+        _write_config_yaml(pdir, project, user, settings, model=model)
         if comment:
             _write_user_update(pdir, comment, source="webapp_continue")
             _write_user_instructions(pdir, comment, source="webapp_continue")
@@ -1855,8 +2100,19 @@ async def api_continue_project(project_id: str, request: Request):
 
 @router.get("/api/system/status")
 async def api_system_status():
-    """Public endpoint — returns webapp gate state (no auth required)."""
-    return JSONResponse({"disabled": _disabled_flag().exists()})
+    """Public endpoint — returns webapp gate state and cloud info (no auth required)."""
+    settings = get_settings()
+    return JSONResponse({
+        "disabled": _disabled_flag().exists(),
+        "cloud": {
+            "enabled": bool(settings.cloud_provider),
+            "provider": settings.cloud_provider,
+            "region": settings.cloud_region,
+        },
+        "slurm": {
+            "available": slurm_available()
+        }
+    })
 
 
 @router.get("/api/admin/status")
@@ -1892,8 +2148,9 @@ async def api_admin_killall(request: Request):
         ).all()
         for p in active:
             if p.slurm_job_id:
-                if p.slurm_job_id.startswith("local:"):
-                    pid_str = p.slurm_job_id[len("local:"):]
+                if p.slurm_job_id.startswith(("local:", "cloud:")):
+                    prefix = "local:" if p.slurm_job_id.startswith("local:") else "cloud:"
+                    pid_str = p.slurm_job_id[len(prefix):]
                     if pid_str.isdigit():
                         cancel_local_job(int(pid_str))
                 else:

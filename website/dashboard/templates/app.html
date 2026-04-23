@@ -292,6 +292,28 @@
     .or-divider { display: flex; align-items: center; gap: 12px; margin: 14px 0; color: var(--text-muted); font-size: .85rem; }
     .or-divider::before, .or-divider::after { content: ''; flex: 1; height: 1px; background: var(--card-border); }
 
+    /* ── settings tabs ── */
+    .settings-layout { display: flex; gap: 24px; min-height: 400px; margin-top: 10px; }
+    .settings-sidebar { min-width: 140px; display: flex; flex-direction: column; gap: 4px; border-right: 1px solid var(--card-border); padding-right: 16px; }
+    .settings-tab-btn { background: none; border: none; text-align: left; padding: 10px 14px; font-size: .9rem; font-weight: 500; color: var(--text-second); border-radius: 8px; cursor: pointer; transition: all .15s; }
+    .settings-tab-btn:hover { background: var(--bg); color: var(--text-primary); }
+    .settings-tab-btn.active { background: #f0fdfa; color: var(--teal-dark); font-weight: 600; }
+    .settings-content-area { flex: 1; min-width: 0; }
+    .settings-tab-pane { display: none; animation: fadeIn .2s ease; }
+    .settings-tab-pane.active { display: block; }
+    @media (max-width: 600px) {
+      .settings-layout { flex-direction: column; gap: 16px; }
+      .settings-sidebar { flex-direction: row; overflow-x: auto; padding-right: 0; border-right: none; border-bottom: 1px solid var(--card-border); padding-bottom: 12px; }
+      .settings-tab-btn { white-space: nowrap; }
+    }
+    .cloud-provider-select { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--card-border); padding-bottom: 16px; }
+    .cloud-provider-btn { flex: 1; background: var(--bg); border: 1px solid var(--card-border); padding: 8px; font-size: .85rem; font-weight: 600; color: var(--text-second); border-radius: 8px; cursor: pointer; transition: all .15s; }
+    .cloud-provider-btn:hover { background: #e2e8f0; }
+    .cloud-provider-btn.active { background: #fff; border-color: var(--teal); color: var(--teal); box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+    .cloud-provider-pane { display: none; }
+    .cloud-provider-pane.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
     /* ── project detail ── */
     #page-detail { padding: 32px 24px; max-width: 980px; margin: 0 auto; }
     .detail-header { margin-bottom: 24px; }
@@ -828,6 +850,77 @@
               <input type="number" name="max_iterations" value="1" min="1" max="5" />
             </div>
           </div>
+          
+          <div class="hero-adv-field" style="margin-top:12px">
+            <label>Compute Environment</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <label class="model-option">
+                <input type="radio" name="compute_backend" value="local" checked />
+                <span class="model-chip">🖥️ Local</span>
+              </label>
+              <label class="model-option" id="hero-backend-slurm-label">
+                <input type="radio" name="compute_backend" value="slurm" />
+                <span class="model-chip">🔧 Slurm</span>
+              </label>
+              <label class="model-option" id="hero-backend-cloud-gcp-label" style="display:none">
+                <input type="radio" name="compute_backend" value="cloud:gcp" />
+                <span class="model-chip">☁️ GCP</span>
+              </label>
+              <label class="model-option" id="hero-backend-cloud-aws-label" style="display:none">
+                <input type="radio" name="compute_backend" value="cloud:aws" />
+                <span class="model-chip">☁️ AWS</span>
+              </label>
+              <label class="model-option" id="hero-backend-cloud-azure-label" style="display:none">
+                <input type="radio" name="compute_backend" value="cloud:azure" />
+                <span class="model-chip">☁️ Azure</span>
+              </label>
+            </div>
+          </div>
+          <!-- GCP per-project options (shown when cloud:gcp selected) -->
+          <div id="hero-gcp-options" style="display:none;margin-top:10px;padding:10px 12px;background:var(--surface-raised,#f8fafc);border:1px solid var(--card-border);border-radius:8px">
+            <div style="display:flex;gap:12px;flex-wrap:wrap">
+              <div class="hero-adv-field" style="flex:1;min-width:140px">
+                <label>Zone</label>
+                <input type="text" id="hero-gcp-zone" placeholder="us-central1-a" />
+              </div>
+              <div class="hero-adv-field" style="flex:1;min-width:140px">
+                <label>Machine Type</label>
+                <input type="text" id="hero-gcp-instance-type" placeholder="n4-standard-2" />
+              </div>
+            </div>
+            <details style="margin-top:8px">
+              <summary style="font-size:.8rem;color:var(--text-muted);cursor:pointer;user-select:none">Advanced GCP options</summary>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
+                <div class="hero-adv-field" style="flex:1;min-width:140px">
+                  <label>Image Family</label>
+                  <input type="text" id="hero-gcp-image-family" placeholder="common-cpu" />
+                </div>
+                <div class="hero-adv-field" style="flex:1;min-width:140px">
+                  <label>Image Project</label>
+                  <input type="text" id="hero-gcp-image-project" placeholder="deeplearning-platform-release" />
+                </div>
+              </div>
+              <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
+                <div class="hero-adv-field" style="flex:1;min-width:140px">
+                  <label>Accelerator Type</label>
+                  <input type="text" id="hero-gcp-accel-type" placeholder="None (CPU-only)" />
+                </div>
+                <div class="hero-adv-field" style="flex:1;min-width:80px">
+                  <label>Count</label>
+                  <input type="number" id="hero-gcp-accel-count" placeholder="1" min="1" max="8" />
+                </div>
+                <div class="hero-adv-field" style="flex:1;min-width:140px">
+                  <label>Network</label>
+                  <input type="text" id="hero-gcp-network" placeholder="" />
+                </div>
+                <div class="hero-adv-field" style="flex:1;min-width:140px">
+                  <label>Subnet</label>
+                  <input type="text" id="hero-gcp-subnet" placeholder="" />
+                </div>
+              </div>
+            </details>
+          </div>
+          <input type="hidden" name="cloud_overrides" id="hero-cloud-overrides" value="" />
         </div>
       </div>
 
@@ -1043,6 +1136,58 @@
       </div>
     </div>
     <div class="form-group">
+      <label>Compute Environment</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="model-option"><input type="radio" name="continue-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
+        <label class="model-option"><input type="radio" name="continue-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
+        <label class="model-option" id="continue-backend-cloud-gcp-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
+        <label class="model-option" id="continue-backend-cloud-aws-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
+        <label class="model-option" id="continue-backend-cloud-azure-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
+      </div>
+    </div>
+    <!-- GCP per-project options (shown when cloud:gcp selected) -->
+    <div id="continue-gcp-options" style="display:none;margin-bottom:12px;padding:10px 12px;background:var(--surface-raised,#f8fafc);border:1px solid var(--card-border);border-radius:8px">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
+          <label style="font-size:.8rem">Zone</label>
+          <input type="text" id="continue-gcp-zone" placeholder="us-central1-a" />
+        </div>
+        <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
+          <label style="font-size:.8rem">Machine Type</label>
+          <input type="text" id="continue-gcp-instance-type" placeholder="n4-standard-2" />
+        </div>
+      </div>
+      <details style="margin-top:8px">
+        <summary style="font-size:.8rem;color:var(--text-muted);cursor:pointer;user-select:none">Advanced GCP options</summary>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
+          <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
+            <label style="font-size:.8rem">Image Family</label>
+            <input type="text" id="continue-gcp-image-family" placeholder="common-cpu" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
+            <label style="font-size:.8rem">Image Project</label>
+            <input type="text" id="continue-gcp-image-project" placeholder="deeplearning-platform-release" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
+            <label style="font-size:.8rem">Accelerator</label>
+            <input type="text" id="continue-gcp-accel-type" placeholder="None (CPU-only)" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:60px;margin-bottom:0">
+            <label style="font-size:.8rem">Count</label>
+            <input type="number" id="continue-gcp-accel-count" placeholder="1" min="1" max="8" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
+            <label style="font-size:.8rem">Network</label>
+            <input type="text" id="continue-gcp-network" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
+            <label style="font-size:.8rem">Subnet</label>
+            <input type="text" id="continue-gcp-subnet" />
+          </div>
+        </div>
+      </details>
+    </div>
+    <div class="form-group">
       <label data-i18n-html="instructions_comments_label">Instructions / Comments <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
       <textarea id="continue-comment" rows="4"
         data-i18n-placeholder="placeholder_continue_comment"
@@ -1090,6 +1235,58 @@
         <label class="model-option"><input type="radio" name="restart-model" value="gemini" /><span class="model-chip">Gemini</span></label>
         <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="restart-model" value="gpt" disabled /><span class="model-chip">GPT</span></label>
       </div>
+    </div>
+    <div class="form-group">
+      <label>Compute Environment</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="model-option"><input type="radio" name="restart-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
+        <label class="model-option"><input type="radio" name="restart-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
+        <label class="model-option" id="restart-backend-cloud-gcp-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
+        <label class="model-option" id="restart-backend-cloud-aws-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
+        <label class="model-option" id="restart-backend-cloud-azure-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
+      </div>
+    </div>
+    <!-- GCP per-project options (shown when cloud:gcp selected) -->
+    <div id="restart-gcp-options" style="display:none;margin-bottom:12px;padding:10px 12px;background:var(--surface-raised,#f8fafc);border:1px solid var(--card-border);border-radius:8px">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
+          <label style="font-size:.8rem">Zone</label>
+          <input type="text" id="restart-gcp-zone" placeholder="us-central1-a" />
+        </div>
+        <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
+          <label style="font-size:.8rem">Machine Type</label>
+          <input type="text" id="restart-gcp-instance-type" placeholder="n4-standard-2" />
+        </div>
+      </div>
+      <details style="margin-top:8px">
+        <summary style="font-size:.8rem;color:var(--text-muted);cursor:pointer;user-select:none">Advanced GCP options</summary>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
+          <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
+            <label style="font-size:.8rem">Image Family</label>
+            <input type="text" id="restart-gcp-image-family" placeholder="common-cpu" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
+            <label style="font-size:.8rem">Image Project</label>
+            <input type="text" id="restart-gcp-image-project" placeholder="deeplearning-platform-release" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
+            <label style="font-size:.8rem">Accelerator</label>
+            <input type="text" id="restart-gcp-accel-type" placeholder="None (CPU-only)" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:60px;margin-bottom:0">
+            <label style="font-size:.8rem">Count</label>
+            <input type="number" id="restart-gcp-accel-count" placeholder="1" min="1" max="8" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
+            <label style="font-size:.8rem">Network</label>
+            <input type="text" id="restart-gcp-network" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
+            <label style="font-size:.8rem">Subnet</label>
+            <input type="text" id="restart-gcp-subnet" />
+          </div>
+        </div>
+      </details>
     </div>
     <div class="tg-section" style="margin-top:12px">
       <div class="tg-section-title">
@@ -1218,98 +1415,219 @@
 
 <!-- SETTINGS MODAL -->
 <div class="modal-backdrop" id="modal-settings">
-  <div class="modal" style="max-width:480px">
-    <h3>User Settings & API Keys</h3>
+  <div class="modal" style="max-width:740px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <h3 style="margin:0;">User Settings & API Keys</h3>
+    </div>
     
     <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:12px 14px; margin-bottom:20px; font-size:.85rem; color:#166534">
       💡 <b>Bring Your Own Key:</b> Configure your API keys here. They are stored encrypted and only used for your own research projects.
     </div>
 
-    <div class="form-group">
-      <label>Gemini API Key <span style="color:#ef4444;font-size:.75rem">* required</span></label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="password" id="settings-gemini" placeholder="AIza..." style="flex:1" />
-        <span id="settings-gemini-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
-      </div>
-      <div style="display:flex; justify-content:space-between; margin-top:2px; font-size:.7rem;">
-        <div id="status-gemini" style="color:var(--text-muted)"></div>
-        <div id="status-gemini-cli" style="color:var(--text-muted)"></div>
-      </div>
-    </div>
-
-    <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px;">
-      <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#d946ef"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span style="font-weight:600; font-size:.95rem">Claude CLI Session (Headless)</span>
-        <span style="color:#ef4444;font-size:.7rem;margin-left:auto">* required</span>
-      </div>
-      <div style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#9a3412">
-        <strong style="display:block; margin-bottom:4px">How to get these?</strong>
-        <ol style="padding-left:16px; margin:0">
-          <li>On your local PC, run: <code style="background:#ffedd5; padding:2px 4px; border-radius:4px; font-family:monospace">claude setup-token</code></li>
-          <li>Copy the token and paste it below.</li>
-        </ol>
+    <div class="settings-layout">
+      <!-- Sidebar -->
+      <div class="settings-sidebar">
+        <button class="settings-tab-btn active" onclick="switchSettingsTab('tab-llms')" id="btn-tab-llms">LLM Providers</button>
+        <button class="settings-tab-btn" onclick="switchSettingsTab('tab-clis')" id="btn-tab-clis">CLI Agents</button>
+        <button class="settings-tab-btn" onclick="switchSettingsTab('tab-cloud')" id="btn-tab-cloud">Cloud Compute</button>
       </div>
 
-      <div class="form-group" style="margin-bottom:0">
-        <label style="font-size:.75rem">OAuth Token (sk-ant-oat01-...)</label>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="password" id="settings-claude-token" placeholder="sk-ant-oat01-..." style="flex:1" />
-          <span id="settings-claude_token-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
-        </div>
-        <div id="status-claude-token" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
-      </div>
-    </div>
-
-    <div class="hero-advanced" style="margin-top:16px">
-      <button type="button" class="hero-advanced-toggle" id="settings-advanced-toggle"
-              aria-expanded="false" onclick="toggleSettingsAdvanced()">
-        <span class="adv-arrow">▶</span> Advanced <span style="color:var(--text-muted);font-weight:400">(optional)</span>
-      </button>
-      <div class="hero-advanced-body" id="settings-advanced-body">
-        <div class="form-group">
-          <label>Anthropic API Key <span style="color:var(--text-muted);font-weight:400;font-size:.75rem">(optional)</span></label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input type="password" id="settings-anthropic" placeholder="sk-ant-..." style="flex:1" />
-            <span id="settings-anthropic-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
-          </div>
-          <div id="status-anthropic" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
-        </div>
-
-        <div class="form-group">
-          <label>OpenAI API Key <span style="color:var(--text-muted);font-weight:400;font-size:.75rem">(optional)</span></label>
-          <div style="display:flex;gap:8px;align-items:center">
-            <input type="password" id="settings-openai" placeholder="sk-..." style="flex:1" />
-            <span id="settings-openai-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
-          </div>
-          <div id="status-openai" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
-        </div>
-
-        <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px;">
-          <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#0d9488"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            <span style="font-weight:600; font-size:.95rem">Gemini CLI Session (Headless)</span>
-            <span style="color:var(--text-muted);font-weight:400;font-size:.7rem;margin-left:auto">(optional)</span>
-          </div>
-          <div style="background:#f0fdfa; border:1px solid #99f6e4; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#0f766e">
-            <strong style="display:block; margin-bottom:4px">How to get these?</strong>
-            <ol style="padding-left:16px; margin:0">
-              <li>On your local PC, run: <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">gemini auth login</code></li>
-              <li>Copy the contents of <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">~/.gemini/oauth_creds.json</code> and paste it below.</li>
-            </ol>
-          </div>
-
-          <div class="form-group" style="margin-bottom:0">
-            <label style="font-size:.75rem">OAuth JSON (~/.gemini/oauth_creds.json)</label>
+      <!-- Content Area -->
+      <div class="settings-content-area">
+        
+        <!-- Tab: LLMs -->
+        <div class="settings-tab-pane active" id="tab-llms">
+          <div class="form-group">
+            <label>Gemini API Key <span style="color:#ef4444;font-size:.75rem">* required</span></label>
             <div style="display:flex;gap:8px;align-items:center">
-              <textarea id="settings-gemini-oauth" placeholder='{"client_id": "...", "client_secret": "...", ...}' style="flex:1; font-family:monospace; font-size:.8rem; min-height:80px;"></textarea>
-              <span id="settings-gemini_oauth-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+              <input type="password" id="settings-gemini" placeholder="AIza..." style="flex:1" />
+              <span id="settings-gemini-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
             </div>
-            <div id="status-gemini-oauth" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
+            <div style="display:flex; justify-content:space-between; margin-top:2px; font-size:.7rem;">
+              <div id="status-gemini" style="color:var(--text-muted)"></div>
+              <div id="status-gemini-cli" style="color:var(--text-muted)"></div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Anthropic API Key <span style="color:var(--text-muted);font-weight:400;font-size:.75rem">(optional)</span></label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="password" id="settings-anthropic" placeholder="sk-ant-..." style="flex:1" />
+              <span id="settings-anthropic-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+            </div>
+            <div id="status-anthropic" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
+          </div>
+
+          <div class="form-group">
+            <label>OpenAI API Key <span style="color:var(--text-muted);font-weight:400;font-size:.75rem">(optional)</span></label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="password" id="settings-openai" placeholder="sk-..." style="flex:1" />
+              <span id="settings-openai-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+            </div>
+            <div id="status-openai" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
           </div>
         </div>
-      </div>
-    </div>
+
+        <!-- Tab: CLI Agents -->
+        <div class="settings-tab-pane" id="tab-clis">
+          <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px; margin-bottom:20px;">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#d946ef"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <span style="font-weight:600; font-size:.95rem">Claude CLI Session (Headless)</span>
+              <span style="color:#ef4444;font-size:.7rem;margin-left:auto">* required</span>
+            </div>
+            <div style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#9a3412">
+              <strong style="display:block; margin-bottom:4px">How to get these?</strong>
+              <ol style="padding-left:16px; margin:0">
+                <li>On your local PC, run: <code style="background:#ffedd5; padding:2px 4px; border-radius:4px; font-family:monospace">claude setup-token</code></li>
+                <li>Copy the token and paste it below.</li>
+              </ol>
+            </div>
+
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:.75rem">OAuth Token (sk-ant-oat01-...)</label>
+              <div style="display:flex;gap:8px;align-items:center">
+                <input type="password" id="settings-claude-token" placeholder="sk-ant-oat01-..." style="flex:1" />
+                <span id="settings-claude_token-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+              </div>
+              <div id="status-claude-token" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
+            </div>
+          </div>
+
+          <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px;">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#0d9488"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <span style="font-weight:600; font-size:.95rem">Gemini CLI Session (Headless)</span>
+              <span style="color:var(--text-muted);font-weight:400;font-size:.7rem;margin-left:auto">(optional)</span>
+            </div>
+            <div style="background:#f0fdfa; border:1px solid #99f6e4; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#0f766e">
+              <strong style="display:block; margin-bottom:4px">How to get these?</strong>
+              <ol style="padding-left:16px; margin:0">
+                <li>On your local PC, run: <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">gemini auth login</code></li>
+                <li>Copy the contents of <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">~/.gemini/oauth_creds.json</code> and paste it below.</li>
+              </ol>
+            </div>
+
+            <div class="form-group" style="margin-bottom:0">
+              <label style="font-size:.75rem">OAuth JSON (~/.gemini/oauth_creds.json)</label>
+              <div style="display:flex;gap:8px;align-items:center">
+                <textarea id="settings-gemini-oauth" placeholder='{"client_id": "...", "client_secret": "...", ...}' style="flex:1; font-family:monospace; font-size:.8rem; min-height:80px;"></textarea>
+                <span id="settings-gemini_oauth-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+              </div>
+              <div id="status-gemini-oauth" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab: Cloud Compute -->
+        <div class="settings-tab-pane" id="tab-cloud">
+          <div class="cloud-provider-select">
+            <button class="cloud-provider-btn active" onclick="switchCloudProviderTab('cp-gcp')" id="btn-cp-gcp">Google Cloud</button>
+            <button class="cloud-provider-btn" onclick="switchCloudProviderTab('cp-aws')" id="btn-cp-aws">AWS</button>
+            <button class="cloud-provider-btn" onclick="switchCloudProviderTab('cp-azure')" id="btn-cp-azure">Azure</button>
+          </div>
+
+          <!-- GCP Pane -->
+          <div class="cloud-provider-pane active" id="cp-gcp">
+            <p style="font-size:.8rem;color:var(--text-second);margin-bottom:12px;">Configure Google Cloud parameters for remote orchestration runs.</p>
+            <div class="form-group">
+              <label style="font-size:.75rem">GCP Service Account JSON</label>
+              <textarea id="settings-gcp-service-account-json" placeholder='{"type": "service_account", ...}' style="font-family:monospace; font-size:.8rem; min-height:80px;"></textarea>
+            </div>
+            <div class="form-group">
+              <label style="font-size:.75rem">GCP Project ID</label>
+              <input type="text" id="settings-gcp-project" placeholder="my-research-project" />
+            </div>
+            
+            <div style="display:flex;gap:12px">
+              <div class="form-group" style="flex:1">
+                <label style="font-size:.75rem">Default Zone</label>
+                <input type="text" id="settings-gcp-zone" placeholder="us-central1-a" />
+              </div>
+              <div class="form-group" style="flex:1">
+                <label style="font-size:.75rem">Default Machine Type</label>
+                <input type="text" id="settings-gcp-instance-type" placeholder="n4-standard-2" />
+              </div>
+            </div>
+
+            <div style="display:flex;gap:12px">
+              <div class="form-group" style="flex:1">
+                <label style="font-size:.75rem">Default Image Family</label>
+                <input type="text" id="settings-gcp-image-family" placeholder="common-cpu" />
+              </div>
+              <div class="form-group" style="flex:1">
+                <label style="font-size:.75rem">Default Image Project</label>
+                <input type="text" id="settings-gcp-image-project" placeholder="deeplearning-platform-release" />
+              </div>
+            </div>
+
+            <div style="display:flex;gap:12px">
+              <div class="form-group" style="flex:1">
+                <label style="font-size:.75rem">Default Network <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+                <input type="text" id="settings-gcp-network" placeholder="default" />
+              </div>
+              <div class="form-group" style="flex:1">
+                <label style="font-size:.75rem">Default Subnet <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+                <input type="text" id="settings-gcp-subnet" placeholder="default" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label style="font-size:.75rem">GCP SSH Private Key <span style="color:var(--text-muted);font-weight:400">(optional — paste contents of ~/.ssh/id_rsa)</span></label>
+              <textarea id="settings-gcp-ssh-private-key" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..." style="font-family:monospace; font-size:.75rem; min-height:80px;"></textarea>
+            </div>
+            <div style="display:flex;gap:12px">
+              <div class="form-group" style="flex:1">
+                <label style="font-size:.75rem">SSH Username <span style="color:var(--text-muted);font-weight:400">(default: ubuntu)</span></label>
+                <input type="text" id="settings-gcp-ssh-user" placeholder="ubuntu" />
+              </div>
+              <div class="form-group" style="flex:1">
+                <label style="font-size:.75rem">Conda Env <span style="color:var(--text-muted);font-weight:400">(default: ark)</span></label>
+                <input type="text" id="settings-gcp-conda-env" placeholder="ark" />
+              </div>
+            </div>
+          </div>
+
+          <!-- AWS Pane -->
+          <div class="cloud-provider-pane" id="cp-aws">
+            <p style="font-size:.8rem;color:var(--text-second);margin-bottom:12px;">Configure AWS parameters for remote orchestration runs.</p>
+            <div class="form-group">
+              <label style="font-size:.75rem">AWS Access Key ID</label>
+              <input type="password" id="settings-aws-access-key-id" placeholder="AKIA..." />
+            </div>
+            <div class="form-group">
+              <label style="font-size:.75rem">AWS Secret Access Key</label>
+              <input type="password" id="settings-aws-secret-access-key" placeholder="wJalr..." />
+            </div>
+            <div class="form-group">
+              <label style="font-size:.75rem">AWS Region</label>
+              <input type="text" id="settings-aws-default-region" placeholder="us-east-1" />
+            </div>
+          </div>
+
+          <!-- Azure Pane -->
+          <div class="cloud-provider-pane" id="cp-azure">
+            <p style="font-size:.8rem;color:var(--text-second);margin-bottom:12px;">Configure Azure parameters for remote orchestration runs.</p>
+            <div class="form-group">
+              <label style="font-size:.75rem">Azure Client ID</label>
+              <input type="password" id="settings-azure-client-id" />
+            </div>
+            <div class="form-group">
+              <label style="font-size:.75rem">Azure Client Secret</label>
+              <input type="password" id="settings-azure-client-secret" />
+            </div>
+            <div class="form-group">
+              <label style="font-size:.75rem">Azure Tenant ID</label>
+              <input type="password" id="settings-azure-tenant-id" />
+            </div>
+            <div class="form-group">
+              <label style="font-size:.75rem">Azure Subscription ID</label>
+              <input type="password" id="settings-azure-subscription-id" />
+            </div>
+          </div>
+        </div>
+
+      </div> <!-- /settings-content-area -->
+    </div> <!-- /settings-layout -->
 
     <div class="modal-footer">
       <button class="btn-secondary" onclick="closeModal('modal-settings')">Close</button>
@@ -1752,6 +2070,87 @@ let detailEventSource = null;
 let logPinned = true;   // true = auto-scroll to bottom; false = user scrolled up
 
 // ══════════════════════════════════════════════════════
+//  Cloud provider helpers
+// ══════════════════════════════════════════════════════
+const _CLOUD_PROVIDER_LABELS = { gcp: 'GCP', aws: 'AWS', azure: 'Azure' };
+
+// Show per-provider cloud buttons across all backend radio groups based on
+// window._userCloudProviders (populated after loadGateBanner fetches user settings).
+function _applyCloudProviderButtons() {
+  const providers = window._userCloudProviders || [];
+  for (const prefix of ['hero', 'continue', 'restart']) {
+    const nameAttr = prefix === 'hero' ? 'compute_backend' : `${prefix}-backend`;
+    for (const p of ['gcp', 'aws', 'azure']) {
+      const lbl = document.getElementById(`${prefix}-backend-cloud-${p}-label`);
+      if (!lbl) continue;
+      const input = lbl.querySelector('input');
+      const available = providers.includes(p);
+      lbl.style.display = available ? '' : 'none';
+      if (input) input.disabled = !available;
+    }
+  }
+}
+
+// Per-user GCP defaults loaded from /api/user/settings (populated in loadGateBanner)
+window._userGcpDefaults = {};
+
+// Show/hide the GCP options panel for a given modal prefix based on selected backend.
+function _updateGcpOptionsVisibility(prefix) {
+  const nameAttr = prefix === 'hero' ? 'compute_backend' : `${prefix}-backend`;
+  const selected = ([...document.querySelectorAll(`input[name="${nameAttr}"]`)].find(r => r.checked) || {}).value || '';
+  const panel = document.getElementById(`${prefix}-gcp-options`);
+  if (panel) panel.style.display = selected === 'cloud:gcp' ? '' : 'none';
+}
+
+// Populate GCP option fields with per-project overrides, falling back to user/system defaults.
+function _loadGcpOptions(prefix, overrides) {
+  const d = window._userGcpDefaults;
+  const o = overrides || {};
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  set(`${prefix}-gcp-zone`,          o.region        || d.zone         || '');
+  set(`${prefix}-gcp-instance-type`, o.instance_type || d.instance_type || '');
+  set(`${prefix}-gcp-image-family`,  o.image_id      || d.image_family  || '');
+  set(`${prefix}-gcp-image-project`, o.image_project || d.image_project || '');
+  set(`${prefix}-gcp-accel-type`,    o.accelerator_type  || '');
+  set(`${prefix}-gcp-accel-count`,   o.accelerator_count != null ? String(o.accelerator_count) : '');
+  set(`${prefix}-gcp-network`,       o.network  || '');
+  set(`${prefix}-gcp-subnet`,        o.subnet   || '');
+}
+
+// Collect non-empty GCP option values into an overrides object (using cfg key names).
+function _collectGcpOptions(prefix) {
+  const get = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const out = {};
+  const zone         = get(`${prefix}-gcp-zone`);
+  const instanceType = get(`${prefix}-gcp-instance-type`);
+  const imageFamily  = get(`${prefix}-gcp-image-family`);
+  const imageProject = get(`${prefix}-gcp-image-project`);
+  const accelType    = get(`${prefix}-gcp-accel-type`);
+  const accelCount   = get(`${prefix}-gcp-accel-count`);
+  const network      = get(`${prefix}-gcp-network`);
+  const subnet       = get(`${prefix}-gcp-subnet`);
+  if (zone)         out.region         = zone;
+  if (instanceType) out.instance_type  = instanceType;
+  if (imageFamily)  out.image_id       = imageFamily;
+  if (imageProject) out.image_project  = imageProject;
+  if (accelType)    out.accelerator_type  = accelType;
+  if (accelCount)   out.accelerator_count = parseInt(accelCount, 10) || 1;
+  if (network)      out.network  = network;
+  if (subnet)       out.subnet   = subnet;
+  return Object.keys(out).length ? out : null;
+}
+
+// Convert a legacy 'cloud' backend value to an explicit 'cloud:<provider>' value
+// by picking the first available provider.  Falls back to 'local' if none.
+function _normalizeCloudBackend(val) {
+  if (val === 'cloud') {
+    const providers = window._userCloudProviders || [];
+    return providers.length > 0 ? `cloud:${providers[0]}` : 'local';
+  }
+  return val || 'local';
+}
+
+// ══════════════════════════════════════════════════════
 //  Router
 // ══════════════════════════════════════════════════════
 function navigate(page, params = {}) {
@@ -1878,6 +2277,10 @@ async function checkAuth() {
 
   // Model and iteration pickers are unlocked for all users (self-provisioned keys).
 
+  // Load cloud provider availability before routing so continue/restart modals
+  // show the correct cloud buttons even when landing directly on a detail page.
+  loadGateBanner();
+
   // Route based on hash
   const hash = location.hash;
   if (hash.startsWith('#project/')) {
@@ -1916,6 +2319,35 @@ async function loadGateBanner() {
   if (!res.ok) return;
   const data = await res.json();
   _adminDisabled = data.disabled;
+  // Global backend availability flags — start from server-side config
+  window._sysCloud = !!(data.cloud && data.cloud.enabled);
+  window._sysSlurm = !!(data.slurm && data.slurm.available);
+
+  // Also check user-level cloud credentials (user may supply their own keys
+  // without a server-side CLOUD_PROVIDER setting)
+  window._userCloudProviders = [];
+  try {
+    const uRes = await fetch(APP_BASE + '/api/user/settings');
+    if (uRes.ok) {
+      const uData = await uRes.json();
+      if (uData.cloud_available) window._sysCloud = true;
+      window._userCloudProviders = uData.cloud_providers || [];
+      window._userGcpDefaults = {
+        zone:          uData.gcp_zone          || '',
+        instance_type: uData.gcp_instance_type || '',
+        image_family:  uData.gcp_image_family  || '',
+        image_project: uData.gcp_image_project || '',
+        ssh_user:      uData.gcp_ssh_user      || '',
+        conda_env:     uData.gcp_conda_env     || '',
+      };
+    }
+  } catch(e) {}
+  _applyCloudProviderButtons();
+  _loadGcpOptions('hero', {});
+  _updateGcpOptionsVisibility('hero');
+  _updateGcpOptionsVisibility('continue');
+  _updateGcpOptionsVisibility('restart');
+
   document.getElementById('gate-banner').style.display = data.disabled ? 'flex' : 'none';
   const heroCard = document.getElementById('hero-card');
   if (heroCard) heroCard.classList.toggle('gate-disabled', data.disabled);
@@ -2002,7 +2434,10 @@ function renderProjectCard(p) {
         </div>
       </div>
       ${idea ? `<div class="project-idea">${idea}</div>` : ''}
-      <div class="project-venue">${esc(p.venue)}</div>
+      <div class="project-venue">
+        ${esc(p.venue || 'General')}
+        ${p.environment ? ` · <span style="color:var(--teal);font-weight:600">${esc(p.environment)}</span>` : ''}
+      </div>
       <div class="score-bar"><div class="score-fill" style="width:${pct}%"></div></div>
       <div class="score-label">${t('score_label', score)}</div>
     </div>`;
@@ -2107,7 +2542,7 @@ async function loadDetail(id) {
   } else if (p.status === 'stopped') {
     statusLine = t('stopped_iter', p.current_iteration || 0, p.max_iterations);
   } else if (p.status === 'failed') {
-    statusLine = t('failed');
+    statusLine = t('failed') + (p.error_message ? ` — ${esc(p.error_message)}` : '');
   } else {
     statusLine = p.status;
   }
@@ -2805,13 +3240,7 @@ function toggleHeroAdvanced() {
   body.classList.toggle('open', !expanded);
 }
 
-function toggleSettingsAdvanced() {
-  const btn = document.getElementById('settings-advanced-toggle');
-  const body = document.getElementById('settings-advanced-body');
-  const expanded = btn.getAttribute('aria-expanded') === 'true';
-  btn.setAttribute('aria-expanded', String(!expanded));
-  body.classList.toggle('open', !expanded);
-}
+
 
 // ══════════════════════════════════════════════════════
 //  Hero form — submit
@@ -2868,6 +3297,14 @@ async function performLaunch(form) {
   label.innerHTML = '<span class="spinner"></span>';
 
   const fd = new FormData(form);
+
+  // Inject GCP per-project overrides if GCP backend is selected
+  const heroBackend = fd.get('compute_backend') || 'local';
+  if (heroBackend === 'cloud:gcp') {
+    const gcpOvr = _collectGcpOptions('hero');
+    fd.set('cloud_overrides', gcpOvr ? JSON.stringify(gcpOvr) : '');
+  }
+
   // Send the first PDF as pdf_file (backend expects this field name)
   const pdfIdx = selectedFiles.findIndex(f => f.name.toLowerCase().endsWith('.pdf'));
   if (pdfIdx !== -1) {
@@ -2976,6 +3413,22 @@ async function openContinueModal(id) {
     document.querySelectorAll('input[name="continue-model"]').forEach(r => {
       r.checked = (r.value === modelVal);
     });
+
+    _applyCloudProviderButtons();
+    const backendVal = _normalizeCloudBackend(p.compute_backend || 'local');
+    document.querySelectorAll('input[name="continue-backend"]').forEach(r => {
+      r.checked = (r.value === backendVal);
+      if (r.value === 'slurm') {
+          const lbl = r.closest('.model-option');
+          if (!window._sysSlurm) { lbl.style.opacity = '0.45'; lbl.style.pointerEvents = 'none'; r.disabled = true; }
+          else { lbl.style.opacity = ''; lbl.style.pointerEvents = ''; r.disabled = false; }
+      }
+    });
+    // Load per-project GCP options from existing overrides (or user defaults)
+    let existingOverrides = {};
+    try { existingOverrides = p.cloud_overrides ? JSON.parse(p.cloud_overrides) : {}; } catch(e) {}
+    _loadGcpOptions('continue', existingOverrides);
+    _updateGcpOptionsVisibility('continue');
   }
 
   document.getElementById('modal-continue').classList.add('open');
@@ -2985,13 +3438,17 @@ async function submitContinue() {
   const iter = Math.max(1, Math.min(5, parseInt(document.getElementById('continue-iter').value) || 1));
   const comment = document.getElementById('continue-comment').value.trim();
   const model = ([...document.querySelectorAll('input[name="continue-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-4-6';
+  const backend = ([...document.querySelectorAll('input[name="continue-backend"]')].find(r => r.checked) || {}).value || 'local';
+  const gcpOverrides = backend === 'cloud:gcp' ? _collectGcpOptions('continue') : null;
   const btn = document.getElementById('continue-btn');
   btn.disabled = true;
   try {
+    const payload = { additional_iterations: iter, comment, model, compute_backend: backend };
+    if (gcpOverrides) payload.cloud_overrides = gcpOverrides;
     const res = await fetch(`${APP_BASE}/api/projects/${continueProjectId}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ additional_iterations: iter, comment, model }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
@@ -3050,6 +3507,27 @@ async function openRestartModal(id) {
     r.checked = (r.value === modelVal);
   });
 
+  // Set compute backend radio
+  _applyCloudProviderButtons();
+  const backendVal = _normalizeCloudBackend(p.compute_backend || 'local');
+  document.querySelectorAll('input[name="restart-backend"]').forEach(r => {
+    r.checked = (r.value === backendVal);
+    if (r.value === 'slurm') {
+        const lbl = r.closest('.model-option');
+        if (!window._sysSlurm) { lbl.style.opacity = '0.45'; lbl.style.pointerEvents = 'none'; r.disabled = true; }
+        else { lbl.style.opacity = ''; lbl.style.pointerEvents = ''; r.disabled = false; }
+    }
+  });
+  // Load per-project GCP options from existing overrides (or user defaults)
+  let restartOverrides = {};
+  try { restartOverrides = p.cloud_overrides ? JSON.parse(p.cloud_overrides) : {}; } catch(e) {}
+  _loadGcpOptions('restart', restartOverrides);
+  _updateGcpOptionsVisibility('restart');
+
+  // Update hero form slurm visibility
+  const hs = document.getElementById('hero-backend-slurm-label');
+  if (hs) { hs.style.display = window._sysSlurm ? 'block' : 'none'; }
+
   // Deep research checkbox
   const drSection = document.getElementById('restart-deep-research-section');
   if (p.has_deep_research) {
@@ -3084,9 +3562,13 @@ async function submitRestart() {
       telegram_token: document.getElementById('restart-tg-token').value.trim(),
       telegram_chat_id: document.getElementById('restart-tg-chatid').value.trim(),
       comment: document.getElementById('restart-comment').value.trim(),
+      compute_backend: ([...document.querySelectorAll('input[name="restart-backend"]')].find(r => r.checked) || {}).value || 'local',
       redo_deep_research: !document.getElementById('restart-keep-dr').checked,
       keep_figures: document.getElementById('restart-keep-figures').checked,
     };
+    const restartBackend = body.compute_backend;
+    const restartGcpOverrides = restartBackend === 'cloud:gcp' ? _collectGcpOptions('restart') : null;
+    if (restartGcpOverrides) body.cloud_overrides = restartGcpOverrides;
     const res = await fetch(`${APP_BASE}/api/projects/${restartProjectId}/restart`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -3478,6 +3960,8 @@ async function submitFeedback(e) {
 
 async function openSettingsModal() {
   openModal('modal-settings');
+  switchSettingsTab('tab-llms');
+  switchCloudProviderTab('cp-gcp');
   try {
     const res = await fetch(APP_BASE + '/api/user/settings');
     const data = await res.json();
@@ -3488,21 +3972,46 @@ async function openSettingsModal() {
     document.getElementById('settings-claude-token').value = data.claude_oauth_token || '';
     document.getElementById('settings-gemini-oauth').value = data.gemini_oauth_json || '';
 
+    document.getElementById('settings-aws-access-key-id').value = data.aws_access_key_id || '';
+    document.getElementById('settings-aws-secret-access-key').value = data.aws_secret_access_key || '';
+    document.getElementById('settings-aws-default-region').value = data.aws_default_region || '';
+    document.getElementById('settings-gcp-service-account-json').value = data.gcp_service_account_json || '';
+    document.getElementById('settings-gcp-project').value = data.gcp_project || '';
+    document.getElementById('settings-gcp-zone').value = data.gcp_zone || '';
+    document.getElementById('settings-gcp-instance-type').value = data.gcp_instance_type || '';
+    document.getElementById('settings-gcp-image-family').value = data.gcp_image_family || '';
+    document.getElementById('settings-gcp-image-project').value = data.gcp_image_project || '';
+    document.getElementById('settings-gcp-ssh-private-key').value = data.gcp_ssh_private_key || '';
+    document.getElementById('settings-gcp-ssh-user').value = data.gcp_ssh_user || '';
+    document.getElementById('settings-gcp-conda-env').value = data.gcp_conda_env || '';
+    document.getElementById('settings-gcp-network').value = data.gcp_network || '';
+    document.getElementById('settings-gcp-subnet').value = data.gcp_subnet || '';
+    document.getElementById('settings-azure-client-id').value = data.azure_client_id || '';
+    document.getElementById('settings-azure-client-secret').value = data.azure_client_secret || '';
+    document.getElementById('settings-azure-tenant-id').value = data.azure_tenant_id || '';
+    document.getElementById('settings-azure-subscription-id').value = data.azure_subscription_id || '';
+
     document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
     document.getElementById('status-claude-token').textContent = data.claude_oauth_token ? 'Current: ' + data.claude_oauth_token : '';
     document.getElementById('status-gemini-oauth').textContent = data.gemini_oauth_json ? 'Current: [JSON Config]' : '';
 
-    // Auto-expand Advanced if any optional field is already set
-    const advBtn = document.getElementById('settings-advanced-toggle');
-    const advBody = document.getElementById('settings-advanced-body');
-    const hasAdv = data.anthropic || data.openai || data.gemini_oauth_json;
-    if (advBtn && advBody && hasAdv) {
-      advBtn.setAttribute('aria-expanded', 'true');
-      advBody.classList.add('open');
-    }
   } catch(e) {}
+}
+
+function switchSettingsTab(tabId) {
+  document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.settings-tab-pane').forEach(p => p.classList.remove('active'));
+  document.getElementById('btn-' + tabId).classList.add('active');
+  document.getElementById(tabId).classList.add('active');
+}
+
+function switchCloudProviderTab(cpId) {
+  document.querySelectorAll('.cloud-provider-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.cloud-provider-pane').forEach(p => p.classList.remove('active'));
+  document.getElementById('btn-' + cpId).classList.add('active');
+  document.getElementById(cpId).classList.add('active');
 }
 
 async function saveUserSettings() {
@@ -3530,6 +4039,24 @@ async function saveUserSettings() {
       openai: document.getElementById('settings-openai').value.trim(),
       claude_oauth_token: document.getElementById('settings-claude-token').value.trim(),
       gemini_oauth_json: document.getElementById('settings-gemini-oauth').value.trim(),
+      aws_access_key_id: document.getElementById('settings-aws-access-key-id').value.trim(),
+      aws_secret_access_key: document.getElementById('settings-aws-secret-access-key').value.trim(),
+      aws_default_region: document.getElementById('settings-aws-default-region').value.trim(),
+      gcp_service_account_json: document.getElementById('settings-gcp-service-account-json').value.trim(),
+      gcp_project: document.getElementById('settings-gcp-project').value.trim(),
+      gcp_zone: document.getElementById('settings-gcp-zone').value.trim(),
+      gcp_instance_type: document.getElementById('settings-gcp-instance-type').value.trim(),
+      gcp_image_family: document.getElementById('settings-gcp-image-family').value.trim(),
+      gcp_image_project: document.getElementById('settings-gcp-image-project').value.trim(),
+      gcp_ssh_private_key: document.getElementById('settings-gcp-ssh-private-key').value.trim(),
+      gcp_ssh_user: document.getElementById('settings-gcp-ssh-user').value.trim(),
+      gcp_conda_env: document.getElementById('settings-gcp-conda-env').value.trim(),
+      gcp_network: document.getElementById('settings-gcp-network').value.trim(),
+      gcp_subnet: document.getElementById('settings-gcp-subnet').value.trim(),
+      azure_client_id: document.getElementById('settings-azure-client-id').value.trim(),
+      azure_client_secret: document.getElementById('settings-azure-client-secret').value.trim(),
+      azure_tenant_id: document.getElementById('settings-azure-tenant-id').value.trim(),
+      azure_subscription_id: document.getElementById('settings-azure-subscription-id').value.trim(),
     };
 
     // Validate: Gemini API Key is required
@@ -3630,6 +4157,16 @@ function showToast(msg, type='') {
 //  Boot
 // ══════════════════════════════════════════════════════
 applyI18n();
+
+// Wire GCP options visibility to backend radio buttons in all three contexts.
+(function() {
+  for (const prefix of ['hero', 'continue', 'restart']) {
+    const nameAttr = prefix === 'hero' ? 'compute_backend' : `${prefix}-backend`;
+    document.querySelectorAll(`input[name="${nameAttr}"]`).forEach(r => {
+      r.addEventListener('change', () => _updateGcpOptionsVisibility(prefix));
+    });
+  }
+})();
 
 if (window.SHARE_MODE) {
   // Project-share visitors skip login and land directly on the detail page.

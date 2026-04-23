@@ -26,6 +26,7 @@
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#ark-pipeline">Pipeline</a> &bull;
   <a href="#ark-agents">Agents</a> &bull;
+  <a href="#cloud-compute">Cloud</a> &bull;
   <a href="#cli-reference">CLI</a>
 </p>
 
@@ -376,6 +377,269 @@ ARK includes a script to build and push images to Google Artifact Registry or GC
 ./docker/push-gcp.sh --project [PROJECT_ID] --legacy --build
 ```
 The `--build` flag automatically builds the images for `linux/amd64` even when running on macOS.
+
+---
+
+## Cloud Compute
+
+ARK supports running experiments on remote cloud VMs (AWS, GCP, Azure) while keeping the orchestrator and web portal running **locally**. This is the recommended setup if you want elastic compute capacity without managing an HPC cluster.
+
+**How it works:**
+1. The webapp runs locally or on a small server, handling project management and the UI.
+2. When a project is submitted, ARK provisions a cloud VM, transfers the project code over SSH, and manages the full experiment lifecycle remotely.
+3. Results are synced back automatically. The VM is terminated when the run completes.
+
+### Enabling Cloud Compute via the Dashboard
+
+1. Open the **Settings** panel (⚙️ icon in the top navigation bar).
+2. Scroll down to the **Cloud Compute** section.
+3. Enter your credentials for your preferred provider (AWS, GCP, or Azure).
+4. Click **Save**. All subsequent project submissions will automatically dispatch to the cloud.
+
+> [!TIP]
+> Cloud credentials are encrypted at rest using your `SECRET_KEY`. Your keys are never logged or transmitted to third parties.
+
+### Configuration Hierarchy
+
+ARK uses a three-tier configuration model for cloud compute:
+1. **System Defaults**: Set in `webapp.env` (e.g., `CLOUD_REGION`, `CLOUD_NETWORK`).
+2. **Global User Defaults**: Set in the **Settings** panel (⚙️). These apply to all your projects.
+3. **Project Overrides**: Set during project creation or restart. These have the highest priority.
+
+This hierarchy allows you to define your standard machine type and VPC settings once, while easily swapping to a powerful GPU instance for a specific high-intensity experiment.
+
+---
+
+### Creating a Project
+
+Once cloud compute is configured, the recommended way to launch a project is through the dashboard:
+
+1. Click **New Project** from the dashboard home.
+2. Fill in the research goal, target venue, and any additional instructions.
+3. Click **Submit** — the webapp automatically generates a `config.yaml` for the project and provisions the cloud VM.
+
+The generated `config.yaml` is stored at:
+
+```
+~/.ark/data/projects/<user_id>/<project_id>/config.yaml
+```
+
+You can inspect or hand-edit this file at any time (e.g., to tune instance type or add `setup_commands`). Changes take effect on the next run or restart.
+
+> [!NOTE]
+> If `PROJECTS_ROOT` is set in your `.ark/webapp.env`, the path above is replaced by `$PROJECTS_ROOT/<user_id>/<project_id>/config.yaml`.
+
+---
+
+### Cloud Provider Setup
+
+<details>
+<summary><strong>☁️ Google Cloud Platform (GCP)</strong></summary>
+
+#### 1. Create a Service Account
+
+```bash
+export PROJECT_ID=your-gcp-project-id
+
+# Create a service account for ARK
+gcloud iam service-accounts create ark-runner \
+  --display-name="ARK Research Runner"
+
+# Grant required roles (Compute Admin + Service Account User)
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:ark-runner@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/compute.admin"
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:ark-runner@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser"
+
+# Download the JSON key
+gcloud iam service-accounts keys create ~/ark-gcp-key.json \
+  --iam-account=ark-runner@${PROJECT_ID}.iam.gserviceaccount.com
+```
+
+#### 2. Enable Required APIs
+
+```bash
+gcloud services enable compute.googleapis.com --project=$PROJECT_ID
+```
+
+#### 3. Configure in Dashboard
+
+Paste the contents of `~/ark-gcp-key.json` into the **GCP Service Account JSON** field and set your **GCP Project ID** in the Settings panel.
+
+#### 4. Finding GCP Parameters (Optional)
+
+If you need to find available zones, machine types, or network details, use these `gcloud` commands:
+
+```bash
+# List available zones
+gcloud compute zones list
+
+# List available machine types in a specific zone
+gcloud compute machine-types list --zones=us-central1-a
+
+# List networks and subnets
+gcloud compute networks list
+gcloud compute networks subnets list --regions=us-central1
+
+# List deep learning images (families)
+gcloud compute images list --project=deeplearning-platform-release --no-standard-images
+```
+
+Alternatively, you can find these in the **Google Cloud Console**:
+- **Zones/Machine Types**: Compute Engine &rarr; VM Instances &rarr; Create Instance (to see options)
+- **Networks**: VPC Network &rarr; VPC Networks
+- **Images**: Compute Engine &rarr; Images
+
+#### 5. `config.yaml` Reference (advanced / CLI only)
+
+The webapp generates this automatically from your Settings. For manual or CLI-driven projects, add the following to your project's `config.yaml`:
+
+```yaml
+compute_backend:
+  type: cloud
+  provider: gcp
+  region: us-central1-a             # GCP zone
+  instance_type: n1-standard-8
+  image_id: common-cpu              # Deep Learning VM image family
+  image_project: deeplearning-platform-release
+  ssh_key_path: ~/.ssh/id_rsa
+  ssh_user: ubuntu
+  # Optional: Networking
+  network: my-vpc                   # Default: "default"
+  subnet: my-subnet                 # Default: "default"
+  # Optional: GPU accelerator
+  accelerator_type: nvidia-tesla-t4
+  accelerator_count: 1
+  # Optional: run these commands on the instance after boot
+  setup_commands:
+    - conda activate base && pip install -r requirements.txt
+```
+
+</details>
+
+---
+
+<details>
+<summary><strong>☁️ Amazon Web Services (AWS)</strong></summary>
+
+#### 1. Create an IAM User
+
+```bash
+# Create an IAM user for ARK
+aws iam create-user --user-name ark-runner
+
+# Attach policy (EC2 full access is sufficient)
+aws iam attach-user-policy \
+  --user-name ark-runner \
+  --policy-arn arn:aws:iam::aws:policy/AmazonEC2FullAccess
+
+# Create access keys
+aws iam create-access-key --user-name ark-runner
+# Note the AccessKeyId and SecretAccessKey from the output
+```
+
+#### 2. Create an SSH Key Pair
+
+```bash
+# Create a key pair and save locally
+aws ec2 create-key-pair \
+  --key-name ark-key \
+  --query 'KeyMaterial' \
+  --output text > ~/.ssh/ark-key.pem
+chmod 600 ~/.ssh/ark-key.pem
+```
+
+#### 3. Configure in Dashboard
+
+Enter your **AWS Access Key ID**, **AWS Secret Access Key**, and **AWS Region** (e.g., `us-east-1`) in the Settings panel.
+
+#### 4. `config.yaml` Reference (advanced / CLI only)
+
+The webapp generates this automatically from your Settings. For manual or CLI-driven projects, add the following to your project's `config.yaml`:
+
+```yaml
+compute_backend:
+  type: cloud
+  provider: aws
+  region: us-east-1
+  instance_type: g4dn.xlarge        # 1x T4 GPU, 4 vCPUs, 16 GB RAM
+  image_id: ami-0c7c51e8edb7b66d3   # Deep Learning AMI (Ubuntu 22.04)
+  ssh_key_name: ark-key              # Key pair name in AWS Console
+  ssh_key_path: ~/.ssh/ark-key.pem
+  ssh_user: ubuntu
+  security_group: sg-xxxxxxxx        # Must allow inbound SSH (port 22)
+  # Optional: post-boot setup
+  setup_commands:
+    - conda activate pytorch && pip install -r requirements.txt
+```
+
+> [!IMPORTANT]
+> Ensure your security group allows **inbound SSH (port 22)** from the IP of the machine running the webapp. Without this, ARK cannot connect to the provisioned instance.
+
+</details>
+
+---
+
+<details>
+<summary><strong>☁️ Microsoft Azure</strong></summary>
+
+#### 1. Create a Service Principal
+
+```bash
+# Login
+az login
+
+# Create a service principal with Contributor role
+az ad sp create-for-rbac \
+  --name "ark-runner" \
+  --role Contributor \
+  --scopes /subscriptions/YOUR_SUBSCRIPTION_ID
+# Note: appId (Client ID), password (Client Secret), and tenant (Tenant ID)
+```
+
+#### 2. Register the SSH Public Key
+
+```bash
+# Generate an SSH key if you don't have one
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/ark-azure-key
+
+# The public key (~/.ssh/ark-azure-key.pub) will be used automatically
+```
+
+#### 3. Configure in Dashboard
+
+Enter your **Azure Client ID**, **Azure Client Secret**, **Azure Tenant ID**, and **Azure Subscription ID** in the Settings panel.
+
+#### 4. `config.yaml` Reference (advanced / CLI only)
+
+The webapp generates this automatically from your Settings. For manual or CLI-driven projects, add the following to your project's `config.yaml`:
+
+```yaml
+compute_backend:
+  type: cloud
+  provider: azure
+  region: eastus                     # Azure location
+  instance_type: Standard_NC6s_v3    # 1x V100 GPU, 6 vCPUs, 112 GB RAM
+  image_id: UbuntuLTS                # OS image alias
+  ssh_key_path: ~/.ssh/ark-azure-key
+  ssh_user: azureuser
+  resource_group: ark-resources      # Will be created if it doesn't exist
+  # Optional: post-boot setup
+  setup_commands:
+    - pip install -r requirements.txt
+```
+
+</details>
+
+---
+
+### Cost Control
+
+> [!WARNING]
+> Cloud VMs are billed by the hour. ARK automatically terminates instances after each run completes. However, if the webapp process is killed unexpectedly, the **Orphan Rescue** mechanism will detect stale instances on the next restart and mark them as failed — but **will not terminate the cloud VM automatically**. Always verify no stray instances are running in your cloud console after unexpected shutdowns.
 
 ---
 

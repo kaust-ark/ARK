@@ -22,6 +22,22 @@ logger = logging.getLogger("website.dashboard")
 _log_mtimes: dict[str, float] = {}   # project_id → last log mtime
 
 
+def _read_job_error(log_dir) -> str:
+    """Return the last few meaningful lines from the most recent job log file."""
+    from pathlib import Path
+    log_dir = Path(log_dir)
+    logs = sorted(log_dir.glob("local_*.out"), key=lambda f: f.stat().st_mtime, reverse=True)
+    if not logs:
+        return ""
+    try:
+        lines = logs[0].read_text(errors="replace").splitlines()
+        # Strip blank lines from the tail, then take last 3 non-empty lines
+        tail = [l for l in lines if l.strip()][-3:]
+        return " | ".join(tail)[:300]
+    except Exception:
+        return ""
+
+
 def _pname(p) -> str:
     """Human-readable project label: title if set, else slug name."""
     return p.title if p.title else p.name
@@ -105,16 +121,20 @@ async def _poll_jobs(app: FastAPI):
                     from .constants import DASHBOARD_PREFIX
                     url = f"{settings.base_url}{DASHBOARD_PREFIX}/#project/{p.id}"
 
-                    # ── Local subprocess job ──────────────────────────────
-                    if p.slurm_job_id.startswith("local:"):
-                        pid_str = p.slurm_job_id[len("local:"):]
+                    # ── Local / Cloud subprocess job ──────────────────────
+                    if p.slurm_job_id.startswith(("local:", "cloud:")):
+                        prefix = "local:" if p.slurm_job_id.startswith("local:") else "cloud:"
+                        pid_str = p.slurm_job_id[len(prefix):]
                         if not pid_str.isdigit():
                             continue
                         pid = int(pid_str)
                         local_state = poll_local_job(pid, pdir / "logs")
                         new_status = slurm_state_to_status(local_state)
                         if new_status != p.status:
-                            update_project(session, p, status=new_status)
+                            kwargs = {"status": new_status}
+                            if new_status == "failed":
+                                kwargs["error_message"] = _read_job_error(pdir / "logs")
+                            update_project(session, p, **kwargs)
                             logger.info(f"Local project {p.id}: {p.status} → {new_status}")
                             if new_status in ("done", "failed", "stopped"):
                                 _advance_pending_queue(session, settings)

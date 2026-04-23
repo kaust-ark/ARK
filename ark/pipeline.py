@@ -1056,8 +1056,6 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
                     self.log_step(f"Conda env ready: {msg}", "success")
                     self.notify_progress("Env ready", f"{msg}", level="done")
                 else:
-                    # Hard fail: the whole pipeline depends on this env for
-                    # experiments. Surface the error; caller will mark failed.
                     self.log_step(f"Conda env provisioning failed: {msg}", "error")
                     self.notify_progress("Env setup failed", f"{msg}", level="warn")
                     raise RuntimeError(f"Conda env provisioning failed: {msg}")
