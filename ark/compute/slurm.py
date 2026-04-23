@@ -4,6 +4,26 @@ import time
 from datetime import datetime, timedelta
 from .base import ComputeBackend
 
+
+# Liveness check parameters for wait_for_completion.
+# When the soft deadline (max_wait_hours) is reached, we consult these to
+# decide between "still progressing, keep waiting" and "truly stuck, fail".
+_STDOUT_LIVENESS_WINDOW = timedelta(minutes=5)
+# Hard ceiling multiplier over max_wait_hours — even an alive job cannot
+# extend waiting past this, to bound total compute spend.
+_HARD_CEILING_MULTIPLIER = 3
+
+
+def _poll_interval_seconds(elapsed: timedelta) -> int:
+    """Grow polling interval to keep logs readable on long waits."""
+    m = elapsed.total_seconds() / 60
+    if m < 15:
+        return 60
+    if m < 60:
+        return 120
+    return 300
+
+
 class SlurmBackend(ComputeBackend):
     """MCNodes / Slurm HPC backend."""
 
@@ -79,36 +99,153 @@ system can track them (e.g., `#SBATCH --job-name={self.job_prefix}experiment_1`)
 
 Save all results to the `results/` directory.{template_section}"""
 
-    def wait_for_completion(self, max_wait_hours: float = 4) -> bool:
-        """Poll squeue for jobs with matching prefix."""
-        max_wait = timedelta(hours=max_wait_hours)
-        start_time = datetime.now()
+    def _query_target_jobs(self) -> tuple[list[tuple[str, str]], int]:
+        """Query squeue for jobs owned by this user.
 
-        while datetime.now() - start_time < max_wait:
+        Returns (target_jobs, other_count). target_jobs is a list of
+        (jobid, jobname) tuples whose name starts with self.job_prefix.
+        Raises on squeue failure — caller decides how to handle.
+        """
+        result = subprocess.run(
+            ["squeue", "-u", os.environ.get("USER", ""), "-h", "-o", "%i %j"],
+            capture_output=True, text=True, timeout=30,
+            check=True,
+        )
+        target, other = [], 0
+        for line in result.stdout.strip().splitlines():
+            parts = line.strip().split(None, 1)
+            if len(parts) != 2:
+                continue
+            jobid, jobname = parts
+            if jobname.startswith(self.job_prefix):
+                target.append((jobid, jobname))
+            else:
+                other += 1
+        return target, other
+
+    def _job_stdout_path(self, jobid: str) -> str | None:
+        """Ask scontrol where a given job is writing its stdout."""
+        try:
+            r = subprocess.run(
+                ["scontrol", "show", "job", str(jobid), "-o"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if r.returncode != 0:
+                return None
+            for tok in r.stdout.split():
+                if tok.startswith("StdOut="):
+                    return tok[len("StdOut="):]
+        except Exception:
+            pass
+        return None
+
+    def _liveness_report(self, jobs: list[tuple[str, str]],
+                         window: timedelta) -> tuple[bool, list[str]]:
+        """Return (any_alive, per-job detail lines) based on stdout mtime.
+
+        Conservative: if no job stdout can be checked at all, returns
+        alive=True — absence of evidence is not evidence of death.
+        """
+        now = datetime.now()
+        alive = False
+        checked = 0
+        details: list[str] = []
+        for jobid, jobname in jobs:
+            path = self._job_stdout_path(jobid)
+            if not path:
+                details.append(f"  {jobname}({jobid}): StdOut path unavailable")
+                continue
             try:
-                result = subprocess.run(
-                    ["squeue", "-u", os.environ.get("USER"), "-h", "-o", "%j"],
-                    capture_output=True, text=True, timeout=30,
-                )
-                if not result.stdout.strip():
-                    self.log("No Slurm jobs found")
-                    return True
+                mtime = datetime.fromtimestamp(os.path.getmtime(path))
+            except OSError as e:
+                details.append(f"  {jobname}({jobid}): stdout unreadable ({e})")
+                continue
+            checked += 1
+            age = now - mtime
+            age_s = int(age.total_seconds())
+            tag = "alive" if age < window else "idle"
+            if age < window:
+                alive = True
+            details.append(f"  {jobname}({jobid}): stdout {age_s}s ago [{tag}]")
+        if checked == 0:
+            alive = True
+            details.append("  (no stdout could be inspected; assuming alive)")
+        return alive, details
 
-                all_jobs = result.stdout.strip().split("\n")
-                target_jobs = [j for j in all_jobs if j.startswith(self.job_prefix)]
+    def wait_for_completion(self, max_wait_hours: float = 4) -> bool:
+        """Poll squeue for jobs with matching prefix.
 
-                if len(target_jobs) == 0:
-                    self.log(f"All {self.job_prefix}* jobs completed "
-                             f"(other jobs: {len(all_jobs)})")
-                    return True
+        Two-stage timeout:
+          * Soft deadline = start + max_wait_hours. When hit, inspect each
+            target job's stdout mtime. If any file was written within
+            _STDOUT_LIVENESS_WINDOW, extend the soft deadline by another
+            max_wait_hours (capped at the hard ceiling).
+          * Hard ceiling = start + max_wait_hours * _HARD_CEILING_MULTIPLIER.
+            Never extended. Prevents zombie jobs from consuming the whole
+            project budget.
 
-                self.log(f"{len(target_jobs)} {self.job_prefix}* jobs running, "
-                         f"waiting 60s...")
-                time.sleep(60)
+        Poll interval grows from 60s to 300s as elapsed time increases, to
+        keep long-wait logs readable.
+        """
+        start_time = datetime.now()
+        soft_deadline = start_time + timedelta(hours=max_wait_hours)
+        hard_deadline = start_time + timedelta(
+            hours=max_wait_hours * _HARD_CEILING_MULTIPLIER
+        )
+        extension = timedelta(hours=max_wait_hours)
 
+        while datetime.now() < hard_deadline:
+            try:
+                target_jobs, other_count = self._query_target_jobs()
             except Exception as e:
                 self.log(f"Error checking Slurm: {e}")
                 time.sleep(60)
+                continue
 
-        self.log(f"Slurm wait timeout after {max_wait_hours} hours")
+            if not target_jobs:
+                self.log(f"All {self.job_prefix}* jobs completed "
+                         f"(other jobs: {other_count})")
+                return True
+
+            now = datetime.now()
+            elapsed = now - start_time
+
+            if now >= soft_deadline:
+                alive, details = self._liveness_report(
+                    target_jobs, _STDOUT_LIVENESS_WINDOW
+                )
+                if alive:
+                    soft_deadline = min(now + extension, hard_deadline)
+                    remaining_min = int((soft_deadline - now).total_seconds() / 60)
+                    self.log(
+                        f"Past soft deadline but {len(target_jobs)} "
+                        f"{self.job_prefix}* job(s) still writing stdout; "
+                        f"extending deadline by {remaining_min}min"
+                    )
+                    for line in details:
+                        self.log(line)
+                else:
+                    window_min = int(_STDOUT_LIVENESS_WINDOW.total_seconds() / 60)
+                    self.log(
+                        f"Slurm wait timeout after {elapsed}: "
+                        f"{len(target_jobs)} {self.job_prefix}* job(s) in queue "
+                        f"but stdout idle >{window_min}min"
+                    )
+                    for line in details:
+                        self.log(line)
+                    return False
+
+            interval = _poll_interval_seconds(elapsed)
+            # Only log the routine "waiting" line before soft deadline — after
+            # that, the liveness report above carries the signal and we don't
+            # want to double-log.
+            if now < soft_deadline:
+                self.log(
+                    f"{len(target_jobs)} {self.job_prefix}* jobs running, "
+                    f"waiting {interval}s..."
+                )
+            time.sleep(interval)
+
+        hard_hours = max_wait_hours * _HARD_CEILING_MULTIPLIER
+        self.log(f"Slurm wait hard ceiling reached after {hard_hours} hours")
         return False
