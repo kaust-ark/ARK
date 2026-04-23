@@ -204,17 +204,29 @@ def _kill_blocking_descendants(parent_pid: int, log_fn=None) -> int:
 
 
 class _BlockingCommandWatchdog:
-    """Background thread that periodically scans for and kills blocking child processes."""
+    """Background thread that periodically scans for and kills blocking child processes.
 
-    def __init__(self, parent_pid: int, log_fn=None, interval: int = 30):
+    After killing a banned child (e.g. `tail -f`), the parent CLI usually stays
+    wedged reading a pipe that will never close, so we escalate: if the parent
+    is still alive `grace_seconds` after the first violation, we SIGTERM its
+    whole process group. This collapses the worst-case wait from the outer
+    `process.communicate(timeout=…)` (often 3600s) down to ~grace_seconds.
+    The empty-run retry logic upstream then picks up normally.
+    """
+
+    def __init__(self, parent_pid: int, log_fn=None, interval: int = 30,
+                 grace_seconds: int = 60):
         self._parent_pid = parent_pid
         self._log_fn = log_fn
         self._interval = interval
+        self._grace_seconds = grace_seconds
         self._stop = threading.Event()
         self._thread = None
+        self._violation_time: float | None = None
 
     def start(self):
         self._stop.clear()
+        self._violation_time = None
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -224,12 +236,40 @@ class _BlockingCommandWatchdog:
             self._thread.join(timeout=5)
             self._thread = None
 
+    def _escalate(self) -> bool:
+        """SIGTERM the parent's process group. Returns True if signal sent."""
+        try:
+            pgid = os.getpgid(self._parent_pid)
+        except (ProcessLookupError, PermissionError):
+            return False
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+            if self._log_fn:
+                self._log_fn(
+                    f"  Watchdog escalating: parent PID {self._parent_pid} still "
+                    f"blocked {self._grace_seconds}s after banned command — "
+                    f"SIGTERM process group",
+                    "WARN",
+                )
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+
     def _run(self):
         # Wait a bit before first check — give the agent time to start
         if self._stop.wait(timeout=self._interval):
             return
         while not self._stop.wait(timeout=self._interval):
-            _kill_blocking_descendants(self._parent_pid, self._log_fn)
+            killed = _kill_blocking_descendants(self._parent_pid, self._log_fn)
+            if killed and self._violation_time is None:
+                self._violation_time = time.monotonic()
+            if (self._violation_time is not None
+                    and time.monotonic() - self._violation_time >= self._grace_seconds):
+                if self._escalate():
+                    # Parent will exit soon; outer communicate() will return.
+                    # Stop scanning — further kills are redundant and the
+                    # descendants die with the group.
+                    return
 
 # Per-agent context profiles: controls what context each agent type receives.
 # memory: iteration history, score trends, escalation suggestions
