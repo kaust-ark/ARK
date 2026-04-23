@@ -3,7 +3,8 @@ import json
 import time
 import pytest
 from pathlib import Path
-from ark.compute import CloudBackend
+from ark.compute.cloud import CloudBackend
+from ark.compute.cloud.gcp import GCPCloudBackend
 
 # Ensure gcloud is in the PATH
 GCLOUD_PATH = "/Users/bilal/Downloads/google-cloud-sdk/bin"
@@ -44,7 +45,7 @@ def test_gcp_provision_and_teardown(gcp_config, tmp_path):
     code_dir.mkdir()
     (code_dir / "auto_research" / "state").mkdir(parents=True)
     
-    backend = CloudBackend(gcp_config, project_name, code_dir)
+    backend = GCPCloudBackend(gcp_config, project_name, code_dir)
     
     instance_id = None
     try:

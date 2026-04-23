@@ -177,8 +177,8 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin, Dev
                 yaml.dump({"language": config_lang}, _pf, default_flow_style=False)
 
         # Compute backend
-        from ark.compute import ComputeBackend
-        self._compute_backend = ComputeBackend.from_config(
+        import ark.compute
+        self._compute_backend = ark.compute.from_config(
             self.config, self.project_name, self.code_dir, self.log
         )
 
