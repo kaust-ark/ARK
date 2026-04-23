@@ -662,8 +662,14 @@ def _read_phase_status(project_dir: Path, project) -> dict:
     # Try DB fields first
     if project.phase:
         result["phase"] = project.phase
-        result["dev_iter"] = project.dev_iteration
-        result["review_iter"] = project.iteration
+        # Clamp iter to max for display. Historical projects whose pipeline
+        # ran past the cumulative cap (pre-c077e15 bug) still have
+        # project.iteration > project.max_iterations persisted; rendering
+        # "11/8" reads as a UI bug to the user. The cap fix already
+        # prevents new runs from overshooting — this is cosmetic for
+        # already-saved overshot state.
+        result["dev_iter"] = min(project.dev_iteration, project.max_dev_iterations)
+        result["review_iter"] = min(project.iteration, project.max_iterations)
         return result
 
     # Fallback to YAML for legacy/unsynced projects
