@@ -7,6 +7,7 @@ The agent designs experiments & writes scripts; the system manages compute lifec
 import json
 import os
 import subprocess
+import tempfile
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
@@ -303,18 +304,59 @@ class CloudBackend(ComputeBackend):
         super().__init__(*args, **kwargs)
         cc = self._compute_config
         self.provider = cc.get("provider", "aws")
-        self.region = cc.get("region", "us-east-1")
+        
+        # Provider-specific region/zone defaults
+        default_region = "us-east-1"
+        if self.provider == "gcp":
+            default_region = "us-central1-a"
+        elif self.provider == "azure":
+            default_region = "eastus"
+            
+        self.region = cc.get("region", default_region)
         self.instance_type = cc.get("instance_type", "")
-        self.image_id = cc.get("image_id", "")
+        self.image_id = cc.get("image_id", "").strip()
+        self.gcp_project = cc.get("gcp_project", "")
         self.ssh_key_name = cc.get("ssh_key_name", "")
         self.ssh_key_path = cc.get("ssh_key_path", "~/.ssh/id_rsa")
         self.ssh_user = cc.get("ssh_user", "ubuntu")
         self.setup_commands = cc.get("setup_commands", [])
         self.conda_env = cc.get("conda_env", self.project_name)
+        self.gcp_service_account_json = cc.get("gcp_service_account_json", "")
         self._instance_id = None
         self._instance_ip = None
         # Persist instance state for crash recovery
         self._state_file = self.code_dir / "auto_research" / "state" / "cloud_instance.yaml"
+
+    def _gcloud_env(self):
+        """Context manager: yields an env dict with GCP credentials active.
+
+        Writes the service account JSON to a temp file for the duration of the
+        block only, deleting it immediately on exit — even if the block raises.
+        """
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _cm():
+            env = os.environ.copy()
+            if not self.gcp_service_account_json:
+                yield env
+                return
+            tf = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, prefix="ark_gcp_sa_"
+            )
+            try:
+                tf.write(self.gcp_service_account_json)
+                tf.flush()
+                tf.close()
+                env["CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"] = tf.name
+                yield env
+            finally:
+                try:
+                    os.unlink(tf.name)
+                except Exception:
+                    pass
+
+        return _cm()
 
     def _resource_labels(self) -> dict:
         """Labels to apply to all cloud resources for lifecycle management."""
@@ -425,16 +467,60 @@ class CloudBackend(ComputeBackend):
         instance_name = f"ark-{self.project_name}-{int(time.time()) % 10000}"
         labels = self._resource_labels()
         labels_str = ",".join(f"{k}={v}" for k, v in labels.items())
+
+        accelerator = self._compute_config.get("accelerator_type")
+        
+        # Default to Deep Learning VM images if none specified
+        image_family = self.image_id
+        image_project = self._compute_config.get("image_project", "deeplearning-platform-release")
+        
+        if not image_family:
+            image_family = "common-cu124" if accelerator else "common-cpu"
+            image_project = "deeplearning-platform-release"
+
+        if self.instance_type:
+            machine_type = self.instance_type
+        elif accelerator:
+            accel_lower = accelerator.lower()
+            if "l4" in accel_lower:
+                machine_type = "g2-standard-4"
+            elif "a100" in accel_lower:
+                machine_type = "a2-highgpu-1g"
+            elif "h100" in accel_lower:
+                machine_type = "a3-highgpu-8g"
+            else:
+                machine_type = "n1-standard-4"
+        else:
+            machine_type = "n4-standard-2"
+
         cmd = [
             "gcloud", "compute", "instances", "create", instance_name,
             "--zone", self.region,
-            "--machine-type", self.instance_type,
-            "--image-family", self.image_id,
-            "--image-project", "deeplearning-platform-release",
+            "--machine-type", machine_type,
+            "--image-family", image_family,
+            "--image-project", image_project,
             "--labels", labels_str,
             "--format", "json",
         ]
-        accelerator = self._compute_config.get("accelerator_type")
+
+        # Add SSH keys to metadata
+        pub_key_path = Path(os.path.expanduser(self.ssh_key_path)).with_suffix(".pub")
+        if pub_key_path.exists():
+            pub_key_content = pub_key_path.read_text().strip()
+            cmd.extend(["--metadata", f"ssh-keys={self.ssh_user}:{pub_key_content}"])
+
+        gcp_project = self.gcp_project or self._compute_config.get("gcp_project")
+        if gcp_project:
+            cmd.extend(["--project", gcp_project])
+
+        network = self._compute_config.get("network")
+        if network:
+            cmd.extend(["--network", network])
+        
+        subnet = self._compute_config.get("subnet")
+        if subnet:
+            cmd.extend(["--subnet", subnet])
+
         if accelerator:
             count = self._compute_config.get("accelerator_count", 1)
             cmd.extend([
@@ -442,7 +528,9 @@ class CloudBackend(ComputeBackend):
                 "--maintenance-policy", "TERMINATE",
             ])
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        with self._gcloud_env() as env:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300,
+                                    env=env)
         if result.returncode != 0:
             raise RuntimeError(f"GCP provision failed: {result.stderr}")
 
@@ -677,11 +765,12 @@ Do NOT use sbatch/srun. Run scripts directly on the instance."""
                     "--region", self.region,
                 ], capture_output=True, timeout=60)
             elif self.provider == "gcp":
-                subprocess.run([
-                    "gcloud", "compute", "instances", "delete",
-                    self._instance_id,
-                    "--zone", self.region, "--quiet",
-                ], capture_output=True, timeout=60)
+                with self._gcloud_env() as env:
+                    subprocess.run([
+                        "gcloud", "compute", "instances", "delete",
+                        self._instance_id,
+                        "--zone", self.region, "--quiet",
+                    ], capture_output=True, timeout=60, env=env)
             elif self.provider == "azure":
                 subprocess.run([
                     "az", "vm", "delete",

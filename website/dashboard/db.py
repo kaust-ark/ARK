@@ -74,6 +74,9 @@ class Project(SQLModel, table=True):
     # ── Process tracking ──
     pid: int = 0
 
+    # ── Failure info ──
+    error_message: str = ""
+
 
 class Feedback(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -145,6 +148,8 @@ def _migrate(engine):
             "checkpoint_data": "TEXT DEFAULT ''",
             # Process
             "pid": "INTEGER DEFAULT 0",
+            # Failure info
+            "error_message": "TEXT DEFAULT ''",
         }
         added = []
         for col, typedef in _new_cols.items():

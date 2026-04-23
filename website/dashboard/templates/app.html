@@ -828,6 +828,32 @@
               <input type="number" name="max_iterations" value="1" min="1" max="5" />
             </div>
           </div>
+          
+          <div class="hero-adv-field" style="margin-top:12px">
+            <label>Compute Environment</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <label class="model-option">
+                <input type="radio" name="compute_backend" value="local" checked />
+                <span class="model-chip">🖥️ Local</span>
+              </label>
+              <label class="model-option" id="hero-backend-slurm-label">
+                <input type="radio" name="compute_backend" value="slurm" />
+                <span class="model-chip">🔧 Slurm</span>
+              </label>
+              <label class="model-option" id="hero-backend-cloud-gcp-label" style="display:none">
+                <input type="radio" name="compute_backend" value="cloud:gcp" />
+                <span class="model-chip">☁️ GCP</span>
+              </label>
+              <label class="model-option" id="hero-backend-cloud-aws-label" style="display:none">
+                <input type="radio" name="compute_backend" value="cloud:aws" />
+                <span class="model-chip">☁️ AWS</span>
+              </label>
+              <label class="model-option" id="hero-backend-cloud-azure-label" style="display:none">
+                <input type="radio" name="compute_backend" value="cloud:azure" />
+                <span class="model-chip">☁️ Azure</span>
+              </label>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1043,6 +1069,16 @@
       </div>
     </div>
     <div class="form-group">
+      <label>Compute Environment</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="model-option"><input type="radio" name="continue-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
+        <label class="model-option"><input type="radio" name="continue-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
+        <label class="model-option" id="continue-backend-cloud-gcp-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
+        <label class="model-option" id="continue-backend-cloud-aws-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
+        <label class="model-option" id="continue-backend-cloud-azure-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
+      </div>
+    </div>
+    <div class="form-group">
       <label data-i18n-html="instructions_comments_label">Instructions / Comments <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
       <textarea id="continue-comment" rows="4"
         data-i18n-placeholder="placeholder_continue_comment"
@@ -1089,6 +1125,16 @@
         <label class="model-option"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
         <label class="model-option"><input type="radio" name="restart-model" value="gemini" /><span class="model-chip">Gemini</span></label>
         <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="restart-model" value="gpt" disabled /><span class="model-chip">GPT</span></label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Compute Environment</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="model-option"><input type="radio" name="restart-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
+        <label class="model-option"><input type="radio" name="restart-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
+        <label class="model-option" id="restart-backend-cloud-gcp-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
+        <label class="model-option" id="restart-backend-cloud-aws-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
+        <label class="model-option" id="restart-backend-cloud-azure-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
       </div>
     </div>
     <div class="tg-section" style="margin-top:12px">
@@ -1803,6 +1849,38 @@ let detailEventSource = null;
 let logPinned = true;   // true = auto-scroll to bottom; false = user scrolled up
 
 // ══════════════════════════════════════════════════════
+//  Cloud provider helpers
+// ══════════════════════════════════════════════════════
+const _CLOUD_PROVIDER_LABELS = { gcp: 'GCP', aws: 'AWS', azure: 'Azure' };
+
+// Show per-provider cloud buttons across all backend radio groups based on
+// window._userCloudProviders (populated after loadGateBanner fetches user settings).
+function _applyCloudProviderButtons() {
+  const providers = window._userCloudProviders || [];
+  for (const prefix of ['hero', 'continue', 'restart']) {
+    const nameAttr = prefix === 'hero' ? 'compute_backend' : `${prefix}-backend`;
+    for (const p of ['gcp', 'aws', 'azure']) {
+      const lbl = document.getElementById(`${prefix}-backend-cloud-${p}-label`);
+      if (!lbl) continue;
+      const input = lbl.querySelector('input');
+      const available = providers.includes(p);
+      lbl.style.display = available ? '' : 'none';
+      if (input) input.disabled = !available;
+    }
+  }
+}
+
+// Convert a legacy 'cloud' backend value to an explicit 'cloud:<provider>' value
+// by picking the first available provider.  Falls back to 'local' if none.
+function _normalizeCloudBackend(val) {
+  if (val === 'cloud') {
+    const providers = window._userCloudProviders || [];
+    return providers.length > 0 ? `cloud:${providers[0]}` : 'local';
+  }
+  return val || 'local';
+}
+
+// ══════════════════════════════════════════════════════
 //  Router
 // ══════════════════════════════════════════════════════
 function navigate(page, params = {}) {
@@ -1828,7 +1906,7 @@ function navigate(page, params = {}) {
     history.pushState({}, '', APP_BASE + '/#dashboard');
   } else if (page === 'detail') {
     loadDetail(params.id);
-    history.pushState({}, '', `/#project/${params.id}`);
+    history.pushState({}, '', APP_BASE + `/#project/${params.id}`);
   } else if (page === 'admin') {
     stopDetailStream();
     loadAdminPage();
@@ -1919,6 +1997,10 @@ async function checkAuth() {
 
   // Model and iteration pickers are unlocked for all users (self-provisioned keys).
 
+  // Load cloud provider availability before routing so continue/restart modals
+  // show the correct cloud buttons even when landing directly on a detail page.
+  loadGateBanner();
+
   // Route based on hash
   const hash = location.hash;
   if (hash.startsWith('#project/')) {
@@ -1957,6 +2039,23 @@ async function loadGateBanner() {
   if (!res.ok) return;
   const data = await res.json();
   _adminDisabled = data.disabled;
+  // Global backend availability flags — start from server-side config
+  window._sysCloud = !!(data.cloud && data.cloud.enabled);
+  window._sysSlurm = !!(data.slurm && data.slurm.available);
+
+  // Also check user-level cloud credentials (user may supply their own keys
+  // without a server-side CLOUD_PROVIDER setting)
+  window._userCloudProviders = [];
+  try {
+    const uRes = await fetch(APP_BASE + '/api/user/settings');
+    if (uRes.ok) {
+      const uData = await uRes.json();
+      if (uData.cloud_available) window._sysCloud = true;
+      window._userCloudProviders = uData.cloud_providers || [];
+    }
+  } catch(e) {}
+  _applyCloudProviderButtons();
+
   document.getElementById('gate-banner').style.display = data.disabled ? 'flex' : 'none';
   const heroCard = document.getElementById('hero-card');
   if (heroCard) heroCard.classList.toggle('gate-disabled', data.disabled);
@@ -2151,7 +2250,7 @@ async function loadDetail(id) {
   } else if (p.status === 'stopped') {
     statusLine = t('stopped_iter', p.current_iteration || 0, p.max_iterations);
   } else if (p.status === 'failed') {
-    statusLine = t('failed');
+    statusLine = t('failed') + (p.error_message ? ` — ${esc(p.error_message)}` : '');
   } else {
     statusLine = p.status;
   }
@@ -3020,6 +3119,17 @@ async function openContinueModal(id) {
     document.querySelectorAll('input[name="continue-model"]').forEach(r => {
       r.checked = (r.value === modelVal);
     });
+
+    _applyCloudProviderButtons();
+    const backendVal = _normalizeCloudBackend(p.compute_backend || 'local');
+    document.querySelectorAll('input[name="continue-backend"]').forEach(r => {
+      r.checked = (r.value === backendVal);
+      if (r.value === 'slurm') {
+          const lbl = r.closest('.model-option');
+          if (!window._sysSlurm) { lbl.style.opacity = '0.45'; lbl.style.pointerEvents = 'none'; r.disabled = true; }
+          else { lbl.style.opacity = ''; lbl.style.pointerEvents = ''; r.disabled = false; }
+      }
+    });
   }
 
   document.getElementById('modal-continue').classList.add('open');
@@ -3029,13 +3139,14 @@ async function submitContinue() {
   const iter = Math.max(1, Math.min(5, parseInt(document.getElementById('continue-iter').value) || 1));
   const comment = document.getElementById('continue-comment').value.trim();
   const model = ([...document.querySelectorAll('input[name="continue-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-4-6';
+  const backend = ([...document.querySelectorAll('input[name="continue-backend"]')].find(r => r.checked) || {}).value || 'local';
   const btn = document.getElementById('continue-btn');
   btn.disabled = true;
   try {
     const res = await fetch(`${APP_BASE}/api/projects/${continueProjectId}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ additional_iterations: iter, comment, model }),
+      body: JSON.stringify({ additional_iterations: iter, comment, model, compute_backend: backend }),
     });
     if (!res.ok) {
       const e = await res.json().catch(() => ({}));
@@ -3094,6 +3205,21 @@ async function openRestartModal(id) {
     r.checked = (r.value === modelVal);
   });
 
+  // Set compute backend radio
+  const backendVal = _normalizeCloudBackend(p.compute_backend || 'local');
+  document.querySelectorAll('input[name="restart-backend"]').forEach(r => {
+    r.checked = (r.value === backendVal);
+    if (r.value === 'slurm') {
+        const lbl = r.closest('.model-option');
+        if (!window._sysSlurm) { lbl.style.opacity = '0.45'; lbl.style.pointerEvents = 'none'; r.disabled = true; }
+        else { lbl.style.opacity = ''; lbl.style.pointerEvents = ''; r.disabled = false; }
+    }
+  });
+
+  // Update hero form slurm visibility
+  const hs = document.getElementById('hero-backend-slurm-label');
+  if (hs) { hs.style.display = window._sysSlurm ? 'block' : 'none'; }
+
   // Deep research checkbox
   const drSection = document.getElementById('restart-deep-research-section');
   if (p.has_deep_research) {
@@ -3128,6 +3254,7 @@ async function submitRestart() {
       telegram_token: document.getElementById('restart-tg-token').value.trim(),
       telegram_chat_id: document.getElementById('restart-tg-chatid').value.trim(),
       comment: document.getElementById('restart-comment').value.trim(),
+      compute_backend: ([...document.querySelectorAll('input[name="restart-backend"]')].find(r => r.checked) || {}).value || 'local',
       redo_deep_research: !document.getElementById('restart-keep-dr').checked,
       keep_figures: document.getElementById('restart-keep-figures').checked,
     };

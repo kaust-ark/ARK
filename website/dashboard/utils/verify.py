@@ -51,7 +51,7 @@ def verify_gemini(api_key: str) -> Dict[str, Any]:
             "generationConfig": {"maxOutputTokens": 1}
         }
         
-        with httpx.Client(timeout=10.0) as client:
+        with httpx.Client(timeout=30.0) as client:
             resp = client.post(url, headers=headers, json=data)
             if resp.status_code == 200:
                 return {"ok": True, "msg": "Functional"}

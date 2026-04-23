@@ -30,6 +30,136 @@ def project_env_ready(project_dir: Path) -> bool:
     return (project_env_prefix(project_dir) / "conda-meta").is_dir()
 
 
+def find_conda_binary() -> str | None:
+    """
+    Locate the conda binary even when PATH is bare (e.g. systemd unit with no
+    Environment=PATH=). Tries shutil.which, then $CONDA_EXE, then common
+    install prefixes under $HOME.
+    """
+    found = shutil.which("conda")
+    if found:
+        return found
+    env_var = os.environ.get("CONDA_EXE")
+    if env_var and Path(env_var).is_file():
+        return env_var
+    home = Path(os.path.expanduser("~"))
+    candidates = [
+        home / "miniforge3" / "condabin" / "conda",
+        home / "miniforge3" / "bin" / "conda",
+        home / "miniconda3" / "condabin" / "conda",
+        home / "miniconda3" / "bin" / "conda",
+        home / "anaconda3" / "condabin" / "conda",
+        home / "anaconda3" / "bin" / "conda",
+        Path("/opt/conda/bin/conda"),
+    ]
+    if sys.platform == "darwin":
+        # Homebrew on Apple Silicon installs to /opt/homebrew
+        candidates += [
+            Path("/opt/homebrew/anaconda3/condabin/conda"),
+            Path("/opt/homebrew/anaconda3/bin/conda"),
+            Path("/opt/homebrew/miniforge3/condabin/conda"),
+            Path("/opt/homebrew/miniforge3/bin/conda"),
+        ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+_ANACONDA_TOS_CHANNELS = [
+    "https://repo.anaconda.com/pkgs/main",
+    "https://repo.anaconda.com/pkgs/r",
+]
+
+
+def _accept_conda_tos(conda_bin: str, log_file=None) -> None:
+    """Accept ToS for the default Anaconda channels non-interactively.
+
+    conda 24+ requires per-user ToS acceptance stored in ~/.conda/tos.
+    This is safe to call multiple times; already-accepted channels are a no-op.
+    Errors are logged but do not raise so that a missing tos sub-command on
+    older conda builds doesn't break provisioning.
+    """
+    for channel in _ANACONDA_TOS_CHANNELS:
+        try:
+            proc = subprocess.run(
+                [conda_bin, "tos", "accept", "--override-channels",
+                 "--channel", channel],
+                capture_output=True, text=True,
+            )
+            if log_file is not None:
+                log_file.write(f"# conda tos accept {channel}: "
+                               f"rc={proc.returncode} {proc.stdout.strip()}\n")
+        except Exception as e:
+            if log_file is not None:
+                log_file.write(f"# conda tos accept {channel} failed: {e}\n")
+
+
+def provision_project_env(project_dir: Path, base_env: str = "ark-base",
+                          log_path: Path | None = None) -> tuple[bool, str]:
+    """
+    Create a per-project conda env at <project_dir>/.env by cloning ``base_env``.
+
+    Returns ``(success, message)``. Idempotent: returns success immediately if
+    the env is already present. Writes the conda command output to ``log_path``
+    (or <project_dir>/.env_provision.log) for debugging.
+    """
+    project_dir = Path(project_dir)
+    target = project_env_prefix(project_dir)
+    log_path = Path(log_path) if log_path else (project_dir / ".env_provision.log")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if project_env_ready(project_dir):
+        return True, f"already exists at {target}"
+
+    conda_bin = find_conda_binary()
+    if not conda_bin:
+        msg = ("conda binary not found (checked PATH, $CONDA_EXE, and common "
+               "miniforge/anaconda locations); cannot provision project env")
+        log_path.write_text(msg + "\n")
+        return False, msg
+
+    # Stale partial env from a prior failed clone — wipe before retrying.
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
+
+    cmd = [conda_bin, "create", "--prefix", str(target),
+           "--clone", base_env, "--yes"]
+    started = time.time()
+    try:
+        with open(log_path, "w") as lf:
+            _accept_conda_tos(conda_bin, log_file=lf)
+            lf.write(f"$ {' '.join(cmd)}\n")
+            lf.flush()
+            proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT)
+        elapsed = time.time() - started
+        if proc.returncode != 0 or not project_env_ready(project_dir):
+            return False, f"conda create failed (rc={proc.returncode}); see {log_path}"
+
+        # Re-pin the ark editable install to the CURRENT webapp's source directory.
+        # Without this, a prod webapp would launch projects whose ark code points
+        # at the dev worktree (inherited from ark-base's editable mapping).
+        try:
+            import ark as _ark_mod
+            ark_source = Path(_ark_mod.__file__).resolve().parent.parent
+            env_python = target / "bin" / "python"
+            pin_cmd = [str(env_python), "-m", "pip", "install", "--quiet",
+                       "-e", str(ark_source)]
+            with open(log_path, "a") as lf:
+                lf.write(f"\n$ {' '.join(pin_cmd)}\n")
+                lf.flush()
+                pin_proc = subprocess.run(pin_cmd, stdout=lf, stderr=subprocess.STDOUT)
+            if pin_proc.returncode != 0:
+                return False, (f"ark source re-pin failed (rc={pin_proc.returncode}); "
+                               f"see {log_path}")
+        except Exception as e:
+            return False, f"ark source re-pin raised {type(e).__name__}: {e}"
+
+        return True, f"cloned {base_env} and pinned ark → {ark_source} in {elapsed:.1f}s"
+    except Exception as e:
+        return False, f"conda create raised {type(e).__name__}: {e}"
+
+
 def find_claude_binary() -> str | None:
     """
     Locate the ``claude`` CLI even when systemd's bare PATH doesn't include
@@ -118,106 +248,6 @@ def build_subprocess_path(extra: list[str] | None = None) -> str:
             seen.add(p)
             out.append(p)
     return ":".join(out)
-
-
-def find_conda_binary() -> str | None:
-    """
-    Locate the conda binary even when PATH is bare (e.g. systemd unit with no
-    Environment=PATH=). Tries shutil.which, then $CONDA_EXE, then common
-    install prefixes under $HOME.
-    """
-    found = shutil.which("conda")
-    if found:
-        return found
-    env_var = os.environ.get("CONDA_EXE")
-    if env_var and Path(env_var).is_file():
-        return env_var
-    home = Path(os.path.expanduser("~"))
-    candidates = [
-        home / "miniforge3" / "condabin" / "conda",
-        home / "miniforge3" / "bin" / "conda",
-        home / "miniconda3" / "condabin" / "conda",
-        home / "miniconda3" / "bin" / "conda",
-        home / "anaconda3" / "condabin" / "conda",
-        home / "anaconda3" / "bin" / "conda",
-        Path("/opt/conda/bin/conda"),
-    ]
-    if sys.platform == "darwin":
-        # Homebrew on Apple Silicon installs to /opt/homebrew
-        candidates += [
-            Path("/opt/homebrew/anaconda3/condabin/conda"),
-            Path("/opt/homebrew/anaconda3/bin/conda"),
-            Path("/opt/homebrew/miniforge3/condabin/conda"),
-            Path("/opt/homebrew/miniforge3/bin/conda"),
-        ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-    return None
-
-
-def provision_project_env(project_dir: Path, base_env: str = "ark-base",
-                          log_path: Path | None = None) -> tuple[bool, str]:
-    """
-    Create a per-project conda env at <project_dir>/.env by cloning ``base_env``.
-
-    Returns ``(success, message)``. Idempotent: returns success immediately if
-    the env is already present. Writes the conda command output to ``log_path``
-    (or <project_dir>/.env_provision.log) for debugging.
-    """
-    project_dir = Path(project_dir)
-    target = project_env_prefix(project_dir)
-    log_path = Path(log_path) if log_path else (project_dir / ".env_provision.log")
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if project_env_ready(project_dir):
-        return True, f"already exists at {target}"
-
-    conda_bin = find_conda_binary()
-    if not conda_bin:
-        msg = ("conda binary not found (checked PATH, $CONDA_EXE, and common "
-               "miniforge/anaconda locations); cannot provision project env")
-        log_path.write_text(msg + "\n")
-        return False, msg
-
-    # Stale partial env from a prior failed clone — wipe before retrying.
-    if target.exists():
-        shutil.rmtree(target, ignore_errors=True)
-
-    cmd = [conda_bin, "create", "--prefix", str(target),
-           "--clone", base_env, "--yes"]
-    started = time.time()
-    try:
-        with open(log_path, "w") as lf:
-            lf.write(f"$ {' '.join(cmd)}\n")
-            lf.flush()
-            proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT)
-        elapsed = time.time() - started
-        if proc.returncode != 0 or not project_env_ready(project_dir):
-            return False, f"conda create failed (rc={proc.returncode}); see {log_path}"
-
-        # Re-pin the ark editable install to the CURRENT webapp's source directory.
-        # Without this, a prod webapp would launch projects whose ark code points
-        # at the dev worktree (inherited from ark-base's editable mapping).
-        try:
-            import ark as _ark_mod
-            ark_source = Path(_ark_mod.__file__).resolve().parent.parent
-            env_python = target / "bin" / "python"
-            pin_cmd = [str(env_python), "-m", "pip", "install", "--quiet",
-                       "-e", str(ark_source)]
-            with open(log_path, "a") as lf:
-                lf.write(f"\n$ {' '.join(pin_cmd)}\n")
-                lf.flush()
-                pin_proc = subprocess.run(pin_cmd, stdout=lf, stderr=subprocess.STDOUT)
-            if pin_proc.returncode != 0:
-                return False, (f"ark source re-pin failed (rc={pin_proc.returncode}); "
-                               f"see {log_path}")
-        except Exception as e:
-            return False, f"ark source re-pin raised {type(e).__name__}: {e}"
-
-        return True, f"cloned {base_env} and pinned ark → {ark_source} in {elapsed:.1f}s"
-    except Exception as e:
-        return False, f"conda create raised {type(e).__name__}: {e}"
 
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -456,6 +486,81 @@ def slurm_state_to_status(slurm_state: str) -> str:
 
 # ── Local subprocess runner ────────────────────────────────────────────────────
 
+def _conda_env_exists(conda_bin: str, env_name: str) -> bool:
+    """Return True if a named conda environment actually exists on this machine."""
+    try:
+        result = subprocess.run(
+            [conda_bin, "env", "list", "--json"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return False
+        import json as _json
+        envs = _json.loads(result.stdout).get("envs", [])
+        return any(Path(e).name == env_name for e in envs)
+    except Exception:
+        return False
+
+
+def _ensure_named_conda_env(conda_bin: str, env_name: str, log_path: Path) -> tuple[bool, str]:
+    """Create the named conda env from the appropriate environment yml if it doesn't exist.
+
+    Picks environment-macos.yml on macOS, environment.yml on Linux. Creates the
+    env under the configured name (overriding the name in the yml file). Re-pins
+    the ark editable install afterward so the env points at the current source tree.
+    """
+    if _conda_env_exists(conda_bin, env_name):
+        return True, f"env '{env_name}' already exists"
+
+    ark_root = Path(__file__).resolve().parents[2]
+    yml_file = ark_root / ("environment-macos.yml" if sys.platform == "darwin" else "environment.yml")
+    if not yml_file.exists():
+        return False, f"environment file not found: {yml_file}"
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [conda_bin, "env", "create", "-f", str(yml_file), "-n", env_name, "--yes"]
+    started = time.time()
+    try:
+        with open(log_path, "w") as lf:
+            _accept_conda_tos(conda_bin, log_file=lf)
+            lf.write(f"$ {' '.join(cmd)}\n")
+            lf.flush()
+            proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT)
+        elapsed = time.time() - started
+        if proc.returncode != 0:
+            return False, f"conda env create failed (rc={proc.returncode}); see {log_path}"
+
+        if not _conda_env_exists(conda_bin, env_name):
+            return False, f"conda env create exited 0 but env '{env_name}' not found"
+
+        try:
+            import ark as _ark_mod
+            ark_source = Path(_ark_mod.__file__).resolve().parent.parent
+            import json as _json
+            result = subprocess.run(
+                [conda_bin, "env", "list", "--json"],
+                capture_output=True, text=True, timeout=10,
+            )
+            envs = _json.loads(result.stdout).get("envs", [])
+            env_prefix = next((Path(e) for e in envs if Path(e).name == env_name), None)
+            if env_prefix:
+                env_python = env_prefix / "bin" / "python"
+                pin_cmd = [str(env_python), "-m", "pip", "install", "--quiet",
+                           "-e", str(ark_source)]
+                with open(log_path, "a") as lf:
+                    lf.write(f"\n$ {' '.join(pin_cmd)}\n")
+                    lf.flush()
+                    pin_proc = subprocess.run(pin_cmd, stdout=lf, stderr=subprocess.STDOUT)
+                if pin_proc.returncode != 0:
+                    return False, f"ark re-pin failed (rc={pin_proc.returncode}); see {log_path}"
+        except Exception as e:
+            return False, f"ark re-pin raised {type(e).__name__}: {e}"
+
+        return True, f"created env '{env_name}' from {yml_file.name} in {elapsed:.1f}s"
+    except Exception as e:
+        return False, f"conda env create raised {type(e).__name__}: {e}"
+
+
 def launch_local_job(
     project_id: str,
     mode: str,
@@ -483,6 +588,10 @@ def launch_local_job(
         python_prefix = [conda_bin, "run", "--no-capture-output",
                          "--prefix", str(local_env), "python"]
     elif conda_bin and fallback_env:
+        provision_log = log_dir / "conda_provision.log"
+        ok, msg = _ensure_named_conda_env(conda_bin, fallback_env, provision_log)
+        if not ok:
+            raise RuntimeError(f"Could not provision conda env '{fallback_env}': {msg}")
         python_prefix = [conda_bin, "run", "--no-capture-output",
                          "-n", fallback_env, "python"]
     else:
@@ -545,8 +654,8 @@ def launch_local_job(
                 gcp_creds_path.chmod(0o600)
                 env["GOOGLE_APPLICATION_CREDENTIALS"] = str(gcp_creds_path)
                 # Also set standard GCP env vars if available in keys/settings
-                if keys.get("gcp_project"):
-                     env["GOOGLE_CLOUD_PROJECT"] = keys["gcp_project"]
+                if api_keys.get("gcp_project"):
+                     env["GOOGLE_CLOUD_PROJECT"] = api_keys["gcp_project"]
             elif k.startswith("azure_"):
                 env[k.upper()] = v
     
