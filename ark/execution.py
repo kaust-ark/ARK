@@ -1175,11 +1175,13 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
             _style_path = Path(__file__).parent / "templates" / "style_guides" / "academic_plot_style.md"
             _plot_style = _style_path.read_text() if _style_path.exists() else ""
 
-            self.run_agent("writer", f"""
-## CRITICAL TASK: Modify Python plotting scripts (not LaTeX!)
+            self.run_agent("coder", f"""
+## Task: Modify existing Python plotting scripts
 
-You received {len(figure_tasks)} FIGURE_CODE_REQUIRED tasks.
-These tasks require modifying **Python code**, not LaTeX files!
+You received {len(figure_tasks)} FIGURE_CODE_REQUIRED tasks. Each task is
+a *modification* to a function already present in the script — not a
+request to invent a new figure from scratch and not a request to edit
+LaTeX. The writer agent does LaTeX; you own the Python.
 
 {''.join(figure_instructions)}
 
@@ -1187,16 +1189,29 @@ These tasks require modifying **Python code**, not LaTeX files!
 
 {_plot_style}
 
-## Tool usage requirements
-- Must use the Read tool to read the target files listed above
-- Must use the Edit tool to modify code
-- Do not use Bash to run scripts (the system will run them automatically)
+## Hard rules (violating any of these is worse than doing nothing)
+- Only modify the target .py file. Do NOT edit main.tex, the bibliography,
+  or anything outside `scripts/`.
+- If the target function does not exist in the script, STOP. Report
+  "target function X not found in Y" in your response and leave the
+  file unchanged. Do NOT invent a new function or fabricate data.
+- If the change you would need to make requires new data that isn't
+  already in the script or in `results/`, STOP and report. Do NOT
+  hardcode synthetic data.
+- Do NOT run the script — the system re-runs it automatically after
+  your edit.
 
-## Verification
-After modifications, ensure:
-1. Python syntax is correct (no indentation errors, brackets match)
-2. matplotlib parameters are reasonable (figsize, fontsize, etc.)
-3. File paths are correct ({latex_dir_name}/figures/*.pdf)
+## Follow-ups for the writer (optional, end of your response)
+If your Python edit changes the figure's identity (e.g. you split a
+panel into two subplots), the paper may need a caption / ref update
+in main.tex. List those as a short "LaTeX follow-ups needed:" block
+at the end of your response. DO NOT edit main.tex yourself — the
+writer agent will pick those up in a later task.
+
+## Tool usage
+- Read each target .py file before editing it.
+- Use Edit for small changes; Write only for complete rewrites of a
+  single function body.
 """, timeout=1800, prior_context=prior_context)
 
             if self._quota_exhausted:
