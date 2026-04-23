@@ -3406,8 +3406,18 @@ Only use double_column for multi-panel figures (side-by-side subplots).
         if self._should_run_research_phase():
             self._run_research_phase()
 
-        # max_iterations is per-run: adjust to be relative to resumed iteration
-        max_iteration_target = self.iteration + self.max_iterations
+        # max_iterations is the CUMULATIVE cap across the project's
+        # lifetime (that's what the webapp's Continue API stores: it
+        # adds the user's requested +N to the project's existing total
+        # and writes the sum back to DB).  Treat it as the absolute
+        # upper bound on self.iteration — not an increment.
+        #
+        # Bug that motivated this: treating max_iterations as per-run
+        # meant a user who asked "continue +3" after iter=5 actually
+        # got +8 iterations (target = 5 + 8 = 13) because DB already
+        # held the cumulative total. Display ("Iteration 11/8") was
+        # the visible tell.
+        max_iteration_target = max(self.max_iterations, self.iteration)
 
         try:
             # Paper mode: run Dev Phase first if needed
