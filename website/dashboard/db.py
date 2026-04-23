@@ -52,7 +52,7 @@ class Project(SQLModel, table=True):
     language: str = "en"             # user language preference
     paper_accept_threshold: float = 8.0
     max_days: float = 3.0
-    compute_backend: str = "local"
+    compute_backend: str = "slurm"
     source: str = "webapp"           # "webapp" or "cli"
 
     # ── Runtime status (previously in yaml state files) ──
@@ -134,7 +134,7 @@ def _migrate(engine):
             "language": "TEXT DEFAULT 'en'",
             "paper_accept_threshold": "REAL DEFAULT 8.0",
             "max_days": "REAL DEFAULT 3.0",
-            "compute_backend": "TEXT DEFAULT 'local'",
+            "compute_backend": "TEXT DEFAULT 'slurm'",
             "source": "TEXT DEFAULT 'webapp'",
             # Runtime status
             "phase": "TEXT DEFAULT ''",

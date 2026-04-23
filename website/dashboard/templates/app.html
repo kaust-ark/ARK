@@ -855,11 +855,11 @@
             <label>Compute Environment</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <label class="model-option">
-                <input type="radio" name="compute_backend" value="local" checked />
+                <input type="radio" name="compute_backend" value="local" />
                 <span class="model-chip">🖥️ Local</span>
               </label>
               <label class="model-option" id="hero-backend-slurm-label">
-                <input type="radio" name="compute_backend" value="slurm" />
+                <input type="radio" name="compute_backend" value="slurm" checked />
                 <span class="model-chip">🔧 Slurm</span>
               </label>
               <label class="model-option" id="hero-backend-cloud-gcp-label" style="display:none">
@@ -2322,6 +2322,19 @@ async function loadGateBanner() {
   // Global backend availability flags — start from server-side config
   window._sysCloud = !!(data.cloud && data.cloud.enabled);
   window._sysSlurm = !!(data.slurm && data.slurm.available);
+
+  // Hero form defaults to slurm (see HTML). If slurm isn't available on
+  // this host, hide the slurm radio and fall the default back to local.
+  const slurmLbl = document.getElementById('hero-backend-slurm-label');
+  if (slurmLbl) slurmLbl.style.display = window._sysSlurm ? '' : 'none';
+  if (!window._sysSlurm) {
+    const slurmRadio = document.querySelector('input[name="compute_backend"][value="slurm"]');
+    const localRadio = document.querySelector('input[name="compute_backend"][value="local"]');
+    if (slurmRadio && slurmRadio.checked && localRadio) {
+      slurmRadio.checked = false;
+      localRadio.checked = true;
+    }
+  }
 
   // Also check user-level cloud credentials (user may supply their own keys
   // without a server-side CLOUD_PROVIDER setting)
