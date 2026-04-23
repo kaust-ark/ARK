@@ -49,6 +49,8 @@ _DEFAULTS = {
     "CLOUD_AZURE_RESOURCE_GROUP": "", # Azure resource group name
     "CLOUD_AZURE_LOCATION": "",       # Azure location (e.g. eastus)
     "CLOUD_CONDA_ENV": "ark",        # conda env to activate on the remote instance
+    "CLOUD_NETWORK": "",             # GCP/AWS network name (optional)
+    "CLOUD_SUBNET": "",              # GCP/AWS subnet name (optional)
     "CLOUD_ALLOWED_INSTANCE_TYPES": "",  # comma-separated allowlist; empty = no restriction
 }
 
@@ -114,6 +116,8 @@ CLOUD_INSTANCE_TYPE=
 CLOUD_IMAGE_ID=
 CLOUD_SSH_KEY_NAME=
 CLOUD_GCP_PROJECT=
+CLOUD_NETWORK=
+CLOUD_SUBNET=
 """
     _env_file().write_text(content)
     print(f"Created config: {_env_file()}")
@@ -176,6 +180,8 @@ class Settings:
         self.cloud_azure_resource_group: str = merged.get("CLOUD_AZURE_RESOURCE_GROUP", "")
         self.cloud_azure_location: str = merged.get("CLOUD_AZURE_LOCATION", "")
         self.cloud_conda_env: str = merged.get("CLOUD_CONDA_ENV", "ark")
+        self.cloud_network: str = merged.get("CLOUD_NETWORK", "")
+        self.cloud_subnet: str = merged.get("CLOUD_SUBNET", "")
         raw_allowed_types = merged.get("CLOUD_ALLOWED_INSTANCE_TYPES", "")
         self.cloud_allowed_instance_types: list[str] = [
             t.strip() for t in raw_allowed_types.split(",") if t.strip()

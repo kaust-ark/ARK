@@ -503,10 +503,24 @@ class CloudBackend(ComputeBackend):
             "--format", "json",
         ]
 
-        # Add SSH keys to metadata
+        # Add SSH keys to metadata — prefer .pub file, fall back to deriving from private key
         pub_key_path = Path(os.path.expanduser(self.ssh_key_path)).with_suffix(".pub")
+        pub_key_content = None
         if pub_key_path.exists():
             pub_key_content = pub_key_path.read_text().strip()
+        else:
+            priv_key_path = Path(os.path.expanduser(self.ssh_key_path))
+            if priv_key_path.exists():
+                try:
+                    result = subprocess.run(
+                        ["ssh-keygen", "-y", "-f", str(priv_key_path)],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    if result.returncode == 0:
+                        pub_key_content = result.stdout.strip()
+                except Exception:
+                    pass
+        if pub_key_content:
             cmd.extend(["--metadata", f"ssh-keys={self.ssh_user}:{pub_key_content}"])
 
         gcp_project = self.gcp_project or self._compute_config.get("gcp_project")

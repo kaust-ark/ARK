@@ -77,6 +77,9 @@ class Project(SQLModel, table=True):
     # ── Failure info ──
     error_message: str = ""
 
+    # ── Per-project cloud overrides ──
+    cloud_overrides: str = ""   # JSON: {region, instance_type, image_id, ...}
+
 
 class Feedback(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -150,6 +153,8 @@ def _migrate(engine):
             "pid": "INTEGER DEFAULT 0",
             # Failure info
             "error_message": "TEXT DEFAULT ''",
+            # Per-project cloud overrides
+            "cloud_overrides": "TEXT DEFAULT ''",
         }
         added = []
         for col, typedef in _new_cols.items():

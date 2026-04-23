@@ -102,6 +102,7 @@ from .jobs import (
     submit_job,
 )
 from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email
+from .auth import make_token, verify_token, verify_share_token
 from .templates import copy_venue_template, has_venue_template
 
 router = APIRouter()
@@ -437,8 +438,25 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     # Resolve per-project compute backend config
     chosen = project.compute_backend or "local"
     if chosen.startswith("cloud"):
-        compute_cfg = _build_cloud_config(user_obj, settings, provider_override=_parse_cloud_provider(chosen))
+        per_project: dict = {}
+        if getattr(project, "cloud_overrides", None):
+            try:
+                per_project = json.loads(project.cloud_overrides)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        compute_cfg = _build_cloud_config(
+            user_obj, settings,
+            per_project_overrides=per_project,
+            provider_override=_parse_cloud_provider(chosen),
+        )
         if compute_cfg:
+            # Write SSH private key content to a per-project file so it never
+            # ends up as raw text in config.yaml.
+            if compute_cfg.get("ssh_private_key"):
+                key_file = project_dir / ".gcp_ssh_key"
+                key_file.write_text(compute_cfg.pop("ssh_private_key"))
+                key_file.chmod(0o600)
+                compute_cfg["ssh_key_path"] = str(key_file)
             config["compute_backend"] = compute_cfg
     elif chosen == "slurm":
         config["compute_backend"] = {
@@ -527,8 +545,11 @@ def _build_cloud_config(user_obj, settings, per_project_overrides=None, provider
             cfg["region"] = settings.cloud_gcp_zone
         elif not cfg["region"] or cfg["region"] == "us-east-1":
             cfg["region"] = "us-central1-a"
-        if not cfg["instance_type"]:
-            cfg["instance_type"] = "e2-standard-2"
+        # Only set a default machine type if none is provided via global settings/keys,
+        # AND only if we aren't about to overide it with a per-project accelerator.
+        accel_ovr = (per_project_overrides or {}).get("accelerator_type")
+        if not cfg["instance_type"] and not accel_ovr:
+            cfg["instance_type"] = "n4-standard-2"
         
         cfg["gcp_project"] = keys.get("gcp_project") or settings.cloud_gcp_project
         if keys.get("gcp_service_account_json"):
@@ -536,10 +557,31 @@ def _build_cloud_config(user_obj, settings, per_project_overrides=None, provider
 
     if provider == "aws" and settings.cloud_security_group:
         cfg["security_group"] = settings.cloud_security_group
-    
+
     if provider == "azure":
         cfg["resource_group"] = settings.cloud_azure_resource_group
         cfg["location"] = settings.cloud_azure_location
+
+    # User-level GCP overrides (stored in encrypted_keys, higher priority than system defaults)
+    if provider == "gcp":
+        if keys.get("gcp_zone"):
+            cfg["region"] = keys["gcp_zone"]
+        if keys.get("gcp_instance_type"):
+            cfg["instance_type"] = keys["gcp_instance_type"]
+        if keys.get("gcp_image_family"):
+            cfg["image_id"] = keys["gcp_image_family"]
+        if keys.get("gcp_image_project"):
+            cfg["image_project"] = keys["gcp_image_project"]
+        if keys.get("gcp_ssh_user"):
+            cfg["ssh_user"] = keys["gcp_ssh_user"]
+        if keys.get("gcp_conda_env"):
+            cfg["conda_env"] = keys["gcp_conda_env"]
+        if keys.get("gcp_ssh_private_key"):
+            cfg["ssh_private_key"] = keys["gcp_ssh_private_key"]
+        if keys.get("gcp_network"):
+            cfg["network"] = keys["gcp_network"]
+        if keys.get("gcp_subnet"):
+            cfg["subnet"] = keys["gcp_subnet"]
 
     if per_project_overrides:
         cfg.update(per_project_overrides)
@@ -990,7 +1032,13 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
     backend = project.compute_backend or "local"
 
     if backend.startswith("cloud"):
-        cloud_cfg = _build_cloud_config(user_obj, settings, provider_override=_parse_cloud_provider(backend))
+        per_project: dict = {}
+        if project.cloud_overrides:
+            try:
+                per_project = json.loads(project.cloud_overrides)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        cloud_cfg = _build_cloud_config(user_obj, settings, per_project_overrides=per_project, provider_override=_parse_cloud_provider(backend))
         if not cloud_cfg:
              logger.warning(f"Cloud selected for {project.id} but not configured. Falling back to local.")
              job_id = launch_local_job(project.id, project.mode, project.max_iterations,
@@ -1352,6 +1400,16 @@ async def api_get_user_settings(request: Request):
         "aws_default_region": keys.get("aws_default_region") or "",
         "gcp_service_account_json": _mask_json(keys.get("gcp_service_account_json")),
         "gcp_project": keys.get("gcp_project") or "",
+        # Per-user GCP compute settings (override system defaults)
+        "gcp_zone": keys.get("gcp_zone") or settings.cloud_gcp_zone or "",
+        "gcp_instance_type": keys.get("gcp_instance_type") or settings.cloud_instance_type or "",
+        "gcp_image_family": keys.get("gcp_image_family") or settings.cloud_image_id or "",
+        "gcp_image_project": keys.get("gcp_image_project") or "",
+        "gcp_ssh_user": keys.get("gcp_ssh_user") or settings.cloud_ssh_user or "ubuntu",
+        "gcp_conda_env": keys.get("gcp_conda_env") or settings.cloud_conda_env or "ark",
+        "gcp_network": keys.get("gcp_network") or settings.cloud_network or "",
+        "gcp_subnet": keys.get("gcp_subnet") or settings.cloud_subnet or "",
+        "gcp_ssh_private_key": "[PRIVATE KEY]" if keys.get("gcp_ssh_private_key") else "",
         "azure_subscription_id": _mask_key(keys.get("azure_subscription_id")),
         "azure_tenant_id": _mask_key(keys.get("azure_tenant_id")),
         "azure_client_id": _mask_key(keys.get("azure_client_id")),
@@ -1376,24 +1434,30 @@ async def api_save_user_settings(request: Request):
         "gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
         "gcp_service_account_json", "gcp_project",
+        "gcp_zone", "gcp_instance_type", "gcp_image_family", "gcp_image_project",
+        "gcp_ssh_user", "gcp_conda_env", "gcp_ssh_private_key",
+        "gcp_network", "gcp_subnet",
         "azure_subscription_id", "azure_tenant_id", "azure_client_id", "azure_client_secret"
     ]
     for field in fields:
         if field not in body:
             continue
-        
+
         val = (body.get(field) or "").strip()
-        
+
         if not val:
-            # User explicitly cleared the field
             current_keys[field] = ""
             continue
-        
-        # For masked fields, only update if not a placeholder
+
+        # JSON/key blob fields: skip placeholder sentinels
         if field in ("gemini_oauth_json", "gcp_service_account_json"):
             if val != "[JSON Config]":
                 current_keys[field] = val
+        elif field == "gcp_ssh_private_key":
+            if val != "[PRIVATE KEY]":
+                current_keys[field] = val
         else:
+            # Plain text / API key fields: skip masked placeholders
             if "..." not in val:
                 current_keys[field] = val
 
@@ -1526,6 +1590,7 @@ async def api_create_project(
     telegram_chat_id: str = Form(""),
     comment: str = Form(""),
     compute_backend: str = Form("local"),
+    cloud_overrides: str = Form(""),
 ):
     user = _require_user(request)
     _check_webapp_enabled()
@@ -1640,6 +1705,7 @@ async def api_create_project(
             max_dev_iterations=max_dev_iterations,
             mode=mode,
             compute_backend=compute_backend,
+            cloud_overrides=cloud_overrides or "",
             status=initial_status,
             has_pdf_upload=has_pdf_upload,
             telegram_token=telegram_token,
@@ -1731,6 +1797,7 @@ async def api_get_project(project_id: str, request: Request):
             "updated_at": project.updated_at.isoformat(),
             "cost_report": _read_cost_report(pdir, project=project),
             "compute_backend": project.compute_backend,
+            "cloud_overrides": project.cloud_overrides or "",
             "error_message": project.error_message or "",
         })
 
@@ -1876,9 +1943,15 @@ async def api_restart_project(project_id: str, request: Request):
         model = body.get("model", "claude-sonnet-4-6")
         new_backend = body.get("compute_backend")
         if new_backend:
-             if new_backend.startswith("cloud") and not _build_cloud_config(user, settings, provider_override=_parse_cloud_provider(new_backend)):
-                  raise HTTPException(400, "Cloud compute not configured.")
+             if new_backend.startswith("cloud"):
+                  overrides = body.get("cloud_overrides") or {}
+                  if not _build_cloud_config(user, settings, per_project_overrides=overrides, provider_override=_parse_cloud_provider(new_backend)):
+                       raise HTTPException(400, "Cloud compute not configured.")
              update_project(session, project, compute_backend=new_backend)
+        new_cloud_overrides = body.get("cloud_overrides")
+        if new_cloud_overrides is not None:
+            val = json.dumps(new_cloud_overrides) if isinstance(new_cloud_overrides, dict) else (new_cloud_overrides or "")
+            update_project(session, project, cloud_overrides=val)
 
         _write_config_yaml(pdir, project, user, settings, model=model)
 
@@ -1951,9 +2024,15 @@ async def api_continue_project(project_id: str, request: Request):
         model = body.get("model") or _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
         new_backend = body.get("compute_backend")
         if new_backend:
-             if new_backend.startswith("cloud") and not _build_cloud_config(user, settings, provider_override=_parse_cloud_provider(new_backend)):
-                  raise HTTPException(400, "Cloud compute not configured.")
+             if new_backend.startswith("cloud"):
+                  overrides = body.get("cloud_overrides") or {}
+                  if not _build_cloud_config(user, settings, per_project_overrides=overrides, provider_override=_parse_cloud_provider(new_backend)):
+                       raise HTTPException(400, "Cloud compute not configured.")
              update_project(session, project, compute_backend=new_backend)
+        new_cloud_overrides = body.get("cloud_overrides")
+        if new_cloud_overrides is not None:
+            val = json.dumps(new_cloud_overrides) if isinstance(new_cloud_overrides, dict) else (new_cloud_overrides or "")
+            update_project(session, project, cloud_overrides=val)
 
         _write_config_yaml(pdir, project, user, settings, model=model)
         if comment:

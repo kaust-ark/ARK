@@ -399,6 +399,15 @@ ARK supports running experiments on remote cloud VMs (AWS, GCP, Azure) while kee
 > [!TIP]
 > Cloud credentials are encrypted at rest using your `SECRET_KEY`. Your keys are never logged or transmitted to third parties.
 
+### Configuration Hierarchy
+
+ARK uses a three-tier configuration model for cloud compute:
+1. **System Defaults**: Set in `webapp.env` (e.g., `CLOUD_REGION`, `CLOUD_NETWORK`).
+2. **Global User Defaults**: Set in the **Settings** panel (⚙️). These apply to all your projects.
+3. **Project Overrides**: Set during project creation or restart. These have the highest priority.
+
+This hierarchy allows you to define your standard machine type and VPC settings once, while easily swapping to a powerful GPU instance for a specific high-intensity experiment.
+
 ---
 
 ### Creating a Project
@@ -460,7 +469,31 @@ gcloud services enable compute.googleapis.com --project=$PROJECT_ID
 
 Paste the contents of `~/ark-gcp-key.json` into the **GCP Service Account JSON** field and set your **GCP Project ID** in the Settings panel.
 
-#### 4. `config.yaml` Reference (advanced / CLI only)
+#### 4. Finding GCP Parameters (Optional)
+
+If you need to find available zones, machine types, or network details, use these `gcloud` commands:
+
+```bash
+# List available zones
+gcloud compute zones list
+
+# List available machine types in a specific zone
+gcloud compute machine-types list --zones=us-central1-a
+
+# List networks and subnets
+gcloud compute networks list
+gcloud compute networks subnets list --regions=us-central1
+
+# List deep learning images (families)
+gcloud compute images list --project=deeplearning-platform-release --no-standard-images
+```
+
+Alternatively, you can find these in the **Google Cloud Console**:
+- **Zones/Machine Types**: Compute Engine &rarr; VM Instances &rarr; Create Instance (to see options)
+- **Networks**: VPC Network &rarr; VPC Networks
+- **Images**: Compute Engine &rarr; Images
+
+#### 5. `config.yaml` Reference (advanced / CLI only)
 
 The webapp generates this automatically from your Settings. For manual or CLI-driven projects, add the following to your project's `config.yaml`:
 
@@ -468,11 +501,15 @@ The webapp generates this automatically from your Settings. For manual or CLI-dr
 compute_backend:
   type: cloud
   provider: gcp
-  region: us-central1-a          # zone, not region
+  region: us-central1-a             # GCP zone
   instance_type: n1-standard-8
-  image_id: common-cu121          # Deep Learning VM image family
+  image_id: common-cpu              # Deep Learning VM image family
+  image_project: deeplearning-platform-release
   ssh_key_path: ~/.ssh/id_rsa
-  ssh_user: user
+  ssh_user: ubuntu
+  # Optional: Networking
+  network: my-vpc                   # Default: "default"
+  subnet: my-subnet                 # Default: "default"
   # Optional: GPU accelerator
   accelerator_type: nvidia-tesla-t4
   accelerator_count: 1
