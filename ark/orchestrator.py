@@ -30,7 +30,7 @@ PROJECT_DIR = None
 
 from ark.memory import get_memory, SimpleMemory
 from ark.engines import AgentMixin
-from ark.compiler import CompilerMixin
+from ark.latex import CompilerMixin
 from ark.execution import ExecutionMixin
 from ark.pipeline import PipelineMixin
 

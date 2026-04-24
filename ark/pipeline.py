@@ -12,125 +12,9 @@ import time
 import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
-
 from ark.execution import QuotaExhaustedError
 from ark.ui import RateLimitCountdown
-
-
-# --------------- Title generation helpers ---------------
-
-_TITLE_MIN_LEN = 10
-_TITLE_MAX_LEN = 200
-_TITLE_MAX_RETRIES = 3
-
-
-# Match the start of an active (non-commented) ``\title`` command, positioning
-# the regex right before the opening ``{``. Active means the line is not a
-# ``%`` comment; we verify this by requiring only whitespace before ``\title``.
-_ACTIVE_TITLE_RE = re.compile(r'^(?P<indent>[ \t]*)\\title\s*(?=\{)', re.MULTILINE)
-
-
-def _replace_latex_title(src: str, new_title: str) -> str:
-    """Replace the first active ``\\title{...}`` in LaTeX source.
-
-    Walks balanced braces (respecting ``\\{``/``\\}`` escapes) so titles
-    containing nested LaTeX commands like ``\\title{A \\emph{note}}`` are
-    handled correctly. Commented-out occurrences (lines starting with ``%``)
-    are skipped. Returns ``src`` unchanged if no active ``\\title`` is found.
-    """
-    for m in _ACTIVE_TITLE_RE.finditer(src):
-        brace_start = m.end()
-        if brace_start >= len(src) or src[brace_start] != '{':
-            continue
-        depth = 1
-        i = brace_start + 1
-        while i < len(src) and depth > 0:
-            ch = src[i]
-            if ch == '\\' and i + 1 < len(src):
-                i += 2
-                continue
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-            i += 1
-        if depth == 0:
-            # src[brace_start] == '{', src[i-1] == '}' — replace the body.
-            return src[:brace_start + 1] + new_title + src[i - 1:]
-    return src
-
-
-def _generate_title_via_llm(idea_text: str, timeout: int = 60) -> str:
-    """Call ``claude -p`` to generate a paper title from idea text.
-
-    Returns the title string, or "" on failure.  The prompt is tightly
-    constrained: output ONLY the title, nothing else.
-    """
-    prompt = (
-        "You are a scientific title generator. "
-        "Given the research summary below, output EXACTLY ONE concise academic paper title.\n\n"
-        "Rules:\n"
-        "- Output ONLY the title text, nothing else\n"
-        "- No quotes, no labels, no prefixes like 'Title:'\n"
-        "- No explanation, no newlines, no markdown\n"
-        "- Between 10 and 200 characters\n\n"
-        f"Research summary:\n{idea_text[:4000]}"
-    )
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    try:
-        result = subprocess.run(
-            ["claude", "--print", "-p", prompt],
-            capture_output=True, text=True, timeout=timeout, env=env,
-        )
-        if result.returncode != 0:
-            return ""
-        title = result.stdout.strip().strip('"').strip("'").strip()
-        # Strip common LLM prefix leaks
-        for prefix in ("Title:", "title:", "Title :", "Generated title:"):
-            if title.lower().startswith(prefix.lower()):
-                title = title[len(prefix):].strip().strip('"').strip("'").strip()
-        return title
-    except subprocess.TimeoutExpired:
-        return ""
-    except FileNotFoundError:
-        return ""
-
-
-def _validate_title(title: str) -> bool:
-    """Check that a title is plausible."""
-    if not title:
-        return False
-    if len(title) < _TITLE_MIN_LEN or len(title) > _TITLE_MAX_LEN:
-        return False
-    # Reject if it looks like LLM meta-output rather than a real title
-    lower = title.lower()
-    if any(phrase in lower for phrase in (
-        "here is", "i suggest", "current title", "appropriate",
-        "as requested", "certainly", "sure,",
-    )):
-        return False
-    # Must contain at least one letter
-    if not any(c.isalpha() for c in title):
-        return False
-    return True
-
-
-def _fallback_title_from_idea(idea_text: str) -> str:
-    """Deterministic fallback: extract first substantive sentence from idea text."""
-    for line in idea_text.splitlines():
-        line = line.strip().lstrip("#").lstrip("-").lstrip("*").strip()
-        if len(line) >= _TITLE_MIN_LEN and not line.startswith("```"):
-            # Truncate to first sentence or max length
-            for sep in (". ", "。", "! ", "? "):
-                idx = line.find(sep)
-                if 0 < idx < _TITLE_MAX_LEN:
-                    line = line[:idx]
-                    break
-            if len(line) > _TITLE_MAX_LEN:
-                line = line[:_TITLE_MAX_LEN - 3] + "..."
-            return line
-    # Absolute last resort
-    return idea_text[:80].strip().replace("\n", " ")
+from ark.latex import utils as latex_utils
 
 
 # --------------- HITL (human-in-the-loop) helpers ---------------
@@ -986,7 +870,7 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
 
         self.log(f"Missing LaTeX tools: {', '.join(missing)}", "WARN")
 
-        install_cmd = self._detect_latex_install_command()
+        install_cmd = latex_utils.detect_latex_install_command()
         question = (
             f"LaTeX tools missing: {', '.join(missing)}\n"
             f"Paper mode requires pdflatex and bibtex to compile."
@@ -1028,20 +912,6 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
         else:
             self.log("Continuing without LaTeX tools — compilation will fail.", "WARN")
 
-    @staticmethod
-    def _detect_latex_install_command() -> str:
-        """Detect platform package manager and return texlive install command."""
-        managers = [
-            ("apt-get", "sudo apt-get install -y texlive-full"),
-            ("dnf", "sudo dnf install -y texlive-scheme-full"),
-            ("yum", "sudo yum install -y texlive-scheme-full"),
-            ("pacman", "sudo pacman -S --noconfirm texlive-full"),
-            ("brew", "brew install --cask mactex"),
-        ]
-        for mgr, cmd in managers:
-            if shutil.which(mgr):
-                return cmd
-        return ""
 
     # ==================== Research Phase ====================
 
@@ -1968,10 +1838,11 @@ in what that file actually says — do not guess.
         if main_tex.exists():
             try:
                 src = main_tex.read_text()
-                new_src = _replace_latex_title(src, title)
-                if new_src != src:
-                    main_tex.write_text(new_src)
-                    self.log(f"Synced \\title{{}} in main.tex → {title}", "INFO")
+                if src and title:
+                    new_src = latex_utils.replace_latex_title(src, title)
+                    if new_src != src:
+                        main_tex.write_text(new_src)
+                        self.log(f"Synced \\title{{}} in main.tex → {title}", "INFO")
             except Exception as e:
                 self.log(f"Failed to sync main.tex title: {e}", "WARN")
 
@@ -2761,25 +2632,6 @@ Produce the complete paper. Do not stop until all sections are written and it co
         self.log("", "RAW")
         self.log_section(f"Dev Phase Complete  |  {dev_state['iteration']} iterations  |  → Review Phase")
 
-    def _maybe_generate_page_images(self) -> list:
-        """Convert PDF to page images, skipping if images are already up-to-date."""
-        pdf_path = self.latex_dir / "main.pdf"
-        if not pdf_path.exists():
-            return self.pdf_to_images()
-
-        first_page = self.latex_dir / "page_01.png"
-        if first_page.exists():
-            try:
-                if first_page.stat().st_mtime >= pdf_path.stat().st_mtime:
-                    # Images are up-to-date
-                    images = sorted(self.latex_dir.glob("page_*.png"))
-                    if images:
-                        self.log("Page images up-to-date, skipping regeneration", "INFO")
-                        return [str(img) for img in images]
-            except OSError:
-                pass  # Fall through to regenerate
-
-        return self.pdf_to_images()
 
     def _reset_stale_action_plan(self):
         """Reset stale pending/in_progress experiments from a previous crashed run.
@@ -3582,125 +3434,3 @@ Only use double_column for multi-panel figures (side-by-side subplots).
                 priority="critical",
             )
         self.log(f"Total iterations: {self.iteration}", "RAW")
-
-    # ═══════════════════════════════════════════════════════════
-    #  Citation Verification (runs every iteration)
-    # ═══════════════════════════════════════════════════════════
-
-    def _run_citation_verification(self):
-        """Verify references.bib, fix errors, mark NEEDS-CHECK, clean unused."""
-        from ark.citation import verify_bib, fix_bib, cleanup_unused
-
-        bib_path = self.latex_dir / "references.bib"
-        if not bib_path.exists():
-            return
-
-        lit_path = str(self.state_dir / "literature.yaml")
-        bib_str = str(bib_path)
-        tex_dir = str(self.latex_dir)
-
-        self.log_step("Citation verification...", "progress")
-
-        try:
-            # 1. Verify each entry against DBLP/CrossRef
-            results = verify_bib(bib_str)
-
-            if results:
-                needs_check = [r for r in results if r.status == "NEEDS-CHECK"]
-                corrected = [r for r in results if r.status == "CORRECTED"]
-
-                # 2. Apply fixes (add note field for NEEDS-CHECK, overwrite CORRECTED)
-                if corrected or needs_check:
-                    fix_bib(bib_str, results)
-
-                # 3. Log summary
-                summary = []
-                verified = [r for r in results if r.status == "VERIFIED"]
-                if verified:
-                    summary.append(f"{len(verified)} verified")
-                if corrected:
-                    summary.append(f"{len(corrected)} corrected")
-                if needs_check:
-                    summary.append(f"{len(needs_check)} needs-check")
-                if summary:
-                    self.log_step(f"Citations: {', '.join(summary)}", "success")
-
-            # 4. Enforce critical citations — if writer dropped a MUST CITE paper, add it back
-            self._enforce_critical_citations(lit_path, tex_dir)
-
-            # 5. NEEDS-CHECK markers stay in References only (via fix_bib note field).
-            # Do NOT mark body text — inserting markers after \cite disrupts page count.
-
-            # 6. Clean up unused entries
-            removed = cleanup_unused(bib_str, tex_dir)
-            if removed:
-                self.log_step(f"Removed {len(removed)} unused citations", "success")
-
-            # 7. Recompile if anything changed
-            if (results and (corrected or needs_check)) or removed:
-                self.log_step("Recompiling after citation updates...", "progress")
-                self.compile_latex()
-
-        except Exception as e:
-            self.log(f"Citation verification error: {e}", "WARN")
-
-    def _enforce_critical_citations(self, lit_path: str, tex_dir: str):
-        """Check that all critical (MUST CITE) papers are cited in tex.
-
-        If a critical paper is missing from tex, ask writer to add it.
-        Checks both references and needs_check in literature.yaml.
-        """
-        import yaml
-
-        lit_file = Path(lit_path)
-        if not lit_file.exists():
-            return
-
-        try:
-            lit_data = yaml.safe_load(lit_file.read_text()) or {}
-        except Exception:
-            return
-
-        # Collect all critical cite keys
-        critical = []
-        for ref in lit_data.get("references", []):
-            if isinstance(ref, dict) and ref.get("importance") == "critical":
-                critical.append((ref.get("bibtex_key", ""), ref.get("title", "")))
-        for nc in lit_data.get("needs_check", []):
-            if isinstance(nc, dict) and nc.get("importance") == "critical":
-                critical.append((nc.get("bibtex_key", ""), nc.get("title", "")))
-
-        if not critical:
-            return
-
-        # Collect all cited keys from tex
-        import re
-        cited_keys = set()
-        tex_path = Path(tex_dir)
-        for tex_file in tex_path.glob("**/*.tex"):
-            content = tex_file.read_text(errors="replace")
-            for m in re.finditer(r"\\cite[pt]?\{([^}]+)\}", content):
-                for key in m.group(1).split(","):
-                    cited_keys.add(key.strip())
-
-        # Find missing critical citations
-        missing = [(key, title) for key, title in critical if key and key not in cited_keys]
-
-        if not missing:
-            return
-
-        self.log_step(f"{len(missing)} critical citation(s) missing from paper, asking writer to add", "warning")
-
-        missing_list = "\n".join(f"- \\cite{{{key}}} — {title}" for key, title in missing)
-        latex_dir_name = self.config.get("latex_dir", "Latex")
-
-        self.run_agent("writer", f"""
-The following critical citations are missing from the paper. They are marked as MUST CITE
-in the research report but are not currently referenced anywhere in {latex_dir_name}/main.tex.
-
-{missing_list}
-
-Add each of these citations to the most appropriate location in the paper (typically Related Work).
-Write a brief sentence or clause that naturally incorporates each \\cite{{}} command.
-Do NOT remove any existing citations. Do NOT modify references.bib.
-""", timeout=600)

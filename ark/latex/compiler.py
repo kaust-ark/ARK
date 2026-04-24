@@ -5,6 +5,7 @@ import re
 import subprocess
 import yaml
 from pathlib import Path
+from ark.latex import utils as latex_utils
 
 
 GEMINI_IMAGE_ASPECT_RATIOS = frozenset({
@@ -53,57 +54,8 @@ class CompilerMixin:
         return False, errors
 
     def _extract_latex_errors(self, log_path: Path) -> str:
-        """Parse LaTeX log for structured error messages.
-
-        Looks for common LaTeX error patterns. Returns up to 5
-        error blocks with surrounding context.
-        """
-        if not log_path.exists():
-            return "No main.log found — compilation may not have run."
-
-        try:
-            log_text = log_path.read_text(errors="replace")
-        except Exception as e:
-            return f"Could not read main.log: {e}"
-
-        lines = log_text.splitlines()
-        error_markers = []
-        for i, line in enumerate(lines):
-            if (line.startswith("!")
-                    or "Fatal error" in line
-                    or "Emergency stop" in line
-                    or "Undefined control sequence" in line
-                    or "LaTeX Error:" in line
-                    or "Package Error:" in line
-                    or "Missing $ inserted" in line
-                    or "Extra alignment tab" in line
-                    or "Misplaced alignment tab" in line
-                    or "Missing \\begin{document}" in line
-                    or "File not found" in line
-                    or "No file" in line and ".sty" in line
-                    or "Too many }'s" in line
-                    or "Runaway argument" in line
-                    or "Paragraph ended before" in line):
-                error_markers.append(i)
-
-        if not error_markers:
-            return "Compilation failed but no specific errors found in main.log."
-
-        # Deduplicate nearby markers (within 3 lines)
-        deduped = [error_markers[0]]
-        for idx in error_markers[1:]:
-            if idx - deduped[-1] > 3:
-                deduped.append(idx)
-        error_markers = deduped[:5]  # Cap at 5 errors
-
-        blocks = []
-        for idx in error_markers:
-            start = max(0, idx - 1)
-            end = min(len(lines), idx + 4)
-            block = "\n".join(lines[start:end])
-            blocks.append(block)
-
-        return f"Found {len(blocks)} error(s) in main.log:\n\n" + "\n---\n".join(blocks)
+        """Parse LaTeX log for structured error messages."""
+        return latex_utils.extract_latex_errors(log_path)
 
     def _compile_until_success(self, context: str = "") -> bool:
         """Keep fixing and recompiling until LaTeX compiles successfully.
@@ -173,28 +125,7 @@ class CompilerMixin:
 
     def _auto_fix_latex(self):
         """Programmatic fixes for common LaTeX compilation issues."""
-        main_tex = self.latex_dir / "main.tex"
-        if not main_tex.exists():
-            return
-
-        # Fix 1: Strip non-UTF8 bytes
-        raw = main_tex.read_bytes()
-        try:
-            raw.decode("utf-8")
-        except UnicodeDecodeError:
-            cleaned = raw.decode("utf-8", errors="ignore").encode("utf-8")
-            main_tex.write_bytes(cleaned)
-            self.log("Auto-fix: stripped non-UTF8 bytes from main.tex", "INFO")
-
-        # Fix 2: Same for .bib files
-        for bib in self.latex_dir.glob("*.bib"):
-            raw = bib.read_bytes()
-            try:
-                raw.decode("utf-8")
-            except UnicodeDecodeError:
-                cleaned = raw.decode("utf-8", errors="ignore").encode("utf-8")
-                bib.write_bytes(cleaned)
-                self.log(f"Auto-fix: stripped non-UTF8 bytes from {bib.name}", "INFO")
+        latex_utils.auto_fix_latex(self.latex_dir, log_fn=self.log)
 
     def compile_latex(self) -> bool:
         """Compile the LaTeX paper.
@@ -444,18 +375,7 @@ class CompilerMixin:
 
     def _parse_overfull_warnings(self) -> list[str]:
         """Parse main.log for Overfull hbox warnings."""
-        log_path = self.latex_dir / "main.log"
-        if not log_path.exists():
-            return []
-        try:
-            log_text = log_path.read_text(errors="replace")
-            warnings = []
-            for line in log_text.splitlines():
-                if 'Overfull \\hbox' in line:
-                    warnings.append(line.strip())
-            return warnings
-        except Exception:
-            return []
+        return latex_utils.parse_overfull_warnings(self.latex_dir)
 
     def _generate_figures_from_results(self) -> bool:
         """Generate figures from latest experiment results and copy to paper dir."""
@@ -693,12 +613,151 @@ class CompilerMixin:
             self.log(f"Generated {len(image_paths)} page images", "INFO")
             return image_paths
         except ImportError:
-            self.log("PyMuPDF not available, trying subprocess fallback", "WARN")
+            # self.log("PyMuPDF not available, trying subprocess fallback", "WARN")
+            pass
         except Exception as e:
-            self.log(f"Direct pdf_to_images failed: {e}, trying fallback", "WARN")
+            self.log(f"Direct pdf_to_images failed: {e}", "WARN")
 
-        # Fallback: subprocess via conda env
-        return self._pdf_to_images_fallback()
+        return []
+
+    def _maybe_generate_page_images(self) -> list:
+        """Convert PDF to page images, skipping if images are already up-to-date."""
+        pdf_path = self.latex_dir / "main.pdf"
+        if not pdf_path.exists():
+            return self.pdf_to_images()
+
+        first_page = self.latex_dir / "page_01.png"
+        if first_page.exists():
+            try:
+                if first_page.stat().st_mtime >= pdf_path.stat().st_mtime:
+                    # Images are up-to-date
+                    images = sorted(self.latex_dir.glob("page_*.png"))
+                    if images:
+                        self.log("Page images up-to-date, skipping regeneration", "INFO")
+                        return [str(img) for img in images]
+            except OSError:
+                pass  # Fall through to regenerate
+
+        return self.pdf_to_images()
+
+    def _run_citation_verification(self):
+        """Verify references.bib, fix errors, mark NEEDS-CHECK, clean unused."""
+        from ark.citation import verify_bib, fix_bib, cleanup_unused
+
+        bib_path = self.latex_dir / "references.bib"
+        if not bib_path.exists():
+            return
+
+        lit_path = str(self.state_dir / "literature.yaml")
+        bib_str = str(bib_path)
+        tex_dir = str(self.latex_dir)
+
+        self.log_step("Citation verification...", "progress")
+
+        try:
+            # 1. Verify each entry against DBLP/CrossRef
+            results = verify_bib(bib_str)
+
+            if results:
+                needs_check = [r for r in results if r.status == "NEEDS-CHECK"]
+                corrected = [r for r in results if r.status == "CORRECTED"]
+
+                # 2. Apply fixes (add note field for NEEDS-CHECK, overwrite CORRECTED)
+                if corrected or needs_check:
+                    fix_bib(bib_str, results)
+
+                # 3. Log summary
+                summary = []
+                verified = [r for r in results if r.status == "VERIFIED"]
+                if verified:
+                    summary.append(f"{len(verified)} verified")
+                if corrected:
+                    summary.append(f"{len(corrected)} fixed")
+                if needs_check:
+                    summary.append(f"{len(needs_check)} marked needs-check")
+
+                if summary:
+                    self.log(f"BibTeX audit: {', '.join(summary)}", "INFO")
+
+                # 4. Notify about needs-check
+                if needs_check:
+                    self.send_notification(
+                        "BibTeX Check Needed",
+                        f"{len(needs_check)} citation(s) in references.bib need manual verification. "
+                        "Marked with 'ark-note: NEEDS-CHECK' in the .bib file.",
+                        priority="warning",
+                    )
+
+                # 4.5. Enforce critical citations
+                self._enforce_critical_citations(lit_path, tex_dir)
+            else:
+                # Still try cleanup even if verify returns nothing or errors
+                pass
+
+            # 5. Clean up unused entries
+            original_size = bib_path.stat().st_size
+            cleanup_unused(bib_str, tex_dir)
+            cleaned_size = bib_path.stat().st_size
+            if cleaned_size < original_size:
+                self.log(f"BibTeX cleanup: removed unused entries ({original_size} -> {cleaned_size} bytes)", "INFO")
+
+        except Exception as e:
+            self.log(f"Citation verification failed: {e}", "WARN")
+
+    def _enforce_critical_citations(self, lit_path: str, tex_dir: str):
+        """Check that all critical (MUST CITE) papers are cited in tex."""
+        lit_file = Path(lit_path)
+        if not lit_file.exists():
+            return
+
+        try:
+            lit_data = yaml.safe_load(lit_file.read_text()) or {}
+        except Exception:
+            return
+
+        # Collect all critical cite keys
+        critical = []
+        for ref in lit_data.get("references", []):
+            if isinstance(ref, dict) and ref.get("importance") == "critical":
+                critical.append((ref.get("bibtex_key", ""), ref.get("title", "")))
+        for nc in lit_data.get("needs_check", []):
+            if isinstance(nc, dict) and nc.get("importance") == "critical":
+                critical.append((nc.get("bibtex_key", ""), nc.get("title", "")))
+
+        if not critical:
+            return
+
+        # Collect all cited keys from tex
+        import re
+        cited_keys = set()
+        tex_path = Path(tex_dir)
+        for tex_file in tex_path.glob("**/*.tex"):
+            content = tex_file.read_text(errors="replace")
+            for m in re.finditer(r"\\cite[pt]?\{([^}]+)\}", content):
+                for key in m.group(1).split(","):
+                    cited_keys.add(key.strip())
+
+        # Find missing critical citations
+        missing = [(key, title) for key, title in critical if key and key not in cited_keys]
+
+        if not missing:
+            return
+
+        self.log_step(f"{len(missing)} critical citation(s) missing from paper, asking writer to add", "warning")
+
+        missing_list = "\n".join(f"- \\cite{{{key}}} — {title}" for key, title in missing)
+        latex_dir_name = self.config.get("latex_dir", "Latex")
+
+        self.run_agent("writer", f"""
+The following critical citations are missing from the paper. They are marked as MUST CITE
+in the research report but are not currently referenced anywhere in {latex_dir_name}/main.tex.
+
+{missing_list}
+
+Add each of these citations to the most appropriate location in the paper (typically Related Work).
+Write a brief sentence or clause that naturally incorporates each \\cite{{}} command.
+Do NOT remove any existing citations. Do NOT modify references.bib.
+""", timeout=600)
 
     def _generate_nano_banana_figures(self) -> int:
         """Generate AI concept figures using PaperBanana pipeline or Nano Banana fallback.
