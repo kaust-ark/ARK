@@ -1,4 +1,4 @@
-"""AgentMixin: agent execution, output parsing, rate limit handling."""
+"""ark.engines: modular package for agent orchestration, runtimes, and parsing."""
 from __future__ import annotations
 
 import json
@@ -11,6 +11,8 @@ import time
 import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from .cli import get_cli_for_model
 
 
 def _parse_claude_json(stdout: str) -> dict | None:
@@ -150,127 +152,6 @@ from ark.ui import (
 )
 
 
-# ── Blocking-command watchdog ─────────────────────────────
-# Patterns that indicate a child process will block forever.
-# Matched against the full command line of descendant processes.
-_BLOCKING_PATTERNS = re.compile(
-    r"(?:^|\s)(?:"
-    r"tail\s+(?:.*\s)?(?:-[fF]|--follow)"  # tail -f / tail -F / tail --follow
-    r"|watch\s"                              # watch <cmd>
-    r"|top(?:\s|$)"                          # top
-    r"|htop(?:\s|$)"                         # htop
-    r"|less(?:\s|$)"                         # less
-    r"|more(?:\s|$)"                         # more
-    r"|vi(?:m)?(?:\s|$)"                     # vi / vim
-    r"|nano(?:\s|$)"                         # nano
-    r"|emacs(?:\s|$)"                        # emacs
-    r")"
-)
-
-
-def _get_descendant_pids(parent_pid: int) -> list:
-    """Get all descendant PIDs of a process (children, grandchildren, etc.)."""
-    try:
-        result = subprocess.run(
-            ["pgrep", "-P", str(parent_pid)],
-            capture_output=True, text=True, timeout=5,
-        )
-        children = [int(p) for p in result.stdout.strip().split() if p.isdigit()]
-        all_descendants = list(children)
-        for child in children:
-            all_descendants.extend(_get_descendant_pids(child))
-        return all_descendants
-    except Exception:
-        return []
-
-
-def _kill_blocking_descendants(parent_pid: int, log_fn=None) -> int:
-    """Find and kill any blocking descendant processes. Returns count killed."""
-    killed = 0
-    for pid in _get_descendant_pids(parent_pid):
-        try:
-            cmdline_path = Path(f"/proc/{pid}/cmdline")
-            if not cmdline_path.exists():
-                continue
-            cmdline = cmdline_path.read_bytes().replace(b'\x00', b' ').decode(errors='replace')
-            if _BLOCKING_PATTERNS.search(cmdline):
-                os.kill(pid, signal.SIGTERM)
-                killed += 1
-                if log_fn:
-                    log_fn(f"  Watchdog killed blocking process (PID {pid}): {cmdline[:80]}", "WARN")
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
-    return killed
-
-
-class _BlockingCommandWatchdog:
-    """Background thread that periodically scans for and kills blocking child processes.
-
-    After killing a banned child (e.g. `tail -f`), the parent CLI usually stays
-    wedged reading a pipe that will never close, so we escalate: if the parent
-    is still alive `grace_seconds` after the first violation, we SIGTERM its
-    whole process group. This collapses the worst-case wait from the outer
-    `process.communicate(timeout=…)` (often 3600s) down to ~grace_seconds.
-    The empty-run retry logic upstream then picks up normally.
-    """
-
-    def __init__(self, parent_pid: int, log_fn=None, interval: int = 30,
-                 grace_seconds: int = 60):
-        self._parent_pid = parent_pid
-        self._log_fn = log_fn
-        self._interval = interval
-        self._grace_seconds = grace_seconds
-        self._stop = threading.Event()
-        self._thread = None
-        self._violation_time: float | None = None
-
-    def start(self):
-        self._stop.clear()
-        self._violation_time = None
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self):
-        self._stop.set()
-        if self._thread:
-            self._thread.join(timeout=5)
-            self._thread = None
-
-    def _escalate(self) -> bool:
-        """SIGTERM the parent's process group. Returns True if signal sent."""
-        try:
-            pgid = os.getpgid(self._parent_pid)
-        except (ProcessLookupError, PermissionError):
-            return False
-        try:
-            os.killpg(pgid, signal.SIGTERM)
-            if self._log_fn:
-                self._log_fn(
-                    f"  Watchdog escalating: parent PID {self._parent_pid} still "
-                    f"blocked {self._grace_seconds}s after banned command — "
-                    f"SIGTERM process group",
-                    "WARN",
-                )
-            return True
-        except (ProcessLookupError, PermissionError):
-            return False
-
-    def _run(self):
-        # Wait a bit before first check — give the agent time to start
-        if self._stop.wait(timeout=self._interval):
-            return
-        while not self._stop.wait(timeout=self._interval):
-            killed = _kill_blocking_descendants(self._parent_pid, self._log_fn)
-            if killed and self._violation_time is None:
-                self._violation_time = time.monotonic()
-            if (self._violation_time is not None
-                    and time.monotonic() - self._violation_time >= self._grace_seconds):
-                if self._escalate():
-                    # Parent will exit soon; outer communicate() will return.
-                    # Stop scanning — further kills are redundant and the
-                    # descendants die with the group.
-                    return
-
 # Per-agent context profiles: controls what context each agent type receives.
 # memory: iteration history, score trends, escalation suggestions
 # deep_research: Gemini Deep Research background report (up to 8KB)
@@ -336,30 +217,6 @@ class AgentMixin:
         if legacy and "-" in legacy:
             return legacy
         return None
-
-    def _kill_process_tree(self, pid: int):
-        """Kill a process and all its descendants (including the process itself).
-
-        Uses SIGKILL on the entire process group (since agents run with
-        start_new_session=True, pid == pgid) to ensure no orphans survive.
-        """
-        # First try to kill the entire process group
-        try:
-            os.killpg(pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
-        # Also kill individual descendants in case pgid differs
-        descendants = _get_descendant_pids(pid)
-        for child_pid in reversed(descendants):
-            try:
-                os.kill(child_pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-        # Kill the process itself
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
 
     def _cleanup_cli_state(self):
         """Clean up Claude CLI state after abnormal termination (e.g. SIGHUP).
@@ -656,175 +513,80 @@ Execute the task and update the corresponding files.
         MAX_RETRIES = 2
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                cmd = []
-                # Strip CLAUDECODE to prevent nested-session detection.
-                # Strip GEMINI_API_KEY / GOOGLE_API_KEY so the Gemini CLI uses                                            
-                # OAuth credentials from ~/.gemini/oauth_creds.json rather than                                    
-                # the API key (which is only for Deep Research via Python API).                                           
-                _strip = {"CLAUDECODE", "GEMINI_API_KEY", "GOOGLE_API_KEY"} 
-                env = {k: v for k, v in os.environ.items() if k not in _strip}
-                if self.model == "gemini":
-                    boundary = self._build_path_boundary()
-                    cmd = [
-                        "gemini",
-                        "-p", f"[SYSTEM RULE] {boundary}\n\n{full_prompt}",
-                        "--approval-mode", "auto_edit",
-                        "-o", "json",
-                    ]
-                    # Respect model_variant if set
-                    ark_model = self._get_ark_model()
-                    if ark_model:
-                        cmd.extend(["-m", ark_model])
-                    else:
-                        cmd.extend(["-m", "auto"])
-                elif self.model == "claude":
-                    cmd = [
-                        "claude", "-p", full_prompt,
-                        "--permission-mode", "bypassPermissions",
-                        "--no-session-persistence",
-                        "--output-format", "json",
-                        "--append-system-prompt", self._build_path_boundary(),
-                    ]
-                    ark_model = self._get_ark_model()
-                    if ark_model:
-                        cmd.extend(["--model", ark_model])
-                elif self.model == "codex":
-                    boundary = self._build_path_boundary()
-                    cmd = [
-                        "codex", "exec",
-                        "--dangerously-bypass-approvals-and-sandbox",
-                        "-C", str(self.code_dir),
-                        f"[SYSTEM RULE] {boundary}\n\n{full_prompt}",
-                    ]
-                else:
-                    self.log(f"Unsupported model backend: {self.model}", "ERROR")
-                    return ""
-
                 ark_model = self._get_ark_model()
                 self.log(f"Backend model: {self.model} | Model: {ark_model or 'default'}", "INFO")
 
-                process = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.DEVNULL,  # Don't hold terminal pty fd
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    cwd=self.code_dir,
-                    env=env,
-                    start_new_session=True,  # isolate from parent's SIGHUP
-                )
-
-                # Start watchdog to kill blocking child processes (tail -f, watch, etc.)
-                watchdog = _BlockingCommandWatchdog(process.pid, log_fn=self.log)
-                watchdog.start()
-
+                cli_runner = get_cli_for_model(self.model, ark_model)
                 timer.start()
-                result = ""
-                stdout = ""
-                stderr = ""
-                usage_record = None  # populated when claude returns parseable JSON
-
-                try:
-                    stdout, stderr = process.communicate(timeout=timeout)
-                    # claude --output-format json: parse the envelope, extract `result`
-                    # field for downstream and `usage` for cost tracking. Fall back to
-                    # raw stdout on parse failure so the existing empty-run / failure
-                    # paths still trigger normally.
-                    if self.model == "claude":
-                        parsed = _parse_claude_json(stdout)
-                        if parsed is not None:
-                            result = parsed.get("result", "") or ""
-                            usage_record = _extract_usage(parsed)
-                        else:
-                            result = stdout
-                    elif self.model == "gemini":
-                        parsed = _parse_gemini_json(stdout)
-                        if parsed is not None:
-                            result = parsed.get("response", "") or ""
-                            usage_record = _extract_gemini_usage(parsed)
-                        else:
-                            result = stdout
-                    else:
-                        result = stdout
-
-                    if stderr:
-                        stderr_lower = stderr.lower()
-                        if "rate limit" in stderr_lower or "rate_limit" in stderr_lower:
-                            wait_seconds = self._parse_rate_limit_wait(stderr)
-                            wait_minutes = wait_seconds / 60
-                            self.log(f"Rate limit detected: need to wait {wait_minutes:.1f} minutes", "WARN")
-
-                            if not self._rate_limit_notified:
-                                self._rate_limit_notified = True
-                                self.save_checkpoint()
-                                self.send_notification(
-                                    f"Rate Limit",
-                                    f"{agent_type} rate-limited, waiting {wait_minutes:.0f}min\n"
-                                    f"Recovery: ~{(datetime.now() + timedelta(seconds=wait_seconds)).strftime('%H:%M')}",
-                                    priority="critical"
-                                )
-
-                            self.log(f"Waiting {wait_minutes:.1f} minutes before auto-recovery...", "INFO")
-                            RateLimitCountdown(wait_seconds + 10).run()
-                            self._rate_limit_notified = False
-                        elif "set an auth method" in stderr_lower:
-                            self.log(f"  [{agent_type}] Auth Error: Authentication not configured. Please export GEMINI_API_KEY='...'", "ERROR")
-                        elif "error" in stderr_lower and "api" in stderr_lower:
-                            self.log(f"  [{agent_type}] API Error: {stderr[:200]}", "AGENT")
-
-                    if process.returncode not in (0, None):
-                        self.log(f"  [{agent_type}] CLI exited with code {process.returncode}", "WARN")
-                        if stderr:
-                            self.log(f"  [{agent_type}] stderr: {stderr[:300]}", "WARN")
-                        # Signal kill (129=SIGHUP, 137=SIGKILL, etc.) — clean up CLI state
-                        if process.returncode >= 128:
-                            sig = process.returncode - 128
-                            self.log(f"  [{agent_type}] Killed by signal {sig}, cleaning up CLI state...", "WARN")
-                            self._cleanup_cli_state()
-
-                except subprocess.TimeoutExpired:
-                    watchdog.stop()
-                    # Kill entire process tree (agent + all its children)
-                    self._kill_process_tree(process.pid)
-                    timer.stop()
-                    self.log(f"Agent {agent_type} timed out ({timeout}s)", "WARN")
-                    # Capture whatever stdout/stderr is available.
-                    # Close pipes first to avoid blocking on dead processes.
-                    try:
-                        stdout, stderr = process.communicate(timeout=5)
-                    except Exception:
-                        # If communicate still blocks, force-close pipes
-                        for pipe in (process.stdout, process.stderr):
-                            if pipe:
-                                try:
-                                    pipe.close()
-                                except Exception:
-                                    pass
-                        stdout, stderr = "", ""
-                    stdout = stdout or ""
-                    stderr = stderr or ""
-                    # JSON envelope is usually missing on timeout (truncated mid-stream).
-                    # Try once; on failure fall back to raw text and let empty-run handle it.
-                    if self.model == "claude":
-                        parsed = _parse_claude_json(stdout)
-                        if parsed is not None:
-                            result = parsed.get("result", "") or ""
-                            usage_record = _extract_usage(parsed)
-                        else:
-                            result = stdout
-                    elif self.model == "gemini":
-                        parsed = _parse_gemini_json(stdout)
-                        if parsed is not None:
-                            result = parsed.get("response", "") or ""
-                            usage_record = _extract_gemini_usage(parsed)
-                        else:
-                            result = stdout
-                    else:
-                        result = stdout
-
-                watchdog.stop()
+                
+                returncode, stdout, stderr, elapsed, timeout_expired = cli_runner.execute(
+                    prompt=full_prompt,
+                    path_boundary=self._build_path_boundary(),
+                    code_dir=self.code_dir,
+                    timeout=timeout,
+                    log_fn=self.log
+                )
                 timer.stop()
-                elapsed = int(time.time() - start_time)
+
+                if timeout_expired:
+                    self.log(f"Agent {agent_type} timed out ({timeout}s)", "WARN")
+                
+                result = ""
+                usage_record = None
+
+                # JSON envelope is usually missing on timeout (truncated mid-stream).
+                # Try once; on failure fall back to raw text and let empty-run handle it.
+                if self.model == "claude":
+                    parsed = _parse_claude_json(stdout)
+                    if parsed is not None:
+                        result = parsed.get("result", "") or ""
+                        usage_record = _extract_usage(parsed)
+                    else:
+                        result = stdout
+                elif self.model == "gemini":
+                    parsed = _parse_gemini_json(stdout)
+                    if parsed is not None:
+                        result = parsed.get("response", "") or ""
+                        usage_record = _extract_gemini_usage(parsed)
+                    else:
+                        result = stdout
+                else:
+                    result = stdout
+
+                if stderr:
+                    stderr_lower = stderr.lower()
+                    if "rate limit" in stderr_lower or "rate_limit" in stderr_lower:
+                        wait_seconds = self._parse_rate_limit_wait(stderr)
+                        wait_minutes = wait_seconds / 60
+                        self.log(f"Rate limit detected: need to wait {wait_minutes:.1f} minutes", "WARN")
+
+                        if not self._rate_limit_notified:
+                            self._rate_limit_notified = True
+                            self.save_checkpoint()
+                            self.send_notification(
+                                f"Rate Limit",
+                                f"{agent_type} rate-limited, waiting {wait_minutes:.0f}min\\n"
+                                f"Recovery: ~{(datetime.now() + timedelta(seconds=wait_seconds)).strftime('%H:%M')}",
+                                priority="critical"
+                            )
+
+                        self.log(f"Waiting {wait_minutes:.1f} minutes before auto-recovery...", "INFO")
+                        RateLimitCountdown(wait_seconds + 10).run()
+                        self._rate_limit_notified = False
+                    elif "set an auth method" in stderr_lower:
+                        self.log(f"  [{agent_type}] Auth Error: Authentication not configured. Please export GEMINI_API_KEY='...'", "ERROR")
+                    elif "error" in stderr_lower and "api" in stderr_lower:
+                        self.log(f"  [{agent_type}] API Error: {stderr[:200]}", "AGENT")
+
+                if returncode not in (0, None):
+                    self.log(f"  [{agent_type}] CLI exited with code {returncode}", "WARN")
+                    if stderr:
+                        self.log(f"  [{agent_type}] stderr: {stderr[:300]}", "WARN")
+                    # Signal kill (129=SIGHUP, 137=SIGKILL, etc.) — clean up CLI state
+                    if returncode >= 128:
+                        sig = returncode - 128
+                        self.log(f"  [{agent_type}] Killed by signal {sig}, cleaning up CLI state...", "WARN")
+                        self._cleanup_cli_state()
 
                 # Empty-run detection with auto-retry.
                 # "Empty" means the agent didn't do its job — that's a property
@@ -837,7 +599,7 @@ Execute the task and update the corresponding files.
                 #   - process produced literally no output
                 stripped = result.strip()
                 is_empty = (
-                    process.returncode != 0
+                    returncode != 0
                     or not stripped
                 )
                 if is_empty:

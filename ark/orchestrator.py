@@ -29,7 +29,7 @@ ARK_ROOT = Path(__file__).parent.parent.absolute()
 PROJECT_DIR = None
 
 from ark.memory import get_memory, SimpleMemory
-from ark.agents import AgentMixin
+from ark.engines import AgentMixin
 from ark.compiler import CompilerMixin
 from ark.execution import ExecutionMixin
 from ark.pipeline import PipelineMixin
