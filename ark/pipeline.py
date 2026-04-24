@@ -1,6 +1,7 @@
 """PipelineMixin: main run loop, paper iteration, research iteration, dependency check."""
 from __future__ import annotations
 
+import html as _html
 import json
 import os
 import re
@@ -197,13 +198,79 @@ def _coerce_hitl_options(raw: dict) -> list:
     return []
 
 
+# Urgency levels that do NOT block the pipeline on a synchronous
+# Telegram reply. Clarification-class requests document a soft need
+# (often with a fallback path already implemented by the agent); the
+# pipeline should note them and proceed rather than burn 60 min of
+# wall-clock waiting for a reply that may never come.
+_NONBLOCKING_URGENCIES = frozenset({
+    "clarification",
+    "informational",
+    "info",
+    "note",
+    "advisory",
+    "fyi",
+    "soft",
+})
+
+
+def _extract_hitl_urgency(raw: dict) -> str:
+    """Return the effective urgency of a needs_human request.
+
+    Sources, in priority order:
+      1. Top-level ``urgency`` field (canonical).
+      2. Highest severity found across ``needs[].urgency`` items. If any
+         item is "blocker", the whole request is treated as blocking;
+         otherwise we fall through to the first non-empty item urgency.
+
+    Default is "blocker" when nothing is explicit — this preserves the
+    historical safe-by-default behaviour for agents that wrote a plain
+    free-form help request.
+    """
+    top = str(raw.get("urgency") or "").strip().lower()
+    if top:
+        return top
+    needs = raw.get("needs")
+    if isinstance(needs, list):
+        urgencies = [str(n.get("urgency") or "").strip().lower()
+                     for n in needs if isinstance(n, dict)]
+        urgencies = [u for u in urgencies if u]
+        if any(u == "blocker" for u in urgencies):
+            return "blocker"
+        if urgencies:
+            return urgencies[0]
+    return "blocker"
+
+
+def _extract_hitl_fallbacks(raw: dict) -> list[str]:
+    """Pull documented fallback descriptions from a needs[]-shaped
+    payload so downstream logs and hitl_decisions entries record what
+    the agent is silently doing instead of waiting."""
+    fallbacks: list[str] = []
+    needs = raw.get("needs")
+    if isinstance(needs, list):
+        for n in needs:
+            if not isinstance(n, dict):
+                continue
+            fb = str(n.get("fallback") or "").strip()
+            if fb:
+                key = str(n.get("key") or n.get("provider") or "").strip()
+                fallbacks.append(f"{key}: {fb}" if key else fb)
+    top_fb = str(raw.get("fallback") or "").strip()
+    if top_fb:
+        fallbacks.append(top_fb)
+    return fallbacks
+
+
 def _normalise_needs_human(raw: dict) -> dict:
     """Coerce a ``needs_human.json`` payload into a stable shape.
 
     Tolerates the legacy free-form schema (``operator_action_needed`` /
     ``needed_items`` / ``commands_tried`` / ``error_output``) as well
     as the structured schema documented in experimenter.prompt
-    (``options[]`` with ``title`` + ``consequence`` per option)."""
+    (``options[]`` with ``title`` + ``consequence`` per option) and the
+    newer ``needs[]`` + ``urgency`` + ``fallback`` schema used by the
+    researcher for soft clarifications."""
     evidence = raw.get("evidence") or {}
     if isinstance(evidence, str):
         evidence = {"freeform": evidence}
@@ -217,14 +284,35 @@ def _normalise_needs_human(raw: dict) -> dict:
     if "error_output" not in evidence and raw.get("error_output"):
         evidence["error_output"] = raw["error_output"]
 
+    # Derive a summary from needs[] items when no top-level summary was
+    # provided, so the log + hitl_decisions entry still carry signal.
+    summary = str(raw.get("summary") or raw.get("reason") or "").strip()
+    if not summary:
+        needs = raw.get("needs")
+        if isinstance(needs, list) and needs:
+            parts = []
+            for n in needs:
+                if not isinstance(n, dict):
+                    continue
+                key = str(n.get("key") or n.get("provider") or "").strip()
+                purpose = str(n.get("purpose") or "").strip()
+                if key and purpose:
+                    parts.append(f"{key}: {purpose}")
+                elif key:
+                    parts.append(key)
+            if parts:
+                summary = "; ".join(parts)[:500]
+
     return {
-        "summary": str(raw.get("summary") or raw.get("reason") or "").strip(),
+        "summary": summary,
         "stage": str(raw.get("stage") or raw.get("phase") or "").strip(),
         "what_failed": str(raw.get("what_failed") or raw.get("details") or "").strip(),
         "evidence": evidence,
         "options": _coerce_hitl_options(raw),
         "default_option": str(raw.get("default_option") or "").strip(),
         "timeout_minutes": int(raw.get("timeout_minutes") or 60),
+        "urgency": _extract_hitl_urgency(raw),
+        "fallbacks": _extract_hitl_fallbacks(raw),
     }
 
 
@@ -1444,8 +1532,17 @@ selected skill (why it matches, which phase will use it).
         log and the ``hitl_decisions.yaml`` accumulator that agents read
         at the start of subsequent iterations.
 
-        Returns True if a decision was made (caller should retry the
-        blocked work), False on timeout with no default / no telegram.
+        Requests tagged ``urgency="clarification"`` (or other
+        non-blocking tiers in ``_NONBLOCKING_URGENCIES``) are recorded
+        and acknowledged asynchronously rather than blocking the
+        pipeline on a synchronous Telegram wait. This prevents stale
+        soft-clarification asks (e.g. an API-key question written during
+        Research while the agent already had a working fallback) from
+        costing the pipeline a 60-minute timeout.
+
+        Returns True if the request was resolved (decision made, soft
+        ack recorded, or file purged), False on a hard-block timeout
+        with no reply.
         """
         needs_file = Path(self.code_dir) / "results" / "needs_human.json"
         if not needs_file.exists():
@@ -1459,9 +1556,60 @@ selected skill (why it matches, which phase will use it).
 
         req = _normalise_needs_human(raw)
         self.log(
-            f"Human intervention requested: {req['summary'] or '(no summary)'}",
+            f"Human intervention requested [urgency={req['urgency']}]: "
+            f"{req['summary'] or '(no summary)'}",
             "WARN",
         )
+
+        # Non-blocking tiers: log, notify async, persist, return without
+        # waiting on ask_user_decision. Agents that want a hard block
+        # must set urgency="blocker" explicitly (or omit urgency, which
+        # also defaults to blocker for safety).
+        if req["urgency"] in _NONBLOCKING_URGENCIES:
+            parts = [
+                f"Auto-acknowledged (urgency={req['urgency']}, not blocking)."
+            ]
+            if req["fallbacks"]:
+                parts.append("Using documented fallbacks:")
+                parts.extend(f"  - {fb}" for fb in req["fallbacks"])
+            else:
+                parts.append(
+                    "No explicit fallback documented in the request — "
+                    "downstream agents will proceed without the requested input."
+                )
+            decision_text = "\n".join(parts)
+            self.log(
+                f"HITL non-blocking ack ({req['urgency']}): "
+                f"{req['summary'][:120] or '(no summary)'}",
+                "INFO",
+            )
+            # Fire-and-forget notification so the user sees it next time
+            # they check Telegram, without us waiting.
+            try:
+                self.telegram.send_async(
+                    f"ℹ️ <b>{_html.escape(self.display_name)}</b>: "
+                    f"agent logged a <i>{_html.escape(req['urgency'])}</i> "
+                    f"need but proceeded with fallback. No action required.\n\n"
+                    f"<b>Summary:</b> {_html.escape(req['summary'][:300] or '(no summary)')}",
+                    parse_mode="HTML",
+                    polish=False,
+                )
+            except Exception as e:
+                self.log(f"HITL async notify failed: {e}", "WARN")
+            try:
+                _append_hitl_history(
+                    Path(self.code_dir), req, None, None, decision_text, stage,
+                )
+            except Exception as e:
+                self.log(f"needs_human_history.jsonl append failed: {e}", "WARN")
+            try:
+                _update_hitl_decisions(
+                    Path(self.state_dir), req, None, decision_text, stage,
+                )
+            except Exception as e:
+                self.log(f"hitl_decisions.yaml update failed: {e}", "WARN")
+            needs_file.unlink(missing_ok=True)
+            return True
 
         # Derive ask_user_decision inputs from the normalised request.
         options = [o["title"] or o["id"] for o in req["options"]]
