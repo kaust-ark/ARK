@@ -476,7 +476,7 @@ class TestIntegration:
         from ark.cli import main
         from ark.memory import SimpleMemory
         from ark.engines import AgentMixin
-        from ark.latex import CompilerMixin
+        from ark.compiler import CompilerMixin
         from ark.execution import ExecutionMixin
         from ark.pipeline import PipelineMixin
 
