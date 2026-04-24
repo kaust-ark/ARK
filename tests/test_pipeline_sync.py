@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from ark.pipeline import _replace_latex_title
+from ark.latex.utils import replace_latex_title as _replace_latex_title
 
 
 # ---------------------------------------------------------------------------
