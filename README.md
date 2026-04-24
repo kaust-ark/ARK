@@ -77,6 +77,16 @@ Give it an idea and a venue. ARK handles the rest.
 
 ---
 
+## ARK Framework
+
+<p align="center">
+  <img src="https://idea2paper.org/assets/framework.png" alt="ARK Framework" width="900">
+</p>
+
+ARK orchestrates three phases &mdash; **Initialization &amp; Research**, **Iterative Development**, and **Iterative Review** &mdash; coordinated through shared memory, a Meta-Debugger for self-repair, and human-in-the-loop steering via the web dashboard or Telegram.
+
+---
+
 ## ARK Pipeline
 
 ARK runs three phases in sequence. The Review phase loops until the paper reaches the target score.
