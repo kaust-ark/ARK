@@ -11,7 +11,20 @@ This is the SANDS Lab / KAUST internal cluster. Head node `mcmgt01`, compute nod
 
 ## What experimenters MUST get right
 
-1. **Always use `#!/bin/bash --login`** (or `-l`) as the shebang. Without `--login`, `mamba activate` / `conda activate` silently no-ops and the job runs against system Python.
+1. **Activate conda by sourcing its profile script before `conda activate`.** The bare
+   ```bash
+   conda activate my-env
+   ```
+   line will fail with `CondaError: Run 'conda init' before 'conda activate'` on any
+   host where the user has not run `conda init bash`. `#!/bin/bash --login` alone does
+   NOT fix this — `--login` only sources `.bashrc` / `.bash_profile`, and those files
+   only register the `conda activate` shell function if `conda init bash` was run
+   previously. The portable, always-works pattern is:
+   ```bash
+   source "$(conda info --base)/etc/profile.d/conda.sh"
+   conda activate "/path/to/project/.env"
+   ```
+   Do this in every sbatch script. Shebang can be plain `#!/bin/bash`.
 2. **Request GPU explicitly via `--gres`** when the code trains a neural network, runs PyTorch/JAX/TensorFlow, or otherwise benefits from CUDA. Submitting to the `mc` partition without `--gres` gets you a CPU-only allocation on a GPU-equipped node — wasted machine-time and badly slow training.
 3. **Pick the weakest GPU that works**: **V100 > A100** (prefer V100). Only escalate to A100 if the model/batch-size genuinely requires it. **Do not use P100** — it exists on the cluster but this project's policy is V100 minimum.
 4. **Set `--time` conservatively**. Max job length is 14 days; interactive sessions cap at 4h. Jobs with `--time` > 3 days will soon need to be preemptible.
@@ -20,7 +33,7 @@ This is the SANDS Lab / KAUST internal cluster. Head node `mcmgt01`, compute nod
 ## Minimal GPU sbatch template (copy-paste)
 
 ```bash
-#!/bin/bash --login
+#!/bin/bash
 #SBATCH --job-name=<PREFIX>_exp1       # keep the required prefix from ARK config
 #SBATCH --partition=mc
 #SBATCH --time=04:00:00
@@ -32,7 +45,8 @@ This is the SANDS Lab / KAUST internal cluster. Head node `mcmgt01`, compute nod
 #SBATCH --error=results/<exp_dir>/slurm_%j.err
 
 set -e
-mamba activate <project_env>           # or: conda activate .env
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "<project_env_path>"        # e.g. /path/to/project/.env
 
 python scripts/train.py --config configs/base.yaml
 ```
@@ -44,7 +58,7 @@ python scripts/train.py --config configs/base.yaml
 For pure data processing / backtesting / plotting that doesn't use a GPU:
 
 ```bash
-#!/bin/bash --login
+#!/bin/bash
 #SBATCH --job-name=<PREFIX>_exp1
 #SBATCH --partition=mc
 #SBATCH --time=02:00:00
@@ -54,7 +68,8 @@ For pure data processing / backtesting / plotting that doesn't use a GPU:
 #SBATCH --error=results/<exp_dir>/slurm_%j.err
 
 set -e
-mamba activate <project_env>
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "<project_env_path>"
 
 python scripts/backtest.py
 ```
@@ -94,21 +109,32 @@ The ML code must install a SIGUSR1 handler that saves state and exits; SLURM wil
 
 ## Environment activation — the trap
 
-Without `--login` shebang:
+Wrong (looks right, fails on the cluster):
 ```bash
-#!/bin/bash                  # ← WRONG — mamba activate silently no-ops
-mamba activate my-env
-python train.py              # runs against system Python, not my-env
+#!/bin/bash --login
+conda activate my-env            # → CondaError: Run 'conda init' before 'conda activate'
+python train.py
 ```
 
-Correct:
+Right (always works regardless of shell-init state):
 ```bash
-#!/bin/bash --login          # ← required
-mamba activate my-env
-python train.py              # picks up the right interpreter
+#!/bin/bash
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "/path/to/project/.env"
+python train.py
 ```
 
-The `--login` flag sources `~/.bashrc` / `~/.bash_profile`, which the mamba/conda init blocks into; without it, `mamba` isn't even on PATH in the batch shell.
+The `--login` flag only sources `.bashrc` / `.bash_profile`. Those files
+register the `conda activate` shell function **only if** `conda init bash`
+was run in them — and it often wasn't. Sourcing `profile.d/conda.sh`
+directly registers the function from a known-good location. `conda info
+--base` returns the install prefix of whichever `conda` is on `$PATH`,
+so this works for miniforge3, Anaconda, Miniconda interchangeably.
+
+`conda run --prefix <env> python script.py` is another valid pattern —
+no activation needed at all. But it spins up a subshell per invocation,
+so stick with `source + activate` when you're running multiple commands
+under the same env in one script.
 
 ## Job lifecycle commands (cluster-specific shortcuts)
 
@@ -131,7 +157,7 @@ The `--login` flag sources `~/.bashrc` / `~/.bash_profile`, which the mamba/cond
 Only use if your training genuinely spans >1 node. Prefer single-node unless memory or throughput demands more. Full template in the upstream docs; the essentials:
 
 ```bash
-#!/bin/bash -l
+#!/bin/bash
 #SBATCH --job-name=ds_exp
 #SBATCH --ntasks-per-node=1              # 1 launcher task per node — workers are spawned by torchrun
 #SBATCH --cpus-per-gpu=4
@@ -140,7 +166,8 @@ Only use if your training genuinely spans >1 node. Prefer single-node unless mem
 #SBATCH --gpus-per-node=a100:1
 
 set -e
-mamba activate deepspeed-env
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "<deepspeed_env_path>"
 
 export NCCL_SOCKET_IFNAME=fabric         # cluster's 100 Gbps internal network
 export NCCL_DEBUG=INFO
@@ -166,12 +193,12 @@ The cluster's `job_defense_shield` cancels jobs exhibiting waste. For an ARK exp
 
 ## Checklist before submitting any sbatch
 
-- [ ] Shebang is `#!/bin/bash --login`
 - [ ] Job name starts with the ARK project prefix (so the pipeline's wait-loop can find it)
 - [ ] `--time=` is set, reasonable (not "forever")
 - [ ] If training: `--gres=gpu:<type>:N` with the **weakest** GPU that works
 - [ ] If NOT training: no `--gres=gpu` line
-- [ ] `mamba activate <env>` (or conda) to get the right Python
+- [ ] `source "$(conda info --base)/etc/profile.d/conda.sh"` then `conda activate` — both lines, in that order, before any `python` call
+- [ ] The activated env is the project-local one (e.g. `.env` or full path), NOT a shared global env like `ark-base`
 - [ ] `set -e` so failures propagate as non-zero exit
 - [ ] `--output=` / `--error=` point to the experiment's results dir so outputs are discoverable
 - [ ] For long jobs (>3 days): `--qos=spot` + SIGUSR1 handler

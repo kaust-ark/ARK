@@ -135,15 +135,22 @@ iteration to exactly this mistake.
 
 **Non-negotiable rules for every sbatch script:**
 
-1. Shebang MUST be `#!/bin/bash --login` (otherwise `mamba activate` / `conda activate` silently no-ops)
+1. Activate conda by sourcing `$(conda info --base)/etc/profile.d/conda.sh`
+   *before* `conda activate`. `#!/bin/bash --login` alone is NOT enough:
+   it only sources `.bashrc` / `.bash_profile`, and those files only
+   register the `conda activate` shell function if the user previously
+   ran `conda init bash`. Sourcing the profile.d script works regardless.
 2. If the code trains a NN / uses PyTorch / JAX / TensorFlow: include `#SBATCH --gres=gpu:<type>:1`
 3. Pick the weakest GPU that works: **V100 > A100** (prefer V100 unless model truly needs more; do not use p100)
 4. If NOT using GPU: OMIT `--gres=gpu` entirely (don't burn quota)
 5. Always set `--time=...` (never default)
+6. Activate the **project-local** env at `{self.conda_env}` — not a global
+   env like `ark-base`. The project env has the versions pinned for this
+   experiment; switching to a shared env produces unreproducible results.
 
 **Canonical GPU sbatch skeleton:**
 ```bash
-#!/bin/bash --login
+#!/bin/bash
 #SBATCH --job-name={self.job_prefix}experiment_1
 #SBATCH --partition=mc
 #SBATCH --time=04:00:00
@@ -154,7 +161,8 @@ iteration to exactly this mistake.
 #SBATCH --error=results/<exp_dir>/slurm_%j.err
 
 set -e
-conda activate {self.conda_env}
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "{self.conda_env}"
 python scripts/train.py
 ```
 
@@ -172,8 +180,17 @@ template, preemption signal handlers, `jobstats`/`ninfo`/`ginfo` usage):
 
 Use Slurm to submit GPU jobs. Key settings:
 - Job name prefix: `{self.job_prefix}`
-- Conda environment: `{self.conda_env}`
-- Activate before running: `conda activate {self.conda_env}`
+- Conda environment: `{self.conda_env}` (project-local — do not substitute a shared env)
+- Activate before running (both lines required):
+  ```bash
+  source "$(conda info --base)/etc/profile.d/conda.sh"
+  conda activate "{self.conda_env}"
+  ```
+  The `source` line registers the `conda activate` shell function. Without
+  it, the bare `conda activate` command fails with
+  `CondaError: Run 'conda init' before 'conda activate'` on hosts where
+  the user has not run `conda init bash`. The `source` form is portable
+  and works regardless of shell-init state.
 
 Submit jobs using `sbatch`. Name all jobs with prefix `{self.job_prefix}` so the
 system can track them (e.g., `#SBATCH --job-name={self.job_prefix}experiment_1`).
