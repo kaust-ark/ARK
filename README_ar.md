@@ -80,7 +80,7 @@
 ## الإطار العام لـ ARK
 
 <p align="center">
-  <img src="https://idea2paper.org/assets/framework.png" alt="ARK Framework" width="900">
+  <img src="assets/framework.png" alt="ARK Framework" width="900">
 </p>
 
 ينسّق ARK ثلاث مراحل &mdash; **التهيئة والبحث**، **التطوير التكراري**، و**المراجعة التكرارية** &mdash; عبر الذاكرة المشتركة، ووحدة Meta-Debugger للإصلاح الذاتي، والتوجيه البشري عبر لوحة الويب أو Telegram.
