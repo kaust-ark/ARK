@@ -15,255 +15,15 @@ from pathlib import Path
 from ark.execution import QuotaExhaustedError
 from ark.ui import RateLimitCountdown
 from ark.latex import utils as latex_utils
+from ark.config import defaults
 
 
-# --------------- HITL (human-in-the-loop) helpers ---------------
-#
-# Agents write ``results/needs_human.json`` when they hit a blocker
-# they cannot resolve autonomously. ``_check_human_intervention`` (on
-# PipelineMixin) reads it, routes it through the shared
-# ``ask_user_decision`` Telegram UI, and persists the decision so a
-# later iteration can honour it without re-asking. The module-level
-# helpers here handle the pure-data concerns (schema coercion, history
-# append, decision accumulator) so they are trivial to unit-test.
-
-_HITL_OPTION_PAREN_RE = re.compile(
-    r"\(([a-z])\)\s*([^()]+?)(?=\(\w\)|$)", re.IGNORECASE,
+from ark.hitl import (
+    _normalise_needs_human,
+    _append_hitl_history,
+    _update_hitl_decisions,
+    _NONBLOCKING_URGENCIES,
 )
-_HITL_TRAILING_CONJUNCTION_RE = re.compile(
-    r"(?:[,;.\s]*\b(?:or|and)\b\s*)+$", re.IGNORECASE,
-)
-
-
-def _clean_option_title(text: str) -> str:
-    s = str(text).strip()
-    s = _HITL_TRAILING_CONJUNCTION_RE.sub("", s).rstrip(",;. ")
-    return s
-
-
-def _coerce_hitl_options(raw: dict) -> list:
-    """Return a canonical [{id, title, consequence}] list.
-
-    Accepts the structured ``options[]`` format plus two legacy shapes
-    (``operator_action_needed`` as a ``(a)/(b)/(c)`` sentence, or
-    ``needed_items`` as a list of strings). Empty result means the
-    agent wrote a free-form help request and we have nothing numbered
-    to surface."""
-    options = raw.get("options")
-    if isinstance(options, list) and options and all(isinstance(o, dict) for o in options):
-        return [
-            {"id": str(o.get("id") or i),
-             "title": str(o.get("title") or "").strip(),
-             "consequence": str(o.get("consequence") or "").strip()}
-            for i, o in enumerate(options, 1)
-        ]
-
-    legacy = raw.get("operator_action_needed") or raw.get("needed_items") or ""
-    if isinstance(legacy, list):
-        return [
-            {"id": str(i),
-             "title": _clean_option_title(item),
-             "consequence": ""}
-            for i, item in enumerate(legacy, 1)
-            if str(item).strip()
-        ]
-    if isinstance(legacy, str) and legacy.strip():
-        matches = _HITL_OPTION_PAREN_RE.findall(legacy)
-        if matches:
-            return [
-                {"id": str(idx + 1),
-                 "title": _clean_option_title(text),
-                 "consequence": ""}
-                for idx, (_, text) in enumerate(matches)
-            ]
-        return [{"id": "1",
-                 "title": _clean_option_title(legacy),
-                 "consequence": ""}]
-    return []
-
-
-# Urgency levels that do NOT block the pipeline on a synchronous
-# Telegram reply. Clarification-class requests document a soft need
-# (often with a fallback path already implemented by the agent); the
-# pipeline should note them and proceed rather than burn 60 min of
-# wall-clock waiting for a reply that may never come.
-_NONBLOCKING_URGENCIES = frozenset({
-    "clarification",
-    "informational",
-    "info",
-    "note",
-    "advisory",
-    "fyi",
-    "soft",
-})
-
-
-def _extract_hitl_urgency(raw: dict) -> str:
-    """Return the effective urgency of a needs_human request.
-
-    Sources, in priority order:
-      1. Top-level ``urgency`` field (canonical).
-      2. Highest severity found across ``needs[].urgency`` items. If any
-         item is "blocker", the whole request is treated as blocking;
-         otherwise we fall through to the first non-empty item urgency.
-
-    Default is "blocker" when nothing is explicit — this preserves the
-    historical safe-by-default behaviour for agents that wrote a plain
-    free-form help request.
-    """
-    top = str(raw.get("urgency") or "").strip().lower()
-    if top:
-        return top
-    needs = raw.get("needs")
-    if isinstance(needs, list):
-        urgencies = [str(n.get("urgency") or "").strip().lower()
-                     for n in needs if isinstance(n, dict)]
-        urgencies = [u for u in urgencies if u]
-        if any(u == "blocker" for u in urgencies):
-            return "blocker"
-        if urgencies:
-            return urgencies[0]
-    return "blocker"
-
-
-def _extract_hitl_fallbacks(raw: dict) -> list[str]:
-    """Pull documented fallback descriptions from a needs[]-shaped
-    payload so downstream logs and hitl_decisions entries record what
-    the agent is silently doing instead of waiting."""
-    fallbacks: list[str] = []
-    needs = raw.get("needs")
-    if isinstance(needs, list):
-        for n in needs:
-            if not isinstance(n, dict):
-                continue
-            fb = str(n.get("fallback") or "").strip()
-            if fb:
-                key = str(n.get("key") or n.get("provider") or "").strip()
-                fallbacks.append(f"{key}: {fb}" if key else fb)
-    top_fb = str(raw.get("fallback") or "").strip()
-    if top_fb:
-        fallbacks.append(top_fb)
-    return fallbacks
-
-
-def _normalise_needs_human(raw: dict) -> dict:
-    """Coerce a ``needs_human.json`` payload into a stable shape.
-
-    Tolerates the legacy free-form schema (``operator_action_needed`` /
-    ``needed_items`` / ``commands_tried`` / ``error_output``) as well
-    as the structured schema documented in experimenter.prompt
-    (``options[]`` with ``title`` + ``consequence`` per option) and the
-    newer ``needs[]`` + ``urgency`` + ``fallback`` schema used by the
-    researcher for soft clarifications."""
-    evidence = raw.get("evidence") or {}
-    if isinstance(evidence, str):
-        evidence = {"freeform": evidence}
-    elif not isinstance(evidence, dict):
-        evidence = {}
-    if "tested_commands" not in evidence:
-        if raw.get("commands_tried"):
-            evidence["tested_commands"] = list(raw["commands_tried"])
-        elif raw.get("tested_cmd"):
-            evidence["tested_commands"] = [raw["tested_cmd"]]
-    if "error_output" not in evidence and raw.get("error_output"):
-        evidence["error_output"] = raw["error_output"]
-
-    # Derive a summary from needs[] items when no top-level summary was
-    # provided, so the log + hitl_decisions entry still carry signal.
-    summary = str(raw.get("summary") or raw.get("reason") or "").strip()
-    if not summary:
-        needs = raw.get("needs")
-        if isinstance(needs, list) and needs:
-            parts = []
-            for n in needs:
-                if not isinstance(n, dict):
-                    continue
-                key = str(n.get("key") or n.get("provider") or "").strip()
-                purpose = str(n.get("purpose") or "").strip()
-                if key and purpose:
-                    parts.append(f"{key}: {purpose}")
-                elif key:
-                    parts.append(key)
-            if parts:
-                summary = "; ".join(parts)[:500]
-
-    return {
-        "summary": summary,
-        "stage": str(raw.get("stage") or raw.get("phase") or "").strip(),
-        "what_failed": str(raw.get("what_failed") or raw.get("details") or "").strip(),
-        "evidence": evidence,
-        "options": _coerce_hitl_options(raw),
-        "default_option": str(raw.get("default_option") or "").strip(),
-        "timeout_minutes": int(raw.get("timeout_minutes") or 60),
-        "urgency": _extract_hitl_urgency(raw),
-        "fallbacks": _extract_hitl_fallbacks(raw),
-    }
-
-
-def _hitl_slug(s: str, max_len: int = 80) -> str:
-    s = re.sub(r"[^a-zA-Z0-9_]+", "_", s).strip("_").lower()
-    return s[:max_len] or "anon"
-
-
-def _append_hitl_history(code_dir: Path, req: dict, reply,
-                         chosen, decision_text: str,
-                         stage_label: str) -> Path:
-    """Append a Q+A entry to ``results/needs_human_history.jsonl``."""
-    history = code_dir / "results" / "needs_human_history.jsonl"
-    history.parent.mkdir(parents=True, exist_ok=True)
-    entry = {
-        "timestamp": datetime.now().isoformat(),
-        "stage": stage_label,
-        "request": req,
-        "reply": reply,
-        "chosen_option": chosen,
-        "decision_text": decision_text,
-    }
-    with history.open("a") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    return history
-
-
-def _update_hitl_decisions(state_dir: Path, req: dict, chosen,
-                           decision_text: str, stage_label: str) -> Path:
-    """Write ``auto_research/state/hitl_decisions.yaml`` — the
-    accumulator agents consult at the start of subsequent iterations
-    so they honour a prior decision instead of re-asking.
-
-    Record id is a slug of ``stage :: summary`` so the *same* blocker
-    surfacing twice updates the existing record rather than piling up
-    duplicates."""
-    path = state_dir / "hitl_decisions.yaml"
-    data: dict = {}
-    if path.exists():
-        try:
-            data = yaml.safe_load(path.read_text()) or {}
-        except Exception:
-            data = {}
-    decisions = data.get("decisions", [])
-    decision_id = _hitl_slug(f"{stage_label}::{req.get('summary','')}")
-    record = {
-        "id": decision_id,
-        "timestamp": datetime.now().isoformat(),
-        "stage": stage_label,
-        "summary": req.get("summary"),
-        "chosen_option": chosen,
-        "free_text": None if chosen else (decision_text or None),
-    }
-
-    replaced = False
-    for i, d in enumerate(decisions):
-        if isinstance(d, dict) and d.get("id") == decision_id:
-            decisions[i] = record
-            replaced = True
-            break
-    if not replaced:
-        decisions.append(record)
-
-    data["decisions"] = decisions
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
-    return path
 
 
 class PipelineMixin:
@@ -289,12 +49,56 @@ class PipelineMixin:
 
     def run_paper_iteration(self) -> bool:
         """Execute one paper review iteration. Returns whether to continue."""
+        self._iteration_prep()
+
+        paper_state = self.load_paper_state()
+        current_score = paper_state.get("current_score", 0)
+
+        # Step-level resume: skip already-completed steps
+        resume_step = self.get_resume_step() if not self._asked_this_iteration else 0
+        total_steps = 5
+
+        # Iteration header
+        self.log("", "RAW")
+        self.log_section(f"Review Phase: Iteration {self.iteration}/{self.max_iterations}  |  Score: {current_score}/10 → ?  |  Target: {self.paper_accept_threshold}/10")
+
+        # 1. Compile
+        if not self._step_compile(1, total_steps, resume_step):
+            return True # Continue to next iteration (skip current)
+
+        # 2. Review
+        review_output, score, issue_ids = self._step_review(2, total_steps, resume_step, paper_state, current_score)
+        if not review_output and score == current_score and not issue_ids:
+            return True # Error in review, retry
+
+        # Acceptance Check
+        stop, post_accept_cleanup, stop_after_cleanup = self._check_acceptance(score, issue_ids, paper_state)
+        if stop:
+            return False
+
+        # 3. Plan
+        action_plan, planner_output = self._step_plan(3, total_steps, resume_step, review_output)
+
+        # 4. Execute
+        self._step_execute(4, total_steps, resume_step, action_plan, planner_output)
+
+        # Quota exhaustion check (set by _step_execute if it calls run_agent)
+        if self._quota_exhausted:
+            return self._handle_quota_exhausted(score)
+
+        # 5. Validate
+        self._step_validate(5, total_steps, resume_step)
+
+        return self._iteration_finalize(score, current_score, paper_state, review_output, post_accept_cleanup, stop_after_cleanup)
+
+    def _iteration_prep(self):
+        """Prepare for a new iteration: increment counters, reset flags, load instructions."""
         self.iteration += 1
         self._iteration_start = datetime.now()
-        self._quota_exhausted = False  # Reset at start of each iteration
-        self._asked_this_iteration = False  # Reset smart intervention flag
+        self._quota_exhausted = False
+        self._asked_this_iteration = False
 
-        # Load persistent user instructions (always active, never consumed)
+        # Load persistent user instructions
         persistent_instructions = self.load_user_instructions()
         if persistent_instructions:
             base_anchor = self.config.get("goal_anchor", "")
@@ -303,7 +107,7 @@ class PipelineMixin:
                 + f"## User Instructions (MUST follow throughout all iterations)\n\n{persistent_instructions}"
             )
 
-        # Check user updates — if present, invalidate step cache (restart from step 1)
+        # Check user updates
         user_updates = self.check_user_updates()
         if user_updates:
             self.log(f"Applying user updates to memory context...", "INFO")
@@ -312,430 +116,250 @@ class PipelineMixin:
             else:
                 self.memory.set_goal_anchor(f"## User Updates\n\n{user_updates}")
 
-        paper_state = self.load_paper_state()
-        paper_requirements = self.load_paper_requirements()
-        current_score = paper_state.get("current_score", 0)
+    def _step_compile(self, step_num: int, total_steps: int, resume_step: int) -> bool:
+        """Step 1: Compile current LaTeX (with robust retry)."""
+        MAX_COMPILE_RETRIES = 5
+        if step_num <= resume_step:
+            self.log_step_header(step_num, total_steps, "Compile LaTeX", "skipped")
+            return True
 
-        # Step-level resume: skip already-completed steps
-        resume_step = self.get_resume_step() if not user_updates else 0
-        if resume_step > 0:
-            self.log(f"Resuming from step {resume_step + 1} (steps 1-{resume_step} completed)", "INFO")
+        self.log_step_header(step_num, total_steps, "Compile LaTeX")
+        compiled = False
+        errors = ""
+        for attempt in range(1, MAX_COMPILE_RETRIES + 1):
+            self.log_step(f"Compiling LaTeX (attempt {attempt}/{MAX_COMPILE_RETRIES})...", "progress")
+            success, errors = self.compile_latex_with_errors()
+            if success:
+                compiled = True
+                break
 
-        # Iteration header
-        self.log("", "RAW")
-        self.log_section(f"Review Phase: Iteration {self.iteration}/{self.max_iterations}  |  Score: {current_score}/10 → ?  |  Target: {self.paper_accept_threshold}/10")
+            self.log_step(f"Attempt {attempt} failed, sending errors to writer...", "warning")
+            fix_prompt = self._build_latex_fix_prompt(attempt, errors)
+            self.run_agent("writer", fix_prompt)
 
-        total_steps = 5
-        step_num = 0
+        if not compiled:
+            return self._handle_compile_failure(step_num, total_steps, MAX_COMPILE_RETRIES, errors)
 
-        # Initialize variables that may be set by skipped steps
+        self.log_step("PDF generated successfully", "success")
+        self.log_step_header(step_num, total_steps, "Compile LaTeX", "end")
+        self.save_step_checkpoint(step_num, "Compile LaTeX")
+        self.notify_progress("Compile", "PDF generated", level="done")
+        return True
+
+    def _build_latex_fix_prompt(self, attempt: int, errors: str) -> str:
+        if attempt <= 1:
+            return f"LaTeX compilation failed. Fix the syntax errors below and ensure it compiles.\n\n{errors}"
+        elif attempt == 2:
+            return f"LaTeX still fails to compile. Check for mismatched braces, undefined commands, and missing packages. Here are the errors:\n\n{errors}"
+        else:
+            return f"LaTeX compilation has failed {attempt} times. Take a conservative approach: comment out the problematic section and replace with a minimal working version. The paper must compile.\n\nErrors:\n{errors}"
+
+    def _handle_compile_failure(self, step_num: int, total_steps: int, max_retries: int, errors: str) -> bool:
+        self.log_step(f"LaTeX failed after {max_retries} attempts", "error")
+        idx, reply = self.ask_user_decision(
+            f"LaTeX compilation failed after {max_retries} writer attempts.",
+            options=["Skip this iteration", f"Retry with {max_retries} more writer attempts", "I'll fix manually, then continue"],
+            timeout=defaults.TIMEOUT_HITL_DECISION, default=0,
+            what_happened=f"LaTeX failed to compile {max_retries} times. The writer agent could not recover.",
+            background=[f"Iteration {self.iteration}", f"Latest errors: {errors[:300]}"],
+            option_details=["Score stays at the last value; skip iteration.", f"Spends another {max_retries} attempts.", "Wait for manual fix."],
+            phase="latex_compile",
+        )
+        if idx == 1:
+            for retry in range(1, max_retries + 1):
+                self.log_step(f"Extra retry {retry}/{max_retries}...", "progress")
+                success, errors = self.compile_latex_with_errors()
+                if success: return True
+                self.run_agent("writer", f"LaTeX still broken. Comment out broken parts.\n\n{errors}")
+        elif idx == 2:
+            self.log_step("Waiting for manual fix...", "progress")
+            success, _ = self.compile_latex_with_errors()
+            if success: return True
+
+        self.log_step("Cannot compile, skipping iteration", "error")
+        self.log_step_header(step_num, total_steps, "Compile LaTeX", "end")
+        return False
+
+    def _step_review(self, step_num: int, total_steps: int, resume_step: int, paper_state: dict, current_score: float) -> tuple[str, float, list[str]]:
+        """Step 2: Reviewer Agent."""
         review_output = ""
         score = current_score
         issue_ids = []
-        post_accept_cleanup = False
-        stop_after_cleanup = False
-        planner_success = True
 
-        # 1. Compile current LaTeX (with robust retry)
-        MAX_COMPILE_RETRIES = 5
-        step_num += 1
         if step_num <= resume_step:
-            self.log_step_header(step_num, total_steps, "Compile LaTeX", "skipped")
-        else:
-            self.log_step_header(step_num, total_steps, "Compile LaTeX")
-            compiled = False
-            for attempt in range(1, MAX_COMPILE_RETRIES + 1):
-                self.log_step(f"Compiling LaTeX (attempt {attempt}/{MAX_COMPILE_RETRIES})...", "progress")
-                success, errors = self.compile_latex_with_errors()
-                if success:
-                    compiled = True
-                    break
-
-                self.log_step(f"Attempt {attempt} failed, sending errors to writer...", "warning")
-
-                # Escalating prompts
-                if attempt <= 1:
-                    fix_prompt = (
-                        f"LaTeX compilation failed. Fix the syntax errors below and ensure it compiles.\n\n"
-                        f"{errors}"
-                    )
-                elif attempt == 2:
-                    fix_prompt = (
-                        f"LaTeX still fails to compile. Check for mismatched braces, undefined commands, "
-                        f"and missing packages. Here are the errors:\n\n{errors}"
-                    )
-                else:
-                    fix_prompt = (
-                        f"LaTeX compilation has failed {attempt} times. Take a conservative approach: "
-                        f"comment out the problematic section and replace with a minimal working version. "
-                        f"The paper must compile.\n\nErrors:\n{errors}"
-                    )
-
-                self.run_agent("writer", fix_prompt)
-
-            if not compiled:
-                self.log_step(f"LaTeX failed after {MAX_COMPILE_RETRIES} attempts", "error")
-                idx, reply = self.ask_user_decision(
-                    f"LaTeX compilation failed after {MAX_COMPILE_RETRIES} writer attempts.",
-                    options=[
-                        "Skip this iteration",
-                        f"Retry with {MAX_COMPILE_RETRIES} more writer attempts",
-                        "I'll fix manually, then continue",
-                    ],
-                    timeout=900, default=0,
-                    what_happened=(
-                        f"LaTeX failed to compile {MAX_COMPILE_RETRIES} times in a row "
-                        f"this iteration. The writer agent could not recover."
-                    ),
-                    background=[
-                        f"Iteration {self.iteration}",
-                        f"Latest errors (truncated): {errors[:300]}",
-                    ],
-                    option_details=[
-                        "Score stays at the last value; the iteration is marked done and we move on.",
-                        f"Spends another ~{MAX_COMPILE_RETRIES} writer attempts (~6 min) before giving up again.",
-                        "Pauses here. You fix the .tex files in your editor and reply when ready; I'll re-compile once.",
-                    ],
-                    phase="latex_compile",
-                )
-                if idx == 1:
-                    # Retry loop (one extra round)
-                    for retry in range(1, MAX_COMPILE_RETRIES + 1):
-                        self.log_step(f"Extra retry {retry}/{MAX_COMPILE_RETRIES}...", "progress")
-                        success, errors = self.compile_latex_with_errors()
-                        if success:
-                            compiled = True
-                            break
-                        self.run_agent("writer", f"LaTeX still broken. Comment out broken parts.\n\n{errors}")
-                elif idx == 2:
-                    # User fixes manually — wait, then try once
-                    self.log_step("Waiting for manual fix...", "progress")
-                    success, errors = self.compile_latex_with_errors()
-                    compiled = success
-
-                if not compiled:
-                    self.log_step("Cannot compile, skipping iteration", "error")
-                    self.log_step_header(step_num, total_steps, "Compile LaTeX", "end")
-                    return True
-
-            self.log_step("PDF generated successfully", "success")
-            self.log_step_header(step_num, total_steps, "Compile LaTeX", "end")
-            self.save_step_checkpoint(step_num, "Compile LaTeX")
-            self.notify_progress("Compile", "PDF generated", level="done")
-
-        # Citation Verification & Cleanup (runs every iteration)
-        self._run_citation_verification()
-
-        # Convert PDF to images for visual review
-        page_images = self._maybe_generate_page_images()
-        visual_review_section = ""
-        if page_images:
-            # Load figure manifest to tell reviewer which figures are AI-generated
-            figure_types_section = ""
-            try:
-                from ark.figure_manifest import load_manifest, get_protected_files
-                manifest = load_manifest(self.figures_dir)
-                figures = manifest.get("figures", {})
-                ai_figs = [f for f, info in figures.items()
-                           if info.get("source") in ("paperbanana", "nano_banana")]
-                mpl_figs = [f for f, info in figures.items()
-                            if info.get("source") == "matplotlib"]
-                if ai_figs or mpl_figs:
-                    figure_types_section = "\n\nFigure sources (for review guidance):\n"
-                    if ai_figs:
-                        figure_types_section += f"- AI-generated concept figures (do not flag for matplotlib style): {', '.join(ai_figs)}\n"
-                    if mpl_figs:
-                        figure_types_section += f"- Matplotlib data plots (can flag for code fixes): {', '.join(mpl_figs)}\n"
-            except Exception:
-                pass
-
-            visual_review_section = f"""
-
-## Visual Review
-
-Please use the Read tool to read the following paper page images for visual review:
-{chr(10).join(f'- {img}' for img in page_images)}
-
-Key checks:
-- Are figure sizes appropriate and fonts clearly readable?
-- Is the layout professional (alignment, spacing, margins)?
-- Is the information density appropriate?
-- Does the overall visual quality meet research publication standards?
-{figure_types_section}"""
-
-        # 2. Reviewer Agent
-        step_num += 1
-        if step_num <= resume_step:
-            # Reload review state from disk
             self.log_step_header(step_num, total_steps, "Review Paper", "skipped")
             review_file = self.state_dir / "latest_review.md"
-            if review_file.exists():
-                review_output = review_file.read_text()
+            if review_file.exists(): review_output = review_file.read_text()
             score = paper_state.get("current_score", 0)
             issue_ids = self.extract_issue_ids()
-        else:
-            self.log_step_header(step_num, total_steps, "Review Paper")
+            return review_output, score, issue_ids
 
-            try:
-                venue_name = self.config.get('venue', 'top venue')
-                review_output = self.run_agent(
-                    "reviewer",
-                    f"""Please review the current paper {self.config.get('latex_dir', 'Latex')}/main.tex and the generated {self.config.get('latex_dir', 'Latex')}/main.pdf.
-
-Review according to {venue_name} standards:
-- Technical Quality (40%)
-- Paper Presentation (30%)
-- Novelty (20%)
-- Writing Quality (10%)
-{visual_review_section}
-Output a detailed review report including:
-1. Overall Score (X/10)
-2. Per-dimension scores
-3. Major Issues (must fix)
-4. Minor Issues (suggested fixes)
-5. Specific improvement suggestions
-
-Save the review report to auto_research/state/latest_review.md""",
-                    timeout=2400,
-                )
-            except Exception as e:
-                self.log(f"Review phase failed: {e}", "ERROR")
-                self.log_step_header(step_num, total_steps, "Review Paper", "end")
-                self.save_step_checkpoint(step_num - 1, "Compile LaTeX")  # Don't mark review as done
-                return True
-
-            # Parse score
-            score = self.parse_review_score(review_output)
-
-            # If score is 0 and review output exists, retry once
-            if score == 0.0 and review_output and len(review_output.strip()) > 100:
-                self.log("Score parsed as 0 but review exists, retrying reviewer for explicit score...", "WARN")
-                retry_output = self.run_agent("reviewer", f"""
-The previous review did not output an explicit score. Please read auto_research/state/latest_review.md,
-provide an explicit overall score (format: Overall Score: X/10), and update the file.
-""", timeout=600)
-                retry_score = self.parse_review_score(retry_output)
-                if retry_score > 0:
-                    score = retry_score
-
-            score_delta = score - current_score
-            delta_str = f"+{score_delta:.1f}" if score_delta >= 0 else f"{score_delta:.1f}"
-            self.log_step(f"Score: {score}/10 ({delta_str} from last)", "success" if score_delta >= 0 else "warning")
-            self.notify_progress(
-                "Review",
-                f"Score {score}/10 ({delta_str} from last)",
-                level="done" if score_delta >= 0 else "warn",
+        self.log_step_header(step_num, total_steps, "Review Paper")
+        self._run_citation_verification()
+        
+        visual_review = self._build_visual_review_section()
+        try:
+            venue_name = self.config.get('venue', 'top venue')
+            review_output = self.run_agent(
+                "reviewer",
+                f"Please review the current paper {self.config.get('latex_dir', 'Latex')}/main.tex and the generated {self.config.get('latex_dir', 'Latex')}/main.pdf.\n\nReview according to {venue_name} standards.\n{visual_review}\nOutput a detailed review report and save to auto_research/state/latest_review.md",
+                timeout=defaults.TIMEOUT_REVIEWER,
             )
-
-            # Record issues for repeat tracking
-            issue_ids = self.extract_issue_ids()
-            self.memory.record_issues(issue_ids, self.iteration)
-
-            # Check for repeating issues
-            repeat_issues = self.memory.get_repeat_issues(threshold=3)
-            if repeat_issues:
-                self.log("Warning: The following issues have repeated 3+ times, indicating previous fixes were ineffective!", "WARN")
-                for issue_id, count in repeat_issues:
-                    self.log(f"  - {issue_id}: appeared {count} times", "WARN")
-                self.log("Suggestion: A completely different approach is needed", "WARN")
-
+        except Exception as e:
+            self.log(f"Review phase failed: {e}", "ERROR")
             self.log_step_header(step_num, total_steps, "Review Paper", "end")
+            self.save_step_checkpoint(step_num - 1, "Compile LaTeX")
+            return "", score, []
 
-            # Proactive intervention: ask user for direction after first review if score is low
-            if self.iteration == 1 and score < 5.0 and self.telegram.is_configured:
-                question, options = self._build_intervention_options(
-                    score, 0, review_output,
-                    trigger="First review score is low",
-                )
-                background = self._build_decision_background(
-                    review_output, options, score=score,
-                )
-                self.ask_user_decision(
-                    question, options, timeout=900,
-                    what_happened=(
-                        f"First review came back at {score}/10 — below the 5.0 floor "
-                        f"(target {self.paper_accept_threshold}/10)."
-                    ),
-                    background=background,
-                    option_details=self._build_option_details(options, review_output),
-                    phase="first_review",
-                )
-                self._asked_this_iteration = True
+        score = self.parse_review_score(review_output)
+        if score == 0.0 and review_output and len(review_output.strip()) > 100:
+            score = self._retry_score_parsing(review_output) or 0.0
 
-            # Update paper state
-            paper_state["reviews"].append({
-                "iteration": self.iteration,
-                "timestamp": datetime.now().isoformat(),
-                "score": score,
-                "log": str(self.log_file),
-            })
-            paper_state["current_score"] = score
-            self.save_paper_state(paper_state)
-            self.save_step_checkpoint(step_num, "Review Paper")
+        score_delta = score - current_score
+        delta_str = f"+{score_delta:.1f}" if score_delta >= 0 else f"{score_delta:.1f}"
+        self.log_step(f"Score: {score}/10 ({delta_str} from last)", "success" if score_delta >= 0 else "warning")
+        self.notify_progress("Review", f"Score {score}/10 ({delta_str} from last)", level="done" if score_delta >= 0 else "warn")
 
-        # Check if accepted
+        issue_ids = self.extract_issue_ids()
+        self.memory.record_issues(issue_ids, self.iteration)
+        self._check_repeat_issues()
+
+        if self.iteration == 1 and score < 5.0 and self.telegram.is_configured:
+            self._proactive_intervention(score, review_output)
+
+        paper_state["reviews"].append({"iteration": self.iteration, "timestamp": datetime.now().isoformat(), "score": score, "log": str(self.log_file)})
+        paper_state["current_score"] = score
+        self.save_paper_state(paper_state)
+        self.save_step_checkpoint(step_num, "Review Paper")
+        self.log_step_header(step_num, total_steps, "Review Paper", "end")
+        return review_output, score, issue_ids
+
+    def _build_visual_review_section(self) -> str:
+        page_images = self._maybe_generate_page_images()
+        if not page_images: return ""
+        
+        figure_types = ""
+        try:
+            from ark.figure_manifest import load_manifest
+            manifest = load_manifest(self.figures_dir)
+            figures = manifest.get("figures", {})
+            ai_figs = [f for f, info in figures.items() if info.get("source") in ("paperbanana", "nano_banana")]
+            mpl_figs = [f for f, info in figures.items() if info.get("source") == "matplotlib"]
+            if ai_figs or mpl_figs:
+                figure_types = "\n\nFigure sources:\n"
+                if ai_figs: figure_types += f"- AI concept figures: {', '.join(ai_figs)}\n"
+                if mpl_figs: figure_types += f"- Matplotlib plots: {', '.join(mpl_figs)}\n"
+        except Exception: pass
+
+        return f"\n\n## Visual Review\n\nPlease read: {chr(10).join(f'- {img}' for img in page_images)}\nKey checks: sizes, layout, density, visual quality.\n{figure_types}"
+
+    def _retry_score_parsing(self, review_output: str) -> Optional[float]:
+        self.log("Score parsed as 0 but review exists, retrying reviewer for explicit score...", "WARN")
+        retry_output = self.run_agent("reviewer", "The previous review did not output an explicit score. Provide one (Overall Score: X/10).", timeout=defaults.TIMEOUT_SCORE_RETRY)
+        return self.parse_review_score(retry_output)
+
+    def _check_repeat_issues(self):
+        repeat_issues = self.memory.get_repeat_issues(threshold=3)
+        if repeat_issues:
+            self.log("Warning: repeating issues detected!", "WARN")
+            for issue_id, count in repeat_issues: self.log(f"  - {issue_id}: appeared {count} times", "WARN")
+
+    def _proactive_intervention(self, score: float, review_output: str):
+        question, options = self._build_intervention_options(score, 0, review_output, trigger="First review score is low")
+        background = self._build_decision_background(review_output, options, score=score)
+        self.ask_user_decision(question, options, timeout=defaults.TIMEOUT_HITL_DECISION, what_happened=f"First review came back at {score}/10.", background=background, option_details=self._build_option_details(options, review_output), phase="first_review")
+        self._asked_this_iteration = True
+
+    def _check_acceptance(self, score: float, issue_ids: list[str], paper_state: dict) -> tuple[bool, bool, bool]:
+        """Check if paper meets acceptance threshold. Returns (stop, post_accept_cleanup, stop_after_cleanup)."""
         if score >= self.paper_accept_threshold:
             cleanup_done = paper_state.get("post_accept_cleanup_done", False)
             if issue_ids and not cleanup_done:
-                post_accept_cleanup = True
-                stop_after_cleanup = True
-                self.log("", "RAW")
-                self.log_section(
-                    f"SCORE REACHED {score}/10, Running One Final Issue Cleanup Iteration",
-                    "★"
-                )
-                self.log(
-                    f"Accepted threshold reached but {len(issue_ids)} issues remain; "
-                    "running one final cleanup iteration.",
-                    "INFO",
-                )
+                self.log_section(f"SCORE REACHED {score}/10, Running One Final Issue Cleanup Iteration", "★")
                 paper_state["status"] = "accepted_pending_cleanup"
                 paper_state["post_accept_cleanup_done"] = True
                 paper_state["accepted_score"] = score
                 paper_state["accepted_iteration"] = self.iteration
+                return False, True, True
             else:
-                self.log("", "RAW")
                 self.log_section(f"PAPER ACCEPTED!  Score: {score}/10 >= {self.paper_accept_threshold}/10", "★")
                 paper_state["status"] = "accepted"
                 self.save_paper_state(paper_state)
                 self._last_score = score
                 self.git_commit(f"ACCEPTED: Final score {score}/10")
-                self.send_notification(
-                    "Paper Accepted",
-                    f"{self.project_name.upper()} scored {score}/10 (target: {self.paper_accept_threshold}/10)\n"
-                    f"After {self.iteration} iterations",
-                )
-                return False
+                self.send_notification("Paper Accepted", f"{self.project_name.upper()} scored {score}/10 after {self.iteration} iterations")
+                return True, False, False
+        return False, False, False
 
-        # ── Step 3: Plan ─────────────────────────────────────────────────────
-        step_num += 1
-        action_plan = None
-        planner_output = ""
+    def _step_plan(self, step_num: int, total_steps: int, resume_step: int, review_output: str) -> tuple[dict, str]:
+        """Step 3: Plan."""
         if step_num <= resume_step:
             self.log_step_header(step_num, total_steps, "Plan", "skipped")
-            # Reload review_output for later phases
-            review_file = self.state_dir / "latest_review.md"
-            if review_file.exists() and not review_output:
-                review_output = review_file.read_text()
-            # Reload saved action plan so Execute step can use it
-            action_plan = self._load_action_plan()
-        else:
-            self.log_step_header(step_num, total_steps, "Plan")
-            try:
-                # Pre-check: self-repair if deeply stagnated (5+ rounds)
-                if self.memory.stagnation_count >= 5:
-                    self.log(f"Stagnation detected ({self.memory.stagnation_count} iterations), triggering self-repair", "REPAIR")
-                    is_stagnating, stagnation_reason = self.memory.is_stagnating()
-                    self.self_repair(stagnation_reason)
+            if not review_output:
+                review_file = self.state_dir / "latest_review.md"
+                if review_file.exists(): review_output = review_file.read_text()
+            return self._load_action_plan(), ""
 
-                # Reset stale experiments from previous crashed runs
-                self._reset_stale_action_plan()
+        self.log_step_header(step_num, total_steps, "Plan")
+        action_plan, planner_output = None, ""
+        try:
+            if self.memory.stagnation_count >= 5:
+                self.log("Stagnation detected, triggering self-repair", "REPAIR")
+                _, stagnation_reason = self.memory.is_stagnating()
+                self.self_repair(stagnation_reason)
+            self._reset_stale_action_plan()
+            action_plan, planner_output = self.run_planning_phase(review_output)
+        except Exception as e: self.log(f"Plan phase failed: {e}", "ERROR")
 
-                action_plan, planner_output = self.run_planning_phase(review_output)
-            except Exception as e:
-                self.log(f"Plan phase failed: {e}", "ERROR")
+        self.save_step_checkpoint(step_num, "Plan")
+        self.log_step_header(step_num, total_steps, "Plan", "end")
+        n_actions = 0
+        if isinstance(action_plan, dict): n_actions = len(action_plan.get("actions") or action_plan.get("issues") or [])
+        elif isinstance(action_plan, list): n_actions = len(action_plan)
+        self.notify_progress("Plan", f"{n_actions} action(s) queued", level="done")
+        return action_plan, planner_output
 
-            self.log_step_header(step_num, total_steps, "Plan", "end")
-            self.save_step_checkpoint(step_num, "Plan")
-            try:
-                n_actions = 0
-                if isinstance(action_plan, dict):
-                    n_actions = len(action_plan.get("actions") or action_plan.get("issues") or [])
-                elif isinstance(action_plan, list):
-                    n_actions = len(action_plan)
-                self.notify_progress("Plan", f"{n_actions} action(s) queued", level="done")
-            except Exception:
-                self.notify_progress("Plan", "ready", level="done")
-
-        # ── Step 4: Execute ───────────────────────────────────────────────────
-        step_num += 1
+    def _step_execute(self, step_num: int, total_steps: int, resume_step: int, action_plan: dict, planner_output: str):
+        """Step 4: Execute."""
         if step_num <= resume_step:
             self.log_step_header(step_num, total_steps, "Execute", "skipped")
-        else:
-            self.log_step_header(step_num, total_steps, "Execute")
-            try:
-                execute_ok = False
-                if action_plan:
-                    # _run_execute_phase always invokes the real _run_writing_phase
-                    # now (see execution.py). If it returns False, that means the
-                    # writing phase itself underperformed (e.g., <5 lines changed);
-                    # the prior hardcoded "fallback writer" here has been removed
-                    # because its impoverished prompt was silently deleting AI
-                    # concept figures. Let the next review iteration react instead.
-                    execute_ok = self._run_execute_phase(action_plan, planner_output)
-                    self._check_human_intervention(stage="Execute")
-            except Exception as e:
-                self.log(f"Execute phase failed: {e}", "ERROR")
+            return
 
-            self.log_step_header(step_num, total_steps, "Execute", "end")
-            self.save_step_checkpoint(step_num, "Execute")
-            try:
-                _ok = bool(execute_ok)  # noqa: F821 - defined in the try above
-            except NameError:
-                _ok = False
-            self.notify_progress(
-                "Execute",
-                "completed" if _ok else "incomplete",
-                level="done" if _ok else "warn",
-            )
+        self.log_step_header(step_num, total_steps, "Execute")
+        execute_ok = False
+        try:
+            if action_plan:
+                execute_ok = self._run_execute_phase(action_plan, planner_output)
+                self._check_human_intervention(stage="Execute")
+        except Exception as e: self.log(f"Execute phase failed: {e}", "ERROR")
 
-        # Quota exhaustion: abort iteration, pause, and retry
-        if self._quota_exhausted:
-            self.iteration -= 1  # Don't count this failed iteration
-            self.log("", "RAW")
-            self.log_summary_box(f"Iteration ABORTED (quota exhausted)", [
-                f"Score: {score}/10 (unchanged)",
-                "Writing phase failed: API quota exhausted",
-                "Iteration not counted, will retry after quota resets",
-            ], inside_phase=False)
-            self.save_checkpoint()
-            wait_time = 1800  # 30 min default
-            self.log(f"Pausing {wait_time}s waiting for API quota to reset...", "ERROR")
-            self.send_notification(
-                "Quota Exhausted",
-                f"Writing failed, pausing {wait_time // 60}min before retry",
-                priority="critical"
-            )
-            RateLimitCountdown(wait_time).run()
-            return True  # continue to retry
+        self.save_step_checkpoint(step_num, "Execute")
+        self.log_step_header(step_num, total_steps, "Execute", "end")
+        self.notify_progress("Execute", "completed" if execute_ok else "incomplete", level="done" if execute_ok else "warn")
 
-        # 4. Validate — figure quality check after writing
-        step_num += 1
+    def _step_validate(self, step_num: int, total_steps: int, resume_step: int):
+        """Step 5: Validate (figure quality check)."""
         if step_num <= resume_step:
             self.log_step_header(step_num, total_steps, "Validate", "skipped")
-        else:
-            self.log_step_header(step_num, total_steps, "Validate")
-            if self._should_skip_figure_phase():
-                self.log_step("Figure phase skipped (no relevant changes)", "info")
-            else:
-                self._run_figure_phase()
-            self.log_step_header(step_num, total_steps, "Validate", "end")
-            self.save_step_checkpoint(step_num, "Validate")
-            self.notify_progress("Validate", "figures checked", level="done")
+            return
+        self.log_step_header(step_num, total_steps, "Validate")
+        if self._should_skip_figure_phase(): self.log_step("Figure phase skipped", "info")
+        else: self._run_figure_phase()
+        self.save_step_checkpoint(step_num, "Validate")
+        self.log_step_header(step_num, total_steps, "Validate", "end")
+        self.notify_progress("Validate", "figures checked", level="done")
 
+    def _iteration_finalize(self, score: float, current_score: float, paper_state: dict, review_output: str, post_accept_cleanup: bool, stop_after_cleanup: bool) -> bool:
+        """Finalize iteration: pre-delivery checks, summary, stagnation check."""
         self.save_paper_state(paper_state)
         self._last_score = score
-
-        # Iteration summary
+        
         self.log("", "RAW")
         gap = self.paper_accept_threshold - score
-        if post_accept_cleanup:
-            status = "POST_ACCEPT_CLEANUP"
-        else:
-            status = "CONTINUE" if gap > 0 else "ACCEPTED"
-        self.log_summary_box(f"Iteration {self.iteration} Summary", [
-            f"Score: {score}/10 (target: {self.paper_accept_threshold}/10)",
-            f"Gap: {gap:.1f} points remaining" if gap > 0 else "Target reached!",
-            f"Status: {status}",
-        ], inside_phase=False)
-
-        # Record to Memory
+        status = "POST_ACCEPT_CLEANUP" if post_accept_cleanup else ("CONTINUE" if gap > 0 else "ACCEPTED")
+        self.log_summary_box(f"Iteration {self.iteration} Summary", [f"Score: {score}/10", f"Status: {status}"], inside_phase=False)
         self.record_score_to_memory(score)
-
-        # ── Pre-delivery checks (all hard guarantees) ──
-        # Order matters: citation verification can add [NEEDS-CHECK] markers
-        # that push the paper over the page limit, so enforce page count AFTER
-        # citation verification.
+        
         self.log_step("Pre-delivery checks...", "progress")
         self._ensure_clearpage_before_bibliography()
         self._ensure_float_barrier()
@@ -745,92 +369,58 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
         try:
             self._enforce_page_count(context="pre-delivery")
         except QuotaExhaustedError as e:
-            self.iteration -= 1  # Don't count this failed iteration
-            self.log("", "RAW")
-            self.log_summary_box("Iteration ABORTED (quota exhausted during page enforcement)", [
-                f"Score: {score}/10 (unchanged)",
-                f"Page count: {e.page_count:.1f}/{e.venue_pages} (over limit, cannot compress)",
-                "Iteration not counted, will retry after quota resets",
-            ], inside_phase=False)
-            self.save_checkpoint()
-            wait_time = 1800  # 30 min
-            self.log(f"Pausing {wait_time}s waiting for API quota to reset...", "ERROR")
-            self.send_notification(
-                "Quota Exhausted",
-                f"Page compression failed ({e.page_count:.1f}/{e.venue_pages} pages), "
-                f"pausing {wait_time // 60}min before retry",
-                priority="critical",
-            )
-            RateLimitCountdown(wait_time).run()
-            return True  # continue to retry
+            return self._handle_quota_exhausted(score, detail=f"Page compression failed: {e.page_count:.1f}/{e.venue_pages} pages")
 
-        # Send iteration summary + PDF to Telegram
         self.send_iteration_summary(score, current_score, review_output)
-
-        # Smart human intervention check
-        if not post_accept_cleanup:
-            self._check_smart_intervention(score, current_score, review_output, planner_success)
-
-        # Cleanup workspace
+        if not post_accept_cleanup: self._check_smart_intervention(score, current_score, review_output, True)
         self.cleanup_workspace()
-
-        # Git commit
         self.git_commit(f"Iteration {self.iteration}: score {score}/10")
-
-        # Save checkpoint
         self.save_checkpoint()
 
-        # Post-accept cleanup done
         if stop_after_cleanup:
             paper_state["status"] = "accepted"
             self.save_paper_state(paper_state)
-            self._last_score = score
-            self.log("", "RAW")
             self.log_section(f"PAPER ACCEPTED AFTER CLEANUP  |  Score: {score}/10", "★")
-            self.git_commit(f"ACCEPTED: Final score {score}/10 (after cleanup iteration)")
-            self.send_notification(
-                "Paper Accepted",
-                f"{self.project_name.upper()} scored {score}/10 (after cleanup iteration)",
-            )
             return False
 
-        # Stagnation detection and self-repair
+        return self._handle_stagnation(score, current_score, review_output)
+
+    def _handle_quota_exhausted(self, score: float, detail: str = "") -> bool:
+        self.iteration -= 1
+        self.log("", "RAW")
+        self.log_summary_box("Iteration ABORTED (quota exhausted)", [f"Score: {score}/10 (unchanged)", detail or "API quota exhausted"], inside_phase=False)
+        self.save_checkpoint()
+        wait_time = 1800
+        self.log(f"Pausing {wait_time}s waiting for API quota reset...", "ERROR")
+        self.send_notification("Quota Exhausted", f"Pausing {wait_time // 60}min before retry")
+        RateLimitCountdown(wait_time).run()
+        return True
+
+    def _handle_stagnation(self, score: float, current_score: float, review_output: str) -> bool:
         is_stagnating, stagnation_reason = self.memory.is_stagnating()
-        if is_stagnating:
-            self.log(f"Stagnation detected: {stagnation_reason} (stagnation_count={self.memory.stagnation_count})", "WARN")
+        if not is_stagnating: return True
 
-            if self.memory.stagnation_count >= 3:
-                self.log("Triggering self-repair...", "REPAIR")
-                self.self_repair(stagnation_reason)
-            else:
-                self.log("Stagnation count is low, delegating to Meta-Debugger", "WARN")
+        self.log(f"Stagnation detected: {stagnation_reason}", "WARN")
+        if self.memory.stagnation_count >= 3:
+            self.log("Triggering self-repair...", "REPAIR")
+            self.self_repair(stagnation_reason)
+        else:
+            self.log("Stagnation count low, delegating to Meta-Debugger", "WARN")
 
-            if self.memory.stagnation_count >= 3 and self.telegram.is_configured:
-                # Use structured intervention with concrete options
-                review_src = review_output
-                if not review_src and (self.state_dir / "latest_review.md").exists():
-                    review_src = (self.state_dir / "latest_review.md").read_text()
-                trigger = f"Stuck {self.memory.stagnation_count} rounds at {score}/10"
-                question, options = self._build_intervention_options(
-                    score, current_score, review_src or "", trigger=trigger,
-                )
-                background = self._build_decision_background(
-                    review_src or "", options, score=score,
-                )
-                self.ask_user_decision(
-                    question, options, timeout=900,
-                    what_happened=(
-                        f"Stagnation triggered: score has stayed at {score}/10 for "
-                        f"{self.memory.stagnation_count} consecutive iterations "
-                        f"(progress < 0.3 each round). Self-repair will trigger at 5 rounds."
-                    ),
-                    background=background,
-                    option_details=self._build_option_details(options, review_src or ""),
-                    phase="stagnation_intervention",
-                )
-                self._asked_this_iteration = True
+        if self.memory.stagnation_count >= 3 and self.telegram.is_configured:
+            self._stagnation_intervention(score, current_score, review_output)
 
         return True
+
+    def _stagnation_intervention(self, score: float, current_score: float, review_output: str):
+        review_src = review_output
+        if not review_src and (self.state_dir / "latest_review.md").exists():
+            review_src = (self.state_dir / "latest_review.md").read_text()
+        trigger = f"Stuck {self.memory.stagnation_count} rounds at {score}/10"
+        question, options = self._build_intervention_options(score, current_score, review_src or "", trigger=trigger)
+        background = self._build_decision_background(review_src or "", options, score=score)
+        self.ask_user_decision(question, options, timeout=defaults.TIMEOUT_HITL_DECISION, what_happened=f"Stagnation triggered at {score}/10.", background=background, option_details=self._build_option_details(options, review_src or ""), phase="stagnation_intervention")
+        self._asked_this_iteration = True
 
     def check_dependencies(self):
         """Check that required CLI tools are available."""
@@ -882,7 +472,7 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
         ]
 
         idx, reply = self.ask_user_decision(
-            question, options, timeout=900, default=0,
+            question, options, timeout=defaults.TIMEOUT_HITL_DECISION, default=0,
             what_happened=f"Required LaTeX binaries are missing: {', '.join(missing)}.",
             background=[
                 "Paper mode needs pdflatex + bibtex to compile.",
@@ -899,7 +489,7 @@ provide an explicit overall score (format: Overall Score: X/10), and update the 
         if idx == 1 and install_cmd:
             self.log(f"Running: {install_cmd}", "INFO")
             result = subprocess.run(
-                install_cmd, shell=True, capture_output=True, text=True, timeout=600,
+                install_cmd, shell=True, capture_output=True, text=True, timeout=defaults.TIMEOUT_LATEX_COMPILE,
             )
             if result.returncode != 0:
                 self.log(f"Install failed: {result.stderr[:500]}", "ERROR")
@@ -1054,7 +644,7 @@ Output the query as plain text at the END of your response, after a line that sa
 "DEEP_RESEARCH_QUERY:" — everything after that line is the query.
 
 Be thorough and faithful to the proposal.
-""", timeout=600)
+""", timeout=defaults.TIMEOUT_INITIALIZER)
 
             self.log_step_header(1, 4, "Analyze Proposal", "end")
         else:
@@ -1146,7 +736,7 @@ to verify:
 
 Write `auto_research/state/project_context.md` with sections:
 ## External Systems, ## Environment Setup, ## Experiment Guidance, ## Credentials & Access
-""", timeout=600)
+""", timeout=defaults.TIMEOUT_INITIALIZER)
             self.log_step("Project context generated", "success")
             self.notify_progress("Project context", "ready", level="done")
 
@@ -1216,7 +806,7 @@ Write `auto_research/state/selected_skills.json` containing a JSON array of
 selected skill paths (or an empty array `[]` if nothing matches). Also write
 `auto_research/state/selected_skills_rationale.md` with a short rationale per
 selected skill (why it matches, which phase will use it).
-""", timeout=600)
+""", timeout=defaults.TIMEOUT_INITIALIZER)
             n_skills = self._install_selected_skills()
             self.log_step("Specialization complete", "success")
             if isinstance(n_skills, int) and n_skills >= 0:
@@ -1393,27 +983,7 @@ selected skill (why it matches, which phase will use it).
             self.log_step(f"Builtin skills installed: {', '.join(installed)}", "success")
 
     def _check_human_intervention(self, stage: str = "") -> bool:
-        """Handle an agent's ``results/needs_human.json`` blocker.
-
-        The payload is normalised, routed through ``ask_user_decision``
-        (main's shared Telegram decision UI — unified header, numbered
-        options with a Custom escape, timeout default, ``/bind`` aware),
-        and the resolution is persisted to both an append-only history
-        log and the ``hitl_decisions.yaml`` accumulator that agents read
-        at the start of subsequent iterations.
-
-        Requests tagged ``urgency="clarification"`` (or other
-        non-blocking tiers in ``_NONBLOCKING_URGENCIES``) are recorded
-        and acknowledged asynchronously rather than blocking the
-        pipeline on a synchronous Telegram wait. This prevents stale
-        soft-clarification asks (e.g. an API-key question written during
-        Research while the agent already had a working fallback) from
-        costing the pipeline a 60-minute timeout.
-
-        Returns True if the request was resolved (decision made, soft
-        ack recorded, or file purged), False on a hard-block timeout
-        with no reply.
-        """
+        """Handle an agent's ``results/needs_human.json`` blocker."""
         needs_file = Path(self.code_dir) / "results" / "needs_human.json"
         if not needs_file.exists():
             return False
@@ -1425,96 +995,16 @@ selected skill (why it matches, which phase will use it).
             return False
 
         req = _normalise_needs_human(raw)
-        self.log(
-            f"Human intervention requested [urgency={req['urgency']}]: "
-            f"{req['summary'] or '(no summary)'}",
-            "WARN",
-        )
+        self.log(f"Human intervention requested [urgency={req['urgency']}]: {req['summary'] or '(no summary)'}", "WARN")
 
-        # Non-blocking tiers: log, notify async, persist, return without
-        # waiting on ask_user_decision. Agents that want a hard block
-        # must set urgency="blocker" explicitly (or omit urgency, which
-        # also defaults to blocker for safety).
         if req["urgency"] in _NONBLOCKING_URGENCIES:
-            parts = [
-                f"Auto-acknowledged (urgency={req['urgency']}, not blocking)."
-            ]
-            if req["fallbacks"]:
-                parts.append("Using documented fallbacks:")
-                parts.extend(f"  - {fb}" for fb in req["fallbacks"])
-            else:
-                parts.append(
-                    "No explicit fallback documented in the request — "
-                    "downstream agents will proceed without the requested input."
-                )
-            decision_text = "\n".join(parts)
-            self.log(
-                f"HITL non-blocking ack ({req['urgency']}): "
-                f"{req['summary'][:120] or '(no summary)'}",
-                "INFO",
-            )
-            # Fire-and-forget notification so the user sees it next time
-            # they check Telegram, without us waiting.
-            try:
-                self.telegram.send_async(
-                    f"ℹ️ <b>{_html.escape(self.display_name)}</b>: "
-                    f"agent logged a <i>{_html.escape(req['urgency'])}</i> "
-                    f"need but proceeded with fallback. No action required.\n\n"
-                    f"<b>Summary:</b> {_html.escape(req['summary'][:300] or '(no summary)')}",
-                    parse_mode="HTML",
-                    polish=False,
-                )
-            except Exception as e:
-                self.log(f"HITL async notify failed: {e}", "WARN")
-            try:
-                _append_hitl_history(
-                    Path(self.code_dir), req, None, None, decision_text, stage,
-                )
-            except Exception as e:
-                self.log(f"needs_human_history.jsonl append failed: {e}", "WARN")
-            try:
-                _update_hitl_decisions(
-                    Path(self.state_dir), req, None, decision_text, stage,
-                )
-            except Exception as e:
-                self.log(f"hitl_decisions.yaml update failed: {e}", "WARN")
-            needs_file.unlink(missing_ok=True)
-            return True
+            return self._handle_nonblocking_hitl(req, stage, needs_file)
 
-        # Derive ask_user_decision inputs from the normalised request.
-        options = [o["title"] or o["id"] for o in req["options"]]
-        option_details = [o["consequence"] for o in req["options"]]
-        if not options:
-            # Agent wrote a free-form help request with no numbered
-            # options. Offer a minimal two-option shape so the user has
-            # something to pick — ask_user_decision auto-appends a
-            # Custom slot so free-text is always possible too.
-            options = ["Continue without action", "Pause and wait for me"]
-            option_details = [
-                "Skip the blocker and let downstream work proceed as best-effort.",
-                "Hold until you reply with guidance.",
-            ]
+        # Derive ask_user_decision inputs
+        options = [o["title"] or o["id"] for o in req["options"]] or ["Continue without action", "Pause and wait for me"]
+        option_details = [o["consequence"] for o in req["options"]] or ["Skip the blocker.", "Hold until guidance."]
 
-        background = []
-        if req["stage"]:
-            background.append(f"Stage: {req['stage']}")
-        if req["what_failed"]:
-            background.append(f"What failed: {req['what_failed'][:400]}")
-        for cmd in (req["evidence"].get("tested_commands") or [])[:4]:
-            if isinstance(cmd, dict):
-                c = cmd.get("cmd") or cmd.get("command") or ""
-                rc = cmd.get("exit_code")
-                background.append(
-                    f"Tested: {str(c)[:120]}"
-                    + (f" (exit {rc})" if rc is not None else "")
-                )
-            else:
-                background.append(f"Tested: {str(cmd)[:120]}")
-        err = req["evidence"].get("error_output")
-        if err:
-            background.append(f"Error: {str(err)[:300]}")
-
-        # Map "3" → 0-indexed int for ask_user_decision.
+        background = self._build_hitl_background(req)
         default_idx = 0
         if req["default_option"] and req["options"]:
             for i, o in enumerate(req["options"]):
@@ -1522,61 +1012,78 @@ selected skill (why it matches, which phase will use it).
                     default_idx = i
                     break
 
-        question = req["summary"] or f"Agent blocked at {stage or 'unknown stage'}"
-
         idx, reply = self.ask_user_decision(
-            question,
-            options,
-            timeout=req["timeout_minutes"] * 60,
-            default=default_idx,
-            what_happened=req["summary"],
-            background=background,
-            option_details=option_details,
-            phase="needs_human",
+            req["summary"] or f"Agent blocked at {stage or 'unknown stage'}",
+            options, timeout=req["timeout_minutes"] * 60, default=default_idx,
+            what_happened=req["summary"], background=background,
+            option_details=option_details, phase="needs_human",
         )
 
-        # Resolve: numeric pick → chosen option; free text → user_update
-        # (already injected by ask_user_decision); timeout → nothing new.
+        chosen, decision_text = self._resolve_hitl_decision(idx, reply, req)
+        
+        try: _append_hitl_history(Path(self.code_dir), req, reply, chosen, decision_text, stage)
+        except Exception as e: self.log(f"history append failed: {e}", "WARN")
+        try: _update_hitl_decisions(Path(self.state_dir), req, chosen, decision_text, stage)
+        except Exception as e: self.log(f"decisions update failed: {e}", "WARN")
+
+        needs_file.unlink(missing_ok=True)
+        return bool(reply) or chosen is not None
+
+    def _handle_nonblocking_hitl(self, req: dict, stage: str, needs_file: Path) -> bool:
+        parts = [f"Auto-acknowledged (urgency={req['urgency']}, not blocking)."]
+        if req["fallbacks"]:
+            parts.append("Using documented fallbacks:")
+            parts.extend(f"  - {fb}" for fb in req["fallbacks"])
+        else:
+            parts.append("No explicit fallback documented — downstream will proceed without requested input.")
+        decision_text = "\n".join(parts)
+        self.log(f"HITL non-blocking ack ({req['urgency']}): {req['summary'][:120] or '(no summary)'}", "INFO")
+        
+        try:
+            self.telegram.send_async(
+                f"ℹ️ <b>{_html.escape(self.display_name)}</b>: agent logged a <i>{_html.escape(req['urgency'])}</i> need but proceeded with fallback. No action required.\n\n<b>Summary:</b> {_html.escape(req['summary'][:300] or '(no summary)')}",
+                parse_mode="HTML", polish=False,
+            )
+        except Exception as e: self.log(f"HITL async notify failed: {e}", "WARN")
+        
+        try: _append_hitl_history(Path(self.code_dir), req, None, None, decision_text, stage)
+        except Exception: pass
+        try: _update_hitl_decisions(Path(self.state_dir), req, None, decision_text, stage)
+        except Exception: pass
+        
+        needs_file.unlink(missing_ok=True)
+        return True
+
+    def _build_hitl_background(self, req: dict) -> list[str]:
+        background = []
+        if req["stage"]: background.append(f"Stage: {req['stage']}")
+        if req["what_failed"]: background.append(f"What failed: {req['what_failed'][:400]}")
+        for cmd in (req["evidence"].get("tested_commands") or [])[:4]:
+            if isinstance(cmd, dict):
+                c = cmd.get("cmd") or cmd.get("command") or ""
+                rc = cmd.get("exit_code")
+                background.append(f"Tested: {str(c)[:120]}" + (f" (exit {rc})" if rc is not None else ""))
+            else: background.append(f"Tested: {str(cmd)[:120]}")
+        err = req["evidence"].get("error_output")
+        if err: background.append(f"Error: {str(err)[:300]}")
+        return background
+
+    def _resolve_hitl_decision(self, idx: int, reply: str, req: dict) -> tuple[Optional[dict], str]:
         chosen = None
         decision_text = ""
         if 0 <= idx < len(req["options"]):
             chosen = req["options"][idx]
             decision_text = f"Selected option {chosen['id']}: {chosen['title']}"
-            if chosen["consequence"]:
-                decision_text += f" (consequence: {chosen['consequence']})"
-            # ask_user_decision only injects on free text; propagate the
-            # numeric decision into user_updates.yaml too so planner /
-            # reviewer memory sees it in the usual channel.
-            try:
-                self.inject_user_update(decision_text)
-            except Exception:
-                pass
+            if chosen["consequence"]: decision_text += f" (consequence: {chosen['consequence']})"
+            try: self.inject_user_update(decision_text)
+            except Exception: pass
             self.log(f"HITL decision: {decision_text[:120]}", "INFO")
         elif reply:
             decision_text = reply.strip()
             self.log(f"HITL free-text reply: {decision_text[:120]}", "INFO")
         else:
-            self.log(
-                f"No HITL reply after {req['timeout_minutes']}min — "
-                f"experiments remain blocked.",
-                "WARN",
-            )
-
-        try:
-            _append_hitl_history(
-                Path(self.code_dir), req, reply, chosen, decision_text, stage,
-            )
-        except Exception as e:
-            self.log(f"needs_human_history.jsonl append failed: {e}", "WARN")
-        try:
-            _update_hitl_decisions(
-                Path(self.state_dir), req, chosen, decision_text, stage,
-            )
-        except Exception as e:
-            self.log(f"hitl_decisions.yaml update failed: {e}", "WARN")
-
-        needs_file.unlink(missing_ok=True)
-        return bool(reply) or chosen is not None
+            self.log(f"No HITL reply after {req['timeout_minutes']}min — experiments remain blocked.", "WARN")
+        return chosen, decision_text
 
     def _sync_agent_prompt_bases(self):
         """Refresh the base template of each per-project agent prompt,
@@ -1720,7 +1227,7 @@ in what that file actually says — do not guess.
 - For experimenter: emphasize project-isolated installs and checking existing services
 - For writer: include anonymity rules (no author names in title or text for blind review)
 - Do NOT repeat generic instructions already in the agent's base prompt
-""", timeout=300)
+""", timeout=defaults.TIMEOUT_CITATIONS_EXTRACT)
 
             if result and len(result.strip()) > 50:
                 # Append to prompt file
@@ -1948,7 +1455,7 @@ Rules:
 - Do NOT invent papers not mentioned in the report
 - If no papers are mentioned, return []
 """
-        agent_output = self.run_agent("researcher", extract_prompt, timeout=300)
+        agent_output = self.run_agent("researcher", extract_prompt, timeout=defaults.TIMEOUT_CITATIONS_EXTRACT)
 
         # Parse the JSON array from agent output
         papers_info = self._parse_paper_info_list(agent_output)
@@ -2296,7 +1803,7 @@ experiments:
 ```
 
 IMPORTANT: If the research idea describes a specific platform, framework, or system (e.g., "evaluate on OpenClaw", "benchmark on MLPerf"), you MUST list it under required_systems. The experimenter is NOT allowed to re-implement these from scratch — they must install and use the real thing. If you are unsure how to install something, write your best guess for install_hint and the experimenter will search online for the correct method.
-""", timeout=1200)
+""", timeout=defaults.TIMEOUT_LIT_REVIEW)
         self.log_step_header(1, 4, "Plan Experiments", "end")
         return output
 
@@ -2364,7 +1871,7 @@ system or it fails with a clear report of what is needed.
 - Use clear naming: results/exp1_results.json, results/exp2_results.json, etc.
 - Handle errors gracefully (log failures, continue with remaining experiments)
 - Keep experiments small enough to finish within the agent budget
-""", timeout=7200)
+""", timeout=defaults.TIMEOUT_EXPERIMENTER)
 
             self.log_step("Waiting for all experiments to complete...", "progress")
             self._compute_backend.wait_for_completion(max_wait_hours=4)
@@ -2409,7 +1916,7 @@ findings:
     significance: "Why this matters"
     supports_claim: "Which paper claim this supports"
 ```
-""", timeout=1200)
+""", timeout=defaults.TIMEOUT_LIT_REVIEW)
         self.log_step_header(3, 4, "Analyze Results", "end")
         return output
 
@@ -2456,7 +1963,7 @@ Output your evaluation in JSON format:
   "reason": "explanation"
 }}
 ```
-""", timeout=600)
+""", timeout=defaults.TIMEOUT_INITIALIZER)
         self.log_step_header(4, 4, "Evaluate Completeness", "end")
 
         # Parse evaluation
@@ -2570,7 +2077,7 @@ Output your evaluation in JSON format:
 Produce the complete paper. Do not stop until all sections are written and it compiles.
 """
 
-        self.run_agent("writer", prompt, timeout=3600)
+        self.run_agent("writer", prompt, timeout=defaults.TIMEOUT_WRITER)
 
     def _deliver_dev_phase(self, dev_state: dict, max_dev_iters: int):
         """Compile, verify, and deliver the dev phase draft.
@@ -3009,7 +2516,7 @@ Produce the complete paper. Do not stop until all sections are written and it co
             review_output, options, score=score,
         )
         idx, reply = self.ask_user_decision(
-            question, options, timeout=900,
+            question, options, timeout=defaults.TIMEOUT_HITL_DECISION,
             what_happened=trigger,
             background=background,
             option_details=self._build_option_details(options, review_output),
@@ -3124,7 +2631,7 @@ Only use double_column for multi-panel figures (side-by-side subplots).
 - Light dashed grid lines behind data
 - Error bars with caps where applicable
 - Bold font for "Ours" method labels
-""", timeout=600)
+""", timeout=defaults.TIMEOUT_INITIALIZER)
 
         if script_path.exists():
             self.log_step(f"Plotting script created: {script_rel}", "success")

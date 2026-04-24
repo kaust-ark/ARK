@@ -33,6 +33,8 @@ from ark.engines import AgentMixin
 from ark.latex import CompilerMixin
 from ark.execution import ExecutionMixin
 from ark.pipeline import PipelineMixin
+from ark.orchestrator.workspace import WorkspaceManager
+from ark.orchestrator.state import StateManager
 
 
 class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
@@ -47,127 +49,69 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self.max_end_time = datetime.now() + timedelta(days=max_days)
         self.max_iterations = max_iterations
         self.iteration = 0
-        # Mode is now always "paper" but kept on self for back-compat with any
-        # call-site that still reads it. The DB schema retains the field for
-        # historical projects; new creates always write "paper".
         self.mode = "paper" if not mode else mode
-        self._model_arg = model  # Store the CLI/constructor argument
+        self._model_arg = model
         self.project_name = project
 
         # ── DB awareness ──
         self._db_path = db_path
         self._project_id = project_id
-        self._db_sync_errors = 0  # count consecutive failures
-
-        # Human-readable display name (resolved after config loads)
+        self._db_sync_errors = 0
         self._display_name = None
 
-        # Project paths and config
-        if project_dir:
-            self.project_path = Path(project_dir).absolute()
-        else:
-            self.project_path = ARK_ROOT / "projects" / self.project_name
-        if not self.project_path.exists():
-            raise FileNotFoundError(f"Project directory not found: {self.project_path}")
+        # 1. Initialize Workspace Manager
+        self.workspace = WorkspaceManager(
+            project, ARK_ROOT, project_dir=project_dir, code_dir=code_dir, logger=self.log
+        )
+        self.config = self.workspace.config
+        self.project_path = self.workspace.project_path
+        self.code_dir = self.workspace.code_dir
+        PROJECT_DIR = self.code_dir  # legacy global
 
-        config_file = self.project_path / "config.yaml"
-        if config_file.exists():
-            with open(config_file) as f:
-                self.config = yaml.safe_load(f) or {}
-        else:
-            self.config = {}
+        # 2. Expose Core Paths (for mixin compatibility)
+        self.state_dir = self.workspace.state_dir
+        self.log_dir = self.workspace.log_dir
+        self.agents_dir = self.workspace.agents_dir
+        self.latex_dir = self.workspace.latex_dir
+        self.figures_dir = self.workspace.figures_dir
 
-        # Resolve model: Argument > config.yaml > fallback to "claude"
+        # 3. Initialize State Manager
+        self.state = StateManager(self.state_dir, logger=self.log)
+
+        # 4. Finalize Workspace Setup
+        self.hooks = self.workspace.setup_workspace()
+
+        # Resolve model
         self.model = self._model_arg or self.config.get("model") or "claude"
 
-        # Set code_dir and legacy global PROJECT_DIR
-        if code_dir:
-            PROJECT_DIR = Path(code_dir).absolute()
-        else:
-            PROJECT_DIR = Path(self.config.get("code_dir", str(ARK_ROOT.parent))).absolute()
-        self.code_dir = PROJECT_DIR
-        os.chdir(PROJECT_DIR)
+        from ark.config.defaults import DEFAULT_PAPER_ACCEPT_THRESHOLD
+        self.paper_accept_threshold = self.config.get("paper_accept_threshold", DEFAULT_PAPER_ACCEPT_THRESHOLD)
 
-        # Load project hooks
-        hooks_file = self.project_path / "hooks.py"
-        if hooks_file.exists():
-            spec = importlib.util.spec_from_file_location("hooks", hooks_file)
-            self.hooks = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(self.hooks)
-        else:
-            self.hooks = None
-
-        # Paths
-        self.state_dir = self.code_dir / "auto_research" / "state"
-        self.log_dir = self.code_dir / "auto_research" / "logs"
-        self.agents_dir = self.project_path / "agents"
-
-        # Config-driven paths
-        self.latex_dir = self.code_dir / self.config.get("latex_dir", "Latex")
-        self.figures_dir = self.code_dir / self.config.get("figures_dir", "Latex/figures")
-
-        # State file paths (agent working state — stays as YAML)
-        self.state_file = self.state_dir / "research_state.yaml"
-        self.findings_file = self.state_dir / "findings.yaml"
-        self.paper_state_file = self.state_dir / "paper_state.yaml"
-        self.paper_requirements_file = self.state_dir / "paper_requirements.yaml"
-        self.checkpoint_file = self.state_dir / "checkpoint.yaml"
-        self.action_plan_file = self.state_dir / "action_plan.yaml"
-        self.latest_review_file = self.state_dir / "latest_review.md"
-        self.literature_file = self.state_dir / "literature.yaml"
-
-        # Ensure directories exist
-        self.log_dir.mkdir(parents=True, exist_ok=True)
-        self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.figures_dir.mkdir(parents=True, exist_ok=True)
-
-        # Project symlinks (skip if project_path IS code_dir)
-        from ark.cli import ensure_project_symlinks
-        if self.project_path.resolve() != self.code_dir.resolve():
-            ensure_project_symlinks(self.project_path, str(self.code_dir))
-
-        # Paper acceptance threshold
-        self.paper_accept_threshold = self.config.get("paper_accept_threshold", 8)
-
-        # Logging setup
+        from ark.config.defaults import MAX_LOG_FILES_TO_KEEP
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_file = self.log_dir / f"{self.project_name}_paper_{self.run_id}.log"
-        self._cleanup_old_logs(keep=5)
+        self._cleanup_old_logs(keep=MAX_LOG_FILES_TO_KEEP)
 
-        # Token stats
         self.total_input_tokens = 0
         self.total_output_tokens = 0
-
-        # Rate limit state
         self._rate_limit_notified = False
-
-        # Agent empty-run counter (initialized here, not dynamically)
         self._agent_empty_count = 0
         self._quota_exhausted = False
         self._asked_this_iteration = False
-
-        # Cost tracking
         self._agent_stats = []
-
-        # Last successfully compiled PDF (set by compile_latex)
         self._latest_pdf = None
-
-        # Deep research background thread
         self._deep_research_thread = None
 
         # Memory
         self.memory = get_memory(state_dir=self.state_dir)
         self._last_score = 0.0
-
-        # Goal Anchor
         if hasattr(self.memory, 'set_goal_anchor'):
             self.memory.set_goal_anchor(self.config.get("goal_anchor", ""))
 
-        # Seed language preference from config if not already set
+        # Seed language preference
         prefs_file = self.state_dir / "user_prefs.yaml"
         if not prefs_file.exists():
             config_lang = self.config.get("language", "en")
-            self.state_dir.mkdir(parents=True, exist_ok=True)
             with open(prefs_file, "w") as _pf:
                 yaml.dump({"language": config_lang}, _pf, default_flow_style=False)
 
@@ -177,7 +121,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
             self.config, self.project_name, self.code_dir, self.log
         )
 
-        # Telegram dispatcher (dedicated per-project bot)
+        # Telegram dispatcher
         from ark.telegram import TelegramDispatcher, TelegramConfig
         tg_config = TelegramConfig.from_project_config(self.config)
         self.telegram = TelegramDispatcher(self.project_name, tg_config)
@@ -1154,12 +1098,18 @@ a {{ color: #0d9488; }}
     # Backward compat alias
     get_resume_phase = get_resume_step
 
+    def save_checkpoint(self):
+        """Save current iteration and score to a checkpoint file."""
+        checkpoint = {
+            "iteration": self.iteration,
+            "last_score": self._last_score,
+            "timestamp": datetime.now().isoformat(),
+            "run_id": self.run_id,
+        }
+        self.state.save_checkpoint(checkpoint)
+
     def load_checkpoint(self) -> dict:
-        """Load checkpoint."""
-        if self.checkpoint_file.exists():
-            with open(self.checkpoint_file) as f:
-                return yaml.safe_load(f) or {}
-        return {}
+        return self.state.load_checkpoint()
 
     def resume_from_checkpoint(self):
         """Resume from checkpoint."""
@@ -1310,69 +1260,22 @@ a {{ color: #0d9488; }}
     # ========== State I/O ==========
 
     def load_state(self) -> dict:
-        """Load research state."""
-        if not self.state_file.exists():
-            self.log("Initializing new research state...", "INFO")
-            default_state = {
-                "phases": {
-                    "C1_quantify": {"status": "pending"},
-                    "C2_probe": {"status": "pending", "sub_tasks": []},
-                    "C3_formulate": {"status": "pending"},
-                    "C4_solver": {"status": "pending"},
-                    "C5_validation": {"status": "pending"},
-                },
-                "current_iteration": {"number": 0},
-                "history": []
-            }
-            self.save_state(default_state)
-            return default_state
-
-        with open(self.state_file) as f:
-            return yaml.safe_load(f) or {}
+        return self.state.load_state()
 
     def save_state(self, state: dict):
-        """Save research state."""
-        with open(self.state_file, "w") as f:
-            yaml.dump(state, f, default_flow_style=False, allow_unicode=True)
+        self.state.save_state(state)
 
-    def get_current_phase(self, state: dict) -> str:
-        """Get current research phase."""
-        phases = state.get("phases", {})
-        for phase_name in ["C1_quantify", "C2_probe", "C3_formulate", "C4_solver", "C5_validation"]:
-            phase = phases.get(phase_name, {})
-            if phase.get("status") in ["pending", "in_progress"]:
-                return phase_name
-        return "completed"
+    def _load_action_plan(self) -> dict:
+        return self.state.load_action_plan()
 
-    # ========== Memory ==========
-
-    def record_score_to_memory(self, score: float):
-        """Record score to Memory."""
-        self.memory.record_score(score)
-        self._last_score = score
-        self.log(f"Memory: recorded score {score}/10", "MEMORY")
-
-    def get_memory_context(self) -> str:
-        """Get Memory context."""
-        return self.memory.get_context()
-
-    # ========== Paper State ==========
+    def _save_action_plan(self, action_plan: dict):
+        self.state.save_action_plan(action_plan)
 
     def load_paper_state(self) -> dict:
-        """Load paper review state."""
-        if self.paper_state_file.exists():
-            with open(self.paper_state_file) as f:
-                return yaml.safe_load(f) or {}
-        return {
-            "reviews": [],
-            "current_score": 0,
-            "status": "in_progress",
-        }
+        return self.state.load_paper_state()
 
     def save_paper_state(self, state: dict):
-        """Save paper review state."""
-        with open(self.paper_state_file, "w") as f:
-            yaml.dump(state, f, default_flow_style=False, allow_unicode=True)
+        self.state.save_paper_state(state)
         # Sync to DB
         db_update = {
             "score": float(state.get("current_score", 0)),
@@ -1394,11 +1297,10 @@ a {{ color: #0d9488; }}
         self._sync_db(**db_update)
 
     def load_paper_requirements(self) -> dict:
-        """Load paper requirements config."""
-        if self.paper_requirements_file.exists():
-            with open(self.paper_requirements_file) as f:
-                return yaml.safe_load(f) or {}
-        return {}
+        return self.state.load_paper_requirements()
+
+    def _load_findings_summary(self) -> str:
+        return self.state.load_findings_summary()
 
     def _paper_has_substantial_content(self) -> bool:
         """Check if main.tex has substantial content."""

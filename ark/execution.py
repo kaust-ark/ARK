@@ -12,6 +12,7 @@ from typing import List
 
 from ark.quality import raw_log_sanity, format_for_prompt
 from ark.findings_schema import validate_findings, format_violations_for_log
+from ark.config import defaults
 
 
 class QuotaExhaustedError(Exception):
@@ -42,7 +43,7 @@ class ExecutionMixin:
         """Wait for submitted jobs to complete. Delegates to compute backend."""
         return self._compute_backend.wait_for_completion(max_wait_hours)
 
-    def _wait_for_slurm_jobs(self, max_wait_hours: float = 2) -> bool:
+    def _wait_for_slurm_jobs(self, max_wait_hours: float = defaults.MAX_COMPUTE_WAIT_HOURS) -> bool:
         """Wait for experiment jobs (internal shortcut). Delegates to compute backend."""
         return self._compute_backend.wait_for_completion(max_wait_hours)
 
@@ -159,7 +160,7 @@ Notes:
 - EXPERIMENT_REQUIRED: requires running GPU experiments (e.g., adding perplexity measurement, supplementing benchmarks)
 - FIGURE_CODE_REQUIRED: requires modifying Python plotting scripts and re-running
 - WRITING_ONLY: only requires modifying LaTeX text
-""", timeout=1200, prior_context=review_output)
+""", timeout=defaults.TIMEOUT_PLANNER, prior_context=review_output)
 
         # Validate action plan
         action_plan = self._load_action_plan()
@@ -190,7 +191,7 @@ Please read auto_research/state/latest_review.md and regenerate.
 {escalation_prompt}{page_constraint}{bottleneck_constraint}
 ## Current Findings Summary
 {findings_summary}
-""", timeout=900, prior_context=review_output)
+""", timeout=defaults.TIMEOUT_HITL_DECISION, prior_context=review_output)
             action_plan = self._load_action_plan()
 
         issues = action_plan.get("issues", [])
@@ -258,7 +259,7 @@ Please read auto_research/state/latest_review.md and regenerate.
                         "Auto-fix: try FIGURE_CODE_REQUIRED next",
                         "Pause and wait for my guidance",
                     ],
-                    timeout=900,
+                    timeout=defaults.TIMEOUT_HITL_DECISION,
                     default=0,
                     what_happened=(
                         f"{len(tech_violations)} technical issue(s) are reusing strategies "
@@ -543,11 +544,11 @@ After running the experiment:
 2. Check whether result files were generated
 3. Evaluate whether the data supports the paper's arguments
 4. Update auto_research/state/findings.yaml with new findings
-""", timeout=3600)
+""", timeout=defaults.TIMEOUT_EXPERIMENTER)
 
             # 3. Wait for jobs
             self.log_step("Waiting for experiment completion...", "info")
-            self._compute_backend.wait_for_completion(max_wait_hours=2)
+            self._compute_backend.wait_for_completion(max_wait_hours=defaults.MAX_COMPUTE_WAIT_HOURS)
 
             # 4. Collect results
             self._compute_backend.collect_results()
@@ -786,7 +787,7 @@ Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
 
 Refer to the page-adjustment and figure-integrity skills for strategies and constraints.
 After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
-""", timeout=1800)
+""", timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
 
             elif page_count < cur_min:
                 action = "expand"
@@ -798,7 +799,7 @@ Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
 
 Refer to the page-adjustment and figure-integrity skills for strategies and constraints.
 After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
-""", timeout=1800)
+""", timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
 
             self._ensure_clearpage_before_bibliography()
             self.compile_latex()
@@ -1016,7 +1017,7 @@ Fix each by rewording the sentence to allow LaTeX better line breaking:
 
 Do NOT change figures, template, or page structure.
 After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex
-""", timeout=600)
+""", timeout=defaults.TIMEOUT_LATEX_COMPILE)
 
             self.compile_latex()
 
@@ -1212,7 +1213,7 @@ writer agent will pick those up in a later task.
 - Read each target .py file before editing it.
 - Use Edit for small changes; Write only for complete rewrites of a
   single function body.
-""", timeout=1800, prior_context=prior_context)
+""", timeout=defaults.TIMEOUT_WRITER, prior_context=prior_context)
 
             if self._quota_exhausted:
                 self.log("Aborting writing phase: API quota exhausted", "ERROR")
@@ -1314,7 +1315,7 @@ You have only one task to complete. Please complete it carefully and thoroughly.
 - auto_research/state/latest_review.md - Review report
 - auto_research/state/literature.yaml - Literature survey results
 - {latex_dir_name}/references.bib - References library
-""", timeout=1800, prior_context=prior_context)
+""", timeout=defaults.TIMEOUT_WRITER, prior_context=prior_context)
 
             if self._quota_exhausted:
                 self.log("Aborting writing phase: API quota exhausted", "ERROR")
@@ -1365,7 +1366,7 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
 ## Reference Files
 - auto_research/state/latest_review.md - Review report
 - auto_research/state/action_plan.yaml - Complete task list
-""", timeout=3600, prior_context=prior_context)
+""", timeout=defaults.TIMEOUT_WRITER, prior_context=prior_context)
 
         # Verify total modifications
         total_added = 0
