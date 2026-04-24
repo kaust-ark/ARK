@@ -92,6 +92,7 @@ from .crypto import encrypt_text, decrypt_text
 from .jobs import (
     cancel_job,
     cancel_local_job,
+    cancel_project_sub_jobs,
     launch_cloud_job,
     launch_local_job,
     poll_local_job,
@@ -1878,6 +1879,16 @@ async def api_stop_project(project_id: str, request: Request):
                     cancel_local_job(int(pid_str))
             else:
                 cancel_job(project.slurm_job_id)
+                # Cascade: the orchestrator submits experimenter sub-jobs
+                # under the project directory. Cancel any still-queued
+                # sub-jobs so we don't leak compute onto a dead pipeline.
+                pdir = _project_dir(settings, project.user_id, project_id)
+                cascaded = cancel_project_sub_jobs(pdir)
+                if cascaded:
+                    logger.info(
+                        f"Stop cascade: cancelled {len(cascaded)} sub-jobs "
+                        f"for project {project_id}: {','.join(cascaded)}"
+                    )
         update_project(session, project, status="stopped")
         return JSONResponse({"ok": True})
 
@@ -2037,6 +2048,7 @@ async def api_delete_project(project_id: str, request: Request):
         project = get_project(session, project_id)
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
+        pdir = _project_dir(settings, project.user_id, project_id)
         if project.slurm_job_id:
             if project.slurm_job_id.startswith(("local:", "cloud:")):
                 prefix = "local:" if project.slurm_job_id.startswith("local:") else "cloud:"
@@ -2045,7 +2057,10 @@ async def api_delete_project(project_id: str, request: Request):
                     cancel_local_job(int(pid_str))
             else:
                 cancel_job(project.slurm_job_id)
-        pdir = _project_dir(settings, project.user_id, project_id)
+                # Cascade before we rmtree the project — any still-queued
+                # sub-jobs would otherwise write into a directory we're
+                # about to delete.
+                cancel_project_sub_jobs(pdir)
         delete_project(session, project_id)
     shutil.rmtree(pdir, ignore_errors=True)
     return JSONResponse({"ok": True})
@@ -2155,6 +2170,8 @@ async def api_admin_killall(request: Request):
                         cancel_local_job(int(pid_str))
                 else:
                     cancel_job(p.slurm_job_id)
+                    pdir = _project_dir(settings, p.user_id, p.id)
+                    cancel_project_sub_jobs(pdir)
             update_project(session, p, status="stopped")
             stopped.append(p.id)
     return JSONResponse({"stopped": stopped, "count": len(stopped)})

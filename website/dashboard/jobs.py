@@ -469,6 +469,55 @@ def cancel_job(job_id: str) -> bool:
         return False
 
 
+def cancel_project_sub_jobs(project_dir: Path) -> list[str]:
+    """Cancel every SLURM job whose WorkDir is inside ``project_dir``.
+
+    The orchestrator job submits an arbitrary number of sub-jobs via the
+    experimenter agent, named by the agent (e.g. `_exp1_clock_diag`) —
+    not by the ``SlurmBackend.job_prefix`` convention. When the webapp
+    stops a project, ``cancel_job(project.slurm_job_id)`` only reaches
+    the orchestrator; sub-jobs keep running, waste compute, and their
+    outputs are never consumed by the dead pipeline.
+
+    We fix this by enumerating the user's queue and using ``scontrol
+    show job -o`` to read each job's WorkDir. Any job whose WorkDir
+    starts with the project directory belongs to this project, even if
+    the agent named it something unexpected.
+
+    Returns the list of cancelled job IDs for logging.
+    """
+    cancelled: list[str] = []
+    project_path = str(Path(project_dir).resolve())
+    try:
+        user = os.environ.get("USER", "")
+        if not user:
+            return cancelled
+        r = _run(["squeue", "-u", user, "-h", "-o", "%i"])
+        if r.returncode != 0:
+            return cancelled
+        jobids = [j for j in r.stdout.split() if j.isdigit()]
+        for jobid in jobids:
+            try:
+                info = _run(["scontrol", "show", "job", jobid, "-o"])
+                if info.returncode != 0:
+                    continue
+                # Look for `WorkDir=<path>` in the single-line output.
+                m = re.search(r"WorkDir=(\S+)", info.stdout)
+                if not m:
+                    continue
+                workdir = m.group(1)
+                # Match by prefix so sub-directories (experiment dirs,
+                # .cache, etc.) all count as "belonging to" the project.
+                if workdir.startswith(project_path):
+                    if cancel_job(jobid):
+                        cancelled.append(jobid)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return cancelled
+
+
 def slurm_state_to_status(slurm_state: str) -> str:
     """Map SLURM state to ARK webapp status."""
     s = slurm_state.upper()
