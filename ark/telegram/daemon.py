@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Optional
 
 from ark.paths import get_config_dir
-from ark.telegram import TelegramConfig
+from ark.telegram.client import TelegramConfig
 
 
 # ══════════════════════════════════════════════════════════════
@@ -416,7 +416,7 @@ class TelegramDaemon:
 
     def _agent_respond(self, project: str, text: str):
         """Call Claude to generate an intelligent response for a stopped project."""
-        from ark.telegram import TelegramDispatcher
+        from ark.telegram.client import TelegramDispatcher
 
         # Gather project context and history
         context = self._gather_project_context(project)
@@ -833,7 +833,7 @@ def ensure_daemon():
 
     with open(log_file, "a") as lf:
         subprocess.Popen(
-            [sys.executable, "-m", "ark.telegram_daemon"],
+            [sys.executable, "-m", "ark.telegram.daemon"],
             stdin=subprocess.DEVNULL,
             stdout=lf,
             stderr=subprocess.STDOUT,
@@ -864,7 +864,7 @@ def stop_daemon():
     try:
         import subprocess as _sp
         result = _sp.run(
-            ["pgrep", "-f", "python.*-m ark.telegram_daemon"],
+            ["pgrep", "-f", "python.*-m ark.telegram.daemon"],
             capture_output=True, text=True, timeout=5,
         )
         for line in result.stdout.strip().splitlines():
@@ -877,7 +877,7 @@ def stop_daemon():
         # Brief wait then force kill remaining
         time.sleep(1)
         _sp.run(
-            ["pkill", "-9", "-f", "python.*-m ark.telegram_daemon"],
+            ["pkill", "-9", "-f", "python.*-m ark.telegram.daemon"],
             capture_output=True, timeout=5,
         )
     except Exception:
@@ -952,7 +952,7 @@ def deregister_project(project_name: str) -> list:
 
 
 # ══════════════════════════════════════════════════════════════
-#  Entry point: python -m ark.telegram_daemon
+#  Entry point: python -m ark.telegram.daemon
 # ══════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":

@@ -236,7 +236,7 @@ for m in SENT:
 
 # ── Preview 7: stopped-project scenario (daemon agent reply) ──────────
 divider("⑦ Incoming routing (daemon bind/release)")
-from ark.telegram_daemon import TelegramDaemon
+from ark.telegram import TelegramDaemon
 
 class _DaemonCapture(TelegramDaemon):
     def __init__(self, state_dir):

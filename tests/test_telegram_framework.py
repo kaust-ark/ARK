@@ -345,11 +345,11 @@ class TestSentMessages:
 @pytest.fixture
 def daemon(tmp_path, monkeypatch):
     """A TelegramDaemon with its state dir redirected into tmp_path."""
-    from ark.telegram_daemon import TelegramDaemon
+    from ark.telegram import TelegramDaemon
 
     ark_dir = tmp_path / ".ark"
     ark_dir.mkdir()
-    monkeypatch.setattr("ark.telegram_daemon.get_config_dir", lambda: ark_dir)
+    monkeypatch.setattr("ark.telegram.daemon.get_config_dir", lambda: ark_dir)
     # Stub out the bot config so _send/_api_call are "configured"
     monkeypatch.setenv("ARK_TELEGRAM_BOT_TOKEN", "fake_token")
     monkeypatch.setenv("ARK_TELEGRAM_CHAT_ID", "12345")

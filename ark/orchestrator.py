@@ -194,7 +194,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
             )
             if anthropic_key:
                 try:
-                    from ark.telegram_ai import polish_message
+                    from ark.telegram import polish_message
                     polish_model = self.config.get("telegram_polish_model", "claude-haiku-4-5")
                     self.telegram._polish_fn = (
                         lambda text, ctx, _k=anthropic_key, _m=polish_model:
@@ -532,6 +532,7 @@ a {{ color: #0d9488; }}
     def _handle_telegram_message(self, text: str):
         """Handle incoming Telegram message via Claude agent."""
         import threading as _threading
+        from ark.telegram import TelegramDispatcher
 
         # All messages go through Claude agent (it decides actions like sending PDF)
         _threading.Thread(target=self._agent_respond_telegram, args=(text,), daemon=True).start()
