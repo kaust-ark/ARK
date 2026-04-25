@@ -14,17 +14,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from ark.pipeline import _replace_latex_title
+from ark.latex.utils import replace_latex_title
 
 
 # ---------------------------------------------------------------------------
-#  _replace_latex_title (pure function)
+#  replace_latex_title (pure function)
 # ---------------------------------------------------------------------------
 
 class TestReplaceLatexTitle:
     def test_simple_replacement(self):
         src = r"\title{Old Title}"
-        assert _replace_latex_title(src, "New Title") == r"\title{New Title}"
+        assert replace_latex_title(src, "New Title") == r"\title{New Title}"
 
     def test_neurips_template_realistic(self):
         # Exact situation from project d9b7fab8: NeurIPS template with its
@@ -35,7 +35,7 @@ class TestReplaceLatexTitle:
             "\n"
             r"\author{...}" "\n"
         )
-        out = _replace_latex_title(src, "Compute-Aware Deployment")
+        out = replace_latex_title(src, "Compute-Aware Deployment")
         assert r"\title{Compute-Aware Deployment}" in out
         assert "Formatting Instructions" not in out
 
@@ -45,30 +45,30 @@ class TestReplaceLatexTitle:
             "% example: \\title{WORKSHOP TITLE}\n"
             r"\title{Real Title}" "\n"
         )
-        out = _replace_latex_title(src, "New")
+        out = replace_latex_title(src, "New")
         assert r"\title{New}" in out
         assert "WORKSHOP TITLE" in out  # comment untouched
 
     def test_handles_nested_braces(self):
         src = r"\title{A \emph{brief} note on things}"
-        out = _replace_latex_title(src, "Plain title")
+        out = replace_latex_title(src, "Plain title")
         assert out == r"\title{Plain title}"
 
     def test_handles_leading_whitespace(self):
         src = "    \\title{Old}\n"
-        out = _replace_latex_title(src, "New")
+        out = replace_latex_title(src, "New")
         assert out == "    \\title{New}\n"
 
     def test_returns_unchanged_if_no_title(self):
         src = r"\documentclass{article}" "\n" r"\begin{document}"
-        assert _replace_latex_title(src, "Anything") == src
+        assert replace_latex_title(src, "Anything") == src
 
     def test_does_not_match_titleformat(self):
         # \titleformat is a different command; shouldn't match the \title regex
         # because \title must be followed immediately by { (after whitespace),
         # and \titleformat has "format" before {.
         src = r"\titleformat{\section}{\large}{}{0em}{}" "\n" r"\title{Real}"
-        out = _replace_latex_title(src, "New")
+        out = replace_latex_title(src, "New")
         assert r"\title{New}" in out
         assert r"\titleformat{\section}" in out
 
@@ -80,7 +80,7 @@ class TestReplaceLatexTitle:
             r"\author{Anonymous}" "\n"
             r"\begin{document}" "\n"
         )
-        out = _replace_latex_title(src, "Final")
+        out = replace_latex_title(src, "Final")
         assert out.count("\n") == src.count("\n")
         assert r"\usepackage{amsmath}" in out
         assert r"\author{Anonymous}" in out

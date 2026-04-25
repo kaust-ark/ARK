@@ -1,4 +1,4 @@
-"""Unit tests for the HITL helpers in ``ark/pipeline.py``.
+"""Unit tests for the HITL helpers in ``ark/hitl/utils.py``.
 
 These cover the schema-coercion + decision-persistence helpers that
 back ``_check_human_intervention``. The actual Telegram rendering and
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ark.pipeline import (
+from ark.hitl.utils import (
     _append_hitl_history,
     _coerce_hitl_options,
     _normalise_needs_human,

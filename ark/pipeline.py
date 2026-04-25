@@ -15,6 +15,20 @@ from pathlib import Path
 from ark.execution import QuotaExhaustedError
 from ark.ui import RateLimitCountdown
 from ark.latex import utils as latex_utils
+# Re-bind public names from latex.utils into this module's namespace under
+# their historical underscore-prefixed names. Two reasons:
+#   1. ``_update_title_from_idea`` below was written when these helpers
+#      lived in pipeline.py (under ``_<name>``). Keeping the prefixes
+#      avoids a 3-site rewrite of the method.
+#   2. Several tests patch via ``patch("ark.pipeline._generate_title_via_llm",
+#      …)`` and ``ark.pipeline._validate_title``; the patch target must be
+#      an attribute on the module, so we bind these aliases at module load.
+from ark.latex.utils import (
+    generate_title_via_llm as _generate_title_via_llm,
+    validate_title as _validate_title,
+    fallback_title_from_idea as _fallback_title_from_idea,
+    _TITLE_MAX_RETRIES,
+)
 from ark.config import defaults
 
 

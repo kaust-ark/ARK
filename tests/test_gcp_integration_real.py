@@ -77,8 +77,17 @@ def test_gcp_provision_and_teardown(gcp_config, tmp_path):
             print("      No instance to teardown.")
 
 def test_gcloud_version():
-    """Verify gcloud is accessible and working."""
+    """Verify gcloud is accessible and working.
+
+    Skipped on hosts without gcloud installed (e.g. CI runners, dev
+    laptops without the SDK). The full GCP integration tests later in
+    the file already gate on ``KEY_FILE``; this single sanity check
+    needed the same kind of guard.
+    """
+    import shutil
     import subprocess
+    if shutil.which("gcloud") is None:
+        pytest.skip("gcloud CLI not installed")
     result = subprocess.run(["gcloud", "version"], capture_output=True, text=True)
     assert result.returncode == 0
     assert "Google Cloud SDK" in result.stdout

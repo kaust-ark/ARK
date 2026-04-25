@@ -430,7 +430,7 @@ def integration_project(tmp_path):
 
     # -- Patches --
     patches = [
-        patch("ark.orchestrator.ARK_ROOT", tmp_path),
+        patch("ark.orchestrator.core.ARK_ROOT", tmp_path),
         patch("ark.cli.ensure_project_symlinks", return_value=None),
         patch("subprocess.run", side_effect=controller.subprocess_run),
         patch("subprocess.Popen", side_effect=controller.subprocess_popen),
@@ -476,7 +476,7 @@ class TestIntegration:
         from ark.cli import main
         from ark.memory import SimpleMemory
         from ark.engines import AgentMixin
-        from ark.compiler import CompilerMixin
+        from ark.latex import CompilerMixin
         from ark.execution import ExecutionMixin
         from ark.pipeline import PipelineMixin
 
@@ -565,7 +565,7 @@ class TestIntegration:
         orig_cwd = os.getcwd()
 
         patches = [
-            patch("ark.orchestrator.ARK_ROOT", tmp_path),
+            patch("ark.orchestrator.core.ARK_ROOT", tmp_path),
             patch("ark.cli.ensure_project_symlinks", return_value=None),
             patch("subprocess.run", side_effect=controller.subprocess_run),
             patch("subprocess.Popen", side_effect=controller.subprocess_popen),
@@ -650,7 +650,7 @@ class TestIntegration:
         orig_cwd = os.getcwd()
 
         patches = [
-            patch("ark.orchestrator.ARK_ROOT", tmp_path),
+            patch("ark.orchestrator.core.ARK_ROOT", tmp_path),
             patch("ark.cli.ensure_project_symlinks", return_value=None),
             patch("subprocess.run", side_effect=controller.subprocess_run),
             patch("subprocess.Popen", side_effect=controller.subprocess_popen),

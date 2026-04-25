@@ -30,7 +30,7 @@ def mock_orchestrator(tmp_path):
     figures_dir.mkdir(parents=True)
 
     # Patch ARK_ROOT so Orchestrator finds the project
-    with patch("ark.orchestrator.ARK_ROOT", tmp_path):
+    with patch("ark.orchestrator.core.ARK_ROOT", tmp_path):
         with patch("ark.cli.ensure_project_symlinks", return_value=None):
             orch = Orchestrator(project="test", code_dir=str(tmp_path))
 

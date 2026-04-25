@@ -22,8 +22,10 @@ import re
 import threading
 import signal
 
-# ARK package root (where projects/ lives)
-ARK_ROOT = Path(__file__).parent.parent.absolute()
+# ARK package root (where projects/ lives).
+# core.py is at ark/orchestrator/core.py — three .parent walks reach
+# the repo root that the original orchestrator.py landed on with two.
+ARK_ROOT = Path(__file__).parent.parent.parent.absolute()
 
 # PROJECT_DIR: legacy global, kept for backward compatibility
 PROJECT_DIR = None
@@ -77,6 +79,18 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
 
         # 3. Initialize State Manager
         self.state = StateManager(self.state_dir, logger=self.log)
+
+        # Backward-compat: many call sites in this module reference file
+        # paths as ``self.paper_state_file``, ``self.findings_file``, etc.
+        # The refactor that moved StateManager out of orchestrator.py
+        # rebound those paths to ``self.state.<file>``; re-expose them on
+        # the orchestrator so the existing call sites and external callers
+        # (tests, hooks) continue to work without per-call rewrites.
+        self.paper_state_file = self.state.paper_state_file
+        self.action_plan_file = self.state.action_plan_file
+        self.findings_file = self.state.findings_file
+        self.checkpoint_file = self.state.checkpoint_file
+        self.latest_review_file = self.state_dir / "latest_review.md"
 
         # 4. Finalize Workspace Setup
         self.hooks = self.workspace.setup_workspace()
@@ -1256,6 +1270,35 @@ a {{ color: #0d9488; }}
                     line = line[:49] + "..."
                 self.log(f"{prefix}│ {line:<52} │", "RAW")
         self.log(f"{prefix}└" + "─" * 54 + "┘", "RAW")
+
+    # ========== Memory ==========
+
+    def record_score_to_memory(self, score: float):
+        """Record an iteration's review score in long-term memory.
+
+        ``PipelineMixin.run_paper_iteration`` calls this at iteration end.
+        The pre-refactor orchestrator.py defined it directly; the package
+        refactor inadvertently dropped it, so add it back here.
+        """
+        self.memory.record_score(score)
+        self._last_score = score
+        self.log(f"Memory: recorded score {score}/10", "MEMORY")
+
+    def get_memory_context(self) -> str:
+        """Return the current Memory context block for prompt injection."""
+        return self.memory.get_context()
+
+    def get_current_phase(self) -> str:
+        """Return the current research phase id (or empty string).
+
+        Reads research_state.yaml via StateManager. Pipeline.py uses this
+        to decide whether to enter a phase-specific code path.
+        """
+        state = self.state.load_state()
+        for phase_id, phase in (state.get("phases") or {}).items():
+            if isinstance(phase, dict) and phase.get("status") == "in_progress":
+                return phase_id
+        return ""
 
     # ========== State I/O ==========
 

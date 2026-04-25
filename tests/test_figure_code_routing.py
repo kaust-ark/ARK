@@ -43,7 +43,7 @@ def mock_paper_orchestrator(tmp_path):
         "    fig.savefig('fig_ablation.pdf')\n"
     )
 
-    with patch("ark.orchestrator.ARK_ROOT", tmp_path):
+    with patch("ark.orchestrator.core.ARK_ROOT", tmp_path):
         with patch("ark.cli.ensure_project_symlinks", return_value=None):
             orch = Orchestrator(project="testpaper", mode="paper", code_dir=str(tmp_path))
     return orch
