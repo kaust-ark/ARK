@@ -1028,7 +1028,14 @@ output: NO_CONCEPT_FIGURES
 
         try:
             import sys
-            pb_dir = Path(__file__).parent.parent / "submodules" / "PaperBanana"
+            # compiler.py lives at ark/latex/compiler.py — three .parent
+            # walks (compiler.py → latex/ → ark/ → repo root) reach the
+            # submodules/ directory. The pre-refactor path used
+            # ``parent.parent`` because compiler.py was at ark/compiler.py.
+            # That two-step walk now stops at ark/ and silently returns
+            # False here, sending every concept-figure call to the Nano
+            # Banana fallback even when PaperBanana is fully installed.
+            pb_dir = Path(__file__).parent.parent.parent / "submodules" / "PaperBanana"
             if not pb_dir.exists():
                 return False
             if str(pb_dir) not in sys.path:
