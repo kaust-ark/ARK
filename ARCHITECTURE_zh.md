@@ -4,7 +4,7 @@
 
 **核心理念**：信任 AI 的判断；代码只负责执行和防护栏。
 
-- **数据库为唯一真相来源** &mdash; 项目配置和状态存储在 SQLite ���；YAML 仅用于智能体运行时状态
+- **数据库为唯一真相来源** &mdash; 项目配置和状态存储在 SQLite 数据库中；YAML 仅用于智能体运行时状态
 - **项目级隔离** &mdash; 每个项目拥有独立的 conda 环境、沙盒 HOME 和 `PYTHONNOUSERSITE=1`
 - **Skills 优于硬编码规则** &mdash; 模块化指令集（skills）在运行时加载以强制执行最佳实践
 
@@ -25,7 +25,7 @@ ARK 按三个阶段依次执行：
 │                                                                 │
 │  阶段 2：Dev                                                     │
 │  ┌───────────────────────────────────────────────────────┐     │
-│  │  规划 → Slurm 实验 → 分析 → 撰写初稿                    │     │
+│  │  规划 → 实验 (Slurm/云) → 分析 → 撰写初稿              │     │
 │  └───────────────────────────────────────────────────────┘     │
 │                                                                 │
 │  阶段 3：Review（迭代循环）                                       │
@@ -35,7 +35,7 @@ ARK 按三个阶段依次执行：
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘  │   │
 │       ▲                                                   │   │
 │       └──── 验证 ◀────────────────────────────────────────┘   │
-���             (重新编译)                                         │
+│             (重新编译)                                         │
 │                                                                 │
 │  循环直到分数 ≥ 阈值或人工干预                                    │
 └─────────────────────────────────────────────────────────────────┘
@@ -48,7 +48,7 @@ ARK 按三个阶段依次执行：
 | 0 | — | **配置**：配置项目级 conda 环境（克隆 ark-base；幂等操作） |
 | 1 | 研究员 | **分析提案**：读取上传 PDF 或创意 → 写入 `idea.md`（摘要、方法、系统）；输出 Deep Research 查询；解析并提交论文标题 |
 | 2 | Gemini | **Deep Research**：文献综述 → `deep_research.md`；通过 Telegram 将 PDF 发送给用户 |
-| 3 | 研究员 | **专项化**：生成 `project_context.md`（网页验证）；为项目定制智能体提示模板；选择相关 skills（0–5 个） |
+| 3 | 研究员 | **专项化**：生成 `project_context.md`（网页验证）；为项目定制智能体提示模板；选择相关 skills（0–15 个） |
 | 4 | — | **引导启动**：安装 builtin skills；引导引用 → `references.bib` |
 
 ### Review 循环
@@ -96,28 +96,33 @@ class SimpleMemory:
 
 ### 3. 编排器 (`orchestrator.py`)
 
-基于 Mixin 的设计，包含 5 个 Mixin：
+编排器采用基于 mixin 的设计来组合专业功能：
 
 ```python
-class Orchestrator(ResearchMixin, DevMixin, ReviewMixin, FigureMixin, BaseMixin):
-    # 根据模式分派到正确阶段
-    # 每步后同步状态到数据库
-    # 处理 Telegram 通知
+class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
+    # AgentMixin: 智能体调用和成本追踪
+    # CompilerMixin: LaTeX 编译和 PDF 管理
+    # ExecutionMixin: Skill 注入和命令执行
+    # PipelineMixin: 高级研究、开发和评审循环
 ```
+
+- **分派** &mdash; 根据项目的当前模式分派到正确的阶段。
+- **同步** &mdash; 在每一步后将状态、分数和进度同步到 SQLite 数据库。
+- **处理** &mdash; 处理双向 Telegram 通信和人工干预（HITL）决策。
 
 ### 4. Skills 系统 (`skills/`)
 
-运行时加载的模块化指令集：
+运行时加载的模块化指令集，用于指导智能体行为：
 
 | Skill | 用途 |
 |:------|:-----|
 | **research-integrity** | 反模拟：智能体必须运行真实实验 |
-| **human-intervention** | 通过 Telegram 的升级协议 |
-| **env-isolation** | 项目级环境边界 |
-| **figure-integrity** | 验证图表与实际数据匹配 |
-| **page-adjustment** | 页面限制内的内容密度控制 |
+| **human-intervention** | 通过 Telegram 针对阻塞情况的升级协议 |
+| **env-isolation** | 每个项目的环境边界和安全性 |
+| **figure-integrity** | 验证图表是否符合实际实验数据 |
+| **page-adjustment** | 内容密度控制，以符合会议页数限制 |
 
-Skills 在流水线引导阶段（Research 阶段第 4 步）自动安装。
+Skills 在流水线引导（研究阶段第 4 步）期间自动安装。
 
 ### 5. 环境隔离 (`website/dashboard/jobs.py`)
 
@@ -125,29 +130,39 @@ Skills 在流水线引导阶段（Research 阶段第 4 步）自动安装。
 
 - `provision_project_env()` 将基础环境克隆到 `<project>/.env/`
 - `project_env_ready()` 检查环境是否存在
-- Orchestrator 以 `HOME=<project_dir>`, `PYTHONNOUSERSITE=1` 运行
-- CLI (`ark run`) 和 Dashboard 均自动检测并使用项目环境
-- 流水线在 Research 阶段第 0 步强制引导 conda 环境（失败则硬报错）
+- 编排器以 `HOME=<project_dir>`, `PYTHONNOUSERSITE=1` 运行
+- CLI (`ark run`) 和仪表盘均自动检测并使用项目本地环境。
 
-### 6. 状态管理 (`website/dashboard/db.py`)
+### 6. 计算后端 (`ark/compute/`)
 
-SQLite 是项目配置和状态的唯一真相来源：
+ARK 支持多种计算后端运行实验：
 
-- 项目创建、配置、阶段状态
-- 分数历史、成本追踪
-- CLI 和 webapp 读写同一个数据库
-- `auto_research/state/` 下的 YAML 文件仅用于智能体运行时状态
+- **Local**: 直接在宿主机上运行实验。
+- **Slurm**: 使用 `sbatch` 将作业提交到 HPC 集群。
+- **Cloud**: 在 **AWS**、**GCP** 或 **Azure** 上配置实例。
+- **Custom**: 用于特殊环境的可扩展后端。
+
+云后端处理全生命周期：配置、代码传输 (rsync)、设置、执行、结果收集和销毁。
+
+### 7. AI 图表生成 (`ark/nano_banana.py`)
+
+**Nano Banana** 是一个基于 Gemini 的系统，用于生成高质量的科学图表：
+
+- **Planner**: 根据论文上下文设计详细的视觉规范。
+- **Stylist**: 改进规范以匹配学术出版物的美学。
+- **Visualizer**: 使用 Gemini 图像生成模型生成图像。
+- **Critic**: 评估图表并提供反馈以进行迭代改进。
 
 ## 智能体列表（6 个）
 
 | 智能体 | 职责 |
 |:-------|:-----|
-| 研究员 | 分析提案 → `idea.md`；文献综述；为项目定制智能体提示模板并选择 skills |
-| 审稿人 | 评审和评分论文；检查实验与提案的一致性 |
-| 规划器 | 分析问题，生成行动计划（论文和开发模式）；验证实验一致性 |
-| 写作者 | 撰写/修改论文章节，引用经 DBLP 验证 |
-| 实验者 | 设计、运行和分析实验；多提供商 API 回退 |
-| 编码器 | 实现代码更改（开发模式） |
+| researcher | 分析提案 → `idea.md`；文献综述；为项目定制智能体提示模板并选择 skills |
+| reviewer | 评审和评分论文；检查实验与提案的一致性 |
+| planner | 分析问题，生成行动计划（论文和开发模式）；验证实验一致性 |
+| writer | 编写/修订论文章节，引用经 DBLP 验证 |
+| experimenter | 设计、运行和分析实验；支持 Slurm 和云后端 |
+| coder | 实现代码更改（开发模式） |
 
 ## 文件结构
 
@@ -155,43 +170,29 @@ SQLite 是项目配置和状态的唯一真相来源：
 ARK/
 ├── ark/
 │   ├── orchestrator.py      # 主循环（基于 Mixin）
-│   ├── pipeline.py          # Research 阶段 5 步流水线
+│   ├── pipeline.py          # 第 1 阶段（研究）和第 2 阶段（开发/评审）逻辑
 │   ├── memory.py            # 分数追踪、问题去重、停滞检测
-│   ├── agents.py            # 智能体调用（Claude + Gemini CLI）
 │   ├── execution.py         # 智能体执行和 skill 注入
 │   ├── cli.py               # CLI 命令 (ark new/run/status/access/...)
-│   ├── access.py            # Cloudflare Access 访问列表管理
-│   ├── compiler.py          # LaTeX 编译
+│   ├── compute/             # 计算后端 (Local, Slurm, AWS, GCP, Azure)
+│   ├── engines/             # 智能体编排和后端运行时 (Claude, Gemini)
+│   ├── orchestrator/        # 状态和工作区管理
+│   ├── telegram/            # Telegram 通知 + 双向机器人
+│   ├── website/             # 仪表盘和主页 (FastAPI + SQLite)
+│   ├── nano_banana.py       # AI 图表生成流水线
 │   ├── citation.py          # DBLP/CrossRef 引用验证
 │   ├── deep_research.py     # Gemini Deep Research 集成
-│   ├── telegram.py          # Telegram 通知 + 人工干预
-│   ├── compute.py           # Slurm/云计算后端
+│   ├── compiler.py          # LaTeX 编译逻辑
 │   └── templates/agents/    # 智能体提示模板
-│       ├── researcher.prompt
-│       ├── reviewer.prompt
-│       ├── planner.prompt
-│       ├── experimenter.prompt
-│       ├── writer.prompt
-│       └── coder.prompt
-├── website/
-│   ├── dashboard/           # FastAPI Dashboard（挂载在 /dashboard）
-│   │   ├── app.py           # FastAPI 应用 + lifespan（同时挂载主页）
-│   │   ├── db.py            # SQLite 模型 + 状态管理
-│   │   ├── jobs.py          # 任务启动、conda 环境配置
-│   │   ├── routes.py        # API 路由 + SSE
-│   │   ├── constants.py     # DASHBOARD_PREFIX 等共享常量
-│   │   └── static/          # SPA 前端资源
-│   └── homepage/            # 静态主页文件（挂载在 /）
-├── skills/
+├── website/                 # Web 界面
+│   ├── dashboard/           # FastAPI 后端 + SQLite 数据库
+│   └── homepage/            # 静态落地页
+├── skills/                  # 模块化指令集
 │   ├── index.json           # Skill 注册表
-│   └── builtin/             # 内置 skills
-│       ├── research-integrity/
-│       ├── human-intervention/
-│       ├── env-isolation/
-│       ├── figure-integrity/
-│       └── page-adjustment/
+│   ├── builtin/             # 内置 skills（自动安装）
+│   └── library/             # 特定领域 skills（由研究员选择）
 ├── venue_templates/         # 每会议 LaTeX 模板
-├── tests/                   # 114 个测试
+├── tests/                   # 全面的测试套件
 └── projects/                # 项目目录（gitignored）
 ```
 

@@ -97,47 +97,62 @@ Every agent invocation includes a constant "Goal Anchor" that describes the proj
 
 ### 3. Orchestrator (`orchestrator.py`)
 
-Mixin-based design with 5 mixins:
+The Orchestrator uses a mixin-based design to compose specialized functionalities:
 
 ```python
-class Orchestrator(ResearchMixin, DevMixin, ReviewMixin, FigureMixin, BaseMixin):
-    # Dispatches to the correct phase based on mode
-    # Syncs status to DB after each step
-    # Handles Telegram notifications
+class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
+    # AgentMixin: agent invocation and cost tracking
+    # CompilerMixin: LaTeX compilation and PDF management
+    # ExecutionMixin: skill injection and command execution
+    # PipelineMixin: high-level research, dev, and review loops
 ```
+
+- **Dispatches** to the correct phase based on the project's current mode.
+- **Syncs** status, scores, and progress to the SQLite database after each step.
+- **Handles** bi-directional Telegram communication and human-in-the-loop decisions.
 
 ### 4. Skills System (`skills/`)
 
-Modular instruction sets loaded at runtime:
+Modular instruction sets loaded at runtime to guide agent behavior:
 
 | Skill | Purpose |
 |:------|:--------|
 | **research-integrity** | Anti-simulation: agents must run real experiments |
-| **human-intervention** | Escalation protocol via Telegram |
-| **env-isolation** | Per-project environment boundaries |
-| **figure-integrity** | Validates figures match actual data |
-| **page-adjustment** | Content density control within page limits |
+| **human-intervention** | Escalation protocol via Telegram for blockers |
+| **env-isolation** | Per-project environment boundaries and security |
+| **figure-integrity** | Validates that figures match actual experimental data |
+| **page-adjustment** | Content density control to fit within venue page limits |
 
-Skills are auto-installed during pipeline bootstrap (Research Phase Step 4).
+Skills are auto-installed during the Pipeline Bootstrap (Research Phase Step 4).
 
 ### 5. Environment Isolation (`website/dashboard/jobs.py`)
 
-Each project gets a sandboxed conda env:
+Each project gets a sandboxed conda environment:
 
-- `provision_project_env()` clones base env to `<project>/.env/`
-- `project_env_ready()` checks if env exists
-- Orchestrator runs with `HOME=<project_dir>`, `PYTHONNOUSERSITE=1`
-- Both CLI (`ark run`) and Dashboard auto-detect and use the project env
-- Pipeline bootstraps the env as **Step 0** of the Research Phase (hard fail if provisioning fails)
+- `provision_project_env()` clones the base environment to `<project>/.env/`
+- `project_env_ready()` checks if the environment exists
+- The Orchestrator runs with `HOME=<project_dir>` and `PYTHONNOUSERSITE=1`
+- Both the CLI (`ark run`) and the Dashboard auto-detect and use the project-local environment.
 
-### 6. State Management (`website/dashboard/db.py`)
+### 6. Compute Backends (`ark/compute/`)
 
-SQLite is the source of truth for project config and status:
+ARK supports multiple compute backends for running experiments:
 
-- Project creation, config, phase status
-- Score history, cost tracking
-- CLI and webapp read/write the same DB
-- YAML files under `auto_research/state/` are for per-agent runtime state only
+- **Local**: Runs experiments directly on the host machine.
+- **Slurm**: Submits jobs to HPC clusters using `sbatch`.
+- **Cloud**: Provisions instances on **AWS**, **GCP**, or **Azure**.
+- **Custom**: Extensible backend for specialized environments.
+
+Cloud backends handle the full lifecycle: provisioning, code transfer (rsync), setup, execution, result collection, and teardown.
+
+### 7. AI Figure Generation (`ark/nano_banana.py`)
+
+**Nano Banana** is a Gemini-powered system for generating high-quality scientific figures:
+
+- **Planner**: Designs a detailed visual specification based on paper context.
+- **Stylist**: Refines the specification to match academic publication aesthetics.
+- **Visualizer**: Generates the image using Gemini image generation models.
+- **Critic**: Evaluates the figure and provides feedback for iterative improvement.
 
 ## Agent List (6 agents)
 
@@ -147,7 +162,7 @@ SQLite is the source of truth for project config and status:
 | reviewer | Reviews and scores the paper; checks experiment alignment against proposal |
 | planner | Analyzes issues, generates action plan (paper & dev modes); verifies experiment alignment |
 | writer | Writes/revises paper sections with DBLP-verified citations |
-| experimenter | Designs, runs, and analyzes experiments; multi-provider API fallback |
+| experimenter | Designs, runs, and analyzes experiments; supports Slurm and Cloud backends |
 | coder | Implements code changes (dev mode) |
 
 ## File Structure
@@ -156,43 +171,29 @@ SQLite is the source of truth for project config and status:
 ARK/
 ├── ark/
 │   ├── orchestrator.py      # Main loop (mixin-based)
-│   ├── pipeline.py          # Research phase 5-step pipeline
-│   ├── memory.py            # Score tracking, issue dedup, stagnation
-│   ├── agents.py            # Agent invocation (Claude + Gemini CLI)
+│   ├── pipeline.py          # Phase 1 (Research) and Phase 2 (Dev/Review) logic
+│   ├── memory.py            # Score tracking, issue dedup, stagnation detection
 │   ├── execution.py         # Agent execution and skill injection
 │   ├── cli.py               # CLI commands (ark new/run/status/access/...)
-│   ├── access.py            # Cloudflare Access allowlist management
-│   ├── compiler.py          # LaTeX compilation
+│   ├── compute/             # Compute backends (Local, Slurm, AWS, GCP, Azure)
+│   ├── engines/             # Agent orchestration and backend runtimes (Claude, Gemini)
+│   ├── orchestrator/        # State and Workspace management
+│   ├── telegram/            # Telegram notifications + bidirectional bot
+│   ├── website/             # Dashboard and Homepage (FastAPI + SQLite)
+│   ├── nano_banana.py       # AI figure generation pipeline
 │   ├── citation.py          # DBLP/CrossRef citation verification
 │   ├── deep_research.py     # Gemini Deep Research integration
-│   ├── telegram.py          # Telegram notifications + human intervention
-│   ├── compute.py           # Slurm/cloud compute backends
+│   ├── compiler.py          # LaTeX compilation logic
 │   └── templates/agents/    # Agent prompt templates
-│       ├── researcher.prompt
-│       ├── reviewer.prompt
-│       ├── planner.prompt
-│       ├── experimenter.prompt
-│       ├── writer.prompt
-│       └── coder.prompt
-├── website/
-│   ├── dashboard/           # FastAPI dashboard (served at /dashboard)
-│   │   ├── app.py           # FastAPI app + lifespan (also mounts homepage)
-│   │   ├── db.py            # SQLite models + state management
-│   │   ├── jobs.py          # Job launch, conda env provisioning
-│   │   ├── routes.py        # API routes + SSE
-│   │   ├── constants.py     # DASHBOARD_PREFIX and shared constants
-│   │   └── static/          # SPA frontend assets
-│   └── homepage/            # Static homepage files (served at /)
-├── skills/
+├── website/                 # Web interface
+│   ├── dashboard/           # FastAPI backend + SQLite DB
+│   └── homepage/            # Static landing page
+├── skills/                  # Modular instruction sets
 │   ├── index.json           # Skill registry
-│   └── builtin/             # Built-in skills
-│       ├── research-integrity/
-│       ├── human-intervention/
-│       ├── env-isolation/
-│       ├── figure-integrity/
-│       └── page-adjustment/
-├── venue_templates/         # LaTeX templates per venue
-├── tests/                   # 114 tests
+│   ├── builtin/             # Built-in skills (auto-installed)
+│   └── library/             # Domain-specific skills (selected by researcher)
+├── venue_templates/         # LaTeX templates per conference
+├── tests/                   # Comprehensive test suite
 └── projects/                # Per-project directories (gitignored)
 ```
 
