@@ -2912,7 +2912,7 @@ Only use double_column for multi-panel figures (side-by-side subplots).
         # got +8 iterations (target = 5 + 8 = 13) because DB already
         # held the cumulative total. Display ("Iteration 11/8") was
         # the visible tell.
-        max_iteration_target = max(self.max_iterations, self.iteration)
+        max_iteration_target = self._get_max_iteration_target()
 
         try:
             # Dev Phase first, if not already done in a prior run.
@@ -2955,3 +2955,10 @@ Only use double_column for multi-panel figures (side-by-side subplots).
                 priority="critical",
             )
         self.log(f"Total iterations: {self.iteration}", "RAW")
+    def _get_max_iteration_target(self) -> int:
+        """Calculate the absolute iteration cap.
+        
+        Treats self.max_iterations as the CUMULATIVE lifetime cap,
+        but ensures we never set a target below our current progress.
+        """
+        return max(self.max_iterations, self.iteration)

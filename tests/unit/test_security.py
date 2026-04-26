@@ -71,7 +71,7 @@ class TestSlurmInjection:
         """Malicious key values must be escaped before rendering into SLURM template."""
         from jinja2 import Template
 
-        template_text = Path(__file__).parent.parent / "website" / "dashboard" / "slurm_template.sh"
+        template_text = Path(__file__).parent.parent.parent / "website" / "dashboard" / "slurm_template.sh"
         template = Template(template_text.read_text())
 
         malicious_keys = {

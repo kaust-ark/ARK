@@ -6,10 +6,7 @@ from pathlib import Path
 from ark.compute.cloud import CloudBackend
 from ark.compute.cloud.gcp import GCPCloudBackend
 
-# Ensure gcloud is in the PATH
-GCLOUD_PATH = "/Users/bilal/Downloads/google-cloud-sdk/bin"
-if GCLOUD_PATH not in os.environ["PATH"]:
-    os.environ["PATH"] = f"{GCLOUD_PATH}:{os.environ['PATH']}"
+pytestmark = pytest.mark.gcp
 
 KEY_FILE = Path("ark-gcp-key.json")
 

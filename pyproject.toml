@@ -34,7 +34,12 @@ webapp = [
 ark = "ark.cli:main"
 
 [tool.pytest.ini_options]
-markers = ["network: tests that hit real APIs (deselect with '-m not network')"]
+markers = [
+    "network: tests that hit real APIs (deselect with '-m not network')",
+    "gcp: tests that provision real Google Cloud resources (deselect with '-m not gcp')",
+    "unit: fast offline/logic tests",
+    "integration: slow tests requiring external services or full pipeline mocks",
+]
 
 [tool.setuptools.packages.find]
 include = ["ark*", "website*"]

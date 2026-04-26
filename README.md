@@ -18,12 +18,13 @@
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 Agents">
   <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
-  <img src="https://img.shields.io/badge/tests-114-brightgreen.svg" alt="114 Tests">
+  <img src="https://img.shields.io/badge/tests-225-brightgreen.svg" alt="225 Tests">
 </p>
 
 <p align="center">
   <a href="https://idea2paper.org/"><strong>Website</strong></a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
+  <a href="#requirements">Requirements</a> &bull;
   <a href="#ark-pipeline">Pipeline</a> &bull;
   <a href="#ark-agents">Agents</a> &bull;
   <a href="#cloud-compute">Cloud</a> &bull;
@@ -74,6 +75,57 @@ Give it an idea and a venue. ARK handles the rest.
 </td>
 </tr>
 </table>
+
+---
+
+## Quick Start
+
+```bash
+# 1. Install
+pip install -e .
+
+# 2. Create a project (interactive wizard)
+ark new mma
+
+# 3. Run — ARK takes it from here
+ark run mma
+
+# 4. Monitor in real time
+ark monitor mma
+
+# 5. Check progress
+ark status mma
+```
+
+The wizard walks you through: code directory, venue, research idea, authors, compute backend, figure generation, and Telegram setup.
+
+### Start from an Existing PDF
+
+```bash
+ark new mma --from-pdf proposal.pdf
+```
+
+ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks off from the extracted spec.
+
+---
+
+## Requirements
+
+- **Python 3.9+** with `pyyaml` and `PyMuPDF`
+- **Agent CLI**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended, Claude Max subscription) **or** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; selectable per project
+- **Optional**: LaTeX (`pdflatex` + `bibtex`), Slurm, `google-genai` for AI figures
+
+### Installation
+
+```bash
+# Set up the conda base environment
+conda env create -f environment.yml         # Linux (creates "ark-base")
+# OR for macOS:
+conda env create -f environment-macos.yml   # macOS (creates "ark-base")
+
+pip install -e .                    # Core
+pip install -e ".[research]"       # + Gemini Deep Research & Nano Banana
+```
 
 ---
 
@@ -183,37 +235,6 @@ Skills live in `skills/builtin/` and are auto-installed during pipeline bootstra
 
 ---
 
-## Quick Start
-
-```bash
-# Install
-pip install -e .
-
-# Create a project (interactive wizard)
-ark new mma
-
-# Run — ARK takes it from here
-ark run mma
-
-# Monitor in real time
-ark monitor mma
-
-# Check progress
-ark status mma
-```
-
-The wizard walks you through: code directory, venue, research idea, authors, compute backend, figure generation, and Telegram setup.
-
-### Start from an Existing PDF
-
-```bash
-ark new mma --from-pdf proposal.pdf
-```
-
-ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks off from the extracted spec.
-
----
-
 ## CLI Reference
 
 | Command | Description |
@@ -268,7 +289,7 @@ The dashboard is configured via `webapp.env` located in your ARK config director
 <summary><strong>Service Details (Prod vs. Dev)</strong></summary>
 
 | | Prod | Dev |
-|--|:-----|:----|
+|---|:-----|:----|
 | **Port** | 9527 | 1027 |
 | **Service Name** | `ark-webapp` | `ark-webapp-dev` |
 | **Conda Env** | `ark-prod` | `ark-dev` |
@@ -342,8 +363,6 @@ docker compose -f docker/docker-compose.yml run --rm job \
 *Note: You must pass your required API keys (e.g., `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) as environment variables.*
 
 ### Running Standalone Containers (Directly)
-
-If you prefer to run the containers manually without Docker Compose:
 
 #### 1. Build the Images (Force amd64)
 ```bash
@@ -668,21 +687,39 @@ What you get:
 
 ---
 
-## Requirements
+## Testing
 
-- **Python 3.9+** with `pyyaml` and `PyMuPDF`
-- **Agent CLI**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended, Claude Max subscription) **or** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; selectable per project
-- Optional: LaTeX (`pdflatex` + `bibtex`), Slurm, `google-genai` for AI figures
+ARK uses a two-tier test suite to ensure both logic correctness and real-world integration.
+
+### 1. Unit Tests (Fast, Offline)
+Unit tests cover core logic, agents, memory, and utilities without requiring real API access or cloud resources.
 
 ```bash
-# Set up the conda base environment
-conda env create -f environment.yml         # Linux (creates "ark-base")
-# OR for macOS:
-conda env create -f environment-macos.yml   # macOS (creates "ark-base")
-
-pip install -e .                    # Core
-pip install -e ".[research]"       # + Gemini Deep Research & Nano Banana
+# Run all unit tests
+pytest tests/unit/
 ```
+
+### 2. Integration Tests (Slow, Online)
+Integration tests verify communication with external APIs (Claude, Gemini, CrossRef) and cloud providers (GCP). These are marked to prevent accidental execution and costs.
+
+```bash
+# Run tests that hit real network APIs (citations, agent CLI)
+pytest tests/integration/ -m network
+
+# Run tests that provision real GCP resources (requires ark-gcp-key.json)
+# If gcloud is not in your PATH, provide it via CLI or environment:
+pytest tests/integration/ -m gcp --gcloud-path /path/to/google-cloud-key-root/
+# OR: export ARK_GCLOUD_PATH=/path/to/google-cloud-key-root && pytest tests/integration/ -m gcp
+```
+
+### Test Markers
+Markers are defined in `pyproject.toml` to allow granular filtering:
+- `-m unit`: Logic-only tests.
+- `-m integration`: Pipeline and cloud tests.
+- `-m network`: Hits external internet APIs.
+- `-m gcp`: Provisions real Google Cloud resources.
+
+---
 
 ## Supported Venues
 
