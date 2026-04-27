@@ -594,3 +594,154 @@ def send_magic_link_email(settings, to_email: str, link: str) -> bool:
 
     # Fallback to local sendmail
     return _sendmail_fallback(from_addr, to_email, msg_str)
+
+
+def send_access_granted_email(settings, to_email: str, dashboard_url: str) -> bool:
+    """Notify a user that they've been added to the ARK Dashboard allowlist.
+
+    The user still has to verify via Cloudflare Access (one-time code sent
+    when they hit the dashboard), so the email is informational + CTA.
+    """
+    from email.utils import formatdate, make_msgid
+    from email.mime.image import MIMEImage
+
+    logo_path = Path(__file__).parent / "static" / "logo_ark_transparent.png"
+
+    subject = "You're in — ARK Dashboard access granted"
+
+    plain = f"""\
+You've been granted access to the ARK Dashboard.
+
+Sign in: {dashboard_url}
+
+When you visit, Cloudflare Access will email a one-time code to this
+address to verify your identity. Use the same email ({to_email}) to
+sign in.
+
+If you weren't expecting this, you can ignore this email.
+
+-- ARK Team
+"""
+
+    from html import escape as _esc
+    html = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#f0fdfa;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdfa;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- Banner -->
+  <tr><td bgcolor="#0d9488" style="background:#0d9488;background:linear-gradient(135deg,#0d9488 0%,#134e4a 100%);padding:40px 40px 36px;text-align:center;">
+    <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px;"><tr>
+      <td><img src="cid:ark_logo" alt="ARK" height="52" style="display:block;" /></td>
+      <td style="padding-left:14px;color:#ccfbf1;font-size:38px;font-weight:300;letter-spacing:6px;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;">ARK</td>
+    </tr></table>
+    <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.3px;">
+      Access Granted
+    </h1>
+    <p style="margin:10px 0 0;color:#ccfbf1;font-size:14px;">
+      ARK Dashboard &mdash; Automatic Research Kit
+    </p>
+  </td></tr>
+
+  <!-- Body -->
+  <tr><td style="padding:32px 44px 10px;">
+    <p style="margin:0 0 18px;color:#333;font-size:15px;line-height:1.7;">
+      Good news &mdash; <strong>{_esc(to_email)}</strong> has been added to the
+      ARK Dashboard allowlist. You can now sign in and start running projects.
+    </p>
+
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 6px;">
+      <tr>
+        <td style="padding:14px 16px;background:#f0fdfa;border-radius:10px;border-left:4px solid #0d9488;">
+          <p style="margin:0;color:#134e4a;font-size:14px;line-height:1.6;">
+            <strong style="color:#0d9488;">How sign-in works</strong><br/>
+            Visit the dashboard, enter this email, and Cloudflare Access will
+            email you a one-time code to verify your identity.
+          </p>
+        </td>
+      </tr>
+    </table>
+
+    <!-- CTA Button -->
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:26px 0 8px;">
+      <tr><td align="center">
+        <a href="{dashboard_url}" style="display:inline-block;background:#0d9488;color:#fff;
+           font-size:15px;font-weight:600;padding:14px 36px;border-radius:8px;
+           text-decoration:none;letter-spacing:0.3px;">
+          Open ARK Dashboard
+        </a>
+      </td></tr>
+    </table>
+
+    <p style="margin:24px 0 0;color:#555;font-size:13px;line-height:1.7;">
+      Questions or need a hand getting started? Reply here or write to
+      <a href="mailto:contact@idea2paper.org" style="color:#0d9488;text-decoration:none;font-weight:600;">contact@idea2paper.org</a>.
+    </p>
+    <p style="margin:14px 0 0;color:#888;font-size:12px;line-height:1.6;">
+      If you weren&rsquo;t expecting this email, you can safely ignore it.
+    </p>
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="background:#f8fffe;padding:22px 44px;border-top:1px solid #e0f2f1;">
+    <p style="margin:0;color:#999;font-size:12px;line-height:1.5;text-align:center;">
+      ARK &mdash; Automatic Research Kit<br/>
+      Sent because your email was added to the ARK Dashboard allowlist.
+    </p>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+"""
+
+    from_addr = getattr(settings, "smtp_from", "") or "contact@idea2paper.org"
+
+    msg = MIMEMultipart("alternative")
+    msg.attach(MIMEText(plain, "plain"))
+
+    html_related = MIMEMultipart("related")
+    html_related.attach(MIMEText(html, "html"))
+    if logo_path.exists():
+        with open(logo_path, "rb") as f:
+            logo = MIMEImage(f.read(), _subtype="png")
+        logo.add_header("Content-ID", "<ark_logo>")
+        logo.add_header("Content-Disposition", "inline", filename="logo.png")
+        html_related.attach(logo)
+    msg.attach(html_related)
+
+    msg["From"] = f"ARK Team <{from_addr}>"
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain="idea2paper.org")
+    msg_str = msg.as_string()
+
+    relay = getattr(settings, "smtp_relay", "")
+    if relay:
+        try:
+            with smtplib.SMTP(relay, 25, timeout=10) as server:
+                server.sendmail(from_addr, to_email, msg_str)
+            logger.info(f"Access-granted email sent via relay to {to_email}")
+            return True
+        except Exception as e:
+            logger.warning(f"Relay failed ({e}), trying SMTP auth…")
+
+    if settings.smtp_user and settings.smtp_password:
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
+                server.starttls()
+                server.login(settings.smtp_user, settings.smtp_password)
+                server.sendmail(from_addr, to_email, msg_str)
+            logger.info(f"Access-granted email sent via SMTP to {to_email}")
+            return True
+        except Exception as e:
+            logger.warning(f"SMTP failed ({e}), trying sendmail fallback…")
+
+    return _sendmail_fallback(from_addr, to_email, msg_str)

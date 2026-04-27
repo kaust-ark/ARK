@@ -190,7 +190,27 @@ def cmd_list() -> int:
     return 0
 
 
-def cmd_add(emails: list[str]) -> int:
+def _notify_added(emails: list[str]) -> None:
+    """Email each newly-added user that they've been granted access."""
+    if not emails:
+        return
+    try:
+        from website.dashboard.config import get_settings  # noqa: WPS433
+        from website.dashboard.notify import send_access_granted_email  # noqa: WPS433
+    except Exception as e:
+        print(f"  (skipped notify: {e})", file=sys.stderr)
+        return
+    settings = get_settings()
+    if not (settings.smtp_user and settings.smtp_password) and not getattr(settings, "smtp_relay", ""):
+        print("  (skipped notify: SMTP not configured)", file=sys.stderr)
+        return
+    dashboard_url = f"{settings.base_url.rstrip('/')}/dashboard"
+    for email in emails:
+        ok = send_access_granted_email(settings, email, dashboard_url)
+        print(f"  {'✉' if ok else '✗'} notify {email}")
+
+
+def cmd_add(emails: list[str], notify: bool = True) -> int:
     cfg = _load_config()
     pol = _get_policy(cfg)
     include = pol.get("include", [])
@@ -215,6 +235,8 @@ def cmd_add(emails: list[str]) -> int:
     for e in added:
         print(f"  + {e}")
     print(f"\nadded {len(added)}  skipped {len(skipped)}")
+    if notify:
+        _notify_added(added)
     return 0
 
 
