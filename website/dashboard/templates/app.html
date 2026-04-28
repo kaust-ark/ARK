@@ -1211,12 +1211,15 @@
         <select id="restart-venue" onchange="restartVenueChanged(this)"></select>
       </div>
       <div class="form-group" style="flex:1">
+        <label>Pages <span id="restart-pages-default" style="font-weight:400;color:var(--text-muted);font-size:.85em">(default: 9)</span></label>
+        <input type="number" id="restart-venue-pages-input" value="9" min="1" max="50" style="width:80px" />
+      </div>
+      <div class="form-group" style="flex:1">
         <label>Max iterations</label>
         <input type="number" id="restart-max-iter" value="1" min="1" max="5" style="width:80px" />
       </div>
     </div>
     <input type="hidden" id="restart-venue-format" />
-    <input type="hidden" id="restart-venue-pages" />
     <div class="form-group">
       <label>Model</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="restart-model-options">
@@ -3454,6 +3457,11 @@ let restartProjectId = null;
 
 async function openRestartModal(id) {
   restartProjectId = id;
+  // Make sure the venue list is loaded — the user may open Restart before
+  // ever scrolling to the hero form, in which case `venues` would be empty
+  // and copying hero's <select> would just give "Loading…".
+  await loadVenues();
+
   // Fetch project detail to pre-fill fields
   const res = await fetch(`${APP_BASE}/api/projects/${id}`);
   if (!res.ok) { alert('Failed to load project details'); return; }
@@ -3465,10 +3473,12 @@ async function openRestartModal(id) {
   document.getElementById('restart-tg-token').value = p.telegram_token || '';
   document.getElementById('restart-tg-chatid').value = p.telegram_chat_id || '';
 
-  // Populate venue select (reuse venues from hero form)
+  // Populate venue select directly from the cached venues list (mirrors
+  // loadVenues) so it works regardless of whether the hero form rendered.
   const venueSelect = document.getElementById('restart-venue');
-  const heroSelect = document.getElementById('hero-venue-select');
-  venueSelect.innerHTML = heroSelect.innerHTML;
+  venueSelect.innerHTML = venues.map(v =>
+    `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}(${v.year || 2025})${v.tag ? ' ' + v.tag : ''}</option>`
+  ).join('') + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
   // Set current venue
   if (p.venue) {
     for (const opt of venueSelect.options) {
@@ -3478,9 +3488,14 @@ async function openRestartModal(id) {
       }
     }
   }
-  // Set hidden venue_format and venue_pages from current project
+  // Pre-fill venue_format and the visible pages input from the current
+  // project; user can override the page count before submitting.
   document.getElementById('restart-venue-format').value = p.venue_format || 'neurips';
-  document.getElementById('restart-venue-pages').value = p.venue_pages || 9;
+  const selOpt = venueSelect.options[venueSelect.selectedIndex];
+  const defaultPages = (selOpt && selOpt.dataset.pages) || 9;
+  document.getElementById('restart-venue-pages-input').value = p.venue_pages || defaultPages;
+  const pagesDefaultEl = document.getElementById('restart-pages-default');
+  if (pagesDefaultEl) pagesDefaultEl.textContent = '(default: ' + defaultPages + ')';
 
   // Set model radio
   const modelMap = { 'claude-sonnet-4-6': 'claude-sonnet-4-6',
@@ -3528,8 +3543,11 @@ async function openRestartModal(id) {
 function restartVenueChanged(sel) {
   const opt = sel.options[sel.selectedIndex];
   if (opt && opt.dataset.format) {
+    const defaultPages = opt.dataset.pages || '9';
     document.getElementById('restart-venue-format').value = opt.dataset.format;
-    document.getElementById('restart-venue-pages').value = opt.dataset.pages || 9;
+    document.getElementById('restart-venue-pages-input').value = defaultPages;
+    const pagesDefaultEl = document.getElementById('restart-pages-default');
+    if (pagesDefaultEl) pagesDefaultEl.textContent = '(default: ' + defaultPages + ')';
   }
 }
 
@@ -3541,7 +3559,7 @@ async function submitRestart() {
       idea: document.getElementById('restart-idea').value.trim(),
       venue: document.getElementById('restart-venue').value,
       venue_format: document.getElementById('restart-venue-format').value,
-      venue_pages: parseInt(document.getElementById('restart-venue-pages').value) || 9,
+      venue_pages: parseInt(document.getElementById('restart-venue-pages-input').value) || 9,
       max_iterations: Math.max(1, Math.min(5, parseInt(document.getElementById('restart-max-iter').value) || 1)),
       model: ([...document.querySelectorAll('input[name="restart-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-4-6',
       telegram_token: document.getElementById('restart-tg-token').value.trim(),
