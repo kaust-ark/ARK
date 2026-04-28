@@ -41,6 +41,12 @@
       font-size: .9rem;
     }
     .ra-form label .req { color: var(--teal); }
+    .ra-form .field-hint {
+      margin: .35rem 0 0;
+      font-size: .82rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
     .ra-form input, .ra-form textarea {
       width: 100%;
       padding: .75rem 1rem;
@@ -113,7 +119,8 @@
 
 <form class="ra-form" id="raForm" onsubmit="return submitForm(event)">
   <label>Your email <span class="req">*</span></label>
-  <input type="email" name="email" required autocomplete="email" placeholder="you@example.com">
+  <input type="email" name="email" required autocomplete="email" placeholder="you@gmail.com">
+  <p class="field-hint">We use <strong>Google authentication</strong> to sign in &mdash; please provide the email tied to your Google account.</p>
 
   <label>Your name</label>
   <input type="text" name="name" autocomplete="name" placeholder="Jane Doe">
