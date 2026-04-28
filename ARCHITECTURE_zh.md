@@ -45,7 +45,7 @@ ARK 按三个阶段依次执行：
 
 | 步骤 | 智能体/工具 | 执行内容 |
 |:-----|:------------|:---------|
-| 0 | — | **配置**：配置项目级 conda 环境（克隆 ark-base；幂等操作） |
+| 0 | — | **配置**：配置项目级 conda 环境（克隆 ark-base —— 仅研究栈，不含 ARK 代码；orchestrator 的 ARK 通过 `PYTHONPATH` 注入） |
 | 1 | 研究员 | **分析提案**：读取上传 PDF 或创意 → 写入 `idea.md`（摘要、方法、系统）；输出 Deep Research 查询；解析并提交论文标题 |
 | 2 | Gemini | **Deep Research**：文献综述 → `deep_research.md`；通过 Telegram 将 PDF 发送给用户 |
 | 3 | 研究员 | **专项化**：生成 `project_context.md`（网页验证）；为项目定制智能体提示模板；选择相关 skills（0–15 个） |
