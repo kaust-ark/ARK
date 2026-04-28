@@ -88,6 +88,34 @@ def test_normalise_string_evidence_coerced_to_dict():
     assert req["evidence"] == {"freeform": "raw stderr dump"}
 
 
+def test_normalise_bare_list_payload_promoted_to_needs_wrapper():
+    # Agents sometimes write needs_human.json as a bare list of need-objects
+    # instead of {"needs": [...]}. Must not raise; downstream extractors that
+    # already understand the needs[] shape (urgency, fallbacks, summary) keep
+    # working after the wrapper is applied.
+    raw = [
+        {
+            "key": "eaamo_repo",
+            "urgency": "clarification",
+            "purpose": "verify dataset URL",
+            "fallback": "drop empirical part",
+        }
+    ]
+    req = _normalise_needs_human(raw)
+    assert isinstance(req, dict)
+    assert req["urgency"] == "clarification"
+    assert any("drop empirical part" in fb for fb in req["fallbacks"])
+    assert "eaamo_repo" in req["summary"]
+
+
+def test_normalise_non_dict_non_list_payload_returns_default_shape():
+    # Defensive: garbage input shouldn't crash the orchestrator.
+    req = _normalise_needs_human("just a string")
+    assert isinstance(req, dict)
+    assert req["summary"] == ""
+    assert req["options"] == []
+
+
 def test_coerce_options_trims_trailing_conjunction():
     opts = _coerce_hitl_options({
         "operator_action_needed": "(a) try X, or (b) try Y, or (c) give up",
