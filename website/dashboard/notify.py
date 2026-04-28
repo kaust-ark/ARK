@@ -618,6 +618,10 @@ When you visit, Cloudflare Access will email a one-time code to this
 address to verify your identity. Use the same email ({to_email}) to
 sign in.
 
+Note: authorization may take up to 24 hours to fully propagate. If
+you hit a "not authorized" page in your normal browser during that
+window, try an incognito / private window instead.
+
 If you weren't expecting this, you can ignore this email.
 
 -- ARK Team
@@ -661,6 +665,18 @@ If you weren't expecting this, you can ignore this email.
             <strong style="color:#0d9488;">How sign-in works</strong><br/>
             Visit the dashboard, enter this email, and Cloudflare Access will
             email you a one-time code to verify your identity.
+          </p>
+        </td>
+      </tr>
+      <tr><td style="height:10px;"></td></tr>
+      <tr>
+        <td style="padding:14px 16px;background:#fffbeb;border-radius:10px;border-left:4px solid #b08800;">
+          <p style="margin:0;color:#5b4500;font-size:14px;line-height:1.6;">
+            <strong style="color:#b08800;">Heads up &mdash; up to 24h to propagate</strong><br/>
+            Authorization may take up to 24 hours to fully take effect. If
+            you hit a &ldquo;not authorized&rdquo; page in your normal browser
+            during that window, try an <strong>incognito / private window</strong>
+            instead.
           </p>
         </td>
       </tr>
