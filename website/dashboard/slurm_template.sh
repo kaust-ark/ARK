@@ -37,6 +37,10 @@ export XDG_CONFIG_HOME="{{ project_dir }}/.config"
 # Disable user-site discovery so the project's conda env is the only
 # source of Python packages. No /home/<user>/.local cross-contamination.
 export PYTHONNOUSERSITE=1
+# Inject the launching webapp's source so `python -m ark.orchestrator` finds
+# ark even though the cloned project env (and ark-base) deliberately omit it.
+# This mirrors what launch_local_job sets in jobs.py.
+export PYTHONPATH="{{ ark_code_root }}${PYTHONPATH:+:$PYTHONPATH}"
 
 cd {{ project_dir }}
 python -m ark.orchestrator \

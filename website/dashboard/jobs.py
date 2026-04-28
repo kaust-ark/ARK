@@ -395,6 +395,7 @@ def submit_job(
         conda_env=settings.slurm_conda_env,
         api_keys=safe_api_keys,
         db_path=db_path,
+        ark_code_root=str(Path(__file__).resolve().parents[2]),
     )
 
     if api_keys:
