@@ -904,13 +904,35 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             import re as _re
             content = main_tex.read_text()
 
-            # Ensure \usepackage{placeins}
+            # Ensure \usepackage{placeins} — \FloatBarrier comes from this
+            # package, and we inject \FloatBarrier below; without the package
+            # the resulting paper fails to compile with "Undefined control
+            # sequence". Some venue templates (e.g. acmart) load everything
+            # internally and have zero \usepackage lines in main.tex, so we
+            # need a fallback that handles that case too.
             if 'placeins' not in content:
-                # Insert after last \usepackage in preamble
                 pkgs = list(_re.finditer(r'\\usepackage(\[.*?\])?\{[^}]+\}', content))
                 if pkgs:
+                    # Anchor after the last existing \usepackage.
                     pos = pkgs[-1].end()
                     content = content[:pos] + '\n\\usepackage{placeins}' + content[pos:]
+                else:
+                    # No \usepackage in main.tex (e.g. acmart). Insert just
+                    # before \begin{document}.
+                    begin_doc = _re.search(r'\\begin\{document\}', content)
+                    if begin_doc:
+                        pos = begin_doc.start()
+                        content = content[:pos] + '\\usepackage{placeins}\n' + content[pos:]
+                    else:
+                        # Pathological: no \begin{document} either. Bail out
+                        # rather than risk corrupting the file with the
+                        # \FloatBarrier injection below.
+                        self.log(
+                            "Skipping \\FloatBarrier injection: main.tex has "
+                            "no \\usepackage anchor and no \\begin{document}",
+                            "WARN",
+                        )
+                        return
 
             # Find the body boundary — \appendix, \clearpage before \bibliography, or \bibliography
             body_end = len(content)
