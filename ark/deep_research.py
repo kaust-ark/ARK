@@ -163,10 +163,17 @@ def run_deep_research(
     print()
 
     try:
-        # Start deep research in background
+        # Start deep research in background.
+        # Switched 2026-04-29 from `deep-research-pro-preview-12-2025` after
+        # repeated silent in_progress hangs (Google AI Developers Forum has
+        # reports of the same recurring bug since 2026-03-31, where
+        # interactions stay `in_progress` for 12+ hours and never complete).
+        # The 04-2026 preview is built on Gemini 3.1 Pro and is the
+        # speed-optimized variant; the Max sibling targets async/cron
+        # workflows and is overkill for our interactive pipeline.
         interaction = client.interactions.create(
             input=query,
-            agent="deep-research-pro-preview-12-2025",
+            agent="deep-research-preview-04-2026",
             background=True,
         )
 
