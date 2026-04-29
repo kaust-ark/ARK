@@ -830,16 +830,25 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
     _ARK_BODY_END_MARKER = (
         r"\makeatletter\pdfsavepos"
         r"\write\@auxout{\string\gdef\string\arkBodyEndY{\the\pdflastypos}"
-        r"\string\gdef\string\arkPageH{\number\pdfpageheight}}"
+        r"\string\gdef\string\arkPageH{\number\pdfpageheight}"
+        r"\string\gdef\string\arkBodyEndPage{\arabic{page}}}"
         r"\makeatother"
     )
 
     def _ensure_clearpage_before_bibliography(self):
-        """Ensure \\clearpage before \\bibliography in main.tex.
+        """Pin the body / appendix / bibliography boundaries cleanly.
 
-        This guarantees References starts on a new page, separate from body.
-        Also injects a \\pdfsavepos marker right before the first \\clearpage
-        so the exact body-end y-position is written to the .aux file.
+        - Inserts \\clearpage before \\appendix (if present) so the
+          appendix gets a fresh page and isn't squeezed onto the same
+          page as the Conclusion.
+        - Inserts \\clearpage before \\bibliography (if missing) so
+          References always starts on a fresh page.
+        - Injects the body-end \\pdfsavepos marker at the *body* end —
+          before \\appendix when one exists, otherwise before
+          \\clearpage \\bibliography. Page-count metrics derived from
+          the marker therefore exclude appendix pages, which matches
+          venue page-limit conventions ("N pages excluding references
+          and appendix").
         """
         main_tex = self.latex_dir / "main.tex"
         if not main_tex.exists():
@@ -852,38 +861,63 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             # Remove any previously injected body-end marker (idempotent)
             content = content.replace(self._ARK_BODY_END_MARKER + '\n', '')
 
-            # Find the first bibliography-related command (\bibliographystyle or \bibliography)
-            bib_style_pos = content.find(r'\bibliographystyle{')
-            bib_pos = content.find(r'\bibliography{')
-            # The anchor is whichever comes first
-            anchor_pos = min(p for p in (bib_style_pos, bib_pos) if p >= 0)
-
-            # Check if \clearpage already precedes the anchor
-            before_anchor = content[:anchor_pos].rstrip()
-            has_clearpage = before_anchor.endswith(r'\clearpage')
-
-            if not has_clearpage:
-                # Insert \clearpage before the anchor
-                content = content[:anchor_pos] + '\\clearpage\n' + content[anchor_pos:]
+            # ── 1. Ensure \clearpage before \bibliography ──
+            bib_anchor = self._first_pos(
+                content,
+                r'\bibliographystyle{',
+                r'\bibliography{',
+            )
+            if not content[:bib_anchor].rstrip().endswith(r'\clearpage'):
+                content = (content[:bib_anchor]
+                           + '\\clearpage\n'
+                           + content[bib_anchor:])
                 self.log("Injected \\clearpage before \\bibliography", "INFO")
-                # Recalculate anchor position
-                anchor_pos = min(
-                    p for p in (content.find(r'\bibliographystyle{'),
-                                content.find(r'\bibliography{'))
-                    if p >= 0
-                )
-                before_anchor = content[:anchor_pos].rstrip()
 
-            # Inject pdfsavepos marker before the first \clearpage
-            # Find the \clearpage that immediately precedes the anchor
-            clearpage_pos = before_anchor.rfind(r'\clearpage')
-            content = (content[:clearpage_pos]
+            # ── 2. Ensure \clearpage before \appendix (if present) ──
+            appendix_pos = content.find(r'\appendix')
+            if appendix_pos != -1:
+                # The appendix command must be on its own line and have
+                # \clearpage on the line above it; otherwise it shares the
+                # last body page with whatever section it follows.
+                if not content[:appendix_pos].rstrip().endswith(r'\clearpage'):
+                    content = (content[:appendix_pos]
+                               + '\\clearpage\n'
+                               + content[appendix_pos:])
+                    self.log("Injected \\clearpage before \\appendix", "INFO")
+
+            # ── 3. Place the body-end marker at body end ──
+            # Body ends at \appendix (if present) or at the
+            # \clearpage that precedes \bibliography. The marker sits
+            # immediately before that boundary, so the y / page it
+            # records is the last body page's last writing position —
+            # *excluding* anything in \appendix.
+            appendix_pos = content.find(r'\appendix')
+            if appendix_pos != -1:
+                # Marker before the \clearpage that precedes \appendix.
+                clearpage_pos = content[:appendix_pos].rstrip().rfind(r'\clearpage')
+                marker_anchor = clearpage_pos
+            else:
+                bib_anchor = self._first_pos(
+                    content,
+                    r'\bibliographystyle{',
+                    r'\bibliography{',
+                )
+                clearpage_pos = content[:bib_anchor].rstrip().rfind(r'\clearpage')
+                marker_anchor = clearpage_pos
+
+            content = (content[:marker_anchor]
                        + self._ARK_BODY_END_MARKER + '\n'
-                       + content[clearpage_pos:])
+                       + content[marker_anchor:])
 
             main_tex.write_text(content)
         except Exception as e:
             self.log(f"Failed to inject \\clearpage: {e}", "WARN")
+
+    @staticmethod
+    def _first_pos(content: str, *needles: str) -> int:
+        """Return the smallest non-negative index of any needle in content."""
+        positions = [content.find(n) for n in needles]
+        return min(p for p in positions if p >= 0)
 
     def _ensure_float_barrier(self):
         """Strip every body-region \\FloatBarrier from main.tex.

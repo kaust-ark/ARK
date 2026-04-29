@@ -256,6 +256,7 @@ class CompilerMixin:
             import re
             m_y = re.search(r'\\gdef\\arkBodyEndY\{(\d+)\}', aux_text)
             m_h = re.search(r'\\gdef\\arkPageH\{(\d+)\}', aux_text)
+            m_p = re.search(r'\\gdef\\arkBodyEndPage\{(\d+)\}', aux_text)
             if not m_y or not m_h:
                 return None
 
@@ -267,23 +268,30 @@ class CompilerMixin:
             # fill_ratio = fraction of page used (from top)
             fill_ratio = 1.0 - (body_end_y_sp / page_height_sp)
 
-            # Determine which page the body ends on by finding References page
             import fitz
             doc = fitz.open(str(pdf_path))
-            ref_page_idx = None
-            for i in range(len(doc)):
-                text = doc[i].get_text()
-                if any(line.strip() == 'References' for line in text.split('\n')):
-                    ref_page_idx = i
-                    break
 
-            if ref_page_idx is None:
-                doc.close()
-                return None  # can't determine without References marker
-
-            # Body ends on the page before References (since we inject
-            # the marker right before \clearpage\bibliography)
-            last_body_idx = max(ref_page_idx - 1, 0)
+            # Prefer the page recorded by the marker itself — it knows
+            # its own page number even when an \appendix section sits
+            # between body and \bibliography, which would otherwise
+            # confuse a "References page minus one" heuristic.
+            if m_p:
+                last_body_idx = max(int(m_p.group(1)) - 1, 0)
+                ref_page_idx = last_body_idx + 1  # used by column-adjust
+            else:
+                # Legacy fallback: find References page in the rendered PDF
+                # and assume the marker is on the page directly before it.
+                # Only correct when there is no appendix.
+                ref_page_idx = None
+                for i in range(len(doc)):
+                    text = doc[i].get_text()
+                    if any(line.strip() == 'References' for line in text.split('\n')):
+                        ref_page_idx = i
+                        break
+                if ref_page_idx is None:
+                    doc.close()
+                    return None
+                last_body_idx = max(ref_page_idx - 1, 0)
 
             # Column-aware correction: if doc is two-column AND the last
             # body page has an empty column, the 1-D aux fill over-reports.
