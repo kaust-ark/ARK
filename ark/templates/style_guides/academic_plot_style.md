@@ -4,6 +4,14 @@
 
 Academic statistical plots should prioritize data clarity over decoration. White backgrounds, readable fonts, and colorblind-safe palettes are mandatory.
 
+> ⚠️ **User overrides take precedence.** The defaults in this guide
+> (color palette, fonts, line styles, etc.) are reasonable choices for
+> typical academic papers. If the runtime prompt provides explicit user
+> instructions — e.g. "use this color theme: #ABCDEF, …" — those
+> instructions override the corresponding defaults below. Apply them
+> verbatim instead of falling back to "MUST" or "NEVER" rules in this
+> document.
+
 ---
 
 ## Background & Grid

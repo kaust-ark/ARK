@@ -1165,6 +1165,46 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
             _style_path = Path(__file__).parent / "templates" / "style_guides" / "academic_plot_style.md"
             _plot_style = _style_path.read_text() if _style_path.exists() else ""
 
+            # Surface persistent user instructions directly to the coder.
+            # The coder profile sets user_instructions=False, which means
+            # user-supplied directives only reach the agent indirectly via
+            # the planner's task description. In practice that's been
+            # losing them: the planner correctly translates a user color
+            # palette into per-figure modifications, but the academic
+            # style guide below contains "MUST FOLLOW: Wong palette" and
+            # the agent defers to that absolute-sounding rule, ignoring
+            # the per-task override. Inject the user instructions at the
+            # top of the prompt with an explicit precedence rule so the
+            # agent has no ambiguity.
+            _user_instructions = ""
+            try:
+                ui_file = self.state_dir / "user_instructions.yaml"
+                if ui_file.exists():
+                    import yaml as _yaml
+                    data = _yaml.safe_load(ui_file.read_text()) or {}
+                    msgs = [e.get("message", "").strip()
+                            for e in (data.get("instructions") or [])
+                            if e.get("message")]
+                    if msgs:
+                        _user_instructions = "\n".join(f"- {m}" for m in msgs)
+            except Exception as e:
+                self.log(f"Could not read user_instructions.yaml: {e}", "WARN")
+
+            user_overrides_section = (
+                f"""\n## ⚠️ USER OVERRIDES (highest priority, takes precedence over the style guide below)
+
+The user has issued these explicit instructions for this project. They
+are persistent — every iteration must continue to honour them. If any
+of them conflicts with the Academic Plot Style Guide further down,
+**follow the user instruction**, not the style guide. Do not silently
+fall back to the guide's defaults.
+
+{_user_instructions}
+"""
+                if _user_instructions
+                else ""
+            )
+
             self.run_agent("coder", f"""
 ## Task: Modify existing Python plotting scripts
 
@@ -1172,10 +1212,10 @@ You received {len(figure_tasks)} FIGURE_CODE_REQUIRED tasks. Each task is
 a *modification* to a function already present in the script — not a
 request to invent a new figure from scratch and not a request to edit
 LaTeX. The writer agent does LaTeX; you own the Python.
-
+{user_overrides_section}
 {''.join(figure_instructions)}
 
-## Academic Plot Style Guide (MUST FOLLOW when modifying plotting code)
+## Academic Plot Style Guide (background defaults — overridden by USER OVERRIDES above)
 
 {_plot_style}
 
