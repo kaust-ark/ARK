@@ -827,10 +827,21 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
     # \pdflastypos at that moment, giving the y-coordinate (in sp, from the
     # page bottom).  Must use \write (not \protected@write) so expansion
     # happens at shipout time, after \pdfsavepos has recorded the position.
+    #
+    # The second line force-balances the two-column body's last page if
+    # balance.sty is loaded (acmart with `balance=true` does this for us).
+    # Without this call, when the last text page's content fits in only the
+    # left column, the right column ships completely empty — the page looks
+    # half-blank to a reader. acmart's own \AtEndDocument{\balance} fires
+    # *after* \bibliography, so it balances the references page, not the
+    # body's last page; we need an earlier call here. The \@ifpackageloaded
+    # guard makes this a no-op for venues that don't use balance.sty
+    # (non-acmart classes), so the injection is venue-agnostic.
     _ARK_BODY_END_MARKER = (
         r"\makeatletter\pdfsavepos"
         r"\write\@auxout{\string\gdef\string\arkBodyEndY{\the\pdflastypos}"
         r"\string\gdef\string\arkPageH{\number\pdfpageheight}}"
+        r"\@ifpackageloaded{balance}{\balance}{}"
         r"\makeatother"
     )
 
