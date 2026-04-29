@@ -116,7 +116,7 @@ Float placement options:
 
 After every modification, compile and check that:
 1. No blank pages with only figures — if any appear, move the `\begin{figure}` earlier in the source
-2. Do **NOT** add `\FloatBarrier` yourself. ARK's post-processing inserts exactly one in the correct position (before the last body section). A manually-added second barrier traps column flow and leaves large whitespace gaps.
+2. Do **NOT** add `\FloatBarrier` yourself. ARK's post-processing strips any `\FloatBarrier` you add — barriers in the body cluster pending floats, push the Conclusion onto an extra page, and silently break the venue page limit. LaTeX's default float placement plus the natural barrier at `\bibliography{}` lay out figure-dense papers correctly without manual intervention.
 3. Figures appear near where they are referenced, not pages later
 4. No large whitespace gaps — if a figure's `placement` in the manifest disagrees with the environment you used, fix the environment, not the figure
 5. Every AI concept figure listed in the manifest must be referenced by `\includegraphics` somewhere in `main.tex` — generating them cost real compute, dropping them silently is the regression that produced 275KB concept-figure-less PDFs

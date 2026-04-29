@@ -886,16 +886,29 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             self.log(f"Failed to inject \\clearpage: {e}", "WARN")
 
     def _ensure_float_barrier(self):
-        """Enforce exactly one \\FloatBarrier in the body, right before the
-        last body \\section. Any other \\FloatBarrier in the body is removed.
-        Also ensures \\usepackage{placeins} is in the preamble.
+        """Strip every body-region \\FloatBarrier from main.tex.
 
-        Rationale: writer agents have been observed to add \\FloatBarrier in
-        the middle of the body (e.g. before an Analysis section). A stray
-        barrier there traps column flow — pending floats (a following
-        \\begin{table*}) block further text from entering the current page's
-        right column, and the page ships half-empty. This routine collapses
-        to the single canonical position so the injection is idempotent.
+        Rationale: writer agents sometimes add \\FloatBarrier in the middle of
+        the body (e.g. before an Analysis section). A stray barrier there
+        traps column flow — pending floats (a following \\begin{table*}) block
+        further text from entering the current page's right column, and the
+        page ships half-empty.
+
+        Earlier versions of this routine *also* injected one canonical
+        \\FloatBarrier right before the last body section, on the theory that
+        a single barrier in a stable spot was harmless. In practice it caused
+        the opposite problem: with figure-dense papers (~6 figures + a table
+        in 8 pages), the pre-Conclusion barrier flushes the entire pending
+        float queue at once, clustering several figures onto two consecutive
+        pages and pushing the Conclusion onto a 9th page — silently breaking
+        the venue page limit. LaTeX's default float placement, plus the
+        natural barrier at \\bibliography{}, handles paper layout fine
+        without our help. We now only strip stray barriers and leave float
+        placement to LaTeX.
+
+        We also no longer touch \\usepackage{placeins}: with no injection of
+        our own and writer-added \\FloatBarriers stripped, the package isn't
+        needed.
         """
         main_tex = self.latex_dir / "main.tex"
         if not main_tex.exists():
@@ -903,36 +916,6 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
         try:
             import re as _re
             content = main_tex.read_text()
-
-            # Ensure \usepackage{placeins} — \FloatBarrier comes from this
-            # package, and we inject \FloatBarrier below; without the package
-            # the resulting paper fails to compile with "Undefined control
-            # sequence". Some venue templates (e.g. acmart) load everything
-            # internally and have zero \usepackage lines in main.tex, so we
-            # need a fallback that handles that case too.
-            if 'placeins' not in content:
-                pkgs = list(_re.finditer(r'\\usepackage(\[.*?\])?\{[^}]+\}', content))
-                if pkgs:
-                    # Anchor after the last existing \usepackage.
-                    pos = pkgs[-1].end()
-                    content = content[:pos] + '\n\\usepackage{placeins}' + content[pos:]
-                else:
-                    # No \usepackage in main.tex (e.g. acmart). Insert just
-                    # before \begin{document}.
-                    begin_doc = _re.search(r'\\begin\{document\}', content)
-                    if begin_doc:
-                        pos = begin_doc.start()
-                        content = content[:pos] + '\\usepackage{placeins}\n' + content[pos:]
-                    else:
-                        # Pathological: no \begin{document} either. Bail out
-                        # rather than risk corrupting the file with the
-                        # \FloatBarrier injection below.
-                        self.log(
-                            "Skipping \\FloatBarrier injection: main.tex has "
-                            "no \\usepackage anchor and no \\begin{document}",
-                            "WARN",
-                        )
-                        return
 
             # Find the body boundary — \appendix, \clearpage before \bibliography, or \bibliography
             body_end = len(content)
@@ -944,48 +927,32 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             body_content = content[:body_end]
             tail = content[body_end:]
 
-            # Must have at least 2 body \section to make "before last section" meaningful
-            sections = list(_re.finditer(r'(?<!sub)\\section\{', body_content))
-            if len(sections) < 2:
-                main_tex.write_text(content)
-                return
-
             # Strip every existing \FloatBarrier (plus its trailing whitespace /
             # newline) from the body. Matching \\FloatBarrier not followed by a
             # letter keeps us from eating any hypothetical \FloatBarrierFoo.
             barrier_re = _re.compile(r'\\FloatBarrier(?![A-Za-z])\s*\n?')
             existing = barrier_re.findall(body_content)
             removed = len(existing)
-            if removed:
-                body_content = barrier_re.sub('', body_content)
+            if not removed:
+                return  # nothing to do; leave file untouched
 
-            # Recompute the last-section position after the stripping.
-            sections = list(_re.finditer(r'(?<!sub)\\section\{', body_content))
-            last_sec_start = sections[-1].start()
-
-            # Insert exactly one \FloatBarrier right before the last body section.
-            body_content = (
-                body_content[:last_sec_start]
-                + '\\FloatBarrier\n'
-                + body_content[last_sec_start:]
-            )
+            body_content = barrier_re.sub('', body_content)
             content = body_content + tail
             main_tex.write_text(content)
 
-            if removed == 0:
-                self.log("Injected \\FloatBarrier before last body section", "INFO")
-            elif removed == 1:
-                # Single existing barrier normalized to canonical position
-                # (may be a no-op in steady state). Stay quiet to avoid log spam.
-                pass
+            if removed == 1:
+                self.log(
+                    "Stripped 1 writer-added \\FloatBarrier from body",
+                    "INFO",
+                )
             else:
                 self.log(
-                    f"Normalized \\FloatBarrier: removed {removed} stray copies, "
-                    f"kept one before the last body section",
+                    f"Stripped {removed} writer-added \\FloatBarrier copies "
+                    "from body",
                     "INFO",
                 )
         except Exception as e:
-            self.log(f"Failed to inject FloatBarrier: {e}", "WARN")
+            self.log(f"Failed to strip FloatBarrier: {e}", "WARN")
 
     def _fix_overfull(self, context: str = "pre-delivery"):
         """Fix overfull \\hbox warnings by asking writer to reword.
