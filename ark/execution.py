@@ -124,20 +124,29 @@ For every writing task, instruct the writer to compile and verify the body page 
                     page_constraint += f"- `{w}`\n"
                 page_constraint += "\n**Fix**: Wrap overflowing tables with `\\resizebox{\\linewidth}{!}{...}` or break long equations.\n"
 
-        # Bottleneck awareness: if Technical Quality is the bottleneck and
-        # score is low, tell the planner it must include experiments
+        # When the score gap from target is large, plans dominated by
+        # WRITING_ONLY tasks rarely move the needle — the gap usually
+        # reflects evidentiary issues that prose edits can only paper
+        # over. Soft-nudge the planner; do not require any specific
+        # task type.
         bottleneck_constraint = ""
         bottleneck = self._get_bottleneck()
         current_score = self.memory.scores[-1] if self.memory.scores else 0
-        if "Technical" in bottleneck and current_score < 7.5:
+        target_score = float(self.config.get("review_target_score", 8.0))
+        if current_score and current_score < (target_score - 1.0):
             bottleneck_constraint = f"""
-## BOTTLENECK: Technical Quality ({current_score}/10)
+## SCORE GAP
 
-The reviewer's primary bottleneck is **Technical Quality**. Pure writing changes
-(WRITING_ONLY) cannot fix this — you MUST include at least one EXPERIMENT_REQUIRED
-task (e.g., add baselines, run ablations, measure new metrics). If you classify
-every issue as WRITING_ONLY when the bottleneck is Technical Quality, the score
-will not improve.
+Current score: {current_score}/10. Target: {target_score}/10.
+Bottleneck dimension: {bottleneck or "unknown"}.
+
+When the gap is this wide, plans dominated by WRITING_ONLY tasks tend
+not to move the score — the gap usually reflects evidentiary or
+analytical issues that prose edits can only paper over. Default
+toward at least one EXPERIMENT_REQUIRED or FIGURE_CODE_REQUIRED
+task this iteration, unless every flagged issue is purely cosmetic
+(typos, awkward phrasing, layout artefacts). Apply judgment, not a
+hard rule.
 """
 
         planner_output = self.run_agent("planner", f"""
@@ -149,17 +158,47 @@ Please read the full review report: auto_research/state/latest_review.md
 ## Current Findings Summary
 {findings_summary}
 
+## Classification (the most consequential decision in this plan)
+
+For each issue, decide which agent can actually solve it. The four
+categories partition the work by *what artifact change is required*:
+
+- **WRITING_ONLY** — the writer agent can fix it by editing main.tex
+  alone. The numbers and figures stay the same; only prose changes.
+  (Typical: rewording an abstract, hedging a claim, adding a caveat,
+  fixing typos, restructuring a paragraph.)
+
+- **FIGURE_CODE_REQUIRED** — the coder agent must edit a plotting
+  script and re-render. Use this when the underlying data already
+  exists in `results/` but the figure must show different content
+  (add a panel, change colormap, swap encoding, add error bars).
+
+- **EXPERIMENT_REQUIRED** — the experimenter agent must run a script
+  or sbatch job to **produce numbers that don't currently exist in
+  `results/`**. The defining test is simple: *can a writer alone fix
+  this by editing LaTeX?* If no — and `results/` doesn't already have
+  the data the issue is asking for — it's EXPERIMENT_REQUIRED.
+
+- **LITERATURE_REQUIRED** — pull additional citations from the
+  Deep Research report.
+
+## Self-check before committing to WRITING_ONLY
+
+If the reviewer's "Fix" recipe combines a substantive action
+(*compute*, *run*, *evaluate*, *measure*, *verify*, *test*, *add a
+panel*) with a wrap-up ("...and add one sentence acknowledging
+this"), do not classify the whole issue as WRITING_ONLY because the
+last clause is writing. Pick the type that addresses the substantive
+action; the writing tail is a follow-up the writer agent picks up
+later. A WRITING_ONLY caveat that doesn't change the underlying
+evidence will be re-flagged on the next iteration.
+
 ## Tasks
 1. Identify all Major Issues (M1, M2, ...) and Minor Issues (m1, m2, ...)
-2. Classify each issue: EXPERIMENT_REQUIRED, FIGURE_CODE_REQUIRED, or WRITING_ONLY
-3. Check strategy escalation requirements, ensure banned methods are not used
-4. Generate a specific action list for each issue
+2. Classify each issue per the rules above
+3. Generate a specific action list per issue
+4. Check strategy escalation requirements, ensure banned methods are not used
 5. Write results to auto_research/state/action_plan.yaml
-
-Notes:
-- EXPERIMENT_REQUIRED: requires running GPU experiments (e.g., adding perplexity measurement, supplementing benchmarks)
-- FIGURE_CODE_REQUIRED: requires modifying Python plotting scripts and re-running
-- WRITING_ONLY: only requires modifying LaTeX text
 """, timeout=defaults.TIMEOUT_PLANNER, prior_context=review_output)
 
         # Validate action plan
