@@ -103,13 +103,13 @@ def test_is_two_column_short_doc_returns_false(compiler):
 # ── _column_adjust ───────────────────────────────────────────────────
 
 
-def test_column_adjust_halves_when_right_empty(compiler):
-    # Sample page (idx 0): both halves filled → 2-col detected
+def test_column_adjust_right_empty_uses_area_average(compiler):
+    # 2-col last page with body in left col only (right col empty).
+    # area-average = (left_y/ph + 0) / 2 = (696/792 + 0) / 2 ≈ 0.439
     sample = _stub_page([
         _block(54, 100, 290, 700, "L"),
         _block(322, 100, 558, 700, "R"),
     ])
-    # Last body page (idx 1): only left half has content (besides header)
     last = _stub_page([
         _block(486, 48, 558, 56, "Anonymous Author(s)"),  # header (filtered)
         _block(54, 100, 290, 696, "long left col body"),
@@ -119,12 +119,12 @@ def test_column_adjust_halves_when_right_empty(compiler):
     adjusted, note = compiler._column_adjust(
         doc, last_body_idx=1, ref_page_idx=2, fill_ratio=0.87,
     )
-    assert adjusted == pytest.approx(0.435)
-    assert "right column empty" in note
+    assert adjusted == pytest.approx(0.4394, abs=0.001)
+    assert "2-col area-avg" in note
 
 
-def test_column_adjust_halves_when_left_empty(compiler):
-    # Symmetric mirror: left column empty
+def test_column_adjust_left_empty_uses_area_average(compiler):
+    # Symmetric: body in right col only.
     sample = _stub_page([
         _block(54, 100, 290, 700, "L"),
         _block(322, 100, 558, 700, "R"),
@@ -137,11 +137,34 @@ def test_column_adjust_halves_when_left_empty(compiler):
     adjusted, note = compiler._column_adjust(
         doc, last_body_idx=1, ref_page_idx=2, fill_ratio=0.87,
     )
-    assert adjusted == pytest.approx(0.435)
-    assert "left column empty" in note
+    assert adjusted == pytest.approx(0.4394, abs=0.001)
+    assert "2-col area-avg" in note
 
 
-def test_column_adjust_no_change_when_both_filled(compiler):
+def test_column_adjust_both_partial_uses_area_average(compiler):
+    # The case the old halving logic missed: left full, right partial.
+    # Visually ~70% used; area-average ≈ (91% + 50%) / 2 = 70.5%.
+    sample = _stub_page([
+        _block(54, 100, 290, 700, "L"),
+        _block(322, 100, 558, 700, "R"),
+    ])
+    # left_y = 720 → 720/792 ≈ 91%; right_y = 396 → 396/792 = 50%
+    last = _stub_page([
+        _block(54, 100, 290, 720, "left col full"),
+        _block(322, 100, 558, 396, "right col half"),
+    ])
+    doc = _stub_doc([sample, last])
+
+    adjusted, note = compiler._column_adjust(
+        doc, last_body_idx=1, ref_page_idx=2, fill_ratio=0.50,
+    )
+    # (720/792 + 396/792) / 2 = (0.909 + 0.5) / 2 = 0.7045
+    assert adjusted == pytest.approx(0.7045, abs=0.001)
+    assert "2-col area-avg" in note
+
+
+def test_column_adjust_both_full_uses_area_average(compiler):
+    # Both columns end at the same y → area-average ≈ raw fill.
     sample = _stub_page([
         _block(54, 100, 290, 700, "L"),
         _block(322, 100, 558, 700, "R"),
@@ -155,8 +178,9 @@ def test_column_adjust_no_change_when_both_filled(compiler):
     adjusted, note = compiler._column_adjust(
         doc, last_body_idx=1, ref_page_idx=2, fill_ratio=0.87,
     )
-    assert adjusted == pytest.approx(0.87)
-    assert note == ""
+    # 600/792 = 0.7576; (0.7576 + 0.7576) / 2 = 0.7576
+    assert adjusted == pytest.approx(0.7576, abs=0.001)
+    assert "2-col area-avg" in note
 
 
 def test_column_adjust_no_change_for_1col_doc(compiler):
@@ -173,9 +197,7 @@ def test_column_adjust_no_change_for_1col_doc(compiler):
 
 
 def test_column_adjust_excludes_running_header(compiler):
-    # Header is in right column (top 8% band). It must NOT count as
-    # "right column filled" — otherwise a 2-col page with body in
-    # left col only and header in right would falsely look balanced.
+    # Header in right column must NOT count as "right column filled".
     sample = _stub_page([
         _block(54, 100, 290, 700, "L"),
         _block(322, 100, 558, 700, "R"),
@@ -190,5 +212,6 @@ def test_column_adjust_excludes_running_header(compiler):
     adjusted, note = compiler._column_adjust(
         doc, last_body_idx=1, ref_page_idx=2, fill_ratio=0.87,
     )
-    assert adjusted == pytest.approx(0.435)
-    assert "right column empty" in note
+    # Header excluded → right_y = 0 → average = (696/792 + 0) / 2 ≈ 0.439
+    assert adjusted == pytest.approx(0.4394, abs=0.001)
+    assert "2-col area-avg" in note

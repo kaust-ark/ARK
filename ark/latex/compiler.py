@@ -311,29 +311,36 @@ class CompilerMixin:
                        fill_ratio: float) -> tuple[float, str]:
         """Return (adjusted_fill_ratio, log_note).
 
-        If doc is two-column and the last body page has only one of the two
-        columns occupied (modulo running header/footer), halve the fill so
-        the metric reflects the actual area used. Otherwise return the
-        input unchanged.
+        For two-column docs, the aux-recorded y is one-dimensional and only
+        reflects the column the body marker landed in. That under-counts
+        when the *other* column is partially filled (e.g. left column
+        full, right column halfway: aux reports the right's bottom y =
+        50%, but the page is ~70% used) and over-counts when the marker's
+        column is the only one with content (e.g. left=87%, right=0%:
+        aux reports 87%, but the page is ~44% used).
+
+        Replace fill_ratio with the average of the two columns' bottom y
+        positions on the last body page — that captures area-use
+        correctly across all four (L,R)-fill combinations: both full,
+        both partial, only one filled, both empty. For single-column
+        docs, return the aux ratio unchanged.
         """
         if not self._is_two_column_doc(doc, ref_page_idx):
             return fill_ratio, ""
 
-        last_page = doc[last_body_idx]
-        ph = last_page.rect.height
-        pw = last_page.rect.width
-        mid_x = pw / 2
+        page = doc[last_body_idx]
+        ph = page.rect.height
+        mid_x = page.rect.width / 2
         content = [
-            b for b in last_page.get_text("blocks")
-            if b[1] > ph * self._HEADER_BAND and b[3] < ph * self._FOOTER_BAND
+            b for b in page.get_text("blocks")
+            if b[1] > ph * self._HEADER_BAND
+            and b[3] < ph * self._FOOTER_BAND
         ]
-        left_filled = any(b[0] < mid_x for b in content)
-        right_filled = any(b[0] >= mid_x for b in content)
-        if left_filled and not right_filled:
-            return fill_ratio / 2, "; right column empty, halved"
-        if right_filled and not left_filled:
-            return fill_ratio / 2, "; left column empty, halved"
-        return fill_ratio, ""
+        left_y = max((b[3] for b in content if b[0] < mid_x), default=0)
+        right_y = max((b[3] for b in content if b[0] >= mid_x), default=0)
+        averaged = ((left_y + right_y) / ph) / 2
+        note = (f"; 2-col area-avg ({left_y/ph:.0%}/{right_y/ph:.0%})")
+        return averaged, note
 
     def _is_two_column_doc(self, doc, ref_page_idx: int) -> bool:
         """Decide whether the document is two-column by sampling early
