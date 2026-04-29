@@ -875,20 +875,36 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
     )
 
     def _ensure_clearpage_before_bibliography(self):
-        """Pin the body / appendix / bibliography boundaries cleanly.
+        """Pin canonical ACM layout:
 
-        - Inserts \\clearpage before \\appendix (if present) so the
-          appendix gets a fresh page and isn't squeezed onto the same
-          page as the Conclusion.
-        - Inserts \\clearpage before \\bibliography (if missing) so
-          References always starts on a fresh page.
-        - Injects the body-end \\pdfsavepos marker at the *body* end —
-          before \\appendix when one exists, otherwise before
-          \\clearpage \\bibliography. Page-count metrics derived from
-          the marker therefore exclude appendix pages, which matches
-          venue page-limit conventions ("N pages excluding references
-          and appendix").
+            body
+            [BODY_END_MARKER]
+            \\clearpage
+            \\bibliographystyle{...}
+            \\bibliography{...}
+            \\clearpage
+            \\appendix
+            ... appendix content ...
+            \\end{document}
+
+        This matches acmart's official sample-sigplan.tex (line 745-844),
+        which puts the appendix *after* the bibliography, not before.
+        Many writer agents emit the older
+        body→appendix→bibliography order; this routine reorders the file
+        in place so the rendered PDF matches the venue convention.
+
+        The body-end \\pdfsavepos marker is placed at the body / refs
+        boundary (immediately before the \\clearpage that precedes
+        \\bibliography), so page-count metrics derived from the marker
+        exclude both the bibliography and the appendix — matching venue
+        page-limit conventions ("N pages excluding references and
+        appendix").
+
+        Idempotent: running this on an already-canonical file
+        produces a byte-identical result.
         """
+        import re as _re
+
         main_tex = self.latex_dir / "main.tex"
         if not main_tex.exists():
             return
@@ -897,58 +913,85 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             if r'\bibliography{' not in content:
                 return
 
-            # Remove any previously injected body-end marker (idempotent)
+            # Strip any previously-injected body-end markers so the
+            # rebuild below uses a single canonical position.
             content = content.replace(self._ARK_BODY_END_MARKER + '\n', '')
 
-            # ── 1. Ensure \clearpage before \bibliography ──
-            bib_anchor = self._first_pos(
+            # Locate the bibliography block. We treat
+            # \bibliographystyle + \bibliography as a single contiguous
+            # block — they always ship together.
+            bib_match = _re.search(
+                r'(?:\\bibliographystyle\{[^}]*\}\s*)?\\bibliography\{[^}]*\}',
                 content,
-                r'\bibliographystyle{',
-                r'\bibliography{',
             )
-            if not content[:bib_anchor].rstrip().endswith(r'\clearpage'):
-                content = (content[:bib_anchor]
-                           + '\\clearpage\n'
-                           + content[bib_anchor:])
-                self.log("Injected \\clearpage before \\bibliography", "INFO")
+            if not bib_match:
+                return
+            bib_block = content[bib_match.start():bib_match.end()].strip()
 
-            # ── 2. Ensure \clearpage before \appendix (if present) ──
-            appendix_pos = content.find(r'\appendix')
-            if appendix_pos != -1:
-                # The appendix command must be on its own line and have
-                # \clearpage on the line above it; otherwise it shares the
-                # last body page with whatever section it follows.
-                if not content[:appendix_pos].rstrip().endswith(r'\clearpage'):
-                    content = (content[:appendix_pos]
-                               + '\\clearpage\n'
-                               + content[appendix_pos:])
-                    self.log("Injected \\clearpage before \\appendix", "INFO")
+            end_doc_pos = content.find(r'\end{document}')
+            if end_doc_pos < 0:
+                return
 
-            # ── 3. Place the body-end marker at body end ──
-            # Body ends at \appendix (if present) or at the
-            # \clearpage that precedes \bibliography. The marker sits
-            # immediately before that boundary, so the y / page it
-            # records is the last body page's last writing position —
-            # *excluding* anything in \appendix.
             appendix_pos = content.find(r'\appendix')
-            if appendix_pos != -1:
-                # Marker before the \clearpage that precedes \appendix.
-                clearpage_pos = content[:appendix_pos].rstrip().rfind(r'\clearpage')
-                marker_anchor = clearpage_pos
+
+            # Three input shapes to handle:
+            #   (a) appendix BEFORE bib  → reorder to bib then appendix
+            #   (b) appendix AFTER bib   → already canonical; just clean
+            #       the surrounding clearpages and re-insert marker
+            #   (c) no appendix          → body + bib, drop in marker
+            if appendix_pos != -1 and appendix_pos < bib_match.start():
+                appendix_block = content[appendix_pos:bib_match.start()]
+                body_section = content[:appendix_pos]
+                reordered = True
+            elif appendix_pos != -1 and appendix_pos > bib_match.end():
+                appendix_block = content[appendix_pos:end_doc_pos]
+                body_section = content[:bib_match.start()]
+                reordered = False
             else:
-                bib_anchor = self._first_pos(
-                    content,
-                    r'\bibliographystyle{',
-                    r'\bibliography{',
-                )
-                clearpage_pos = content[:bib_anchor].rstrip().rfind(r'\clearpage')
-                marker_anchor = clearpage_pos
+                appendix_block = ""
+                body_section = content[:bib_match.start()]
+                reordered = False
 
-            content = (content[:marker_anchor]
-                       + self._ARK_BODY_END_MARKER + '\n'
-                       + content[marker_anchor:])
+            tail = content[end_doc_pos:].rstrip()
 
-            main_tex.write_text(content)
+            # Strip stray \clearpage from the trailing edges of each
+            # piece — we re-insert canonical separators below.
+            body_section = _re.sub(
+                r'\\clearpage\s*$', '', body_section.rstrip()
+            ).rstrip()
+            if appendix_block:
+                appendix_block = _re.sub(
+                    r'^\s*\\clearpage\s*', '', appendix_block.lstrip()
+                ).lstrip()
+                appendix_block = _re.sub(
+                    r'\\clearpage\s*$', '', appendix_block.rstrip()
+                ).rstrip()
+
+            # Reassemble in canonical order.
+            parts = [
+                body_section,
+                "",
+                self._ARK_BODY_END_MARKER,
+                r"\clearpage",
+                bib_block,
+            ]
+            if appendix_block:
+                parts.extend([
+                    "",
+                    r"\clearpage",
+                    appendix_block,
+                ])
+            parts.extend(["", tail, ""])
+            new_content = "\n".join(parts)
+
+            if new_content != content:
+                main_tex.write_text(new_content)
+                if reordered:
+                    self.log(
+                        "Reordered: body → bibliography → appendix "
+                        "(matches acmart sample-sigplan convention)",
+                        "INFO",
+                    )
         except Exception as e:
             self.log(f"Failed to inject \\clearpage: {e}", "WARN")
 
