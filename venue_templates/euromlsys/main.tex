@@ -1,11 +1,6 @@
 \documentclass[sigplan,10pt,nonacm,balance=false]{acmart}
-% balance=false above prevents acmart from auto-calling \balance at
-% \AtEndDocument (which would equalize the *references* page and create
-% bottom whitespace). We still want to balance the *body's last page*, so
-% load balance.sty explicitly here and let ARK's body-end injection call
-% \balance before \clearpage and \nobalance after.
-\usepackage{balance}
 
+% Remove ACM-specific elements for non-ACM venue
 \settopmatter{printacmref=false}
 \renewcommand\footnotetextcopyrightpermission[1]{}
 \pagestyle{plain}

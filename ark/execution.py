@@ -827,31 +827,11 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
     # \pdflastypos at that moment, giving the y-coordinate (in sp, from the
     # page bottom).  Must use \write (not \protected@write) so expansion
     # happens at shipout time, after \pdfsavepos has recorded the position.
-    #
-    # The \@ifpackageloaded{balance}{\balance}{} call force-balances the
-    # two-column body's last page when balance.sty is loaded (the EuroMLSys
-    # template does \usepackage{balance} explicitly). Without it, content
-    # that fits in the left column alone ships with an empty right column —
-    # the page looks half-blank. acmart's own \AtEndDocument{\balance}
-    # would fire *after* \bibliography, balancing the references page, not
-    # the body's last page; we need an earlier call here. The
-    # \@ifpackageloaded guard makes this a no-op for venues that don't use
-    # balance.sty, so the injection is venue-agnostic.
     _ARK_BODY_END_MARKER = (
         r"\makeatletter\pdfsavepos"
         r"\write\@auxout{\string\gdef\string\arkBodyEndY{\the\pdflastypos}"
         r"\string\gdef\string\arkPageH{\number\pdfpageheight}}"
-        r"\@ifpackageloaded{balance}{\balance}{}"
         r"\makeatother"
-    )
-
-    # Counterpart to _ARK_BODY_END_MARKER: turn balanced output back off so
-    # the references page falls back to left-column-fill instead of being
-    # split evenly with bottom whitespace. balance.sty's \balance is sticky
-    # (it stays on once toggled), so we need an explicit \nobalance after
-    # \clearpage.
-    _ARK_REFS_START_MARKER = (
-        r"\makeatletter\@ifpackageloaded{balance}{\nobalance}{}\makeatother"
     )
 
     def _ensure_clearpage_before_bibliography(self):
@@ -869,9 +849,8 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             if r'\bibliography{' not in content:
                 return
 
-            # Remove any previously injected markers (idempotent)
+            # Remove any previously injected body-end marker (idempotent)
             content = content.replace(self._ARK_BODY_END_MARKER + '\n', '')
-            content = content.replace(self._ARK_REFS_START_MARKER + '\n', '')
 
             # Find the first bibliography-related command (\bibliographystyle or \bibliography)
             bib_style_pos = content.find(r'\bibliographystyle{')
@@ -895,18 +874,12 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 )
                 before_anchor = content[:anchor_pos].rstrip()
 
-            # Inject pdfsavepos marker (with \balance) before the first
-            # \clearpage, and \nobalance right after it. The combined effect:
-            # body's last page is balanced; references page resumes
-            # left-fill so a short refs list doesn't split with bottom
-            # whitespace.
+            # Inject pdfsavepos marker before the first \clearpage
+            # Find the \clearpage that immediately precedes the anchor
             clearpage_pos = before_anchor.rfind(r'\clearpage')
-            clearpage_end = clearpage_pos + len(r'\clearpage')
             content = (content[:clearpage_pos]
                        + self._ARK_BODY_END_MARKER + '\n'
-                       + content[clearpage_pos:clearpage_end]
-                       + '\n' + self._ARK_REFS_START_MARKER
-                       + content[clearpage_end:])
+                       + content[clearpage_pos:])
 
             main_tex.write_text(content)
         except Exception as e:
