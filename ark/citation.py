@@ -967,15 +967,19 @@ def fix_bib(bib_path: str, results: list[VerificationResult]) -> None:
             content = content.replace(r.original_bibtex, tagged)
 
         elif r.status == "NEEDS-CHECK":
-            # Add note field inside the entry so it shows in PDF
-            if "note" not in r.original_bibtex.lower():
-                modified_entry = r.original_bibtex.rstrip().rstrip("}")
-                # Ensure last field has a trailing comma before adding note
-                modified_entry = modified_entry.rstrip()
-                if modified_entry and not modified_entry.endswith(","):
-                    modified_entry += ","
-                modified_entry += "\n" + r'  note = {\textcolor{red}{[NEEDS-CHECK: citation not verified]}}' + "\n}"
-                content = content.replace(r.original_bibtex, modified_entry)
+            # Tag the entry for downstream tooling (summary PDF, citation
+            # audits) by prepending a comment line. Do NOT add a `note`
+            # field to the entry itself — most bib styles render `note` in
+            # the references list, so a "[NEEDS-CHECK: citation not
+            # verified]" note shows up next to the citation in the rendered
+            # PDF (and was previously wrapped in \textcolor{red}{} which
+            # made it ugly red text). The leading comment is invisible to
+            # LaTeX but parseable by us.
+            marker = "% [NEEDS-CHECK: citation not verified]\n"
+            if not r.original_bibtex.lstrip().startswith("% [NEEDS-CHECK"):
+                content = content.replace(
+                    r.original_bibtex, marker + r.original_bibtex,
+                )
 
     bib_file.write_text(content)
 
@@ -1075,7 +1079,8 @@ def _write_needs_check_to_bib(bib_path: str, titles: list[str],
             fields.append(f"  author = {{{author} et al.}}")
         if year:
             fields.append(f"  year = {{{year}}}")
-        fields.append(r"  note = {\textcolor{red}{[NEEDS-CHECK: citation not verified]}}")
+        # No `note` field with red markup — the comment line above the
+        # entry is the marker; downstream tooling (summary PDF) reads it.
 
         entry = (
             f"% [NEEDS-CHECK] Not found in DBLP, CrossRef, or Semantic Scholar\n"
@@ -1156,7 +1161,8 @@ def regenerate_bib_from_literature(literature_path: str, bib_path: str) -> None:
             fields.append(f"  author = {{{author} et al.}}")
         if year:
             fields.append(f"  year = {{{year}}}")
-        fields.append(r"  note = {\textcolor{red}{[NEEDS-CHECK: citation not verified]}}")
+        # See above: no `note` field with red markup. The leading
+        # comment line is the marker.
 
         entry = (
             f"% [NEEDS-CHECK]\n"

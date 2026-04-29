@@ -904,6 +904,208 @@ a {{ color: #0d9488; }}
         except Exception as e:
             self.log(f"Review .md send raised: {e}", "WARN")
 
+    def _generate_project_summary_md(self, score: float, prev_score: float) -> str:
+        """Build a per-iteration project summary in markdown.
+
+        Sections (in order): idea → work this iteration → known
+        limitations → suggested next steps → citation verification.
+        Aggregates from existing artefacts (idea.md, findings.yaml,
+        latest_review.md, references.bib) instead of asking an LLM —
+        the goal is a fast, transparent companion to the rendered
+        paper, not an LLM polish.
+        """
+        import re as _re
+        import yaml as _yaml
+
+        lines = [
+            f"# {self.display_name} — Project Summary",
+            f"_Iteration {self.iteration} • Score {score:.2f}/10 "
+            f"(previous {prev_score:.2f}/10) • Target "
+            f"{self.paper_accept_threshold}/10_",
+            "",
+        ]
+
+        # ── Idea ─────────────────────────────────────────────────
+        idea_md = self.state_dir / "idea.md"
+        lines.append("## 1. Project idea")
+        if idea_md.exists():
+            txt = idea_md.read_text(errors="replace").strip()
+            # Skip the duplicate heading if idea.md starts with one.
+            txt = _re.sub(r"^#[^\n]*\n+", "", txt, count=1)
+            # Cap length so the summary stays scan-able.
+            if len(txt) > 2000:
+                txt = txt[:2000].rstrip() + "\n\n*(truncated — see full idea.md)*"
+            lines.append(txt)
+        else:
+            lines.append("_idea.md not available._")
+        lines.append("")
+
+        # ── Work this iteration ──────────────────────────────────
+        lines.append("## 2. What was done this iteration")
+        findings_path = self.state_dir / "findings.yaml"
+        if findings_path.exists():
+            try:
+                data = _yaml.safe_load(findings_path.read_text()) or {}
+                findings = data.get("findings") or []
+                # Keep entries explicitly tagged for this iteration if
+                # available, else show the most recent few.
+                relevant = [
+                    f for f in findings
+                    if isinstance(f, dict)
+                    and f.get("iteration") in (self.iteration, str(self.iteration))
+                ] or findings[-5:]
+                if relevant:
+                    for f in relevant[-8:]:
+                        if not isinstance(f, dict):
+                            continue
+                        title = (f.get("title") or "").strip()
+                        summary = (f.get("summary") or
+                                   f.get("description") or "").strip()
+                        if title:
+                            lines.append(f"- **{title}**: {summary}")
+                        elif summary:
+                            lines.append(f"- {summary}")
+                else:
+                    lines.append("_No findings recorded for this iteration._")
+            except Exception as e:
+                lines.append(f"_findings.yaml unreadable: {e}_")
+        else:
+            lines.append("_findings.yaml not available._")
+        lines.append("")
+
+        # ── Known limitations ───────────────────────────────────
+        lines.append("## 3. Known limitations")
+        review_md = self.state_dir / "latest_review.md"
+        if review_md.exists():
+            review_text = review_md.read_text(errors="replace")
+            # Pull the Major Issues section as the authoritative
+            # limitations list — that's what the reviewer flagged as
+            # blocking acceptance.
+            major_match = _re.search(
+                r"##\s*Major\s*Issues\s*\n(.*?)(?=\n##\s|\Z)",
+                review_text, _re.DOTALL | _re.IGNORECASE,
+            )
+            if major_match:
+                snippet = major_match.group(1).strip()
+                # Compact: keep section headings only (### M1. …)
+                head_lines = [
+                    ln.strip() for ln in snippet.split("\n")
+                    if ln.strip().startswith("###")
+                ]
+                if head_lines:
+                    for h in head_lines[:8]:
+                        lines.append(f"- {h.lstrip('#').strip()}")
+                else:
+                    lines.append(snippet[:1500])
+            else:
+                lines.append("_Reviewer report did not list Major Issues._")
+        else:
+            lines.append("_No reviewer report available yet._")
+        lines.append("")
+
+        # ── Next steps ─────────────────────────────────────────
+        lines.append("## 4. Suggested next steps")
+        if review_md.exists():
+            review_text = review_md.read_text(errors="replace")
+            pathway_match = _re.search(
+                r"##\s*Acceptance\s*Pathway\s*\n(.*?)(?=\n##\s|\Z)",
+                review_text, _re.DOTALL | _re.IGNORECASE,
+            )
+            if pathway_match:
+                lines.append(pathway_match.group(1).strip())
+            else:
+                # Fall back: extract sentences containing "should" or
+                # "could" or "recommend" from the review.
+                hints = _re.findall(
+                    r"(?:^|\n)[^\n]*?\b(?:should|could|recommend|consider)\b[^\n]*",
+                    review_text, _re.IGNORECASE,
+                )
+                if hints:
+                    for h in hints[:5]:
+                        h = h.strip().lstrip("-").strip()
+                        if h:
+                            lines.append(f"- {h[:200]}")
+                else:
+                    lines.append("_No explicit next-step recommendations parsed._")
+        else:
+            lines.append("_No reviewer report available yet._")
+        lines.append("")
+
+        # ── Citation verification ──────────────────────────────
+        lines.append("## 5. Citation verification")
+        bib_path = self.latex_dir / "references.bib"
+        if bib_path.exists():
+            bib_text = bib_path.read_text(errors="replace")
+            # Find every entry preceded by a `% [NEEDS-CHECK ...]` comment.
+            unverified = []
+            for m in _re.finditer(
+                r"%\s*\[NEEDS-CHECK[^\]]*\][^\n]*\n+@\w+\s*\{\s*([^,\s]+)",
+                bib_text, _re.IGNORECASE,
+            ):
+                unverified.append(m.group(1).strip())
+            total_entries = len(_re.findall(r"^@\w+\s*\{", bib_text, _re.MULTILINE))
+            verified_count = total_entries - len(unverified)
+            lines.append(
+                f"- Verified: **{verified_count}** / "
+                f"unverified (`NEEDS-CHECK`): **{len(unverified)}** "
+                f"out of {total_entries} entries."
+            )
+            if unverified:
+                lines.append("")
+                lines.append("Entries flagged for manual review:")
+                for k in unverified[:30]:
+                    lines.append(f"  - `{k}`")
+                if len(unverified) > 30:
+                    lines.append(f"  - …and {len(unverified) - 30} more.")
+        else:
+            lines.append("_references.bib not present._")
+
+        return "\n".join(lines)
+
+    def _send_project_summary_via_telegram(
+        self, score: float, prev_score: float,
+    ) -> None:
+        """Render the project summary markdown to PDF and send via Telegram.
+
+        Uses the same _render_review_to_pdf helper as the review report
+        so the output styling matches. On render failure, falls back to
+        sending the .md file as a text document — the user still gets
+        the content, just without typesetting.
+        """
+        if not self.telegram.is_configured:
+            return
+        try:
+            md = self._generate_project_summary_md(score, prev_score)
+        except Exception as e:
+            self.log(f"_generate_project_summary_md raised: {e}", "WARN")
+            return
+        if not md.strip():
+            return
+
+        # Persist the .md so it ends up in the project's git history
+        # alongside the iteration's other artefacts.
+        out_md = self.state_dir / f"summary_iter{self.iteration}.md"
+        out_pdf = self.state_dir / f"summary_iter{self.iteration}.pdf"
+        try:
+            out_md.write_text(md)
+        except Exception as e:
+            self.log(f"summary md write failed: {e}", "WARN")
+        caption = (
+            f"📋 {self.display_name} — iter {self.iteration} project summary "
+            f"(score {score:.2f}/10)"
+        )
+        if self._render_review_to_pdf(md, out_pdf):
+            ok = self.telegram.send_document(out_pdf, caption=caption)
+            if ok:
+                self.log(f"Project summary PDF sent: {out_pdf}", "INFO")
+            return
+        # Fallback: send .md as text document.
+        if out_md.exists():
+            self.telegram.send_document(
+                out_md, caption=caption,
+                require_pdf=False, min_size=64,
+            )
+
     def send_iteration_summary(self, score: float, prev_score: float, review_text: str = ""):
         """Send compact iteration summary + PDF to Telegram."""
         if not self.telegram.is_configured:
@@ -971,6 +1173,12 @@ a {{ color: #0d9488; }}
                 self._send_review_report_via_telegram(score=_score)
             except Exception as e:
                 self.log(f"Review report send failed: {e}", "WARN")
+            try:
+                self._send_project_summary_via_telegram(
+                    score=_score, prev_score=prev_score,
+                )
+            except Exception as e:
+                self.log(f"Project summary send failed: {e}", "WARN")
 
         t = threading.Thread(
             target=_send_artifacts_bg, args=(score,), daemon=True,

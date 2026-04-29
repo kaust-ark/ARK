@@ -832,6 +832,39 @@ class CompilerMixin:
 
         return self.pdf_to_images()
 
+    def _strip_legacy_needs_check_notes(self, bib_path: "Path") -> int:
+        """Remove `note = {\\textcolor{red}{[NEEDS-CHECK: ...]}}` fields
+        injected by older citation-verification code paths. The new
+        convention is a `% [NEEDS-CHECK]` comment line above each
+        affected entry; the rendered PDF stays clean.
+
+        Returns the number of stripped notes. Idempotent.
+        """
+        try:
+            text = bib_path.read_text(errors="replace")
+            # Match the whole line containing the textcolor note (with
+            # optional trailing comma so we don't leave a dangling comma).
+            pattern = re.compile(
+                r"\s*,?\s*note\s*=\s*\{\\textcolor\{red\}"
+                r"\{\[NEEDS-CHECK[^\}]*\]\}\}\s*,?",
+                re.IGNORECASE,
+            )
+            new_text, n = pattern.subn("", text)
+            # Also tag the entry's preceding line with a comment marker
+            # so downstream tooling (summary PDF) still sees the
+            # NEEDS-CHECK status — but only if not already tagged.
+            if n and new_text != text:
+                bib_path.write_text(new_text)
+                self.log(
+                    f"Stripped {n} legacy red-textcolor NEEDS-CHECK note(s) "
+                    "from references.bib",
+                    "INFO",
+                )
+            return n
+        except Exception as e:
+            self.log(f"_strip_legacy_needs_check_notes failed: {e}", "WARN")
+            return 0
+
     def _run_citation_verification(self):
         """Verify references.bib, fix errors, mark NEEDS-CHECK, clean unused."""
         from ark.citation import verify_bib, fix_bib, cleanup_unused
@@ -839,6 +872,12 @@ class CompilerMixin:
         bib_path = self.latex_dir / "references.bib"
         if not bib_path.exists():
             return
+
+        # Strip legacy red-textcolor notes left in the bib by earlier
+        # versions of this routine. They render in red in the rendered
+        # references list; the new convention is a `% [NEEDS-CHECK]`
+        # comment line above the entry, which is invisible to LaTeX.
+        self._strip_legacy_needs_check_notes(bib_path)
 
         lit_path = str(self.state_dir / "literature.yaml")
         bib_str = str(bib_path)
