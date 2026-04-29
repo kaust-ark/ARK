@@ -772,6 +772,9 @@ a {{ color: #0d9488; }}
 
         Uses self._latest_pdf (set by compile_latex) as the single source
         of truth — no path guessing, no post-hoc validation needed.
+        The on-disk file is `main.pdf` (LaTeX-build convention from
+        main.tex); we present it as `paper.pdf` in Telegram so the user
+        sees a descriptive name in chat.
         """
         pdf = getattr(self, '_latest_pdf', None)
         if pdf is None or not pdf.exists():
@@ -779,7 +782,7 @@ a {{ color: #0d9488; }}
             return
 
         caption = f"📄 {self.display_name} — iter {self.iteration}, score {self._last_score:.1f}/10"
-        ok = self.telegram.send_document(pdf, caption=caption)
+        ok = self.telegram.send_document(pdf, caption=caption, filename="paper.pdf")
         if ok:
             self.log(f"PDF sent via Telegram: {pdf} ({pdf.stat().st_size} bytes)", "INFO")
         else:
@@ -907,12 +910,13 @@ a {{ color: #0d9488; }}
     def _generate_project_summary_md(self, score: float, prev_score: float) -> str:
         """Build a per-iteration project summary in markdown.
 
-        Sections (in order): idea → work this iteration → known
-        limitations → suggested next steps → citation verification.
-        Aggregates from existing artefacts (idea.md, findings.yaml,
-        latest_review.md, references.bib) instead of asking an LLM —
-        the goal is a fast, transparent companion to the rendered
-        paper, not an LLM polish.
+        Lead with a "Progress Summary" that frames what the project
+        explores and what's been done, then a sequence of subsections:
+        what changed this iteration, the reviewer's feedback, known
+        limitations, suggested next steps, and citation verification.
+        The reviewer feedback subsection replaces the standalone
+        latest_review.md PDF — the user receives one consolidated
+        document instead of two overlapping ones.
         """
         import re as _re
         import yaml as _yaml
@@ -925,88 +929,169 @@ a {{ color: #0d9488; }}
             "",
         ]
 
-        # ── Idea ─────────────────────────────────────────────────
+        # Read shared state once for use across multiple sections.
         idea_md = self.state_dir / "idea.md"
-        lines.append("## 1. Project idea")
+        idea_text = ""
         if idea_md.exists():
-            txt = idea_md.read_text(errors="replace").strip()
-            # Skip the duplicate heading if idea.md starts with one.
-            txt = _re.sub(r"^#[^\n]*\n+", "", txt, count=1)
-            # Cap length so the summary stays scan-able.
-            if len(txt) > 2000:
-                txt = txt[:2000].rstrip() + "\n\n*(truncated — see full idea.md)*"
-            lines.append(txt)
-        else:
-            lines.append("_idea.md not available._")
+            idea_text = _re.sub(
+                r"^#[^\n]*\n+", "",
+                idea_md.read_text(errors="replace").strip(),
+                count=1,
+            )
+
+        review_md = self.state_dir / "latest_review.md"
+        review_text = (
+            review_md.read_text(errors="replace") if review_md.exists() else ""
+        )
+
+        # ── Progress Summary (lead) ──────────────────────────────
+        # Narrative that opens the document: what is this project
+        # exploring + cumulative progress so far. Pulls the first
+        # paragraph or two of idea.md as the framing, then states
+        # the current state ("at iteration N with score X").
+        lines.append("## Progress Summary")
+        if idea_text:
+            # Take the first paragraph as the opening framing — it's
+            # usually the elevator pitch.
+            first_para = idea_text.split("\n\n", 1)[0].strip()
+            if len(first_para) > 1200:
+                first_para = first_para[:1200].rstrip() + "…"
+            lines.append(first_para)
+            lines.append("")
+        lines.append(
+            f"After {self.iteration} review iteration"
+            f"{'s' if self.iteration != 1 else ''}, the paper currently scores "
+            f"**{score:.2f}/10** against a target of "
+            f"{self.paper_accept_threshold}/10. The sections below summarise "
+            f"this iteration's changes, the reviewer's feedback, the "
+            f"open methodological gaps, and the suggested next steps."
+        )
         lines.append("")
 
-        # ── Work this iteration ──────────────────────────────────
-        lines.append("## 2. What was done this iteration")
+        # ── What changed this iteration ──────────────────────────
+        lines.append("## Changes this iteration")
         findings_path = self.state_dir / "findings.yaml"
+        added_any = False
         if findings_path.exists():
             try:
                 data = _yaml.safe_load(findings_path.read_text()) or {}
                 findings = data.get("findings") or []
-                # Keep entries explicitly tagged for this iteration if
-                # available, else show the most recent few.
                 relevant = [
                     f for f in findings
                     if isinstance(f, dict)
                     and f.get("iteration") in (self.iteration, str(self.iteration))
                 ] or findings[-5:]
-                if relevant:
-                    for f in relevant[-8:]:
-                        if not isinstance(f, dict):
-                            continue
-                        title = (f.get("title") or "").strip()
-                        summary = (f.get("summary") or
-                                   f.get("description") or "").strip()
-                        if title:
-                            lines.append(f"- **{title}**: {summary}")
-                        elif summary:
-                            lines.append(f"- {summary}")
-                else:
-                    lines.append("_No findings recorded for this iteration._")
+                for f in relevant[-8:]:
+                    if not isinstance(f, dict):
+                        continue
+                    title = (f.get("title") or "").strip()
+                    summary = (f.get("summary") or
+                               f.get("description") or "").strip()
+                    if title:
+                        lines.append(f"- **{title}**: {summary}")
+                        added_any = True
+                    elif summary:
+                        lines.append(f"- {summary}")
+                        added_any = True
             except Exception as e:
                 lines.append(f"_findings.yaml unreadable: {e}_")
-        else:
-            lines.append("_findings.yaml not available._")
+                added_any = True
+        if not added_any:
+            lines.append("_No iteration-specific findings recorded._")
         lines.append("")
 
-        # ── Known limitations ───────────────────────────────────
-        lines.append("## 3. Known limitations")
-        review_md = self.state_dir / "latest_review.md"
-        if review_md.exists():
-            review_text = review_md.read_text(errors="replace")
-            # Pull the Major Issues section as the authoritative
-            # limitations list — that's what the reviewer flagged as
-            # blocking acceptance.
+        # ── Reviewer feedback (subsumes the standalone review PDF) ──
+        lines.append("## Reviewer feedback")
+        if not review_text.strip():
+            lines.append("_No reviewer report available yet._")
+        else:
+            # Score table → keep as-is for context (it's already a
+            # markdown table and renders nicely).
+            scores_match = _re.search(
+                r"(\|\s*Dimension[\s\S]*?\n)(?:\n|##|---)",
+                review_text,
+            )
+            if scores_match:
+                lines.append("### Score breakdown")
+                # Trim to the table proper (lines starting with `|`).
+                table_lines = [
+                    ln for ln in scores_match.group(1).split("\n")
+                    if ln.strip().startswith("|")
+                ]
+                lines.extend(table_lines)
+                lines.append("")
+
+            # Major Issues — keep both the headings and a one-line
+            # context per issue so the user sees the substance.
             major_match = _re.search(
                 r"##\s*Major\s*Issues\s*\n(.*?)(?=\n##\s|\Z)",
                 review_text, _re.DOTALL | _re.IGNORECASE,
             )
             if major_match:
+                lines.append("### Major issues raised")
                 snippet = major_match.group(1).strip()
-                # Compact: keep section headings only (### M1. …)
-                head_lines = [
-                    ln.strip() for ln in snippet.split("\n")
+                # Find each "### M1. ..." block.
+                blocks = _re.split(r"(?=^###\s+M\d+)", snippet, flags=_re.MULTILINE)
+                for block in blocks:
+                    block = block.strip()
+                    if not block.startswith("###"):
+                        continue
+                    head_match = _re.match(r"###\s*(M\d+\.[^\n]*)", block)
+                    if not head_match:
+                        continue
+                    heading = head_match.group(1).strip()
+                    # First non-heading paragraph after the heading.
+                    body = block[head_match.end():].strip()
+                    para = body.split("\n\n", 1)[0].strip() if body else ""
+                    lines.append(f"- **{heading}** — {para[:400]}"
+                                 + ("…" if len(para) > 400 else ""))
+                lines.append("")
+
+            # Minor Issues — just count + list IDs/titles.
+            minor_match = _re.search(
+                r"##\s*Minor\s*Issues\s*\n(.*?)(?=\n##\s|\Z)",
+                review_text, _re.DOTALL | _re.IGNORECASE,
+            )
+            if minor_match:
+                heads = [
+                    ln.strip().lstrip("#").strip()
+                    for ln in minor_match.group(1).split("\n")
                     if ln.strip().startswith("###")
                 ]
-                if head_lines:
-                    for h in head_lines[:8]:
-                        lines.append(f"- {h.lstrip('#').strip()}")
-                else:
-                    lines.append(snippet[:1500])
+                if heads:
+                    lines.append("### Minor issues")
+                    for h in heads[:10]:
+                        lines.append(f"- {h}")
+                    if len(heads) > 10:
+                        lines.append(f"- …and {len(heads) - 10} more")
+                    lines.append("")
+
+        # ── Known limitations ────────────────────────────────────
+        lines.append("## Known limitations")
+        if review_text:
+            major_match = _re.search(
+                r"##\s*Major\s*Issues\s*\n(.*?)(?=\n##\s|\Z)",
+                review_text, _re.DOTALL | _re.IGNORECASE,
+            )
+            head_lines = []
+            if major_match:
+                head_lines = [
+                    ln.strip().lstrip("#").strip()
+                    for ln in major_match.group(1).split("\n")
+                    if ln.strip().startswith("###")
+                ]
+            if head_lines:
+                for h in head_lines[:8]:
+                    lines.append(f"- {h}")
             else:
                 lines.append("_Reviewer report did not list Major Issues._")
         else:
             lines.append("_No reviewer report available yet._")
         lines.append("")
 
-        # ── Next steps ─────────────────────────────────────────
-        lines.append("## 4. Suggested next steps")
-        if review_md.exists():
-            review_text = review_md.read_text(errors="replace")
+        # ── Suggested next steps ─────────────────────────────────
+        lines.append("## Suggested next steps")
+        if review_text:
             pathway_match = _re.search(
                 r"##\s*Acceptance\s*Pathway\s*\n(.*?)(?=\n##\s|\Z)",
                 review_text, _re.DOTALL | _re.IGNORECASE,
@@ -1014,8 +1099,6 @@ a {{ color: #0d9488; }}
             if pathway_match:
                 lines.append(pathway_match.group(1).strip())
             else:
-                # Fall back: extract sentences containing "should" or
-                # "could" or "recommend" from the review.
                 hints = _re.findall(
                     r"(?:^|\n)[^\n]*?\b(?:should|could|recommend|consider)\b[^\n]*",
                     review_text, _re.IGNORECASE,
@@ -1031,12 +1114,11 @@ a {{ color: #0d9488; }}
             lines.append("_No reviewer report available yet._")
         lines.append("")
 
-        # ── Citation verification ──────────────────────────────
-        lines.append("## 5. Citation verification")
+        # ── Citation verification ────────────────────────────────
+        lines.append("## Citation verification")
         bib_path = self.latex_dir / "references.bib"
         if bib_path.exists():
             bib_text = bib_path.read_text(errors="replace")
-            # Find every entry preceded by a `% [NEEDS-CHECK ...]` comment.
             unverified = []
             for m in _re.finditer(
                 r"%\s*\[NEEDS-CHECK[^\]]*\][^\n]*\n+@\w+\s*\{\s*([^,\s]+)",
@@ -1169,10 +1251,11 @@ a {{ color: #0d9488; }}
                 self._send_pdf_via_telegram()
             except Exception as e:
                 self.log(f"Paper PDF send failed: {e}", "WARN")
-            try:
-                self._send_review_report_via_telegram(score=_score)
-            except Exception as e:
-                self.log(f"Review report send failed: {e}", "WARN")
+            # Note: the standalone reviewer report PDF is intentionally
+            # not sent. The reviewer's findings are now folded into the
+            # project summary below as a "Reviewer feedback" section, so
+            # the user receives one consolidated summary instead of two
+            # overlapping documents.
             try:
                 self._send_project_summary_via_telegram(
                     score=_score, prev_score=prev_score,
