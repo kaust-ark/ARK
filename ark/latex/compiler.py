@@ -139,6 +139,15 @@ class CompilerMixin:
         self.log("Compiling LaTeX...")
         self._last_compile_stderr = ""
         self._last_compile_errors = []
+        # Strip phantom citations (cite keys that don't exist in
+        # references.bib) before invoking pdflatex/bibtex. Without this,
+        # writer agents that name a non-existent key produce "[?]" markers
+        # in the rendered PDF and a stream of "I didn't find a database
+        # entry" warnings the bibtex audit then has to chase. Running
+        # the prune fresh on every compile is cheap (single regex pass)
+        # and idempotent (a citation re-added to .bib later doesn't get
+        # re-stripped).
+        self._prune_undefined_citations()
         try:
             for cmd in [
                 ["pdflatex", "-interaction=nonstopmode", "main.tex"],
@@ -212,6 +221,94 @@ class CompilerMixin:
         except Exception as e:
             self.log(f"Page count check failed: {e}", "WARN")
         return 0
+
+    # Citation commands recognised when pruning. Matches \cite, \citep,
+    # \citet, \nocite, biblatex's \autocite / \parencite / \textcite /
+    # \smartcite / \fullcite, and any project-specific custom command
+    # whose name contains "cite". Math operators and unrelated commands
+    # are left untouched.
+    _CITE_CMD_RE = re.compile(
+        # \cmdname  optional [pre] [post]  {keys}
+        r'\\(\w*cite\w*)\s*'
+        r'(\[[^\]]*\])?\s*'
+        r'(\[[^\]]*\])?\s*'
+        r'\{([^}]*)\}'
+    )
+
+    # Top-level BibTeX entry headers, e.g. "@article{tiecke2017mapping,"
+    _BIB_KEY_RE = re.compile(r'@\w+\s*\{\s*([^,\s]+)\s*,', re.MULTILINE)
+
+    def _prune_undefined_citations(self) -> int:
+        """Remove `\\cite{...}`-family keys that don't appear in
+        references.bib, before pdflatex runs.
+
+        Logic:
+        1. Parse references.bib to collect every defined cite key.
+        2. Walk every citation command in main.tex (\\cite, \\citep,
+           \\citet, \\nocite, biblatex variants, etc.). For each
+           command, drop any key not present in the bib.
+        3. If all keys in a command are undefined, remove the command
+           entirely; if some are valid, keep just those.
+
+        Idempotent: a key re-added to references.bib in a later
+        iteration won't get re-stripped because we only act on what's
+        currently missing.
+
+        Returns the count of (command, key) pairs pruned.
+        """
+        main_tex = self.latex_dir / "main.tex"
+        bib_file = self.latex_dir / "references.bib"
+        if not main_tex.exists() or not bib_file.exists():
+            return 0
+        try:
+            bib_text = bib_file.read_text(errors="replace")
+            defined = {
+                m.group(1).strip()
+                for m in self._BIB_KEY_RE.finditer(bib_text)
+                if m.group(1).strip()
+            }
+            if not defined:
+                return 0
+
+            main_text = main_tex.read_text(errors="replace")
+            pruned: list[tuple[str, str]] = []  # (cmd, key) for logging
+
+            def _replace(match: "re.Match") -> str:
+                cmd = match.group(1)
+                pre = match.group(2) or ""
+                post = match.group(3) or ""
+                key_str = match.group(4)
+                keys = [k.strip() for k in key_str.split(",")]
+                valid = [k for k in keys if k and k in defined]
+                invalid = [k for k in keys if k and k not in defined]
+                if not invalid:
+                    return match.group(0)
+                for k in invalid:
+                    pruned.append((cmd, k))
+                if not valid:
+                    # All keys gone → drop the whole command. The
+                    # surrounding text may need a tiny tidy by the
+                    # writer (e.g. dangling "(see )"), but that's
+                    # better than rendering "[?]" in the final PDF.
+                    return ""
+                return f"\\{cmd}{pre}{post}{{{','.join(valid)}}}"
+
+            new_text = self._CITE_CMD_RE.sub(_replace, main_text)
+
+            if pruned:
+                main_tex.write_text(new_text)
+                summary = ", ".join(
+                    sorted({k for _, k in pruned})
+                )
+                self.log(
+                    f"Pruned {len(pruned)} undefined citation(s) "
+                    f"({summary}) — keys not present in references.bib",
+                    "INFO",
+                )
+            return len(pruned)
+        except Exception as e:
+            self.log(f"_prune_undefined_citations failed: {e}", "WARN")
+            return 0
 
     def _count_body_pages(self, pdf_path: Path) -> float:
         """Count body pages (before References section).
