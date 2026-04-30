@@ -89,6 +89,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self.paper_state_file = self.state.paper_state_file
         self.action_plan_file = self.state.action_plan_file
         self.findings_file = self.state.findings_file
+        self.literature_file = self.state.literature_file
         self.checkpoint_file = self.state.checkpoint_file
         self.latest_review_file = self.state_dir / "latest_review.md"
 
