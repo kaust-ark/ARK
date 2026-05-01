@@ -3279,6 +3279,19 @@ def _cmd_webapp_release(args):
             capture_output=True, text=True, cwd=prod_dir,
         )
 
+    # Initialise/update git submodules in the prod worktree. `git worktree
+    # add` and `git checkout` do NOT do this implicitly — without this,
+    # submodule paths exist as empty directories and importing
+    # submodules/PaperBanana fails at runtime, silently downgrading every
+    # prod paper from PaperBanana's 5-agent figure pipeline to the simpler
+    # Nano Banana fallback. Run this on both create and update branches.
+    sub_r = _sp.run(
+        ["git", "submodule", "update", "--init", "--recursive"],
+        capture_output=True, text=True, cwd=prod_dir,
+    )
+    if sub_r.returncode != 0:
+        print(f"  {_c(f'submodule init warning: {sub_r.stderr.strip()[:200]}', Colors.YELLOW)}")
+
     print(f"  {_c('Prod worktree:', Colors.GREEN)} {prod_dir} → {tag}")
 
     # 5. Install in prod worktree using ark-prod conda env (non-editable)
