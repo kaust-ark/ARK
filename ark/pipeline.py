@@ -1827,6 +1827,11 @@ IMPORTANT: If the research idea describes a specific platform, framework, or sys
         self._send_dev_phase_telegram("experiments", dev_iter, max_dev_iters)
 
         compute_ctx = self._compute_backend.setup()
+
+        # Sync project code to backend
+        remote_work_dir = compute_ctx.get("work_dir", str(self.code_dir))
+        self._compute_backend.sync_to_backend(str(self.code_dir), remote_work_dir)
+
         compute_instructions = self._compute_backend.get_agent_instructions()
 
         try:
@@ -1889,7 +1894,7 @@ system or it fails with a clear report of what is needed.
 
             self.log_step("Waiting for all experiments to complete...", "progress")
             self._compute_backend.wait_for_completion(max_wait_hours=4)
-            self._compute_backend.collect_results()
+            self._compute_backend.sync_from_backend(f"{remote_work_dir}/results", str(self.code_dir / "results"))
         finally:
             self._compute_backend.teardown()
 

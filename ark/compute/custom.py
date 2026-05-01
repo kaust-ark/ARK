@@ -48,3 +48,13 @@ General settings:
                     self.log("Found recent results")
                     return True
         return True
+
+    def sync_to_backend(self, source_dir: str, remote_dir: str) -> bool:
+        """Push local project files to the compute backend."""
+        self.log("CustomBackend: sync_to_backend is a no-op", "WARN")
+        return True
+
+    def sync_from_backend(self, remote_dir: str, dest_dir: str) -> bool:
+        """Pull results from the compute backend back to the orchestrator."""
+        self.log("CustomBackend: sync_from_backend is a no-op", "WARN")
+        return True

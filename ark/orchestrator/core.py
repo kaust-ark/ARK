@@ -105,6 +105,16 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_file = self.log_dir / f"{self.project_name}_paper_{self.run_id}.log"
         self._cleanup_old_logs(keep=MAX_LOG_FILES_TO_KEEP)
+        
+        # Create a latest.log symlink for log streaming (Phase 5)
+        latest_symlink = self.log_dir / "latest.log"
+        try:
+            if latest_symlink.is_symlink() or latest_symlink.exists():
+                latest_symlink.unlink()
+            latest_symlink.symlink_to(self.log_file.name)
+        except Exception as e:
+            # Fallback if symlinks aren't supported
+            pass
 
         self.total_input_tokens = 0
         self.total_output_tokens = 0

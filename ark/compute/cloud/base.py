@@ -73,7 +73,6 @@ class CloudBackend(ComputeBackend):
         self._provision()
 
         self._wait_for_ssh()
-        self._transfer_code()
 
         for cmd in self.setup_commands:
             self.log(f"Setup: {cmd[:60]}...", "INFO")
@@ -126,24 +125,31 @@ class CloudBackend(ComputeBackend):
             time.sleep(delay)
         raise RuntimeError(f"SSH to {self._instance_ip} timed out after {max_retries * delay}s")
 
-    def _transfer_code(self):
-        """rsync code to the remote instance."""
+    def sync_to_backend(self, source_dir: str, remote_dir: str) -> bool:
+        """Push local project files to the compute backend."""
+        if not self._instance_ip:
+            return False
+
         key_path = os.path.expanduser(self.ssh_key_path)
-        remote_dir = (f"{self.ssh_user}@{self._instance_ip}:"
-                      f"/home/{self.ssh_user}/{self.project_name}")
+        dest = f"{self.ssh_user}@{self._instance_ip}:{remote_dir}"
         ssh_opts = (f"ssh -o StrictHostKeyChecking=no "
                     f"-o UserKnownHostsFile=/dev/null "
                     f"-o LogLevel=ERROR -i {key_path}")
-        subprocess.run([
-            "rsync", "-az",
-            "--exclude", ".git",
-            "--exclude", "__pycache__",
-            "--exclude", "*.pyc",
-            "--exclude", "auto_research",
-            "-e", ssh_opts,
-            f"{self.code_dir}/", remote_dir,
-        ], check=True, timeout=300)
-        self.log("Code transferred to remote instance")
+        try:
+            subprocess.run([
+                "rsync", "-azL",
+                "--exclude", ".git",
+                "--exclude", "__pycache__",
+                "--exclude", "*.pyc",
+                "--exclude", "auto_research",
+                "-e", ssh_opts,
+                f"{source_dir}/", dest,
+            ], check=True, timeout=300)
+            self.log(f"Synced {source_dir} to remote instance")
+            return True
+        except Exception as e:
+            self.log(f"Sync to remote failed: {e}", "ERROR")
+            return False
 
     def _save_instance_state(self):
         import yaml
@@ -224,16 +230,14 @@ Do NOT use sbatch/srun. Run scripts directly on the instance."""
         self.log(f"Cloud wait timeout after {max_wait_hours} hours", "WARN")
         return False
 
-    def collect_results(self) -> bool:
-        """rsync results back from remote instance."""
+    def sync_from_backend(self, remote_dir: str, dest_dir: str) -> bool:
+        """Pull results from the compute backend back to the orchestrator."""
         if not self._instance_ip:
             return False
 
         key_path = os.path.expanduser(self.ssh_key_path)
-        remote_results = (f"{self.ssh_user}@{self._instance_ip}:"
-                          f"/home/{self.ssh_user}/{self.project_name}/results/")
-        local_results = self.code_dir / "results"
-        local_results.mkdir(exist_ok=True)
+        source = f"{self.ssh_user}@{self._instance_ip}:{remote_dir}/"
+        Path(dest_dir).mkdir(exist_ok=True, parents=True)
 
         ssh_opts = (f"ssh -o StrictHostKeyChecking=no "
                     f"-o UserKnownHostsFile=/dev/null "
@@ -242,12 +246,12 @@ Do NOT use sbatch/srun. Run scripts directly on the instance."""
             subprocess.run([
                 "rsync", "-az",
                 "-e", ssh_opts,
-                remote_results, str(local_results) + "/",
+                source, f"{dest_dir}/",
             ], check=True, timeout=300)
-            self.log("Results collected from cloud instance")
+            self.log(f"Synced from remote instance to {dest_dir}")
             return True
         except Exception as e:
-            self.log(f"Result collection failed: {e}", "ERROR")
+            self.log(f"Sync from remote failed: {e}", "ERROR")
             return False
 
     @abstractmethod

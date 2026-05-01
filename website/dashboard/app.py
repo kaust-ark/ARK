@@ -121,10 +121,9 @@ async def _poll_jobs(app: FastAPI):
                     from .constants import DASHBOARD_PREFIX
                     url = f"{settings.base_url}{DASHBOARD_PREFIX}/#project/{p.id}"
 
-                    # ── Local / Cloud subprocess job ──────────────────────
-                    if p.slurm_job_id.startswith(("local:", "cloud:")):
-                        prefix = "local:" if p.slurm_job_id.startswith("local:") else "cloud:"
-                        pid_str = p.slurm_job_id[len(prefix):]
+                    # ── Local subprocess job ─────────────────────────────
+                    if p.slurm_job_id.startswith("local:"):
+                        pid_str = p.slurm_job_id[len("local:"):]
                         if not pid_str.isdigit():
                             continue
                         pid = int(pid_str)
@@ -197,6 +196,104 @@ async def _poll_jobs(app: FastAPI):
                                             bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                                         )
                                         _stuck_alerted.add(p.id)
+                        continue
+
+                    # ── Remote Cloud Orchestrator job (Phase 5) ──────────
+                    if p.slurm_job_id.startswith("cloud:"):
+                        try:
+                            import yaml as _yaml
+                            from ark.compute.cloud.orchestrator import OrchestratorCloudBackend
+
+                            config_file = pdir / "project.yaml"
+                            if not config_file.exists():
+                                continue
+                            config_dict = _yaml.safe_load(config_file.read_text())
+                            orch = OrchestratorCloudBackend.from_config(
+                                config_dict, p.id, pdir, log_fn=logger.info
+                            )
+                            
+                            # Write launcher heartbeat for the VM reaper (Phase 6)
+                            heartbeat_file = pdir / "auto_research" / "state" / "launcher_heartbeat"
+                            heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
+                            heartbeat_file.touch()
+
+                            remote_state = orch.poll_orchestrator()
+                            logger.debug(f"Cloud orchestrator {p.id}: {remote_state}")
+
+                            if remote_state == "RUNNING":
+                                # Periodic sync: pull auto_research state to refresh UI
+                                remote_work_dir = f"/home/{orch.ssh_user}/{p.id}"
+                                try:
+                                    orch.sync_from_backend(
+                                        f"{remote_work_dir}/auto_research/",
+                                        str(pdir / "auto_research"),
+                                    )
+                                except Exception as sync_err:
+                                    logger.warning(f"State sync failed for {p.id}: {sync_err}")
+                                continue
+
+                            # Terminal state detected
+                            if remote_state == "COMPLETED":
+                                new_status = "done"
+                            elif remote_state in ("FAILED", "UNKNOWN"):
+                                new_status = "failed"
+                            else:
+                                continue
+
+                            # Final sync before marking terminal
+                            try:
+                                remote_work_dir = f"/home/{orch.ssh_user}/{p.id}"
+                                orch.sync_from_backend(
+                                    f"{remote_work_dir}/auto_research/",
+                                    str(pdir / "auto_research"),
+                                )
+                                orch.sync_from_backend(
+                                    f"{remote_work_dir}/paper/",
+                                    str(pdir / "paper"),
+                                )
+                            except Exception as sync_err:
+                                logger.warning(f"Final sync failed for {p.id}: {sync_err}")
+
+                            kwargs = {"status": new_status}
+                            update_project(session, p, **kwargs)
+                            logger.info(f"Cloud orchestrator {p.id}: {p.status} → {new_status}")
+                            _advance_pending_queue(session, settings)
+
+                            if new_status == "done":
+                                score = 0.0
+                                ps = pdir / "auto_research" / "state" / "paper_state.yaml"
+                                if ps.exists():
+                                    d = _yaml.safe_load(ps.read_text()) or {}
+                                    score = float(d.get("current_score", 0))
+                                send_telegram_notify(
+                                    f"✅ <b>{_pname(p)}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
+                                    bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                                )
+                                user = get_user(session, p.user_id)
+                                if user:
+                                    pdf_files = sorted(
+                                        (pdir / "paper").glob("*.pdf"),
+                                        key=lambda x: x.stat().st_mtime,
+                                        reverse=True,
+                                    )
+                                    pdf_path = str(pdf_files[0]) if pdf_files else None
+                                    send_completion_email(
+                                        settings,
+                                        to_email=user.email,
+                                        project_name=_pname(p),
+                                        score=score,
+                                        pdf_path=pdf_path,
+                                        project_url=url,
+                                    )
+                            else:
+                                send_telegram_notify(
+                                    f"❌ <b>{_pname(p)}</b> {new_status}\n<a href='{url}'>{url}</a>",
+                                    bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                                )
+                            _log_mtimes.pop(p.id, None)
+                            _stuck_alerted.discard(p.id)
+                        except Exception as cloud_poll_err:
+                            logger.error(f"Cloud orchestrator poll failed for {p.id}: {cloud_poll_err}")
                         continue
 
                     # ── SLURM job ─────────────────────────────────────────

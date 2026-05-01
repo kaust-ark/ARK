@@ -489,6 +489,14 @@ Please read auto_research/state/latest_review.md and regenerate.
 
         # 1. Setup compute
         compute_ctx = self._compute_backend.setup()
+        
+        # Determine remote working directory
+        # CloudBackend provides 'work_dir' in compute_ctx. Slurm/Local fallback to code_dir.
+        remote_work_dir = compute_ctx.get("work_dir", str(self.code_dir))
+        
+        # Sync project code to backend
+        self._compute_backend.sync_to_backend(str(self.code_dir), remote_work_dir)
+
         compute_instructions = self._compute_backend.get_agent_instructions()
 
         # Check for referenced file paths that don't exist
@@ -551,7 +559,7 @@ After running the experiment:
             self._compute_backend.wait_for_completion(max_wait_hours=defaults.MAX_COMPUTE_WAIT_HOURS)
 
             # 4. Collect results
-            self._compute_backend.collect_results()
+            self._compute_backend.sync_from_backend(f"{remote_work_dir}/results", str(self.code_dir / "results"))
 
         finally:
             self._compute_backend.teardown()

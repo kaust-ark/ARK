@@ -450,36 +450,41 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
         "auto_github_remote": False,
     }
 
-    # Resolve per-project compute backend config
-    chosen = project.compute_backend or "local"
-    if chosen.startswith("cloud"):
-        per_project: dict = {}
-        if getattr(project, "cloud_overrides", None):
-            try:
-                per_project = json.loads(project.cloud_overrides)
-            except (json.JSONDecodeError, TypeError):
-                pass
-        compute_cfg = _build_cloud_config(
-            user_obj, settings,
-            per_project_overrides=per_project,
-            provider_override=_parse_cloud_provider(chosen),
-        )
-        if compute_cfg:
-            # Write SSH private key content to a per-project file so it never
-            # ends up as raw text in config.yaml.
-            if compute_cfg.get("ssh_private_key"):
-                key_file = project_dir / ".gcp_ssh_key"
-                key_file.write_text(compute_cfg.pop("ssh_private_key"))
-                key_file.chmod(0o600)
-                compute_cfg["ssh_key_path"] = str(key_file)
-            config["compute_backend"] = compute_cfg
-    elif chosen == "slurm":
-        config["compute_backend"] = {
-            "type": "slurm",
-            "job_prefix": f"{project.name.upper()[:8]}_",
-            "conda_env": settings.slurm_conda_env or "ark-base",
-        }
-    # "local" defaults to orchestrator's internal default if omitted entirely
+    def _resolve_compute_config(chosen: str, is_orchestrator: bool = False):
+        if chosen.startswith("cloud"):
+            per_project: dict = {}
+            if getattr(project, "cloud_overrides", None):
+                try:
+                    per_project = json.loads(project.cloud_overrides)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            compute_cfg = _build_cloud_config(
+                user_obj, settings,
+                per_project_overrides=per_project,
+                provider_override=_parse_cloud_provider(chosen),
+            )
+            if compute_cfg:
+                if compute_cfg.get("ssh_private_key"):
+                    prefix = "orch_" if is_orchestrator else ""
+                    key_file = project_dir / f".{prefix}gcp_ssh_key"
+                    key_file.write_text(compute_cfg.pop("ssh_private_key"))
+                    key_file.chmod(0o600)
+                    compute_cfg["ssh_key_path"] = str(key_file)
+                return compute_cfg
+        elif chosen == "slurm":
+            return {
+                "type": "slurm",
+                "job_prefix": f"{project.name.upper()[:8]}_",
+                "conda_env": settings.slurm_conda_env or "ark-base",
+            }
+        return {"type": "local"}
+
+    orch_chosen = project.orchestrator_compute_backend or "local"
+    config["orchestrator_compute_backend"] = _resolve_compute_config(orch_chosen, is_orchestrator=True)
+    
+    exp_chosen = project.experiment_compute_backend or project.compute_backend or "slurm"
+    config["experiment_compute_backend"] = _resolve_compute_config(exp_chosen, is_orchestrator=False)
+    config["compute_backend"] = config["experiment_compute_backend"]  # Legacy
     if project.telegram_token:
         config["telegram_bot_token"] = project.telegram_token
     if project.telegram_chat_id:
@@ -1076,7 +1081,7 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
     log_dir = pdir / "logs"
     log_dir.mkdir(exist_ok=True)
     
-    backend = project.compute_backend or "local"
+    backend = project.orchestrator_compute_backend or "local"
 
     if backend.startswith("cloud"):
         per_project: dict = {}
@@ -1092,10 +1097,46 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
                                        pdir, log_dir, settings, api_keys=api_keys)
              update_project(session, project, status="running", slurm_job_id=job_id)
              return "running"
-        job_id = launch_cloud_job(project.id, project.mode, project.max_iterations,
-                                  pdir, log_dir, settings, api_keys=api_keys)
-        update_project(session, project, status="running", slurm_job_id=job_id)
-        return "running"
+             
+        try:
+            import yaml
+            from ark.compute.cloud.orchestrator import OrchestratorCloudBackend
+            from website.dashboard.jobs import provision_claude_session, provision_gemini_session
+            
+            # Write credentials to project dir so they are synced
+            if api_keys:
+                provision_claude_session(pdir, api_keys)
+                provision_gemini_session(pdir, api_keys)
+                gcp_json = api_keys.get("gcp_service_account_json")
+                if gcp_json:
+                    gcp_creds_path = pdir / ".gcp_credentials.json"
+                    gcp_creds_path.write_text(gcp_json)
+                    gcp_creds_path.chmod(0o600)
+            
+            config_file = pdir / "project.yaml"
+            with open(config_file) as f:
+                config_dict = yaml.safe_load(f)
+                
+            orch_backend = OrchestratorCloudBackend.from_config(
+                config_dict, project.id, pdir, log_fn=logger.info
+            )
+            orch_backend.setup()
+            
+            remote_work_dir = f"/home/{orch_backend.ssh_user}/{project.id}"
+            if not orch_backend.sync_to_backend(str(pdir), remote_work_dir):
+                raise RuntimeError("Failed to sync project directory to Orchestrator VM")
+                
+            pid = orch_backend.run_orchestrator()
+            if not pid:
+                raise RuntimeError("Failed to start remote orchestrator process")
+                
+            job_id = f"cloud:{pid}"
+            update_project(session, project, status="running", slurm_job_id=job_id)
+            return "running"
+        except Exception as e:
+            logger.error(f"Failed to launch cloud orchestrator: {e}", exc_info=True)
+            update_project(session, project, status="failed")
+            return "failed"
 
     if backend == "slurm" and slurm_available():
         job_id = submit_job(project.id, project.mode, project.max_iterations,

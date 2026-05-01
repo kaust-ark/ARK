@@ -30,9 +30,19 @@ class ComputeBackend(ABC):
         """Block until experiments complete. Returns True if completed."""
         pass
 
-    def collect_results(self) -> bool:
-        """Collect results from remote to local. Default: no-op."""
-        return True
+    def run(self):
+        """Execute the backend's primary workload (no-op by default for experiment backends)."""
+        pass
+
+    @abstractmethod
+    def sync_to_backend(self, source_dir: str, remote_dir: str) -> bool:
+        """Push local project files to the compute backend."""
+        pass
+
+    @abstractmethod
+    def sync_from_backend(self, remote_dir: str, dest_dir: str) -> bool:
+        """Pull results from the compute backend back to the orchestrator."""
+        pass
 
     def teardown(self):
         """Post-experiment cleanup. Default: no-op."""

@@ -88,3 +88,35 @@ Save all results to the `results/` directory."""
         else:
             self.log("No recent experiment results found.", "WARN")
             return True
+
+    def sync_to_backend(self, source_dir: str, remote_dir: str) -> bool:
+        """Push local project files to the compute backend."""
+        import shutil
+        from pathlib import Path
+        src = Path(source_dir).resolve()
+        dst = Path(remote_dir).resolve()
+        if src == dst:
+            return True
+        try:
+            shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns('.git', '__pycache__', '*.pyc', 'auto_research'))
+            self.log(f"Copied {src} to {dst}")
+            return True
+        except Exception as e:
+            self.log(f"Local sync failed: {e}", "ERROR")
+            return False
+
+    def sync_from_backend(self, remote_dir: str, dest_dir: str) -> bool:
+        """Pull results from the compute backend back to the orchestrator."""
+        import shutil
+        from pathlib import Path
+        src = Path(remote_dir).resolve()
+        dst = Path(dest_dir).resolve()
+        if src == dst:
+            return True
+        try:
+            shutil.copytree(src, dst, dirs_exist_ok=True)
+            self.log(f"Copied from {src} to {dst}")
+            return True
+        except Exception as e:
+            self.log(f"Local reverse sync failed: {e}", "ERROR")
+            return False

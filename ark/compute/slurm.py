@@ -347,3 +347,63 @@ Save all results to the `results/` directory.{cluster_section}{template_section}
         hard_hours = max_wait_hours * _HARD_CEILING_MULTIPLIER
         self.log(f"Slurm wait hard ceiling reached after {hard_hours} hours")
         return False
+
+    def sync_to_backend(self, source_dir: str, remote_dir: str) -> bool:
+        """Push local project files to the compute backend."""
+        ssh_host = self._compute_config.get("ssh_host")
+        if not ssh_host:
+            # Shared filesystem
+            return True
+            
+        ssh_user = self._compute_config.get("ssh_user", os.environ.get("USER"))
+        ssh_key = self._compute_config.get("ssh_key_path", "~/.ssh/id_rsa")
+        key_path = os.path.expanduser(ssh_key)
+        
+        dest = f"{ssh_user}@{ssh_host}:{remote_dir}"
+        ssh_opts = (f"ssh -o StrictHostKeyChecking=no "
+                    f"-o UserKnownHostsFile=/dev/null "
+                    f"-o LogLevel=ERROR -i {key_path}")
+        try:
+            subprocess.run([
+                "rsync", "-azL",
+                "--exclude", ".git",
+                "--exclude", "__pycache__",
+                "--exclude", "*.pyc",
+                "--exclude", "auto_research",
+                "-e", ssh_opts,
+                f"{source_dir}/", dest,
+            ], check=True, timeout=300)
+            self.log(f"Synced {source_dir} to Slurm remote")
+            return True
+        except Exception as e:
+            self.log(f"Sync to Slurm remote failed: {e}", "ERROR")
+            return False
+
+    def sync_from_backend(self, remote_dir: str, dest_dir: str) -> bool:
+        """Pull results from the compute backend back to the orchestrator."""
+        ssh_host = self._compute_config.get("ssh_host")
+        if not ssh_host:
+            # Shared filesystem
+            return True
+
+        ssh_user = self._compute_config.get("ssh_user", os.environ.get("USER"))
+        ssh_key = self._compute_config.get("ssh_key_path", "~/.ssh/id_rsa")
+        key_path = os.path.expanduser(ssh_key)
+        
+        source = f"{ssh_user}@{ssh_host}:{remote_dir}/"
+        Path(dest_dir).mkdir(exist_ok=True, parents=True)
+
+        ssh_opts = (f"ssh -o StrictHostKeyChecking=no "
+                    f"-o UserKnownHostsFile=/dev/null "
+                    f"-o LogLevel=ERROR -i {key_path}")
+        try:
+            subprocess.run([
+                "rsync", "-az",
+                "-e", ssh_opts,
+                source, f"{dest_dir}/",
+            ], check=True, timeout=300)
+            self.log(f"Synced from Slurm remote to {dest_dir}")
+            return True
+        except Exception as e:
+            self.log(f"Sync from Slurm remote failed: {e}", "ERROR")
+            return False
