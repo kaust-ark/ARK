@@ -3344,7 +3344,7 @@ def cmd_access(args):
         if sub == 'list' or sub is None:
             return _access.cmd_list()
         if sub == 'add':
-            return _access.cmd_add(args.emails)
+            return _access.cmd_add(args.emails, notify=not getattr(args, 'no_notify', False))
         if sub == 'remove':
             return _access.cmd_remove(args.emails)
         if sub == 'add-domain':
@@ -4124,6 +4124,8 @@ def main():
     access_sub.add_parser("list", help="Show current allowed emails and domains")
     p_acc_add = access_sub.add_parser("add", help="Add email(s) to allowlist")
     p_acc_add.add_argument("emails", nargs="+", help="Email address(es)")
+    p_acc_add.add_argument("--no-notify", action="store_true",
+                           help="Don't send a confirmation email to the added user(s)")
     p_acc_rm = access_sub.add_parser("remove", help="Remove email(s) from allowlist")
     p_acc_rm.add_argument("emails", nargs="+", help="Email address(es)")
     p_acc_ad = access_sub.add_parser("add-domain", help="Add email domain (e.g. kaust.edu.sa)")

@@ -169,3 +169,34 @@ class TestValidateActionPlan:
     def test_not_dict(self, mock_orchestrator):
         valid, msg = mock_orchestrator._validate_action_plan("not a dict")
         assert not valid
+
+
+class TestStateFileAttrs:
+    """Regression: every StateManager-owned path must be re-exposed on the
+    Orchestrator. Execute phase failed mid-iteration when literature_file
+    was missing — a writer step accessed self.literature_file and got
+    AttributeError. Lock the contract here so future StateManager additions
+    can't silently regress.
+    """
+
+    def test_state_file_attrs_re_exposed(self, mock_orchestrator):
+        # Every public *_file path on StateManager must also live on the
+        # Orchestrator (modulo state_file itself which uses a different
+        # name on the orchestrator side: research_state.yaml is consumed
+        # via self.state.load_state, not a direct attr).
+        state = mock_orchestrator.state
+        expected_attrs = [
+            "paper_state_file",
+            "action_plan_file",
+            "findings_file",
+            "literature_file",
+            "checkpoint_file",
+        ]
+        for name in expected_attrs:
+            assert hasattr(state, name), f"StateManager missing {name}"
+            assert hasattr(mock_orchestrator, name), (
+                f"Orchestrator must re-expose state.{name} (regression: "
+                "execute phase crashed when literature_file was missing)"
+            )
+            # And they must point to the same Path object.
+            assert getattr(mock_orchestrator, name) == getattr(state, name)

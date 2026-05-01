@@ -94,8 +94,17 @@ def _extract_hitl_fallbacks(raw: dict) -> list[str]:
         fallbacks.append(top_fb)
     return fallbacks
 
-def _normalise_needs_human(raw: dict) -> dict:
-    """Coerce a ``needs_human.json`` payload into a stable shape."""
+def _normalise_needs_human(raw) -> dict:
+    """Coerce a ``needs_human.json`` payload into a stable shape.
+
+    Agents sometimes emit a bare list of need-objects instead of the canonical
+    ``{"needs": [...]}`` wrapper; promote that to the wrapper shape so all
+    downstream callers can rely on dict access.
+    """
+    if isinstance(raw, list):
+        raw = {"needs": raw}
+    elif not isinstance(raw, dict):
+        raw = {}
     evidence = raw.get("evidence") or {}
     if isinstance(evidence, str):
         evidence = {"freeform": evidence}

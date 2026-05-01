@@ -226,12 +226,18 @@ class TelegramDispatcher:
             self._api_call("sendMessage", **data)
 
     def send_document(self, file_path: Path, caption: str = "",
-                       require_pdf: bool = True, min_size: int = 1024) -> bool:
+                       require_pdf: bool = True, min_size: int = 1024,
+                       filename: str | None = None) -> bool:
         """Send a file (PDF or other) via Telegram.
 
         By default validates that the file is a real PDF (≥1KB, %PDF- header).
         Pass `require_pdf=False` to send any file (markdown, txt, csv, etc.) —
         in that case only `min_size` is enforced.
+
+        `filename` overrides the name shown in the Telegram chat. Defaults to
+        the on-disk file name. Useful when the on-disk name is a LaTeX-build
+        convention (e.g. main.pdf) but the user-facing name should be
+        descriptive (paper.pdf).
 
         Returns True if the upload succeeded and Telegram confirmed the
         correct file size, False otherwise.
@@ -257,11 +263,13 @@ class TelegramDispatcher:
         if len(safe_caption) > 1024:
             safe_caption = safe_caption[:1021] + "..."
 
+        display_name = filename or file_path.name
+
         boundary = uuid.uuid4().hex
         parts = [
             f'--{boundary}\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n{chat_id}\r\n',
             f'--{boundary}\r\nContent-Disposition: form-data; name="caption"\r\n\r\n{safe_caption}\r\n',
-            f'--{boundary}\r\nContent-Disposition: form-data; name="document"; filename="{file_path.name}"\r\nContent-Type: application/octet-stream\r\n\r\n',
+            f'--{boundary}\r\nContent-Disposition: form-data; name="document"; filename="{display_name}"\r\nContent-Type: application/octet-stream\r\n\r\n',
         ]
         body = "".join(parts).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
 

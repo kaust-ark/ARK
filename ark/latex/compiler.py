@@ -139,6 +139,15 @@ class CompilerMixin:
         self.log("Compiling LaTeX...")
         self._last_compile_stderr = ""
         self._last_compile_errors = []
+        # Strip phantom citations (cite keys that don't exist in
+        # references.bib) before invoking pdflatex/bibtex. Without this,
+        # writer agents that name a non-existent key produce "[?]" markers
+        # in the rendered PDF and a stream of "I didn't find a database
+        # entry" warnings the bibtex audit then has to chase. Running
+        # the prune fresh on every compile is cheap (single regex pass)
+        # and idempotent (a citation re-added to .bib later doesn't get
+        # re-stripped).
+        self._prune_undefined_citations()
         try:
             for cmd in [
                 ["pdflatex", "-interaction=nonstopmode", "main.tex"],
@@ -213,6 +222,94 @@ class CompilerMixin:
             self.log(f"Page count check failed: {e}", "WARN")
         return 0
 
+    # Citation commands recognised when pruning. Matches \cite, \citep,
+    # \citet, \nocite, biblatex's \autocite / \parencite / \textcite /
+    # \smartcite / \fullcite, and any project-specific custom command
+    # whose name contains "cite". Math operators and unrelated commands
+    # are left untouched.
+    _CITE_CMD_RE = re.compile(
+        # \cmdname  optional [pre] [post]  {keys}
+        r'\\(\w*cite\w*)\s*'
+        r'(\[[^\]]*\])?\s*'
+        r'(\[[^\]]*\])?\s*'
+        r'\{([^}]*)\}'
+    )
+
+    # Top-level BibTeX entry headers, e.g. "@article{tiecke2017mapping,"
+    _BIB_KEY_RE = re.compile(r'@\w+\s*\{\s*([^,\s]+)\s*,', re.MULTILINE)
+
+    def _prune_undefined_citations(self) -> int:
+        """Remove `\\cite{...}`-family keys that don't appear in
+        references.bib, before pdflatex runs.
+
+        Logic:
+        1. Parse references.bib to collect every defined cite key.
+        2. Walk every citation command in main.tex (\\cite, \\citep,
+           \\citet, \\nocite, biblatex variants, etc.). For each
+           command, drop any key not present in the bib.
+        3. If all keys in a command are undefined, remove the command
+           entirely; if some are valid, keep just those.
+
+        Idempotent: a key re-added to references.bib in a later
+        iteration won't get re-stripped because we only act on what's
+        currently missing.
+
+        Returns the count of (command, key) pairs pruned.
+        """
+        main_tex = self.latex_dir / "main.tex"
+        bib_file = self.latex_dir / "references.bib"
+        if not main_tex.exists() or not bib_file.exists():
+            return 0
+        try:
+            bib_text = bib_file.read_text(errors="replace")
+            defined = {
+                m.group(1).strip()
+                for m in self._BIB_KEY_RE.finditer(bib_text)
+                if m.group(1).strip()
+            }
+            if not defined:
+                return 0
+
+            main_text = main_tex.read_text(errors="replace")
+            pruned: list[tuple[str, str]] = []  # (cmd, key) for logging
+
+            def _replace(match: "re.Match") -> str:
+                cmd = match.group(1)
+                pre = match.group(2) or ""
+                post = match.group(3) or ""
+                key_str = match.group(4)
+                keys = [k.strip() for k in key_str.split(",")]
+                valid = [k for k in keys if k and k in defined]
+                invalid = [k for k in keys if k and k not in defined]
+                if not invalid:
+                    return match.group(0)
+                for k in invalid:
+                    pruned.append((cmd, k))
+                if not valid:
+                    # All keys gone → drop the whole command. The
+                    # surrounding text may need a tiny tidy by the
+                    # writer (e.g. dangling "(see )"), but that's
+                    # better than rendering "[?]" in the final PDF.
+                    return ""
+                return f"\\{cmd}{pre}{post}{{{','.join(valid)}}}"
+
+            new_text = self._CITE_CMD_RE.sub(_replace, main_text)
+
+            if pruned:
+                main_tex.write_text(new_text)
+                summary = ", ".join(
+                    sorted({k for _, k in pruned})
+                )
+                self.log(
+                    f"Pruned {len(pruned)} undefined citation(s) "
+                    f"({summary}) — keys not present in references.bib",
+                    "INFO",
+                )
+            return len(pruned)
+        except Exception as e:
+            self.log(f"_prune_undefined_citations failed: {e}", "WARN")
+            return 0
+
     def _count_body_pages(self, pdf_path: Path) -> float:
         """Count body pages (before References section).
 
@@ -237,6 +334,16 @@ class CompilerMixin:
         """Read body-end position from .aux file (written by \\pdfsavepos).
 
         Returns body page count as a float, or None if aux data unavailable.
+
+        For two-column papers, the aux-recorded y position is 1-dimensional
+        (vertical only) and reflects the *last shipped column's* bottom on
+        the last body page. When that page has content only in the left
+        column and an empty right column, the raw fill_ratio over-reports
+        page utilisation: a half-empty page would read as ~85% full. This
+        method post-corrects by sampling the rendered PDF: if the document
+        is two-column overall and the last body page has an empty
+        non-marker column, the fill is halved to reflect the actual area
+        used.
         """
         aux_path = self.latex_dir / "main.aux"
         if not aux_path.exists():
@@ -246,6 +353,7 @@ class CompilerMixin:
             import re
             m_y = re.search(r'\\gdef\\arkBodyEndY\{(\d+)\}', aux_text)
             m_h = re.search(r'\\gdef\\arkPageH\{(\d+)\}', aux_text)
+            m_p = re.search(r'\\gdef\\arkBodyEndPage\{(\d+)\}', aux_text)
             if not m_y or not m_h:
                 return None
 
@@ -257,33 +365,136 @@ class CompilerMixin:
             # fill_ratio = fraction of page used (from top)
             fill_ratio = 1.0 - (body_end_y_sp / page_height_sp)
 
-            # Determine which page the body ends on by finding References page
             import fitz
             doc = fitz.open(str(pdf_path))
-            ref_page_idx = None
-            for i in range(len(doc)):
-                text = doc[i].get_text()
-                if any(line.strip() == 'References' for line in text.split('\n')):
-                    ref_page_idx = i
-                    break
+
+            # Prefer the page recorded by the marker itself — it knows
+            # its own page number even when an \appendix section sits
+            # between body and \bibliography, which would otherwise
+            # confuse a "References page minus one" heuristic.
+            if m_p:
+                last_body_idx = max(int(m_p.group(1)) - 1, 0)
+                ref_page_idx = last_body_idx + 1  # used by column-adjust
+            else:
+                # Legacy fallback: find References page in the rendered PDF
+                # and assume the marker is on the page directly before it.
+                # Only correct when there is no appendix.
+                ref_page_idx = None
+                for i in range(len(doc)):
+                    text = doc[i].get_text()
+                    if any(line.strip() == 'References' for line in text.split('\n')):
+                        ref_page_idx = i
+                        break
+                if ref_page_idx is None:
+                    doc.close()
+                    return None
+                last_body_idx = max(ref_page_idx - 1, 0)
+
+            # Column-aware correction: if doc is two-column AND the last
+            # body page has an empty column, the 1-D aux fill over-reports.
+            adjusted, note = self._column_adjust(
+                doc, last_body_idx, ref_page_idx, fill_ratio,
+            )
             doc.close()
 
-            if ref_page_idx is None:
-                return None  # can't determine without References marker
-
-            # Body ends on the page before References (since we inject
-            # the marker right before \clearpage\bibliography)
-            last_body_idx = max(ref_page_idx - 1, 0)
-            result = last_body_idx + fill_ratio
+            result = last_body_idx + adjusted
             self.log(f"Body page count (aux): {result:.2f} "
-                     f"(page {last_body_idx+1}, {fill_ratio:.1%} filled)", "DEBUG")
+                     f"(page {last_body_idx+1}, {adjusted:.1%} filled{note})",
+                     "DEBUG")
             return result
         except Exception as e:
             self.log(f"Aux-based page count failed: {e}", "DEBUG")
             return None
 
+    # Top fraction of a page that is treated as the running-header zone
+    # and excluded when measuring "real" body content.
+    _HEADER_BAND = 0.08
+    # Same for the bottom — running-footer / page number band.
+    _FOOTER_BAND = 0.96
+
+    def _column_adjust(self, doc, last_body_idx: int, ref_page_idx: int,
+                       fill_ratio: float) -> tuple[float, str]:
+        """Return (adjusted_fill_ratio, log_note).
+
+        For two-column docs, the aux-recorded y is one-dimensional and only
+        reflects the column the body marker landed in. That under-counts
+        when the *other* column is partially filled (e.g. left column
+        full, right column halfway: aux reports the right's bottom y =
+        50%, but the page is ~70% used) and over-counts when the marker's
+        column is the only one with content (e.g. left=87%, right=0%:
+        aux reports 87%, but the page is ~44% used).
+
+        Replace fill_ratio with the average of the two columns' bottom y
+        positions on the last body page — that captures area-use
+        correctly across all four (L,R)-fill combinations: both full,
+        both partial, only one filled, both empty. For single-column
+        docs, return the aux ratio unchanged.
+        """
+        if not self._is_two_column_doc(doc, ref_page_idx):
+            return fill_ratio, ""
+
+        page = doc[last_body_idx]
+        ph = page.rect.height
+        mid_x = page.rect.width / 2
+        content = [
+            b for b in page.get_text("blocks")
+            if b[1] > ph * self._HEADER_BAND
+            and b[3] < ph * self._FOOTER_BAND
+        ]
+        left_y = max((b[3] for b in content if b[0] < mid_x), default=0)
+        right_y = max((b[3] for b in content if b[0] >= mid_x), default=0)
+        averaged = ((left_y + right_y) / ph) / 2
+        note = (f"; 2-col area-avg ({left_y/ph:.0%}/{right_y/ph:.0%})")
+        return averaged, note
+
+    def _is_two_column_doc(self, doc, ref_page_idx: int) -> bool:
+        """Decide whether the document is two-column by sampling early
+        body pages. We deliberately skip the *last* body page — that's
+        the page our caller is asking about, and if it is half-empty
+        (which is exactly the case we want to flag), sampling it would
+        produce a false "single-column" signal and disable the
+        correction. We also avoid page 1 when possible because a title
+        block can span both columns and is not representative.
+        """
+        if doc.page_count < 2 or ref_page_idx < 1:
+            return False
+        # Body pages are 0 .. ref_page_idx-1. Pick samples that are not
+        # the last body page.
+        body_pages = list(range(ref_page_idx))
+        if len(body_pages) >= 3:
+            # Skip first and last body page; sample middle.
+            sample_indices = [body_pages[1], body_pages[len(body_pages) // 2]]
+        elif len(body_pages) == 2:
+            # Only the first body page is "not last".
+            sample_indices = [body_pages[0]]
+        else:
+            # Single body page; nothing safer to sample.
+            sample_indices = [body_pages[0]]
+
+        # Require at least one sampled page to show content in both
+        # halves — that's strong evidence of a two-column layout.
+        for idx in sample_indices:
+            page = doc[idx]
+            ph = page.rect.height
+            mid_x = page.rect.width / 2
+            content = [
+                b for b in page.get_text("blocks")
+                if b[1] > ph * self._HEADER_BAND
+                and b[3] < ph * self._FOOTER_BAND
+            ]
+            has_left = any(b[0] < mid_x for b in content)
+            has_right = any(b[0] >= mid_x for b in content)
+            if has_left and has_right:
+                return True
+        return False
+
     def _count_body_pages_from_pdf(self, pdf_path: Path) -> float:
-        """Fallback: count body pages via PyMuPDF text-block analysis."""
+        """Fallback: count body pages via PyMuPDF text-block analysis.
+
+        Column-aware: for two-column docs, averages left and right column
+        fill on the last body page so a half-empty 2-col page reads as
+        ~half full instead of as full as its filled column.
+        """
         try:
             import fitz
             doc = fitz.open(str(pdf_path))
@@ -302,12 +513,10 @@ class CompilerMixin:
                 doc.close()
                 return float(total)
 
-            # The last body page is the page BEFORE References
-            # (if References has its own page via \clearpage)
-            # OR the same page (if References starts mid-page)
             ref_page = doc[ref_page_idx]
+            page_height = ref_page.rect.height
 
-            # Check if References is at the very top of its page (i.e., \clearpage was used)
+            # Locate the "References" heading's y on its page
             ref_y = 0
             for block in ref_page.get_text("dict")["blocks"]:
                 for line_obj in block.get("lines", []):
@@ -318,53 +527,36 @@ class CompilerMixin:
                 if ref_y > 0:
                     break
 
-            page_height = ref_page.rect.height
-            ref_at_top = ref_y < page_height * 0.15  # References in top 15% = separate page
-
+            ref_at_top = ref_y < page_height * 0.15  # separate page if References is top
             if ref_at_top and ref_page_idx > 0:
-                # References on its own page — last body page is previous page
                 last_body_idx = ref_page_idx - 1
             else:
-                # References starts mid-page — body ends partway through this page
                 last_body_idx = ref_page_idx
 
             last_body_page = doc[last_body_idx]
-            page_width = last_body_page.rect.width
-            page_height = last_body_page.rect.height
-
-            # Detect dual-column by checking if text exists in both halves
-            # Filter out headers (top 6%) and footers (bottom 4%) — page numbers, running titles
-            blocks = last_body_page.get_text("blocks")
+            ph = last_body_page.rect.height
+            mid_x = last_body_page.rect.width / 2
             content_blocks = [
-                b for b in blocks
-                if b[3] > page_height * 0.06
-                and b[1] < page_height * 0.96
+                b for b in last_body_page.get_text("blocks")
+                if b[1] > ph * self._HEADER_BAND
+                and b[3] < ph * self._FOOTER_BAND
             ]
-            mid_x = page_width / 2
-            left_blocks = [b for b in content_blocks if b[0] < mid_x]
-            right_blocks = [b for b in content_blocks if b[0] >= mid_x]
+            left = [b for b in content_blocks if b[0] < mid_x]
+            right = [b for b in content_blocks if b[0] >= mid_x]
 
-            is_dual_column = len(left_blocks) > 0 and len(right_blocks) > 0
-
-            if is_dual_column:
-                # Dual column: fill ratio = right column's last text y / page height
-                right_last_y = max(b[3] for b in right_blocks) if right_blocks else 0
-                fill_ratio = right_last_y / page_height
-            elif ref_at_top:
-                # Single column, References on separate page: check last body page fill
-                body_blocks = [
-                    b for b in blocks
-                    if b[3] > page_height * 0.06       # below header
-                    and b[1] < page_height * 0.96       # above footer
-                ]
-                if body_blocks:
-                    last_y = max(b[3] for b in body_blocks)
-                    fill_ratio = last_y / page_height
-                else:
-                    fill_ratio = 0.0
+            if self._is_two_column_doc(doc, ref_page_idx):
+                # Two-column: average per-column fill so a half-empty page
+                # reads as half full, not as full as its non-empty column.
+                left_fill = (max(b[3] for b in left) / ph) if left else 0
+                right_fill = (max(b[3] for b in right) / ph) if right else 0
+                fill_ratio = (left_fill + right_fill) / 2
+            elif not ref_at_top:
+                # References starts mid-page in a single-column layout: body
+                # ends right before the References heading.
+                fill_ratio = ref_y / ph
             else:
-                # Single column, References mid-page: body ends at References y
-                fill_ratio = ref_y / page_height
+                # Single-column, References on separate page.
+                fill_ratio = (max((b[3] for b in content_blocks), default=0) / ph)
 
             result = last_body_idx + fill_ratio
             doc.close()
@@ -640,6 +832,39 @@ class CompilerMixin:
 
         return self.pdf_to_images()
 
+    def _strip_legacy_needs_check_notes(self, bib_path: "Path") -> int:
+        """Remove `note = {\\textcolor{red}{[NEEDS-CHECK: ...]}}` fields
+        injected by older citation-verification code paths. The new
+        convention is a `% [NEEDS-CHECK]` comment line above each
+        affected entry; the rendered PDF stays clean.
+
+        Returns the number of stripped notes. Idempotent.
+        """
+        try:
+            text = bib_path.read_text(errors="replace")
+            # Match the whole line containing the textcolor note (with
+            # optional trailing comma so we don't leave a dangling comma).
+            pattern = re.compile(
+                r"\s*,?\s*note\s*=\s*\{\\textcolor\{red\}"
+                r"\{\[NEEDS-CHECK[^\}]*\]\}\}\s*,?",
+                re.IGNORECASE,
+            )
+            new_text, n = pattern.subn("", text)
+            # Also tag the entry's preceding line with a comment marker
+            # so downstream tooling (summary PDF) still sees the
+            # NEEDS-CHECK status — but only if not already tagged.
+            if n and new_text != text:
+                bib_path.write_text(new_text)
+                self.log(
+                    f"Stripped {n} legacy red-textcolor NEEDS-CHECK note(s) "
+                    "from references.bib",
+                    "INFO",
+                )
+            return n
+        except Exception as e:
+            self.log(f"_strip_legacy_needs_check_notes failed: {e}", "WARN")
+            return 0
+
     def _run_citation_verification(self):
         """Verify references.bib, fix errors, mark NEEDS-CHECK, clean unused."""
         from ark.citation import verify_bib, fix_bib, cleanup_unused
@@ -647,6 +872,12 @@ class CompilerMixin:
         bib_path = self.latex_dir / "references.bib"
         if not bib_path.exists():
             return
+
+        # Strip legacy red-textcolor notes left in the bib by earlier
+        # versions of this routine. They render in red in the rendered
+        # references list; the new convention is a `% [NEEDS-CHECK]`
+        # comment line above the entry, which is invisible to LaTeX.
+        self._strip_legacy_needs_check_notes(bib_path)
 
         lit_path = str(self.state_dir / "literature.yaml")
         bib_str = str(bib_path)

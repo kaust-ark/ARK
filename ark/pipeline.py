@@ -2639,6 +2639,27 @@ Only use double_column for multi-panel figures (side-by-side subplots).
 3. Save each figure as BOTH PDF and PNG to {figures_dir}/
 4. Name figures descriptively: fig_main_results.pdf, fig_ablation.pdf, etc.
 
+## ❌ HARD RULE: NO FIGURE TITLES INSIDE THE PLOT
+LaTeX `\\caption{{}}` is the **single source of truth** for the figure's
+title and number. The figure environment auto-numbers as Figure 1, 2, 3, …
+based on order of appearance in the .tex file. Any title baked into the
+matplotlib output ("Figure 1: My Result", "Phase Diagram", etc.) ends up
+*next to* a different LaTeX-numbered caption in the rendered PDF — two
+clashing titles per figure, with mis-matched numbers. It looks broken.
+
+Concretely:
+- ❌ Do NOT call `plt.title(...)`.
+- ❌ Do NOT call `fig.suptitle(...)`.
+- ❌ Do NOT call `ax.set_title("Figure N: ...")` or any other prose title
+     for the figure as a whole.
+- ✅ The ONLY allowed `set_title` use is per-panel sub-labels in
+     multi-panel figures, and even then the title must be just the panel
+     letter, e.g. `ax1.set_title('(a)', fontweight='bold', loc='left')`.
+     No descriptive text — that goes in the LaTeX caption.
+
+When in doubt: omit the title call entirely. The LaTeX `\\caption{{}}` will
+provide the title.
+
 ## Style Guide (MUST follow):
 - Apply ALL rcParams from figure_config.json (font sizes match LaTeX template)
 - Wong colorblind-safe palette: ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9']
@@ -2646,7 +2667,6 @@ Only use double_column for multi-panel figures (side-by-side subplots).
 - Use horizontal bars when there are 5+ categories (avoids x-label overlap)
 - constrained_layout=True on all figures
 - DPI 300, sans-serif fonts exclusively
-- No figure titles inside plots (LaTeX \\caption handles titles)
 - Light dashed grid lines behind data
 - Error bars with caps where applicable
 - Bold font for "Ours" method labels

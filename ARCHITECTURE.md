@@ -46,7 +46,7 @@ ARK runs three phases in sequence:
 
 | Step | Agent/Tool | What Happens |
 |:-----|:-----------|:-------------|
-| 0 | — | **Setup**: provision per-project conda env (clones ark-base; idempotent) |
+| 0 | — | **Setup**: provision per-project conda env (clones ark-base — research stack only, no ARK code; orchestrator's ARK is injected via `PYTHONPATH`) |
 | 1 | Researcher | **Analyze Proposal**: read uploaded PDF or idea → write `idea.md` (summary, methodology, systems); output Deep Research query; parse and commit paper title |
 | 2 | Gemini | **Deep Research**: literature survey → `deep_research.md`; PDF sent to user via Telegram |
 | 3 | Researcher | **Specialization**: generate `project_context.md` (web-verified); specialize agent prompt templates for the project; select relevant skills (0–5) |

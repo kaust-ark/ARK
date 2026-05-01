@@ -118,11 +118,15 @@ ARK 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息，并根
 ### 安装步骤
 
 ```bash
-# 设置 conda 基础环境
+# 1. 创建项目研究栈模板（这里不要装 ARK —— 每个新项目都会克隆此环境，
+#    所以必须保持纯净）。
 conda env create -f environment.yml         # Linux 系统 (创建 "ark-base")
 # 或 macOS 系统:
 conda env create -f environment-macos.yml   # macOS 系统 (创建 "ark-base")
 
+# 2. 把 ARK 本体装进一个独立的 env（不要装进 ark-base）。
+conda create -n ark python=3.11 -y
+conda activate ark
 pip install -e .                    # 核心库
 pip install -e ".[research]"       # + Gemini 深度研究与 Nano Banana
 ```

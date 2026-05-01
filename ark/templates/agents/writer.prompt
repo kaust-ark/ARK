@@ -82,14 +82,36 @@ Before making changes, check the current page count. Refer to the **page-adjustm
 
 Always ensure `\clearpage` appears before `\bibliography` so references start on a new page.
 
-## Appendix Usage
+## Appendix is part of the paper, not an overflow buffer
 
-Use `\appendix` proactively when content genuinely belongs there, rather than only as a last-resort overflow dump:
+A complete deliverable has **two parts**: body (within the page limit)
+and `\appendix` (no page limit). The appendix is the default home for
+the supplementary detail that supports the body but would dilute it —
+it is *not* a place reserved for the moment the body has overflowed.
 
-- **Belongs in appendix**: full proofs/derivations, extended ablation tables, hyperparameter sweeps, prompt templates, implementation/config details, additional qualitative examples, dataset statistics beyond a summary
-- **Belongs in body**: problem statement, core method, headline results, primary ablation, key analysis/discussion
+When drafting or editing any section, ask: *"what detail supports this
+claim that doesn't belong in the body?"* If the experiment produced
+hyperparameter sweeps, full proof derivations, prompt templates, full
+configuration / implementation specifics, per-seed tables, or extended
+qualitative examples, draft those into `\appendix` as part of the same
+writing task. Don't wait for a reviewer or page-overflow loop to ask
+for them — by then they're being moved defensively, not chosen.
 
-When a reviewer or planner task adds supplementary content, prefer placing it in `\appendix` over cutting body text — the body-page limit excludes the appendix. Do NOT create an empty or single-paragraph appendix just to have one.
+- **Body** carries the problem statement, core method, headline
+  results, primary ablation, and key analysis. Tightly written.
+- **`\appendix`** carries the supporting detail that a careful reader
+  will want to verify or reproduce against — proofs, full tables,
+  prompt text, hyperparameter grids, additional qualitative examples,
+  dataset statistics beyond the body's summary.
+
+When a planner or reviewer task adds supplementary content, place it
+in `\appendix` rather than cutting body — the page limit excludes the
+appendix.
+
+Honesty constraint: if the project genuinely has no supplementary
+material that would help a reader (e.g. a pure-theory paper with no
+experiments), don't fabricate appendix content to fill space. An
+empty or single-paragraph appendix is worse than no appendix.
 
 ## Figure Placement
 
@@ -116,7 +138,7 @@ Float placement options:
 
 After every modification, compile and check that:
 1. No blank pages with only figures — if any appear, move the `\begin{figure}` earlier in the source
-2. Do **NOT** add `\FloatBarrier` yourself. ARK's post-processing inserts exactly one in the correct position (before the last body section). A manually-added second barrier traps column flow and leaves large whitespace gaps.
+2. Do **NOT** add `\FloatBarrier` yourself. ARK's post-processing strips any `\FloatBarrier` you add — barriers in the body cluster pending floats, push the Conclusion onto an extra page, and silently break the venue page limit. LaTeX's default float placement plus the natural barrier at `\bibliography{}` lay out figure-dense papers correctly without manual intervention.
 3. Figures appear near where they are referenced, not pages later
 4. No large whitespace gaps — if a figure's `placement` in the manifest disagrees with the environment you used, fix the environment, not the figure
 5. Every AI concept figure listed in the manifest must be referenced by `\includegraphics` somewhere in `main.tex` — generating them cost real compute, dropping them silently is the regression that produced 275KB concept-figure-less PDFs

@@ -118,11 +118,15 @@ ark new mma --from-pdf proposal.pdf
 ### التثبيت
 
 ```bash
-# إعداد بيئة conda الأساسية
+# 1. أنشئ قالب بيئة المشاريع (المكدّس البحثي فقط، بدون كود ARK —
+#    كل مشروع جديد يستنسخ هذه البيئة، لذلك يجب أن تبقى نظيفة).
 conda env create -f environment.yml         # لأنظمة Linux (ينشئ "ark-base")
 # أو لنظام macOS:
 conda env create -f environment-macos.yml   # لأنظمة macOS (ينشئ "ark-base")
 
+# 2. ثبّت ARK نفسه في بيئة منفصلة (ليست ark-base).
+conda create -n ark python=3.11 -y
+conda activate ark
 pip install -e .                    # النواة الأساسية
 pip install -e ".[research]"       # + Gemini Deep Research و Nano Banana
 ```

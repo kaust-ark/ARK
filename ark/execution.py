@@ -124,20 +124,29 @@ For every writing task, instruct the writer to compile and verify the body page 
                     page_constraint += f"- `{w}`\n"
                 page_constraint += "\n**Fix**: Wrap overflowing tables with `\\resizebox{\\linewidth}{!}{...}` or break long equations.\n"
 
-        # Bottleneck awareness: if Technical Quality is the bottleneck and
-        # score is low, tell the planner it must include experiments
+        # When the score gap from target is large, plans dominated by
+        # WRITING_ONLY tasks rarely move the needle — the gap usually
+        # reflects evidentiary issues that prose edits can only paper
+        # over. Soft-nudge the planner; do not require any specific
+        # task type.
         bottleneck_constraint = ""
         bottleneck = self._get_bottleneck()
         current_score = self.memory.scores[-1] if self.memory.scores else 0
-        if "Technical" in bottleneck and current_score < 7.5:
+        target_score = float(self.config.get("review_target_score", 8.0))
+        if current_score and current_score < (target_score - 1.0):
             bottleneck_constraint = f"""
-## BOTTLENECK: Technical Quality ({current_score}/10)
+## SCORE GAP
 
-The reviewer's primary bottleneck is **Technical Quality**. Pure writing changes
-(WRITING_ONLY) cannot fix this — you MUST include at least one EXPERIMENT_REQUIRED
-task (e.g., add baselines, run ablations, measure new metrics). If you classify
-every issue as WRITING_ONLY when the bottleneck is Technical Quality, the score
-will not improve.
+Current score: {current_score}/10. Target: {target_score}/10.
+Bottleneck dimension: {bottleneck or "unknown"}.
+
+When the gap is this wide, plans dominated by WRITING_ONLY tasks tend
+not to move the score — the gap usually reflects evidentiary or
+analytical issues that prose edits can only paper over. Default
+toward at least one EXPERIMENT_REQUIRED or FIGURE_CODE_REQUIRED
+task this iteration, unless every flagged issue is purely cosmetic
+(typos, awkward phrasing, layout artefacts). Apply judgment, not a
+hard rule.
 """
 
         planner_output = self.run_agent("planner", f"""
@@ -149,17 +158,47 @@ Please read the full review report: auto_research/state/latest_review.md
 ## Current Findings Summary
 {findings_summary}
 
+## Classification (the most consequential decision in this plan)
+
+For each issue, decide which agent can actually solve it. The four
+categories partition the work by *what artifact change is required*:
+
+- **WRITING_ONLY** — the writer agent can fix it by editing main.tex
+  alone. The numbers and figures stay the same; only prose changes.
+  (Typical: rewording an abstract, hedging a claim, adding a caveat,
+  fixing typos, restructuring a paragraph.)
+
+- **FIGURE_CODE_REQUIRED** — the coder agent must edit a plotting
+  script and re-render. Use this when the underlying data already
+  exists in `results/` but the figure must show different content
+  (add a panel, change colormap, swap encoding, add error bars).
+
+- **EXPERIMENT_REQUIRED** — the experimenter agent must run a script
+  or sbatch job to **produce numbers that don't currently exist in
+  `results/`**. The defining test is simple: *can a writer alone fix
+  this by editing LaTeX?* If no — and `results/` doesn't already have
+  the data the issue is asking for — it's EXPERIMENT_REQUIRED.
+
+- **LITERATURE_REQUIRED** — pull additional citations from the
+  Deep Research report.
+
+## Self-check before committing to WRITING_ONLY
+
+If the reviewer's "Fix" recipe combines a substantive action
+(*compute*, *run*, *evaluate*, *measure*, *verify*, *test*, *add a
+panel*) with a wrap-up ("...and add one sentence acknowledging
+this"), do not classify the whole issue as WRITING_ONLY because the
+last clause is writing. Pick the type that addresses the substantive
+action; the writing tail is a follow-up the writer agent picks up
+later. A WRITING_ONLY caveat that doesn't change the underlying
+evidence will be re-flagged on the next iteration.
+
 ## Tasks
 1. Identify all Major Issues (M1, M2, ...) and Minor Issues (m1, m2, ...)
-2. Classify each issue: EXPERIMENT_REQUIRED, FIGURE_CODE_REQUIRED, or WRITING_ONLY
-3. Check strategy escalation requirements, ensure banned methods are not used
-4. Generate a specific action list for each issue
+2. Classify each issue per the rules above
+3. Generate a specific action list per issue
+4. Check strategy escalation requirements, ensure banned methods are not used
 5. Write results to auto_research/state/action_plan.yaml
-
-Notes:
-- EXPERIMENT_REQUIRED: requires running GPU experiments (e.g., adding perplexity measurement, supplementing benchmarks)
-- FIGURE_CODE_REQUIRED: requires modifying Python plotting scripts and re-running
-- WRITING_ONLY: only requires modifying LaTeX text
 """, timeout=defaults.TIMEOUT_PLANNER, prior_context=review_output)
 
         # Validate action plan
@@ -838,17 +877,42 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
     _ARK_BODY_END_MARKER = (
         r"\makeatletter\pdfsavepos"
         r"\write\@auxout{\string\gdef\string\arkBodyEndY{\the\pdflastypos}"
-        r"\string\gdef\string\arkPageH{\number\pdfpageheight}}"
+        r"\string\gdef\string\arkPageH{\number\pdfpageheight}"
+        r"\string\gdef\string\arkBodyEndPage{\arabic{page}}}"
         r"\makeatother"
     )
 
     def _ensure_clearpage_before_bibliography(self):
-        """Ensure \\clearpage before \\bibliography in main.tex.
+        """Pin canonical ACM layout:
 
-        This guarantees References starts on a new page, separate from body.
-        Also injects a \\pdfsavepos marker right before the first \\clearpage
-        so the exact body-end y-position is written to the .aux file.
+            body
+            [BODY_END_MARKER]
+            \\clearpage
+            \\bibliographystyle{...}
+            \\bibliography{...}
+            \\clearpage
+            \\appendix
+            ... appendix content ...
+            \\end{document}
+
+        This matches acmart's official sample-sigplan.tex (line 745-844),
+        which puts the appendix *after* the bibliography, not before.
+        Many writer agents emit the older
+        body→appendix→bibliography order; this routine reorders the file
+        in place so the rendered PDF matches the venue convention.
+
+        The body-end \\pdfsavepos marker is placed at the body / refs
+        boundary (immediately before the \\clearpage that precedes
+        \\bibliography), so page-count metrics derived from the marker
+        exclude both the bibliography and the appendix — matching venue
+        page-limit conventions ("N pages excluding references and
+        appendix").
+
+        Idempotent: running this on an already-canonical file
+        produces a byte-identical result.
         """
+        import re as _re
+
         main_tex = self.latex_dir / "main.tex"
         if not main_tex.exists():
             return
@@ -857,53 +921,118 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             if r'\bibliography{' not in content:
                 return
 
-            # Remove any previously injected body-end marker (idempotent)
+            # Strip any previously-injected body-end markers so the
+            # rebuild below uses a single canonical position.
             content = content.replace(self._ARK_BODY_END_MARKER + '\n', '')
 
-            # Find the first bibliography-related command (\bibliographystyle or \bibliography)
-            bib_style_pos = content.find(r'\bibliographystyle{')
-            bib_pos = content.find(r'\bibliography{')
-            # The anchor is whichever comes first
-            anchor_pos = min(p for p in (bib_style_pos, bib_pos) if p >= 0)
+            # Locate the bibliography block. We treat
+            # \bibliographystyle + \bibliography as a single contiguous
+            # block — they always ship together.
+            bib_match = _re.search(
+                r'(?:\\bibliographystyle\{[^}]*\}\s*)?\\bibliography\{[^}]*\}',
+                content,
+            )
+            if not bib_match:
+                return
+            bib_block = content[bib_match.start():bib_match.end()].strip()
 
-            # Check if \clearpage already precedes the anchor
-            before_anchor = content[:anchor_pos].rstrip()
-            has_clearpage = before_anchor.endswith(r'\clearpage')
+            end_doc_pos = content.find(r'\end{document}')
+            if end_doc_pos < 0:
+                return
 
-            if not has_clearpage:
-                # Insert \clearpage before the anchor
-                content = content[:anchor_pos] + '\\clearpage\n' + content[anchor_pos:]
-                self.log("Injected \\clearpage before \\bibliography", "INFO")
-                # Recalculate anchor position
-                anchor_pos = min(
-                    p for p in (content.find(r'\bibliographystyle{'),
-                                content.find(r'\bibliography{'))
-                    if p >= 0
-                )
-                before_anchor = content[:anchor_pos].rstrip()
+            appendix_pos = content.find(r'\appendix')
 
-            # Inject pdfsavepos marker before the first \clearpage
-            # Find the \clearpage that immediately precedes the anchor
-            clearpage_pos = before_anchor.rfind(r'\clearpage')
-            content = (content[:clearpage_pos]
-                       + self._ARK_BODY_END_MARKER + '\n'
-                       + content[clearpage_pos:])
+            # Three input shapes to handle:
+            #   (a) appendix BEFORE bib  → reorder to bib then appendix
+            #   (b) appendix AFTER bib   → already canonical; just clean
+            #       the surrounding clearpages and re-insert marker
+            #   (c) no appendix          → body + bib, drop in marker
+            if appendix_pos != -1 and appendix_pos < bib_match.start():
+                appendix_block = content[appendix_pos:bib_match.start()]
+                body_section = content[:appendix_pos]
+                reordered = True
+            elif appendix_pos != -1 and appendix_pos > bib_match.end():
+                appendix_block = content[appendix_pos:end_doc_pos]
+                body_section = content[:bib_match.start()]
+                reordered = False
+            else:
+                appendix_block = ""
+                body_section = content[:bib_match.start()]
+                reordered = False
 
-            main_tex.write_text(content)
+            tail = content[end_doc_pos:].rstrip()
+
+            # Strip stray \clearpage from the trailing edges of each
+            # piece — we re-insert canonical separators below.
+            body_section = _re.sub(
+                r'\\clearpage\s*$', '', body_section.rstrip()
+            ).rstrip()
+            if appendix_block:
+                appendix_block = _re.sub(
+                    r'^\s*\\clearpage\s*', '', appendix_block.lstrip()
+                ).lstrip()
+                appendix_block = _re.sub(
+                    r'\\clearpage\s*$', '', appendix_block.rstrip()
+                ).rstrip()
+
+            # Reassemble in canonical order.
+            parts = [
+                body_section,
+                "",
+                self._ARK_BODY_END_MARKER,
+                r"\clearpage",
+                bib_block,
+            ]
+            if appendix_block:
+                parts.extend([
+                    "",
+                    r"\clearpage",
+                    appendix_block,
+                ])
+            parts.extend(["", tail, ""])
+            new_content = "\n".join(parts)
+
+            if new_content != content:
+                main_tex.write_text(new_content)
+                if reordered:
+                    self.log(
+                        "Reordered: body → bibliography → appendix "
+                        "(matches acmart sample-sigplan convention)",
+                        "INFO",
+                    )
         except Exception as e:
             self.log(f"Failed to inject \\clearpage: {e}", "WARN")
 
-    def _ensure_float_barrier(self):
-        """Enforce exactly one \\FloatBarrier in the body, right before the
-        last body \\section. Any other \\FloatBarrier in the body is removed.
-        Also ensures \\usepackage{placeins} is in the preamble.
+    @staticmethod
+    def _first_pos(content: str, *needles: str) -> int:
+        """Return the smallest non-negative index of any needle in content."""
+        positions = [content.find(n) for n in needles]
+        return min(p for p in positions if p >= 0)
 
-        Rationale: writer agents have been observed to add \\FloatBarrier in
-        the middle of the body (e.g. before an Analysis section). A stray
-        barrier there traps column flow — pending floats (a following
-        \\begin{table*}) block further text from entering the current page's
-        right column, and the page ships half-empty. This routine collapses
-        to the single canonical position so the injection is idempotent.
+    def _ensure_float_barrier(self):
+        """Strip every body-region \\FloatBarrier from main.tex.
+
+        Rationale: writer agents sometimes add \\FloatBarrier in the middle of
+        the body (e.g. before an Analysis section). A stray barrier there
+        traps column flow — pending floats (a following \\begin{table*}) block
+        further text from entering the current page's right column, and the
+        page ships half-empty.
+
+        Earlier versions of this routine *also* injected one canonical
+        \\FloatBarrier right before the last body section, on the theory that
+        a single barrier in a stable spot was harmless. In practice it caused
+        the opposite problem: with figure-dense papers (~6 figures + a table
+        in 8 pages), the pre-Conclusion barrier flushes the entire pending
+        float queue at once, clustering several figures onto two consecutive
+        pages and pushing the Conclusion onto a 9th page — silently breaking
+        the venue page limit. LaTeX's default float placement, plus the
+        natural barrier at \\bibliography{}, handles paper layout fine
+        without our help. We now only strip stray barriers and leave float
+        placement to LaTeX.
+
+        We also no longer touch \\usepackage{placeins}: with no injection of
+        our own and writer-added \\FloatBarriers stripped, the package isn't
+        needed.
         """
         main_tex = self.latex_dir / "main.tex"
         if not main_tex.exists():
@@ -911,14 +1040,6 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
         try:
             import re as _re
             content = main_tex.read_text()
-
-            # Ensure \usepackage{placeins}
-            if 'placeins' not in content:
-                # Insert after last \usepackage in preamble
-                pkgs = list(_re.finditer(r'\\usepackage(\[.*?\])?\{[^}]+\}', content))
-                if pkgs:
-                    pos = pkgs[-1].end()
-                    content = content[:pos] + '\n\\usepackage{placeins}' + content[pos:]
 
             # Find the body boundary — \appendix, \clearpage before \bibliography, or \bibliography
             body_end = len(content)
@@ -930,48 +1051,32 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             body_content = content[:body_end]
             tail = content[body_end:]
 
-            # Must have at least 2 body \section to make "before last section" meaningful
-            sections = list(_re.finditer(r'(?<!sub)\\section\{', body_content))
-            if len(sections) < 2:
-                main_tex.write_text(content)
-                return
-
             # Strip every existing \FloatBarrier (plus its trailing whitespace /
             # newline) from the body. Matching \\FloatBarrier not followed by a
             # letter keeps us from eating any hypothetical \FloatBarrierFoo.
             barrier_re = _re.compile(r'\\FloatBarrier(?![A-Za-z])\s*\n?')
             existing = barrier_re.findall(body_content)
             removed = len(existing)
-            if removed:
-                body_content = barrier_re.sub('', body_content)
+            if not removed:
+                return  # nothing to do; leave file untouched
 
-            # Recompute the last-section position after the stripping.
-            sections = list(_re.finditer(r'(?<!sub)\\section\{', body_content))
-            last_sec_start = sections[-1].start()
-
-            # Insert exactly one \FloatBarrier right before the last body section.
-            body_content = (
-                body_content[:last_sec_start]
-                + '\\FloatBarrier\n'
-                + body_content[last_sec_start:]
-            )
+            body_content = barrier_re.sub('', body_content)
             content = body_content + tail
             main_tex.write_text(content)
 
-            if removed == 0:
-                self.log("Injected \\FloatBarrier before last body section", "INFO")
-            elif removed == 1:
-                # Single existing barrier normalized to canonical position
-                # (may be a no-op in steady state). Stay quiet to avoid log spam.
-                pass
+            if removed == 1:
+                self.log(
+                    "Stripped 1 writer-added \\FloatBarrier from body",
+                    "INFO",
+                )
             else:
                 self.log(
-                    f"Normalized \\FloatBarrier: removed {removed} stray copies, "
-                    f"kept one before the last body section",
+                    f"Stripped {removed} writer-added \\FloatBarrier copies "
+                    "from body",
                     "INFO",
                 )
         except Exception as e:
-            self.log(f"Failed to inject FloatBarrier: {e}", "WARN")
+            self.log(f"Failed to strip FloatBarrier: {e}", "WARN")
 
     def _fix_overfull(self, context: str = "pre-delivery"):
         """Fix overfull \\hbox warnings by asking writer to reword.
@@ -1184,6 +1289,46 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
             _style_path = Path(__file__).parent / "templates" / "style_guides" / "academic_plot_style.md"
             _plot_style = _style_path.read_text() if _style_path.exists() else ""
 
+            # Surface persistent user instructions directly to the coder.
+            # The coder profile sets user_instructions=False, which means
+            # user-supplied directives only reach the agent indirectly via
+            # the planner's task description. In practice that's been
+            # losing them: the planner correctly translates a user color
+            # palette into per-figure modifications, but the academic
+            # style guide below contains "MUST FOLLOW: Wong palette" and
+            # the agent defers to that absolute-sounding rule, ignoring
+            # the per-task override. Inject the user instructions at the
+            # top of the prompt with an explicit precedence rule so the
+            # agent has no ambiguity.
+            _user_instructions = ""
+            try:
+                ui_file = self.state_dir / "user_instructions.yaml"
+                if ui_file.exists():
+                    import yaml as _yaml
+                    data = _yaml.safe_load(ui_file.read_text()) or {}
+                    msgs = [e.get("message", "").strip()
+                            for e in (data.get("instructions") or [])
+                            if e.get("message")]
+                    if msgs:
+                        _user_instructions = "\n".join(f"- {m}" for m in msgs)
+            except Exception as e:
+                self.log(f"Could not read user_instructions.yaml: {e}", "WARN")
+
+            user_overrides_section = (
+                f"""\n## ⚠️ USER OVERRIDES (highest priority, takes precedence over the style guide below)
+
+The user has issued these explicit instructions for this project. They
+are persistent — every iteration must continue to honour them. If any
+of them conflicts with the Academic Plot Style Guide further down,
+**follow the user instruction**, not the style guide. Do not silently
+fall back to the guide's defaults.
+
+{_user_instructions}
+"""
+                if _user_instructions
+                else ""
+            )
+
             self.run_agent("coder", f"""
 ## Task: Modify existing Python plotting scripts
 
@@ -1191,10 +1336,10 @@ You received {len(figure_tasks)} FIGURE_CODE_REQUIRED tasks. Each task is
 a *modification* to a function already present in the script — not a
 request to invent a new figure from scratch and not a request to edit
 LaTeX. The writer agent does LaTeX; you own the Python.
-
+{user_overrides_section}
 {''.join(figure_instructions)}
 
-## Academic Plot Style Guide (MUST FOLLOW when modifying plotting code)
+## Academic Plot Style Guide (background defaults — overridden by USER OVERRIDES above)
 
 {_plot_style}
 

@@ -6,11 +6,13 @@ Uses Google's Gemini Deep Research agent to gather comprehensive background
 research before starting the paper writing loop.
 """
 
+import base64
 import os
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Iterable
 
 
 def get_gemini_api_key() -> str:
@@ -106,6 +108,86 @@ def build_research_query(config: dict) -> str:
     return "\n".join(query_parts)
 
 
+def _apply_url_annotations(text: str, annotations: Iterable | None) -> str:
+    """Inline `[cite: N]` markers as markdown links using URLCitation data.
+
+    The Deep Research API returns each citation marker as a substring
+    range (start_index/end_index) plus a grounding URL on the parent
+    TextContent. We rewrite ``text[start:end]`` from ``[cite: N]`` to
+    ``[cite: N](url)`` in reverse offset order so earlier substitutions
+    don't shift later indices.
+
+    Annotations without a URL or with out-of-range offsets are skipped
+    silently — the underlying body text already contains the marker, so
+    a missing URL just means that citation stays unlinked rather than
+    crashing the whole report.
+    """
+    if not annotations:
+        return text
+    spans: list[tuple[int, int, str]] = []
+    for a in annotations:
+        if getattr(a, "type", "") != "url_citation":
+            continue
+        start = getattr(a, "start_index", None)
+        end = getattr(a, "end_index", None)
+        url = getattr(a, "url", None)
+        if start is None or end is None or not url:
+            continue
+        if start < 0 or end > len(text) or start >= end:
+            continue
+        spans.append((start, end, url))
+    spans.sort(key=lambda s: s[0], reverse=True)
+    for start, end, url in spans:
+        marker = text[start:end]
+        text = text[:start] + f"{marker}({url})" + text[end:]
+    return text
+
+
+def _assemble_report(outputs: Iterable, assets_dir: Path) -> str:
+    """Build the final markdown body from a Deep Research interaction.
+
+    Concatenates every TextContent in order (the bug we hit before was
+    that we ``break``ed after the first text output, dropping ~80% of
+    the report including the Sources list and the Gini-metrics
+    section). ImageContent items are decoded from base64 and saved to
+    ``assets_dir/figure_NN.png``, with a markdown image reference
+    inserted where they appeared so the converter picks them up.
+
+    Returns the joined markdown. Caller is responsible for prepending
+    the header block (title, generated date, etc).
+    """
+    parts: list[str] = []
+    fig_count = 0
+    for o in outputs or []:
+        otype = getattr(o, "type", "")
+        if otype == "text":
+            text = getattr(o, "text", "") or ""
+            if not text.strip():
+                continue
+            text = _apply_url_annotations(text, getattr(o, "annotations", None))
+            parts.append(text)
+        elif otype == "image":
+            data = getattr(o, "data", "") or ""
+            if not data:
+                continue
+            mime = (getattr(o, "mime_type", "") or "image/png").lower()
+            ext = ".png" if "png" in mime else (".jpg" if "jp" in mime else ".bin")
+            fig_count += 1
+            try:
+                assets_dir.mkdir(parents=True, exist_ok=True)
+                fig_path = assets_dir / f"figure_{fig_count:02d}{ext}"
+                fig_path.write_bytes(base64.b64decode(data))
+                # The markdown lives one level above assets_dir; reference
+                # via the assets/ subfolder name so a relative-path
+                # converter (weasyprint, pandoc) can resolve it.
+                parts.append(f"\n![Figure {fig_count}]({assets_dir.name}/{fig_path.name})\n")
+            except Exception as e:
+                parts.append(f"\n*(failed to decode image #{fig_count}: {e})*\n")
+        # Other content types (tool calls, code blocks API may add later)
+        # are intentionally ignored — DR currently only emits text + image.
+    return "\n\n".join(parts)
+
+
 def run_deep_research(
     config: dict,
     output_dir: Path,
@@ -163,10 +245,17 @@ def run_deep_research(
     print()
 
     try:
-        # Start deep research in background
+        # Start deep research in background.
+        # Switched 2026-04-29 from `deep-research-pro-preview-12-2025` after
+        # repeated silent in_progress hangs (Google AI Developers Forum has
+        # reports of the same recurring bug since 2026-03-31, where
+        # interactions stay `in_progress` for 12+ hours and never complete).
+        # The 04-2026 preview is built on Gemini 3.1 Pro and is the
+        # speed-optimized variant; the Max sibling targets async/cron
+        # workflows and is overkill for our interactive pipeline.
         interaction = client.interactions.create(
             input=query,
-            agent="deep-research-pro-preview-12-2025",
+            agent="deep-research-preview-04-2026",
             background=True,
         )
 
@@ -191,21 +280,22 @@ def run_deep_research(
                 last_status = status
 
             if status == "completed":
-                # Extract the final text output
-                report_text = ""
-                for output in interaction.outputs:
-                    if hasattr(output, "text") and output.text:
-                        report_text = output.text
-                        break
+                # Assemble all outputs (text + images) into one report.
+                # Earlier code took only outputs[0].text — that dropped
+                # the Sources list and ~80% of the body. See
+                # tests/unit/test_deep_research_assemble.py for the
+                # interaction shape we expect.
+                output_dir.mkdir(parents=True, exist_ok=True)
+                assets_dir = output_dir / "deep_research_assets"
+                report_text = _assemble_report(
+                    list(interaction.outputs or []), assets_dir
+                )
 
-                if not report_text:
+                if not report_text.strip():
                     print("  Warning: Research completed but no text output found.")
                     return ""
 
-                # Save report
-                output_dir.mkdir(parents=True, exist_ok=True)
                 report_path = output_dir / "deep_research.md"
-
                 header = (
                     f"# Deep Research Report\n\n"
                     f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
@@ -219,6 +309,9 @@ def run_deep_research(
                 print()
                 print(f"  Research completed! ({elapsed_str})")
                 print(f"  Report saved: {report_path}")
+                print(f"  Outputs: {len(list(interaction.outputs or []))} items "
+                      f"({sum(1 for o in (interaction.outputs or []) if getattr(o, 'type', '') == 'text')} text, "
+                      f"{sum(1 for o in (interaction.outputs or []) if getattr(o, 'type', '') == 'image')} image)")
                 print()
 
                 return str(report_path)

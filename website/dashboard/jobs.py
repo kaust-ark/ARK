@@ -136,26 +136,7 @@ def provision_project_env(project_dir: Path, base_env: str = "ark-base",
         if proc.returncode != 0 or not project_env_ready(project_dir):
             return False, f"conda create failed (rc={proc.returncode}); see {log_path}"
 
-        # Re-pin the ark editable install to the CURRENT webapp's source directory.
-        # Without this, a prod webapp would launch projects whose ark code points
-        # at the dev worktree (inherited from ark-base's editable mapping).
-        try:
-            import ark as _ark_mod
-            ark_source = Path(_ark_mod.__file__).resolve().parent.parent
-            env_python = target / "bin" / "python"
-            pin_cmd = [str(env_python), "-m", "pip", "install", "--quiet",
-                       "-e", str(ark_source)]
-            with open(log_path, "a") as lf:
-                lf.write(f"\n$ {' '.join(pin_cmd)}\n")
-                lf.flush()
-                pin_proc = subprocess.run(pin_cmd, stdout=lf, stderr=subprocess.STDOUT)
-            if pin_proc.returncode != 0:
-                return False, (f"ark source re-pin failed (rc={pin_proc.returncode}); "
-                               f"see {log_path}")
-        except Exception as e:
-            return False, f"ark source re-pin raised {type(e).__name__}: {e}"
-
-        return True, f"cloned {base_env} and pinned ark → {ark_source} in {elapsed:.1f}s"
+        return True, f"cloned {base_env} in {elapsed:.1f}s"
     except Exception as e:
         return False, f"conda create raised {type(e).__name__}: {e}"
 
@@ -414,6 +395,7 @@ def submit_job(
         conda_env=settings.slurm_conda_env,
         api_keys=safe_api_keys,
         db_path=db_path,
+        ark_code_root=str(Path(__file__).resolve().parents[2]),
     )
 
     if api_keys:
@@ -555,8 +537,10 @@ def _ensure_named_conda_env(conda_bin: str, env_name: str, log_path: Path) -> tu
     """Create the named conda env from the appropriate environment yml if it doesn't exist.
 
     Picks environment-macos.yml on macOS, environment.yml on Linux. Creates the
-    env under the configured name (overriding the name in the yml file). Re-pins
-    the ark editable install afterward so the env points at the current source tree.
+    env under the configured name (overriding the name in the yml file). The
+    yml deliberately omits ark itself — orchestrator subprocesses get ark via
+    the PYTHONPATH that ``launch_local_job`` injects, so the named env stays
+    a clean research-stack template that can be safely cloned per-project.
     """
     if _conda_env_exists(conda_bin, env_name):
         return True, f"env '{env_name}' already exists"
@@ -581,29 +565,6 @@ def _ensure_named_conda_env(conda_bin: str, env_name: str, log_path: Path) -> tu
 
         if not _conda_env_exists(conda_bin, env_name):
             return False, f"conda env create exited 0 but env '{env_name}' not found"
-
-        try:
-            import ark as _ark_mod
-            ark_source = Path(_ark_mod.__file__).resolve().parent.parent
-            import json as _json
-            result = subprocess.run(
-                [conda_bin, "env", "list", "--json"],
-                capture_output=True, text=True, timeout=10,
-            )
-            envs = _json.loads(result.stdout).get("envs", [])
-            env_prefix = next((Path(e) for e in envs if Path(e).name == env_name), None)
-            if env_prefix:
-                env_python = env_prefix / "bin" / "python"
-                pin_cmd = [str(env_python), "-m", "pip", "install", "--quiet",
-                           "-e", str(ark_source)]
-                with open(log_path, "a") as lf:
-                    lf.write(f"\n$ {' '.join(pin_cmd)}\n")
-                    lf.flush()
-                    pin_proc = subprocess.run(pin_cmd, stdout=lf, stderr=subprocess.STDOUT)
-                if pin_proc.returncode != 0:
-                    return False, f"ark re-pin failed (rc={pin_proc.returncode}); see {log_path}"
-        except Exception as e:
-            return False, f"ark re-pin raised {type(e).__name__}: {e}"
 
         return True, f"created env '{env_name}' from {yml_file.name} in {elapsed:.1f}s"
     except Exception as e:

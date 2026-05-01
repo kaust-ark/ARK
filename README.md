@@ -118,11 +118,15 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 ### Installation
 
 ```bash
-# Set up the conda base environment
+# 1. Create the project research-stack template (no ARK code in here —
+#    each new project clones this env, so it must stay clean).
 conda env create -f environment.yml         # Linux (creates "ark-base")
 # OR for macOS:
 conda env create -f environment-macos.yml   # macOS (creates "ark-base")
 
+# 2. Install ARK itself into a SEPARATE env (not ark-base).
+conda create -n ark python=3.11 -y
+conda activate ark
 pip install -e .                    # Core
 pip install -e ".[research]"       # + Gemini Deep Research & Nano Banana
 ```
