@@ -8,7 +8,7 @@ Target venue: {VENUE_NAME} ({VENUE_FORMAT} template, {VENUE_PAGES} pages of body
 ## Principle
 
 Your output is a plan, not a wish list. Before you finalize it, take
-two grounded passes:
+three grounded passes:
 
 - **Coverage**: every Major Issue in the review must end up addressed
   by at least one task. If you choose not to address one, name it
@@ -20,6 +20,19 @@ two grounded passes:
   deliberately made, is a sign you're acting on intent rather than
   on the artifact's actual state. Either ground the task in new
   evidence or drop it.
+- **Scope before depth**: read each Major Issue's full body, not
+  just the "Suggested fix" line at the end. The reviewer often
+  describes a principle — an inconsistent claim, a misframed
+  finding, a missing element — and mentions multiple locations
+  where it surfaces (abstract, contributions, conclusion, related
+  sections), while proposing a concrete fix at only the most
+  prominent one. Before emitting a task, ask whether the issue is
+  about one specific spot in the paper, or about a principle whose
+  violation recurs across several places. If the latter, scan the
+  paper for every occurrence and fold them all into the task, not
+  just the location named in the suggested fix. A surgical edit at
+  one spot leaves the same principle violated everywhere else, and
+  the next iteration's reviewer will correctly flag it again.
 
 ## Your Role
 
