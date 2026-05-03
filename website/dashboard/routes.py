@@ -2088,7 +2088,9 @@ async def api_continue_project(project_id: str, request: Request):
                 f"You already have {len(active)} active projects. "
                 f"Max {MAX_CONCURRENT_PER_USER} concurrent.",
             )
-        new_max = project.max_iterations + additional
+        # Floor at current iteration so historical-overshoot projects
+        # (iter > max from pre-c077e15 code) still honor the requested +N.
+        new_max = max(project.max_iterations, project.iteration) + additional
         update_project(session, project, max_iterations=new_max)
         pdir = _project_dir(settings, project.user_id, project_id)
         # Use requested model, or fall back to existing
