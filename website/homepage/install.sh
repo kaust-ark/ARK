@@ -109,6 +109,10 @@ if [ "$INSTALL_WEBAPP" -eq 1 ] && [ "$PLATFORM" != "linux" ]; then
   warn "--webapp uses systemd; ignoring on $PLATFORM (you can run \`ark webapp\` in the foreground instead)."
   INSTALL_WEBAPP=0
 fi
+if [ "$INSTALL_WEBAPP" -eq 1 ] && ! command -v systemctl >/dev/null 2>&1; then
+  warn "--webapp needs systemctl, not found in PATH (containers, WSL1, etc.). Skipping; \`ark webapp\` still works in the foreground."
+  INSTALL_WEBAPP=0
+fi
 
 for cmd in git curl bash; do
   command -v "$cmd" >/dev/null 2>&1 || fail "Missing required tool: $cmd"

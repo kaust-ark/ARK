@@ -3853,25 +3853,55 @@ def cmd_doctor(args):
     except Exception as e:
         line("FAIL", "ark package importable", str(e)[:80])
 
-    # 3. Conda + envs
-    conda = shutil.which("conda")
+    # 3. Conda + envs.
+    # `conda` may be absent from PATH even when it's installed (the shim
+    # exec's python directly, no `conda activate`), so also derive from
+    # sys.executable (e.g. .../miniforge3/envs/ark/bin/python →
+    # .../miniforge3/condabin/conda) and probe the usual home locations.
+    def _find_conda() -> str | None:
+        c = shutil.which("conda")
+        if c:
+            return c
+        from pathlib import Path as _P
+        here = _P(sys.executable).resolve()
+        for anc in here.parents:
+            for sub in ("condabin/conda", "bin/conda"):
+                cand = anc / sub
+                if cand.is_file() and os.access(cand, os.X_OK):
+                    return str(cand)
+        for cand in (
+            _P.home() / "miniforge3" / "condabin" / "conda",
+            _P.home() / "miniforge3" / "bin" / "conda",
+            _P.home() / "anaconda3" / "condabin" / "conda",
+            _P.home() / "miniconda3" / "condabin" / "conda",
+        ):
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return str(cand)
+        return None
+
+    conda = _find_conda()
     if conda:
         line("PASS", "conda found", conda)
+    else:
+        line("WARN", "conda found", "not strictly required, but per-project env isolation needs it")
+
+    envs: set[str] = set()
+    if conda:
         try:
             r = _sp.run([conda, "env", "list"], capture_output=True, text=True, timeout=10)
             envs = {ln.split()[0] for ln in r.stdout.splitlines()
                     if ln and not ln.startswith("#") and ln.split()}
         except Exception:
-            envs = set()
-        for env in ("ark-base", "ark"):
-            if env in envs:
-                line("PASS", f"conda env: {env}")
-            else:
-                msg = "create with `conda env create -f environment.yml`" if env == "ark-base" \
-                      else "create with `conda create -n ark python=3.11 && pip install -e .[webapp]`"
-                line("WARN", f"conda env: {env}", msg)
-    else:
-        line("WARN", "conda found", "not strictly required, but per-project env isolation needs it")
+            pass
+    for env in ("ark-base", "ark"):
+        if env in envs:
+            line("PASS", f"conda env: {env}")
+        elif not conda:
+            line("WARN", f"conda env: {env}", "can't check — no conda on PATH or in $HOME")
+        else:
+            msg = "create with `conda env create -f environment.yml`" if env == "ark-base" \
+                  else "create with `conda create -n ark python=3.11 && pip install -e .[webapp]`"
+            line("WARN", f"conda env: {env}", msg)
 
     # 4. Agent CLI
     claude_cli = shutil.which("claude")
