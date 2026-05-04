@@ -225,6 +225,9 @@ if [ "$DRY_RUN" -eq 0 ]; then
     else
       note "Node.js already in ark env"
     fi
+    # npm's shebang is `#!/usr/bin/env node`, so it needs `node` on PATH.
+    # Without this, `npm install` fails: env: 'node': No such file or directory.
+    PATH="$ARK_ENV_BIN:$PATH"; export PATH
     if [ "$need_claude" -eq 1 ]; then
       step "Installing Claude Code CLI"
       run "$ARK_ENV_BIN/npm" install -g @anthropic-ai/claude-code
