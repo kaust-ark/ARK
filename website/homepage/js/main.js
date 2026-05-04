@@ -278,3 +278,25 @@ if (compSplit) {
   }, { threshold: 0.15 });
   compObserver.observe(compSplit);
 }
+
+/* ===== Self-host: copy install command ===== */
+document.querySelectorAll('.install-copy').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const text = btn.dataset.copy || '';
+    if (!text) return;
+    const done = () => {
+      btn.classList.add('copied');
+      const orig = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.classList.remove('copied'); btn.textContent = orig; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {});
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (_) {}
+      document.body.removeChild(ta);
+    }
+  });
+});

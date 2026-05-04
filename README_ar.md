@@ -81,21 +81,24 @@
 ## بداية سريعة
 
 ```bash
-# 1. التثبيت
-pip install -e .
+# تثبيت ذاتي بأمر واحد (Linux / macOS)
+curl -fsSL https://idea2paper.org/install.sh | bash
 
-# 2. إنشاء مشروع (معالج تفاعلي)
+# تحقّق من التثبيت
+ark doctor
+
+# إنشاء مشروع (معالج تفاعلي)
 ark new mma
 
-# 3. التشغيل — ARK سيتولى المهمة من هنا
+# التشغيل — ARK سيتولى المهمة من هنا
 ark run mma
 
-# 4. المراقبة في الوقت الفعلي
+# المراقبة الحية / حالة المشروع
 ark monitor mma
-
-# 5. تحقق من التقدم
-ark status mma
+ark status  mma
 ```
+
+يكشف السكربت نظامك، ويثبّت miniforge عند الحاجة، وينشئ بيئتي conda (`ark-base` و `ark`)، ثم يثبّت ARK بصيغة `pip install -e` داخل `~/ARK`. أضف `--webapp` لتثبيت لوحة التحكم كخدمة `systemd --user` على المنفذ 9527. السكربت الكامل: [`website/homepage/install.sh`](website/homepage/install.sh).
 
 يأخذك المعالج عبر: دليل الكود، المؤتمر المستهدف، فكرة البحث، المؤلفين، نظام الحوسبة، توليد الأشكال البيانية، وإعداد تيليجرام.
 
@@ -117,6 +120,8 @@ ark new mma --from-pdf proposal.pdf
 
 ### التثبيت
 
+أسرع طريقة هي السكربت ذو الأمر الواحد المذكور في [بداية سريعة](#بداية-سريعة)، فهو يقوم بهذه الخطوات نيابة عنك. للتنفيذ اليدوي:
+
 ```bash
 # 1. أنشئ قالب بيئة المشاريع (المكدّس البحثي فقط، بدون كود ARK —
 #    كل مشروع جديد يستنسخ هذه البيئة، لذلك يجب أن تبقى نظيفة).
@@ -129,6 +134,10 @@ conda create -n ark python=3.11 -y
 conda activate ark
 pip install -e .                    # النواة الأساسية
 pip install -e ".[research]"       # + Gemini Deep Research و Nano Banana
+pip install -e ".[webapp]"         # + دعم لوحة التحكم وخدمة systemd
+
+# 3. تحقّق
+ark doctor
 ```
 
 ---
@@ -256,6 +265,7 @@ ark run myproject
 | `ark delete <name>` | حذف المشروع تماماً |
 | `ark setup-bot` | إعداد بوت تيليجرام |
 | `ark list` | سرد جميع المشاريع مع حالتها |
+| `ark doctor` | تشخيص التثبيت الذاتي (البيئات، مفاتيح API، الويب) |
 | `ark webapp install` | تثبيت خدمة لوحة التحكم |
 | `ark access list` | عرض قائمة Cloudflare Access المسموح بها |
 | `ark access add <email>` | إضافة بريد إلكتروني لقائمة CF Access |

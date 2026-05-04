@@ -63,6 +63,9 @@
           <a href="/dashboard" class="btn btn-primary">
             🚀 Launch ARK Project
           </a>
+          <a href="#self-host" class="btn btn-outline">
+            ⚡ Self-host
+          </a>
         </div>
       </div>
       <p class="hero-accent">Offload the Labour. Steer the Science.</p>
@@ -79,6 +82,27 @@
     </div>
     <div class="about-ark-content reveal">
       <p>ARK (Automatic Research Kit) is an idea-to-paper research automation service. Give it a research idea and a target venue &mdash; ARK handles literature review, experiment design, code execution, figure generation, LaTeX writing, and iterative revision. Six specialized AI agents collaborate through a structured pipeline, while you stay in control at every checkpoint via a web dashboard or Telegram.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Self-host ===== -->
+<section id="self-host">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">Self-host</p>
+      <h2 class="section-title reveal">Install in One Line</h2>
+      <p class="section-subtitle reveal">Linux or macOS. The script installs miniforge, builds the conda envs, and pip-installs ARK. Add <code>--webapp</code> to also run the dashboard locally.</p>
+    </div>
+    <div class="install-block reveal">
+      <pre class="install-cmd"><code>curl -fsSL https://idea2paper.org/install.sh | bash</code><button class="install-copy" type="button" aria-label="Copy install command" data-copy="curl -fsSL https://idea2paper.org/install.sh | bash">Copy</button></pre>
+      <div class="install-flags">
+        <span><code>--webapp</code> dashboard as <code>systemd --user</code></span>
+        <span><code>--no-research</code> skip optional research extras</span>
+        <span><code>--prefix DIR</code> install to a custom directory</span>
+        <span><code>--dry-run</code> preview without changes</span>
+      </div>
+      <p class="install-after">After install: <code>ark doctor</code> verifies the setup, <code>ark new myproject</code> launches the wizard. Full docs at <a href="doc.html">doc.html</a> · script at <a href="install.sh">install.sh</a>.</p>
     </div>
   </div>
 </section>

@@ -81,21 +81,24 @@ Give it an idea and a venue. ARK handles the rest.
 ## Quick Start
 
 ```bash
-# 1. Install
-pip install -e .
+# One-click self-host install (Linux / macOS)
+curl -fsSL https://idea2paper.org/install.sh | bash
 
-# 2. Create a project (interactive wizard)
+# Verify the install
+ark doctor
+
+# Create a project (interactive wizard)
 ark new mma
 
-# 3. Run — ARK takes it from here
+# Run — ARK takes it from here
 ark run mma
 
-# 4. Monitor in real time
+# Live-monitor / check status
 ark monitor mma
-
-# 5. Check progress
-ark status mma
+ark status  mma
 ```
+
+The installer detects your OS, installs miniforge if missing, creates the `ark-base` and `ark` conda envs, and pip-installs ARK editable into `~/ARK`. Pass `--webapp` to also install the dashboard as a `systemd --user` service on port 9527. See [`website/homepage/install.sh`](website/homepage/install.sh) for the full script and flags.
 
 The wizard walks you through: code directory, venue, research idea, authors, compute backend, figure generation, and Telegram setup.
 
@@ -117,6 +120,8 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 
 ### Installation
 
+The fastest path is the one-line installer in [Quick Start](#quick-start). It runs the steps below for you and prints onboarding hints. To do it by hand:
+
 ```bash
 # 1. Create the project research-stack template (no ARK code in here —
 #    each new project clones this env, so it must stay clean).
@@ -129,6 +134,10 @@ conda create -n ark python=3.11 -y
 conda activate ark
 pip install -e .                    # Core
 pip install -e ".[research]"       # + Gemini Deep Research & Nano Banana
+pip install -e ".[webapp]"         # + dashboard / systemd service support
+
+# 3. Verify
+ark doctor
 ```
 
 ---
@@ -256,6 +265,7 @@ Skills live in `skills/builtin/` and are auto-installed during pipeline bootstra
 | `ark delete <name>` | Remove project entirely |
 | `ark setup-bot` | Configure Telegram bot |
 | `ark list` | List all projects with status |
+| `ark doctor` | Diagnose a self-host install (envs, API keys, webapp) |
 | `ark webapp install` | Install web dashboard service |
 | `ark access list` | Show Dashboard Cloudflare Access allowlist |
 | `ark access add <email>` | Add email(s) to CF Access allowlist |

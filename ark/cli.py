@@ -3805,6 +3805,133 @@ def cmd_list(args):
 
 
 # ============================================================
+#  ark doctor — diagnose a self-host install
+# ============================================================
+
+def cmd_doctor(args):
+    """Run a series of self-host sanity checks and report status.
+
+    Designed for users who installed via `curl install.sh | bash`. Each check
+    prints PASS / WARN / FAIL with a one-line hint. Exit code is 0 if no FAILs,
+    1 otherwise — so install scripts and CI can branch on it.
+    """
+    import platform as _platform
+    import subprocess as _sp
+
+    fails = 0
+    warns = 0
+
+    def line(status: str, label: str, detail: str = "") -> None:
+        nonlocal fails, warns
+        if status == "PASS":
+            tag = _c(" ok ", Colors.GREEN)
+        elif status == "WARN":
+            tag = _c("warn", Colors.YELLOW); warns += 1
+        else:
+            tag = _c("fail", Colors.RED);    fails += 1
+        suffix = f"  {_c(detail, Colors.DIM)}" if detail else ""
+        print(f"  [{tag}] {label}{suffix}")
+
+    print(f"\n{_c('ARK doctor', Colors.BOLD)}\n")
+
+    # 1. Python
+    py = sys.version_info
+    if py >= (3, 9):
+        line("PASS", f"python {py.major}.{py.minor}.{py.micro}", sys.executable)
+    else:
+        line("FAIL", f"python {py.major}.{py.minor}", "need >= 3.9")
+
+    # 2. ark package importable + version
+    try:
+        import ark  # noqa: F401
+        from importlib import metadata as _md
+        try:
+            ver = _md.version("ark-research")
+        except Exception:
+            ver = "unknown"
+        line("PASS", "ark package importable", f"v{ver}")
+    except Exception as e:
+        line("FAIL", "ark package importable", str(e)[:80])
+
+    # 3. Conda + envs
+    conda = shutil.which("conda")
+    if conda:
+        line("PASS", "conda found", conda)
+        try:
+            r = _sp.run([conda, "env", "list"], capture_output=True, text=True, timeout=10)
+            envs = {ln.split()[0] for ln in r.stdout.splitlines()
+                    if ln and not ln.startswith("#") and ln.split()}
+        except Exception:
+            envs = set()
+        for env in ("ark-base", "ark"):
+            if env in envs:
+                line("PASS", f"conda env: {env}")
+            else:
+                msg = "create with `conda env create -f environment.yml`" if env == "ark-base" \
+                      else "create with `conda create -n ark python=3.11 && pip install -e .[webapp]`"
+                line("WARN", f"conda env: {env}", msg)
+    else:
+        line("WARN", "conda found", "not strictly required, but per-project env isolation needs it")
+
+    # 4. Agent CLI
+    claude_cli = shutil.which("claude")
+    gemini_cli = shutil.which("gemini")
+    if claude_cli or gemini_cli:
+        found = []
+        if claude_cli: found.append(f"claude={claude_cli}")
+        if gemini_cli: found.append(f"gemini={gemini_cli}")
+        line("PASS", "agent CLI", ", ".join(found))
+    else:
+        line("WARN", "agent CLI", "install Claude Code or Gemini CLI to run projects")
+
+    # 5. API keys
+    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    has_gemini = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    if has_anthropic or has_gemini:
+        keys = []
+        if has_anthropic: keys.append("ANTHROPIC_API_KEY")
+        if has_gemini: keys.append("GEMINI_API_KEY")
+        line("PASS", "API key", ", ".join(keys))
+    else:
+        line("WARN", "API key", "set ANTHROPIC_API_KEY or GEMINI_API_KEY in your shell rc")
+
+    # 6. LaTeX (for compilation)
+    pdflatex = shutil.which("pdflatex")
+    bibtex = shutil.which("bibtex")
+    if pdflatex and bibtex:
+        line("PASS", "LaTeX", f"pdflatex={pdflatex}")
+    else:
+        missing = [n for n, p in (("pdflatex", pdflatex), ("bibtex", bibtex)) if not p]
+        line("WARN", "LaTeX", f"missing {', '.join(missing)} — needed for PDF compilation")
+
+    # 7. Webapp service (Linux/systemd only)
+    if _platform.system() == "Linux" and shutil.which("systemctl"):
+        try:
+            r = _sp.run(["systemctl", "--user", "is-active", "ark-webapp"],
+                        capture_output=True, text=True, timeout=5)
+            state = r.stdout.strip() or "inactive"
+            if state == "active":
+                line("PASS", "webapp service", f"ark-webapp: {state}")
+            elif state in ("inactive", "failed", "unknown"):
+                line("WARN", "webapp service", f"ark-webapp: {state} (run `ark webapp install`)")
+            else:
+                line("WARN", "webapp service", f"ark-webapp: {state}")
+        except Exception:
+            line("WARN", "webapp service", "could not query systemctl")
+    else:
+        line("WARN", "webapp service", "skipped (non-Linux or no systemd)")
+
+    print()
+    if fails:
+        print(_c(f"  {fails} fail, {warns} warn — fix the failures and re-run.", Colors.RED))
+        sys.exit(1)
+    elif warns:
+        print(_c(f"  ok, {warns} warning(s) — see above.", Colors.YELLOW))
+    else:
+        print(_c("  All checks passed.", Colors.GREEN))
+
+
+# ============================================================
 #  ark cite-check / cite-search / cite-debug
 # ============================================================
 
@@ -4077,6 +4204,10 @@ def main():
     # ark list
     p_list = subparsers.add_parser("list", help="List all projects")
     p_list.set_defaults(func=cmd_list)
+
+    # ark doctor
+    p_doctor = subparsers.add_parser("doctor", help="Diagnose a self-host install (python, envs, API keys, webapp)")
+    p_doctor.set_defaults(func=cmd_doctor)
 
     p_setup_bot = subparsers.add_parser("setup-bot", help="Set up Telegram notifications (per-project or global)")
     p_setup_bot.add_argument("project", nargs="?", default=None, help="Project name for per-project setup (omit for global)")
