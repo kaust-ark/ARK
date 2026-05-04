@@ -206,13 +206,48 @@ extras="webapp"
 run "$ARK_PY" -m pip install --upgrade pip
 run "$ARK_PY" -m pip install -e "$PREFIX[$extras]"
 
+# ─── 4b. Agent CLIs (Claude Code, Gemini) ─────────────────────────────
+# ARK invokes `claude` and `gemini` via subprocess. We install both into
+# the ark conda env (via Node.js from conda-forge) so they live alongside
+# the python that runs ark.cli, no system root required. Skip individually
+# if the user already has them on $PATH.
+if [ "$DRY_RUN" -eq 0 ]; then
+  ARK_ENV_BIN="$(dirname "$ARK_PY")"
+  need_claude=1
+  need_gemini=1
+  command -v claude >/dev/null 2>&1 && need_claude=0
+  command -v gemini >/dev/null 2>&1 && need_gemini=0
+
+  if [ "$need_claude" -eq 1 ] || [ "$need_gemini" -eq 1 ]; then
+    step "Installing Node.js (for agent CLIs)"
+    if [ ! -x "$ARK_ENV_BIN/npm" ]; then
+      run conda install -n ark -y -c conda-forge "nodejs>=20"
+    else
+      note "Node.js already in ark env"
+    fi
+    if [ "$need_claude" -eq 1 ]; then
+      step "Installing Claude Code CLI"
+      run "$ARK_ENV_BIN/npm" install -g @anthropic-ai/claude-code
+    fi
+    if [ "$need_gemini" -eq 1 ]; then
+      step "Installing Gemini CLI"
+      run "$ARK_ENV_BIN/npm" install -g @google/gemini-cli
+    fi
+  fi
+fi
+
 # Create user-level shim so `ark` is on PATH without activating the env.
+# Prepend the ark env's bin to PATH so subprocesses (claude, gemini) inherit
+# a working PATH even when the user runs `ark` from a shell without conda
+# activated.
 SHIM_DIR="${HOME}/.local/bin"
 SHIM="$SHIM_DIR/ark"
 if [ "$DRY_RUN" -eq 0 ]; then
   mkdir -p "$SHIM_DIR"
+  ARK_ENV_BIN="$(dirname "$ARK_PY")"
   cat > "$SHIM" <<EOF
 #!/usr/bin/env bash
+export PATH="$ARK_ENV_BIN:\$PATH"
 exec "$ARK_PY" -m ark.cli "\$@"
 EOF
   chmod +x "$SHIM"
@@ -239,10 +274,10 @@ say
 say "${C_GREEN}${C_BOLD}ARK installed.${C_RESET}"
 say
 say "${C_BOLD}Next steps${C_RESET}"
-say "  1. Set API keys (one or both):"
-say "       ${C_DIM}export ANTHROPIC_API_KEY=sk-ant-...${C_RESET}"
-say "       ${C_DIM}export GEMINI_API_KEY=...${C_RESET}"
-say "     Add the lines to your shell rc to keep them across sessions."
+say "  1. Authenticate the agent CLIs (one-time):"
+say "       ${C_CYAN}claude${C_RESET}      ${C_DIM}# launches Claude Code, sign in (or set ANTHROPIC_API_KEY)${C_RESET}"
+say "       ${C_CYAN}gemini${C_RESET}      ${C_DIM}# launches Gemini CLI, sign in${C_RESET}"
+say "     For Deep Research also set: ${C_DIM}export GEMINI_API_KEY=...${C_RESET}"
 say
 say "  2. Verify the install:"
 say "       ${C_CYAN}ark doctor${C_RESET}"

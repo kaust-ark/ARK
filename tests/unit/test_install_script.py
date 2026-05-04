@@ -128,6 +128,28 @@ def test_dry_run_webapp_flag(script_path: Path, fake_home: Path) -> None:
     assert "9527" in out
 
 
+def test_script_installs_agent_clis(script_path: Path) -> None:
+    """ARK invokes claude/gemini via subprocess, so the installer has to
+    bootstrap them when missing. Make sure that branch isn't lost in a
+    refactor."""
+    text = script_path.read_text()
+    assert "@anthropic-ai/claude-code" in text, "missing claude-code npm install"
+    assert "@google/gemini-cli" in text, "missing gemini-cli npm install"
+    assert "command -v claude" in text, "missing skip-if-installed guard for claude"
+    assert "command -v gemini" in text, "missing skip-if-installed guard for gemini"
+    assert "nodejs" in text, "must install Node.js for the npm CLIs"
+
+
+def test_shim_extends_path_for_subprocesses(script_path: Path) -> None:
+    """The launcher must put the ark env's bin on PATH so that the
+    `claude`/`gemini` binaries we just installed are discoverable when
+    the orchestrator spawns subprocesses."""
+    text = script_path.read_text()
+    # The shim heredoc should set PATH to include $ARK_ENV_BIN.
+    assert 'export PATH="$ARK_ENV_BIN' in text or "ARK_ENV_BIN:" in text, \
+        "shim does not prepend env bin to PATH"
+
+
 def test_dry_run_prefix_override(script_path: Path, fake_home: Path) -> None:
     target = fake_home / "custom-ark-dir"
     r = subprocess.run(
