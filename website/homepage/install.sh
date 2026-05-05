@@ -333,6 +333,15 @@ if [ "$DRY_RUN" -eq 0 ]; then
   upsert_env GEMINI_API_KEY "$GKEY"
   upsert_env GOOGLE_API_KEY "$GKEY"
   [ -n "$CKEY" ] && upsert_env CLAUDE_CODE_OAUTH_TOKEN "$CKEY"
+  # SECRET_KEY signs magic-link tokens. Without an explicit value in
+  # webapp.env, every Python process generates a fresh random secret →
+  # tokens minted by `ark webapp login` won't verify against the running
+  # webapp's secret. Pin one here, BEFORE installing the service, so all
+  # processes share it. Re-running install.sh leaves an existing key in
+  # place (upsert_env replaces existing keys; we only set if missing).
+  if ! grep -q "^SECRET_KEY=" "$ARK_ENV_FILE" 2>/dev/null; then
+    upsert_env SECRET_KEY "$("$ARK_PY" -c 'import secrets; print(secrets.token_hex(32))')"
+  fi
 fi
 
 # ─── 6. Webapp service ────────────────────────────────────────────────
