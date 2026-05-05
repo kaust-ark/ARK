@@ -92,17 +92,17 @@
     <div style="text-align:center">
       <p class="section-label reveal">Self-host</p>
       <h2 class="section-title reveal">Install in One Line</h2>
-      <p class="section-subtitle reveal">Linux or macOS. The script installs miniforge, builds the conda envs, and pip-installs ARK. Add <code>--webapp</code> to also run the dashboard locally.</p>
+      <p class="section-subtitle reveal">Linux or macOS. Builds the conda envs, installs ARK + Claude Code + Gemini CLIs, runs the dashboard as a <code>systemd --user</code> service, and prints a one-time magic-link URL for your local sign-in. <strong>No SMTP, no Google OAuth needed.</strong></p>
     </div>
     <div class="install-block reveal">
       <pre class="install-cmd"><code>curl -fsSL https://idea2paper.org/install.sh | bash</code><button class="install-copy" type="button" aria-label="Copy install command" data-copy="curl -fsSL https://idea2paper.org/install.sh | bash">Copy</button></pre>
       <div class="install-flags">
-        <span><code>--webapp</code> dashboard as <code>systemd --user</code></span>
+        <span><code>--no-webapp</code> skip the local dashboard service</span>
         <span><code>--no-research</code> skip optional research extras</span>
         <span><code>--prefix DIR</code> install to a custom directory</span>
         <span><code>--dry-run</code> preview without changes</span>
       </div>
-      <p class="install-after">After install: <code>ark doctor</code> verifies the setup, <code>ark new myproject</code> launches the wizard. Full docs at <a href="doc.html">doc.html</a> · script at <a href="install.sh">install.sh</a>.</p>
+      <p class="install-after">The script asks for your Gemini API key, Claude OAuth token, and login email. After install: click the printed magic link → you're in the dashboard at <code>http://localhost:9527</code>. Full docs at <a href="doc.html">doc.html</a> · script at <a href="install.sh">install.sh</a>.</p>
     </div>
   </div>
 </section>

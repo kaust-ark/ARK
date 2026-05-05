@@ -109,17 +109,17 @@
     <div style="text-align:center">
       <p class="section-label reveal">تثبيت ذاتي</p>
       <h2 class="section-title reveal">ثبّت بسطر واحد</h2>
-      <p class="section-subtitle reveal">يعمل على Linux و macOS. السكربت يثبّت miniforge، يبني بيئتي conda، ويثبّت ARK بصيغة قابلة للتعديل. أضف <code>--webapp</code> لتشغيل لوحة التحكم محلياً.</p>
+      <p class="section-subtitle reveal">يعمل على Linux و macOS. يبني بيئات conda، يثبّت ARK + Claude Code + Gemini CLI، يشغّل لوحة التحكم كخدمة <code>systemd --user</code>، ويطبع رابطاً سحرياً لمرة واحدة لتسجيل الدخول محلياً. <strong>بدون SMTP وبدون Google OAuth.</strong></p>
     </div>
     <div class="install-block reveal">
       <pre class="install-cmd" dir="ltr"><code>curl -fsSL https://idea2paper.org/install.sh | bash</code><button class="install-copy" type="button" aria-label="نسخ أمر التثبيت" data-copy="curl -fsSL https://idea2paper.org/install.sh | bash">نسخ</button></pre>
       <div class="install-flags">
-        <span><code>--webapp</code> لوحة التحكم كـ <code>systemd --user</code></span>
+        <span><code>--no-webapp</code> تخطّي لوحة التحكم</span>
         <span><code>--no-research</code> تجاوز الإضافات البحثية</span>
         <span><code>--prefix DIR</code> ثبّت إلى مجلد مخصّص</span>
         <span><code>--dry-run</code> معاينة دون تغييرات</span>
       </div>
-      <p class="install-after">بعد التثبيت: <code>ark doctor</code> للتحقّق، و <code>ark new myproject</code> لتشغيل المعالج. الوثائق الكاملة في <a href="../doc.html">doc.html</a> · السكربت في <a href="../install.sh">install.sh</a>.</p>
+      <p class="install-after">السكربت يسأل عن مفتاح Gemini API، رمز Claude OAuth، والبريد الإلكتروني. انقر على الرابط السحري المطبوع → ستدخل لوحة التحكم على <code>http://localhost:9527</code>. الوثائق الكاملة في <a href="../doc.html">doc.html</a> · السكربت في <a href="../install.sh">install.sh</a>.</p>
     </div>
   </div>
 </section>

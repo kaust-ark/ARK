@@ -81,26 +81,26 @@ Give it an idea and a venue. ARK handles the rest.
 ## Quick Start
 
 ```bash
-# One-click self-host install (Linux / macOS)
 curl -fsSL https://idea2paper.org/install.sh | bash
-
-# Verify the install
-ark doctor
-
-# Create a project (interactive wizard)
-ark new mma
-
-# Run — ARK takes it from here
-ark run mma
-
-# Live-monitor / check status
-ark monitor mma
-ark status  mma
 ```
 
-The installer detects your OS, installs miniforge if missing, creates the `ark-base` and `ark` conda envs, and pip-installs ARK editable into `~/ARK`. Pass `--webapp` to also install the dashboard as a `systemd --user` service on port 9527. See [`website/homepage/install.sh`](website/homepage/install.sh) for the full script and flags.
+The script:
 
-The wizard walks you through: code directory, venue, research idea, authors, compute backend, figure generation, and Telegram setup.
+1. Detects your OS, installs miniforge if missing, builds the `ark-base` and `ark` conda envs, pip-installs ARK editable into `~/ARK`, and adds the Claude Code + Gemini CLIs.
+2. Asks you for: **Gemini API key**, **Claude OAuth token** (`sk-ant-oat01-…` from `claude /login`), and **email for dashboard login**. Press Enter to skip any.
+3. Installs the dashboard as a `systemd --user` service on port `9527` (use `--no-webapp` to opt out).
+4. Prints a one-time **magic-link URL** for your email — click it once and you're logged into the local dashboard. No SMTP, no Google OAuth.
+
+After that the dashboard at <http://localhost:9527> is the primary UX — create projects, set the model, run, monitor. The CLI also works:
+
+```bash
+ark doctor          # verify install
+ark new myproject   # interactive project wizard
+ark run  myproject
+ark monitor myproject
+```
+
+Re-run `ark webapp login <email>` anytime for a fresh sign-in link. Full installer flags: [`website/homepage/install.sh --help`](website/homepage/install.sh).
 
 ### Start from an Existing PDF
 

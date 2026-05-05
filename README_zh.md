@@ -81,26 +81,26 @@ ARK 协调 **6 个专业 AI 智能体**，将研究构想转化为完整论文 &
 ## 快速上手
 
 ```bash
-# 一键自托管安装 (Linux / macOS)
 curl -fsSL https://idea2paper.org/install.sh | bash
-
-# 验证安装
-ark doctor
-
-# 创建项目 (交互式向导)
-ark new mma
-
-# 运行 — ARK 将从这里接管
-ark run mma
-
-# 实时监控 / 查看进度
-ark monitor mma
-ark status  mma
 ```
 
-安装脚本会检测系统、按需安装 miniforge、创建 `ark-base` 与 `ark` 两个 conda env，并以可编辑模式将 ARK 装到 `~/ARK`。加 `--webapp` 还可顺带把仪表板装成 `systemd --user` 服务（端口 9527）。完整脚本见 [`website/homepage/install.sh`](website/homepage/install.sh)。
+脚本会：
 
-向导将引导您完成：代码目录、目标会议、研究构想、作者信息、计算后端、图表生成和 Telegram 设置。
+1. 检测系统、按需安装 miniforge、创建 `ark-base` 与 `ark` 两个 conda env、以可编辑模式将 ARK 装到 `~/ARK`，并装好 Claude Code + Gemini CLI。
+2. 提示你输入：**Gemini API key**、**Claude OAuth token**（从 `claude /login` 拿到的 `sk-ant-oat01-…`）、**仪表板登录邮箱**。回车跳过任意一项。
+3. 把仪表板装成 `systemd --user` 服务（端口 `9527`，用 `--no-webapp` 退出）。
+4. 打印一个一次性的 **magic-link URL** 到你输入的邮箱地址——点一次链接就登录本地仪表板。**不需要 SMTP，也不需要 Google OAuth**。
+
+之后 <http://localhost:9527> 仪表板就是主要的交互界面——建项目、选模型、运行、监控。CLI 也照常可用：
+
+```bash
+ark doctor          # 验证安装
+ark new myproject   # 交互式项目向导
+ark run  myproject
+ark monitor myproject
+```
+
+随时跑 `ark webapp login <email>` 获取新的登录链接。完整脚本参数见 [`website/homepage/install.sh --help`](website/homepage/install.sh)。
 
 ### 从现有 PDF 开始
 

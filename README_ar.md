@@ -81,26 +81,26 @@
 ## بداية سريعة
 
 ```bash
-# تثبيت ذاتي بأمر واحد (Linux / macOS)
 curl -fsSL https://idea2paper.org/install.sh | bash
-
-# تحقّق من التثبيت
-ark doctor
-
-# إنشاء مشروع (معالج تفاعلي)
-ark new mma
-
-# التشغيل — ARK سيتولى المهمة من هنا
-ark run mma
-
-# المراقبة الحية / حالة المشروع
-ark monitor mma
-ark status  mma
 ```
 
-يكشف السكربت نظامك، ويثبّت miniforge عند الحاجة، وينشئ بيئتي conda (`ark-base` و `ark`)، ثم يثبّت ARK بصيغة `pip install -e` داخل `~/ARK`. أضف `--webapp` لتثبيت لوحة التحكم كخدمة `systemd --user` على المنفذ 9527. السكربت الكامل: [`website/homepage/install.sh`](website/homepage/install.sh).
+السكربت سيقوم بـ:
 
-يأخذك المعالج عبر: دليل الكود، المؤتمر المستهدف، فكرة البحث، المؤلفين، نظام الحوسبة، توليد الأشكال البيانية، وإعداد تيليجرام.
+1. كشف النظام، تثبيت miniforge عند الحاجة، إنشاء بيئتي `ark-base` و `ark`، تثبيت ARK بصيغة `pip install -e` داخل `~/ARK`، وتثبيت أدوات Claude Code + Gemini CLI.
+2. سؤالك عن: **مفتاح Gemini API**، **رمز Claude OAuth** (`sk-ant-oat01-…` تحصل عليه من `claude /login`)، و**البريد الإلكتروني لتسجيل الدخول إلى لوحة التحكم**. اضغط Enter لتخطّي أي حقل.
+3. تثبيت لوحة التحكم كخدمة `systemd --user` على المنفذ `9527` (استخدم `--no-webapp` للتخطّي).
+4. طباعة **رابط سحري لمرة واحدة** للبريد المُدخل — انقر عليه مرة واحدة وستدخل لوحة التحكم المحلية. لا حاجة لـ SMTP أو Google OAuth.
+
+بعد ذلك، لوحة التحكم على <http://localhost:9527> هي واجهة العمل الرئيسية — إنشاء المشاريع، اختيار النموذج، التشغيل، والمراقبة. سطر الأوامر يعمل كذلك:
+
+```bash
+ark doctor          # التحقّق من التثبيت
+ark new myproject   # معالج إنشاء المشروع
+ark run  myproject
+ark monitor myproject
+```
+
+شغّل `ark webapp login <email>` في أي وقت للحصول على رابط دخول جديد. خيارات السكربت الكاملة: [`website/homepage/install.sh --help`](website/homepage/install.sh).
 
 ### البدء من ملف PDF موجود
 
