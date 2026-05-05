@@ -297,24 +297,38 @@ upsert_env() {
   chmod 600 "$ARK_ENV_FILE"
 }
 
-LOGIN_EMAIL=""
-if [ "$DRY_RUN" -eq 0 ] && [ "$NONINTERACTIVE" -eq 0 ] && [ -e /dev/tty ] && [ -r /dev/tty ]; then
+# Env-var fallbacks for automation/CI: set ARK_GEMINI_KEY,
+# ARK_CLAUDE_OAUTH, ARK_LOGIN_EMAIL to pre-fill any of the three answers.
+# Anything not set falls through to an interactive prompt (if a TTY is
+# attached) or is silently skipped under --noninteractive.
+LOGIN_EMAIL="${ARK_LOGIN_EMAIL:-}"
+GKEY="${ARK_GEMINI_KEY:-}"
+CKEY="${ARK_CLAUDE_OAUTH:-}"
+INTERACTIVE_OK=0
+[ "$DRY_RUN" -eq 0 ] && [ "$NONINTERACTIVE" -eq 0 ] && [ -e /dev/tty ] && [ -r /dev/tty ] && INTERACTIVE_OK=1
+
+if [ "$INTERACTIVE_OK" -eq 1 ] && \
+   { [ -z "$GKEY" ] || [ -z "$CKEY" ] || [ -z "$LOGIN_EMAIL" ]; }; then
   step "Configure API keys (press Enter to skip any prompt)"
-  printf '   Gemini API key   (https://aistudio.google.com/apikey): '
-  IFS= read -r _gkey < /dev/tty || _gkey=""
-  upsert_env GEMINI_API_KEY  "$_gkey"
-  upsert_env GOOGLE_API_KEY  "$_gkey"
-
-  printf '   Claude OAuth token (sk-ant-oat01-...) or Enter to use `claude` browser flow: '
-  IFS= read -r _ckey < /dev/tty || _ckey=""
-  if [ -n "$_ckey" ]; then
-    upsert_env CLAUDE_CODE_OAUTH_TOKEN "$_ckey"
+  if [ -z "$GKEY" ]; then
+    printf '   Gemini API key   (https://aistudio.google.com/apikey): '
+    IFS= read -r GKEY < /dev/tty || GKEY=""
   fi
-
-  printf '   Email for dashboard login: '
-  IFS= read -r LOGIN_EMAIL < /dev/tty || LOGIN_EMAIL=""
-  unset _gkey _ckey
+  if [ -z "$CKEY" ]; then
+    printf '   Claude OAuth token (sk-ant-oat01-...) or Enter to use `claude` browser flow: '
+    IFS= read -r CKEY < /dev/tty || CKEY=""
+  fi
+  if [ -z "$LOGIN_EMAIL" ]; then
+    printf '   Email for dashboard login: '
+    IFS= read -r LOGIN_EMAIL < /dev/tty || LOGIN_EMAIL=""
+  fi
   say
+fi
+
+if [ "$DRY_RUN" -eq 0 ]; then
+  upsert_env GEMINI_API_KEY "$GKEY"
+  upsert_env GOOGLE_API_KEY "$GKEY"
+  [ -n "$CKEY" ] && upsert_env CLAUDE_CODE_OAUTH_TOKEN "$CKEY"
 fi
 
 # ─── 6. Webapp service ────────────────────────────────────────────────
