@@ -3063,23 +3063,31 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
             print(f"  {_c(f'pip install warning: {r.stderr.strip()[:200]}', Colors.YELLOW)}")
     else:
         svc_name = _PROD_SERVICE
-        work_dir = _get_prod_worktree_dir()
+        prod_worktree = _get_prod_worktree_dir()
         desc = "ARK Research Portal"
-        python_bin = _conda_env_python("ark-prod")
 
-        # Ensure prod worktree exists
-        if not work_dir.exists():
-            print(f"  {_c('Error:', Colors.RED)} Prod worktree not found at {work_dir}")
-            print(f"  Run {_c('ark webapp release', Colors.BOLD)} first to create it.")
-            return
-
-        # Symlink shared webapp.env into prod worktree
-        prod_ark_dir = work_dir / ".ark"
-        prod_ark_dir.mkdir(parents=True, exist_ok=True)
-        prod_env_link = prod_ark_dir / "webapp.env"
-        main_env = get_config_dir() / "webapp.env"
-        if main_env.exists() and not prod_env_link.exists():
-            prod_env_link.symlink_to(main_env)
+        if prod_worktree.exists():
+            # Released-deployment workflow (KAUST internal): pinned tag worktree.
+            work_dir = prod_worktree
+            python_bin = _conda_env_python("ark-prod")
+            # Symlink shared webapp.env into prod worktree.
+            prod_ark_dir = work_dir / ".ark"
+            prod_ark_dir.mkdir(parents=True, exist_ok=True)
+            prod_env_link = prod_ark_dir / "webapp.env"
+            main_env = get_config_dir() / "webapp.env"
+            if main_env.exists() and not prod_env_link.exists():
+                prod_env_link.symlink_to(main_env)
+        else:
+            # Self-host fallback: no release worktree, use the live source dir
+            # and the `ark` conda env created by install.sh. This is the path
+            # used by `curl install.sh | bash --webapp`.
+            work_dir = get_ark_root()
+            python_bin = _conda_env_python("ark")
+            if not (work_dir / "ark" / "cli.py").exists():
+                print(f"  {_c('Error:', Colors.RED)} Cannot locate ARK source at {work_dir}")
+                print(f"  Reinstall via {_c('curl -fsSL https://idea2paper.org/install.sh | bash', Colors.BOLD)}")
+                return
+            print(f"  {_c('Self-host mode:', Colors.DIM)} serving from {_c(str(work_dir), Colors.CYAN)}")
 
     # Environment variables for systemd service.
     # Dashboard mount prefix is hardcoded in website/dashboard/constants.py
