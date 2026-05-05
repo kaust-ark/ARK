@@ -14,6 +14,7 @@
 #   --no-webapp       Skip dashboard install (default: install + start systemd service)
 #   --no-base         Skip building the per-project ark-base research env
 #   --no-research     Skip the [research] extra (saves disk + an Anthropic dep)
+#   --no-latex        Skip TinyTeX install (you'll need pdflatex/bibtex from elsewhere)
 #   --noninteractive  Skip the API-key + login prompts at the end
 #   --dry-run         Print the plan, do not change anything
 #   -h | --help       Show this help and exit
@@ -42,6 +43,7 @@ REPO_URL="${ARK_REPO:-$DEFAULT_REPO}"
 INSTALL_WEBAPP=1
 SKIP_BASE=0
 SKIP_RESEARCH=0
+SKIP_LATEX=0
 DRY_RUN=0
 NONINTERACTIVE=0
 
@@ -62,6 +64,7 @@ while [ $# -gt 0 ]; do
     --no-webapp)      INSTALL_WEBAPP=0; shift ;;
     --no-base)        SKIP_BASE=1; shift ;;
     --no-research)    SKIP_RESEARCH=1; shift ;;
+    --no-latex)       SKIP_LATEX=1; shift ;;
     --noninteractive) NONINTERACTIVE=1; shift ;;
     --dry-run)        DRY_RUN=1; shift ;;
     -h|--help)        usage; exit 0 ;;
@@ -344,7 +347,54 @@ if [ "$DRY_RUN" -eq 0 ]; then
   fi
 fi
 
-# ─── 6. Webapp service ────────────────────────────────────────────────
+# ─── 6. LaTeX (for PDF compilation) ───────────────────────────────────
+# ARK invokes pdflatex/bibtex via subprocess at the end of every paper
+# iteration. If they're missing, the pipeline runs all the way through
+# the agents and dies at compile, which is a terrible "first paper"
+# experience. Install TinyTeX into ~/.TinyTeX (~150-300 MB; no root)
+# unless the user already has pdflatex on PATH or passed --no-latex.
+if [ "$DRY_RUN" -eq 0 ] && [ "$SKIP_LATEX" -eq 0 ]; then
+  if command -v pdflatex >/dev/null 2>&1 && command -v bibtex >/dev/null 2>&1; then
+    note "LaTeX already on PATH — skipping TinyTeX install"
+  elif [ -x "$HOME/.TinyTeX/bin/x86_64-linux/pdflatex" ] || \
+       [ -x "$HOME/.TinyTeX/bin/aarch64-linux/pdflatex" ] || \
+       [ -x "$HOME/.TinyTeX/bin/universal-darwin/pdflatex" ]; then
+    note "TinyTeX already installed — skipping"
+  else
+    step "Installing LaTeX (TinyTeX, ~3min, ~300MB)"
+    # TinyTeX needs `xz` to extract its bundle. On lean Debian images
+    # (containers, some HPC chroots) xz isn't installed. If we can't
+    # find it, warn instead of crashing — the user can install LaTeX
+    # later and ARK still produces a paper draft, just without compile.
+    if ! command -v xz >/dev/null 2>&1; then
+      warn "xz not found; TinyTeX install needs it. Skipping LaTeX."
+      warn "  Linux: sudo apt-get install xz-utils  (or equivalent)"
+      warn "  Then re-run: bash <(curl -fsSL https://idea2paper.org/install.sh) --no-webapp --noninteractive"
+    else
+      run curl -fsSL https://yihui.org/tinytex/install-bin-unix.sh -o /tmp/tinytex.sh
+      run sh /tmp/tinytex.sh || warn "TinyTeX install reported errors"
+      # Pick the right arch dir (TinyTeX names: x86_64-linux, aarch64-linux, universal-darwin)
+      for d in "$HOME/.TinyTeX/bin/x86_64-linux" "$HOME/.TinyTeX/bin/aarch64-linux" "$HOME/.TinyTeX/bin/universal-darwin"; do
+        [ -x "$d/pdflatex" ] && { TINYTEX_BIN="$d"; break; }
+      done
+      if [ -n "${TINYTEX_BIN:-}" ]; then
+        # Pull the packages ARK's venue templates reach for. tlmgr is best-effort —
+        # missing packages on first install just mean a slower first compile (TeX
+        # auto-fetches them at runtime if Live's net repo is reachable).
+        PATH="$TINYTEX_BIN:$PATH" run "$TINYTEX_BIN/tlmgr" install \
+          collection-latex collection-latexrecommended collection-fontsrecommended \
+          collection-mathscience natbib geometry algorithm algorithmicx algpseudocodex \
+          fancyhdr titlesec etoolbox xcolor caption float hyperref booktabs multirow \
+          enumitem fontawesome lipsum pgf pgfplots subcaption microtype || \
+          warn "Some tlmgr packages failed; TeX will fetch them on first compile"
+      else
+        warn "Could not locate TinyTeX bin dir after install"
+      fi
+    fi
+  fi
+fi
+
+# ─── 7. Webapp service ────────────────────────────────────────────────
 if [ "$INSTALL_WEBAPP" -eq 1 ]; then
   step "Installing webapp as systemd user service"
   if [ "$DRY_RUN" -eq 0 ]; then
@@ -354,7 +404,7 @@ if [ "$INSTALL_WEBAPP" -eq 1 ]; then
   fi
 fi
 
-# ─── 7. Onboarding ─────────────────────────────────────────────────────
+# ─── 8. Onboarding ─────────────────────────────────────────────────────
 say
 say "${C_GREEN}${C_BOLD}ARK installed.${C_RESET}"
 say

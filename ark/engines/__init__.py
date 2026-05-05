@@ -604,7 +604,7 @@ Execute the task and update the corresponding files.
                 )
                 if is_empty:
                     self.log(f"Agent [{agent_type}] empty-run detected (attempt {attempt}/{MAX_RETRIES}): ran only {elapsed}s, output only {len(result.strip())} chars", "WARN")
-                    self.log(f"  returncode: {process.returncode}", "WARN")
+                    self.log(f"  returncode: {returncode}", "WARN")
                     if stderr:
                         self.log(f"  stderr: {stderr[:500]}", "WARN")
                     else:
