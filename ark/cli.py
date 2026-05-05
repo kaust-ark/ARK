@@ -2992,7 +2992,8 @@ def _conda_env_python(env_name: str) -> str:
 
 
 def _generate_service_unit(host: str, port: int, work_dir: Path, description: str,
-                           env_vars=None, python_bin: str = None) -> str:
+                           env_vars=None, python_bin: str = None,
+                           env_file: Path | None = None) -> str:
     """Generate a systemd user service unit file for the ARK webapp."""
     if python_bin is None:
         python_bin = sys.executable
@@ -3000,6 +3001,11 @@ def _generate_service_unit(host: str, port: int, work_dir: Path, description: st
     if env_vars:
         for k, v in env_vars.items():
             env_lines += f"Environment={k}={v}\n"
+    # Prefix `-` so a missing file is silently ignored — the user may not have
+    # populated webapp.env yet on a fresh self-host install. systemd parses
+    # KEY=VALUE lines; webapp.env uses the same format.
+    if env_file is not None:
+        env_lines += f"EnvironmentFile=-{env_file}\n"
     return f"""\
 [Unit]
 Description={description}
@@ -3131,7 +3137,9 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
     svc_path = _service_file_path(svc_name)
     svc_path.parent.mkdir(parents=True, exist_ok=True)
 
-    unit = _generate_service_unit(host, port, work_dir, desc, env_vars, python_bin=python_bin)
+    unit = _generate_service_unit(host, port, work_dir, desc, env_vars,
+                                   python_bin=python_bin,
+                                   env_file=get_config_dir() / "webapp.env")
     svc_path.write_text(unit)
     print(f"  Service file written to {_c(str(svc_path), Colors.CYAN)}")
 
@@ -3208,6 +3216,46 @@ def _cmd_webapp_restart(dev: bool = False):
     else:
         print(f"  {_c('Error:', Colors.RED)} Failed to restart {svc}. Is it installed?")
         print(f"  Run: {_c('ark webapp install', Colors.BOLD)}")
+
+
+def _cmd_webapp_login(email: str, host: str = "0.0.0.0", port: int = None) -> None:
+    """Print a magic-link URL for ``email`` — bypass SMTP for self-host.
+
+    The webapp's normal magic-link flow needs SMTP credentials to send the
+    one-time link. On a fresh self-host install there's no SMTP configured,
+    so we just generate the same token the webapp would and print the URL —
+    the user clicks it once to log in, no email round-trip required.
+    """
+    if not email or "@" not in email:
+        print(f"  {_c('Error:', Colors.RED)} pass a valid email: ark webapp login me@example.com")
+        sys.exit(2)
+
+    try:
+        from website.dashboard.auth import make_token
+        from website.dashboard.config import get_settings
+        from website.dashboard.constants import DASHBOARD_PREFIX
+    except ImportError:
+        print(f"  {_c('Error:', Colors.RED)} webapp deps missing. Install with `pip install ark-research[webapp]`.")
+        sys.exit(1)
+
+    settings = get_settings()
+    secret = getattr(settings, "secret_key", "") or os.environ.get("SECRET_KEY", "")
+    if not secret:
+        print(f"  {_c('Error:', Colors.RED)} SECRET_KEY not set in {get_config_dir() / 'webapp.env'}.")
+        print(f"  Run `ark webapp` once to generate a default config.")
+        sys.exit(1)
+
+    token = make_token(email, secret)
+    base = (settings.base_url or f"http://{host}:{port or _PROD_PORT}").rstrip("/")
+    url = f"{base}{DASHBOARD_PREFIX}/auth/verify?token={token}"
+
+    print()
+    print(f"  {_c('Magic link for', Colors.BOLD)} {_c(email, Colors.CYAN)}:")
+    print(f"  {_c(url, Colors.GREEN)}")
+    print()
+    print(f"  {_c('Open this URL once to sign in', Colors.DIM)} (no email round-trip needed).")
+    print(f"  Token is valid for 30 days.")
+    print()
 
 
 def _cmd_webapp_release(args):
@@ -3424,6 +3472,10 @@ def cmd_webapp(args):
         return
     if subcmd == 'release':
         _cmd_webapp_release(args)
+        return
+    if subcmd == 'login':
+        _cmd_webapp_login(args.email, getattr(args, 'host', '0.0.0.0'),
+                           getattr(args, 'port', _PROD_PORT))
         return
 
     try:
@@ -4274,6 +4326,8 @@ def main():
     p_svc_restart.add_argument("--dev", action="store_true", help="Restart dev service")
     p_release = webapp_sub.add_parser("release", help="Tag and deploy to prod environment")
     p_release.add_argument("--tag", type=str, default=None, help="Version tag (default: auto-increment)")
+    p_login = webapp_sub.add_parser("login", help="Generate a magic-link URL (self-host, no SMTP)")
+    p_login.add_argument("email", help="Email to log in as (will be created on first use)")
     p_webapp.add_argument("--port", type=int, default=9527, help="Port (default: 9527)")
     p_webapp.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
     p_webapp.add_argument("--daemon", action="store_true", help="Run in background (deprecated, use 'install')")

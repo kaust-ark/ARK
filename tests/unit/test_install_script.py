@@ -52,9 +52,10 @@ def test_help_flag(script_path: Path) -> None:
     # Should describe the public usage and the supported flags.
     assert "ARK" in out
     assert "--prefix" in out
-    assert "--webapp" in out
+    assert "--no-webapp" in out  # --webapp is now the default; doc the opt-out
     assert "--dry-run" in out
     assert "--no-research" in out
+    assert "--noninteractive" in out
 
 
 def test_unknown_flag_exits_nonzero(script_path: Path) -> None:
@@ -86,7 +87,8 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_dry_run_no_conda_no_repo(script_path: Path, fake_home: Path) -> None:
     """--dry-run with no conda + no existing repo should plan a full install."""
     r = subprocess.run(
-        ["bash", str(script_path), "--dry-run", "--no-base", "--no-research"],
+        ["bash", str(script_path), "--dry-run", "--no-base", "--no-research",
+         "--no-webapp", "--noninteractive"],
         capture_output=True, text=True, timeout=30,
         env={**os.environ},
     )
@@ -107,25 +109,36 @@ def test_dry_run_no_conda_no_repo(script_path: Path, fake_home: Path) -> None:
     assert "conda create -n ark" in out
     assert "pip install -e" in out
 
-    # Onboarding hints must show how to set keys + run a project
-    assert "ANTHROPIC_API_KEY" in out
+    # Onboarding hints must show how to run a project + verify
     assert "ark new" in out
     assert "ark doctor" in out
 
 
-def test_dry_run_webapp_flag(script_path: Path, fake_home: Path) -> None:
-    """--webapp should plan to invoke `ark.cli webapp install`."""
+def test_webapp_default_on(script_path: Path, fake_home: Path) -> None:
+    """--webapp is the default; the plan should call `ark.cli webapp install`."""
     r = subprocess.run(
-        ["bash", str(script_path), "--dry-run", "--webapp", "--no-base", "--no-research"],
+        ["bash", str(script_path), "--dry-run", "--no-base", "--no-research",
+         "--noninteractive"],
         capture_output=True, text=True, timeout=30,
         env={**os.environ},
     )
     assert r.returncode == 0, r.stderr
     out = r.stdout
-    assert "webapp" in out.lower()
     assert "ark.cli webapp install" in out
     # Onboarding should advertise the dashboard URL
     assert "9527" in out
+
+
+def test_no_webapp_skips_service(script_path: Path, fake_home: Path) -> None:
+    """--no-webapp opts out of the default service install."""
+    r = subprocess.run(
+        ["bash", str(script_path), "--dry-run", "--no-base", "--no-research",
+         "--no-webapp", "--noninteractive"],
+        capture_output=True, text=True, timeout=30,
+        env={**os.environ},
+    )
+    assert r.returncode == 0, r.stderr
+    assert "ark.cli webapp install" not in r.stdout, "webapp install should be skipped"
 
 
 def test_script_installs_agent_clis(script_path: Path) -> None:

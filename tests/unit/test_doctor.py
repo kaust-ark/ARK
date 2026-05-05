@@ -81,6 +81,37 @@ def test_doctor_warns_on_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> Non
     pytest.fail(f"API key line not found in doctor output:\n{out}")
 
 
+def test_webapp_login_prints_magic_link(tmp_path) -> None:
+    """`ark webapp login me@example.com` should print a clickable magic link
+    without sending an email — the self-host SMTP-free login path. Settings
+    merges file values with os.environ (env wins), so we pin BASE_URL +
+    SECRET_KEY via env to make the test independent of the host's webapp.env.
+    """
+    env = os.environ.copy()
+    env["BASE_URL"] = "http://localhost:9527"
+    env["SECRET_KEY"] = "test-secret-fixture-please-do-not-reuse"
+    env["DB_PATH"] = str(tmp_path / "webapp.db")
+
+    r = subprocess.run(
+        [sys.executable, "-m", "ark.cli", "webapp", "login", "me@example.com"],
+        capture_output=True, text=True, timeout=15, env=env, cwd=REPO_ROOT,
+    )
+    assert r.returncode == 0, r.stderr or r.stdout
+    out = _strip_ansi(r.stdout)
+    assert "me@example.com" in out
+    # The URL we print must include /auth/verify?token= and the BASE_URL.
+    assert "http://localhost:9527" in out
+    assert "/auth/verify?token=" in out
+
+
+def test_webapp_login_rejects_invalid_email() -> None:
+    r = subprocess.run(
+        [sys.executable, "-m", "ark.cli", "webapp", "login", "not-an-email"],
+        capture_output=True, text=True, timeout=10, cwd=REPO_ROOT,
+    )
+    assert r.returncode != 0
+
+
 def test_doctor_passes_on_present_api_key() -> None:
     """With at least one API key set, the API-key check should PASS."""
     env = {"ANTHROPIC_API_KEY": "sk-test-doctor-fake-key"}

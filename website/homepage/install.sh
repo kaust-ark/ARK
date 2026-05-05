@@ -4,18 +4,19 @@
 #
 # Usage:
 #   curl -fsSL https://idea2paper.org/install.sh | bash
-#   curl -fsSL https://idea2paper.org/install.sh | bash -s -- --webapp
+#   curl -fsSL https://idea2paper.org/install.sh | bash -s -- --no-webapp
 #   curl -fsSL https://idea2paper.org/install.sh -o install.sh && bash install.sh --help
 #
 # Flags:
-#   --prefix DIR     Install ARK source to DIR (default: $HOME/ARK)
-#   --branch NAME    Git branch/tag to clone (default: main)
-#   --repo URL       Clone from URL (default: https://github.com/kaust-ark/ARK)
-#   --webapp         Install + start the dashboard as a systemd user service (Linux)
-#   --no-base        Skip building the per-project ark-base research env
-#   --no-research    Skip the [research] extra (saves disk + an Anthropic dep)
-#   --dry-run        Print the plan, do not change anything
-#   -h | --help      Show this help and exit
+#   --prefix DIR      Install ARK source to DIR (default: $HOME/ARK)
+#   --branch NAME     Git branch/tag to clone (default: main)
+#   --repo URL        Clone from URL (default: https://github.com/kaust-ark/ARK)
+#   --no-webapp       Skip dashboard install (default: install + start systemd service)
+#   --no-base         Skip building the per-project ark-base research env
+#   --no-research     Skip the [research] extra (saves disk + an Anthropic dep)
+#   --noninteractive  Skip the API-key + login prompts at the end
+#   --dry-run         Print the plan, do not change anything
+#   -h | --help       Show this help and exit
 #
 # Notes:
 #   * Installs miniforge3 to ~/miniforge3 if no conda is detected.
@@ -38,10 +39,11 @@ WEBAPP_PORT=9527
 PREFIX="${ARK_PREFIX:-$DEFAULT_PREFIX}"
 BRANCH="${ARK_BRANCH:-$DEFAULT_BRANCH}"
 REPO_URL="${ARK_REPO:-$DEFAULT_REPO}"
-INSTALL_WEBAPP=0
+INSTALL_WEBAPP=1
 SKIP_BASE=0
 SKIP_RESEARCH=0
 DRY_RUN=0
+NONINTERACTIVE=0
 
 usage() {
   # Print only the leading comment block (skip shebang, stop at first blank line).
@@ -50,17 +52,19 @@ usage() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --prefix)        PREFIX="$2"; shift 2 ;;
-    --prefix=*)      PREFIX="${1#*=}"; shift ;;
-    --branch)        BRANCH="$2"; shift 2 ;;
-    --branch=*)      BRANCH="${1#*=}"; shift ;;
-    --repo)          REPO_URL="$2"; shift 2 ;;
-    --repo=*)        REPO_URL="${1#*=}"; shift ;;
-    --webapp)        INSTALL_WEBAPP=1; shift ;;
-    --no-base)       SKIP_BASE=1; shift ;;
-    --no-research)   SKIP_RESEARCH=1; shift ;;
-    --dry-run)       DRY_RUN=1; shift ;;
-    -h|--help)       usage; exit 0 ;;
+    --prefix)         PREFIX="$2"; shift 2 ;;
+    --prefix=*)       PREFIX="${1#*=}"; shift ;;
+    --branch)         BRANCH="$2"; shift 2 ;;
+    --branch=*)       BRANCH="${1#*=}"; shift ;;
+    --repo)           REPO_URL="$2"; shift 2 ;;
+    --repo=*)         REPO_URL="${1#*=}"; shift ;;
+    --webapp)         INSTALL_WEBAPP=1; shift ;;
+    --no-webapp)      INSTALL_WEBAPP=0; shift ;;
+    --no-base)        SKIP_BASE=1; shift ;;
+    --no-research)    SKIP_RESEARCH=1; shift ;;
+    --noninteractive) NONINTERACTIVE=1; shift ;;
+    --dry-run)        DRY_RUN=1; shift ;;
+    -h|--help)        usage; exit 0 ;;
     *) printf 'Unknown flag: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -240,17 +244,30 @@ if [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 # Create user-level shim so `ark` is on PATH without activating the env.
-# Prepend the ark env's bin to PATH so subprocesses (claude, gemini) inherit
-# a working PATH even when the user runs `ark` from a shell without conda
-# activated.
+# - Prepends the ark env's bin to PATH so subprocesses (claude, gemini) inherit
+#   it even when the user runs `ark` from a shell without `conda activate`.
+# - Sources ~/.ark/webapp.env so API keys (ANTHROPIC_API_KEY, GEMINI_API_KEY,
+#   CLAUDE_CODE_OAUTH_TOKEN) flow into the orchestrator's environment for CLI
+#   runs. The webapp service gets the same file via systemd EnvironmentFile.
 SHIM_DIR="${HOME}/.local/bin"
 SHIM="$SHIM_DIR/ark"
+ARK_CONFIG_DIR="${HOME}/.ark"
+ARK_ENV_FILE="${ARK_CONFIG_DIR}/webapp.env"
 if [ "$DRY_RUN" -eq 0 ]; then
-  mkdir -p "$SHIM_DIR"
+  mkdir -p "$SHIM_DIR" "$ARK_CONFIG_DIR"
   ARK_ENV_BIN="$(dirname "$ARK_PY")"
   cat > "$SHIM" <<EOF
 #!/usr/bin/env bash
 export PATH="$ARK_ENV_BIN:\$PATH"
+if [ -f "$ARK_ENV_FILE" ]; then
+  set -a
+  while IFS='=' read -r _k _v; do
+    case "\$_k" in ''|\\#*) continue;; esac
+    eval "\$_k=\"\$_v\""
+  done < "$ARK_ENV_FILE"
+  set +a
+  unset _k _v
+fi
 exec "$ARK_PY" -m ark.cli "\$@"
 EOF
   chmod +x "$SHIM"
@@ -262,7 +279,45 @@ EOF
   esac
 fi
 
-# ─── 5. Optional webapp service ───────────────────────────────────────
+# ─── 5. Interactive setup: API keys + login email ──────────────────────
+# Prompts read from /dev/tty so they work even when the script is curl-piped
+# (stdin is the script content). Skip silently if no controlling terminal
+# (CI runs, ssh -T, docker exec without -t) or --noninteractive was passed.
+upsert_env() {
+  # upsert_env KEY VALUE  →  set/replace `KEY=VALUE` in $ARK_ENV_FILE
+  local k="$1" v="$2"
+  [ -z "$v" ] && return 0
+  touch "$ARK_ENV_FILE"
+  if grep -q "^${k}=" "$ARK_ENV_FILE" 2>/dev/null; then
+    # Replace existing line (use # as sed delimiter so / in keys is fine).
+    sed -i.bak "s#^${k}=.*#${k}=${v}#" "$ARK_ENV_FILE" && rm -f "${ARK_ENV_FILE}.bak"
+  else
+    printf '%s=%s\n' "$k" "$v" >> "$ARK_ENV_FILE"
+  fi
+  chmod 600 "$ARK_ENV_FILE"
+}
+
+LOGIN_EMAIL=""
+if [ "$DRY_RUN" -eq 0 ] && [ "$NONINTERACTIVE" -eq 0 ] && [ -e /dev/tty ] && [ -r /dev/tty ]; then
+  step "Configure API keys (press Enter to skip any prompt)"
+  printf '   Gemini API key   (https://aistudio.google.com/apikey): '
+  IFS= read -r _gkey < /dev/tty || _gkey=""
+  upsert_env GEMINI_API_KEY  "$_gkey"
+  upsert_env GOOGLE_API_KEY  "$_gkey"
+
+  printf '   Claude OAuth token (sk-ant-oat01-...) or Enter to use `claude` browser flow: '
+  IFS= read -r _ckey < /dev/tty || _ckey=""
+  if [ -n "$_ckey" ]; then
+    upsert_env CLAUDE_CODE_OAUTH_TOKEN "$_ckey"
+  fi
+
+  printf '   Email for dashboard login: '
+  IFS= read -r LOGIN_EMAIL < /dev/tty || LOGIN_EMAIL=""
+  unset _gkey _ckey
+  say
+fi
+
+# ─── 6. Webapp service ────────────────────────────────────────────────
 if [ "$INSTALL_WEBAPP" -eq 1 ]; then
   step "Installing webapp as systemd user service"
   if [ "$DRY_RUN" -eq 0 ]; then
@@ -272,33 +327,37 @@ if [ "$INSTALL_WEBAPP" -eq 1 ]; then
   fi
 fi
 
-# ─── 6. Onboarding ─────────────────────────────────────────────────────
+# ─── 7. Onboarding ─────────────────────────────────────────────────────
 say
 say "${C_GREEN}${C_BOLD}ARK installed.${C_RESET}"
 say
+
+# If --webapp + email captured, generate a magic link and tell the user to
+# click it. This is the "open the URL once and you're in" path that bypasses
+# SMTP entirely — perfect for self-host where smtp.gmail.com isn't configured.
+if [ "$DRY_RUN" -eq 0 ] && [ "$INSTALL_WEBAPP" -eq 1 ] && [ -n "$LOGIN_EMAIL" ]; then
+  step "Sign in to the dashboard"
+  "$ARK_PY" -m ark.cli webapp login "$LOGIN_EMAIL" || \
+    warn "Could not generate magic link (webapp may not have started yet — try \`ark webapp login $LOGIN_EMAIL\` after a moment)."
+fi
+
 say "${C_BOLD}Next steps${C_RESET}"
-say "  1. Authenticate the agent CLIs (one-time):"
-say "       ${C_CYAN}claude${C_RESET}      ${C_DIM}# launches Claude Code, sign in (or set ANTHROPIC_API_KEY)${C_RESET}"
-say "       ${C_CYAN}gemini${C_RESET}      ${C_DIM}# launches Gemini CLI, sign in${C_RESET}"
-say "     For Deep Research also set: ${C_DIM}export GEMINI_API_KEY=...${C_RESET}"
-say
-say "  2. Verify the install:"
-say "       ${C_CYAN}ark doctor${C_RESET}"
-say
-say "  3. Create your first project (interactive wizard):"
-say "       ${C_CYAN}ark new myproject${C_RESET}"
+if [ "$INSTALL_WEBAPP" -eq 1 ]; then
+  say "  1. ${C_BOLD}Open the dashboard${C_RESET} (click the magic link printed above, or):"
+  say "       ${C_CYAN}http://localhost:${WEBAPP_PORT}${C_RESET}"
+  say "       Manage with: ${C_DIM}ark webapp status | restart | logs -f${C_RESET}"
+  say
+  say "  2. Or use the CLI:"
+else
+  say "  1. Use the CLI:"
+fi
+say "       ${C_CYAN}ark doctor${C_RESET}                # verify install"
+say "       ${C_CYAN}ark new myproject${C_RESET}         # interactive wizard"
 say "       ${C_CYAN}ark run  myproject${C_RESET}"
 say "       ${C_CYAN}ark monitor myproject${C_RESET}"
 say
-if [ "$INSTALL_WEBAPP" -eq 1 ]; then
-  say "  4. Open the dashboard:"
-  say "       ${C_CYAN}http://localhost:${WEBAPP_PORT}${C_RESET}"
-  say "       Manage with: ${C_DIM}ark webapp status | restart | logs -f${C_RESET}"
-else
-  say "  4. (Optional) Start the dashboard on demand:"
-  say "       ${C_CYAN}ark webapp${C_RESET}                 # foreground, port ${WEBAPP_PORT}"
-  say "       ${C_CYAN}ark webapp install${C_RESET}         # systemd user service (Linux)"
-fi
+say "  ${C_DIM}Keys saved to: ${ARK_ENV_FILE}${C_RESET}"
+say "  ${C_DIM}Re-run \`ark webapp login <email>\` anytime to get a fresh sign-in link.${C_RESET}"
 say
 say "Docs:    https://idea2paper.org/doc.html"
 say "Source:  $PREFIX"
