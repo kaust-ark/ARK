@@ -3059,10 +3059,12 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
         python_bin = _conda_env_python("ark-dev")
         conda_env = "ark-dev"
 
-        # Install editable in ark-dev env
+        # Install editable in ark-dev env. Include [research] so PaperBanana
+        # imports succeed (aiofiles, json_repair, etc.) — same reason as the
+        # prod path below.
         print(f"  Installing dependencies (editable) in {conda_env}...")
         r = _sp.run(
-            [python_bin, "-m", "pip", "install", "-e", ".[webapp]", "-q"],
+            [python_bin, "-m", "pip", "install", "-e", ".[webapp,research]", "-q"],
             capture_output=True, text=True, cwd=work_dir,
         )
         if r.returncode != 0:
@@ -3350,11 +3352,14 @@ def _cmd_webapp_release(args):
 
     print(f"  {_c('Prod worktree:', Colors.GREEN)} {prod_dir} → {tag}")
 
-    # 5. Install in prod worktree using ark-prod conda env (non-editable)
+    # 5. Install in prod worktree using ark-prod conda env (non-editable).
+    # Include [research] so PaperBanana's runtime deps (aiofiles, json_repair,
+    # numpy, etc.) are present — without them compiler.py's `_try_paperbanana`
+    # silently falls back to Nano Banana on every run.
     prod_python = _conda_env_python("ark-prod")
     print(f"  Installing dependencies in ark-prod (non-editable)...")
     r = _sp.run(
-        [prod_python, "-m", "pip", "install", ".[webapp]", "-q"],
+        [prod_python, "-m", "pip", "install", ".[webapp,research]", "-q"],
         capture_output=True, text=True, cwd=prod_dir,
     )
     if r.returncode != 0:
