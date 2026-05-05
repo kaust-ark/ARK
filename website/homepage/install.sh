@@ -251,7 +251,11 @@ fi
 #   runs. The webapp service gets the same file via systemd EnvironmentFile.
 SHIM_DIR="${HOME}/.local/bin"
 SHIM="$SHIM_DIR/ark"
-ARK_CONFIG_DIR="${HOME}/.ark"
+# Use the source dir's .ark/ — this is what get_config_dir() resolves to
+# inside the running webapp/CLI, so writing here means keys propagate to
+# both the systemd unit (via EnvironmentFile=) and to interactive Settings
+# loads. ~/.ark/ would silently diverge from where the webapp reads.
+ARK_CONFIG_DIR="${PREFIX}/.ark"
 ARK_ENV_FILE="${ARK_CONFIG_DIR}/webapp.env"
 if [ "$DRY_RUN" -eq 0 ]; then
   mkdir -p "$SHIM_DIR" "$ARK_CONFIG_DIR"
