@@ -81,23 +81,26 @@ Give it an idea and a venue. ARK handles the rest.
 ## Quick Start
 
 ```bash
-# 1. Install
-pip install -e .
-
-# 2. Create a project (interactive wizard)
-ark new mma
-
-# 3. Run — ARK takes it from here
-ark run mma
-
-# 4. Monitor in real time
-ark monitor mma
-
-# 5. Check progress
-ark status mma
+curl -fsSL https://idea2paper.org/install.sh | bash
 ```
 
-The wizard walks you through: code directory, venue, research idea, authors, compute backend, figure generation, and Telegram setup.
+The script:
+
+1. Detects your OS, installs miniforge if missing, builds the `ark-base` and `ark` conda envs, pip-installs ARK editable into `~/ARK`, and adds the Claude Code + Gemini CLIs.
+2. Asks you for: **Gemini API key**, **Claude OAuth token** (`sk-ant-oat01-…` from `claude /login`), and **email for dashboard login**. Press Enter to skip any.
+3. Installs the dashboard as a `systemd --user` service on port `9527` (use `--no-webapp` to opt out).
+4. Prints a one-time **magic-link URL** for your email — click it once and you're logged into the local dashboard. No SMTP, no Google OAuth.
+
+After that the dashboard at <http://localhost:9527> is the primary UX — create projects, set the model, run, monitor. The CLI also works:
+
+```bash
+ark doctor          # verify install
+ark new myproject   # interactive project wizard
+ark run  myproject
+ark monitor myproject
+```
+
+Re-run `ark webapp login <email>` anytime for a fresh sign-in link. Full installer flags: [`website/homepage/install.sh --help`](website/homepage/install.sh).
 
 ### Start from an Existing PDF
 
@@ -117,6 +120,8 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 
 ### Installation
 
+The fastest path is the one-line installer in [Quick Start](#quick-start). It runs the steps below for you and prints onboarding hints. To do it by hand:
+
 ```bash
 # 1. Create the project research-stack template (no ARK code in here —
 #    each new project clones this env, so it must stay clean).
@@ -129,6 +134,10 @@ conda create -n ark python=3.11 -y
 conda activate ark
 pip install -e .                    # Core
 pip install -e ".[research]"       # + Gemini Deep Research & Nano Banana
+pip install -e ".[webapp]"         # + dashboard / systemd service support
+
+# 3. Verify
+ark doctor
 ```
 
 ---
@@ -256,6 +265,7 @@ Skills live in `skills/builtin/` and are auto-installed during pipeline bootstra
 | `ark delete <name>` | Remove project entirely |
 | `ark setup-bot` | Configure Telegram bot |
 | `ark list` | List all projects with status |
+| `ark doctor` | Diagnose a self-host install (envs, API keys, webapp) |
 | `ark webapp install` | Install web dashboard service |
 | `ark access list` | Show Dashboard Cloudflare Access allowlist |
 | `ark access add <email>` | Add email(s) to CF Access allowlist |
