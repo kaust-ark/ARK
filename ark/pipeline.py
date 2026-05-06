@@ -2067,6 +2067,7 @@ Output your evaluation in JSON format:
 - Experiments: setup table, baselines listed, main results table with numbers, ablation
 - Analysis/Discussion: explain WHY results are good/bad, failure cases
 - Conclusion: 1 paragraph summary + 1 paragraph future work
+- LLM Usage Statement: keep the pre-inserted `\\section*{{LLM Usage Statement}}` block VERBATIM between Conclusion and the bibliography. Do NOT rewrite, edit, translate, or remove it.
 
 ### 2. Appendix policy (use `\\appendix` only when content genuinely belongs there)
 - Belongs in appendix: full proofs/derivations, extended ablation tables, hyperparameter sweeps, prompt templates, implementation/config details, additional qualitative examples, dataset statistics beyond a summary
@@ -2899,6 +2900,65 @@ provide the title.
             total_agent_calls=total_calls,
         )
 
+    def _run_ethical_review(self) -> bool:
+        """Pre-launch ethical screening of the submitted research idea.
+
+        Hard-rejects clearly malicious / weaponization / explicit-sexual /
+        anti-human proposals. Allows everything else (including legitimate
+        dual-use security research). Result is cached at
+        ``state_dir/ethical_review.json`` so resumed runs skip re-review.
+
+        Returns True if the launch may proceed, False if blocked.
+        """
+        review_file = self.state_dir / "ethical_review.json"
+        if review_file.exists():
+            return True
+
+        idea = self._research_idea or ""
+        if not idea.strip():
+            return True
+
+        from ark.ethical_review import review_idea
+        api_key = (
+            os.environ.get("ANTHROPIC_API_KEY", "")
+            or self.config.get("anthropic_api_key", "")
+        )
+        model = self.config.get("model_variant") or "claude-sonnet-4-6"
+
+        self.log_step("Pre-launch ethical review...", "progress")
+        result = review_idea(idea, model=model, api_key=api_key)
+
+        if result.get("decision") == "block":
+            category = result.get("category", "unknown")
+            reason = result.get("reason", "")
+            self.log_section("Ethical Review FAILED — launch blocked")
+            self.log(
+                f"Category: {category}\n"
+                f"Reason: {reason}\n\n"
+                f"This proposal appears to violate ARK's ethical-use principles "
+                f"(no clearly malicious / weaponization / explicit-sexual / "
+                f"anti-human research). Please revise and resubmit.",
+                "RAW",
+            )
+            if getattr(self, "telegram", None) and self.telegram.is_configured:
+                self.telegram.send(
+                    f"{self.tg_header('⛔')}\n"
+                    f"<b>Ethical review blocked this project</b>\n"
+                    f"Category: <code>{_html.escape(str(category))}</code>\n"
+                    f"Reason: {_html.escape(str(reason))}",
+                    parse_mode="HTML",
+                )
+            self._sync_db(status="failed", phase="blocked_ethical")
+            return False
+
+        review_file.parent.mkdir(parents=True, exist_ok=True)
+        review_file.write_text(json.dumps(result, indent=2))
+        self.log_step(
+            f"Ethical review passed: {result.get('reason', '')[:80]}",
+            "success",
+        )
+        return True
+
     def run(self):
         """Main loop."""
         self.check_dependencies()
@@ -2910,6 +2970,10 @@ provide the title.
         self.log(f"Max iterations: {self.max_iterations}  |  Max time: {self.max_end_time.strftime('%Y-%m-%d %H:%M')}", "RAW")
         self.log(f"Log: {self.log_file}", "RAW")
         self.log("", "RAW")
+
+        # Pre-launch ethical review (cached on first pass; skipped on resume)
+        if not self._run_ethical_review():
+            return
 
         # Start background Telegram listener for bidirectional communication
         self.start_telegram_listener()

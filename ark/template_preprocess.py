@@ -295,6 +295,8 @@ _WRITER_SCAFFOLD = """
 \\section{Conclusion}
 % TO BE WRITTEN
 
+\\section*{LLM Usage Statement}
+This paper was produced with the assistance of ARK (idea2paper.org), an autonomous research framework powered by large language models. The author(s) should review all content and assume ultimate responsibility for its correctness, originality, and integrity.
 
 """
 

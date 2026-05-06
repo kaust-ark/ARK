@@ -440,6 +440,9 @@ def _get_main_tex_content(venue_format: str, title: str, venue_name: str, author
 
 
 
+\section*{LLM Usage Statement}
+This paper was produced with the assistance of ARK (idea2paper.org), an autonomous research framework powered by large language models. The author(s) should review all content and assume ultimate responsibility for its correctness, originality, and integrity.
+
 \bibliographystyle{plainnat}
 \bibliography{references}
 
