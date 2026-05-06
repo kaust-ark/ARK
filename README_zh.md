@@ -43,35 +43,26 @@ ARK 协调 **6 个专业 AI 智能体**，将研究构想转化为完整论文 &
 
 <table align="center">
 <tr>
-<td align="center" width="50%">
-<a href="https://idea2paper.org/assets/papers/marco.pdf"><img src="https://idea2paper.org/assets/paper-marco.png" alt="MARCO" width="320"></a>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/marco.pdf"><img src="https://idea2paper.org/assets/paper-marco.png" alt="Budget-Constrained Multi-Modal Research Synthesis" width="320"></a>
 <br>
-<strong>MARCO: Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</strong>
+<strong>Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</strong>
 <br>
 <sub>模板: EuroMLSys</sub>
 </td>
-<td align="center" width="50%">
+<td align="center" width="33%">
 <a href="https://idea2paper.org/assets/papers/heteroserve.pdf"><img src="https://idea2paper.org/assets/paper-heteroserve.png" alt="HeteroServe" width="320"></a>
 <br>
 <strong>HeteroServe: Capability-Weighted Batch Scheduling for Heterogeneous GPU Clusters in LLM Inference</strong>
 <br>
 <sub>模板: ICML</sub>
 </td>
-</tr>
-<tr>
-<td align="center" width="50%">
+<td align="center" width="33%">
 <a href="https://idea2paper.org/assets/papers/tierkv.pdf"><img src="https://idea2paper.org/assets/paper-tierkv.png" alt="TierKV" width="320"></a>
 <br>
 <strong>TierKV: Prefetch-Aware Memory Tiering for KV Cache in LLM Serving</strong>
 <br>
 <sub>模板: NeurIPS</sub>
-</td>
-<td align="center" width="50%">
-<a href="https://idea2paper.org/assets/papers/gac.pdf"><img src="https://idea2paper.org/assets/paper-gac.png" alt="GAC" width="320"></a>
-<br>
-<strong>Why Smaller Is Slower: Dimensional Misalignment in Compressed Large Language Models</strong>
-<br>
-<sub>模板: ICLR</sub>
 </td>
 </tr>
 </table>
