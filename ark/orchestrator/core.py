@@ -1726,13 +1726,42 @@ a {{ color: #0d9488; }}
         if self.findings_file.exists():
             try:
                 with open(self.findings_file) as f:
-                    findings = yaml.safe_load(f) or {}
+                    text = f.read()
+                findings = yaml.safe_load(text) or {}
                 return yaml.dump(findings, allow_unicode=True)[:500]
             except yaml.YAMLError as e:
+                # Try the same auto-repair as state.load_findings_summary
+                # so this read path doesn't lose evidence to a known bug.
+                try:
+                    from ark.findings_schema import attempt_repair
+                    repaired, changes = attempt_repair(text)
+                except Exception:
+                    repaired, changes = None, []
+                if repaired is not None:
+                    try:
+                        backup = self.findings_file.with_suffix(".yaml.malformed")
+                        backup.write_text(text)
+                        self.findings_file.write_text(repaired)
+                        findings = yaml.safe_load(repaired) or {}
+                        detail = "; ".join(changes) if changes else "auto-repaired"
+                        self.log(
+                            f"findings.yaml had a parse error and was "
+                            f"auto-repaired ({detail}); original saved to "
+                            f"{backup.name}",
+                            "INFO",
+                        )
+                        return yaml.dump(findings, allow_unicode=True)[:500]
+                    except Exception as repair_err:
+                        self.log(
+                            f"findings.yaml auto-repair failed at write step: "
+                            f"{repair_err}",
+                            "WARN",
+                        )
+                detail = "; ".join(changes) if changes else "no known repair pattern matched"
                 self.log(
                     f"findings.yaml is malformed ({type(e).__name__}); "
                     f"planner will proceed without it. Fix the file to "
-                    f"restore evidence-aware planning.",
+                    f"restore evidence-aware planning. Repair attempt: {detail}.",
                     "WARN",
                 )
                 return f"[findings.yaml unparseable: {e.__class__.__name__}]"

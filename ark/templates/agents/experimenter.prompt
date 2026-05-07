@@ -192,6 +192,53 @@ name the output column after a library you merely imported. If you
 fell back to a substitute per the Protocol's Failure contingency, label
 it accurately in findings.yaml so the writer reports it honestly.
 
+## YAML structure of findings.yaml (read before editing)
+
+`findings.yaml` is consumed by the planner / reviewer as evidence. If
+it fails to parse, those agents silently lose access to it and you get
+an "evidence-aware planning disabled" warning in the next iteration.
+
+The single most common bug is **a sibling top-level key left indented
+inside the `findings:` list scope**:
+
+```yaml
+# WRONG — `sanity_report:` parses as a list element key, breaks the file
+findings:
+  - id: f1
+    title: ...
+    metrics: { ... }
+  - id: f2
+    title: ...
+
+  sanity_report:        # ← 2-space indent: still inside the list scope
+    acknowledged: [...]
+```
+
+```yaml
+# RIGHT — `sanity_report:` is a sibling of `findings:`, indent column 0
+findings:
+  - id: f1
+    title: ...
+  - id: f2
+    title: ...
+
+sanity_report:          # ← column 0: top-level sibling
+  acknowledged: [...]
+
+coverage:               # ← column 0
+  ...
+```
+
+The YAML rule: a key at indentation N can only follow lines at
+indentation ≥ N within the SAME scope. Once you finish a `- ` list, any
+new top-level section (`coverage:`, `sanity_report:`, `surprises:`,
+`notes:`, `open_questions:`, `carryforward:`, `method_honesty_log:`)
+MUST start at column 0.
+
+Validate every save: after writing, run a quick mental parse — if you
+just closed a `findings:` list and the next line starts with two
+spaces but isn't a list item, **dedent it to column 0**.
+
 ## Coverage Echo (mandatory artifact)
 
 The `## Experimental Protocol` in `project_context.md` defines what each

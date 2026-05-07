@@ -50,6 +50,120 @@ def _parse_findings_text(text: str) -> Optional[Dict[str, Any]]:
     return loaded if isinstance(loaded, dict) else None
 
 
+# ────────────────────────────────────────────────────────────────────────
+#  Auto-repair for the most common LLM-emitted YAML mistake
+# ────────────────────────────────────────────────────────────────────────
+#
+# Symptom: agent finishes a `findings:` list, then writes a sibling
+# top-level key (`sanity_report:`, `coverage:`, `notes:`, ...) but
+# leaves it indented at the list-item column instead of dedenting to
+# column 0. PyYAML reports
+#
+#     expected <block end>, but found '?'
+#
+# at the offending line. This is the dominant source of the
+# "findings.yaml is malformed" warnings in production runs because
+# every LLM that has tried to extend findings.yaml has eventually made
+# this mistake at least once.
+#
+# The repair is conservative: only rewrite lines that look exactly
+# like ``  <identifier>:`` (two-space indent + bare identifier + colon
+# + nothing else on the line, possibly trailing whitespace) AND that
+# fall within or after a ``findings:`` list scope. Anything more
+# ambiguous is left alone — we'd rather log a malformed file than
+# corrupt an intentional structure.
+
+_BARE_KEY_AT_2SPACES = re.compile(r'^( {2})([a-z][a-z0-9_]*):\s*$')
+
+# Top-level identifiers we know are intended siblings of `findings:`
+# in ARK's findings.yaml schema. This guards against accidentally
+# dedenting an unrelated nested key that happens to match the regex.
+_KNOWN_TOP_LEVEL_KEYS = frozenset({
+    "findings",
+    "coverage",
+    "sanity_report",
+    "surprises",
+    "notes",
+    "open_questions",
+    "carryforward",
+    "method_honesty_log",
+})
+
+
+def attempt_repair(text: str) -> tuple[Optional[str], list[str]]:
+    """Best-effort fix for the common indent-of-sibling-key error.
+
+    Returns ``(repaired_text_or_None, log_messages)``. ``None`` is
+    returned when the text already parses cleanly OR when the heuristic
+    cannot find a confident repair. ``log_messages`` describes what was
+    changed so the caller can surface it. The function never raises.
+
+    Behaviour:
+    1. If the text already parses, return ``(None, [])``.
+    2. Otherwise, attempt one or more targeted dedents and re-parse.
+       Only dedent ``  <identifier>:`` lines whose identifier is in
+       ``_KNOWN_TOP_LEVEL_KEYS`` and that appear *after* the first
+       ``findings:`` list scope (or after another known top-level
+       sibling). All other malformed YAML shapes are left alone.
+    3. If the repaired text parses, return it. Otherwise return
+       ``(None, [...])`` with diagnostics.
+    """
+    try:
+        yaml.safe_load(text)
+        return None, []
+    except yaml.YAMLError:
+        pass
+
+    lines = text.split("\n")
+    repaired = list(lines)
+    changes: list[str] = []
+
+    # Find scope boundaries — track when we're inside the `findings:`
+    # list (or another top-level mapping) so we can be confident a
+    # 2-space `<known_key>:` is genuinely a misplaced sibling.
+    inside_findings_list = False
+    for i, line in enumerate(lines):
+        # Top-level key starts a new scope and ends `findings:`.
+        if re.match(r'^[a-z][a-z0-9_]*:\s*$', line):
+            inside_findings_list = (line.rstrip(": \t") == "findings")
+            continue
+
+        m = _BARE_KEY_AT_2SPACES.match(line)
+        if not m:
+            continue
+        key = m.group(2)
+        if key not in _KNOWN_TOP_LEVEL_KEYS:
+            continue
+        # Heuristic: only repair if we're currently inside the
+        # findings list (or otherwise after a known top-level scope
+        # — i.e. the only safe time to "dedent to top level"). If we
+        # see a 2-space `<known_key>:` while NOT in findings list,
+        # we assume the agent meant a nested key and skip.
+        if not inside_findings_list:
+            continue
+        repaired[i] = f"{key}:"
+        changes.append(
+            f"line {i+1}: dedented misplaced top-level key "
+            f"`{key}:` from 2-space to column 0"
+        )
+        # Once dedented, we are now in the new top-level scope.
+        inside_findings_list = False
+
+    if not changes:
+        return None, ["YAML parse error did not match the known indent-misplacement pattern"]
+
+    repaired_text = "\n".join(repaired)
+    try:
+        yaml.safe_load(repaired_text)
+    except yaml.YAMLError as e:
+        return None, [
+            *changes,
+            f"After {len(changes)} repair(s), YAML still malformed: {e.__class__.__name__}",
+        ]
+
+    return repaired_text, changes
+
+
 def validate_findings(
     findings_path: Path,
     project_root: Optional[Path] = None,
