@@ -1979,7 +1979,7 @@ a {{ color: #0d9488; }}
                 for f in files:
                     subprocess.run(["git", "add", f], cwd=self.code_dir, timeout=30)
             else:
-                latex_dir_name = self.config.get("latex_dir", "Latex")
+                latex_dir_name = self.config.get("latex_dir", "paper")
                 key_files = [
                     f"{latex_dir_name}/main.tex",
                     f"{latex_dir_name}/*.bib",

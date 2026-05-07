@@ -46,8 +46,8 @@ class WorkspaceManager:
         self.agents_dir = self.project_path / "agents"
         
         # Config-driven subpaths
-        self.latex_dir = self.code_dir / self.config.get("latex_dir", "Latex")
-        self.figures_dir = self.code_dir / self.config.get("figures_dir", "Latex/figures")
+        self.latex_dir = self.code_dir / self.config.get("latex_dir", "paper")
+        self.figures_dir = self.code_dir / self.config.get("figures_dir", "paper/figures")
 
         # 5. Ensure Directories Exist
         self.state_dir.mkdir(parents=True, exist_ok=True)

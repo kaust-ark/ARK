@@ -216,7 +216,7 @@ class PipelineMixin:
             venue_name = self.config.get('venue', 'top venue')
             review_output = self.run_agent(
                 "reviewer",
-                f"Please review the current paper {self.config.get('latex_dir', 'Latex')}/main.tex and the generated {self.config.get('latex_dir', 'Latex')}/main.pdf.\n\nReview according to {venue_name} standards.\n{visual_review}\nOutput a detailed review report and save to auto_research/state/latest_review.md",
+                f"Please review the current paper {self.config.get('latex_dir', 'paper')}/main.tex and the generated {self.config.get('latex_dir', 'paper')}/main.pdf.\n\nReview according to {venue_name} standards.\n{visual_review}\nOutput a detailed review report and save to auto_research/state/latest_review.md",
                 timeout=defaults.TIMEOUT_REVIEWER,
             )
         except Exception as e:

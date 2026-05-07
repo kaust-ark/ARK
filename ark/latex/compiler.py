@@ -977,7 +977,7 @@ class CompilerMixin:
         self.log_step(f"{len(missing)} critical citation(s) missing from paper, asking writer to add", "warning")
 
         missing_list = "\n".join(f"- \\cite{{{key}}} — {title}" for key, title in missing)
-        latex_dir_name = self.config.get("latex_dir", "Latex")
+        latex_dir_name = self.config.get("latex_dir", "paper")
 
         self.run_agent("writer", f"""
 The following critical citations are missing from the paper. They are marked as MUST CITE

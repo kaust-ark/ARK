@@ -1136,7 +1136,7 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
         issues = action_plan.get("issues", [])
         issues = [i for i in issues if i is not None and isinstance(i, dict)]
 
-        latex_dir_name = self.config.get("latex_dir", "Latex")
+        latex_dir_name = self.config.get("latex_dir", "paper")
         writing_tasks = []
 
         for issue in issues:
@@ -1621,7 +1621,7 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
 
             if len(lines) > 1:
                 lines.append(f"\nPlease cite these references in Related Work and other appropriate sections.")
-                lines.append(f"BibTeX entries are in {self.config.get('latex_dir', 'Latex')}/references.bib, please use \\cite{{}} to cite.")
+                lines.append(f"BibTeX entries are in {self.config.get('latex_dir', 'paper')}/references.bib, please use \\cite{{}} to cite.")
                 lines.append(f"\nDo NOT remove existing \\cite{{}} commands. When revising, only add or modify — never delete existing citations.")
                 lines.append(f"\n[NEEDS-CHECK] papers are treated as normal citations. Use them where appropriate based on content relevance.")
                 return "\n".join(lines)

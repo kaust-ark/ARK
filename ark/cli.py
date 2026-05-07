@@ -4043,7 +4043,7 @@ def cmd_cite_check(args):
         sys.exit(1)
 
     code_dir = Path(config.get("code_dir", ""))
-    latex_dir = code_dir / config.get("latex_dir", "Latex")
+    latex_dir = code_dir / config.get("latex_dir", "paper")
     bib_path = latex_dir / "references.bib"
 
     if not bib_path.exists():
@@ -4118,7 +4118,7 @@ def cmd_cite_debug(args):
 
     project_dir = get_projects_dir() / args.project
     code_dir = Path(config.get("code_dir", ""))
-    latex_dir = code_dir / config.get("latex_dir", "Latex")
+    latex_dir = code_dir / config.get("latex_dir", "paper")
     bib_path = latex_dir / "references.bib"
     lit_path = code_dir / "auto_research" / "state" / "literature.yaml"
 
@@ -4164,7 +4164,7 @@ def cmd_cite_debug(args):
 
     # Step 2: Writer (Related Work only)
     print(styled(Style.BOLD, "\n═══ Step 2: Writer (Related Work only) ═══\n"))
-    latex_dir_name = config.get("latex_dir", "Latex")
+    latex_dir_name = config.get("latex_dir", "paper")
     orch.run_agent("writer", f"""
 Write the Related Work section in {latex_dir_name}/main.tex.
 Use ONLY the citations available in {latex_dir_name}/references.bib (use \\cite{{key}} commands).

@@ -340,7 +340,7 @@ class AgentMixin:
 
         elif agent_type == "writer":
             if "main.tex" in output.lower():
-                summary_lines.append(f"Modified: {self.config.get('latex_dir', 'Latex')}/main.tex")
+                summary_lines.append(f"Modified: {self.config.get('latex_dir', 'paper')}/main.tex")
             fig_changes = re.findall(r"fig\d+|figure\s*\d+", output, re.IGNORECASE)
             if fig_changes:
                 summary_lines.append(f"Figures touched: {len(set(fig_changes))}")
