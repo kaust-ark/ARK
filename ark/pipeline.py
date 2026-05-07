@@ -2067,7 +2067,7 @@ Output your evaluation in JSON format:
 - Experiments: setup table, baselines listed, main results table with numbers, ablation
 - Analysis/Discussion: explain WHY results are good/bad, failure cases
 - Conclusion: 1 paragraph summary + 1 paragraph future work
-- LLM Usage Statement: keep the pre-inserted `\\section*{{LLM Usage Statement}}` block VERBATIM between Conclusion and the bibliography. Do NOT rewrite, edit, translate, or remove it.
+- LLM Usage Statement: keep the pre-inserted `\\section*{{LLM Usage Statement}}` block VERBATIM. It is *endmatter* (like Acknowledgments) — ARK's post-processing will automatically place it on the references page (after the body `\\clearpage`, before `\\bibliography`), and it does NOT count toward the body page limit. Do NOT rewrite, edit, translate, remove, or wrap it in `\\clearpage` yourself.
 
 ### 2. Appendix policy (use `\\appendix` only when content genuinely belongs there)
 - Belongs in appendix: full proofs/derivations, extended ablation tables, hyperparameter sweeps, prompt templates, implementation/config details, additional qualitative examples, dataset statistics beyond a summary

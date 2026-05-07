@@ -880,6 +880,8 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             body
             [BODY_END_MARKER]
             \\clearpage
+            \\section*{LLM Usage Statement}        ← endmatter, on the refs page
+            ... LLM Usage content ...
             \\bibliographystyle{...}
             \\bibliography{...}
             \\clearpage
@@ -893,12 +895,21 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
         body→appendix→bibliography order; this routine reorders the file
         in place so the rendered PDF matches the venue convention.
 
+        Boilerplate sections (LLM Usage Statement, Acknowledgments, etc.)
+        emitted between Conclusion and \\bibliography belong on the
+        references page — *after* the body \\clearpage, *before*
+        \\bibliography. Earlier versions of this routine left them in the
+        body region, which silently consumed page-limit budget and pushed
+        Conclusion / Limitations into a partial-fill last body page.
+        We now extract the LLM Usage block from the body and re-insert it
+        as endmatter on the references-page side of the \\clearpage.
+
         The body-end \\pdfsavepos marker is placed at the body / refs
         boundary (immediately before the \\clearpage that precedes
-        \\bibliography), so page-count metrics derived from the marker
-        exclude both the bibliography and the appendix — matching venue
-        page-limit conventions ("N pages excluding references and
-        appendix").
+        the LLM Usage Statement and \\bibliography), so page-count
+        metrics derived from the marker exclude the LLM Usage Statement,
+        the bibliography, and the appendix — matching venue page-limit
+        conventions ("N pages excluding references and appendix").
 
         Idempotent: running this on an already-canonical file
         produces a byte-identical result.
@@ -954,6 +965,37 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 
             tail = content[end_doc_pos:].rstrip()
 
+            # Extract LLM Usage Statement (and any other boilerplate
+            # endmatter sections) from the body. They belong on the
+            # references-page side of the \clearpage, not in the body.
+            # Pattern: \section*{LLM Usage Statement} ... up to next
+            # \section, \appendix, \bibliography, or \end{document}.
+            ENDMATTER_TITLES = [
+                r'LLM Usage Statement',
+                r'LLM Use Statement',
+                r'AI Usage Statement',
+                r'Acknowledg(?:e?ments|ements)?',
+            ]
+            endmatter_pattern = _re.compile(
+                r'\\section\*?\{\s*(?:' + '|'.join(ENDMATTER_TITLES) + r')\s*\}'
+                r'.*?'
+                r'(?=\\section\b|\\appendix\b|\\bibliography\b|\Z)',
+                _re.DOTALL,
+            )
+            endmatter_blocks = []
+            # Run pattern on body_section (and appendix_block when (a))
+            for m in endmatter_pattern.finditer(body_section):
+                endmatter_blocks.append(m.group(0).rstrip())
+            body_section = endmatter_pattern.sub('', body_section)
+            if reordered and appendix_block:
+                # case (a): writer put appendix between body and bib,
+                # but boilerplate could be inside that range too.
+                for m in endmatter_pattern.finditer(appendix_block):
+                    endmatter_blocks.append(m.group(0).rstrip())
+                appendix_block = endmatter_pattern.sub('', appendix_block)
+
+            endmatter_text = "\n\n".join(b for b in endmatter_blocks if b.strip())
+
             # Strip stray \clearpage from the trailing edges of each
             # piece — we re-insert canonical separators below.
             body_section = _re.sub(
@@ -966,6 +1008,13 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 appendix_block = _re.sub(
                     r'\\clearpage\s*$', '', appendix_block.rstrip()
                 ).rstrip()
+            if endmatter_text:
+                endmatter_text = _re.sub(
+                    r'^\s*\\clearpage\s*', '', endmatter_text.lstrip()
+                ).lstrip()
+                endmatter_text = _re.sub(
+                    r'\\clearpage\s*$', '', endmatter_text.rstrip()
+                ).rstrip()
 
             # Reassemble in canonical order.
             parts = [
@@ -973,8 +1022,10 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 "",
                 self._ARK_BODY_END_MARKER,
                 r"\clearpage",
-                bib_block,
             ]
+            if endmatter_text:
+                parts.extend(["", endmatter_text, ""])
+            parts.append(bib_block)
             if appendix_block:
                 parts.extend([
                     "",
@@ -990,6 +1041,17 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                     self.log(
                         "Reordered: body → bibliography → appendix "
                         "(matches acmart sample-sigplan convention)",
+                        "INFO",
+                    )
+                if endmatter_blocks:
+                    titles = []
+                    for b in endmatter_blocks:
+                        m = _re.search(r'\\section\*?\{\s*([^}]+?)\s*\}', b)
+                        if m:
+                            titles.append(m.group(1))
+                    self.log(
+                        f"Moved endmatter ({', '.join(titles)}) onto refs "
+                        f"page (after \\clearpage, before \\bibliography)",
                         "INFO",
                     )
         except Exception as e:
