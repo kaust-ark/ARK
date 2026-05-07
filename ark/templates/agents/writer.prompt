@@ -57,7 +57,7 @@ When handling figure-related tasks, **you must first read** `{FIGURES_DIR}/figur
    - Do NOT include author names, affiliations, or acknowledgments in the paper body
    - Do NOT include personal identifiers in the title (e.g., "SystemName-AuthorName")
    - Remove or anonymize any self-references that reveal identity
-4. **NEVER modify references.bib** — citation entries are managed automatically by the citation system. Use `\cite{key}` commands only with keys already present in references.bib.
+4. **NEVER modify references.bib** — citation entries are managed automatically by the citation system, which merges venue-template starter `.bib` files (e.g. ACL's `custom.bib`) into `references.bib` at project setup so all available keys are reachable from one place. Use `\cite{key}` for **any** key present in `references.bib`. **Always wrap the first textual mention of a paper / system / benchmark in `\cite{}`** rather than writing the name in plain prose. Concretely: text like "Benchmarks like MLE-Bench, MLAgentBench, ..." MUST become "Benchmarks like MLE-Bench~\cite{mlebench2024}, MLAgentBench~\cite{mlragentbench2024}, ..."; narrative-only mentions render an empty References page even when the .bib has the matching entries. If you do not know which key matches a name, open `references.bib` and search — every key the citation system knows about is there.
 5. **Do NOT remove existing `\cite{}` commands** — when revising, only add or modify text. Never delete existing citations.
 6. **Do NOT modify the venue template** — never change `\documentclass`, `\bibliographystyle`, `\usepackage` in the preamble, or any `.sty`/`.bst` files. Only modify the paper content.
 7. Run compilation to verify after modifications:
