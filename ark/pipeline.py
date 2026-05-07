@@ -1416,15 +1416,157 @@ in what that file actually says — do not guess.
 
     # ==================== Citation Bootstrapping ====================
 
-    def _bootstrap_citations_from_deep_research(self):
-        """Extract paper titles from Deep Research report via LLM, then fetch BibTeX via API.
+    def _merge_template_bibs_into_references(self):
+        r"""Merge entries from venue-template .bib files into references.bib.
 
-        1. LLM reads the report and extracts paper titles as JSON list
-        2. Each title is searched via DBLP/CrossRef/arXiv/S2
-        3. Found papers get official BibTeX written to references.bib
-        4. Not-found titles get a keyword retry, then [NEEDS-CHECK] + Telegram notification
+        Many venues (ACL/EMNLP/NAACL via acl-style-files, NeurIPS via
+        the neurips template) ship a starter `.bib` file under a
+        non-canonical name — `custom.bib`, `references.bib`,
+        `mybib.bib`, etc. The writer agent is told (via
+        ``ark/templates/agents/writer.prompt``) to use keys from
+        ``references.bib``. ARK's citation system writes auto-fetched
+        entries to ``references.bib``. The venue's starter file is
+        ignored by both, even though ``\bibliography{custom}`` in the
+        rendered main.tex reads it. Result: writer sees an empty
+        ``references.bib``, concludes "no keys available", emits zero
+        ``\cite{}`` calls, and the final paper renders with an empty
+        References section.
+
+        This routine consolidates the situation: read every other
+        ``.bib`` file in the LaTeX directory, parse out its
+        ``@<type>{<key>, ...}`` entries, and append any entries whose
+        key is NOT already present in ``references.bib``. The original
+        venue-template ``.bib`` files are left in place so the venue
+        template's example ``\bibliography{custom}`` keeps working,
+        but every key is now also reachable via ``references.bib``.
+
+        The merge is idempotent (re-running adds no duplicates) and
+        non-destructive (only ``references.bib`` is modified).
+        """
+        import re as _re
+
+        latex_dir = getattr(self, "latex_dir", None)
+        if latex_dir is None or not latex_dir.exists():
+            return
+
+        refs_path = latex_dir / "references.bib"
+        if not refs_path.exists():
+            refs_path.write_text("% ARK auto-managed references\n\n")
+
+        existing_text = refs_path.read_text(errors="replace")
+        # @<type>{<key>, — capture key
+        entry_re = _re.compile(r'@\w+\s*\{\s*([^,\s}]+)', _re.MULTILINE)
+        existing_keys = set(entry_re.findall(existing_text))
+
+        # Find sibling .bib files (skip references.bib itself and any
+        # *.bib.txt note files like ACL's anthology.bib.txt).
+        merged_keys: list[str] = []
+        merged_from: list[str] = []
+        for sibling in sorted(latex_dir.glob("*.bib")):
+            if sibling.name == "references.bib":
+                continue
+            try:
+                text = sibling.read_text(errors="replace")
+            except Exception:
+                continue
+
+            # Walk top-level entries by tracking brace depth so multi-line
+            # entries are captured intact and entry boundaries are correct.
+            entries = self._split_top_level_bib_entries(text)
+            new_block = []
+            for entry in entries:
+                m = entry_re.match(entry)
+                if not m:
+                    continue
+                key = m.group(1)
+                if key in existing_keys:
+                    continue
+                new_block.append(entry.strip())
+                existing_keys.add(key)
+                merged_keys.append(key)
+            if new_block:
+                merged_from.append(sibling.name)
+                existing_text = (
+                    existing_text.rstrip() +
+                    f"\n\n% Merged from {sibling.name} ({len(new_block)} entries)\n\n" +
+                    "\n\n".join(new_block) + "\n"
+                )
+
+        if merged_keys:
+            refs_path.write_text(existing_text)
+            self.log(
+                f"Merged {len(merged_keys)} bib entries into references.bib "
+                f"from {', '.join(merged_from)}: {', '.join(merged_keys[:8])}"
+                + ("..." if len(merged_keys) > 8 else ""),
+                "INFO",
+            )
+
+    @staticmethod
+    def _split_top_level_bib_entries(text: str) -> list[str]:
+        """Split a .bib file body into top-level @entry{...} chunks.
+
+        Naive `re.findall(r'@\\w+\\{[^}]*\\}', ...)` misses entries with
+        nested braces (e.g., titles like ``{The {ACL} 2026 Special
+        Theme}``). Walk the brace structure manually instead.
+        """
+        out: list[str] = []
+        i = 0
+        n = len(text)
+        while i < n:
+            # find next @
+            at = text.find("@", i)
+            if at < 0:
+                break
+            # entry must look like @ident{ — guard against @-in-title
+            j = at + 1
+            while j < n and (text[j].isalnum() or text[j] == "_"):
+                j += 1
+            # skip whitespace then expect {
+            k = j
+            while k < n and text[k] in " \t":
+                k += 1
+            if k >= n or text[k] != "{":
+                i = at + 1
+                continue
+            depth = 1
+            p = k + 1
+            while p < n and depth > 0:
+                ch = text[p]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                p += 1
+            if depth == 0:
+                out.append(text[at:p])
+                i = p
+            else:
+                # unbalanced — bail on this entry, advance past @
+                i = at + 1
+        return out
+
+    def _bootstrap_citations_from_deep_research(self):
+        r"""Extract paper titles from Deep Research report via LLM, then fetch BibTeX via API.
+
+        1. Merge any venue-template .bib files (e.g. ACL's `custom.bib`)
+           into `references.bib` so the writer prompt's "use keys from
+           references.bib" rule actually surfaces the template's
+           starter citations. Without this merge, ARK and the venue
+           template each maintain a separate .bib file and the writer
+           sees a near-empty `references.bib` because the entries live
+           in `custom.bib` — that has caused multiple final papers to
+           ship with `\cite{}` count = 0 and an empty References page.
+        2. LLM reads the report and extracts paper titles as JSON list
+        3. Each title is searched via DBLP/CrossRef/arXiv/S2
+        4. Found papers get official BibTeX written to references.bib
+        5. Not-found titles get a keyword retry, then [NEEDS-CHECK] + Telegram notification
         """
         from ark.citation import bootstrap_citations
+
+        # Step 0: merge venue-template .bib files into references.bib.
+        # Idempotent: re-running on a file that already has all template
+        # entries is a no-op.
+        self._merge_template_bibs_into_references()
 
         deep_research_file = self.state_dir / "deep_research.md"
         if not deep_research_file.exists():
