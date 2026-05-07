@@ -668,6 +668,61 @@ After running the experiment:
         self.log_step(f"Issue {issue.get('id')} completed", "success")
         self._generate_figures_from_results()
 
+    def _format_reviewer_context_block(self, task: dict) -> str:
+        """Surface the reviewer's verbatim observation, fix, acceptance criterion,
+        and priority justification to the writer agent. The planner is required
+        (per planner.prompt Output Format) to lift these fields from the review.
+        Without this, the writer only sees the planner's task summary and tends
+        to fix the description rather than the underlying issue, which is the
+        dominant cause of issues being re-flagged in the next iteration.
+        """
+        if not isinstance(task, dict):
+            return ""
+
+        observation = (task.get("reviewer_observation") or "").strip()
+        fix = (task.get("reviewer_fix") or "").strip()
+        criterion = (task.get("acceptance_criterion") or "").strip()
+        justification = (task.get("priority_justification") or "").strip()
+        prior_iter_id = task.get("prior_iter_id")
+        prior_attempted = task.get("prior_attempted")
+
+        if not any([observation, fix, criterion, justification, prior_iter_id]):
+            return ""
+
+        lines = ["\n## Reviewer Context (from latest review report)\n"]
+        if observation:
+            lines.append(f"### What the reviewer observed\n{observation}\n")
+        if fix:
+            lines.append(f"### Reviewer's suggested fix\n{fix}\n")
+        if criterion:
+            lines.append(
+                "### Acceptance criterion (next iteration's reviewer will check this)\n"
+                f"{criterion}\n"
+            )
+        if justification:
+            lines.append(f"### Why this priority\n{justification}\n")
+        if prior_iter_id:
+            attempted_note = (
+                "The previous writer DID attempt this last round and the fix did not satisfy the reviewer."
+                if prior_attempted
+                else "The previous writer did NOT attempt this last round."
+            )
+            lines.append(
+                f"### Cross-iteration linkage\n"
+                f"This continues prior issue **{prior_iter_id}**. {attempted_note} "
+                f"Try a different approach if the prior approach failed.\n"
+            )
+
+        if criterion:
+            lines.append(
+                "### MANDATORY VERIFICATION (before marking the task done)\n"
+                "After your edit, re-read the modified section and self-check: would the "
+                "acceptance criterion above now pass when the reviewer reads the rendered PDF? "
+                "If no, iterate on the edit. Do NOT stop at \"I touched the right paragraph\".\n"
+            )
+
+        return "".join(lines)
+
     def _get_page_constraint_warning(self) -> str:
         """Return a page constraint warning string for the writer."""
         venue_pages = self.config.get("venue_pages")
@@ -1498,6 +1553,7 @@ writer agent will pick those up in a later task.
             self.log_step(f"Writing (individual): {task_id} - {task_title[:40]}", "progress")
 
             literature_context = self._get_literature_context_for_task(task)
+            reviewer_context = self._format_reviewer_context_block(task)
 
             page_warning = self._get_page_constraint_warning()
             figure_list = self._list_available_figures()
@@ -1509,6 +1565,7 @@ You have only one task to complete. Please complete it carefully and thoroughly.
 
 ## Task: {task_id} - {task_title}
 {task_desc}
+{reviewer_context}
 {literature_context}
 
 ## Requirements
@@ -1547,9 +1604,11 @@ You have only one task to complete. Please complete it carefully and thoroughly.
 
             task_list = []
             for idx, task in enumerate(batch_tasks, 1):
+                reviewer_block = self._format_reviewer_context_block(task)
                 task_list.append(f"""
 ### Task {idx}: {task.get('id', '')} - {task.get('title', '')}
 {task.get('description', '')}
+{reviewer_block}
 """)
 
             page_warning = self._get_page_constraint_warning()
