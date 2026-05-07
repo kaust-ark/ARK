@@ -833,6 +833,14 @@ Be thorough and faithful to the proposal.
             self.log_step("Deep research report exists, skipping", "info")
 
         # ── Step 3: Specialization ──────────────────────────────────────
+        # Always sync agent prompt bases from templates first, regardless of
+        # whether the project has already been initialized. Edits to
+        # `ark/templates/agents/*.prompt` need to reach already-specialized
+        # projects on every Continue, not just on first init. The sync
+        # preserves any '## Project-Specific Knowledge' addendum that
+        # _specialize_agent_prompts appended below the base.
+        self._sync_agent_prompt_bases()
+
         ctx_file = self.state_dir / "project_context.md"
         if not ctx_file.exists():
             self.log_step_header(3, 4, "Specialization")
@@ -867,12 +875,9 @@ Write `auto_research/state/project_context.md` with sections:
             self.notify_progress("Project context", "ready", level="done")
 
             # 3.2: Specialize agent prompts (code-driven, one call per agent)
-            # First refresh the template base for any already-specialized
-            # project — fixes a staleness bug where prompt template edits
-            # in ark/ never reached a project that had already been
-            # specialized on an earlier run. See _sync_agent_prompt_bases
-            # docstring for the preservation logic.
-            self._sync_agent_prompt_bases()
+            # _sync_agent_prompt_bases already ran above (unconditionally),
+            # so the per-project prompt files reflect the latest template
+            # before specialization is appended.
             self.log_step("Specializing agent prompts...", "progress")
             self.notify_progress(
                 "Agent prompts", "specializing for this project...", level="working"
