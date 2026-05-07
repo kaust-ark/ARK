@@ -46,6 +46,13 @@ Read the following files:
 3. `auto_research/state/idea.md` - Original research proposal (check experiment alignment)
 4. `auto_research/state/project_context.md` - `## Experimental Protocol` section (the design contract)
 5. `auto_research/state/findings.yaml` - latest experiment outputs, especially the `coverage:` field
+6. `auto_research/state/unresolved_overlaps.yaml` (if it exists) - figures whose
+   text overlaps Layer-1 auto-fix could not resolve. Each entry MUST become a
+   `FIGURE_CODE_REQUIRED` task in the action plan, priority `high`, with the
+   redesign hints from the file pasted into the task description so the coder
+   agent has concrete options (move annotation outside plot, redesign as 2x2
+   grouped bars, etc.). Do NOT mark these as `WRITING_ONLY` — they require
+   modifying `scripts/create_paper_figures.py`, not `main.tex`.
 
 ## Drift Audit (run BEFORE composing the action plan)
 

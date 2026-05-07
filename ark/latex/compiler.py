@@ -720,17 +720,36 @@ class CompilerMixin:
                         pass  # Already registered
             save_manifest(self.figures_dir, manifest)
 
-            # Step 3.1: Programmatic overlap detection and auto-fix
+            # Step 3.1: Programmatic overlap detection and auto-fix.
+            # Two-layer architecture:
+            #   Layer-1 (figure_overlap.check_and_fix_figures) — cheap regex
+            #     fixes; runs up to 3 rounds.
+            #   Layer-2 (the coder agent) — when Layer-1 exhausts,
+            #     unresolved overlaps are written to
+            #     ``auto_research/state/unresolved_overlaps.yaml`` so the
+            #     next planner pass converts each into a
+            #     FIGURE_CODE_REQUIRED task. The planner reads that file
+            #     as part of its standard input set.
             try:
                 from ark.figure_overlap import check_and_fix_figures
+                state_dir = self.code_dir / "auto_research" / "state"
                 overlap_report = check_and_fix_figures(
                     full_script, self.figures_dir, geo, log_fn=self.log,
+                    state_dir=state_dir,
                 )
                 if overlap_report.get("summary", {}).get("with_overlaps", 0) > 0:
                     self.log_step("Regenerating figures after overlap fixes...", "progress")
                     backups = backup_protected(self.figures_dir, manifest)
                     self.generate_figures()
                     restore_protected(self.figures_dir, backups, log_fn=self.log)
+                if overlap_report.get("escalation_needed"):
+                    self.log(
+                        "Unresolved figure overlaps escalated to coder via "
+                        "auto_research/state/unresolved_overlaps.yaml — the "
+                        "next planner iteration will create FIGURE_CODE_REQUIRED "
+                        "tasks to redesign the affected figures.",
+                        "WARN",
+                    )
             except Exception as e:
                 self.log(f"Overlap detection error (non-fatal): {e}", "WARN")
         else:
