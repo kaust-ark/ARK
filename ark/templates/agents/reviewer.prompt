@@ -208,6 +208,56 @@ the paper must still ACKNOWLEDGE the gap in text; say so explicitly.
 | Innovation | Novelty, significance of contributions, impact | 20% |
 | Writing Quality | Language fluency, logical clarity, structural soundness | 20% |
 
+## Venue-Specific Acceptance Bar (calibrate scoring against THIS venue)
+
+This paper targets: **{VENUE_NAME}** ({VENUE_FORMAT} template, {VENUE_PAGES} pages of body text).
+
+The 1–10 score scale below is calibrated against the actual acceptance bar of this venue. **Do not apply a generic "top venue" bar across the board** — a 4-page short paper is not evaluated by long-paper criteria, and TMLR is not evaluated by NeurIPS criteria. Anchor your numeric scores to the table below.
+
+### Short papers (≤ 4 body pages — e.g. ACL Short / EMNLP Short / NAACL Short / Workshop)
+
+A short paper is a *small, focused contribution*: one finding, one method, or one careful empirical observation, communicated cleanly. It is NOT a long paper with the experiments amputated.
+
+- **8.5+** = strong: contribution is novel, evidence is sufficient for the focused claim, writing is publication-clean.
+- **7.0–8.0** = clear accept at this venue: one clear contribution, evidence sufficient for the focused claim, writing is sound. Some minor issues are acceptable.
+- **6.0–7.0** = borderline / weak accept with revision.
+- **< 6.0** = the focused contribution itself is unclear, unsupported, or duplicates known work.
+- DO NOT subtract points for "lack of comprehensive ablation" or "narrow scope" — short papers are explicitly not held to that bar. Penalising "this could have been a long paper" is a calibration error.
+
+### Long papers (8–9 body pages — e.g. ACL Long / EMNLP Long / NAACL Long / NeurIPS / ICML / ICLR / CVPR)
+
+A long paper is expected to deliver a *novel contribution backed by comprehensive experiments and competitive positioning*.
+
+- **8.5+** = clear accept: novel contribution + thorough experiments + clean writing + good positioning vs. prior work.
+- **7.5–8.0** = borderline accept: contribution is real, experiments are sufficient, with addressable issues.
+- **6.5–7.5** = borderline / revise-and-resubmit.
+- **< 6.5** = below the venue's bar — missing experiments, unclear novelty, or significant issues.
+
+### TMLR
+
+TMLR's editorial criteria are explicit: **technical correctness and clarity matter; "novelty" and "significance" are not acceptance criteria**. A correct paper that contributes a small but solid finding is publishable.
+
+- **7.5+** = publishable: claims are correct, evidence supports them, writing is clear.
+- **6.5–7.5** = correct but presentation is the blocker — usually a writing or layout fix.
+- **< 6.5** = a correctness or clarity problem is severe enough that a careful reader cannot trust the paper.
+- DO NOT use "incremental contribution", "limited novelty", or "narrow scope" as a reduction reason — TMLR explicitly accepts those papers.
+
+### Top systems venues (OSDI / SOSP / NSDI / USENIX ATC / IEEE S&P / EuroSys)
+
+A top systems paper needs *measurable system contributions* (latency / throughput / cost) at *real-system scale*, plus reproducible artifacts.
+
+- **8.5+** = clear accept: measurable system win + real workloads + artifact.
+- **7.5–8.0** = borderline accept.
+- **< 7.5** = below the venue's bar — synthetic-only experiments, missing artifact, or no real-system measurement.
+
+### Calibration self-check (mandatory)
+
+When you assign the **Total** score, name the calibration line you used. Example:
+
+> Total = 7.4 / 10 (calibrated against Short-paper rubric: clean focused contribution, evidence sufficient for the focused claim, one minor presentation issue).
+
+Do not silently use a different bar than the venue's actual one.
+
 ## Issue Naming Rules (IMPORTANT)
 
 Each issue must have a **short, descriptive title** that captures its semantic meaning.

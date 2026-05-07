@@ -89,17 +89,22 @@ def ensure_project_symlinks(project_dir: Path, code_dir: str):
 # ============================================================
 
 VENUES = [
-    {"name": "NeurIPS",    "format": "neurips",  "pages": 9},
-    {"name": "ICML",       "format": "icml",     "pages": 9},
-    {"name": "ICLR",       "format": "iclr",     "pages": 9},
-    {"name": "ACL",        "format": "acl",       "pages": 8},
-    {"name": "EMNLP",      "format": "acl",       "pages": 8},
-    {"name": "CVPR",       "format": "cvpr",      "pages": 8},
-    {"name": "EuroMLSys",  "format": "sigplan",   "pages": 6},
-    {"name": "MLSys",      "format": "mlsys",     "pages": 12},
-    {"name": "INFOCOM",    "format": "ieee",      "pages": 9},
-    {"name": "OSDI",       "format": "usenix",    "pages": 14},
-    {"name": "SOSP",       "format": "sigplan",   "pages": 15},
+    {"name": "NeurIPS",        "format": "neurips",  "pages": 9},
+    {"name": "ICML",           "format": "icml",     "pages": 9},
+    {"name": "ICLR",           "format": "iclr",     "pages": 9},
+    {"name": "ACL",            "format": "acl",      "pages": 8},
+    {"name": "ACL Short",      "format": "acl",      "pages": 4},
+    {"name": "EMNLP",          "format": "acl",      "pages": 8},
+    {"name": "EMNLP Short",    "format": "acl",      "pages": 4},
+    {"name": "NAACL",          "format": "acl",      "pages": 8},
+    {"name": "NAACL Short",    "format": "acl",      "pages": 4},
+    {"name": "TMLR",           "format": "article",  "pages": 0},
+    {"name": "CVPR",           "format": "cvpr",     "pages": 8},
+    {"name": "EuroMLSys",      "format": "sigplan",  "pages": 6},
+    {"name": "MLSys",          "format": "mlsys",    "pages": 12},
+    {"name": "INFOCOM",        "format": "ieee",     "pages": 9},
+    {"name": "OSDI",           "format": "usenix",   "pages": 14},
+    {"name": "SOSP",           "format": "sigplan",  "pages": 15},
 ]
 
 OTHER_VENUES = [

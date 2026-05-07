@@ -2420,24 +2420,29 @@ async def api_venues():
     """Return supported venues list."""
     venues = [
         # Verified
-        {"name": "ICML",       "format": "icml",     "pages": 9,  "year": 2025, "tag": "[Verified] (Default)"},
-        {"name": "NeurIPS",    "format": "neurips",  "pages": 9,  "year": 2025, "tag": "[Verified]"},
-        {"name": "EuroMLSys",  "format": "euromlsys",  "pages": 6, "year": 2025, "tag": "[Verified]"},
+        {"name": "ICML",         "format": "icml",     "pages": 9,  "year": 2025, "tag": "[Verified] (Default)"},
+        {"name": "NeurIPS",      "format": "neurips",  "pages": 9,  "year": 2025, "tag": "[Verified]"},
+        {"name": "EuroMLSys",    "format": "euromlsys", "pages": 6, "year": 2025, "tag": "[Verified]"},
         # ML / AI
-        {"name": "ICLR",       "format": "iclr",     "pages": 9,  "year": 2026},
-        {"name": "ACL",        "format": "acl",      "pages": 8,  "year": 2025},
-        {"name": "EMNLP",      "format": "emnlp",    "pages": 8,  "year": 2025},
-        {"name": "CVPR",       "format": "cvpr",     "pages": 8,  "year": 2025},
-        {"name": "MLSys",      "format": "mlsys",    "pages": 8,  "year": 2026},
+        {"name": "ICLR",         "format": "iclr",     "pages": 9,  "year": 2026},
+        {"name": "ACL",          "format": "acl",      "pages": 8,  "year": 2025},
+        {"name": "ACL Short",    "format": "acl",      "pages": 4,  "year": 2025},
+        {"name": "EMNLP",        "format": "emnlp",    "pages": 8,  "year": 2025},
+        {"name": "EMNLP Short",  "format": "emnlp",    "pages": 4,  "year": 2025},
+        {"name": "NAACL",        "format": "acl",      "pages": 8,  "year": 2025},
+        {"name": "NAACL Short",  "format": "acl",      "pages": 4,  "year": 2025},
+        {"name": "TMLR",         "format": "article",  "pages": 0,  "year": 2026},
+        {"name": "CVPR",         "format": "cvpr",     "pages": 8,  "year": 2025},
+        {"name": "MLSys",        "format": "mlsys",    "pages": 8,  "year": 2026},
         # Systems
-        {"name": "SOSP",       "format": "sosp",     "pages": 14, "year": 2025},
-        {"name": "EuroSys",    "format": "sosp",     "pages": 12, "year": 2026},
-        {"name": "NSDI",       "format": "osdi",     "pages": 14, "year": 2025},
-        {"name": "OSDI",       "format": "osdi",     "pages": 14, "year": 2025},
-        {"name": "USENIX ATC", "format": "osdi",     "pages": 12, "year": 2026},
-        {"name": "IEEE S&P",   "format": "neurips",  "pages": 13, "year": 2025},
+        {"name": "SOSP",         "format": "sosp",     "pages": 14, "year": 2025},
+        {"name": "EuroSys",      "format": "sosp",     "pages": 12, "year": 2026},
+        {"name": "NSDI",         "format": "osdi",     "pages": 14, "year": 2025},
+        {"name": "OSDI",         "format": "osdi",     "pages": 14, "year": 2025},
+        {"name": "USENIX ATC",   "format": "osdi",     "pages": 12, "year": 2026},
+        {"name": "IEEE S&P",     "format": "neurips",  "pages": 13, "year": 2025},
         # Networking
-        {"name": "INFOCOM",    "format": "infocom",  "pages": 9,  "year": 2025},
+        {"name": "INFOCOM",      "format": "infocom",  "pages": 9,  "year": 2025},
     ]
     return JSONResponse(venues)
 
