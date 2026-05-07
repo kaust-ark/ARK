@@ -292,6 +292,26 @@ You must use the following format for the review report:
 
 **Rating: [Accept/Weak Accept/Borderline/Weak Reject/Reject]**
 
+## Delta from Prior Iteration (MANDATORY when prior review exists)
+
+If a "Cross-Iteration Calibration" block was provided in your task input
+(i.e., this is iter ≥ 2), reconcile your score with the prior review:
+
+- **Resolved**: list the prior M*/m* IDs that are now fixed.
+- **Partially resolved**: list IDs where the issue is reduced but not gone.
+- **Still present**: list IDs that remain unchanged.
+- **Newly introduced**: list any issues YOU are raising for the first
+  time this iter, with a one-sentence justification of why they became
+  visible now (e.g. "newly introduced by iter-N edit", "missed last
+  round").
+
+If `score < prior_score`, you must explicitly identify which newly
+introduced issues caused the regression — DO NOT mark a score down
+solely because remaining minor issues are now visible against fewer
+majors. Use the absolute Venue Calibration to anchor your number.
+
+If iter 1 (no prior review), write `N/A — first review`.
+
 ## Acceptance Pathway
 
 State where the paper stands for the target venue AND what pathway

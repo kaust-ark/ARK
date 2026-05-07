@@ -210,13 +210,25 @@ class PipelineMixin:
 
         self.log_step_header(step_num, total_steps, "Review Paper")
         self._run_citation_verification()
-        
+
+        # Snapshot the *previous* iter's review (currently at
+        # latest_review.md) into the per-iter history archive BEFORE
+        # the new reviewer overwrites it. This gives the new reviewer
+        # access to "what I said last time" so it can do absolute-scale
+        # calibration instead of arbitrarily ratcheting bar each iter.
+        prior_review_section = self._archive_and_load_prior_review()
+
         visual_review = self._build_visual_review_section()
         try:
             venue_name = self.config.get('venue', 'top venue')
             review_output = self.run_agent(
                 "reviewer",
-                f"Please review the current paper {self.config.get('latex_dir', 'paper')}/main.tex and the generated {self.config.get('latex_dir', 'paper')}/main.pdf.\n\nReview according to {venue_name} standards.\n{visual_review}\nOutput a detailed review report and save to auto_research/state/latest_review.md",
+                f"Please review the current paper {self.config.get('latex_dir', 'paper')}/main.tex "
+                f"and the generated {self.config.get('latex_dir', 'paper')}/main.pdf.\n\n"
+                f"Review according to {venue_name} standards.\n"
+                f"{visual_review}\n"
+                f"{prior_review_section}\n"
+                f"Output a detailed review report and save to auto_research/state/latest_review.md",
                 timeout=defaults.TIMEOUT_REVIEWER,
             )
         except Exception as e:
@@ -247,6 +259,106 @@ class PipelineMixin:
         self.save_step_checkpoint(step_num, "Review Paper")
         self.log_step_header(step_num, total_steps, "Review Paper", "end")
         return review_output, score, issue_ids
+
+    def _archive_and_load_prior_review(self) -> str:
+        """Snapshot the prior iter's review and build the cross-iter
+        calibration block to inject into the new reviewer's prompt.
+
+        Without this, every reviewer call is independent — the new
+        reviewer has no memory of what the previous reviewer asked
+        for, can't tell which issues were addressed, and tends to
+        ratchet up severity of remaining nitpicks until a paper that
+        actually improved scores worse than its predecessor. The
+        block we return:
+
+        1. Names the score the previous iter received.
+        2. Hands the new reviewer the prior review report verbatim,
+           so it can check ``did the M1/M2 issues the last reviewer
+           raised actually get fixed?`` instead of inventing a fresh
+           list.
+        3. Gives explicit absolute-scale calibration rules so the
+           reviewer doesn't escalate minor issues into majors just
+           because no real majors remain.
+
+        Side effect: archives the previous ``latest_review.md`` into
+        ``auto_research/state/.review_history/iter_<n>.md`` so the
+        per-iter audit trail survives across runs.
+        """
+        review_path = self.state_dir / "latest_review.md"
+        if not review_path.exists():
+            # First iter — nothing to calibrate against.
+            return ""
+        try:
+            prior_text = review_path.read_text(errors="replace")
+        except Exception:
+            return ""
+        if not prior_text.strip():
+            return ""
+
+        # Archive the prior review under .review_history/ keyed by
+        # the iteration number that produced it (current iter - 1).
+        prior_iter = max(1, getattr(self, "iteration", 1) - 1)
+        history_dir = self.state_dir / ".review_history"
+        try:
+            history_dir.mkdir(parents=True, exist_ok=True)
+            archive_path = history_dir / f"iter_{prior_iter}.md"
+            if not archive_path.exists():
+                archive_path.write_text(prior_text)
+        except Exception as e:
+            self.log(f"Could not archive prior review: {e}", "WARN")
+
+        # Pull the prior score out of memory.yaml (already maintained
+        # by self.memory.record_issues / save_paper_state).
+        prior_score: Optional[float] = None
+        try:
+            mem_path = self.state_dir / "memory.yaml"
+            if mem_path.exists():
+                import yaml as _yaml
+                mem = _yaml.safe_load(mem_path.read_text()) or {}
+                history = mem.get("score_history") or []
+                if history:
+                    last = history[-1]
+                    if isinstance(last, dict):
+                        prior_score = last.get("score")
+        except Exception:
+            prior_score = None
+
+        score_line = (
+            f"- Prior iteration ({prior_iter}) Total score: **{prior_score:.1f}/10**\n"
+            if isinstance(prior_score, (int, float))
+            else f"- Prior iteration ({prior_iter}) score: not parsed (assume nearby).\n"
+        )
+
+        # Cap prior review payload so the reviewer's prompt doesn't
+        # blow up — full review is still on disk if needed.
+        prior_excerpt = prior_text
+        if len(prior_excerpt) > 8000:
+            prior_excerpt = prior_excerpt[:8000] + "\n\n[... truncated; full review at auto_research/state/.review_history/iter_{}.md ...]".format(prior_iter)
+
+        return (
+            "\n\n## Cross-Iteration Calibration (MANDATORY)\n\n"
+            f"{score_line}"
+            f"- Per-iter review archive: `auto_research/state/.review_history/iter_{prior_iter}.md`\n\n"
+            "You must use the prior review as the calibration anchor for this round. "
+            "Specifically:\n\n"
+            "1. **Compare each prior issue to the current paper.** For every M1/M2/m1/... raised "
+            "previously, decide one of: `RESOLVED` / `PARTIALLY_RESOLVED` / `STILL_PRESENT` / "
+            "`NEW_PROBLEM_INTRODUCED_INSTEAD`. State this in a `## Delta from Prior Iteration` "
+            "section in your review.\n"
+            "2. **Score must reflect the delta.** A paper that resolved 3 of 4 majors with no new "
+            "majors must score *higher* than the prior iter. A paper where remaining issues are "
+            "objectively minor must NOT be re-classified as Major just because they are now the "
+            "worst remaining. Use the absolute Venue Calibration above — a nitpick is a nitpick "
+            "regardless of how few issues remain.\n"
+            "3. **Do not re-raise issues that were RESOLVED.** If you cannot articulate a NEW "
+            "issue beyond the previous round, the score should rise toward the venue accept bar.\n"
+            "4. **New issues require justification.** If you raise an issue that was not in the "
+            "prior review, briefly say why it became visible now (e.g. \"newly introduced by "
+            "iter-N edit\", \"now visible because previous M1 was resolved\", or \"I missed it "
+            "last round, acknowledging\").\n\n"
+            "### Prior review (verbatim):\n\n"
+            f"```markdown\n{prior_excerpt}\n```\n"
+        )
 
     def _build_visual_review_section(self) -> str:
         page_images = self._maybe_generate_page_images()
