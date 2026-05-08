@@ -21,6 +21,7 @@ import subprocess
 logger = logging.getLogger("website.dashboard.routes")
 
 MAX_PROJECTS_PER_USER = 10
+MAX_PROJECTS_PER_ADMIN = 25
 MAX_ITER_PER_START = 5
 MAX_CONCURRENT_PER_USER = 3
 MAX_CONCURRENT_GLOBAL = 10
@@ -1646,8 +1647,9 @@ async def api_create_project(
     settings = get_settings()
     with get_session(settings.db_path) as _s:
         user_projects = get_projects_for_user(_s, user.id)
-        if len(user_projects) >= MAX_PROJECTS_PER_USER:
-            raise HTTPException(400, f"Max {MAX_PROJECTS_PER_USER} projects per user.")
+        project_cap = MAX_PROJECTS_PER_ADMIN if _is_admin(user) else MAX_PROJECTS_PER_USER
+        if len(user_projects) >= project_cap:
+            raise HTTPException(400, f"Max {project_cap} projects per user.")
         active = [p for p in user_projects if p.status in ("queued", "running", "initializing")]
         if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
             raise HTTPException(
