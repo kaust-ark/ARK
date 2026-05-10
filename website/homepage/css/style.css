@@ -620,6 +620,55 @@ section { padding: 5rem 0; }
   font-size: 1.1rem; line-height: 1.75; color: var(--text-muted);
 }
 
+/* ===== Demo Video ===== */
+.video-wrap {
+  max-width: 960px; margin: 2.5rem auto 0;
+  border-radius: var(--radius); overflow: hidden;
+  background: #000; box-shadow: 0 20px 60px rgba(0,0,0,.45);
+  position: relative;
+}
+.video-facade {
+  position: relative; width: 100%; aspect-ratio: 16 / 9;
+  cursor: pointer; background: #000; outline: none;
+}
+.video-facade:focus-visible { box-shadow: 0 0 0 3px var(--teal, #2dd4bf) inset; }
+.video-thumb {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover; display: block;
+  transition: transform .6s ease, filter .3s ease;
+}
+.video-facade:hover .video-thumb {
+  transform: scale(1.03);
+  filter: brightness(.85);
+}
+.video-play {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 84px; height: 60px;
+  border: 0; background: transparent;
+  cursor: pointer; padding: 0;
+  transition: transform .25s ease;
+  z-index: 2;
+}
+.video-facade:hover .video-play { transform: translate(-50%, -50%) scale(1.1); }
+.video-play svg {
+  width: 100%; height: 100%; display: block;
+  filter: drop-shadow(0 4px 14px rgba(0,0,0,.5));
+}
+.video-facade iframe {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; border: 0;
+}
+/* Block clicks on the YouTube top-right "Watch on YouTube" link area once the iframe is loaded. */
+.video-facade.playing .video-thumb,
+.video-facade.playing .video-play { display: none; }
+.video-facade.playing::after {
+  content: ""; position: absolute; top: 0; right: 0;
+  width: 220px; height: 60px; z-index: 3;
+  background: transparent; cursor: default;
+}
+
 /* ===== Agents ===== */
 .agents-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2rem;
