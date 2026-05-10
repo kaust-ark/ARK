@@ -210,13 +210,25 @@ class PipelineMixin:
 
         self.log_step_header(step_num, total_steps, "Review Paper")
         self._run_citation_verification()
-        
+
+        # Snapshot the *previous* iter's review (currently at
+        # latest_review.md) into the per-iter history archive BEFORE
+        # the new reviewer overwrites it. This gives the new reviewer
+        # access to "what I said last time" so it can do absolute-scale
+        # calibration instead of arbitrarily ratcheting bar each iter.
+        prior_review_section = self._archive_and_load_prior_review()
+
         visual_review = self._build_visual_review_section()
         try:
             venue_name = self.config.get('venue', 'top venue')
             review_output = self.run_agent(
                 "reviewer",
-                f"Please review the current paper {self.config.get('latex_dir', 'Latex')}/main.tex and the generated {self.config.get('latex_dir', 'Latex')}/main.pdf.\n\nReview according to {venue_name} standards.\n{visual_review}\nOutput a detailed review report and save to auto_research/state/latest_review.md",
+                f"Please review the current paper {self.config.get('latex_dir', 'paper')}/main.tex "
+                f"and the generated {self.config.get('latex_dir', 'paper')}/main.pdf.\n\n"
+                f"Review according to {venue_name} standards.\n"
+                f"{visual_review}\n"
+                f"{prior_review_section}\n"
+                f"Output a detailed review report and save to auto_research/state/latest_review.md",
                 timeout=defaults.TIMEOUT_REVIEWER,
             )
         except Exception as e:
@@ -247,6 +259,106 @@ class PipelineMixin:
         self.save_step_checkpoint(step_num, "Review Paper")
         self.log_step_header(step_num, total_steps, "Review Paper", "end")
         return review_output, score, issue_ids
+
+    def _archive_and_load_prior_review(self) -> str:
+        """Snapshot the prior iter's review and build the cross-iter
+        calibration block to inject into the new reviewer's prompt.
+
+        Without this, every reviewer call is independent — the new
+        reviewer has no memory of what the previous reviewer asked
+        for, can't tell which issues were addressed, and tends to
+        ratchet up severity of remaining nitpicks until a paper that
+        actually improved scores worse than its predecessor. The
+        block we return:
+
+        1. Names the score the previous iter received.
+        2. Hands the new reviewer the prior review report verbatim,
+           so it can check ``did the M1/M2 issues the last reviewer
+           raised actually get fixed?`` instead of inventing a fresh
+           list.
+        3. Gives explicit absolute-scale calibration rules so the
+           reviewer doesn't escalate minor issues into majors just
+           because no real majors remain.
+
+        Side effect: archives the previous ``latest_review.md`` into
+        ``auto_research/state/.review_history/iter_<n>.md`` so the
+        per-iter audit trail survives across runs.
+        """
+        review_path = self.state_dir / "latest_review.md"
+        if not review_path.exists():
+            # First iter — nothing to calibrate against.
+            return ""
+        try:
+            prior_text = review_path.read_text(errors="replace")
+        except Exception:
+            return ""
+        if not prior_text.strip():
+            return ""
+
+        # Archive the prior review under .review_history/ keyed by
+        # the iteration number that produced it (current iter - 1).
+        prior_iter = max(1, getattr(self, "iteration", 1) - 1)
+        history_dir = self.state_dir / ".review_history"
+        try:
+            history_dir.mkdir(parents=True, exist_ok=True)
+            archive_path = history_dir / f"iter_{prior_iter}.md"
+            if not archive_path.exists():
+                archive_path.write_text(prior_text)
+        except Exception as e:
+            self.log(f"Could not archive prior review: {e}", "WARN")
+
+        # Pull the prior score out of memory.yaml (already maintained
+        # by self.memory.record_issues / save_paper_state).
+        prior_score: Optional[float] = None
+        try:
+            mem_path = self.state_dir / "memory.yaml"
+            if mem_path.exists():
+                import yaml as _yaml
+                mem = _yaml.safe_load(mem_path.read_text()) or {}
+                history = mem.get("score_history") or []
+                if history:
+                    last = history[-1]
+                    if isinstance(last, dict):
+                        prior_score = last.get("score")
+        except Exception:
+            prior_score = None
+
+        score_line = (
+            f"- Prior iteration ({prior_iter}) Total score: **{prior_score:.1f}/10**\n"
+            if isinstance(prior_score, (int, float))
+            else f"- Prior iteration ({prior_iter}) score: not parsed (assume nearby).\n"
+        )
+
+        # Cap prior review payload so the reviewer's prompt doesn't
+        # blow up — full review is still on disk if needed.
+        prior_excerpt = prior_text
+        if len(prior_excerpt) > 8000:
+            prior_excerpt = prior_excerpt[:8000] + "\n\n[... truncated; full review at auto_research/state/.review_history/iter_{}.md ...]".format(prior_iter)
+
+        return (
+            "\n\n## Cross-Iteration Calibration (MANDATORY)\n\n"
+            f"{score_line}"
+            f"- Per-iter review archive: `auto_research/state/.review_history/iter_{prior_iter}.md`\n\n"
+            "You must use the prior review as the calibration anchor for this round. "
+            "Specifically:\n\n"
+            "1. **Compare each prior issue to the current paper.** For every M1/M2/m1/... raised "
+            "previously, decide one of: `RESOLVED` / `PARTIALLY_RESOLVED` / `STILL_PRESENT` / "
+            "`NEW_PROBLEM_INTRODUCED_INSTEAD`. State this in a `## Delta from Prior Iteration` "
+            "section in your review.\n"
+            "2. **Score must reflect the delta.** A paper that resolved 3 of 4 majors with no new "
+            "majors must score *higher* than the prior iter. A paper where remaining issues are "
+            "objectively minor must NOT be re-classified as Major just because they are now the "
+            "worst remaining. Use the absolute Venue Calibration above — a nitpick is a nitpick "
+            "regardless of how few issues remain.\n"
+            "3. **Do not re-raise issues that were RESOLVED.** If you cannot articulate a NEW "
+            "issue beyond the previous round, the score should rise toward the venue accept bar.\n"
+            "4. **New issues require justification.** If you raise an issue that was not in the "
+            "prior review, briefly say why it became visible now (e.g. \"newly introduced by "
+            "iter-N edit\", \"now visible because previous M1 was resolved\", or \"I missed it "
+            "last round, acknowledging\").\n\n"
+            "### Prior review (verbatim):\n\n"
+            f"```markdown\n{prior_excerpt}\n```\n"
+        )
 
     def _build_visual_review_section(self) -> str:
         page_images = self._maybe_generate_page_images()
@@ -721,6 +833,14 @@ Be thorough and faithful to the proposal.
             self.log_step("Deep research report exists, skipping", "info")
 
         # ── Step 3: Specialization ──────────────────────────────────────
+        # Always sync agent prompt bases from templates first, regardless of
+        # whether the project has already been initialized. Edits to
+        # `ark/templates/agents/*.prompt` need to reach already-specialized
+        # projects on every Continue, not just on first init. The sync
+        # preserves any '## Project-Specific Knowledge' addendum that
+        # _specialize_agent_prompts appended below the base.
+        self._sync_agent_prompt_bases()
+
         ctx_file = self.state_dir / "project_context.md"
         if not ctx_file.exists():
             self.log_step_header(3, 4, "Specialization")
@@ -755,12 +875,9 @@ Write `auto_research/state/project_context.md` with sections:
             self.notify_progress("Project context", "ready", level="done")
 
             # 3.2: Specialize agent prompts (code-driven, one call per agent)
-            # First refresh the template base for any already-specialized
-            # project — fixes a staleness bug where prompt template edits
-            # in ark/ never reached a project that had already been
-            # specialized on an earlier run. See _sync_agent_prompt_bases
-            # docstring for the preservation logic.
-            self._sync_agent_prompt_bases()
+            # _sync_agent_prompt_bases already ran above (unconditionally),
+            # so the per-project prompt files reflect the latest template
+            # before specialization is appended.
             self.log_step("Specializing agent prompts...", "progress")
             self.notify_progress(
                 "Agent prompts", "specializing for this project...", level="working"
@@ -1416,15 +1533,157 @@ in what that file actually says — do not guess.
 
     # ==================== Citation Bootstrapping ====================
 
-    def _bootstrap_citations_from_deep_research(self):
-        """Extract paper titles from Deep Research report via LLM, then fetch BibTeX via API.
+    def _merge_template_bibs_into_references(self):
+        r"""Merge entries from venue-template .bib files into references.bib.
 
-        1. LLM reads the report and extracts paper titles as JSON list
-        2. Each title is searched via DBLP/CrossRef/arXiv/S2
-        3. Found papers get official BibTeX written to references.bib
-        4. Not-found titles get a keyword retry, then [NEEDS-CHECK] + Telegram notification
+        Many venues (ACL/EMNLP/NAACL via acl-style-files, NeurIPS via
+        the neurips template) ship a starter `.bib` file under a
+        non-canonical name — `custom.bib`, `references.bib`,
+        `mybib.bib`, etc. The writer agent is told (via
+        ``ark/templates/agents/writer.prompt``) to use keys from
+        ``references.bib``. ARK's citation system writes auto-fetched
+        entries to ``references.bib``. The venue's starter file is
+        ignored by both, even though ``\bibliography{custom}`` in the
+        rendered main.tex reads it. Result: writer sees an empty
+        ``references.bib``, concludes "no keys available", emits zero
+        ``\cite{}`` calls, and the final paper renders with an empty
+        References section.
+
+        This routine consolidates the situation: read every other
+        ``.bib`` file in the LaTeX directory, parse out its
+        ``@<type>{<key>, ...}`` entries, and append any entries whose
+        key is NOT already present in ``references.bib``. The original
+        venue-template ``.bib`` files are left in place so the venue
+        template's example ``\bibliography{custom}`` keeps working,
+        but every key is now also reachable via ``references.bib``.
+
+        The merge is idempotent (re-running adds no duplicates) and
+        non-destructive (only ``references.bib`` is modified).
+        """
+        import re as _re
+
+        latex_dir = getattr(self, "latex_dir", None)
+        if latex_dir is None or not latex_dir.exists():
+            return
+
+        refs_path = latex_dir / "references.bib"
+        if not refs_path.exists():
+            refs_path.write_text("% ARK auto-managed references\n\n")
+
+        existing_text = refs_path.read_text(errors="replace")
+        # @<type>{<key>, — capture key
+        entry_re = _re.compile(r'@\w+\s*\{\s*([^,\s}]+)', _re.MULTILINE)
+        existing_keys = set(entry_re.findall(existing_text))
+
+        # Find sibling .bib files (skip references.bib itself and any
+        # *.bib.txt note files like ACL's anthology.bib.txt).
+        merged_keys: list[str] = []
+        merged_from: list[str] = []
+        for sibling in sorted(latex_dir.glob("*.bib")):
+            if sibling.name == "references.bib":
+                continue
+            try:
+                text = sibling.read_text(errors="replace")
+            except Exception:
+                continue
+
+            # Walk top-level entries by tracking brace depth so multi-line
+            # entries are captured intact and entry boundaries are correct.
+            entries = self._split_top_level_bib_entries(text)
+            new_block = []
+            for entry in entries:
+                m = entry_re.match(entry)
+                if not m:
+                    continue
+                key = m.group(1)
+                if key in existing_keys:
+                    continue
+                new_block.append(entry.strip())
+                existing_keys.add(key)
+                merged_keys.append(key)
+            if new_block:
+                merged_from.append(sibling.name)
+                existing_text = (
+                    existing_text.rstrip() +
+                    f"\n\n% Merged from {sibling.name} ({len(new_block)} entries)\n\n" +
+                    "\n\n".join(new_block) + "\n"
+                )
+
+        if merged_keys:
+            refs_path.write_text(existing_text)
+            self.log(
+                f"Merged {len(merged_keys)} bib entries into references.bib "
+                f"from {', '.join(merged_from)}: {', '.join(merged_keys[:8])}"
+                + ("..." if len(merged_keys) > 8 else ""),
+                "INFO",
+            )
+
+    @staticmethod
+    def _split_top_level_bib_entries(text: str) -> list[str]:
+        """Split a .bib file body into top-level @entry{...} chunks.
+
+        Naive `re.findall(r'@\\w+\\{[^}]*\\}', ...)` misses entries with
+        nested braces (e.g., titles like ``{The {ACL} 2026 Special
+        Theme}``). Walk the brace structure manually instead.
+        """
+        out: list[str] = []
+        i = 0
+        n = len(text)
+        while i < n:
+            # find next @
+            at = text.find("@", i)
+            if at < 0:
+                break
+            # entry must look like @ident{ — guard against @-in-title
+            j = at + 1
+            while j < n and (text[j].isalnum() or text[j] == "_"):
+                j += 1
+            # skip whitespace then expect {
+            k = j
+            while k < n and text[k] in " \t":
+                k += 1
+            if k >= n or text[k] != "{":
+                i = at + 1
+                continue
+            depth = 1
+            p = k + 1
+            while p < n and depth > 0:
+                ch = text[p]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                p += 1
+            if depth == 0:
+                out.append(text[at:p])
+                i = p
+            else:
+                # unbalanced — bail on this entry, advance past @
+                i = at + 1
+        return out
+
+    def _bootstrap_citations_from_deep_research(self):
+        r"""Extract paper titles from Deep Research report via LLM, then fetch BibTeX via API.
+
+        1. Merge any venue-template .bib files (e.g. ACL's `custom.bib`)
+           into `references.bib` so the writer prompt's "use keys from
+           references.bib" rule actually surfaces the template's
+           starter citations. Without this merge, ARK and the venue
+           template each maintain a separate .bib file and the writer
+           sees a near-empty `references.bib` because the entries live
+           in `custom.bib` — that has caused multiple final papers to
+           ship with `\cite{}` count = 0 and an empty References page.
+        2. LLM reads the report and extracts paper titles as JSON list
+        3. Each title is searched via DBLP/CrossRef/arXiv/S2
+        4. Found papers get official BibTeX written to references.bib
+        5. Not-found titles get a keyword retry, then [NEEDS-CHECK] + Telegram notification
         """
         from ark.citation import bootstrap_citations
+
+        # Step 0: merge venue-template .bib files into references.bib.
+        # Idempotent: re-running on a file that already has all template
+        # entries is a no-op.
+        self._merge_template_bibs_into_references()
 
         deep_research_file = self.state_dir / "deep_research.md"
         if not deep_research_file.exists():
@@ -2072,6 +2331,7 @@ Output your evaluation in JSON format:
 - Experiments: setup table, baselines listed, main results table with numbers, ablation
 - Analysis/Discussion: explain WHY results are good/bad, failure cases
 - Conclusion: 1 paragraph summary + 1 paragraph future work
+- LLM Usage Statement: keep the pre-inserted `\\section*{{LLM Usage Statement}}` block VERBATIM. It is *endmatter* (like Acknowledgments) — ARK's post-processing will automatically place it on the references page (after the body `\\clearpage`, before `\\bibliography`), and it does NOT count toward the body page limit. Do NOT rewrite, edit, translate, remove, or wrap it in `\\clearpage` yourself.
 
 ### 2. Appendix policy (use `\\appendix` only when content genuinely belongs there)
 - Belongs in appendix: full proofs/derivations, extended ablation tables, hyperparameter sweeps, prompt templates, implementation/config details, additional qualitative examples, dataset statistics beyond a summary
@@ -2904,6 +3164,65 @@ provide the title.
             total_agent_calls=total_calls,
         )
 
+    def _run_ethical_review(self) -> bool:
+        """Pre-launch ethical screening of the submitted research idea.
+
+        Hard-rejects clearly malicious / weaponization / explicit-sexual /
+        anti-human proposals. Allows everything else (including legitimate
+        dual-use security research). Result is cached at
+        ``state_dir/ethical_review.json`` so resumed runs skip re-review.
+
+        Returns True if the launch may proceed, False if blocked.
+        """
+        review_file = self.state_dir / "ethical_review.json"
+        if review_file.exists():
+            return True
+
+        idea = self._research_idea or ""
+        if not idea.strip():
+            return True
+
+        from ark.ethical_review import review_idea
+        api_key = (
+            os.environ.get("ANTHROPIC_API_KEY", "")
+            or self.config.get("anthropic_api_key", "")
+        )
+        model = self.config.get("model_variant") or "claude-sonnet-4-6"
+
+        self.log_step("Pre-launch ethical review...", "progress")
+        result = review_idea(idea, model=model, api_key=api_key)
+
+        if result.get("decision") == "block":
+            category = result.get("category", "unknown")
+            reason = result.get("reason", "")
+            self.log_section("Ethical Review FAILED — launch blocked")
+            self.log(
+                f"Category: {category}\n"
+                f"Reason: {reason}\n\n"
+                f"This proposal appears to violate ARK's ethical-use principles "
+                f"(no clearly malicious / weaponization / explicit-sexual / "
+                f"anti-human research). Please revise and resubmit.",
+                "RAW",
+            )
+            if getattr(self, "telegram", None) and self.telegram.is_configured:
+                self.telegram.send(
+                    f"{self.tg_header('⛔')}\n"
+                    f"<b>Ethical review blocked this project</b>\n"
+                    f"Category: <code>{_html.escape(str(category))}</code>\n"
+                    f"Reason: {_html.escape(str(reason))}",
+                    parse_mode="HTML",
+                )
+            self._sync_db(status="failed", phase="blocked_ethical")
+            return False
+
+        review_file.parent.mkdir(parents=True, exist_ok=True)
+        review_file.write_text(json.dumps(result, indent=2))
+        self.log_step(
+            f"Ethical review passed: {result.get('reason', '')[:80]}",
+            "success",
+        )
+        return True
+
     def run(self):
         """Main loop."""
         self.check_dependencies()
@@ -2915,6 +3234,10 @@ provide the title.
         self.log(f"Max iterations: {self.max_iterations}  |  Max time: {self.max_end_time.strftime('%Y-%m-%d %H:%M')}", "RAW")
         self.log(f"Log: {self.log_file}", "RAW")
         self.log("", "RAW")
+
+        # Pre-launch ethical review (cached on first pass; skipped on resume)
+        if not self._run_ethical_review():
+            return
 
         # Start background Telegram listener for bidirectional communication
         self.start_telegram_listener()

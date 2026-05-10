@@ -591,7 +591,7 @@ If the user wants the PDF, add [SEND_PDF] on a new line at the end."""
             return
 
         code_dir = config.get("code_dir", "")
-        latex_dir_rel = config.get("latex_dir", "Latex")
+        latex_dir_rel = config.get("latex_dir", "paper")
         latex_dir = Path(code_dir) / latex_dir_rel if code_dir else None
         pdf = latex_dir / "main.pdf" if latex_dir else None
 

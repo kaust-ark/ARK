@@ -149,16 +149,52 @@ class StateManager:
 
     # --- Findings ---
     def load_findings_summary(self) -> str:
-        """Load findings.yaml summary, tolerating malformed YAML."""
+        """Load findings.yaml summary, tolerating malformed YAML.
+
+        On parse error, attempts a best-effort auto-repair (the dominant
+        agent mistake — a sibling top-level key left indented inside the
+        `findings:` list scope). If repair succeeds, the file is
+        rewritten in place so the planner gets evidence-aware context on
+        this run instead of having to wait for the agent to notice.
+        """
         if not self.findings_file.exists():
             return "No findings yet"
-            
+
         try:
             with open(self.findings_file) as f:
-                findings = yaml.safe_load(f) or {}
+                text = f.read()
+            findings = yaml.safe_load(text) or {}
             return yaml.dump(findings, allow_unicode=True)[:500]
         except yaml.YAMLError as e:
-            self.log(f"findings.yaml is malformed ({type(e).__name__}); planner will proceed without it.", "WARN")
+            try:
+                from ark.findings_schema import attempt_repair
+                repaired, changes = attempt_repair(text)
+            except Exception:
+                repaired, changes = None, []
+            if repaired is not None:
+                try:
+                    backup = self.findings_file.with_suffix(".yaml.malformed")
+                    backup.write_text(text)
+                    self.findings_file.write_text(repaired)
+                    findings = yaml.safe_load(repaired) or {}
+                    detail = "; ".join(changes) if changes else "auto-repaired"
+                    self.log(
+                        f"findings.yaml had a parse error and was auto-repaired "
+                        f"({detail}); original saved to {backup.name}",
+                        "INFO",
+                    )
+                    return yaml.dump(findings, allow_unicode=True)[:500]
+                except Exception as repair_err:
+                    self.log(
+                        f"findings.yaml auto-repair failed at write step: {repair_err}",
+                        "WARN",
+                    )
+            detail = "; ".join(changes) if changes else "no known repair pattern matched"
+            self.log(
+                f"findings.yaml is malformed ({type(e).__name__}); planner will "
+                f"proceed without it. Repair attempt: {detail}.",
+                "WARN",
+            )
             return f"[findings.yaml unparseable: {e.__class__.__name__}]"
         except Exception:
             return "No findings yet"

@@ -340,7 +340,7 @@ class AgentMixin:
 
         elif agent_type == "writer":
             if "main.tex" in output.lower():
-                summary_lines.append(f"Modified: {self.config.get('latex_dir', 'Latex')}/main.tex")
+                summary_lines.append(f"Modified: {self.config.get('latex_dir', 'paper')}/main.tex")
             fig_changes = re.findall(r"fig\d+|figure\s*\d+", output, re.IGNORECASE)
             if fig_changes:
                 summary_lines.append(f"Figures touched: {len(set(fig_changes))}")
@@ -604,7 +604,7 @@ Execute the task and update the corresponding files.
                 )
                 if is_empty:
                     self.log(f"Agent [{agent_type}] empty-run detected (attempt {attempt}/{MAX_RETRIES}): ran only {elapsed}s, output only {len(result.strip())} chars", "WARN")
-                    self.log(f"  returncode: {process.returncode}", "WARN")
+                    self.log(f"  returncode: {returncode}", "WARN")
                     if stderr:
                         self.log(f"  stderr: {stderr[:500]}", "WARN")
                     else:

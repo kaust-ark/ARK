@@ -43,35 +43,26 @@
 
 <table align="center">
 <tr>
-<td align="center" width="50%">
-<a href="https://idea2paper.org/assets/papers/marco.pdf"><img src="https://idea2paper.org/assets/paper-marco.png" alt="MARCO" width="320"></a>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/marco.pdf"><img src="https://idea2paper.org/assets/paper-marco.png" alt="Budget-Constrained Multi-Modal Research Synthesis" width="320"></a>
 <br>
-<strong>MARCO: Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</strong>
+<strong>Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</strong>
 <br>
 <sub>القالب: EuroMLSys</sub>
 </td>
-<td align="center" width="50%">
+<td align="center" width="33%">
 <a href="https://idea2paper.org/assets/papers/heteroserve.pdf"><img src="https://idea2paper.org/assets/paper-heteroserve.png" alt="HeteroServe" width="320"></a>
 <br>
 <strong>HeteroServe: Capability-Weighted Batch Scheduling for Heterogeneous GPU Clusters in LLM Inference</strong>
 <br>
 <sub>القالب: ICML</sub>
 </td>
-</tr>
-<tr>
-<td align="center" width="50%">
+<td align="center" width="33%">
 <a href="https://idea2paper.org/assets/papers/tierkv.pdf"><img src="https://idea2paper.org/assets/paper-tierkv.png" alt="TierKV" width="320"></a>
 <br>
 <strong>TierKV: Prefetch-Aware Memory Tiering for KV Cache in LLM Serving</strong>
 <br>
 <sub>القالب: NeurIPS</sub>
-</td>
-<td align="center" width="50%">
-<a href="https://idea2paper.org/assets/papers/gac.pdf"><img src="https://idea2paper.org/assets/paper-gac.png" alt="GAC" width="320"></a>
-<br>
-<strong>Why Smaller Is Slower: Dimensional Misalignment in Compressed Large Language Models</strong>
-<br>
-<sub>القالب: ICLR</sub>
 </td>
 </tr>
 </table>
@@ -81,23 +72,26 @@
 ## بداية سريعة
 
 ```bash
-# 1. التثبيت
-pip install -e .
-
-# 2. إنشاء مشروع (معالج تفاعلي)
-ark new mma
-
-# 3. التشغيل — ARK سيتولى المهمة من هنا
-ark run mma
-
-# 4. المراقبة في الوقت الفعلي
-ark monitor mma
-
-# 5. تحقق من التقدم
-ark status mma
+curl -fsSL https://idea2paper.org/install.sh | bash
 ```
 
-يأخذك المعالج عبر: دليل الكود، المؤتمر المستهدف، فكرة البحث، المؤلفين، نظام الحوسبة، توليد الأشكال البيانية، وإعداد تيليجرام.
+السكربت سيقوم بـ:
+
+1. كشف النظام، تثبيت miniforge عند الحاجة، إنشاء بيئتي `ark-base` و `ark`، تثبيت ARK بصيغة `pip install -e` داخل `~/ARK`، وتثبيت أدوات Claude Code + Gemini CLI.
+2. سؤالك عن: **مفتاح Gemini API**، **رمز Claude OAuth** (`sk-ant-oat01-…` تحصل عليه من `claude /login`)، و**البريد الإلكتروني لتسجيل الدخول إلى لوحة التحكم**. اضغط Enter لتخطّي أي حقل.
+3. تثبيت لوحة التحكم كخدمة `systemd --user` على المنفذ `9527` (استخدم `--no-webapp` للتخطّي).
+4. طباعة **رابط سحري لمرة واحدة** للبريد المُدخل — انقر عليه مرة واحدة وستدخل لوحة التحكم المحلية. لا حاجة لـ SMTP أو Google OAuth.
+
+بعد ذلك، لوحة التحكم على <http://localhost:9527> هي واجهة العمل الرئيسية — إنشاء المشاريع، اختيار النموذج، التشغيل، والمراقبة. سطر الأوامر يعمل كذلك:
+
+```bash
+ark doctor          # التحقّق من التثبيت
+ark new myproject   # معالج إنشاء المشروع
+ark run  myproject
+ark monitor myproject
+```
+
+شغّل `ark webapp login <email>` في أي وقت للحصول على رابط دخول جديد. خيارات السكربت الكاملة: [`website/homepage/install.sh --help`](website/homepage/install.sh).
 
 ### البدء من ملف PDF موجود
 
@@ -117,6 +111,8 @@ ark new mma --from-pdf proposal.pdf
 
 ### التثبيت
 
+أسرع طريقة هي السكربت ذو الأمر الواحد المذكور في [بداية سريعة](#بداية-سريعة)، فهو يقوم بهذه الخطوات نيابة عنك. للتنفيذ اليدوي:
+
 ```bash
 # 1. أنشئ قالب بيئة المشاريع (المكدّس البحثي فقط، بدون كود ARK —
 #    كل مشروع جديد يستنسخ هذه البيئة، لذلك يجب أن تبقى نظيفة).
@@ -129,6 +125,10 @@ conda create -n ark python=3.11 -y
 conda activate ark
 pip install -e .                    # النواة الأساسية
 pip install -e ".[research]"       # + Gemini Deep Research و Nano Banana
+pip install -e ".[webapp]"         # + دعم لوحة التحكم وخدمة systemd
+
+# 3. تحقّق
+ark doctor
 ```
 
 ---
@@ -256,6 +256,7 @@ ark run myproject
 | `ark delete <name>` | حذف المشروع تماماً |
 | `ark setup-bot` | إعداد بوت تيليجرام |
 | `ark list` | سرد جميع المشاريع مع حالتها |
+| `ark doctor` | تشخيص التثبيت الذاتي (البيئات، مفاتيح API، الويب) |
 | `ark webapp install` | تثبيت خدمة لوحة التحكم |
 | `ark access list` | عرض قائمة Cloudflare Access المسموح بها |
 | `ark access add <email>` | إضافة بريد إلكتروني لقائمة CF Access |

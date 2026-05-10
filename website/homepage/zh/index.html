@@ -63,6 +63,9 @@
           <a href="/dashboard" class="btn btn-primary">
             🚀 启动 ARK 项目
           </a>
+          <a href="../doc.html#installation" class="btn btn-outline">
+            ⚡ 本地部署
+          </a>
         </div>
       </div>
       <p class="hero-accent">Offload the Labour. Steer the Science.</p>
@@ -83,6 +86,27 @@
   </div>
 </section>
 
+<!-- ===== Self-host ===== -->
+<section id="self-host">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">自部署</p>
+      <h2 class="section-title reveal">一行命令安装</h2>
+      <p class="section-subtitle reveal">支持 Linux 与 macOS。脚本会构建 conda 环境，装好 ARK + Claude Code + Gemini CLI，把仪表板装成 <code>systemd --user</code> 服务，并打印一个一次性的 magic-link 链接让你本地登录。<strong>不需要 SMTP，也不需要 Google OAuth。</strong></p>
+    </div>
+    <div class="install-block reveal">
+      <pre class="install-cmd"><code>curl -fsSL https://idea2paper.org/install.sh | bash</code><button class="install-copy" type="button" aria-label="复制安装命令" data-copy="curl -fsSL https://idea2paper.org/install.sh | bash">复制</button></pre>
+      <div class="install-flags">
+        <span><code>--no-webapp</code> 跳过本地仪表板</span>
+        <span><code>--no-research</code> 跳过可选研究依赖</span>
+        <span><code>--prefix DIR</code> 安装到自定义目录</span>
+        <span><code>--dry-run</code> 仅预览不动手</span>
+      </div>
+      <p class="install-after">脚本会提示输入 Gemini API key、Claude OAuth token、登录邮箱。装完点提示里的 magic link → 直接进 <code>http://localhost:9527</code> 仪表板。完整文档见 <a href="../doc.html">doc.html</a> · 脚本见 <a href="../install.sh">install.sh</a>。</p>
+    </div>
+  </div>
+</section>
+
 
 <!-- ===== Papers ===== -->
 <section id="papers">
@@ -95,11 +119,11 @@
     <div class="papers-grid">
       <div class="paper-card reveal stagger-1" data-tilt>
         <a href="../assets/papers/marco.pdf" target="_blank" rel="noopener" class="paper-card-img">
-          <img src="../assets/paper-marco.png" alt="MARCO 论文">
+          <img src="../assets/paper-marco.png" alt="Budget-Constrained Multi-Modal Research Synthesis">
           <span class="paper-badge">模板: EuroMLSys</span>
         </a>
         <div class="paper-card-body">
-          <h3>MARCO: Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</h3>
+          <h3>Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</h3>
           <a href="../assets/papers/marco.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">阅读论文</a>
         </div>
       </div>
@@ -121,16 +145,6 @@
         <div class="paper-card-body">
           <h3>TierKV: Prefetch-Aware Memory Tiering for KV Cache in LLM Serving</h3>
           <a href="../assets/papers/tierkv.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">阅读论文</a>
-        </div>
-      </div>
-      <div class="paper-card reveal stagger-4" data-tilt>
-        <a href="../assets/papers/gac.pdf" target="_blank" rel="noopener" class="paper-card-img">
-          <img src="../assets/paper-gac.png" alt="GAC 论文">
-          <span class="paper-badge">模板: ICLR</span>
-        </a>
-        <div class="paper-card-body">
-          <h3>Why Smaller Is Slower: Dimensional Misalignment in Compressed Large Language Models</h3>
-          <a href="../assets/papers/gac.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">阅读论文</a>
         </div>
       </div>
     </div>

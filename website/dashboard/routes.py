@@ -21,6 +21,7 @@ import subprocess
 logger = logging.getLogger("website.dashboard.routes")
 
 MAX_PROJECTS_PER_USER = 10
+MAX_PROJECTS_PER_ADMIN = 25
 MAX_ITER_PER_START = 5
 MAX_CONCURRENT_PER_USER = 3
 MAX_CONCURRENT_GLOBAL = 10
@@ -1687,8 +1688,9 @@ async def api_create_project(
     settings = get_settings()
     with get_session(settings.db_path) as _s:
         user_projects = get_projects_for_user(_s, user.id)
-        if len(user_projects) >= MAX_PROJECTS_PER_USER:
-            raise HTTPException(400, f"Max {MAX_PROJECTS_PER_USER} projects per user.")
+        project_cap = MAX_PROJECTS_PER_ADMIN if _is_admin(user) else MAX_PROJECTS_PER_USER
+        if len(user_projects) >= project_cap:
+            raise HTTPException(400, f"Max {project_cap} projects per user.")
         active = [p for p in user_projects if p.status in ("queued", "running", "initializing")]
         if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
             raise HTTPException(
@@ -2129,7 +2131,9 @@ async def api_continue_project(project_id: str, request: Request):
                 f"You already have {len(active)} active projects. "
                 f"Max {MAX_CONCURRENT_PER_USER} concurrent.",
             )
-        new_max = project.max_iterations + additional
+        # Floor at current iteration so historical-overshoot projects
+        # (iter > max from pre-c077e15 code) still honor the requested +N.
+        new_max = max(project.max_iterations, project.iteration) + additional
         update_project(session, project, max_iterations=new_max)
         pdir = _project_dir(settings, project.user_id, project_id)
         # Use requested model, or fall back to existing
@@ -2459,24 +2463,29 @@ async def api_venues():
     """Return supported venues list."""
     venues = [
         # Verified
-        {"name": "ICML",       "format": "icml",     "pages": 9,  "year": 2025, "tag": "[Verified] (Default)"},
-        {"name": "NeurIPS",    "format": "neurips",  "pages": 9,  "year": 2025, "tag": "[Verified]"},
-        {"name": "EuroMLSys",  "format": "euromlsys",  "pages": 6, "year": 2025, "tag": "[Verified]"},
+        {"name": "ICML",         "format": "icml",     "pages": 9,  "year": 2025, "tag": "[Verified] (Default)"},
+        {"name": "NeurIPS",      "format": "neurips",  "pages": 9,  "year": 2025, "tag": "[Verified]"},
+        {"name": "EuroMLSys",    "format": "euromlsys", "pages": 6, "year": 2025, "tag": "[Verified]"},
         # ML / AI
-        {"name": "ICLR",       "format": "iclr",     "pages": 9,  "year": 2026},
-        {"name": "ACL",        "format": "acl",      "pages": 8,  "year": 2025},
-        {"name": "EMNLP",      "format": "emnlp",    "pages": 8,  "year": 2025},
-        {"name": "CVPR",       "format": "cvpr",     "pages": 8,  "year": 2025},
-        {"name": "MLSys",      "format": "mlsys",    "pages": 8,  "year": 2026},
+        {"name": "ICLR",         "format": "iclr",     "pages": 9,  "year": 2026},
+        {"name": "ACL",          "format": "acl",      "pages": 8,  "year": 2025},
+        {"name": "ACL Short",    "format": "acl",      "pages": 4,  "year": 2025},
+        {"name": "EMNLP",        "format": "emnlp",    "pages": 8,  "year": 2025},
+        {"name": "EMNLP Short",  "format": "emnlp",    "pages": 4,  "year": 2025},
+        {"name": "NAACL",        "format": "acl",      "pages": 8,  "year": 2025},
+        {"name": "NAACL Short",  "format": "acl",      "pages": 4,  "year": 2025},
+        {"name": "TMLR",         "format": "article",  "pages": 0,  "year": 2026},
+        {"name": "CVPR",         "format": "cvpr",     "pages": 8,  "year": 2025},
+        {"name": "MLSys",        "format": "mlsys",    "pages": 8,  "year": 2026},
         # Systems
-        {"name": "SOSP",       "format": "sosp",     "pages": 14, "year": 2025},
-        {"name": "EuroSys",    "format": "sosp",     "pages": 12, "year": 2026},
-        {"name": "NSDI",       "format": "osdi",     "pages": 14, "year": 2025},
-        {"name": "OSDI",       "format": "osdi",     "pages": 14, "year": 2025},
-        {"name": "USENIX ATC", "format": "osdi",     "pages": 12, "year": 2026},
-        {"name": "IEEE S&P",   "format": "neurips",  "pages": 13, "year": 2025},
+        {"name": "SOSP",         "format": "sosp",     "pages": 14, "year": 2025},
+        {"name": "EuroSys",      "format": "sosp",     "pages": 12, "year": 2026},
+        {"name": "NSDI",         "format": "osdi",     "pages": 14, "year": 2025},
+        {"name": "OSDI",         "format": "osdi",     "pages": 14, "year": 2025},
+        {"name": "USENIX ATC",   "format": "osdi",     "pages": 12, "year": 2026},
+        {"name": "IEEE S&P",     "format": "neurips",  "pages": 13, "year": 2025},
         # Networking
-        {"name": "INFOCOM",    "format": "infocom",  "pages": 9,  "year": 2025},
+        {"name": "INFOCOM",      "format": "infocom",  "pages": 9,  "year": 2025},
     ]
     return JSONResponse(venues)
 

@@ -245,11 +245,33 @@
 
     <!-- ===== GETTING STARTED ===== -->
     <h2 id="installation">Installation</h2>
-    <p>Install ARK in editable mode:</p>
-    <pre><code>pip install -e .</code></pre>
 
-    <p>For research phase features (Deep Research integration), install with the research extra:</p>
-    <pre><code>pip install -e ".[research]"</code></pre>
+    <p><strong>One-click self-host install</strong> (Linux / macOS):</p>
+    <pre><code>curl -fsSL https://idea2paper.org/install.sh | bash</code></pre>
+    <p>The script:</p>
+    <ol>
+      <li>Installs miniforge (if missing), builds <code>ark-base</code> + <code>ark</code> conda envs, pip-installs ARK editable into <code>~/ARK</code>, and adds Claude Code + Gemini CLIs.</li>
+      <li>Asks for <strong>Gemini API key</strong>, <strong>Claude OAuth token</strong> (<code>sk-ant-oat01-…</code>), and <strong>email for dashboard login</strong>. Press Enter to skip any.</li>
+      <li>Installs the dashboard as a <code>systemd --user</code> service on port 9527.</li>
+      <li>Prints a one-time <strong>magic-link URL</strong> for your email. Click it once → you're logged into the local dashboard. <strong>No SMTP, no Google OAuth needed</strong>.</li>
+    </ol>
+    <p>Useful flags:</p>
+    <ul>
+      <li><code>--no-webapp</code> — skip the local dashboard service</li>
+      <li><code>--prefix DIR</code> — install ARK source to a custom directory</li>
+      <li><code>--branch NAME</code> / <code>--repo URL</code> — override the git source</li>
+      <li><code>--no-research</code> / <code>--no-base</code> — skip optional components</li>
+      <li><code>--noninteractive</code> — skip the prompts (CI / unattended)</li>
+      <li><code>--dry-run</code> — print the plan without making changes</li>
+    </ul>
+    <p>You can also pre-fill answers via env vars: <code>ARK_GEMINI_KEY</code>, <code>ARK_CLAUDE_OAUTH</code>, <code>ARK_LOGIN_EMAIL</code>. Run <code>ark doctor</code> to verify, and <code>ark webapp login &lt;email&gt;</code> any time for a fresh sign-in link. Full script: <a href="install.sh">install.sh</a>.</p>
+
+    <p><strong>Manual install</strong> — if you prefer to do it yourself:</p>
+    <pre><code>conda env create -f environment.yml      # creates ark-base (Linux)
+conda create -n ark python=3.11 -y
+conda activate ark
+pip install -e ".[research,webapp]"
+ark doctor</code></pre>
 
     <h2 id="prerequisites">Prerequisites</h2>
     <ul>

@@ -239,34 +239,53 @@ class CompilerMixin:
     _BIB_KEY_RE = re.compile(r'@\w+\s*\{\s*([^,\s]+)\s*,', re.MULTILINE)
 
     def _prune_undefined_citations(self) -> int:
-        """Remove `\\cite{...}`-family keys that don't appear in
-        references.bib, before pdflatex runs.
+        """Remove ``\\cite{...}``-family keys that don't appear in
+        ANY of the project's .bib files, before pdflatex runs.
 
         Logic:
-        1. Parse references.bib to collect every defined cite key.
-        2. Walk every citation command in main.tex (\\cite, \\citep,
-           \\citet, \\nocite, biblatex variants, etc.). For each
-           command, drop any key not present in the bib.
+        1. Parse every ``*.bib`` file in the LaTeX directory (not just
+           ``references.bib``) and union their cite keys into a single
+           "defined" set. This is critical: ACL/NeurIPS/etc. ship a
+           starter ``custom.bib`` (or ``anthology.bib``) which the
+           ``\\bibliography{custom}`` line in main.tex actually reads.
+           A previous version of this routine looked only at
+           ``references.bib`` and would happily strip every
+           ``\\cite{mlebench2024}`` etc. that lived in ``custom.bib``,
+           leaving the final paper with an empty References page even
+           though the keys were perfectly valid for bibtex.
+        2. Walk every citation command in main.tex (``\\cite``,
+           ``\\citep``, ``\\citet``, ``\\nocite``, biblatex variants,
+           etc.). For each command, drop any key not present in the
+           combined defined set.
         3. If all keys in a command are undefined, remove the command
            entirely; if some are valid, keep just those.
 
-        Idempotent: a key re-added to references.bib in a later
+        Idempotent: a key re-added to any .bib file in a later
         iteration won't get re-stripped because we only act on what's
         currently missing.
 
         Returns the count of (command, key) pairs pruned.
         """
         main_tex = self.latex_dir / "main.tex"
-        bib_file = self.latex_dir / "references.bib"
-        if not main_tex.exists() or not bib_file.exists():
+        bib_files = sorted(self.latex_dir.glob("*.bib"))
+        if not main_tex.exists() or not bib_files:
             return 0
         try:
-            bib_text = bib_file.read_text(errors="replace")
-            defined = {
-                m.group(1).strip()
-                for m in self._BIB_KEY_RE.finditer(bib_text)
-                if m.group(1).strip()
-            }
+            defined: set[str] = set()
+            scanned: list[str] = []
+            for bib_file in bib_files:
+                try:
+                    bib_text = bib_file.read_text(errors="replace")
+                except Exception:
+                    continue
+                file_keys = {
+                    m.group(1).strip()
+                    for m in self._BIB_KEY_RE.finditer(bib_text)
+                    if m.group(1).strip()
+                }
+                if file_keys:
+                    defined |= file_keys
+                    scanned.append(f"{bib_file.name}({len(file_keys)})")
             if not defined:
                 return 0
 
@@ -300,9 +319,11 @@ class CompilerMixin:
                 summary = ", ".join(
                     sorted({k for _, k in pruned})
                 )
+                bibs_label = ", ".join(scanned) if scanned else "no .bib files"
                 self.log(
                     f"Pruned {len(pruned)} undefined citation(s) "
-                    f"({summary}) — keys not present in references.bib",
+                    f"({summary}) — keys not present in any .bib "
+                    f"[scanned: {bibs_label}]",
                     "INFO",
                 )
             return len(pruned)
@@ -720,17 +741,36 @@ class CompilerMixin:
                         pass  # Already registered
             save_manifest(self.figures_dir, manifest)
 
-            # Step 3.1: Programmatic overlap detection and auto-fix
+            # Step 3.1: Programmatic overlap detection and auto-fix.
+            # Two-layer architecture:
+            #   Layer-1 (figure_overlap.check_and_fix_figures) — cheap regex
+            #     fixes; runs up to 3 rounds.
+            #   Layer-2 (the coder agent) — when Layer-1 exhausts,
+            #     unresolved overlaps are written to
+            #     ``auto_research/state/unresolved_overlaps.yaml`` so the
+            #     next planner pass converts each into a
+            #     FIGURE_CODE_REQUIRED task. The planner reads that file
+            #     as part of its standard input set.
             try:
                 from ark.figure_overlap import check_and_fix_figures
+                state_dir = self.code_dir / "auto_research" / "state"
                 overlap_report = check_and_fix_figures(
                     full_script, self.figures_dir, geo, log_fn=self.log,
+                    state_dir=state_dir,
                 )
                 if overlap_report.get("summary", {}).get("with_overlaps", 0) > 0:
                     self.log_step("Regenerating figures after overlap fixes...", "progress")
                     backups = backup_protected(self.figures_dir, manifest)
                     self.generate_figures()
                     restore_protected(self.figures_dir, backups, log_fn=self.log)
+                if overlap_report.get("escalation_needed"):
+                    self.log(
+                        "Unresolved figure overlaps escalated to coder via "
+                        "auto_research/state/unresolved_overlaps.yaml — the "
+                        "next planner iteration will create FIGURE_CODE_REQUIRED "
+                        "tasks to redesign the affected figures.",
+                        "WARN",
+                    )
             except Exception as e:
                 self.log(f"Overlap detection error (non-fatal): {e}", "WARN")
         else:
@@ -873,6 +913,19 @@ class CompilerMixin:
         if not bib_path.exists():
             return
 
+        # Merge venue-template starter .bib files (custom.bib /
+        # anthology.bib / etc.) into references.bib first. The
+        # research-phase merge in PipelineMixin runs at project
+        # creation but is skipped on Continue — without re-running it
+        # here, citation pruning later in this same compile cycle
+        # would strip every \cite{} key that lives only in custom.bib.
+        # Idempotent: re-running on an already-merged file is a no-op.
+        try:
+            if hasattr(self, "_merge_template_bibs_into_references"):
+                self._merge_template_bibs_into_references()
+        except Exception as e:
+            self.log(f"_merge_template_bibs_into_references skipped: {e}", "WARN")
+
         # Strip legacy red-textcolor notes left in the bib by earlier
         # versions of this routine. They render in red in the rendered
         # references list; the new convention is a `% [NEEDS-CHECK]`
@@ -977,7 +1030,7 @@ class CompilerMixin:
         self.log_step(f"{len(missing)} critical citation(s) missing from paper, asking writer to add", "warning")
 
         missing_list = "\n".join(f"- \\cite{{{key}}} — {title}" for key, title in missing)
-        latex_dir_name = self.config.get("latex_dir", "Latex")
+        latex_dir_name = self.config.get("latex_dir", "paper")
 
         self.run_agent("writer", f"""
 The following critical citations are missing from the paper. They are marked as MUST CITE

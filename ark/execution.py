@@ -676,6 +676,61 @@ After running the experiment:
         self.log_step(f"Issue {issue.get('id')} completed", "success")
         self._generate_figures_from_results()
 
+    def _format_reviewer_context_block(self, task: dict) -> str:
+        """Surface the reviewer's verbatim observation, fix, acceptance criterion,
+        and priority justification to the writer agent. The planner is required
+        (per planner.prompt Output Format) to lift these fields from the review.
+        Without this, the writer only sees the planner's task summary and tends
+        to fix the description rather than the underlying issue, which is the
+        dominant cause of issues being re-flagged in the next iteration.
+        """
+        if not isinstance(task, dict):
+            return ""
+
+        observation = (task.get("reviewer_observation") or "").strip()
+        fix = (task.get("reviewer_fix") or "").strip()
+        criterion = (task.get("acceptance_criterion") or "").strip()
+        justification = (task.get("priority_justification") or "").strip()
+        prior_iter_id = task.get("prior_iter_id")
+        prior_attempted = task.get("prior_attempted")
+
+        if not any([observation, fix, criterion, justification, prior_iter_id]):
+            return ""
+
+        lines = ["\n## Reviewer Context (from latest review report)\n"]
+        if observation:
+            lines.append(f"### What the reviewer observed\n{observation}\n")
+        if fix:
+            lines.append(f"### Reviewer's suggested fix\n{fix}\n")
+        if criterion:
+            lines.append(
+                "### Acceptance criterion (next iteration's reviewer will check this)\n"
+                f"{criterion}\n"
+            )
+        if justification:
+            lines.append(f"### Why this priority\n{justification}\n")
+        if prior_iter_id:
+            attempted_note = (
+                "The previous writer DID attempt this last round and the fix did not satisfy the reviewer."
+                if prior_attempted
+                else "The previous writer did NOT attempt this last round."
+            )
+            lines.append(
+                f"### Cross-iteration linkage\n"
+                f"This continues prior issue **{prior_iter_id}**. {attempted_note} "
+                f"Try a different approach if the prior approach failed.\n"
+            )
+
+        if criterion:
+            lines.append(
+                "### MANDATORY VERIFICATION (before marking the task done)\n"
+                "After your edit, re-read the modified section and self-check: would the "
+                "acceptance criterion above now pass when the reviewer reads the rendered PDF? "
+                "If no, iterate on the edit. Do NOT stop at \"I touched the right paragraph\".\n"
+            )
+
+        return "".join(lines)
+
     def _get_page_constraint_warning(self) -> str:
         """Return a page constraint warning string for the writer."""
         venue_pages = self.config.get("venue_pages")
@@ -888,6 +943,8 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             body
             [BODY_END_MARKER]
             \\clearpage
+            \\section*{LLM Usage Statement}        ← endmatter, on the refs page
+            ... LLM Usage content ...
             \\bibliographystyle{...}
             \\bibliography{...}
             \\clearpage
@@ -901,12 +958,21 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
         body→appendix→bibliography order; this routine reorders the file
         in place so the rendered PDF matches the venue convention.
 
+        Boilerplate sections (LLM Usage Statement, Acknowledgments, etc.)
+        emitted between Conclusion and \\bibliography belong on the
+        references page — *after* the body \\clearpage, *before*
+        \\bibliography. Earlier versions of this routine left them in the
+        body region, which silently consumed page-limit budget and pushed
+        Conclusion / Limitations into a partial-fill last body page.
+        We now extract the LLM Usage block from the body and re-insert it
+        as endmatter on the references-page side of the \\clearpage.
+
         The body-end \\pdfsavepos marker is placed at the body / refs
         boundary (immediately before the \\clearpage that precedes
-        \\bibliography), so page-count metrics derived from the marker
-        exclude both the bibliography and the appendix — matching venue
-        page-limit conventions ("N pages excluding references and
-        appendix").
+        the LLM Usage Statement and \\bibliography), so page-count
+        metrics derived from the marker exclude the LLM Usage Statement,
+        the bibliography, and the appendix — matching venue page-limit
+        conventions ("N pages excluding references and appendix").
 
         Idempotent: running this on an already-canonical file
         produces a byte-identical result.
@@ -962,6 +1028,37 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 
             tail = content[end_doc_pos:].rstrip()
 
+            # Extract LLM Usage Statement (and any other boilerplate
+            # endmatter sections) from the body. They belong on the
+            # references-page side of the \clearpage, not in the body.
+            # Pattern: \section*{LLM Usage Statement} ... up to next
+            # \section, \appendix, \bibliography, or \end{document}.
+            ENDMATTER_TITLES = [
+                r'LLM Usage Statement',
+                r'LLM Use Statement',
+                r'AI Usage Statement',
+                r'Acknowledg(?:e?ments|ements)?',
+            ]
+            endmatter_pattern = _re.compile(
+                r'\\section\*?\{\s*(?:' + '|'.join(ENDMATTER_TITLES) + r')\s*\}'
+                r'.*?'
+                r'(?=\\section\b|\\appendix\b|\\bibliography\b|\Z)',
+                _re.DOTALL,
+            )
+            endmatter_blocks = []
+            # Run pattern on body_section (and appendix_block when (a))
+            for m in endmatter_pattern.finditer(body_section):
+                endmatter_blocks.append(m.group(0).rstrip())
+            body_section = endmatter_pattern.sub('', body_section)
+            if reordered and appendix_block:
+                # case (a): writer put appendix between body and bib,
+                # but boilerplate could be inside that range too.
+                for m in endmatter_pattern.finditer(appendix_block):
+                    endmatter_blocks.append(m.group(0).rstrip())
+                appendix_block = endmatter_pattern.sub('', appendix_block)
+
+            endmatter_text = "\n\n".join(b for b in endmatter_blocks if b.strip())
+
             # Strip stray \clearpage from the trailing edges of each
             # piece — we re-insert canonical separators below.
             body_section = _re.sub(
@@ -974,6 +1071,13 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 appendix_block = _re.sub(
                     r'\\clearpage\s*$', '', appendix_block.rstrip()
                 ).rstrip()
+            if endmatter_text:
+                endmatter_text = _re.sub(
+                    r'^\s*\\clearpage\s*', '', endmatter_text.lstrip()
+                ).lstrip()
+                endmatter_text = _re.sub(
+                    r'\\clearpage\s*$', '', endmatter_text.rstrip()
+                ).rstrip()
 
             # Reassemble in canonical order.
             parts = [
@@ -981,8 +1085,10 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 "",
                 self._ARK_BODY_END_MARKER,
                 r"\clearpage",
-                bib_block,
             ]
+            if endmatter_text:
+                parts.extend(["", endmatter_text, ""])
+            parts.append(bib_block)
             if appendix_block:
                 parts.extend([
                     "",
@@ -998,6 +1104,17 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                     self.log(
                         "Reordered: body → bibliography → appendix "
                         "(matches acmart sample-sigplan convention)",
+                        "INFO",
+                    )
+                if endmatter_blocks:
+                    titles = []
+                    for b in endmatter_blocks:
+                        m = _re.search(r'\\section\*?\{\s*([^}]+?)\s*\}', b)
+                        if m:
+                            titles.append(m.group(1))
+                    self.log(
+                        f"Moved endmatter ({', '.join(titles)}) onto refs "
+                        f"page (after \\clearpage, before \\bibliography)",
                         "INFO",
                     )
         except Exception as e:
@@ -1144,7 +1261,7 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
         issues = action_plan.get("issues", [])
         issues = [i for i in issues if i is not None and isinstance(i, dict)]
 
-        latex_dir_name = self.config.get("latex_dir", "Latex")
+        latex_dir_name = self.config.get("latex_dir", "paper")
         writing_tasks = []
 
         for issue in issues:
@@ -1444,6 +1561,7 @@ writer agent will pick those up in a later task.
             self.log_step(f"Writing (individual): {task_id} - {task_title[:40]}", "progress")
 
             literature_context = self._get_literature_context_for_task(task)
+            reviewer_context = self._format_reviewer_context_block(task)
 
             page_warning = self._get_page_constraint_warning()
             figure_list = self._list_available_figures()
@@ -1455,6 +1573,7 @@ You have only one task to complete. Please complete it carefully and thoroughly.
 
 ## Task: {task_id} - {task_title}
 {task_desc}
+{reviewer_context}
 {literature_context}
 
 ## Requirements
@@ -1493,9 +1612,11 @@ You have only one task to complete. Please complete it carefully and thoroughly.
 
             task_list = []
             for idx, task in enumerate(batch_tasks, 1):
+                reviewer_block = self._format_reviewer_context_block(task)
                 task_list.append(f"""
 ### Task {idx}: {task.get('id', '')} - {task.get('title', '')}
 {task.get('description', '')}
+{reviewer_block}
 """)
 
             page_warning = self._get_page_constraint_warning()
@@ -1629,7 +1750,7 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
 
             if len(lines) > 1:
                 lines.append(f"\nPlease cite these references in Related Work and other appropriate sections.")
-                lines.append(f"BibTeX entries are in {self.config.get('latex_dir', 'Latex')}/references.bib, please use \\cite{{}} to cite.")
+                lines.append(f"BibTeX entries are in {self.config.get('latex_dir', 'paper')}/references.bib, please use \\cite{{}} to cite.")
                 lines.append(f"\nDo NOT remove existing \\cite{{}} commands. When revising, only add or modify — never delete existing citations.")
                 lines.append(f"\n[NEEDS-CHECK] papers are treated as normal citations. Use them where appropriate based on content relevance.")
                 return "\n".join(lines)

@@ -63,6 +63,9 @@
           <a href="/dashboard" class="btn btn-primary">
             🚀 Launch ARK Project
           </a>
+          <a href="doc.html#installation" class="btn btn-outline">
+            ⚡ Deploy Locally
+          </a>
         </div>
       </div>
       <p class="hero-accent">Offload the Labour. Steer the Science.</p>
@@ -83,6 +86,27 @@
   </div>
 </section>
 
+<!-- ===== Self-host ===== -->
+<section id="self-host">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">Self-host</p>
+      <h2 class="section-title reveal">Install in One Line</h2>
+      <p class="section-subtitle reveal">Linux or macOS. Builds the conda envs, installs ARK + Claude Code + Gemini CLIs, runs the dashboard as a <code>systemd --user</code> service, and prints a one-time magic-link URL for your local sign-in. <strong>No SMTP, no Google OAuth needed.</strong></p>
+    </div>
+    <div class="install-block reveal">
+      <pre class="install-cmd"><code>curl -fsSL https://idea2paper.org/install.sh | bash</code><button class="install-copy" type="button" aria-label="Copy install command" data-copy="curl -fsSL https://idea2paper.org/install.sh | bash">Copy</button></pre>
+      <div class="install-flags">
+        <span><code>--no-webapp</code> skip the local dashboard service</span>
+        <span><code>--no-research</code> skip optional research extras</span>
+        <span><code>--prefix DIR</code> install to a custom directory</span>
+        <span><code>--dry-run</code> preview without changes</span>
+      </div>
+      <p class="install-after">The script asks for your Gemini API key, Claude OAuth token, and login email. After install: click the printed magic link → you're in the dashboard at <code>http://localhost:9527</code>. Full docs at <a href="doc.html">doc.html</a> · script at <a href="install.sh">install.sh</a>.</p>
+    </div>
+  </div>
+</section>
+
 <!-- ===== Papers ===== -->
 <section id="papers">
   <div class="container">
@@ -94,11 +118,11 @@
     <div class="papers-grid">
       <div class="paper-card reveal stagger-1" data-tilt>
         <a href="assets/papers/marco.pdf" target="_blank" rel="noopener" class="paper-card-img">
-          <img src="assets/paper-marco.png" alt="MARCO Paper">
+          <img src="assets/paper-marco.png" alt="Budget-Constrained Multi-Modal Research Synthesis">
           <span class="paper-badge">Template: EuroMLSys</span>
         </a>
         <div class="paper-card-body">
-          <h3>MARCO: Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</h3>
+          <h3>Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</h3>
           <a href="assets/papers/marco.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">Read Paper</a>
         </div>
       </div>
@@ -120,16 +144,6 @@
         <div class="paper-card-body">
           <h3>TierKV: Prefetch-Aware Memory Tiering for KV Cache in LLM Serving</h3>
           <a href="assets/papers/tierkv.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">Read Paper</a>
-        </div>
-      </div>
-      <div class="paper-card reveal stagger-4" data-tilt>
-        <a href="assets/papers/gac.pdf" target="_blank" rel="noopener" class="paper-card-img">
-          <img src="assets/paper-gac.png" alt="GAC Paper">
-          <span class="paper-badge">Template: ICLR</span>
-        </a>
-        <div class="paper-card-body">
-          <h3>Why Smaller Is Slower: Dimensional Misalignment in Compressed Large Language Models</h3>
-          <a href="assets/papers/gac.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">Read Paper</a>
         </div>
       </div>
     </div>

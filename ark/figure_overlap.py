@@ -268,10 +268,12 @@ def apply_auto_fixes(script_path: Path, overlap_report: dict,
     Modifies the script in-place. Returns True if any fixes were applied.
 
     Fix strategies (applied in order):
-    1. Add constrained_layout=True to figure creation
+    1. Add tight_layout(pad=1.5) before every savefig
     2. Rotate x-tick labels 45 degrees for x-tick overlaps
     3. Increase figsize height for density issues
-    4. Add tight_layout with generous padding
+    4. Remove in-figure set_title calls (LaTeX caption owns titles)
+    5. Increase figsize WIDTH (×1.25) when suggestion fires
+    6. Inject adjustText for annotation/text repositioning
     """
     if not overlap_report.get("figures"):
         return False
@@ -341,6 +343,58 @@ def apply_auto_fixes(script_path: Path, overlap_report: dict,
             flags=re.MULTILINE,
         )
 
+    # Fix 5: Increase figure WIDTH (×1.25) when detector suggests it.
+    # Bookkeeping marker prevents stacking width increases across re-runs.
+    # Distinct from Fix 3 which only grows height.
+    if "increase_figure_width" in all_suggestions and "_overlap_fix_width" not in script_content:
+        def _increase_width(match):
+            w = float(match.group(1))
+            h = float(match.group(2))
+            return f"figsize=({w * 1.25:.2f}, {h})"
+        new_content = re.sub(
+            r'figsize=\(([0-9.]+),\s*([0-9.]+)\)',
+            _increase_width,
+            script_content,
+        )
+        if new_content != script_content:
+            # Add an idempotency marker as a comment near the top of the file
+            new_content = "# _overlap_fix_width applied\n" + new_content
+            script_content = new_content
+
+    # Fix 6: Inject adjustText to reposition annotations/text away from
+    # ticks and other text. Particularly useful when an in-plot statistic
+    # annotation (e.g., "χ²(...) p=...") collides with a ytick label.
+    # adjustText is lazy-imported; if unavailable, the wrapper is a no-op
+    # so paper compilation isn't blocked by a missing optional dep.
+    if "use_adjustText_or_reposition" in all_suggestions and "_overlap_fix_adjusttext" not in script_content:
+        adjusttext_setup = (
+            "# _overlap_fix_adjusttext\n"
+            "try:\n"
+            "    from adjustText import adjust_text as _ark_adjust_text\n"
+            "except ImportError:  # pragma: no cover - optional dep\n"
+            "    _ark_adjust_text = None\n\n"
+        )
+        # Inject setup once near the top of the file (after the first
+        # non-comment, non-import statement is risky; placing at the
+        # top right after the shebang/docstring is safest).
+        script_content = adjusttext_setup + script_content
+
+        # Inject adjust_text() call before every savefig (idempotent —
+        # wrapped in try/except + None-check on the imported callable).
+        script_content = re.sub(
+            r'(\s*)(\w+\.savefig\()',
+            r'\1if _ark_adjust_text is not None:\n'
+            r'\1    try:\n'
+            r'\1        for _ax in plt.gcf().get_axes():\n'
+            r'\1            _texts = list(_ax.texts)\n'
+            r'\1            if _texts:\n'
+            r'\1                _ark_adjust_text(_texts, ax=_ax,\n'
+            r'\1                    only_move={"text": "y", "static": "y"})\n'
+            r'\1    except Exception: pass\n'
+            r'\1\2',
+            script_content,
+        )
+
     if script_content != original_content:
         script_path.write_text(script_content)
         return True
@@ -349,17 +403,36 @@ def apply_auto_fixes(script_path: Path, overlap_report: dict,
 
 
 def check_and_fix_figures(script_path: Path, figures_dir: Path,
-                           figure_config: dict = None, log_fn=None) -> dict:
+                           figure_config: dict = None, log_fn=None,
+                           state_dir: Path = None,
+                           max_attempts: int = 3) -> dict:
     """Full pipeline: detect overlaps, apply fixes, re-run if needed.
+
+    Layer-1 (this function): cheap regex-based fixes that handle known
+    patterns (xtick crowding, in-plot title pollution, undersized
+    figsize, annotation collisions). Up to ``max_attempts`` rounds.
+
+    Layer-2 (caller): when Layer-1 still leaves overlaps after the
+    attempt budget, this function writes
+    ``state_dir/unresolved_overlaps.yaml`` so the next planner pass can
+    convert each entry into a FIGURE_CODE_REQUIRED task and let the
+    coder agent redesign the figure intelligently. The caller does not
+    need to do anything extra; the planner reads that file as part of
+    its standard inputs.
 
     Args:
         script_path: Path to the plotting script
         figures_dir: Directory for figure output
         figure_config: Geometry config dict
         log_fn: Optional logging function(msg, level)
+        state_dir: ``auto_research/state/`` for escalation handoff;
+            if None, no escalation file is written (legacy callers).
+        max_attempts: Layer-1 retry budget before escalating.
 
     Returns:
-        Final overlap report dict.
+        Final overlap report dict, with extra key
+        ``"escalation_needed": bool`` indicating that Layer-2 (the
+        coder agent) must take over.
     """
     def _log(msg, level="INFO"):
         if log_fn:
@@ -371,13 +444,16 @@ def check_and_fix_figures(script_path: Path, figures_dir: Path,
 
     if report.get("error"):
         _log(f"Overlap detection error: {report['error']}", "WARN")
+        report["escalation_needed"] = False
         return report
 
     total = report.get("summary", {}).get("total", 0)
     with_overlaps = report.get("summary", {}).get("with_overlaps", 0)
+    initial_with_overlaps = with_overlaps
 
     if with_overlaps == 0:
         _log(f"No overlaps detected in {total} figures")
+        report["escalation_needed"] = False
         return report
 
     _log(f"Found overlaps in {with_overlaps}/{total} figures")
@@ -386,23 +462,99 @@ def check_and_fix_figures(script_path: Path, figures_dir: Path,
             _log(f"  {fig_info['name']}: {fig_info['overlap_count']} overlaps, "
                  f"density={fig_info['density']}, suggestions={fig_info.get('suggestions', [])}")
 
-    # Step 2: Apply auto-fixes
-    _log("Applying auto-fixes to plotting script...")
-    fixed = apply_auto_fixes(script_path, report, figure_config)
+    # Steps 2..N: apply Layer-1 fixes up to max_attempts. Each round
+    # may pick a fresh combination of fixes if the script changed.
+    current_report = report
+    for attempt in range(1, max_attempts + 1):
+        _log(f"Applying auto-fixes to plotting script... (attempt {attempt}/{max_attempts})")
+        fixed = apply_auto_fixes(script_path, current_report, figure_config)
+        if not fixed:
+            _log("No auto-fixes could be applied this round")
+            break
+        _log("Auto-fixes applied, re-running script...")
+        current_report = detect_overlaps_from_script(script_path, figures_dir, figure_config)
+        remaining = current_report.get("summary", {}).get("with_overlaps", 0)
+        if remaining == 0:
+            _log(f"All overlaps resolved after auto-fix on attempt {attempt}")
+            current_report["escalation_needed"] = False
+            return current_report
+        _log(f"After attempt {attempt}: {remaining} figures still have overlaps "
+             f"(started with {initial_with_overlaps})")
 
-    if not fixed:
-        _log("No auto-fixes could be applied")
-        return report
-
-    _log("Auto-fixes applied, re-running script...")
-
-    # Step 3: Re-run and re-detect
-    report2 = detect_overlaps_from_script(script_path, figures_dir, figure_config)
-    remaining = report2.get("summary", {}).get("with_overlaps", 0)
-
+    # Layer-1 exhausted without clean result → escalate to Layer-2.
+    remaining = current_report.get("summary", {}).get("with_overlaps", 0)
     if remaining == 0:
-        _log(f"All overlaps resolved after auto-fix!")
-    else:
-        _log(f"After auto-fix: {remaining} figures still have overlaps (was {with_overlaps})")
+        current_report["escalation_needed"] = False
+        return current_report
 
-    return report2
+    _log(f"Layer-1 auto-fix exhausted; escalating {remaining} figure(s) to coder agent",
+         "WARN")
+    current_report["escalation_needed"] = True
+
+    if state_dir is not None:
+        try:
+            _write_overlap_escalation(current_report, Path(state_dir), log_fn)
+        except Exception as e:
+            _log(f"Failed to write escalation handoff: {e}", "WARN")
+
+    return current_report
+
+
+def _write_overlap_escalation(report: dict, state_dir: Path, log_fn=None) -> None:
+    """Write ``unresolved_overlaps.yaml`` for the planner to pick up.
+
+    Each entry describes one figure with its specific overlap details,
+    which suggestions Layer-1 already tried, and a short rationale that
+    the planner can paste into a FIGURE_CODE_REQUIRED task description.
+    """
+    import yaml
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    out_path = state_dir / "unresolved_overlaps.yaml"
+
+    entries = []
+    for fig in report.get("figures", []):
+        if not fig.get("has_overlaps"):
+            continue
+        # Deduplicate identical entries (the script can re-run and
+        # produce repeated identical reports)
+        overlaps_summary = []
+        seen = set()
+        for ov in fig.get("overlaps", []):
+            key = (ov.get("type1"), ov.get("text1"), ov.get("type2"), ov.get("text2"))
+            if key in seen:
+                continue
+            seen.add(key)
+            overlaps_summary.append({
+                "axis": ov.get("axis"),
+                "kind": f"{ov.get('type1')} vs {ov.get('type2')}",
+                "text1": (ov.get("text1") or "")[:120],
+                "text2": (ov.get("text2") or "")[:120],
+                "severity": ov.get("severity"),
+            })
+        entry = {
+            "figure": fig.get("name"),
+            "density": fig.get("density"),
+            "tried_suggestions": fig.get("suggestions", []),
+            "overlaps": overlaps_summary,
+            "redesign_hints": [
+                "Move the colliding annotation outside the plot area "
+                "(e.g., into the figure caption or a textbox below the axes).",
+                "Reduce annotation fontsize to 7pt and reposition with "
+                "ax.text(..., transform=ax.transAxes) at a corner.",
+                "Redesign the layout (e.g., 2x2 grouped bar instead of "
+                "single axes with overlapping text).",
+            ],
+        }
+        entries.append(entry)
+
+    payload = {
+        "version": 1,
+        "generated_by": "ark.figure_overlap.check_and_fix_figures",
+        "n_figures": len(entries),
+        "figures": entries,
+    }
+    out_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True))
+    if log_fn:
+        log_fn(f"Wrote overlap escalation: {out_path} ({len(entries)} figure(s))",
+               "INFO")

@@ -10,10 +10,26 @@ requires-python = ">=3.9"
 dependencies = ["pyyaml>=6.0", "PyMuPDF>=1.24.0", "Pillow>=10.0.0"]
 
 [project.optional-dependencies]
-# `anthropic` is required by submodules/PaperBanana (top-level import in
-# generation_utils.py); without it the entire PaperBanana figure pipeline
-# fails to import and we silently fall back to the simpler Nano Banana path.
-research = ["google-genai>=1.55.0", "anthropic>=0.40.0"]
+# Deep Research uses google-genai. PaperBanana (submodules/PaperBanana) is
+# imported inline by ark/latex/compiler.py — `from agents.planner_agent
+# import PlannerAgent` walks straight into the submodule, so all of
+# PaperBanana's runtime imports must resolve in the same Python that runs
+# the orchestrator. A missing dep here = silent fallback to Nano Banana
+# on every paper run (real bug we shipped: ark-prod was missing aiofiles
+# the whole time, so prod papers never used the 5-agent figure pipeline).
+# Skip the demo-UI deps (gradio, streamlit) — runtime doesn't import them.
+research = [
+    "google-genai>=1.55.0",
+    "anthropic>=0.40.0",
+    "aiofiles>=23.0",
+    "json_repair>=0.30",
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "tqdm>=4.65",
+    "google-auth>=2.0",
+    "huggingface_hub>=0.20",
+    "openai>=1.0",
+]
 webapp = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",

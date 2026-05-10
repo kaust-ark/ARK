@@ -43,35 +43,26 @@ ARK 协调 **6 个专业 AI 智能体**，将研究构想转化为完整论文 &
 
 <table align="center">
 <tr>
-<td align="center" width="50%">
-<a href="https://idea2paper.org/assets/papers/marco.pdf"><img src="https://idea2paper.org/assets/paper-marco.png" alt="MARCO" width="320"></a>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/marco.pdf"><img src="https://idea2paper.org/assets/paper-marco.png" alt="Budget-Constrained Multi-Modal Research Synthesis" width="320"></a>
 <br>
-<strong>MARCO: Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</strong>
+<strong>Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</strong>
 <br>
 <sub>模板: EuroMLSys</sub>
 </td>
-<td align="center" width="50%">
+<td align="center" width="33%">
 <a href="https://idea2paper.org/assets/papers/heteroserve.pdf"><img src="https://idea2paper.org/assets/paper-heteroserve.png" alt="HeteroServe" width="320"></a>
 <br>
 <strong>HeteroServe: Capability-Weighted Batch Scheduling for Heterogeneous GPU Clusters in LLM Inference</strong>
 <br>
 <sub>模板: ICML</sub>
 </td>
-</tr>
-<tr>
-<td align="center" width="50%">
+<td align="center" width="33%">
 <a href="https://idea2paper.org/assets/papers/tierkv.pdf"><img src="https://idea2paper.org/assets/paper-tierkv.png" alt="TierKV" width="320"></a>
 <br>
 <strong>TierKV: Prefetch-Aware Memory Tiering for KV Cache in LLM Serving</strong>
 <br>
 <sub>模板: NeurIPS</sub>
-</td>
-<td align="center" width="50%">
-<a href="https://idea2paper.org/assets/papers/gac.pdf"><img src="https://idea2paper.org/assets/paper-gac.png" alt="GAC" width="320"></a>
-<br>
-<strong>Why Smaller Is Slower: Dimensional Misalignment in Compressed Large Language Models</strong>
-<br>
-<sub>模板: ICLR</sub>
 </td>
 </tr>
 </table>
@@ -81,23 +72,26 @@ ARK 协调 **6 个专业 AI 智能体**，将研究构想转化为完整论文 &
 ## 快速上手
 
 ```bash
-# 1. 安装
-pip install -e .
-
-# 2. 创建项目 (交互式向导)
-ark new mma
-
-# 3. 运行 — ARK 将从这里接管
-ark run mma
-
-# 4. 实时监控
-ark monitor mma
-
-# 5. 查看进度
-ark status mma
+curl -fsSL https://idea2paper.org/install.sh | bash
 ```
 
-向导将引导您完成：代码目录、目标会议、研究构想、作者信息、计算后端、图表生成和 Telegram 设置。
+脚本会：
+
+1. 检测系统、按需安装 miniforge、创建 `ark-base` 与 `ark` 两个 conda env、以可编辑模式将 ARK 装到 `~/ARK`，并装好 Claude Code + Gemini CLI。
+2. 提示你输入：**Gemini API key**、**Claude OAuth token**（从 `claude /login` 拿到的 `sk-ant-oat01-…`）、**仪表板登录邮箱**。回车跳过任意一项。
+3. 把仪表板装成 `systemd --user` 服务（端口 `9527`，用 `--no-webapp` 退出）。
+4. 打印一个一次性的 **magic-link URL** 到你输入的邮箱地址——点一次链接就登录本地仪表板。**不需要 SMTP，也不需要 Google OAuth**。
+
+之后 <http://localhost:9527> 仪表板就是主要的交互界面——建项目、选模型、运行、监控。CLI 也照常可用：
+
+```bash
+ark doctor          # 验证安装
+ark new myproject   # 交互式项目向导
+ark run  myproject
+ark monitor myproject
+```
+
+随时跑 `ark webapp login <email>` 获取新的登录链接。完整脚本参数见 [`website/homepage/install.sh --help`](website/homepage/install.sh)。
 
 ### 从现有 PDF 开始
 
@@ -117,6 +111,8 @@ ARK 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息，并根
 
 ### 安装步骤
 
+最简单的方式是 [快速上手](#快速上手) 中的一键安装脚本，它会替你执行下面这些步骤。手动安装如下：
+
 ```bash
 # 1. 创建项目研究栈模板（这里不要装 ARK —— 每个新项目都会克隆此环境，
 #    所以必须保持纯净）。
@@ -129,6 +125,10 @@ conda create -n ark python=3.11 -y
 conda activate ark
 pip install -e .                    # 核心库
 pip install -e ".[research]"       # + Gemini 深度研究与 Nano Banana
+pip install -e ".[webapp]"         # + 仪表板 / systemd 服务支持
+
+# 3. 验证
+ark doctor
 ```
 
 ---
@@ -256,6 +256,7 @@ ARK 附带 **内置技能** &mdash; 智能体在运行时加载的模块化指�
 | `ark delete <name>` | 完全删除项目 |
 | `ark setup-bot` | 配置 Telegram 机器人 |
 | `ark list` | 列出所有项目及其状态 |
+| `ark doctor` | 自托管安装诊断（环境、API key、Web 服务） |
 | `ark webapp install` | 安装 Web 仪表板服务 |
 | `ark access list` | 显示仪表板 Cloudflare Access 允许列表 |
 | `ark access add <email>` | 将电子邮件添加到 CF Access 允许列表 |

@@ -80,6 +80,9 @@
           <a href="/dashboard" class="btn btn-primary">
             🚀 إطلاق مشروع ARK
           </a>
+          <a href="../doc.html#installation" class="btn btn-outline">
+            ⚡ التثبيت محلياً
+          </a>
         </div>
       </div>
       <p class="hero-accent">أفرغ العمل المتكرر. وجّه البحث.</p>
@@ -100,6 +103,27 @@
   </div>
 </section>
 
+<!-- ===== Self-host ===== -->
+<section id="self-host">
+  <div class="container">
+    <div style="text-align:center">
+      <p class="section-label reveal">تثبيت ذاتي</p>
+      <h2 class="section-title reveal">ثبّت بسطر واحد</h2>
+      <p class="section-subtitle reveal">يعمل على Linux و macOS. يبني بيئات conda، يثبّت ARK + Claude Code + Gemini CLI، يشغّل لوحة التحكم كخدمة <code>systemd --user</code>، ويطبع رابطاً سحرياً لمرة واحدة لتسجيل الدخول محلياً. <strong>بدون SMTP وبدون Google OAuth.</strong></p>
+    </div>
+    <div class="install-block reveal">
+      <pre class="install-cmd" dir="ltr"><code>curl -fsSL https://idea2paper.org/install.sh | bash</code><button class="install-copy" type="button" aria-label="نسخ أمر التثبيت" data-copy="curl -fsSL https://idea2paper.org/install.sh | bash">نسخ</button></pre>
+      <div class="install-flags">
+        <span><code>--no-webapp</code> تخطّي لوحة التحكم</span>
+        <span><code>--no-research</code> تجاوز الإضافات البحثية</span>
+        <span><code>--prefix DIR</code> ثبّت إلى مجلد مخصّص</span>
+        <span><code>--dry-run</code> معاينة دون تغييرات</span>
+      </div>
+      <p class="install-after">السكربت يسأل عن مفتاح Gemini API، رمز Claude OAuth، والبريد الإلكتروني. انقر على الرابط السحري المطبوع → ستدخل لوحة التحكم على <code>http://localhost:9527</code>. الوثائق الكاملة في <a href="../doc.html">doc.html</a> · السكربت في <a href="../install.sh">install.sh</a>.</p>
+    </div>
+  </div>
+</section>
+
 
 <!-- ===== Papers ===== -->
 <section id="papers">
@@ -112,11 +136,11 @@
     <div class="papers-grid">
       <div class="paper-card reveal stagger-1" data-tilt>
         <a href="../assets/papers/marco.pdf" target="_blank" rel="noopener" class="paper-card-img">
-          <img src="../assets/paper-marco.png" alt="ورقة MARCO">
+          <img src="../assets/paper-marco.png" alt="Budget-Constrained Multi-Modal Research Synthesis">
           <span class="paper-badge">قالب: EuroMLSys</span>
         </a>
         <div class="paper-card-body">
-          <h3>MARCO: Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</h3>
+          <h3>Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</h3>
           <a href="../assets/papers/marco.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">اقرأ الورقة</a>
         </div>
       </div>
@@ -138,16 +162,6 @@
         <div class="paper-card-body">
           <h3>TierKV: Prefetch-Aware Memory Tiering for KV Cache in LLM Serving</h3>
           <a href="../assets/papers/tierkv.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">اقرأ الورقة</a>
-        </div>
-      </div>
-      <div class="paper-card reveal stagger-4" data-tilt>
-        <a href="../assets/papers/gac.pdf" target="_blank" rel="noopener" class="paper-card-img">
-          <img src="../assets/paper-gac.png" alt="ورقة GAC">
-          <span class="paper-badge">قالب: ICLR</span>
-        </a>
-        <div class="paper-card-body">
-          <h3>Why Smaller Is Slower: Dimensional Misalignment in Compressed Large Language Models</h3>
-          <a href="../assets/papers/gac.pdf" target="_blank" rel="noopener" class="btn btn-primary" style="font-size:.85rem;padding:.5rem 1rem">اقرأ الورقة</a>
         </div>
       </div>
     </div>

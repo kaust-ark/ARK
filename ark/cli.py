@@ -89,17 +89,22 @@ def ensure_project_symlinks(project_dir: Path, code_dir: str):
 # ============================================================
 
 VENUES = [
-    {"name": "NeurIPS",    "format": "neurips",  "pages": 9},
-    {"name": "ICML",       "format": "icml",     "pages": 9},
-    {"name": "ICLR",       "format": "iclr",     "pages": 9},
-    {"name": "ACL",        "format": "acl",       "pages": 8},
-    {"name": "EMNLP",      "format": "acl",       "pages": 8},
-    {"name": "CVPR",       "format": "cvpr",      "pages": 8},
-    {"name": "EuroMLSys",  "format": "sigplan",   "pages": 6},
-    {"name": "MLSys",      "format": "mlsys",     "pages": 12},
-    {"name": "INFOCOM",    "format": "ieee",      "pages": 9},
-    {"name": "OSDI",       "format": "usenix",    "pages": 14},
-    {"name": "SOSP",       "format": "sigplan",   "pages": 15},
+    {"name": "NeurIPS",        "format": "neurips",  "pages": 9},
+    {"name": "ICML",           "format": "icml",     "pages": 9},
+    {"name": "ICLR",           "format": "iclr",     "pages": 9},
+    {"name": "ACL",            "format": "acl",      "pages": 8},
+    {"name": "ACL Short",      "format": "acl",      "pages": 4},
+    {"name": "EMNLP",          "format": "acl",      "pages": 8},
+    {"name": "EMNLP Short",    "format": "acl",      "pages": 4},
+    {"name": "NAACL",          "format": "acl",      "pages": 8},
+    {"name": "NAACL Short",    "format": "acl",      "pages": 4},
+    {"name": "TMLR",           "format": "article",  "pages": 0},
+    {"name": "CVPR",           "format": "cvpr",     "pages": 8},
+    {"name": "EuroMLSys",      "format": "sigplan",  "pages": 6},
+    {"name": "MLSys",          "format": "mlsys",    "pages": 12},
+    {"name": "INFOCOM",        "format": "ieee",     "pages": 9},
+    {"name": "OSDI",           "format": "usenix",   "pages": 14},
+    {"name": "SOSP",           "format": "sigplan",  "pages": 15},
 ]
 
 OTHER_VENUES = [
@@ -439,6 +444,9 @@ def _get_main_tex_content(venue_format: str, title: str, venue_name: str, author
 \section{Conclusion}
 
 
+
+\section*{LLM Usage Statement}
+This paper was produced with the assistance of ARK (idea2paper.org), an autonomous research framework powered by large language models. The author(s) should review all content and assume ultimate responsibility for its correctness, originality, and integrity.
 
 \bibliographystyle{plainnat}
 \bibliography{references}
@@ -2977,7 +2985,8 @@ def _conda_env_python(env_name: str) -> str:
 
 
 def _generate_service_unit(host: str, port: int, work_dir: Path, description: str,
-                           env_vars=None, python_bin: str = None) -> str:
+                           env_vars=None, python_bin: str = None,
+                           env_file: Path | None = None) -> str:
     """Generate a systemd user service unit file for the ARK webapp."""
     if python_bin is None:
         python_bin = sys.executable
@@ -2985,6 +2994,11 @@ def _generate_service_unit(host: str, port: int, work_dir: Path, description: st
     if env_vars:
         for k, v in env_vars.items():
             env_lines += f"Environment={k}={v}\n"
+    # Prefix `-` so a missing file is silently ignored — the user may not have
+    # populated webapp.env yet on a fresh self-host install. systemd parses
+    # KEY=VALUE lines; webapp.env uses the same format.
+    if env_file is not None:
+        env_lines += f"EnvironmentFile=-{env_file}\n"
     return f"""\
 [Unit]
 Description={description}
@@ -3038,33 +3052,43 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
         python_bin = _conda_env_python("ark-dev")
         conda_env = "ark-dev"
 
-        # Install editable in ark-dev env
+        # Install editable in ark-dev env. Include [research] so PaperBanana
+        # imports succeed (aiofiles, json_repair, etc.) — same reason as the
+        # prod path below.
         print(f"  Installing dependencies (editable) in {conda_env}...")
         r = _sp.run(
-            [python_bin, "-m", "pip", "install", "-e", ".[webapp]", "-q"],
+            [python_bin, "-m", "pip", "install", "-e", ".[webapp,research]", "-q"],
             capture_output=True, text=True, cwd=work_dir,
         )
         if r.returncode != 0:
             print(f"  {_c(f'pip install warning: {r.stderr.strip()[:200]}', Colors.YELLOW)}")
     else:
         svc_name = _PROD_SERVICE
-        work_dir = _get_prod_worktree_dir()
+        prod_worktree = _get_prod_worktree_dir()
         desc = "ARK Research Portal"
-        python_bin = _conda_env_python("ark-prod")
 
-        # Ensure prod worktree exists
-        if not work_dir.exists():
-            print(f"  {_c('Error:', Colors.RED)} Prod worktree not found at {work_dir}")
-            print(f"  Run {_c('ark webapp release', Colors.BOLD)} first to create it.")
-            return
-
-        # Symlink shared webapp.env into prod worktree
-        prod_ark_dir = work_dir / ".ark"
-        prod_ark_dir.mkdir(parents=True, exist_ok=True)
-        prod_env_link = prod_ark_dir / "webapp.env"
-        main_env = get_config_dir() / "webapp.env"
-        if main_env.exists() and not prod_env_link.exists():
-            prod_env_link.symlink_to(main_env)
+        if prod_worktree.exists():
+            # Released-deployment workflow (KAUST internal): pinned tag worktree.
+            work_dir = prod_worktree
+            python_bin = _conda_env_python("ark-prod")
+            # Symlink shared webapp.env into prod worktree.
+            prod_ark_dir = work_dir / ".ark"
+            prod_ark_dir.mkdir(parents=True, exist_ok=True)
+            prod_env_link = prod_ark_dir / "webapp.env"
+            main_env = get_config_dir() / "webapp.env"
+            if main_env.exists() and not prod_env_link.exists():
+                prod_env_link.symlink_to(main_env)
+        else:
+            # Self-host fallback: no release worktree, use the live source dir
+            # and the `ark` conda env created by install.sh. This is the path
+            # used by `curl install.sh | bash --webapp`.
+            work_dir = get_ark_root()
+            python_bin = _conda_env_python("ark")
+            if not (work_dir / "ark" / "cli.py").exists():
+                print(f"  {_c('Error:', Colors.RED)} Cannot locate ARK source at {work_dir}")
+                print(f"  Reinstall via {_c('curl -fsSL https://idea2paper.org/install.sh | bash', Colors.BOLD)}")
+                return
+            print(f"  {_c('Self-host mode:', Colors.DIM)} serving from {_c(str(work_dir), Colors.CYAN)}")
 
     # Environment variables for systemd service.
     # Dashboard mount prefix is hardcoded in website/dashboard/constants.py
@@ -3108,7 +3132,9 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
     svc_path = _service_file_path(svc_name)
     svc_path.parent.mkdir(parents=True, exist_ok=True)
 
-    unit = _generate_service_unit(host, port, work_dir, desc, env_vars, python_bin=python_bin)
+    unit = _generate_service_unit(host, port, work_dir, desc, env_vars,
+                                   python_bin=python_bin,
+                                   env_file=get_config_dir() / "webapp.env")
     svc_path.write_text(unit)
     print(f"  Service file written to {_c(str(svc_path), Colors.CYAN)}")
 
@@ -3185,6 +3211,46 @@ def _cmd_webapp_restart(dev: bool = False):
     else:
         print(f"  {_c('Error:', Colors.RED)} Failed to restart {svc}. Is it installed?")
         print(f"  Run: {_c('ark webapp install', Colors.BOLD)}")
+
+
+def _cmd_webapp_login(email: str, host: str = "0.0.0.0", port: int = None) -> None:
+    """Print a magic-link URL for ``email`` — bypass SMTP for self-host.
+
+    The webapp's normal magic-link flow needs SMTP credentials to send the
+    one-time link. On a fresh self-host install there's no SMTP configured,
+    so we just generate the same token the webapp would and print the URL —
+    the user clicks it once to log in, no email round-trip required.
+    """
+    if not email or "@" not in email:
+        print(f"  {_c('Error:', Colors.RED)} pass a valid email: ark webapp login me@example.com")
+        sys.exit(2)
+
+    try:
+        from website.dashboard.auth import make_token
+        from website.dashboard.config import get_settings
+        from website.dashboard.constants import DASHBOARD_PREFIX
+    except ImportError:
+        print(f"  {_c('Error:', Colors.RED)} webapp deps missing. Install with `pip install ark-research[webapp]`.")
+        sys.exit(1)
+
+    settings = get_settings()
+    secret = getattr(settings, "secret_key", "") or os.environ.get("SECRET_KEY", "")
+    if not secret:
+        print(f"  {_c('Error:', Colors.RED)} SECRET_KEY not set in {get_config_dir() / 'webapp.env'}.")
+        print(f"  Run `ark webapp` once to generate a default config.")
+        sys.exit(1)
+
+    token = make_token(email, secret)
+    base = (settings.base_url or f"http://{host}:{port or _PROD_PORT}").rstrip("/")
+    url = f"{base}{DASHBOARD_PREFIX}/auth/verify?token={token}"
+
+    print()
+    print(f"  {_c('Magic link for', Colors.BOLD)} {_c(email, Colors.CYAN)}:")
+    print(f"  {_c(url, Colors.GREEN)}")
+    print()
+    print(f"  {_c('Open this URL once to sign in', Colors.DIM)} (no email round-trip needed).")
+    print(f"  Token is valid for 30 days.")
+    print()
 
 
 def _cmd_webapp_release(args):
@@ -3264,13 +3330,29 @@ def _cmd_webapp_release(args):
             capture_output=True, text=True, cwd=prod_dir,
         )
 
+    # Initialise/update git submodules in the prod worktree. `git worktree
+    # add` and `git checkout` do NOT do this implicitly — without this,
+    # submodule paths exist as empty directories and importing
+    # submodules/PaperBanana fails at runtime, silently downgrading every
+    # prod paper from PaperBanana's 5-agent figure pipeline to the simpler
+    # Nano Banana fallback. Run this on both create and update branches.
+    sub_r = _sp.run(
+        ["git", "submodule", "update", "--init", "--recursive"],
+        capture_output=True, text=True, cwd=prod_dir,
+    )
+    if sub_r.returncode != 0:
+        print(f"  {_c(f'submodule init warning: {sub_r.stderr.strip()[:200]}', Colors.YELLOW)}")
+
     print(f"  {_c('Prod worktree:', Colors.GREEN)} {prod_dir} → {tag}")
 
-    # 5. Install in prod worktree using ark-prod conda env (non-editable)
+    # 5. Install in prod worktree using ark-prod conda env (non-editable).
+    # Include [research] so PaperBanana's runtime deps (aiofiles, json_repair,
+    # numpy, etc.) are present — without them compiler.py's `_try_paperbanana`
+    # silently falls back to Nano Banana on every run.
     prod_python = _conda_env_python("ark-prod")
     print(f"  Installing dependencies in ark-prod (non-editable)...")
     r = _sp.run(
-        [prod_python, "-m", "pip", "install", ".[webapp]", "-q"],
+        [prod_python, "-m", "pip", "install", ".[webapp,research]", "-q"],
         capture_output=True, text=True, cwd=prod_dir,
     )
     if r.returncode != 0:
@@ -3388,6 +3470,10 @@ def cmd_webapp(args):
         return
     if subcmd == 'release':
         _cmd_webapp_release(args)
+        return
+    if subcmd == 'login':
+        _cmd_webapp_login(args.email, getattr(args, 'host', '0.0.0.0'),
+                           getattr(args, 'port', _PROD_PORT))
         return
 
     try:
@@ -3777,6 +3863,163 @@ def cmd_list(args):
 
 
 # ============================================================
+#  ark doctor — diagnose a self-host install
+# ============================================================
+
+def cmd_doctor(args):
+    """Run a series of self-host sanity checks and report status.
+
+    Designed for users who installed via `curl install.sh | bash`. Each check
+    prints PASS / WARN / FAIL with a one-line hint. Exit code is 0 if no FAILs,
+    1 otherwise — so install scripts and CI can branch on it.
+    """
+    import platform as _platform
+    import subprocess as _sp
+
+    fails = 0
+    warns = 0
+
+    def line(status: str, label: str, detail: str = "") -> None:
+        nonlocal fails, warns
+        if status == "PASS":
+            tag = _c(" ok ", Colors.GREEN)
+        elif status == "WARN":
+            tag = _c("warn", Colors.YELLOW); warns += 1
+        else:
+            tag = _c("fail", Colors.RED);    fails += 1
+        suffix = f"  {_c(detail, Colors.DIM)}" if detail else ""
+        print(f"  [{tag}] {label}{suffix}")
+
+    print(f"\n{_c('ARK doctor', Colors.BOLD)}\n")
+
+    # 1. Python
+    py = sys.version_info
+    if py >= (3, 9):
+        line("PASS", f"python {py.major}.{py.minor}.{py.micro}", sys.executable)
+    else:
+        line("FAIL", f"python {py.major}.{py.minor}", "need >= 3.9")
+
+    # 2. ark package importable + version
+    try:
+        import ark  # noqa: F401
+        from importlib import metadata as _md
+        try:
+            ver = _md.version("ark-research")
+        except Exception:
+            ver = "unknown"
+        line("PASS", "ark package importable", f"v{ver}")
+    except Exception as e:
+        line("FAIL", "ark package importable", str(e)[:80])
+
+    # 3. Conda + envs.
+    # `conda` may be absent from PATH even when it's installed (the shim
+    # exec's python directly, no `conda activate`), so also derive from
+    # sys.executable (e.g. .../miniforge3/envs/ark/bin/python →
+    # .../miniforge3/condabin/conda) and probe the usual home locations.
+    def _find_conda() -> str | None:
+        c = shutil.which("conda")
+        if c:
+            return c
+        from pathlib import Path as _P
+        here = _P(sys.executable).resolve()
+        for anc in here.parents:
+            for sub in ("condabin/conda", "bin/conda"):
+                cand = anc / sub
+                if cand.is_file() and os.access(cand, os.X_OK):
+                    return str(cand)
+        for cand in (
+            _P.home() / "miniforge3" / "condabin" / "conda",
+            _P.home() / "miniforge3" / "bin" / "conda",
+            _P.home() / "anaconda3" / "condabin" / "conda",
+            _P.home() / "miniconda3" / "condabin" / "conda",
+        ):
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return str(cand)
+        return None
+
+    conda = _find_conda()
+    if conda:
+        line("PASS", "conda found", conda)
+    else:
+        line("WARN", "conda found", "not strictly required, but per-project env isolation needs it")
+
+    envs: set[str] = set()
+    if conda:
+        try:
+            r = _sp.run([conda, "env", "list"], capture_output=True, text=True, timeout=10)
+            envs = {ln.split()[0] for ln in r.stdout.splitlines()
+                    if ln and not ln.startswith("#") and ln.split()}
+        except Exception:
+            pass
+    for env in ("ark-base", "ark"):
+        if env in envs:
+            line("PASS", f"conda env: {env}")
+        elif not conda:
+            line("WARN", f"conda env: {env}", "can't check — no conda on PATH or in $HOME")
+        else:
+            msg = "create with `conda env create -f environment.yml`" if env == "ark-base" \
+                  else "create with `conda create -n ark python=3.11 && pip install -e .[webapp]`"
+            line("WARN", f"conda env: {env}", msg)
+
+    # 4. Agent CLI
+    claude_cli = shutil.which("claude")
+    gemini_cli = shutil.which("gemini")
+    if claude_cli or gemini_cli:
+        found = []
+        if claude_cli: found.append(f"claude={claude_cli}")
+        if gemini_cli: found.append(f"gemini={gemini_cli}")
+        line("PASS", "agent CLI", ", ".join(found))
+    else:
+        line("WARN", "agent CLI", "install Claude Code or Gemini CLI to run projects")
+
+    # 5. API keys
+    has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    has_gemini = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    if has_anthropic or has_gemini:
+        keys = []
+        if has_anthropic: keys.append("ANTHROPIC_API_KEY")
+        if has_gemini: keys.append("GEMINI_API_KEY")
+        line("PASS", "API key", ", ".join(keys))
+    else:
+        line("WARN", "API key", "set ANTHROPIC_API_KEY or GEMINI_API_KEY in your shell rc")
+
+    # 6. LaTeX (for compilation)
+    pdflatex = shutil.which("pdflatex")
+    bibtex = shutil.which("bibtex")
+    if pdflatex and bibtex:
+        line("PASS", "LaTeX", f"pdflatex={pdflatex}")
+    else:
+        missing = [n for n, p in (("pdflatex", pdflatex), ("bibtex", bibtex)) if not p]
+        line("WARN", "LaTeX", f"missing {', '.join(missing)} — needed for PDF compilation")
+
+    # 7. Webapp service (Linux/systemd only)
+    if _platform.system() == "Linux" and shutil.which("systemctl"):
+        try:
+            r = _sp.run(["systemctl", "--user", "is-active", "ark-webapp"],
+                        capture_output=True, text=True, timeout=5)
+            state = r.stdout.strip() or "inactive"
+            if state == "active":
+                line("PASS", "webapp service", f"ark-webapp: {state}")
+            elif state in ("inactive", "failed", "unknown"):
+                line("WARN", "webapp service", f"ark-webapp: {state} (run `ark webapp install`)")
+            else:
+                line("WARN", "webapp service", f"ark-webapp: {state}")
+        except Exception:
+            line("WARN", "webapp service", "could not query systemctl")
+    else:
+        line("WARN", "webapp service", "skipped (non-Linux or no systemd)")
+
+    print()
+    if fails:
+        print(_c(f"  {fails} fail, {warns} warn — fix the failures and re-run.", Colors.RED))
+        sys.exit(1)
+    elif warns:
+        print(_c(f"  ok, {warns} warning(s) — see above.", Colors.YELLOW))
+    else:
+        print(_c("  All checks passed.", Colors.GREEN))
+
+
+# ============================================================
 #  ark cite-check / cite-search / cite-debug
 # ============================================================
 
@@ -3790,7 +4033,7 @@ def cmd_cite_check(args):
         sys.exit(1)
 
     code_dir = Path(config.get("code_dir", ""))
-    latex_dir = code_dir / config.get("latex_dir", "Latex")
+    latex_dir = code_dir / config.get("latex_dir", "paper")
     bib_path = latex_dir / "references.bib"
 
     if not bib_path.exists():
@@ -3865,7 +4108,7 @@ def cmd_cite_debug(args):
 
     project_dir = get_projects_dir() / args.project
     code_dir = Path(config.get("code_dir", ""))
-    latex_dir = code_dir / config.get("latex_dir", "Latex")
+    latex_dir = code_dir / config.get("latex_dir", "paper")
     bib_path = latex_dir / "references.bib"
     lit_path = code_dir / "auto_research" / "state" / "literature.yaml"
 
@@ -3911,7 +4154,7 @@ def cmd_cite_debug(args):
 
     # Step 2: Writer (Related Work only)
     print(styled(Style.BOLD, "\n═══ Step 2: Writer (Related Work only) ═══\n"))
-    latex_dir_name = config.get("latex_dir", "Latex")
+    latex_dir_name = config.get("latex_dir", "paper")
     orch.run_agent("writer", f"""
 Write the Related Work section in {latex_dir_name}/main.tex.
 Use ONLY the citations available in {latex_dir_name}/references.bib (use \\cite{{key}} commands).
@@ -4050,6 +4293,10 @@ def main():
     p_list = subparsers.add_parser("list", help="List all projects")
     p_list.set_defaults(func=cmd_list)
 
+    # ark doctor
+    p_doctor = subparsers.add_parser("doctor", help="Diagnose a self-host install (python, envs, API keys, webapp)")
+    p_doctor.set_defaults(func=cmd_doctor)
+
     p_setup_bot = subparsers.add_parser("setup-bot", help="Set up Telegram notifications (per-project or global)")
     p_setup_bot.add_argument("project", nargs="?", default=None, help="Project name for per-project setup (omit for global)")
     p_setup_bot.set_defaults(func=cmd_setup_bot)
@@ -4077,6 +4324,8 @@ def main():
     p_svc_restart.add_argument("--dev", action="store_true", help="Restart dev service")
     p_release = webapp_sub.add_parser("release", help="Tag and deploy to prod environment")
     p_release.add_argument("--tag", type=str, default=None, help="Version tag (default: auto-increment)")
+    p_login = webapp_sub.add_parser("login", help="Generate a magic-link URL (self-host, no SMTP)")
+    p_login.add_argument("email", help="Email to log in as (will be created on first use)")
     p_webapp.add_argument("--port", type=int, default=9527, help="Port (default: 9527)")
     p_webapp.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
     p_webapp.add_argument("--daemon", action="store_true", help="Run in background (deprecated, use 'install')")
