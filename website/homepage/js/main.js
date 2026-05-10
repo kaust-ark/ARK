@@ -300,25 +300,3 @@ document.querySelectorAll('.install-copy').forEach((btn) => {
     }
   });
 });
-
-/* ===== Demo video: click-to-play facade ===== */
-document.querySelectorAll('.video-facade').forEach((facade) => {
-  const play = () => {
-    if (facade.classList.contains('playing')) return;
-    const vid = facade.dataset.vid;
-    if (!vid) return;
-    const iframe = document.createElement('iframe');
-    const params = 'autoplay=1&modestbranding=1&rel=0&playsinline=1&iv_load_policy=3&color=white';
-    iframe.src = `https://www.youtube-nocookie.com/embed/${vid}?${params}`;
-    iframe.title = 'ARK demo';
-    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
-    iframe.setAttribute('allowfullscreen', '');
-    iframe.setAttribute('referrerpolicy', 'no-referrer');
-    facade.appendChild(iframe);
-    facade.classList.add('playing');
-  };
-  facade.addEventListener('click', play);
-  facade.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); play(); }
-  });
-});
