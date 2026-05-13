@@ -844,7 +844,7 @@
           </div>
           
           <div class="hero-adv-field" style="margin-top:12px">
-            <label>Compute Environment</label>
+            <label>Experiments Backend</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <label class="model-option">
                 <input type="radio" name="compute_backend" value="local" />
@@ -864,6 +864,31 @@
               </label>
               <label class="model-option" id="hero-backend-cloud-azure-label" style="display:none">
                 <input type="radio" name="compute_backend" value="cloud:azure" />
+                <span class="model-chip">☁️ Azure</span>
+              </label>
+            </div>
+          </div>
+          <div class="hero-adv-field" style="margin-top:8px">
+            <label>Orchestrator Backend</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <label class="model-option">
+                <input type="radio" name="orchestrator_compute_backend" value="local" checked />
+                <span class="model-chip">🖥️ Local</span>
+              </label>
+              <label class="model-option" id="hero-orch-backend-slurm-label">
+                <input type="radio" name="orchestrator_compute_backend" value="slurm" />
+                <span class="model-chip">🔧 Slurm</span>
+              </label>
+              <label class="model-option" id="hero-orch-backend-cloud-gcp-label" style="display:none">
+                <input type="radio" name="orchestrator_compute_backend" value="cloud:gcp" />
+                <span class="model-chip">☁️ GCP</span>
+              </label>
+              <label class="model-option" id="hero-orch-backend-cloud-aws-label" style="display:none">
+                <input type="radio" name="orchestrator_compute_backend" value="cloud:aws" />
+                <span class="model-chip">☁️ AWS</span>
+              </label>
+              <label class="model-option" id="hero-orch-backend-cloud-azure-label" style="display:none">
+                <input type="radio" name="orchestrator_compute_backend" value="cloud:azure" />
                 <span class="model-chip">☁️ Azure</span>
               </label>
             </div>
@@ -1128,13 +1153,23 @@
       </div>
     </div>
     <div class="form-group">
-      <label>Compute Environment</label>
+      <label>Experiments Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="continue-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
         <label class="model-option"><input type="radio" name="continue-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
         <label class="model-option" id="continue-backend-cloud-gcp-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
         <label class="model-option" id="continue-backend-cloud-aws-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
         <label class="model-option" id="continue-backend-cloud-azure-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Orchestrator Backend</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="model-option"><input type="radio" name="continue-orch-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
+        <label class="model-option"><input type="radio" name="continue-orch-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
+        <label class="model-option" id="continue-orch-backend-cloud-gcp-label" style="display:none"><input type="radio" name="continue-orch-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
+        <label class="model-option" id="continue-orch-backend-cloud-aws-label" style="display:none"><input type="radio" name="continue-orch-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
+        <label class="model-option" id="continue-orch-backend-cloud-azure-label" style="display:none"><input type="radio" name="continue-orch-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
       </div>
     </div>
     <!-- GCP per-project options (shown when cloud:gcp selected) -->
@@ -1232,13 +1267,23 @@
       </div>
     </div>
     <div class="form-group">
-      <label>Compute Environment</label>
+      <label>Experiments Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="restart-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
         <label class="model-option"><input type="radio" name="restart-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
         <label class="model-option" id="restart-backend-cloud-gcp-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
         <label class="model-option" id="restart-backend-cloud-aws-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
         <label class="model-option" id="restart-backend-cloud-azure-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Orchestrator Backend</label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="model-option"><input type="radio" name="restart-orch-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
+        <label class="model-option"><input type="radio" name="restart-orch-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
+        <label class="model-option" id="restart-orch-backend-cloud-gcp-label" style="display:none"><input type="radio" name="restart-orch-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
+        <label class="model-option" id="restart-orch-backend-cloud-aws-label" style="display:none"><input type="radio" name="restart-orch-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
+        <label class="model-option" id="restart-orch-backend-cloud-azure-label" style="display:none"><input type="radio" name="restart-orch-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
       </div>
     </div>
     <!-- GCP per-project options (shown when cloud:gcp selected) -->
@@ -2070,14 +2115,15 @@ const _CLOUD_PROVIDER_LABELS = { gcp: 'GCP', aws: 'AWS', azure: 'Azure' };
 function _applyCloudProviderButtons() {
   const providers = window._userCloudProviders || [];
   for (const prefix of ['hero', 'continue', 'restart']) {
-    const nameAttr = prefix === 'hero' ? 'compute_backend' : `${prefix}-backend`;
     for (const p of ['gcp', 'aws', 'azure']) {
-      const lbl = document.getElementById(`${prefix}-backend-cloud-${p}-label`);
-      if (!lbl) continue;
-      const input = lbl.querySelector('input');
-      const available = providers.includes(p);
-      lbl.style.display = available ? '' : 'none';
-      if (input) input.disabled = !available;
+      for (const idPrefix of [`${prefix}-backend`, `${prefix}-orch-backend`]) {
+        const lbl = document.getElementById(`${idPrefix}-cloud-${p}-label`);
+        if (!lbl) continue;
+        const input = lbl.querySelector('input');
+        const available = providers.includes(p);
+        lbl.style.display = available ? '' : 'none';
+        if (input) input.disabled = !available;
+      }
     }
   }
 }
@@ -2318,6 +2364,8 @@ async function loadGateBanner() {
   // this host, hide the slurm radio and fall the default back to local.
   const slurmLbl = document.getElementById('hero-backend-slurm-label');
   if (slurmLbl) slurmLbl.style.display = window._sysSlurm ? '' : 'none';
+  const orchSlurmLbl = document.getElementById('hero-orch-backend-slurm-label');
+  if (orchSlurmLbl) orchSlurmLbl.style.display = window._sysSlurm ? '' : 'none';
   if (!window._sysSlurm) {
     const slurmRadio = document.querySelector('input[name="compute_backend"][value="slurm"]');
     const localRadio = document.querySelector('input[name="compute_backend"][value="local"]');
@@ -3412,6 +3460,10 @@ async function openContinueModal(id) {
           else { lbl.style.opacity = ''; lbl.style.pointerEvents = ''; r.disabled = false; }
       }
     });
+    const orchBackendVal = _normalizeCloudBackend(p.orchestrator_compute_backend || 'local');
+    document.querySelectorAll('input[name="continue-orch-backend"]').forEach(r => {
+      r.checked = (r.value === orchBackendVal);
+    });
     // Load per-project GCP options from existing overrides (or user defaults)
     let existingOverrides = {};
     try { existingOverrides = p.cloud_overrides ? JSON.parse(p.cloud_overrides) : {}; } catch(e) {}
@@ -3427,11 +3479,12 @@ async function submitContinue() {
   const comment = document.getElementById('continue-comment').value.trim();
   const model = ([...document.querySelectorAll('input[name="continue-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-4-6';
   const backend = ([...document.querySelectorAll('input[name="continue-backend"]')].find(r => r.checked) || {}).value || 'local';
+  const orchBackend = ([...document.querySelectorAll('input[name="continue-orch-backend"]')].find(r => r.checked) || {}).value || 'local';
   const gcpOverrides = backend === 'cloud:gcp' ? _collectGcpOptions('continue') : null;
   const btn = document.getElementById('continue-btn');
   btn.disabled = true;
   try {
-    const payload = { additional_iterations: iter, comment, model, compute_backend: backend };
+    const payload = { additional_iterations: iter, comment, model, compute_backend: backend, orchestrator_compute_backend: orchBackend };
     if (gcpOverrides) payload.cloud_overrides = gcpOverrides;
     const res = await fetch(`${APP_BASE}/api/projects/${continueProjectId}/continue`, {
       method: 'POST',
@@ -3518,6 +3571,10 @@ async function openRestartModal(id) {
         else { lbl.style.opacity = ''; lbl.style.pointerEvents = ''; r.disabled = false; }
     }
   });
+  const restartOrchBackendVal = _normalizeCloudBackend(p.orchestrator_compute_backend || 'local');
+  document.querySelectorAll('input[name="restart-orch-backend"]').forEach(r => {
+    r.checked = (r.value === restartOrchBackendVal);
+  });
   // Load per-project GCP options from existing overrides (or user defaults)
   let restartOverrides = {};
   try { restartOverrides = p.cloud_overrides ? JSON.parse(p.cloud_overrides) : {}; } catch(e) {}
@@ -3527,6 +3584,8 @@ async function openRestartModal(id) {
   // Update hero form slurm visibility
   const hs = document.getElementById('hero-backend-slurm-label');
   if (hs) { hs.style.display = window._sysSlurm ? 'block' : 'none'; }
+  const hos = document.getElementById('hero-orch-backend-slurm-label');
+  if (hos) { hos.style.display = window._sysSlurm ? 'block' : 'none'; }
 
   // Deep research checkbox
   const drSection = document.getElementById('restart-deep-research-section');
@@ -3566,6 +3625,7 @@ async function submitRestart() {
       telegram_chat_id: document.getElementById('restart-tg-chatid').value.trim(),
       comment: document.getElementById('restart-comment').value.trim(),
       compute_backend: ([...document.querySelectorAll('input[name="restart-backend"]')].find(r => r.checked) || {}).value || 'local',
+      orchestrator_compute_backend: ([...document.querySelectorAll('input[name="restart-orch-backend"]')].find(r => r.checked) || {}).value || 'local',
       redo_deep_research: !document.getElementById('restart-keep-dr').checked,
       keep_figures: document.getElementById('restart-keep-figures').checked,
     };

@@ -1685,6 +1685,7 @@ async def api_create_project(
     telegram_chat_id: str = Form(""),
     comment: str = Form(""),
     compute_backend: str = Form("local"),
+    orchestrator_compute_backend: str = Form("local"),
     cloud_overrides: str = Form(""),
 ):
     user = _require_user(request)
@@ -1801,6 +1802,7 @@ async def api_create_project(
             max_dev_iterations=max_dev_iterations,
             mode=mode,
             compute_backend=compute_backend,
+            orchestrator_compute_backend=orchestrator_compute_backend,
             cloud_overrides=cloud_overrides or "",
             status=initial_status,
             has_pdf_upload=has_pdf_upload,
@@ -1893,6 +1895,8 @@ async def api_get_project(project_id: str, request: Request):
             "updated_at": project.updated_at.isoformat(),
             "cost_report": _read_cost_report(pdir, project=project),
             "compute_backend": project.compute_backend,
+            "orchestrator_compute_backend": project.orchestrator_compute_backend or "local",
+            "experiment_compute_backend": project.experiment_compute_backend or project.compute_backend or "slurm",
             "cloud_overrides": project.cloud_overrides or "",
             "error_message": project.error_message or "",
         })
@@ -2064,6 +2068,9 @@ async def api_restart_project(project_id: str, request: Request):
                   if not _build_cloud_config(user, settings, per_project_overrides=overrides, provider_override=_parse_cloud_provider(new_backend)):
                        raise HTTPException(400, "Cloud compute not configured.")
              update_project(session, project, compute_backend=new_backend)
+        new_orch_backend = body.get("orchestrator_compute_backend")
+        if new_orch_backend:
+            update_project(session, project, orchestrator_compute_backend=new_orch_backend)
         new_cloud_overrides = body.get("cloud_overrides")
         if new_cloud_overrides is not None:
             val = json.dumps(new_cloud_overrides) if isinstance(new_cloud_overrides, dict) else (new_cloud_overrides or "")
@@ -2151,6 +2158,9 @@ async def api_continue_project(project_id: str, request: Request):
                   if not _build_cloud_config(user, settings, per_project_overrides=overrides, provider_override=_parse_cloud_provider(new_backend)):
                        raise HTTPException(400, "Cloud compute not configured.")
              update_project(session, project, compute_backend=new_backend)
+        new_orch_backend = body.get("orchestrator_compute_backend")
+        if new_orch_backend:
+            update_project(session, project, orchestrator_compute_backend=new_orch_backend)
         new_cloud_overrides = body.get("cloud_overrides")
         if new_cloud_overrides is not None:
             val = json.dumps(new_cloud_overrides) if isinstance(new_cloud_overrides, dict) else (new_cloud_overrides or "")
