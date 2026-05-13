@@ -3,16 +3,16 @@
 # ARK GCP Image Builder
 #
 # Provisions a temporary VM, runs setup_ark_host.sh, and saves a Machine Image.
-# Usage: ./scripts/build_ark_gcp_image.sh [GCP_PROJECT] [ZONE]
+# Usage: ./scripts/build_ark_gcp_image.sh [GCP_PROJECT] [ZONE] [VERSION]
 # =============================================================================
 
 set -e
 
 PROJECT=${1:-$(gcloud config get-value project)}
 ZONE=${2:-us-central1-a}
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-INSTANCE_NAME="ark-image-builder-$TIMESTAMP"
-IMAGE_NAME="ark-job-v1-$TIMESTAMP"
+VERSION=${3:-v1}
+INSTANCE_NAME="ark-image-builder-$(date +%Y%m%d-%H%M%S)"
+IMAGE_NAME="ark-debian-base-$VERSION"
 
 echo "Building ARK GCP Image: $IMAGE_NAME"
 echo "Project: $PROJECT, Zone: $ZONE"
@@ -25,7 +25,8 @@ gcloud compute instances create "$INSTANCE_NAME" \
     --image-family="debian-12" \
     --image-project="debian-cloud" \
     --boot-disk-size="50GB" \
-    --metadata="serial-port-enable=1"
+    --metadata="serial-port-enable=1" \
+    --network="${NETWORK:-default}"
 
 # Wait for SSH to be ready
 echo "Waiting for SSH..."
@@ -48,7 +49,7 @@ gcloud compute images create "$IMAGE_NAME" \
     --project="$PROJECT" \
     --source-disk="$INSTANCE_NAME" \
     --source-disk-zone="$ZONE" \
-    --family="ark-job"
+    --family="ark-debian-base"
 
 # 6. Cleanup
 echo "Cleaning up temporary instance..."

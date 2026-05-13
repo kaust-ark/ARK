@@ -36,6 +36,10 @@ ark_web_projects
 .ark/
 ark_webapp/
 
+# GCP service account keys
+ark-gcp-key.json
+ark-runner-gcp-key.json
+
 # Claude Code worktrees/session state (local only)
 .claude/
 

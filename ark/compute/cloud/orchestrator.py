@@ -154,17 +154,33 @@ class OrchestratorCloudBackend(GCPCloudBackend):
         reaper_pid_file = f"{remote_work_dir}/reaper.pid"
         reaper_script = f"{remote_work_dir}/ark_vm_reaper.sh"
 
+        # Sync the ark source package so PYTHONPATH=/home/{ssh_user}/ark_source resolves
+        import os
+        key_path = os.path.expanduser(self.ssh_key_path)
+        ssh_opts = (
+            f"ssh -o StrictHostKeyChecking=no "
+            f"-o UserKnownHostsFile=/dev/null "
+            f"-o LogLevel=ERROR -i {key_path}"
+        )
+        ark_source_root = Path(__file__).resolve().parents[3]  # repo root containing ark/
+        remote_ark_source = f"/home/{self.ssh_user}/ark_source"
+        try:
+            self._ssh_exec(f"mkdir -p {remote_ark_source}", timeout=10)
+            subprocess.run([
+                "rsync", "-az", "--exclude=.git", "--exclude=__pycache__",
+                "--exclude=.venv", "--exclude=*.pyc", "--exclude=projects",
+                "-e", ssh_opts,
+                str(ark_source_root) + "/",
+                f"{self.ssh_user}@{self._instance_ip}:{remote_ark_source}/",
+            ], check=True, timeout=120)
+            self.log("Ark source synced to remote ark_source/")
+        except Exception as e:
+            self.log(f"Ark source sync failed: {e}", "WARN")
+
         # Sync the reaper script to the VM (Phase 6)
         local_reaper = Path(__file__).resolve().parents[3] / "scripts" / "ark_vm_reaper.sh"
         if local_reaper.exists():
             try:
-                import os
-                key_path = os.path.expanduser(self.ssh_key_path)
-                ssh_opts = (
-                    f"ssh -o StrictHostKeyChecking=no "
-                    f"-o UserKnownHostsFile=/dev/null "
-                    f"-o LogLevel=ERROR -i {key_path}"
-                )
                 subprocess.run([
                     "rsync", "-az", "-e", ssh_opts,
                     str(local_reaper),
@@ -174,11 +190,40 @@ class OrchestratorCloudBackend(GCPCloudBackend):
             except Exception as e:
                 self.log(f"Reaper sync failed (non-fatal): {e}", "WARN")
 
+        # Phase 4: Sync credentials securely to /dev/shm (RAM disk)
+        # Sync local .env
+        local_env = self.code_dir / ".env"
+        if local_env.exists():
+            try:
+                subprocess.run([
+                    "rsync", "-az", "-e", ssh_opts,
+                    str(local_env),
+                    f"{self.ssh_user}@{self._instance_ip}:/dev/shm/.env",
+                ], check=True, timeout=30)
+            except Exception as e:
+                self.log(f"Failed to sync .env to /dev/shm: {e}", "WARN")
+
+        # Sync SSH key
+        if os.path.exists(key_path):
+            try:
+                subprocess.run([
+                    "rsync", "-az", "-e", ssh_opts,
+                    key_path,
+                    f"{self.ssh_user}@{self._instance_ip}:/dev/shm/ark_id_rsa",
+                ], check=True, timeout=30)
+                self._ssh_exec("chmod 600 /dev/shm/ark_id_rsa", timeout=10)
+            except Exception as e:
+                self.log(f"Failed to sync SSH key to /dev/shm: {e}", "WARN")
+
         # Ensure the logs dir exists on the remote
         self._ssh_exec(f"mkdir -p {remote_work_dir}/logs {remote_work_dir}/auto_research/state", timeout=10)
 
         start_cmd = (
-            f"cd {remote_work_dir} && "
+            f"cd /home/{self.ssh_user}/ark_source && "
+            f"export PYTHONPATH=/home/{self.ssh_user}/ark_source && "
+            f"export ARK_PROJECT_DIR={remote_work_dir} && "
+            f"export ARK_SSH_KEY_PATH=/dev/shm/ark_id_rsa && "
+            f"set -a && [ -f /dev/shm/.env ] && source /dev/shm/.env && set +a && "
             f"nohup conda run -n {conda_env} python -m ark.cli run {self.project_name} "
             f"> {log_file} 2>&1 & "
             f"echo $! > {pid_file}"
@@ -187,7 +232,9 @@ class OrchestratorCloudBackend(GCPCloudBackend):
         self.log(f"Starting remote orchestrator process...")
         self._ssh_exec(start_cmd, timeout=30)
 
-        # Read the PID back to confirm it started
+        # Read the PID back to confirm it started.
+        # conda run exits quickly after spawning Python; prefer the PID written
+        # by ark.cli run itself (projects/{name}/.pid) which tracks the real process.
         pid = None
         try:
             pid = self._ssh_exec(f"cat {pid_file}", timeout=10).strip()
@@ -195,6 +242,17 @@ class OrchestratorCloudBackend(GCPCloudBackend):
         except Exception as e:
             self.log(f"Failed to read remote orchestrator PID: {e}", "ERROR")
             return None
+
+        # Give ark.cli run a moment to write its own .pid file, then prefer that
+        time.sleep(3)
+        ark_pid_file = f"/home/{self.ssh_user}/ark_source/projects/{self.project_name}/.pid"
+        try:
+            ark_pid = self._ssh_exec(f"cat {ark_pid_file} 2>/dev/null || echo ''", timeout=10).strip()
+            if ark_pid and ark_pid != pid:
+                self.log(f"Using ark process PID: {ark_pid} (was {pid})")
+                pid = ark_pid
+        except Exception:
+            pass
 
         # Start the reaper daemon after the orchestrator (Phase 6)
         if local_reaper.exists():
@@ -297,6 +355,12 @@ class OrchestratorCloudBackend(GCPCloudBackend):
             self.log("Final sync from orchestrator VM completed.")
         except Exception as e:
             self.log(f"Final sync failed (non-fatal): {e}", "WARN")
+
+        # Wipe credentials from RAM disk (Phase 4 / Phase 6)
+        try:
+            self._ssh_exec("rm -f /dev/shm/.env /dev/shm/ark_id_rsa", timeout=10)
+        except Exception:
+            pass
 
         # Delegate actual VM termination to GCPCloudBackend
         super().teardown()

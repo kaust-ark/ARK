@@ -1127,6 +1127,12 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
             if not orch_backend.sync_to_backend(str(pdir), remote_work_dir):
                 raise RuntimeError("Failed to sync project directory to Orchestrator VM")
                 
+            # Sync the ark codebase to the remote VM so the orchestrator runs the live code
+            ark_code_root = str(Path(__file__).resolve().parents[2])
+            remote_ark_dir = f"/home/{orch_backend.ssh_user}/ark_source"
+            if not orch_backend.sync_to_backend(ark_code_root, remote_ark_dir):
+                raise RuntimeError("Failed to sync ARK source to Orchestrator VM")
+                
             pid = orch_backend.run_orchestrator()
             if not pid:
                 raise RuntimeError("Failed to start remote orchestrator process")

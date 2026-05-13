@@ -40,7 +40,14 @@ sudo apt-get update && sudo apt-get install -y --no-install-recommends \
 
 sudo git lfs install
 
-# 2. Conda Environment (Miniforge)
+# 2. Google Cloud SDK
+if ! command -v gcloud &>/dev/null; then
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+    sudo apt-get update && sudo apt-get install -y google-cloud-sdk
+fi
+
+# 3. Conda Environment (Miniforge)
 if [ ! -d "/opt/conda" ]; then
     ARCH=$(uname -m)
     case "$ARCH" in
@@ -54,27 +61,23 @@ if [ ! -d "/opt/conda" ]; then
     sudo ln -sf /opt/conda/bin/conda /usr/local/bin/conda
 fi
 
-# 3. Create ark-base environment
+# 4. Create ark-base environment
 # We expect environment.yml to be in the current dir or we can download it
 # For the image builder, we'll assume it's uploaded to the VM.
 if [ -f "environment.yml" ]; then
     sudo /opt/conda/bin/conda env create -f environment.yml || true
 fi
 
-# 4. Node.js & Claude CLI
+# 5. Node.js & Claude CLI
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
 sudo apt-get install -y nodejs
 sudo npm install -g @anthropic-ai/claude-code
 
-# 5. ARK User and Directories
-if ! id "ark" &>/dev/null; then
-    sudo useradd -m -s /bin/bash ark
-fi
+# 6. Directories and conda path for ubuntu user
 sudo mkdir -p /data/projects /data/.ark
-sudo chown -R ark:ark /data /opt/conda
+sudo chown -R ubuntu:ubuntu /data /opt/conda
 
-# Add conda to ark user's path
-echo 'export PATH="/opt/conda/bin:$PATH"' | sudo tee -a /home/ark/.bashrc
-echo 'conda activate ark-base' | sudo tee -a /home/ark/.bashrc
+echo 'export PATH="/opt/conda/bin:$PATH"' | sudo tee -a /home/ubuntu/.bashrc
+echo 'conda activate ark-base' | sudo tee -a /home/ubuntu/.bashrc
 
 echo "ARK host setup complete."

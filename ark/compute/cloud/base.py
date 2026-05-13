@@ -137,11 +137,12 @@ class CloudBackend(ComputeBackend):
                     f"-o LogLevel=ERROR -i {key_path}")
         try:
             subprocess.run([
-                "rsync", "-azL",
+                "rsync", "-az",
                 "--exclude", ".git",
                 "--exclude", "__pycache__",
                 "--exclude", "*.pyc",
                 "--exclude", "auto_research",
+                "--exclude", "projects",
                 "-e", ssh_opts,
                 f"{source_dir}/", dest,
             ], check=True, timeout=300)
