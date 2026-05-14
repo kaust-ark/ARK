@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 Agents">
@@ -104,7 +104,7 @@ ARK 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息，并根
 
 ## 环境要求
 
-- **Python 3.9+** (需安装 `pyyaml` 和 `PyMuPDF`)
+- **Python 3.10+** (需安装 `pyyaml` 和 `PyMuPDF`)
 - **智能体命令行**：[Claude Code](https://docs.anthropic.com/en/docs/claude-code)（推荐，使用 Claude Max 订阅）、[OpenAI Codex](https://github.com/openai/codex)，**或** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; 可按项目选择。
 - **可选**: LaTeX (`pdflatex` + `bibtex`)、Slurm、用于 AI 绘图的 `google-genai`。
 

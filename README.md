@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 Agents">
@@ -104,7 +104,7 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 
 ## Requirements
 
-- **Python 3.9+** with `pyyaml` and `PyMuPDF`
+- **Python 3.10+** with `pyyaml` and `PyMuPDF`
 - **Agent CLI**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended, Claude Max subscription), [OpenAI Codex](https://github.com/openai/codex), **or** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; selectable per project
 - **Optional**: LaTeX (`pdflatex` + `bibtex`), Slurm, `google-genai` for AI figures
 
