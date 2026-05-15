@@ -4122,19 +4122,6 @@ async function saveUserSettings() {
       azure_subscription_id: document.getElementById('settings-azure-subscription-id').value.trim(),
     };
 
-    // Validate: Gemini API Key is required
-    if (!body.gemini || body.gemini.includes('...')) {
-      showToast('Gemini API Key is required', 'warn');
-      btn.disabled = false; btn.textContent = 'Verify and Save Keys';
-      return;
-    }
-    // Validate: Claude CLI Session is required
-    const hasClaude = body.claude_oauth_token && !body.claude_oauth_token.includes('...');
-    if (!hasClaude) {
-      showToast('Claude CLI Session is required', 'warn');
-      btn.disabled = false; btn.textContent = 'Verify and Save Keys';
-      return;
-    }
 
     // Show wait icons for non-empty keys
     if (body.gemini && !body.gemini.includes('...')) document.getElementById('settings-gemini-status').innerHTML = '⏳';

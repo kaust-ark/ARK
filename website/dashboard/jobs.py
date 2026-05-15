@@ -630,7 +630,7 @@ def launch_local_job(
         "from pathlib import Path\n"
         "pdir = Path({project_dir!r})\n"
         "def cleanup(*args):\n"
-        "    for d in (pdir / '.gemini', pdir / '.config', pdir / '.claude.json'):\n"
+        "    for d in (pdir / '.gemini', pdir / '.config', pdir / '.claude.json', pdir / '.gcp_credentials.json'):\n"
         "        if d.is_dir(): _sh.rmtree(d, ignore_errors=True)\n"
         "        elif d.is_file(): d.unlink(missing_ok=True)\n"
         "    _sys.exit(0)\n"

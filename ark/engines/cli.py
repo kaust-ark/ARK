@@ -9,21 +9,14 @@ from typing import Optional, Tuple
 from pathlib import Path
 
 # ── Blocking-command watchdog ─────────────────────────────
-# Patterns that indicate a child process will block forever.
-# Matched against the full command line of descendant processes.
-_BLOCKING_PATTERNS = re.compile(
-    r"(?:^|\s)(?:"
-    r"tail\s+(?:.*\s)?(?:-[fF]|--follow)"  # tail -f / tail -F / tail --follow
-    r"|watch\s"                              # watch <cmd>
-    r"|top(?:\s|$)"                          # top
-    r"|htop(?:\s|$)"                         # htop
-    r"|less(?:\s|$)"                         # less
-    r"|more(?:\s|$)"                         # more
-    r"|vi(?:m)?(?:\s|$)"                     # vi / vim
-    r"|nano(?:\s|$)"                         # nano
-    r"|emacs(?:\s|$)"                        # emacs
-    r")"
-)
+# Executables that will block forever waiting for user input.
+# Matched against argv[0] basename only — never against arguments/prompts.
+_BLOCKING_EXECUTABLES = frozenset({
+    "tail", "watch", "top", "htop", "less", "more", "vi", "vim", "nano", "emacs",
+})
+
+# tail -f is the only non-basename check needed (tail itself is fine without -f)
+_TAIL_FOLLOW_RE = re.compile(r"(?:^|\s)-[a-zA-Z]*[fF]|--follow(?:\s|$)")
 
 def _get_descendant_pids(parent_pid: int) -> list:
     """Get all descendant PIDs of a process (children, grandchildren, etc.)."""
@@ -48,12 +41,24 @@ def _kill_blocking_descendants(parent_pid: int, log_fn=None) -> int:
             cmdline_path = Path(f"/proc/{pid}/cmdline")
             if not cmdline_path.exists():
                 continue
-            cmdline = cmdline_path.read_bytes().replace(b'\x00', b' ').decode(errors='replace')
-            if _BLOCKING_PATTERNS.search(cmdline):
+            # Split on null bytes to get argv list; check only argv[0] basename
+            # so prompt text embedded as arguments never triggers a false positive.
+            argv = cmdline_path.read_bytes().split(b'\x00')
+            argv = [a.decode(errors='replace') for a in argv if a]
+            if not argv:
+                continue
+            exe_name = Path(argv[0]).name
+            is_blocking = exe_name in _BLOCKING_EXECUTABLES
+            # tail is only blocking when -f / -F / --follow is present
+            if exe_name == "tail":
+                rest = " ".join(argv[1:])
+                is_blocking = bool(_TAIL_FOLLOW_RE.search(rest))
+            if is_blocking:
                 os.kill(pid, signal.SIGTERM)
                 killed += 1
                 if log_fn:
-                    log_fn(f"  Watchdog killed blocking process (PID {pid}): {cmdline[:80]}", "WARN")
+                    display = " ".join(argv)[:80]
+                    log_fn(f"  Watchdog killed blocking process (PID {pid}): {display}", "WARN")
         except (ProcessLookupError, PermissionError, OSError):
             pass
     return killed
@@ -143,14 +148,14 @@ class AgentCLI(ABC):
     def build_command(self, prompt: str, path_boundary: str, code_dir: Path) -> list:
         pass
 
-    def build_env(self) -> dict:
+    def build_env(self, code_dir: Optional[Path] = None) -> dict:
         _strip = {"CLAUDECODE", "GEMINI_API_KEY", "GOOGLE_API_KEY"}
         return {k: v for k, v in os.environ.items() if k not in _strip}
-        
+
     def execute(self, prompt: str, path_boundary: str, code_dir: Path, timeout: int, log_fn=None) -> Tuple[int, str, str, int, bool]:
         """Runs the CLI and returns (returncode, stdout, stderr, elapsed_seconds, timeout_expired)."""
         cmd = self.build_command(prompt, path_boundary, code_dir)
-        env = self.build_env()
+        env = self.build_env(code_dir)
         
         start_time = time.time()
         
@@ -216,6 +221,16 @@ class GeminiCLI(AgentCLI):
         else:
             cmd.extend(["-m", "auto"])
         return cmd
+
+    def build_env(self, code_dir: Optional[Path] = None) -> dict:
+        env = super().build_env()
+        env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
+        for key in ("GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            if key in os.environ:
+                env[key] = os.environ[key]
+        if code_dir and (Path(code_dir) / ".gemini" / "oauth_creds.json").exists():
+            env["HOME"] = str(code_dir)
+        return env
 
 class CodexCLI(AgentCLI):
     def build_command(self, prompt: str, path_boundary: str, code_dir: Path) -> list:

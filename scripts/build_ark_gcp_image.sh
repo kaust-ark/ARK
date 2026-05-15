@@ -32,8 +32,15 @@ gcloud compute instances create "$INSTANCE_NAME" \
 echo "Waiting for SSH..."
 sleep 30
 
-# 2. Push setup scripts and environment.yml
+# 2. Push setup scripts, environment.yml, and the ark source package
 gcloud compute scp scripts/setup_ark_host.sh environment.yml "$INSTANCE_NAME":~/ --zone="$ZONE" --project="$PROJECT"
+# Upload the ark package so setup_ark_host.sh can pip-install it into ark-base.
+gcloud compute scp --recurse ark "$INSTANCE_NAME":~/ark --zone="$ZONE" --project="$PROJECT"
+if [ -f "pyproject.toml" ]; then
+    gcloud compute scp pyproject.toml "$INSTANCE_NAME":~/ --zone="$ZONE" --project="$PROJECT"
+elif [ -f "setup.py" ]; then
+    gcloud compute scp setup.py "$INSTANCE_NAME":~/ --zone="$ZONE" --project="$PROJECT"
+fi
 
 # 3. Run setup
 echo "Running setup script on VM..."

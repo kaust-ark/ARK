@@ -18,8 +18,6 @@ def validate_config(config: dict):
 
 def from_config(config: dict, project_name: str, code_dir, log_fn=None, is_orchestrator=False) -> ComputeBackend:
     """Factory: build the right backend from config."""
-    validate_config(config)
-
     if is_orchestrator:
         compute = config.get("orchestrator_compute_backend", {"type": "local"})
     else:

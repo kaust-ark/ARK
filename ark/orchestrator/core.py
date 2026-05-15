@@ -2558,8 +2558,11 @@ def main():
     db_path = args.db_path
     project_id = args.project_id
     if not db_path:
-        from website.dashboard.db import resolve_db_path
-        db_path = resolve_db_path()
+        try:
+            from website.dashboard.db import resolve_db_path
+            db_path = resolve_db_path()
+        except ImportError:
+            pass  # webapp deps not available (e.g. running on remote VM)
 
     # Load project config to resolve code_dir if not specified
     project_dir = args.project_dir

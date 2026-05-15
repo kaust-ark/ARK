@@ -61,20 +61,38 @@ if [ ! -d "/opt/conda" ]; then
     sudo ln -sf /opt/conda/bin/conda /usr/local/bin/conda
 fi
 
-# 4. Create ark-base environment
-# We expect environment.yml to be in the current dir or we can download it
-# For the image builder, we'll assume it's uploaded to the VM.
+# 4. Create ark-base environment from environment.yml, then install ark itself.
+# environment.yml declares all third-party deps (anthropic, openai, etc.).
+# ark is a local package synced at runtime by OrchestratorCloudBackend.run_orchestrator();
+# install it here in editable mode using a temporary checkout so the image is
+# self-contained and doesn't rely solely on PYTHONPATH being forwarded.
 if [ -f "environment.yml" ]; then
     sudo /opt/conda/bin/conda env create -f environment.yml || true
+fi
+
+# Install the ark package into the env.
+# At image-build time the ark source is uploaded alongside setup_ark_host.sh
+# by build_ark_gcp_image.sh (see step 2 in that script). If the source directory
+# is present, install it; otherwise skip — run_orchestrator will inject PYTHONPATH.
+if [ -d "ark" ] && [ -f "pyproject.toml" -o -f "setup.py" ]; then
+    echo "Installing ark package into ark-base env..."
+    sudo /opt/conda/envs/ark-base/bin/pip install . --no-build-isolation -q
 fi
 
 # 5. Node.js & Claude CLI
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
 sudo apt-get install -y nodejs
-sudo npm install -g @anthropic-ai/claude-code
+sudo npm install -g @anthropic-ai/claude-code @google/gemini-cli
 
 # 6. Directories and conda path for ubuntu user
 sudo mkdir -p /data/projects /data/.ark
+
+# Create ubuntu user if it doesn't exist (image builds on GCP Debian don't have it)
+if ! id ubuntu &>/dev/null; then
+    sudo useradd -m -s /bin/bash ubuntu
+    echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/ubuntu-nopasswd
+fi
+
 sudo chown -R ubuntu:ubuntu /data /opt/conda
 
 echo 'export PATH="/opt/conda/bin:$PATH"' | sudo tee -a /home/ubuntu/.bashrc

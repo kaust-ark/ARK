@@ -48,7 +48,7 @@ _DEFAULTS = {
     "CLOUD_GCP_ZONE": "",            # GCP zone (e.g. us-central1-a)
     "CLOUD_AZURE_RESOURCE_GROUP": "", # Azure resource group name
     "CLOUD_AZURE_LOCATION": "",       # Azure location (e.g. eastus)
-    "CLOUD_CONDA_ENV": "ark",        # conda env to activate on the remote instance
+    "CLOUD_CONDA_ENV": "ark-base",   # conda env to activate on the remote instance
     "CLOUD_NETWORK": "",             # GCP/AWS network name (optional)
     "CLOUD_SUBNET": "",              # GCP/AWS subnet name (optional)
     "CLOUD_ALLOWED_INSTANCE_TYPES": "",  # comma-separated allowlist; empty = no restriction
@@ -179,7 +179,7 @@ class Settings:
         self.cloud_gcp_zone: str = merged.get("CLOUD_GCP_ZONE", "")
         self.cloud_azure_resource_group: str = merged.get("CLOUD_AZURE_RESOURCE_GROUP", "")
         self.cloud_azure_location: str = merged.get("CLOUD_AZURE_LOCATION", "")
-        self.cloud_conda_env: str = merged.get("CLOUD_CONDA_ENV", "ark")
+        self.cloud_conda_env: str = merged.get("CLOUD_CONDA_ENV", "ark-base")
         self.cloud_network: str = merged.get("CLOUD_NETWORK", "")
         self.cloud_subnet: str = merged.get("CLOUD_SUBNET", "")
         raw_allowed_types = merged.get("CLOUD_ALLOWED_INSTANCE_TYPES", "")

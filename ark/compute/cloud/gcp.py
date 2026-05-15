@@ -45,11 +45,10 @@ class GCPCloudBackend(CloudBackend):
 
         accelerator = self._compute_config.get("accelerator_type")
         image_family = self.image_id
-        image_project = self._compute_config.get("image_project", "deeplearning-platform-release")
-        
+        image_project = self._compute_config.get("image_project", self.gcp_project)
+
         if not image_family:
-            image_family = "common-cu124" if accelerator else "common-cpu"
-            image_project = "deeplearning-platform-release"
+            image_family = "ark-debian-base"
 
         if self.instance_type:
             machine_type = self.instance_type
@@ -136,12 +135,15 @@ class GCPCloudBackend(CloudBackend):
             return
         self.log(f"Terminating GCP instance {self._instance_id}...")
         try:
+            cmd = [
+                "gcloud", "compute", "instances", "delete",
+                self._instance_id,
+                "--zone", self.region, "--quiet",
+            ]
+            if self.gcp_project:
+                cmd.extend(["--project", self.gcp_project])
             with self._gcloud_env() as env:
-                subprocess.run([
-                    "gcloud", "compute", "instances", "delete",
-                    self._instance_id,
-                    "--zone", self.region, "--quiet",
-                ], capture_output=True, timeout=60, env=env)
+                subprocess.run(cmd, capture_output=True, timeout=60, env=env)
             self.log(f"Instance {self._instance_id} terminated")
         except Exception as e:
             self.log(f"Failed to terminate instance: {e}", "ERROR")

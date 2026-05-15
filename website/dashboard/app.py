@@ -204,7 +204,7 @@ async def _poll_jobs(app: FastAPI):
                             import yaml as _yaml
                             from ark.compute.cloud.orchestrator import OrchestratorCloudBackend
 
-                            config_file = pdir / "project.yaml"
+                            config_file = pdir / "config.yaml"
                             if not config_file.exists():
                                 continue
                             config_dict = _yaml.safe_load(config_file.read_text())
@@ -220,9 +220,10 @@ async def _poll_jobs(app: FastAPI):
                             remote_state = orch.poll_orchestrator()
                             logger.debug(f"Cloud orchestrator {p.id}: {remote_state}")
 
+                            remote_work_dir = f"/home/{orch.ssh_user}/{p.id}"
+
                             if remote_state == "RUNNING":
-                                # Periodic sync: pull auto_research state to refresh UI
-                                remote_work_dir = f"/home/{orch.ssh_user}/{p.id}"
+                                # Periodic sync: pull state + logs to refresh UI
                                 try:
                                     orch.sync_from_backend(
                                         f"{remote_work_dir}/auto_research/",
@@ -230,6 +231,13 @@ async def _poll_jobs(app: FastAPI):
                                     )
                                 except Exception as sync_err:
                                     logger.warning(f"State sync failed for {p.id}: {sync_err}")
+                                try:
+                                    orch.sync_from_backend(
+                                        f"{remote_work_dir}/logs/",
+                                        str(pdir / "logs"),
+                                    )
+                                except Exception as sync_err:
+                                    logger.warning(f"Log sync failed for {p.id}: {sync_err}")
                                 continue
 
                             # Terminal state detected
@@ -242,7 +250,6 @@ async def _poll_jobs(app: FastAPI):
 
                             # Final sync before marking terminal
                             try:
-                                remote_work_dir = f"/home/{orch.ssh_user}/{p.id}"
                                 orch.sync_from_backend(
                                     f"{remote_work_dir}/auto_research/",
                                     str(pdir / "auto_research"),
@@ -250,6 +257,10 @@ async def _poll_jobs(app: FastAPI):
                                 orch.sync_from_backend(
                                     f"{remote_work_dir}/paper/",
                                     str(pdir / "paper"),
+                                )
+                                orch.sync_from_backend(
+                                    f"{remote_work_dir}/logs/",
+                                    str(pdir / "logs"),
                                 )
                             except Exception as sync_err:
                                 logger.warning(f"Final sync failed for {p.id}: {sync_err}")

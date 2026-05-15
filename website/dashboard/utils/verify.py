@@ -196,6 +196,7 @@ def verify_gemini_cli(user_id: str, projects_root: Path, keys: Dict[str, str]) -
         env["HOME"] = str(verify_dir)
         env["XDG_CONFIG_HOME"] = str(verify_dir / ".config")
         env["TMPDIR"] = str(verify_dir)
+        env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
         
         gemini_bin = find_gemini_binary()
         if not gemini_bin:
@@ -257,6 +258,7 @@ def verify_gemini_oauth(user_id: str, projects_root: Path, keys: Dict[str, str])
         env["HOME"] = str(verify_dir)
         env["XDG_CONFIG_HOME"] = str(verify_dir / ".config")
         env["TMPDIR"] = str(verify_dir)
+        env["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
 
         # Provision the oauth file
         provision_gemini_session(verify_dir, keys)

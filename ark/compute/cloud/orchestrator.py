@@ -191,17 +191,45 @@ class OrchestratorCloudBackend(GCPCloudBackend):
                 self.log(f"Reaper sync failed (non-fatal): {e}", "WARN")
 
         # Phase 4: Sync credentials securely to /dev/shm (RAM disk)
-        # Sync local .env
+        # Build a merged .env that combines the on-disk project .env with any
+        # API key env vars injected into this process by the webapp (e.g.
+        # GEMINI_API_KEY, ANTHROPIC_API_KEY). Without this merge, keys supplied
+        # via the webapp's user-settings form never reach the remote orchestrator.
+        _API_KEY_VARS = (
+            "GEMINI_API_KEY", "GOOGLE_API_KEY",
+            "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
+            "OPENAI_API_KEY",
+            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION",
+            "GOOGLE_CLOUD_PROJECT",
+        )
         local_env = self.code_dir / ".env"
-        if local_env.exists():
-            try:
-                subprocess.run([
-                    "rsync", "-az", "-e", ssh_opts,
-                    str(local_env),
-                    f"{self.ssh_user}@{self._instance_ip}:/dev/shm/.env",
-                ], check=True, timeout=30)
-            except Exception as e:
-                self.log(f"Failed to sync .env to /dev/shm: {e}", "WARN")
+        existing_lines = local_env.read_text().splitlines() if local_env.exists() else []
+        # Track which keys are already set in the file so we only append missing ones
+        existing_keys = set()
+        for line in existing_lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and "=" in stripped:
+                existing_keys.add(stripped.split("=", 1)[0].strip())
+        extra_lines = []
+        for var in _API_KEY_VARS:
+            if var not in existing_keys and os.environ.get(var):
+                extra_lines.append(f"{var}={os.environ[var]}")
+        import tempfile
+        merged_env_content = "\n".join(existing_lines + extra_lines)
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False, prefix="ark_remote_") as tf:
+                tf.write(merged_env_content)
+                merged_env_path = tf.name
+            subprocess.run([
+                "rsync", "-az", "-e", ssh_opts,
+                merged_env_path,
+                f"{self.ssh_user}@{self._instance_ip}:/dev/shm/.env",
+            ], check=True, timeout=30)
+            os.unlink(merged_env_path)
+            if extra_lines:
+                self.log(f"Synced .env with {len(extra_lines)} extra key(s): {[l.split('=')[0] for l in extra_lines]}")
+        except Exception as e:
+            self.log(f"Failed to sync .env to /dev/shm: {e}", "WARN")
 
         # Sync SSH key
         if os.path.exists(key_path):
@@ -218,13 +246,29 @@ class OrchestratorCloudBackend(GCPCloudBackend):
         # Ensure the logs dir exists on the remote
         self._ssh_exec(f"mkdir -p {remote_work_dir}/logs {remote_work_dir}/auto_research/state", timeout=10)
 
+        max_iterations = self.config.get("max_iterations", 3)
+        max_days = self.config.get("max_days", 3)
+
         start_cmd = (
             f"cd /home/{self.ssh_user}/ark_source && "
-            f"export PYTHONPATH=/home/{self.ssh_user}/ark_source && "
             f"export ARK_PROJECT_DIR={remote_work_dir} && "
             f"export ARK_SSH_KEY_PATH=/dev/shm/ark_id_rsa && "
-            f"set -a && [ -f /dev/shm/.env ] && source /dev/shm/.env && set +a && "
-            f"nohup conda run -n {conda_env} python -m ark.cli run {self.project_name} "
+            f"set -a; [ -f /dev/shm/.env ] && source /dev/shm/.env; set +a; "
+            # conda run spawns a fresh process that does not inherit shell exports,
+            # so PYTHONPATH must be injected via `env` inside the conda run invocation.
+            # Use ark.orchestrator directly with --project-dir / --code-dir so the remote
+            # process finds the config in the synced project directory rather than looking
+            # under ark_source/projects/ (which does not exist on the remote VM).
+            f"nohup conda run -n {conda_env} env "
+            f"PYTHONPATH=/home/{self.ssh_user}/ark_source "
+            f"ARK_PROJECT_DIR={remote_work_dir} "
+            f"ARK_SSH_KEY_PATH=/dev/shm/ark_id_rsa "
+            f"python -m ark.orchestrator "
+            f"--project {self.project_name} "
+            f"--project-dir {remote_work_dir} "
+            f"--code-dir {remote_work_dir} "
+            f"--iterations {max_iterations} "
+            f"--max-days {max_days} "
             f"> {log_file} 2>&1 & "
             f"echo $! > {pid_file}"
         )
@@ -234,7 +278,7 @@ class OrchestratorCloudBackend(GCPCloudBackend):
 
         # Read the PID back to confirm it started.
         # conda run exits quickly after spawning Python; prefer the PID written
-        # by ark.cli run itself (projects/{name}/.pid) which tracks the real process.
+        # by ark.orchestrator itself ({remote_work_dir}/.pid) which tracks the real process.
         pid = None
         try:
             pid = self._ssh_exec(f"cat {pid_file}", timeout=10).strip()
@@ -243,9 +287,9 @@ class OrchestratorCloudBackend(GCPCloudBackend):
             self.log(f"Failed to read remote orchestrator PID: {e}", "ERROR")
             return None
 
-        # Give ark.cli run a moment to write its own .pid file, then prefer that
+        # Give ark.orchestrator a moment to write its own .pid file, then prefer that
         time.sleep(3)
-        ark_pid_file = f"/home/{self.ssh_user}/ark_source/projects/{self.project_name}/.pid"
+        ark_pid_file = f"{remote_work_dir}/.pid"
         try:
             ark_pid = self._ssh_exec(f"cat {ark_pid_file} 2>/dev/null || echo ''", timeout=10).strip()
             if ark_pid and ark_pid != pid:
@@ -317,12 +361,16 @@ class OrchestratorCloudBackend(GCPCloudBackend):
             except Exception:
                 pass
 
-            # Process is not running — sync state and determine terminal condition
+            # Process is not running — sync state and logs, then determine terminal condition
             remote_work_dir = f"/home/{self.ssh_user}/{self.project_name}"
             try:
                 self.sync_from_backend(
                     f"{remote_work_dir}/auto_research/",
                     str(self.code_dir / "auto_research"),
+                )
+                self.sync_from_backend(
+                    f"{remote_work_dir}/logs/",
+                    str(self.code_dir / "logs"),
                 )
                 ps = self.code_dir / "auto_research" / "state" / "paper_state.yaml"
                 if ps.exists():

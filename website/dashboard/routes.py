@@ -483,7 +483,12 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     orch_chosen = project.orchestrator_compute_backend or "local"
     config["orchestrator_compute_backend"] = _resolve_compute_config(orch_chosen, is_orchestrator=True)
     
-    exp_chosen = project.experiment_compute_backend or project.compute_backend or "slurm"
+    exp_chosen = project.experiment_compute_backend
+    # If experiment_compute_backend is the legacy default "slurm" but compute_backend
+    # is explicitly set to cloud/something else, prefer compute_backend.
+    if exp_chosen == "slurm" and project.compute_backend and project.compute_backend != "slurm":
+        exp_chosen = project.compute_backend
+    exp_chosen = exp_chosen or project.compute_backend or "slurm"
     config["experiment_compute_backend"] = _resolve_compute_config(exp_chosen, is_orchestrator=False)
     config["compute_backend"] = config["experiment_compute_backend"]  # Legacy
     if project.telegram_token:
@@ -1104,7 +1109,8 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
             from ark.compute.cloud.orchestrator import OrchestratorCloudBackend
             from website.dashboard.jobs import provision_claude_session, provision_gemini_session
             
-            # Write credentials to project dir so they are synced
+            # Write credentials to project dir so they are synced to the remote VM
+            env_file_created = False
             if api_keys:
                 provision_claude_session(pdir, api_keys)
                 provision_gemini_session(pdir, api_keys)
@@ -1113,11 +1119,34 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
                     gcp_creds_path = pdir / ".gcp_credentials.json"
                     gcp_creds_path.write_text(gcp_json)
                     gcp_creds_path.chmod(0o600)
+                # Write a .env so the remote orchestrator has API keys available
+                # (synced to /dev/shm/.env and sourced before the process starts)
+                env_lines = []
+                for k, v in api_keys.items():
+                    if k == "claude_oauth_token":
+                        env_lines.append(f"CLAUDE_CODE_OAUTH_TOKEN={v}")
+                    elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai"):
+                        env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
+                        env_lines.append(f"{env_key}={v}")
+                    elif k in ("aws_access_key_id", "aws_secret_access_key", "aws_default_region"):
+                        env_lines.append(f"{k.upper()}={v}")
+                    elif k.startswith("azure_"):
+                        env_lines.append(f"{k.upper()}={v}")
+                env_file_created = False
+                if env_lines:
+                    env_file = pdir / ".env"
+                    if not env_file.exists():
+                        env_file.write_text("\n".join(env_lines) + "\n")
+                        env_file.chmod(0o600)
+                        env_file_created = True
             
-            config_file = pdir / "project.yaml"
+            config_file = pdir / "config.yaml"
             with open(config_file) as f:
                 config_dict = yaml.safe_load(f)
-                
+
+            from ark.compute import validate_config
+            validate_config(config_dict)
+
             orch_backend = OrchestratorCloudBackend.from_config(
                 config_dict, project.id, pdir, log_fn=logger.info
             )
@@ -1134,6 +1163,8 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
                 raise RuntimeError("Failed to sync ARK source to Orchestrator VM")
                 
             pid = orch_backend.run_orchestrator()
+            if env_file_created:
+                (pdir / ".env").unlink(missing_ok=True)
             if not pid:
                 raise RuntimeError("Failed to start remote orchestrator process")
                 
@@ -1501,7 +1532,7 @@ async def api_get_user_settings(request: Request):
         "gcp_image_family": keys.get("gcp_image_family") or settings.cloud_image_id or "",
         "gcp_image_project": keys.get("gcp_image_project") or "",
         "gcp_ssh_user": keys.get("gcp_ssh_user") or settings.cloud_ssh_user or "ubuntu",
-        "gcp_conda_env": keys.get("gcp_conda_env") or settings.cloud_conda_env or "ark",
+        "gcp_conda_env": keys.get("gcp_conda_env") or settings.cloud_conda_env or "ark-base",
         "gcp_network": keys.get("gcp_network") or settings.cloud_network or "",
         "gcp_subnet": keys.get("gcp_subnet") or settings.cloud_subnet or "",
         "gcp_ssh_private_key": "[PRIVATE KEY]" if keys.get("gcp_ssh_private_key") else "",
@@ -1802,6 +1833,7 @@ async def api_create_project(
             max_dev_iterations=max_dev_iterations,
             mode=mode,
             compute_backend=compute_backend,
+            experiment_compute_backend=compute_backend,
             orchestrator_compute_backend=orchestrator_compute_backend,
             cloud_overrides=cloud_overrides or "",
             status=initial_status,
@@ -2363,21 +2395,28 @@ async def api_get_log(project_id: str, request: Request, lines: int = 200):
             raise HTTPException(404)
         owner_id = project.user_id
     pdir = _project_dir(settings, owner_id, project_id)
-    log_dir = pdir / "logs"
+    log_dirs = [pdir / "logs", pdir / "auto_research" / "logs"]
 
-    # Find the latest log file
+    # Find the latest log file across all candidate dirs
     log_lines: list[str] = []
     log_file = ""
-    for pattern in ["local_*.out", "slurm_*.out", "orchestrator.log", "*.log"]:
-        matches = sorted(log_dir.glob(pattern), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
-        if matches:
-            log_file = str(matches[0])
-            try:
-                all_lines = matches[0].read_text(errors="replace").splitlines()
-                log_lines = all_lines[-lines:]
-            except Exception:
-                pass
-            break
+    best: tuple[float, Path] | None = None
+    for log_dir in log_dirs:
+        for pattern in ["local_*.out", "slurm_*.out", "orchestrator.log", "*.log"]:
+            for p in log_dir.glob(pattern):
+                try:
+                    mtime = p.stat().st_mtime
+                    if best is None or mtime > best[0]:
+                        best = (mtime, p)
+                except Exception:
+                    pass
+    if best:
+        log_file = str(best[1])
+        try:
+            all_lines = best[1].read_text(errors="replace").splitlines()
+            log_lines = all_lines[-lines:]
+        except Exception:
+            pass
 
     return JSONResponse({"lines": log_lines, "log_file": log_file})
 
@@ -2395,7 +2434,7 @@ async def api_stream_log(project_id: str, request: Request):
         owner_id = project.user_id
 
     pdir = _project_dir(settings, owner_id, project_id)
-    log_dir = pdir / "logs"
+    log_dirs = [pdir / "logs", pdir / "auto_research" / "logs"]
 
     async def event_generator():
         # Track which log file we're tailing and how many lines we've sent
@@ -2411,15 +2450,20 @@ async def api_stream_log(project_id: str, request: Request):
             if await request.is_disconnected():
                 break
 
-            # Find latest log file
+            # Find latest log file across all candidate dirs
             log_file = None
-            for pattern in ["local_*.out", "slurm_*.out", "orchestrator.log", "*.log"]:
-                matches = sorted(log_dir.glob(pattern),
-                                 key=lambda p: p.stat().st_mtime if p.exists() else 0,
-                                 reverse=True)
-                if matches:
-                    log_file = matches[0]
-                    break
+            best: tuple[float, Path] | None = None
+            for log_dir in log_dirs:
+                for pattern in ["local_*.out", "slurm_*.out", "orchestrator.log", "*.log"]:
+                    for p in log_dir.glob(pattern):
+                        try:
+                            mtime = p.stat().st_mtime
+                            if best is None or mtime > best[0]:
+                                best = (mtime, p)
+                        except Exception:
+                            pass
+            if best:
+                log_file = best[1]
 
             if log_file and log_file.exists():
                 try:
