@@ -861,42 +861,43 @@ def _read_phase_status(project_dir: Path, project) -> dict:
 
 
 def _read_cost_report(project_dir: Path, project=None) -> dict:
-    """Read cost report from DB (primary) + YAML per-agent details (secondary).
+    """Read cost report from YAML (primary) + DB totals as fallback.
 
-    DB has totals; YAML has per-agent breakdown. Returns a merged dict.
+    YAML is the ground truth written atomically after every agent call.
+    DB totals can lag (e.g. after a restart or transient write failure), so
+    when YAML exists we always prefer its numbers to keep the headline total
+    consistent with the per-agent breakdown.
     """
     result = {}
 
-    # DB has the totals — fast, no file I/O
-    if project and project.total_cost_usd:
-        result = {
-            "total_cost_usd": project.total_cost_usd,
-            "total_input_tokens": project.total_input_tokens,
-            "total_output_tokens": project.total_output_tokens,
-            "total_agent_calls": project.total_agent_calls,
-        }
-
-    # Per-agent breakdown still comes from YAML (too detailed for DB columns)
+    # YAML is authoritative — always read it first
     p = project_dir / "auto_research" / "state" / "cost_report.yaml"
     if p.exists():
         try:
             d = yaml.safe_load(p.read_text()) or {}
         except Exception:
             d = {}
-        if not result:
-            # No DB data yet — use YAML for everything
+        if d:
             result = {
                 "total_cost_usd": d.get("total_cost_usd", 0),
                 "total_input_tokens": d.get("total_input_tokens", 0),
                 "total_output_tokens": d.get("total_output_tokens", 0),
                 "total_agent_calls": d.get("total_agent_calls", 0),
+                "total_cache_read_tokens": d.get("total_cache_read_tokens", 0),
+                "total_cache_creation_tokens": d.get("total_cache_creation_tokens", 0),
+                "total_agent_seconds": d.get("total_agent_seconds", 0),
+                "per_agent": d.get("per_agent", {}),
+                "generated_at": d.get("generated_at"),
             }
-        # Always merge per-agent and timing from YAML
-        result["total_cache_read_tokens"] = d.get("total_cache_read_tokens", 0)
-        result["total_cache_creation_tokens"] = d.get("total_cache_creation_tokens", 0)
-        result["total_agent_seconds"] = d.get("total_agent_seconds", 0)
-        result["per_agent"] = d.get("per_agent", {})
-        result["generated_at"] = d.get("generated_at")
+
+    # Fall back to DB totals only when YAML has no data yet
+    if not result and project and project.total_cost_usd:
+        result = {
+            "total_cost_usd": project.total_cost_usd,
+            "total_input_tokens": project.total_input_tokens,
+            "total_output_tokens": project.total_output_tokens,
+            "total_agent_calls": project.total_agent_calls,
+        }
 
     return result
 
