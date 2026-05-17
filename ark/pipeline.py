@@ -103,7 +103,18 @@ class PipelineMixin:
         # 5. Validate
         self._step_validate(5, total_steps, resume_step)
 
-        return self._iteration_finalize(score, current_score, paper_state, review_output, post_accept_cleanup, stop_after_cleanup)
+        result = self._iteration_finalize(score, current_score, paper_state, review_output, post_accept_cleanup, stop_after_cleanup)
+
+        # Project-specific post-iteration hook (snapanchor uses this for drift
+        # measurement and per-condition anchor management). Optional; only
+        # invoked if hooks.py defines `run_paper_iter_end(orch)`.
+        if self.hooks and hasattr(self.hooks, "run_paper_iter_end"):
+            try:
+                self.hooks.run_paper_iter_end(self)
+            except Exception as e:
+                self.log(f"hooks.run_paper_iter_end raised: {e}", "WARN")
+
+        return result
 
     def _iteration_prep(self):
         """Prepare for a new iteration: increment counters, reset flags, load instructions."""
