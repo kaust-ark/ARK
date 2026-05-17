@@ -2004,6 +2004,15 @@ Rules:
             findings_summary = self._load_findings_summary()
             sufficient = self._evaluate_completeness(research_idea, findings_summary)
 
+            # Project-specific post-dev-iteration hook (snapanchor uses this
+            # for drift measurement and per-condition anchor management).
+            # Optional; only invoked if hooks.py defines `run_dev_iter_end`.
+            if self.hooks and hasattr(self.hooks, "run_dev_iter_end"):
+                try:
+                    self.hooks.run_dev_iter_end(self, dev_iter=dev_iter)
+                except Exception as e:
+                    self.log(f"hooks.run_dev_iter_end raised: {e}", "WARN")
+
             if sufficient:
                 self.log_step("Experiments sufficient, proceeding to initial draft", "success")
                 break
