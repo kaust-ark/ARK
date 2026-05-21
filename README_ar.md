@@ -13,12 +13,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 Agents">
   <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
-  <img src="https://img.shields.io/badge/tests-225-brightgreen.svg" alt="225 Tests">
 </p>
 
 <p align="center">
@@ -96,7 +95,7 @@ ark monitor myproject
 ### البدء من ملف PDF موجود
 
 ```bash
-ark new mma --from-pdf proposal.pdf
+ark new myproject --from-pdf proposal.pdf
 ```
 
 يقوم ARK بتحليل ملف PDF باستخدام PyMuPDF + Claude Haiku، ويملأ البيانات تلقائياً، ويبدأ من المواصفات المستخرجة.
@@ -105,8 +104,8 @@ ark new mma --from-pdf proposal.pdf
 
 ## المتطلبات
 
-- **Python 3.9+** مع `pyyaml` و `PyMuPDF`
-- **واجهة أوامر الوكيل**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (موصى به، باقة Claude Max) **أو** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; قابل للاختيار لكل مشروع.
+- **Python 3.10+** مع `pyyaml` و `PyMuPDF`
+- **واجهة أوامر الوكيل**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (موصى به، باقة Claude Max)، [OpenAI Codex](https://github.com/openai/codex)، **أو** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; قابل للاختيار لكل مشروع.
 - **اختياري**: LaTeX (`pdflatex` + `bibtex`)، Slurm، `google-genai` للأشكال البيانية المولدة بالذكاء الاصطناعي.
 
 ### التثبيت
@@ -139,17 +138,13 @@ ark doctor
   <img src="assets/framework.png" alt="ARK Framework" width="900">
 </p>
 
-ينسق ARK ثلاث مراحل &mdash; **التهيئة والبحث**، **التطوير المتكرر**، و **المراجعة المتكررة** &mdash; من خلال ذاكرة مشتركة، ومصحح أخطاء ذاتي (Meta-Debugger)، وتدخل بشري عبر لوحة التحكم أو تيليجرام.
+ينسق ARK ثلاث مراحل &mdash; **التهيئة والبحث**، **التطوير المتكرر**، و **المراجعة المتكررة** &mdash; من خلال ذاكرة مشتركة، و**Goal Anchor** ثابت يُحقن من جديد في كل استدعاء وكيل لمنع الانحراف عبر التكرارات، إضافةً إلى تدخل بشري عبر لوحة التحكم أو تيليجرام.
 
 ---
 
 ## مسار عمل ARK
 
 ينفذ ARK ثلاث مراحل بالتتابع. وتتكرر مرحلة المراجعة حتى تصل الورقة إلى الدرجة المستهدفة.
-
-<p align="center">
-  <img src="https://idea2paper.org/assets/pipeline_overview.png" alt="ARK Pipeline" width="700">
-</p>
 
 | المرحلة | ماذا يحدث |
 |:------|:-------------|
@@ -160,10 +155,6 @@ ark doctor
 ### حلقة المراجعة
 
 كل تكرار لمرحلة المراجعة يتكون من **5 خطوات**:
-
-<p align="center">
-  <img src="https://idea2paper.org/assets/review_loop.png" alt="Review Loop" width="700">
-</p>
 
 | الخطوة | الوصف |
 |:-----|:------------|
@@ -179,13 +170,9 @@ ark doctor
 
 ## وكلاء ARK
 
-<p align="center">
-  <img src="https://idea2paper.org/assets/architecture_overview.png" alt="ARK Architecture" width="600">
-</p>
-
 | الوكيل | الدور |
 |:------|:-----|
-| **الباحث** | يحلل المقترح &larr; يكتب `idea.md`؛ مسح أدبي مدعوم بـ Gemini؛ يخصص مطالبات الوكلاء للمشروع |
+| **الباحث** | يحلل المقترح؛ يجري مسحاً أدبياً مدعوماً بـ Gemini؛ ويخصص مطالبات الوكلاء للمشروع |
 | **المراجع** | يقيم الورقة وفقاً لمعايير المؤتمر، ويولد مهام التحسين |
 | **المخطط** | يحول ملاحظات المراجعة إلى خطة عمل؛ يحلل نتائج مرحلة التطوير |
 | **الكاتب** | يصيغ ويحسن أقسام LaTeX مع استشهادات موثقة من DBLP |
@@ -199,8 +186,9 @@ ark doctor
 | | أدوات أخرى | ARK |
 |---|:------------|:----|
 | **التحكم** | استقلالية كاملة &mdash; انحراف عن القصد، لا تصحيح أثناء التشغيل | تدخل بشري: توقف عند القرارات الرئيسية، توجيه عبر تيليجرام أو الويب |
-| **التنسيق** | تخطيطات مكسورة، أخطاء LaTeX، تنظيف يدوي | قوالب LaTeX صلبة للمؤتمرات (NeurIPS, ACL, IEEE&hellip;) |
-| **الاستشهاد** | النماذج اللغوية تبتكر مراجع وهمية | كل استشهاد يتم التحقق منه عبر DBLP &mdash; لا مراجع وهمية |
+| **التنسيق** | تخطيطات مكسورة، أخطاء LaTeX، تنظيف يدوي | قوالب المؤتمرات + تحكم دون مستوى الصفحة للالتزام بالحد الأقصى للصفحات بدقة |
+| **الاستشهاد** | النماذج اللغوية تبتكر مراجع وهمية | BibTeX من واجهات برمجية أولاً (DBLP / CrossRef / arXiv) مع مواءمة المحتوى مع الادعاء |
+| **المراجعة** | مراجعة نصية فقط لمصدر LaTeX | مراجعة بصرية: صور الصفحات **و** المصدر، بتقييم وفق معايير المؤتمر |
 | **الأشكال** | أنماط افتراضية، أحجام خاطئة، لا وعي بالصفحة | Nano Banana + قماش واعي بالمكان، عرض الأعمدة، والخطوط |
 | **العزل** | بيئة مشتركة &mdash; المشاريع تتداخل مع بعضها | بيئة conda لكل مشروع، HOME معزول، عزل كامل للمستأجرين |
 | **النزاهة** | المحاكاة بدلاً من التجارب الحقيقية | مطالبات تمنع المحاكاة + مهارات مدمجة تفرض التنفيذ الحقيقي |
@@ -232,10 +220,11 @@ ark run myproject
 | **نزاهة البحث** | تمنع المحاكاة: يجب على الوكلاء تشغيل تجارب حقيقية |
 | **التدخل البشري** | بروتوكول التصعيد: يتوقف الوكلاء للسؤال قبل الإجراءات غير القابلة للتراجع |
 | **عزل البيئة** | يفرض حدود البيئة الخاصة بكل مشروع |
+| **صندوق وقت التشغيل** | يقيّد كل مشروع وقت التشغيل ببيئة conda الخاصة به و`HOME` ودليل مؤقت خاص |
 | **نزاهة الأشكال البيانية** | يتحقق من مطابقة الأشكال للبيانات؛ يمنع الرسوم الوهمية |
 | **تعديل الصفحات** | يحافظ على حدود عدد الصفحات عبر تعديل كثافة المحتوى |
 
-تعيش المهارات في `skills/builtin/` ويتم تثبيتها تلقائياً أثناء تهيئة المسار.
+تعيش المهارات المدمجة في `skills/builtin/` ويتم تثبيتها تلقائياً أثناء تهيئة المسار. وتقع مهارات المجالات (مثل HPC) في `skills/library/`، ويختارها الباحث عند الحاجة.
 
 ---
 
@@ -257,12 +246,10 @@ ark run myproject
 | `ark setup-bot` | إعداد بوت تيليجرام |
 | `ark list` | سرد جميع المشاريع مع حالتها |
 | `ark doctor` | تشخيص التثبيت الذاتي (البيئات، مفاتيح API، الويب) |
+| `ark cite-check <name>` | التحقق من استشهادات المشروع عبر DBLP / CrossRef |
+| `ark cite-search <query>` | البحث في قواعد البيانات الأكاديمية |
 | `ark webapp install` | تثبيت خدمة لوحة التحكم |
-| `ark access list` | عرض قائمة Cloudflare Access المسموح بها |
-| `ark access add <email>` | إضافة بريد إلكتروني لقائمة CF Access |
-| `ark access remove <email>` | إزالة بريد إلكتروني من قائمة CF Access |
-| `ark access add-domain <domain>` | إضافة قاعدة نطاق بريد لـ CF Access |
-| `ark access remove-domain <domain>` | إزالة قاعدة نطاق بريد من CF Access |
+| `ark access {list,add,remove,add-domain,remove-domain}` | إدارة قائمة Cloudflare Access الخاصة بلوحة التحكم |
 
 ---
 
@@ -272,12 +259,7 @@ ark run myproject
 
 ### الإعدادات
 
-يتم ضبط لوحة التحكم عبر ملف `webapp.env` الموجود في دليل إعدادات ARK (الافتراضي: `.ark/webapp.env` في جذر المشروع). يتم إنشاء هذا الملف تلقائياً عند أول تشغيل لـ `ark webapp`.
-
-#### الهوية والوصول
-- **SMTP**: مطلوب لتسجيل الدخول عبر "الرابط السحري". اضبط `SMTP_HOST` و `SMTP_USER` و `SMTP_PASSWORD`.
-- **القيود**: استخدم `ALLOWED_EMAILS` (مستخدمين محددين) أو `EMAIL_DOMAINS` (مؤسسات كاملة) لتقييد الوصول.
-- **Google OAuth**: اختياري. اضبط `GOOGLE_CLIENT_ID` و `GOOGLE_CLIENT_SECRET`.
+يُضبط الإعداد عبر `.ark/webapp.env` (يُنشأ تلقائياً عند أول تشغيل لـ `ark webapp`). اضبط `SMTP_*` لتفعيل تسجيل الدخول عبر الرابط السحري، واستخدم `ALLOWED_EMAILS` / `EMAIL_DOMAINS` لتقييد الوصول، واختيارياً `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` لتفعيل Google OAuth.
 
 ### أوامر الإدارة
 
@@ -306,8 +288,8 @@ ark run myproject
 <summary><strong>الاستدعاء المباشر للمنسق</strong></summary>
 
 ```bash
-python -m ark.orchestrator --project mma --mode paper --max-iterations 20
-python -m ark.orchestrator --project mma --mode dev
+python -m ark.orchestrator --project myproject --mode paper --max-iterations 20
+python -m ark.orchestrator --project myproject --mode dev
 ```
 
 </details>
@@ -474,42 +456,9 @@ ark setup-bot    # لمرة واحدة: الصق توكن BotFather، وسيتم
 
 ---
 
-## الاختبار (Testing)
-
-يستخدم ARK نظام اختبار ثنائي المستويات لضمان صحة المنطق والتكامل الحقيقي.
-
-### 1. اختبارات الوحدة (سريعة، بدون اتصال)
-تغطي المنطق الأساسي والوكلاء والذاكرة دون الحاجة لبيانات سحابية.
-
-```bash
-# تشغيل جميع اختبارات الوحدة
-pytest tests/unit/
-```
-
-### 2. اختبارات التكامل (بطيئة، عبر الإنترنت)
-تتحقق من الاتصال مع الواجهات البرمجية الخارجية (Claude, Gemini) ومزودي السحاب (GCP).
-
-```bash
-# اختبارات الشبكة (الاستشهاد، واجهة الأوامر)
-pytest tests/integration/ -m network
-
-# اختبارات موارد GCP الحقيقية (تتطلب ark-gcp-key.json)
-# إذا لم يكن gcloud في المسار الخاص بك، قم بتوفيره عبر:
-pytest tests/integration/ -m gcp --gcloud-path /path/to/google-cloud-key-root/
-# أو: export ARK_GCLOUD_PATH=/path/to/google-cloud-key-root/ && pytest tests/integration/ -m gcp
-```
-
-### علامات الاختبار (Markers)
-- `-m unit`: اختبارات المنطق فقط.
-- `-m integration`: اختبارات المسار والسحابة.
-- `-m network`: الوصول للواجهات البرمجية عبر الإنترنت.
-- `-m gcp`: موارد Google Cloud الحقيقية.
-
----
-
 ## المؤتمرات العلمية المدعومة
 
-NeurIPS &bull; ICML &bull; ICLR &bull; AAAI &bull; ACL &bull; IEEE &bull; ACM SIGPLAN &bull; ACM SIGCONF &bull; LNCS &bull; MLSys &bull; USENIX &mdash; بالإضافة إلى PLDI, ASPLOS, SOSP, EuroSys, OSDI, NSDI والمزيد.
+تأتي قوالب LaTeX جاهزة لـ **NeurIPS وICML وICLR وACL وEMNLP وCVPR وMLSys وEuroMLSys وINFOCOM وOSDI وSOSP**، مع كشف تلقائي لتنسيقات عائلات **IEEE** و**ACMART (SIGPLAN)** و**LNCS** و**USENIX**. كما يُقبل استخدام قوالب مخصّصة &mdash; إذ يفحص ARK ملفات `.tex` / `.aux` / `.sty` لاستيعاب التنسيق، ويصلح أخطاء التجميع، ويضبط حد الصفحات بدقة.
 
 ## الترخيص
 

@@ -13,12 +13,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 Agents">
   <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
-  <img src="https://img.shields.io/badge/tests-225-brightgreen.svg" alt="225 Tests">
 </p>
 
 <p align="center">
@@ -96,7 +95,7 @@ ark monitor myproject
 ### 从现有 PDF 开始
 
 ```bash
-ark new mma --from-pdf proposal.pdf
+ark new myproject --from-pdf proposal.pdf
 ```
 
 ARK 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息，并根据提取的规格开始工作。
@@ -105,8 +104,8 @@ ARK 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息，并根
 
 ## 环境要求
 
-- **Python 3.9+** (需安装 `pyyaml` 和 `PyMuPDF`)
-- **智能体命令行**: 推荐 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (推荐使用 Claude Max 订阅) **或** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; 可按项目选择。
+- **Python 3.10+** (需安装 `pyyaml` 和 `PyMuPDF`)
+- **智能体命令行**：[Claude Code](https://docs.anthropic.com/en/docs/claude-code)（推荐，使用 Claude Max 订阅）、[OpenAI Codex](https://github.com/openai/codex)，**或** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; 可按项目选择。
 - **可选**: LaTeX (`pdflatex` + `bibtex`)、Slurm、用于 AI 绘图的 `google-genai`。
 
 ### 安装步骤
@@ -139,17 +138,13 @@ ark doctor
   <img src="assets/framework.png" alt="ARK Framework" width="900">
 </p>
 
-ARK 协调三个阶段 &mdash; **初始化与研究**、**迭代开发** 和 **迭代评审** &mdash; 通过共享记忆、自修复元调试器 (Meta-Debugger) 以及通过 Web 仪表板或 Telegram 进行的人机协同来协同工作。
+ARK 协调三个阶段 &mdash; **初始化与研究**、**迭代开发** 和 **迭代评审** &mdash; 通过共享记忆、在每次智能体调用时重新注入的 **Goal Anchor**（防止跨迭代漂移），以及经 Web 仪表板或 Telegram 的人机协同来协同工作。
 
 ---
 
 ## ARK 流水线
 
 ARK 按顺序运行三个阶段。评审阶段会循环进行，直到论文达到目标分数。
-
-<p align="center">
-  <img src="https://idea2paper.org/assets/pipeline_overview.png" alt="ARK Pipeline" width="700">
-</p>
 
 | 阶段 | 过程内容 |
 |:------|:-------------|
@@ -160,10 +155,6 @@ ARK 按顺序运行三个阶段。评审阶段会循环进行，直到论文达�
 ### 评审循环
 
 评审阶段的每次迭代包含 **5 个步骤**：
-
-<p align="center">
-  <img src="https://idea2paper.org/assets/review_loop.png" alt="Review Loop" width="700">
-</p>
 
 | 步骤 | 描述 |
 |:-----|:------------|
@@ -179,13 +170,9 @@ ARK 按顺序运行三个阶段。评审阶段会循环进行，直到论文达�
 
 ## ARK 智能体
 
-<p align="center">
-  <img src="https://idea2paper.org/assets/architecture_overview.png" alt="ARK Architecture" width="600">
-</p>
-
 | 智能体 | 职责 |
 |:------|:-----|
-| **研究员** | 分析方案 &rarr; 编写 `idea.md`；基于 Gemini 的文献调研；为项目定制智能体提示词 |
+| **研究员** | 分析方案；基于 Gemini 的文献调研；为项目定制智能体提示词 |
 | **评审员** | 根据会议标准为论文评分，生成改进任务 |
 | **规划器** | 将评审反馈转化为优先行动计划；分析开发阶段的结果 |
 | **撰写员** | 撰写和精炼 LaTeX 章节，并附带经过 DBLP 验证的参考文献 |
@@ -199,8 +186,9 @@ ARK 按顺序运行三个阶段。评审阶段会循环进行，直到论文达�
 | | 其他工具 | ARK |
 |---|:------------|:----|
 | **控制力** | 完全自主 &mdash; 容易偏离意图，无法中途纠正 | 人机协同：在关键决策点暂停，通过 Telegram 或 Web 引导 |
-| **排版** | 布局损坏、LaTeX 错误、需要手动清理 | 硬编码的 LaTeX + 会议模板 (NeurIPS, ACL, IEEE&hellip;) |
-| **引用** | LLM 编造看似真实的虚假参考文献 | 每一个引用都经过 DBLP 验证 &mdash; 绝无虚假参考文献 |
+| **排版** | 布局损坏、LaTeX 错误、需要手动清理 | 会议模板 + 亚页级长度控制，精准卡住页数上限 |
+| **引用** | LLM 编造看似真实的虚假参考文献 | API 优先生成 BibTeX (DBLP / CrossRef / arXiv)，并做内容&ndash;论断对齐 |
+| **评审** | 仅对 LaTeX 源码做纯文本评审 | 视觉接地：页面图像 **加** 源码，按会议标准打分 |
 | **插图** | 默认样式、尺寸错误、缺乏页面意识 | Nano Banana + 具备页面感知能力的画布、列宽和字体 |
 | **隔离性** | 共享环境 &mdash; 项目之间相互干扰 | 每个项目独立的 conda 环境、沙盒化 HOME 目录、完整的隔离 |
 | **真实性** | LLM 模拟结果而非运行真实实验 | 防模拟提示词 + 内置技能强制执行真实运行 |
@@ -232,10 +220,11 @@ ARK 附带 **内置技能** &mdash; 智能体在运行时加载的模块化指�
 | **研究真实性** | 防模拟提示词：智能体必须运行真实实验，不得编造输出 |
 | **人工干预** | 升级协议：智能体在执行不可逆操作前会通过 Telegram 询问 |
 | **环境隔离** | 强制执行每个项目的环境边界 |
+| **运行时沙箱** | 在运行时把每个项目锁定在自己的 conda 环境、`HOME` 与临时目录中 |
 | **插图真实性** | 验证插图内容与数据匹配；防止占位符或幻觉图表 |
 | **页面调整** | 通过调整内容密度而非删除章节来维持页面限制 |
 
-技能存储在 `skills/builtin/` 中，并在流水线引导期间自动安装。
+内置技能位于 `skills/builtin/`，在流水线引导期间自动安装。领域技能（例如 HPC）位于 `skills/library/`，由研究员在初始化阶段按需取用。
 
 ---
 
@@ -257,12 +246,10 @@ ARK 附带 **内置技能** &mdash; 智能体在运行时加载的模块化指�
 | `ark setup-bot` | 配置 Telegram 机器人 |
 | `ark list` | 列出所有项目及其状态 |
 | `ark doctor` | 自托管安装诊断（环境、API key、Web 服务） |
+| `ark cite-check <name>` | 用 DBLP / CrossRef 校验项目引用 |
+| `ark cite-search <query>` | 搜索学术数据库 |
 | `ark webapp install` | 安装 Web 仪表板服务 |
-| `ark access list` | 显示仪表板 Cloudflare Access 允许列表 |
-| `ark access add <email>` | 将电子邮件添加到 CF Access 允许列表 |
-| `ark access remove <email>` | 从 CF Access 允许列表中删除电子邮件 |
-| `ark access add-domain <domain>` | 向 CF Access 添加电子邮件域规则 |
-| `ark access remove-domain <domain>` | 从 CF Access 中删除电子邮件域规则 |
+| `ark access {list,add,remove,add-domain,remove-domain}` | 管理仪表板的 Cloudflare Access 允许列表 |
 
 ---
 
@@ -272,12 +259,7 @@ ARK 包含一个基于 Web 的仪表板，用于管理项目、查看分数和�
 
 ### 配置
 
-仪表板通过 ARK 配置目录中的 `webapp.env` 进行配置 (默认：项目根目录下的 `.ark/webapp.env`)。该文件在首次运行 `ark webapp` 时自动创建。
-
-#### 身份验证与访问
-- **SMTP**: "魔术链接"登录所需。设置 `SMTP_HOST`、`SMTP_USER` 和 `SMTP_PASSWORD`。
-- **限制**: 使用 `ALLOWED_EMAILS` (特定用户) 或 `EMAIL_DOMAINS` (整个组织) 来限制访问。
-- **Google OAuth**: 可选。设置 `GOOGLE_CLIENT_ID` 和 `GOOGLE_CLIENT_SECRET`。
+通过 `.ark/webapp.env` 配置（首次运行 `ark webapp` 时自动创建）。设置 `SMTP_*` 启用魔术链接登录，用 `ALLOWED_EMAILS` / `EMAIL_DOMAINS` 限制访问，可选设置 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` 启用 Google OAuth。
 
 ### 管理命令
 
@@ -306,8 +288,8 @@ ARK 包含一个基于 Web 的仪表板，用于管理项目、查看分数和�
 <summary><strong>直接调用编排器</strong></summary>
 
 ```bash
-python -m ark.orchestrator --project mma --mode paper --max-iterations 20
-python -m ark.orchestrator --project mma --mode dev
+python -m ark.orchestrator --project myproject --mode paper --max-iterations 20
+python -m ark.orchestrator --project myproject --mode dev
 ```
 
 </details>
@@ -658,43 +640,9 @@ ark setup-bot    # 一次性操作：粘贴 BotFather 令牌，自动检测聊�
 
 ---
 
-## 测试 (Testing)
-
-ARK 使用双层测试套件以确保逻辑正确性和真实集成。
-
-### 1. 单元测试 (快速，离线)
-覆盖核心逻辑、智能体、记忆和工具，无需真实的 API 访问或云资源。
-
-```bash
-# 运行所有单元测试
-pytest tests/unit/
-```
-
-### 2. 集成测试 (慢速，在线)
-验证与外部 API (Claude, Gemini, CrossRef) 和云提供商 (GCP) 的通信。这些测试被标记以防止意外执行和产生费用。
-
-```bash
-# 运行访问真实网络 API 的测试 (引用、智能体命令行)
-pytest tests/integration/ -m network
-
-# 运行预配置真实 GCP 资源的测试 (需要 ark-gcp-key.json)
-# 如果 gcloud 不在您的 PATH 中，请通过 CLI 或环境提供：
-pytest tests/integration/ -m gcp --gcloud-path /path/to/google-cloud-key-root/
-# 或: export ARK_GCLOUD_PATH=/path/to/google-cloud-key-root/ && pytest tests/integration/ -m gcp
-```
-
-### 测试标记 (Markers)
-标记在 `pyproject.toml` 中定义，以实现细粒度过滤：
-- `-m unit`: 仅逻辑测试。
-- `-m integration`: 流水线和云端测试。
-- `-m network`: 访问外部互联网 API。
-- `-m gcp`: 预配置真实 Google Cloud 资源。
-
----
-
 ## 支持的会议
 
-NeurIPS &bull; ICML &bull; ICLR &bull; AAAI &bull; ACL &bull; IEEE &bull; ACM SIGPLAN &bull; ACM SIGCONF &bull; LNCS &bull; MLSys &bull; USENIX &mdash; 以及 PLDI, ASPLOS, SOSP, EuroSys, OSDI, NSDI, INFOCOM 等别名。
+随仓库提供的 LaTeX 模板：**NeurIPS、ICML、ICLR、ACL、EMNLP、CVPR、MLSys、EuroMLSys、INFOCOM、OSDI、SOSP**；并对 **IEEE**、**ACMART (SIGPLAN)**、**LNCS**、**USENIX** 等模板族做格式识别。也接受自定义模板 &mdash; ARK 会扫描 `.tex` / `.aux` / `.sty` 学习排版、修编译错误、并精确控制页数。
 
 ## 许可证
 

@@ -13,12 +13,11 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.9+-blue.svg" alt="Python 3.9+">
+  <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 Agents">
   <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
-  <img src="https://img.shields.io/badge/tests-225-brightgreen.svg" alt="225 Tests">
 </p>
 
 <p align="center">
@@ -96,7 +95,7 @@ Re-run `ark webapp login <email>` anytime for a fresh sign-in link. Full install
 ### Start from an Existing PDF
 
 ```bash
-ark new mma --from-pdf proposal.pdf
+ark new myproject --from-pdf proposal.pdf
 ```
 
 ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks off from the extracted spec.
@@ -105,8 +104,8 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 
 ## Requirements
 
-- **Python 3.9+** with `pyyaml` and `PyMuPDF`
-- **Agent CLI**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended, Claude Max subscription) **or** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; selectable per project
+- **Python 3.10+** with `pyyaml` and `PyMuPDF`
+- **Agent CLI**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended, Claude Max subscription), [OpenAI Codex](https://github.com/openai/codex), **or** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; selectable per project
 - **Optional**: LaTeX (`pdflatex` + `bibtex`), Slurm, `google-genai` for AI figures
 
 ### Installation
@@ -139,17 +138,13 @@ ark doctor
   <img src="assets/framework.png" alt="ARK Framework" width="900">
 </p>
 
-ARK orchestrates three phases &mdash; **Initialization &amp; Research**, **Iterative Development**, and **Iterative Review** &mdash; coordinated through shared memory, a Meta-Debugger for self-repair, and human-in-the-loop steering via the web dashboard or Telegram.
+ARK orchestrates three phases &mdash; **Initialization &amp; Research**, **Iterative Development**, and **Iterative Review** &mdash; coordinated through shared memory, a persistent **Goal Anchor** re-injected into every agent call to prevent drift, and human-in-the-loop steering via the web dashboard or Telegram.
 
 ---
 
 ## ARK Pipeline
 
 ARK runs three phases in sequence. The Review phase loops until the paper reaches the target score.
-
-<p align="center">
-  <img src="https://idea2paper.org/assets/pipeline_overview.png" alt="ARK Pipeline" width="700">
-</p>
 
 | Phase | What Happens |
 |:------|:-------------|
@@ -160,10 +155,6 @@ ARK runs three phases in sequence. The Review phase loops until the paper reache
 ### Review Loop
 
 Each iteration of the Review phase runs **5 steps**:
-
-<p align="center">
-  <img src="https://idea2paper.org/assets/review_loop.png" alt="Review Loop" width="700">
-</p>
 
 | Step | Description |
 |:-----|:------------|
@@ -179,13 +170,9 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 
 ## ARK Agents
 
-<p align="center">
-  <img src="https://idea2paper.org/assets/architecture_overview.png" alt="ARK Architecture" width="600">
-</p>
-
 | Agent | Role |
 |:------|:-----|
-| **Researcher** | Analyzes proposal &rarr; writes `idea.md`; Gemini-backed literature survey; specializes agent prompts for the project |
+| **Researcher** | Analyzes the proposal, runs the Gemini-backed literature survey, and specializes agent prompts for the project |
 | **Reviewer** | Scores the paper against venue standards, generates improvement tasks |
 | **Planner** | Turns review feedback into a prioritized action plan; analyzes Dev-phase results |
 | **Writer** | Drafts and refines LaTeX sections with DBLP-verified references |
@@ -199,8 +186,9 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 | | Other Tools | ARK |
 |---|:------------|:----|
 | **Control** | Fully autonomous &mdash; drifts from intent, no mid-run correction | Human-in-the-loop: pause at key decisions, steer via Telegram or web |
-| **Formatting** | Broken layouts, LaTeX errors, manual cleanup | Hard-coded LaTeX + venue templates (NeurIPS, ACL, IEEE&hellip;) |
-| **Citations** | LLMs fabricate plausible-looking references | Every citation verified against DBLP &mdash; no fake references |
+| **Formatting** | Broken layouts, LaTeX errors, manual cleanup | Venue templates + sub-page length control to hit page limits exactly |
+| **Citations** | LLMs fabricate plausible-looking references | API-first BibTeX (DBLP / CrossRef / arXiv) with content&ndash;claim alignment |
+| **Review** | Text-only review of the LaTeX source | Visual-grounded: page images **and** source, scored against venue standards |
 | **Figures** | Default styles, wrong sizes, no page awareness | Nano Banana + venue-aware canvas, column widths, and fonts |
 | **Isolation** | Shared env &mdash; projects interfere with each other | Per-project conda env, sandboxed HOME, full multi-tenant isolation |
 | **Integrity** | LLMs simulate results instead of running real experiments | Anti-simulation prompts + builtin skills enforce real execution |
@@ -232,10 +220,11 @@ ARK ships with **builtin skills** &mdash; modular instruction sets that agents l
 | **research-integrity** | Anti-simulation prompts: agents must run real experiments, not fabricate outputs |
 | **human-intervention** | Escalation protocol: agents pause and ask via Telegram before irreversible actions |
 | **env-isolation** | Enforces per-project environment boundaries |
+| **runtime-sandbox** | Locks each project to its own conda env, `HOME`, and tmp dir at runtime |
 | **figure-integrity** | Validates figure content matches data; prevents placeholder or hallucinated plots |
 | **page-adjustment** | Maintains page limits by adjusting content density, not deleting sections |
 
-Skills live in `skills/builtin/` and are auto-installed during pipeline bootstrap.
+Skills live in `skills/builtin/` and are auto-installed during pipeline bootstrap. Domain skills (e.g., HPC) live in `skills/library/` and are pulled in by the Researcher when relevant.
 
 ---
 
@@ -257,12 +246,10 @@ Skills live in `skills/builtin/` and are auto-installed during pipeline bootstra
 | `ark setup-bot` | Configure Telegram bot |
 | `ark list` | List all projects with status |
 | `ark doctor` | Diagnose a self-host install (envs, API keys, webapp) |
+| `ark cite-check <name>` | Verify project citations against DBLP / CrossRef |
+| `ark cite-search <query>` | Search academic databases for papers |
 | `ark webapp install` | Install web dashboard service |
-| `ark access list` | Show Dashboard Cloudflare Access allowlist |
-| `ark access add <email>` | Add email(s) to CF Access allowlist |
-| `ark access remove <email>` | Remove email(s) from CF Access allowlist |
-| `ark access add-domain <domain>` | Add email domain rule to CF Access |
-| `ark access remove-domain <domain>` | Remove email domain rule from CF Access |
+| `ark access {list,add,remove,add-domain,remove-domain}` | Manage Dashboard Cloudflare Access allowlist |
 
 ---
 
@@ -272,12 +259,7 @@ ARK includes a web-based dashboard for managing projects, viewing scores, and st
 
 ### Configuration
 
-The dashboard is configured via `webapp.env` located in your ARK config directory (default: `.ark/webapp.env` in the project root). This file is created automatically on the first run of `ark webapp`.
-
-#### Authentication & Access
-- **SMTP**: Required for "Magic Link" login. Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASSWORD`.
-- **Restrictions**: Use `ALLOWED_EMAILS` (specific users) or `EMAIL_DOMAINS` (entire organizations) to limit access.
-- **Google OAuth**: Optional. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+Configured via `.ark/webapp.env` (auto-created on first `ark webapp` run). Set `SMTP_*` for magic-link login, `ALLOWED_EMAILS` / `EMAIL_DOMAINS` to restrict access, and optionally `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` for Google OAuth.
 
 ### Management Commands
 
@@ -306,8 +288,8 @@ The dashboard is configured via `webapp.env` located in your ARK config director
 <summary><strong>Direct orchestrator invocation</strong></summary>
 
 ```bash
-python -m ark.orchestrator --project mma --mode paper --max-iterations 20
-python -m ark.orchestrator --project mma --mode dev
+python -m ark.orchestrator --project myproject --mode paper --max-iterations 20
+python -m ark.orchestrator --project myproject --mode dev
 ```
 
 </details>
@@ -692,43 +674,9 @@ What you get:
 
 ---
 
-## Testing
-
-ARK uses a two-tier test suite to ensure both logic correctness and real-world integration.
-
-### 1. Unit Tests (Fast, Offline)
-Unit tests cover core logic, agents, memory, and utilities without requiring real API access or cloud resources.
-
-```bash
-# Run all unit tests
-pytest tests/unit/
-```
-
-### 2. Integration Tests (Slow, Online)
-Integration tests verify communication with external APIs (Claude, Gemini, CrossRef) and cloud providers (GCP). These are marked to prevent accidental execution and costs.
-
-```bash
-# Run tests that hit real network APIs (citations, agent CLI)
-pytest tests/integration/ -m network
-
-# Run tests that provision real GCP resources (requires ark-gcp-key.json)
-# If gcloud is not in your PATH, provide it via CLI or environment:
-pytest tests/integration/ -m gcp --gcloud-path /path/to/google-cloud-key-root/
-# OR: export ARK_GCLOUD_PATH=/path/to/google-cloud-key-root && pytest tests/integration/ -m gcp
-```
-
-### Test Markers
-Markers are defined in `pyproject.toml` to allow granular filtering:
-- `-m unit`: Logic-only tests.
-- `-m integration`: Pipeline and cloud tests.
-- `-m network`: Hits external internet APIs.
-- `-m gcp`: Provisions real Google Cloud resources.
-
----
-
 ## Supported Venues
 
-NeurIPS &bull; ICML &bull; ICLR &bull; AAAI &bull; ACL &bull; IEEE &bull; ACM SIGPLAN &bull; ACM SIGCONF &bull; LNCS &bull; MLSys &bull; USENIX &mdash; plus aliases for PLDI, ASPLOS, SOSP, EuroSys, OSDI, NSDI, INFOCOM, and more.
+LaTeX templates ship for **NeurIPS, ICML, ICLR, ACL, EMNLP, CVPR, MLSys, EuroMLSys, INFOCOM, OSDI, SOSP**, with format detection for the **IEEE**, **ACMART (SIGPLAN)**, **LNCS**, and **USENIX** families. Custom templates are accepted &mdash; ARK scans `.tex` / `.aux` / `.sty` to learn the layout, fixes compile errors, and enforces the venue page limit.
 
 ## License
 
