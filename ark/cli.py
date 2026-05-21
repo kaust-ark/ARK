@@ -1327,120 +1327,6 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
                 authors.append(author)
     _wizard_step_footer()
 
-    # ── Step 5: Experiment Compute ────────────────────────────
-def _prompt_compute_backend(backend_name: str, project_name: str, allow_slurm: bool = True) -> dict:
-    print(f"  How should the {backend_name} run?")
-    compute_options = []
-    if allow_slurm:
-        compute_options.append(("Slurm HPC (MCNodes, etc.)", "slurm"))
-    compute_options.extend([
-        ("Local machine", "local"),
-        ("Cloud (AWS/GCP/Azure)", "cloud"),
-        ("Other / Custom", "custom"),
-    ])
-    
-    for i, (display, _) in enumerate(compute_options, 1):
-        print(f"  {_c(f'{i}.', Colors.BOLD)} {display}")
-    compute_idx = prompt_choice(f"Select {backend_name} backend", compute_options, default=1)
-    compute_type = compute_options[compute_idx][1]
-    backend_config = {"type": compute_type}
-
-    if compute_type == "slurm":
-        print(f"  {_c('Discovering cluster...', Colors.DIM)}")
-        try:
-            sinfo = subprocess.run(["sinfo", "-o", "%P %G %c %m %a"], capture_output=True, text=True, timeout=15)
-            if sinfo.returncode == 0 and sinfo.stdout.strip():
-                print(f"  {_c('Cluster partitions:', Colors.GREEN)}")
-                for line in sinfo.stdout.strip().split("\n")[:8]:
-                    print(f"    {line}")
-        except Exception:
-            print(f"  {_c('sinfo not available (not on login node?)', Colors.YELLOW)}")
-
-        default_prefix = f"{project_name.upper()}_"
-        backend_config["job_prefix"] = prompt_input("  Job name prefix", default_prefix)
-        backend_config["conda_env"] = prompt_input("  Conda environment", project_name.lower())
-
-        if prompt_yn("  Provide a template .slurm file?", default=False):
-            template = prompt_input("  Path to .slurm template").strip()
-            if template:
-                backend_config["slurm_template"] = template
-
-    elif compute_type == "local":
-        backend_config["conda_env"] = prompt_input("  Conda environment", project_name.lower())
-        gpu_raw = prompt_input("  Number of GPUs (0 = CPU only)", "0")
-        try:
-            backend_config["gpu_count"] = int(gpu_raw)
-        except ValueError:
-            backend_config["gpu_count"] = 0
-
-    elif compute_type == "cloud":
-        print("  Cloud providers:")
-        providers = [("AWS (EC2)", "aws"), ("Google Cloud (GCE)", "gcp"), ("Azure (VM)", "azure")]
-        for i, (display, _) in enumerate(providers, 1):
-            print(f"    {_c(f'{i}.', Colors.BOLD)} {display}")
-        prov_idx = prompt_choice("  Select provider", providers, default=1)
-        provider = providers[prov_idx][1]
-        backend_config["provider"] = provider
-
-        if provider == "aws":
-            backend_config["region"] = prompt_input("  AWS region", "us-east-1")
-            backend_config["instance_type"] = prompt_input("  Instance type", "p3.2xlarge")
-            backend_config["image_id"] = prompt_input("  AMI ID (Deep Learning AMI recommended)")
-            backend_config["ssh_key_name"] = prompt_input("  SSH key pair name")
-            backend_config["ssh_key_path"] = prompt_input("  SSH private key path", "~/.ssh/id_rsa")
-            sg = prompt_input("  Security group ID (Enter to skip)", "").strip()
-            if sg:
-                backend_config["security_group"] = sg
-        elif provider == "gcp":
-            backend_config["region"] = prompt_input("  GCP zone", "us-central1-a")
-            backend_config["instance_type"] = prompt_input("  Machine type", "n1-standard-8")
-            backend_config["image_id"] = prompt_input("  Image family", "pytorch-latest-gpu")
-            backend_config["ssh_key_path"] = prompt_input("  SSH private key path", "~/.ssh/id_rsa")
-            accel = prompt_input("  Accelerator type (e.g. nvidia-tesla-v100, Enter to skip)", "").strip()
-            if accel:
-                backend_config["accelerator_type"] = accel
-                accel_count = prompt_input("  Accelerator count", "1")
-                try:
-                    backend_config["accelerator_count"] = int(accel_count)
-                except ValueError:
-                    backend_config["accelerator_count"] = 1
-        elif provider == "azure":
-            backend_config["region"] = prompt_input("  Azure location", "eastus")
-            backend_config["instance_type"] = prompt_input("  VM size", "Standard_NC6s_v3")
-            backend_config["image_id"] = prompt_input("  Image URN", "Canonical:UbuntuServer:18.04-LTS:latest")
-            backend_config["ssh_key_path"] = prompt_input("  SSH private key path", "~/.ssh/id_rsa")
-            rg = prompt_input("  Resource group (Enter for auto)", "").strip()
-            if rg:
-                backend_config["resource_group"] = rg
-
-        backend_config["ssh_user"] = prompt_input("  SSH username", "ubuntu")
-        backend_config["conda_env"] = prompt_input("  Conda environment", project_name.lower())
-
-        print("  Setup commands (run on instance after provisioning, empty line to finish):")
-        setup_cmds = []
-        while True:
-            cmd_line = input("    > ").strip()
-            if not cmd_line:
-                break
-            setup_cmds.append(cmd_line)
-        if setup_cmds:
-            backend_config["setup_commands"] = setup_cmds
-
-    elif compute_type == "custom":
-        backend_config["conda_env"] = prompt_input("  Conda environment", project_name.lower())
-        print("  Enter custom compute instructions (multi-line, empty line to finish):")
-        custom_lines = []
-        while True:
-            line = input("    > ").rstrip()
-            if not line:
-                break
-            custom_lines.append(line)
-        if custom_lines:
-            backend_config["instructions"] = "\n".join(custom_lines)
-
-    print(f"  {_c('✓', Colors.GREEN)} Compute: {compute_type}")
-    return backend_config
-
     # ── Step 5: Compute Backend ────────────────────────────
     _wizard_step_header(5, "Compute Configuration")
     orchestrator_compute_backend = _prompt_compute_backend("orchestrator", name, allow_slurm=False)
@@ -1569,6 +1455,120 @@ def _prompt_compute_backend(backend_name: str, project_name: str, allow_slurm: b
         config.update(tg_config_dict)   # adds telegram_bot_token + telegram_chat_id
 
     _finalize_project(name, project_dir, config, title, venue_name, venue_format, venue_pages, pdf_spec)
+
+
+def _prompt_compute_backend(backend_name: str, project_name: str, allow_slurm: bool = True) -> dict:
+    print(f"  How should the {backend_name} run?")
+    compute_options = []
+    if allow_slurm:
+        compute_options.append(("Slurm HPC (MCNodes, etc.)", "slurm"))
+    compute_options.extend([
+        ("Local machine", "local"),
+        ("Cloud (AWS/GCP/Azure)", "cloud"),
+        ("Other / Custom", "custom"),
+    ])
+    
+    for i, (display, _) in enumerate(compute_options, 1):
+        print(f"  {_c(f'{i}.', Colors.BOLD)} {display}")
+    compute_idx = prompt_choice(f"Select {backend_name} backend", compute_options, default=1)
+    compute_type = compute_options[compute_idx][1]
+    backend_config = {"type": compute_type}
+
+    if compute_type == "slurm":
+        print(f"  {_c('Discovering cluster...', Colors.DIM)}")
+        try:
+            sinfo = subprocess.run(["sinfo", "-o", "%P %G %c %m %a"], capture_output=True, text=True, timeout=15)
+            if sinfo.returncode == 0 and sinfo.stdout.strip():
+                print(f"  {_c('Cluster partitions:', Colors.GREEN)}")
+                for line in sinfo.stdout.strip().split("\n")[:8]:
+                    print(f"    {line}")
+        except Exception:
+            print(f"  {_c('sinfo not available (not on login node?)', Colors.YELLOW)}")
+
+        default_prefix = f"{project_name.upper()}_"
+        backend_config["job_prefix"] = prompt_input("  Job name prefix", default_prefix)
+        backend_config["conda_env"] = prompt_input("  Conda environment", project_name.lower())
+
+        if prompt_yn("  Provide a template .slurm file?", default=False):
+            template = prompt_input("  Path to .slurm template").strip()
+            if template:
+                backend_config["slurm_template"] = template
+
+    elif compute_type == "local":
+        backend_config["conda_env"] = prompt_input("  Conda environment", project_name.lower())
+        gpu_raw = prompt_input("  Number of GPUs (0 = CPU only)", "0")
+        try:
+            backend_config["gpu_count"] = int(gpu_raw)
+        except ValueError:
+            backend_config["gpu_count"] = 0
+
+    elif compute_type == "cloud":
+        print("  Cloud providers:")
+        providers = [("AWS (EC2)", "aws"), ("Google Cloud (GCE)", "gcp"), ("Azure (VM)", "azure")]
+        for i, (display, _) in enumerate(providers, 1):
+            print(f"    {_c(f'{i}.', Colors.BOLD)} {display}")
+        prov_idx = prompt_choice("  Select provider", providers, default=1)
+        provider = providers[prov_idx][1]
+        backend_config["provider"] = provider
+
+        if provider == "aws":
+            backend_config["region"] = prompt_input("  AWS region", "us-east-1")
+            backend_config["instance_type"] = prompt_input("  Instance type", "p3.2xlarge")
+            backend_config["image_id"] = prompt_input("  AMI ID (Deep Learning AMI recommended)")
+            backend_config["ssh_key_name"] = prompt_input("  SSH key pair name")
+            backend_config["ssh_key_path"] = prompt_input("  SSH private key path", "~/.ssh/id_rsa")
+            sg = prompt_input("  Security group ID (Enter to skip)", "").strip()
+            if sg:
+                backend_config["security_group"] = sg
+        elif provider == "gcp":
+            backend_config["region"] = prompt_input("  GCP zone", "us-central1-a")
+            backend_config["instance_type"] = prompt_input("  Machine type", "n1-standard-8")
+            backend_config["image_id"] = prompt_input("  Image family", "pytorch-latest-gpu")
+            backend_config["ssh_key_path"] = prompt_input("  SSH private key path", "~/.ssh/id_rsa")
+            accel = prompt_input("  Accelerator type (e.g. nvidia-tesla-v100, Enter to skip)", "").strip()
+            if accel:
+                backend_config["accelerator_type"] = accel
+                accel_count = prompt_input("  Accelerator count", "1")
+                try:
+                    backend_config["accelerator_count"] = int(accel_count)
+                except ValueError:
+                    backend_config["accelerator_count"] = 1
+        elif provider == "azure":
+            backend_config["region"] = prompt_input("  Azure location", "eastus")
+            backend_config["instance_type"] = prompt_input("  VM size", "Standard_NC6s_v3")
+            backend_config["image_id"] = prompt_input("  Image URN", "Canonical:UbuntuServer:18.04-LTS:latest")
+            backend_config["ssh_key_path"] = prompt_input("  SSH private key path", "~/.ssh/id_rsa")
+            rg = prompt_input("  Resource group (Enter for auto)", "").strip()
+            if rg:
+                backend_config["resource_group"] = rg
+
+        backend_config["ssh_user"] = prompt_input("  SSH username", "ubuntu")
+        backend_config["conda_env"] = prompt_input("  Conda environment", project_name.lower())
+
+        print("  Setup commands (run on instance after provisioning, empty line to finish):")
+        setup_cmds = []
+        while True:
+            cmd_line = input("    > ").strip()
+            if not cmd_line:
+                break
+            setup_cmds.append(cmd_line)
+        if setup_cmds:
+            backend_config["setup_commands"] = setup_cmds
+
+    elif compute_type == "custom":
+        backend_config["conda_env"] = prompt_input("  Conda environment", project_name.lower())
+        print("  Enter custom compute instructions (multi-line, empty line to finish):")
+        custom_lines = []
+        while True:
+            line = input("    > ").rstrip()
+            if not line:
+                break
+            custom_lines.append(line)
+        if custom_lines:
+            backend_config["instructions"] = "\n".join(custom_lines)
+
+    print(f"  {_c('✓', Colors.GREEN)} Compute: {compute_type}")
+    return backend_config
 
 
 # ============================================================
