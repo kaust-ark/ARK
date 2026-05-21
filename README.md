@@ -108,7 +108,8 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 - **Agent CLI**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended, Claude Max subscription), [OpenAI Codex](https://github.com/openai/codex), **or** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; selectable per project
 - **Optional**: LaTeX (`pdflatex` + `bibtex`), Slurm, `google-genai` for AI figures
 
-### Installation
+<details>
+<summary><strong>Manual Installation</strong></summary>
 
 The fastest path is the one-line installer in [Quick Start](#quick-start). It runs the steps below for you and prints onboarding hints. To do it by hand:
 
@@ -129,6 +130,8 @@ pip install -e ".[webapp]"         # + dashboard / systemd service support
 # 3. Verify
 ark doctor
 ```
+
+</details>
 
 ---
 
@@ -152,7 +155,8 @@ ARK runs three phases in sequence. The Review phase loops until the paper reache
 | **Dev** | Iterative experiment cycle: plan &rarr; run on Slurm &rarr; analyze &rarr; write initial draft |
 | **Review** | Compile &rarr; Review &rarr; Plan &rarr; Execute &rarr; Validate, repeating until score &ge; threshold |
 
-### Review Loop
+<details>
+<summary><strong>Review Loop details</strong></summary>
 
 Each iteration of the Review phase runs **5 steps**:
 
@@ -165,6 +169,8 @@ Each iteration of the Review phase runs **5 steps**:
 | **Validate** | Verify changes compile; recompile PDF |
 
 The loop repeats until the score reaches the acceptance threshold &mdash; or you intervene via Telegram.
+
+</details>
 
 ---
 
@@ -195,7 +201,8 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 
 ---
 
-## Environment Isolation
+<details>
+<summary><strong>Environment Isolation</strong></summary>
 
 Each project runs in its own **per-project conda environment**, cloned from a base env at project creation. This ensures full multi-tenant isolation:
 
@@ -211,7 +218,10 @@ ark run myproject
 #   Conda env: /path/to/projects/myproject/.env
 ```
 
-## Skills System
+</details>
+
+<details>
+<summary><strong>Skills System</strong></summary>
 
 ARK ships with **builtin skills** &mdash; modular instruction sets that agents load at runtime to enforce best practices:
 
@@ -225,6 +235,8 @@ ARK ships with **builtin skills** &mdash; modular instruction sets that agents l
 | **page-adjustment** | Maintains page limits by adjusting content density, not deleting sections |
 
 Skills live in `skills/builtin/` and are auto-installed during pipeline bootstrap. Domain skills (e.g., HPC) live in `skills/library/` and are pulled in by the Researcher when relevant.
+
+</details>
 
 ---
 
@@ -296,48 +308,43 @@ python -m ark.orchestrator --project myproject --mode dev
 
 ---
 
-## Docker Usage
-
-### Architecture Requirements
+<details>
+<summary><strong>Docker Usage</strong></summary>
 
 > [!IMPORTANT]
 > The ARK research runtime depends on scientific libraries that are most stable on x86_64. If you are building on an **Apple Silicon (M1/M2/M3)** Mac, you must build for the `linux/amd64` platform.
 >
 > All ARK Dockerfiles and the `docker-compose.yml` are configured to force `linux/amd64` by default.
 
-### Running with Docker Compose
-
-The easiest way to run the ARK Web Portal is using `docker-compose`. From the root of the project:
+**Running with Docker Compose**
 
 ```bash
 # Start the web portal (builds the image automatically for amd64)
 docker compose -f docker/docker-compose.yml up --build -d
 ```
 
-The web portal will be accessible at `http://localhost:9527`. All databases, configurations, and project data are persisted automatically in a Docker named volume (`ark_data`).
+The web portal will be accessible at `http://localhost:9527`. All databases, configurations, and project data are persisted in a Docker named volume (`ark_data`).
 
-To view the live logs for the web portal:
 ```bash
 docker compose -f docker/docker-compose.yml logs -f webapp
 ```
 
-### Configuration
-
-To customize the web portal configuration (e.g., setting up SMTP for magic-link logins or OAuth):
+**Configuration**
 
 ```bash
-# Create a custom config
 cp .ark/webapp.env.example .ark/webapp.env
 # Edit .ark/webapp.env with your credentials
 ```
+
 Then uncomment the environment volume mapping in `docker/docker-compose.yml` under the `webapp` service:
+
 ```yaml
       - ../.ark/webapp.env:/data/.ark/webapp.env:ro
 ```
 
-### Running Individual Jobs
+**Running Individual Jobs**
 
-You can run isolated research jobs alongside the web app using the ARK job container. Uncomment the `job` service in `docker/docker-compose.yml`, then run:
+Uncomment the `job` service in `docker/docker-compose.yml`, then run:
 
 ```bash
 docker compose -f docker/docker-compose.yml run --rm job \
@@ -347,30 +354,23 @@ docker compose -f docker/docker-compose.yml run --rm job \
   --iterations 10
 ```
 
-*Note: You must pass your required API keys (e.g., `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) as environment variables.*
+*Pass required API keys (e.g., `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) as environment variables.*
 
-### Running Standalone Containers (Directly)
+**Running Standalone Containers**
 
-#### 1. Build the Images (Force amd64)
 ```bash
-# Build Web Portal
+# Build images (force amd64)
 docker build --platform linux/amd64 -f docker/Dockerfile.webapp -t ark-webapp .
-
-# Build Job Container
 docker build --platform linux/amd64 -f docker/Dockerfile.job -t ark-job .
-```
 
-#### 2. Run the Web Portal
-```bash
+# Run the Web Portal
 docker run -d --name ark-webapp \
   --platform linux/amd64 \
   -p 9527:9527 \
   -v ark_data:/data \
   ark-webapp
-```
 
-#### 3. Run a Research Job
-```bash
+# Run a Research Job
 docker run --rm -it \
   --platform linux/amd64 \
   -v ark_data:/data \
@@ -381,9 +381,7 @@ docker run --rm -it \
   --mode research
 ```
 
-### Pushing to Google Cloud Platform (GCP)
-
-ARK includes a script to build and push images to Google Artifact Registry or GCR.
+**Pushing to GCP**
 
 ```bash
 # Push to Artifact Registry (recommended)
@@ -392,47 +390,61 @@ ARK includes a script to build and push images to Google Artifact Registry or GC
 # Push to Legacy Container Registry (gcr.io)
 ./docker/push-gcp.sh --project [PROJECT_ID] --legacy --build
 ```
+
 The `--build` flag automatically builds the images for `linux/amd64` even when running on macOS.
+
+</details>
 
 ---
 
 ## Cloud Compute
 
-ARK supports running experiments on remote cloud VMs (AWS, GCP, Azure) while keeping the orchestrator and web portal running **locally**. This is the recommended setup if you want elastic compute capacity without managing an HPC cluster.
+ARK's **v2 cloud architecture** decouples the *Control Plane* from the *Execution Plane*, enabling the full orchestrator to run on a remote cloud VM while you interact with a lightweight local webapp.
 
 **How it works:**
-1. The webapp runs locally or on a small server, handling project management and the UI.
-2. When a project is submitted, ARK provisions a cloud VM, transfers the project code over SSH, and manages the full experiment lifecycle remotely.
-3. Results are synced back automatically. The VM is terminated when the run completes.
-
-### Enabling Cloud Compute via the Dashboard
-
-1. Open the **Settings** panel (⚙️ icon in the top navigation bar).
-2. Scroll down to the **Cloud Compute** section.
-3. Enter your credentials for your preferred provider (AWS, GCP, or Azure).
-4. Click **Save**. All subsequent project submissions will automatically dispatch to the cloud.
+1. The local webapp (or CLI) acts as a lightweight launcher — it provisions a remote **Orchestrator VM**, syncs your project code and API keys over SSH, and triggers the orchestrator process.
+2. The **Orchestrator VM** runs all high-level logic (Researcher, Planner, Writer, LaTeX, figures) remotely in a detached session.
+3. Experiments can run on the same orchestrator VM or on a separate GPU VM (configurable independently).
+4. The webapp streams logs and syncs state back periodically. The orchestrator VM self-terminates when the run completes.
 
 > [!TIP]
 > Cloud credentials are encrypted at rest using your `SECRET_KEY`. Your keys are never logged or transmitted to third parties.
 
-### Configuration Hierarchy
+<details>
+<summary><strong>Configuration Hierarchy</strong></summary>
 
 ARK uses a three-tier configuration model for cloud compute:
 1. **System Defaults**: Set in `webapp.env` (e.g., `CLOUD_REGION`, `CLOUD_NETWORK`).
 2. **Global User Defaults**: Set in the **Settings** panel (⚙️). These apply to all your projects.
 3. **Project Overrides**: Set during project creation or restart. These have the highest priority.
 
-This hierarchy allows you to define your standard machine type and VPC settings once, while easily swapping to a powerful GPU instance for a specific high-intensity experiment.
+This hierarchy lets you define standard machine types and VPC settings once, while easily swapping to a powerful GPU instance for a specific experiment.
+
+</details>
 
 ---
 
-### Creating a Project
+### Enabling Cloud Compute via the Dashboard
 
-Once cloud compute is configured, the recommended way to launch a project is through the dashboard:
+1. Open the **Settings** panel (⚙️ icon in the top navigation bar).
+2. Scroll down to the **Cloud Compute** section.
+3. Enter your credentials for your preferred provider (GCP, AWS, or Azure).
+4. Click **Save**.
+
+When creating a new project you can now independently select:
+- **Orchestrator Backend** — `cloud` (GCP) to run the control plane remotely, or `local` to run it on the same machine as the webapp.
+- **Experiment Backend** — `cloud` (GCP/AWS/Azure) for GPU experiments, or `local` to run them on the Orchestrator VM itself.
+
+---
+
+<details>
+<summary><strong>Creating a Project</strong></summary>
+
+Once cloud compute is configured, launch a project through the dashboard:
 
 1. Click **New Project** from the dashboard home.
 2. Fill in the research goal, target venue, and any additional instructions.
-3. Click **Submit** — the webapp automatically generates a `config.yaml` for the project and provisions the cloud VM.
+3. Click **Submit** — the webapp generates a `config.yaml`, provisions the Orchestrator VM, syncs your project, and starts the run.
 
 The generated `config.yaml` is stored at:
 
@@ -444,6 +456,8 @@ You can inspect or hand-edit this file at any time (e.g., to tune instance type 
 
 > [!NOTE]
 > If `PROJECTS_ROOT` is set in your `.ark/webapp.env`, the path above is replaced by `$PROJECTS_ROOT/<user_id>/<project_id>/config.yaml`.
+
+</details>
 
 ---
 
@@ -481,13 +495,21 @@ gcloud iam service-accounts keys create ~/ark-gcp-key.json \
 gcloud services enable compute.googleapis.com --project=$PROJECT_ID
 ```
 
-#### 3. Configure in Dashboard
+#### 3. Build the Machine Image
+
+ARK uses a pre-baked Machine Image containing all system dependencies (Conda, LaTeX, Node.js) for fast boot times. Build it once:
+
+```bash
+./scripts/build_ark_gcp_image.sh [GCP_PROJECT_ID] [ZONE]
+```
+
+This script spins up a temporary VM, installs TeX Live, Miniforge, Node.js, and the `ark-base` environment, then saves a Machine Image named `ark-job-v1-[timestamp]` tagged with the `ark-job` family.
+
+#### 4. Configure in Dashboard
 
 Paste the contents of `~/ark-gcp-key.json` into the **GCP Service Account JSON** field and set your **GCP Project ID** in the Settings panel.
 
-#### 4. Finding GCP Parameters (Optional)
-
-If you need to find available zones, machine types, or network details, use these `gcloud` commands:
+#### 5. Finding GCP Parameters (Optional)
 
 ```bash
 # List available zones
@@ -499,40 +521,40 @@ gcloud compute machine-types list --zones=us-central1-a
 # List networks and subnets
 gcloud compute networks list
 gcloud compute networks subnets list --regions=us-central1
-
-# List deep learning images (families)
-gcloud compute images list --project=(your-project-id) --no-standard-images
 ```
 
-Alternatively, you can find these in the **Google Cloud Console**:
-- **Zones/Machine Types**: Compute Engine &rarr; VM Instances &rarr; Create Instance (to see options)
+Alternatively, use the **Google Cloud Console**:
+- **Zones/Machine Types**: Compute Engine &rarr; VM Instances &rarr; Create Instance
 - **Networks**: VPC Network &rarr; VPC Networks
 - **Images**: Compute Engine &rarr; Images
 
-#### 5. `config.yaml` Reference (advanced / CLI only)
+#### 6. `config.yaml` Reference (advanced / CLI only)
 
-The webapp generates this automatically from your Settings. For manual or CLI-driven projects, add the following to your project's `config.yaml`:
+The webapp generates this automatically from your Settings. For manual or CLI-driven projects, use the two-backend model:
 
 ```yaml
-compute_backend:
+# Orchestrator VM: runs Researcher, Planner, Writer, LaTeX (no GPU needed)
+orchestrator_compute_backend:
   type: cloud
   provider: gcp
-  region: us-central1-a             # GCP zone
-  instance_type: n1-standard-8
-  image_id: ark-debian-base              # Custom ARK base image
-  image_project: (your-project-id)
-  ssh_key_path: ~/.ssh/id_rsa
-  ssh_user: ubuntu
-  # Optional: Networking
-  network: my-vpc                   # Default: "default"
-  subnet: my-subnet                 # Default: "default"
-  # Optional: GPU accelerator
-  accelerator_type: nvidia-tesla-t4
+  region: us-central1-a
+  instance_type: n1-standard-2
+  image_family: ark-job              # Pre-baked ARK image
+
+# Experiment VM: runs GPU-intensive workloads
+experiment_compute_backend:
+  type: cloud
+  provider: gcp
+  region: us-central1-a
+  instance_type: g2-standard-4
+  accelerator_type: nvidia-l4
   accelerator_count: 1
-  # Optional: run these commands on the instance after boot
+  # Optional: post-boot setup
   setup_commands:
     - conda activate base && pip install -r requirements.txt
 ```
+
+> To run experiments on the Orchestrator VM instead of a separate instance, set `experiment_compute_backend.type: local`.
 
 </details>
 
@@ -574,10 +596,8 @@ Enter your **AWS Access Key ID**, **AWS Secret Access Key**, and **AWS Region** 
 
 #### 4. `config.yaml` Reference (advanced / CLI only)
 
-The webapp generates this automatically from your Settings. For manual or CLI-driven projects, add the following to your project's `config.yaml`:
-
 ```yaml
-compute_backend:
+experiment_compute_backend:
   type: cloud
   provider: aws
   region: us-east-1
@@ -587,7 +607,6 @@ compute_backend:
   ssh_key_path: ~/.ssh/ark-key.pem
   ssh_user: ubuntu
   security_group: sg-xxxxxxxx        # Must allow inbound SSH (port 22)
-  # Optional: post-boot setup
   setup_commands:
     - conda activate pytorch && pip install -r requirements.txt
 ```
@@ -631,10 +650,8 @@ Enter your **Azure Client ID**, **Azure Client Secret**, **Azure Tenant ID**, an
 
 #### 4. `config.yaml` Reference (advanced / CLI only)
 
-The webapp generates this automatically from your Settings. For manual or CLI-driven projects, add the following to your project's `config.yaml`:
-
 ```yaml
-compute_backend:
+experiment_compute_backend:
   type: cloud
   provider: azure
   region: eastus                     # Azure location
@@ -643,7 +660,6 @@ compute_backend:
   ssh_key_path: ~/.ssh/ark-azure-key
   ssh_user: azureuser
   resource_group: ark-resources      # Will be created if it doesn't exist
-  # Optional: post-boot setup
   setup_commands:
     - pip install -r requirements.txt
 ```
@@ -652,14 +668,33 @@ compute_backend:
 
 ---
 
-### Cost Control
+<details>
+<summary><strong>Log Streaming &amp; Re-attachment</strong></summary>
+
+- **Log Streaming** — the Orchestrator VM maintains a `logs/latest.log` symlink; the webapp polls it periodically to show live progress.
+- **State Sync** — every 60 seconds, the launcher pulls the `auto_research/` state directory back from the VM to update the Dashboard UI.
+- **Re-attachment** — if you restart your local webapp, ARK detects the existing `orchestrator_instance.yaml`, probes the remote VM via SSH, and re-attaches to the running process without re-provisioning.
+
+</details>
+
+<details>
+<summary><strong>Cost Control</strong></summary>
 
 > [!WARNING]
-> Cloud VMs are billed by the hour. ARK automatically terminates instances after each run completes. However, if the webapp process is killed unexpectedly, the **Orphan Rescue** mechanism will detect stale instances on the next restart and mark them as failed — but **will not terminate the cloud VM automatically**. Always verify no stray instances are running in your cloud console after unexpected shutdowns.
+> Cloud VMs are billed by the hour. ARK includes several safeguards to prevent runaway costs:
+>
+> - **Launcher Heartbeat** — every time the webapp polls the VM for state, it touches a `launcher_heartbeat` file on the remote VM.
+> - **VM Reaper** — a background daemon (`ark_vm_reaper.sh`) runs on the Orchestrator VM. If the orchestrator process finishes and the launcher heartbeat is stale for >30 minutes, the VM **automatically shuts itself down**.
+> - **Manual Stop** — clicking **Stop** in the dashboard performs a final sync of all results and then terminates the GCP instance.
+>
+> If the webapp process is killed unexpectedly, the VM Reaper will self-terminate after the heartbeat timeout. Always verify no stray instances are running in your cloud console after unexpected shutdowns. Check `reaper.log` in the remote project directory if a VM shuts down unexpectedly.
+
+</details>
 
 ---
 
-## Telegram Integration
+<details>
+<summary><strong>Telegram Integration</strong></summary>
 
 ```bash
 ark setup-bot    # one-time: paste BotFather token, auto-detect chat ID
@@ -671,6 +706,8 @@ What you get:
 - **Request PDFs** &mdash; latest compiled paper sent to chat
 - **Human intervention** &mdash; agents escalate decisions to you before irreversible actions
 - **HPC-friendly** &mdash; handles self-signed SSL certificates on enterprise/HPC networks
+
+</details>
 
 ---
 
