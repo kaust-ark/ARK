@@ -1347,6 +1347,23 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
     model_idx = prompt_choice("Select model", models, default=1)
     model = models[model_idx][1]
     print(f"  {_c('✓', Colors.GREEN)} Selected: {model}")
+
+    model_variant = ""
+    if model == "gemini":
+        gemini_variants = [
+            ("Auto (router picks)", "auto"),
+            ("Gemini 3.1 Pro (preview)", "gemini-3.1-pro-preview"),
+            ("Gemini 3 Flash (preview)", "gemini-3-flash-preview"),
+            ("Gemini 3.1 Flash Lite (preview)", "gemini-3.1-flash-lite-preview"),
+            ("Gemini 2.5 Pro", "gemini-2.5-pro"),
+        ]
+        print()
+        for i, (display, _) in enumerate(gemini_variants, 1):
+            rec = " (recommended)" if i == 1 else ""
+            print(f"  {_c(f'{i}.', Colors.BOLD)} {display}{rec}")
+        variant_idx = prompt_choice("Select Gemini variant", gemini_variants, default=1)
+        model_variant = gemini_variants[variant_idx][1]
+        print(f"  {_c('✓', Colors.GREEN)} Variant: {model_variant}")
     _wizard_step_footer()
 
     # ── Step 7: Figure Generation ────────────────────────────
@@ -1428,6 +1445,7 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
         "venue_pages": venue_pages,
         "title": title,
         "model": model,
+        "model_variant": model_variant,
         "orchestrator_compute_backend": orchestrator_compute_backend,
         "experiment_compute_backend": experiment_compute_backend,
         "paper_accept_threshold": 8,
@@ -1796,6 +1814,7 @@ def cmd_run(args):
 
     code_dir = config.get("code_dir", str(get_ark_root().parent))
     model = args.model or config.get("model", "claude")
+    model_variant = getattr(args, "model_variant", None) or config.get("model_variant", "")
     mode = "paper"  # only mode supported; flag kept for slurm-script compat
     max_iterations = args.iterations or 3
     max_days = args.max_days or 3
@@ -1824,7 +1843,7 @@ def cmd_run(args):
     log_file = log_dir / f"{name}_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
     print(f"Starting {_c(name, Colors.BOLD)} in {_c(mode, Colors.CYAN)} mode...")
-    print(f"  Model:          {model}")
+    print(f"  Model:          {model}" + (f" ({model_variant})" if model_variant else ""))
     print(f"  Code dir:       {code_dir}")
     print(f"  Max iterations: {max_iterations}")
     print(f"  Max days:       {max_days}")
@@ -1877,6 +1896,8 @@ def cmd_run(args):
         "--iterations", str(max_iterations),
         "--max-days", str(max_days),
     ]
+    if model_variant:
+        cmd.extend(["--model-variant", model_variant])
     if db_path:
         cmd.extend(["--db-path", db_path])
     if project_id:
@@ -4233,6 +4254,10 @@ def main():
                        help=argparse.SUPPRESS)
     p_run.add_argument("--model", choices=["claude", "gemini", "codex"], default=None,
                        help="AI model backend")
+    p_run.add_argument("--model-variant", default=None,
+                       help="Specific model id (e.g. claude-sonnet-4-6, "
+                            "gemini-3.1-pro-preview, gemini-3-flash-preview, "
+                            "gemini-3.1-flash-lite-preview, gemini-2.5-pro, auto)")
     p_run.add_argument("--iterations", type=int, default=None, help="Number of iterations to run")
     p_run.add_argument("--max-days", type=float, default=None, help="Maximum runtime in days")
     p_run.add_argument("--no-research", action="store_true", default=False,

@@ -80,13 +80,25 @@ def _calculate_gemini_cost(model_id: str, input_tok: int, output_tok: int) -> fl
     output_tok = int(output_tok or 0)
     model_lower = (model_id or "").lower()
 
-    # Pricing per 1M tokens
-    if "3.1-pro" in model_lower:
+    # Pricing per 1M tokens (check most-specific substrings first)
+    if "flash-lite" in model_lower:
+        in_rate = 0.15
+        out_rate = 0.60
+    elif "3.1-pro" in model_lower:
         in_rate = 2.00
         out_rate = 12.00
-    elif "3.1-flash" in model_lower:
+    elif "3-pro" in model_lower:
+        in_rate = 2.00
+        out_rate = 12.00
+    elif "3.1-flash" in model_lower or "3-flash" in model_lower:
         in_rate = 0.50
         out_rate = 3.00
+    elif "2.5-pro" in model_lower:
+        in_rate = 1.25
+        out_rate = 10.00
+    elif "2.5-flash" in model_lower:
+        in_rate = 0.30
+        out_rate = 2.50
     else:
         # Default to pro
         in_rate = 2.00

@@ -3207,7 +3207,10 @@ provide the title.
             os.environ.get("ANTHROPIC_API_KEY", "")
             or self.config.get("anthropic_api_key", "")
         )
-        model = self.config.get("model_variant") or "claude-sonnet-4-6"
+        variant = self.config.get("model_variant") or ""
+        # Ethical review always uses Anthropic's API directly — coerce non-Claude
+        # variants (e.g. Gemini ids) to a Claude default so the call doesn't 404.
+        model = variant if variant.startswith("claude-") else "claude-sonnet-4-6"
 
         self.log_step("Pre-launch ethical review...", "progress")
         result = review_idea(idea, model=model, api_key=api_key)

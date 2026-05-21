@@ -426,7 +426,12 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
         "claude-opus-4-7": ("claude", "claude-opus-4-7"),
         "claude-opus-4-6": ("claude", "claude-opus-4-6"),
         "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
-        "gemini": ("gemini", ""),
+        "gemini": ("gemini", "auto"),
+        "gemini-auto": ("gemini", "auto"),
+        "gemini-3.1-pro-preview": ("gemini", "gemini-3.1-pro-preview"),
+        "gemini-3-flash-preview": ("gemini", "gemini-3-flash-preview"),
+        "gemini-3.1-flash-lite-preview": ("gemini", "gemini-3.1-flash-lite-preview"),
+        "gemini-2.5-pro": ("gemini", "gemini-2.5-pro"),
     }
     model_backend, model_variant = MODEL_MAP.get(model, ("claude", "claude-sonnet-4-6"))
 
@@ -1907,7 +1912,12 @@ async def api_create_project(
         "claude-opus-4-7": ("claude", "claude-opus-4-7"),
         "claude-opus-4-6": ("claude", "claude-opus-4-6"),
         "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
-        "gemini": ("gemini", ""),
+        "gemini": ("gemini", "auto"),
+        "gemini-auto": ("gemini", "auto"),
+        "gemini-3.1-pro-preview": ("gemini", "gemini-3.1-pro-preview"),
+        "gemini-3-flash-preview": ("gemini", "gemini-3-flash-preview"),
+        "gemini-3.1-flash-lite-preview": ("gemini", "gemini-3.1-flash-lite-preview"),
+        "gemini-2.5-pro": ("gemini", "gemini-2.5-pro"),
     }
     model_backend, model_variant = MODEL_MAP.get(model, ("claude", "claude-sonnet-4-6"))
 

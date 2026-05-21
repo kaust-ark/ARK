@@ -43,7 +43,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
     """Main orchestrator class composing all mixins."""
 
     def __init__(self, project: str, max_days: float = 3, max_iterations: int = 100,
-                 model: str = None, code_dir: str = None,
+                 model: str = None, model_variant: str = None, code_dir: str = None,
                  project_dir: str = None, db_path: str = None, project_id: str = None,
                  mode: str = "paper"):
         global PROJECT_DIR
@@ -98,6 +98,8 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
 
         # Resolve model
         self.model = self._model_arg or self.config.get("model") or "claude"
+        if model_variant:
+            self.config["model_variant"] = model_variant
 
         from ark.config.defaults import DEFAULT_PAPER_ACCEPT_THRESHOLD
         self.paper_accept_threshold = self.config.get("paper_accept_threshold", DEFAULT_PAPER_ACCEPT_THRESHOLD)
@@ -2536,6 +2538,10 @@ def main():
     parser.add_argument("--project", type=str, required=True, help="Project name (e.g., prouter)")
     parser.add_argument("--model", type=str, default=None, choices=["claude", "gemini", "codex"],
                         help="Model backend: 'claude', 'gemini', or 'codex'")
+    parser.add_argument("--model-variant", type=str, default=None,
+                        help="Specific model id (e.g. claude-sonnet-4-6, "
+                             "gemini-3.1-pro-preview, gemini-3-flash-preview, "
+                             "gemini-3.1-flash-lite-preview, gemini-2.5-pro, auto)")
     parser.add_argument("--max-days", type=float, default=3, help="Maximum runtime in days")
     parser.add_argument("--iterations", type=int, default=100, help="Number of iterations to run")
     parser.add_argument("--code-dir", type=str, default=None,
@@ -2595,6 +2601,7 @@ def main():
         mode=args.mode,
         project=args.project,
         model=args.model,
+        model_variant=args.model_variant,
         code_dir=code_dir,
         project_dir=project_dir,
         db_path=db_path,
