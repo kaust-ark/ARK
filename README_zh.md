@@ -483,29 +483,30 @@ gcloud compute machine-types list --zones=us-central1-a
 gcloud compute networks list
 gcloud compute networks subnets list --regions=us-central1
 
-# 列出深度学习镜像 (系列)
-gcloud compute images list --project=deeplearning-platform-release --no-standard-images
+# 列出深度学习镜像（系列）
+gcloud compute images list --project=(your-project-id) --no-standard-images
 ```
 
 或者，您可以在 **Google Cloud 控制台**中找到这些信息：
-- **区域/机器类型**: Compute Engine &rarr; VM 实例 &rarr; 创建实例 (查看选项)
+- **区域/机器类型**: Compute Engine &rarr; VM 实例 &rarr; 创建实例（以查看选项）
 - **网络**: VPC 网络 &rarr; VPC 网络
 - **镜像**: Compute Engine &rarr; 镜像
 
-#### 5. `config.yaml` 参考 (高级 / 仅限 CLI)
+#### 5. `config.yaml` 参考（高级 / 仅限命令行）
 
-Web 应用程序会根据您的设置自动生成。对于手动或 CLI 驱动的项目，将以下内容添加到项目的 `config.yaml` 中：
+Web 应用会根据您的设置自动生成此文件。对于手动或通过命令行驱动的项目，请在项目的 `config.yaml` 中添加以下内容：
 
 ```yaml
 compute_backend:
   type: cloud
   provider: gcp
-  region: us-central1-a             # GCP 区域 (zone)
+  region: us-central1-a             # GCP 区域
   instance_type: n1-standard-8
-  image_id: common-cpu              # 深度学习虚拟机镜像系列
-  image_project: deeplearning-platform-release
+  image_id: ark-debian-base              # 自定义 ARK 基础镜像
+  image_project: (your-project-id)
   ssh_key_path: ~/.ssh/id_rsa
   ssh_user: ubuntu
+
   # 可选：网络
   network: my-vpc                   # 默认: "default"
   subnet: my-subnet                 # 默认: "default"

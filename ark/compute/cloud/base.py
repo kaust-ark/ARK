@@ -1,3 +1,4 @@
+import atexit
 import os
 import json
 import subprocess
@@ -27,7 +28,14 @@ class CloudBackend(ComputeBackend):
         self.ssh_user = cc.get("ssh_user", "ubuntu")
         self.setup_commands = cc.get("setup_commands", [])
         self.conda_env = cc.get("conda_env", self.project_name)
-        
+
+        # ARK_SSH_KEY_PATH is set by the remote orchestrator to point at the key
+        # synced to /dev/shm. Prefer it over the config value so that experiment
+        # instances get the correct public key injected and SSH auth succeeds.
+        ark_ssh_key = os.environ.get("ARK_SSH_KEY_PATH", "")
+        if ark_ssh_key and os.path.exists(ark_ssh_key):
+            self.ssh_key_path = ark_ssh_key
+
         self._instance_id = None
         self._instance_ip = None
         # Persist instance state for crash recovery
@@ -79,6 +87,7 @@ class CloudBackend(ComputeBackend):
             self._ssh_exec(cmd, timeout=600)
 
         self._save_instance_state()
+        atexit.register(self.teardown)
         return self._context_dict()
 
     @abstractmethod
@@ -141,8 +150,8 @@ class CloudBackend(ComputeBackend):
                 "--exclude", ".git",
                 "--exclude", "__pycache__",
                 "--exclude", "*.pyc",
-                "--exclude", "auto_research",
                 "--exclude", "projects",
+                "--exclude", ".env",
                 "-e", ssh_opts,
                 f"{source_dir}/", dest,
             ], check=True, timeout=300)
@@ -215,14 +224,40 @@ Do NOT use sbatch/srun. Run scripts directly on the instance."""
                     return True
 
                 ps = self._ssh_exec(
-                    "pgrep -af 'python|train' | grep -v pgrep | head -5",
+                    "pgrep -af 'python|train' | grep -v pgrep | grep -v networkd-dispatcher | grep -v unattended-upgrade | head -5",
                     timeout=30,
                 )
                 if not ps.strip():
-                    self.log("No running experiment processes detected")
-                    return True
+                    # Processes gone but no marker yet. Two possibilities:
+                    # (a) experiment exited cleanly and the marker write is
+                    # racing this check, or (b) the process crashed (OOM,
+                    # signal, segfault) and the marker will never appear.
+                    # Re-check the marker after a short grace; if still
+                    # absent, treat it as a crash and fail fast so the
+                    # caller doesn't silently consume garbage results.
+                    time.sleep(5)
+                    recheck = self._ssh_exec(
+                        f"test -f {self._MARKER_FILE} && echo DONE || echo CRASHED",
+                        timeout=30,
+                    )
+                    if "DONE" in recheck:
+                        self.log("Cloud experiment completed (marker found after process exit)")
+                        return True
+                    self.log(
+                        "Experiment processes exited without writing completion "
+                        "marker — treating as crash",
+                        "ERROR",
+                    )
+                    return False
 
-                self.log(f"Cloud experiments running, waiting 60s...")
+                self.log(f"Cloud experiments running (processes):\n{ps.strip()}")
+                # Tail recent log output from the remote instance
+                log_tail = self._ssh_exec(
+                    "find /home -name '*.log' -newer /proc/1/stat 2>/dev/null | head -3 | xargs -I{} tail -n 20 {} 2>/dev/null || true",
+                    timeout=30,
+                )
+                if log_tail.strip():
+                    self.log(f"Remote experiment output:\n{log_tail.strip()}")
                 time.sleep(60)
             except Exception as e:
                 self.log(f"SSH check failed: {e}, retrying...", "WARN")

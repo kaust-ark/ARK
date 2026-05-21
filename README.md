@@ -519,7 +519,7 @@ gcloud compute networks list
 gcloud compute networks subnets list --regions=us-central1
 
 # List deep learning images (families)
-gcloud compute images list --project=deeplearning-platform-release --no-standard-images
+gcloud compute images list --project=(your-project-id) --no-standard-images
 ```
 
 Alternatively, you can find these in the **Google Cloud Console**:
@@ -537,8 +537,8 @@ compute_backend:
   provider: gcp
   region: us-central1-a             # GCP zone
   instance_type: n1-standard-8
-  image_id: common-cpu              # Deep Learning VM image family
-  image_project: deeplearning-platform-release
+  image_id: ark-debian-base              # Custom ARK base image
+  image_project: (your-project-id)
   ssh_key_path: ~/.ssh/id_rsa
   ssh_user: ubuntu
   # Optional: Networking

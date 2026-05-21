@@ -19,7 +19,7 @@ _SLURM_TEMPLATE = Path(__file__).parent / "slurm_template.sh"
 # Per-project conda env: lives at <project_dir>/.env as a `--prefix` env cloned
 # from the configured base env. Detected via the conda-meta directory which
 # every conda env has, even an empty one.
-PROJECT_ENV_DIRNAME = ".env"
+PROJECT_ENV_DIRNAME = ".conda_env"
 
 
 def project_env_prefix(project_dir: Path) -> Path:

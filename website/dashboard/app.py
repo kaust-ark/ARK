@@ -223,7 +223,9 @@ async def _poll_jobs(app: FastAPI):
                             remote_work_dir = f"/home/{orch.ssh_user}/{p.id}"
 
                             if remote_state == "RUNNING":
-                                # Periodic sync: pull state + logs to refresh UI
+                                # Periodic sync: pull state + logs + experiments to
+                                # refresh UI and preserve partial experiment outputs
+                                # against an experiment/VM crash.
                                 try:
                                     orch.sync_from_backend(
                                         f"{remote_work_dir}/auto_research/",
@@ -238,6 +240,13 @@ async def _poll_jobs(app: FastAPI):
                                     )
                                 except Exception as sync_err:
                                     logger.warning(f"Log sync failed for {p.id}: {sync_err}")
+                                try:
+                                    orch.sync_from_backend(
+                                        f"{remote_work_dir}/experiments/",
+                                        str(pdir / "experiments"),
+                                    )
+                                except Exception as sync_err:
+                                    logger.warning(f"Experiments sync failed for {p.id}: {sync_err}")
                                 continue
 
                             # Terminal state detected
@@ -248,22 +257,34 @@ async def _poll_jobs(app: FastAPI):
                             else:
                                 continue
 
-                            # Final sync before marking terminal
-                            try:
-                                orch.sync_from_backend(
-                                    f"{remote_work_dir}/auto_research/",
-                                    str(pdir / "auto_research"),
+                            # Final sync before marking terminal. If this fails we
+                            # must NOT flip status — otherwise the project lands in
+                            # a terminal state with stale local files and no retry
+                            # path. Leave it as-is and let the next poll retry.
+                            final_sync_ok = True
+                            for remote_sub, local_sub in (
+                                ("auto_research/", "auto_research"),
+                                ("paper/", "paper"),
+                                ("logs/", "logs"),
+                                ("experiments/", "experiments"),
+                            ):
+                                try:
+                                    orch.sync_from_backend(
+                                        f"{remote_work_dir}/{remote_sub}",
+                                        str(pdir / local_sub),
+                                    )
+                                except Exception as sync_err:
+                                    final_sync_ok = False
+                                    logger.warning(
+                                        f"Final sync of {remote_sub} failed for {p.id}: {sync_err}"
+                                    )
+
+                            if not final_sync_ok:
+                                logger.warning(
+                                    f"Cloud orchestrator {p.id}: deferring {new_status} "
+                                    f"transition until final sync succeeds"
                                 )
-                                orch.sync_from_backend(
-                                    f"{remote_work_dir}/paper/",
-                                    str(pdir / "paper"),
-                                )
-                                orch.sync_from_backend(
-                                    f"{remote_work_dir}/logs/",
-                                    str(pdir / "logs"),
-                                )
-                            except Exception as sync_err:
-                                logger.warning(f"Final sync failed for {p.id}: {sync_err}")
+                                continue
 
                             kwargs = {"status": new_status}
                             update_project(session, p, **kwargs)

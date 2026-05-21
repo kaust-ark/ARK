@@ -213,7 +213,7 @@ class GeminiCLI(AgentCLI):
         cmd = [
             "gemini",
             "-p", f"[SYSTEM RULE] {path_boundary}\n\n{prompt}",
-            "--approval-mode", "auto_edit",
+            "--approval-mode", "yolo",
             "-o", "json",
         ]
         if self.model_variant:

@@ -36,7 +36,7 @@ from ark.latex import CompilerMixin
 from ark.execution import ExecutionMixin
 from ark.pipeline import PipelineMixin
 from .workspace import WorkspaceManager
-from .state import StateManager
+from .state import StateManager, _atomic_write_yaml, _atomic_write_text
 
 
 class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
@@ -1372,8 +1372,7 @@ a {{ color: #0d9488; }}
             "timestamp": datetime.now().isoformat(),
             "completed_phase": 0,  # Reset — full iteration done
         }
-        with open(self.checkpoint_file, "w") as f:
-            yaml.dump(checkpoint, f, default_flow_style=False)
+        _atomic_write_yaml(self.checkpoint_file, checkpoint, default_flow_style=False)
         self.log(f"Checkpoint saved: iteration={self.iteration}", "INFO")
         self._sync_db(
             checkpoint_data=json.dumps(checkpoint),
@@ -1397,8 +1396,7 @@ a {{ color: #0d9488; }}
             "completed_phase": step_num,
             "completed_phase_name": step_name,
         }
-        with open(self.checkpoint_file, "w") as f:
-            yaml.dump(checkpoint, f, default_flow_style=False)
+        _atomic_write_yaml(self.checkpoint_file, checkpoint, default_flow_style=False)
         self._sync_db(checkpoint_data=json.dumps(checkpoint))
 
     # Backward compat alias
@@ -1708,7 +1706,7 @@ a {{ color: #0d9488; }}
                         return match.group(0)
 
                     fixed = re.sub(r'"([^"\n]*)"', fix_dquoted, raw)
-                    self.action_plan_file.write_text(fixed)
+                    _atomic_write_text(self.action_plan_file, fixed)
                     result = yaml.safe_load(fixed) or {}
                     self.log("YAML fix succeeded (LaTeX escape -> single quotes)", "INFO")
                     return result
@@ -1721,8 +1719,10 @@ a {{ color: #0d9488; }}
 
     def _save_action_plan(self, action_plan: dict):
         """Save action plan."""
-        with open(self.action_plan_file, "w") as f:
-            yaml.dump(action_plan, f, default_flow_style=False, allow_unicode=True)
+        _atomic_write_yaml(
+            self.action_plan_file, action_plan,
+            default_flow_style=False, allow_unicode=True,
+        )
 
     def _load_findings_summary(self) -> str:
         """Load findings.yaml summary.
@@ -1750,8 +1750,8 @@ a {{ color: #0d9488; }}
                 if repaired is not None:
                     try:
                         backup = self.findings_file.with_suffix(".yaml.malformed")
-                        backup.write_text(text)
-                        self.findings_file.write_text(repaired)
+                        _atomic_write_text(backup, text)
+                        _atomic_write_text(self.findings_file, repaired)
                         findings = yaml.safe_load(repaired) or {}
                         detail = "; ".join(changes) if changes else "auto-repaired"
                         self.log(

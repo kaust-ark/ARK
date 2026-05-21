@@ -122,12 +122,18 @@ class GCPCloudBackend(CloudBackend):
         data = json.loads(result.stdout)
         self._instance_id = instance_name
         for iface in data[0].get("networkInterfaces", []):
+            internal_ip = iface.get("networkIP")
+            external_ip = None
             for access in iface.get("accessConfigs", []):
                 if access.get("natIP"):
-                    self._instance_ip = access["natIP"]
+                    external_ip = access["natIP"]
                     break
+            # Prefer internal IP: avoids firewall rules blocking external SSH on custom VPCs
+            self._instance_ip = internal_ip or external_ip
+            if self._instance_ip:
+                break
         if not self._instance_ip:
-            raise RuntimeError("GCP instance has no external IP")
+            raise RuntimeError("GCP instance has no accessible IP (internal or external)")
         self.log(f"Instance created: {self._instance_id} ({self._instance_ip})")
 
     def teardown(self):

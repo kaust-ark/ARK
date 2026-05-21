@@ -1,9 +1,56 @@
 from __future__ import annotations
+import os
 import yaml
 import json
 import re
+import tempfile
 from pathlib import Path
 from typing import Optional, Any, Tuple
+
+
+def _atomic_write_yaml(path: Path, data: Any, **dump_kwargs) -> None:
+    """Write YAML atomically: tmp file in same dir, fsync, then os.replace.
+
+    Why: a crash mid-write must never leave a half-written state file —
+    the orchestrator reloads its own state on restart and a truncated
+    YAML aborts the whole resume path.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.dump(data, f, **dump_kwargs)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
 
 class StateManager:
     """Handles persistence of research state, paper state, and checkpoints with robust error recovery."""
@@ -50,8 +97,10 @@ class StateManager:
 
     def save_state(self, state: dict):
         try:
-            with open(self.state_file, "w") as f:
-                yaml.dump(state, f, default_flow_style=False, allow_unicode=True)
+            _atomic_write_yaml(
+                self.state_file, state,
+                default_flow_style=False, allow_unicode=True,
+            )
         except Exception as e:
             self.log(f"Failed to save research_state.yaml: {e}", "ERROR")
 
@@ -71,8 +120,10 @@ class StateManager:
 
     def save_paper_state(self, state: dict):
         try:
-            with open(self.paper_state_file, "w") as f:
-                yaml.dump(state, f, default_flow_style=False, allow_unicode=True)
+            _atomic_write_yaml(
+                self.paper_state_file, state,
+                default_flow_style=False, allow_unicode=True,
+            )
         except Exception as e:
             self.log(f"Failed to save paper_state.yaml: {e}", "ERROR")
 
@@ -88,8 +139,10 @@ class StateManager:
     # --- Checkpoints ---
     def save_checkpoint(self, checkpoint_data: dict):
         try:
-            with open(self.checkpoint_file, "w") as f:
-                yaml.dump(checkpoint_data, f, default_flow_style=False)
+            _atomic_write_yaml(
+                self.checkpoint_file, checkpoint_data,
+                default_flow_style=False,
+            )
         except Exception as e:
             self.log(f"Failed to save checkpoint.yaml: {e}", "ERROR")
 
@@ -132,7 +185,7 @@ class StateManager:
                 return match.group(0)
 
             fixed = re.sub(r'"([^"\n]*)"', fix_dquoted, raw)
-            file_path.write_text(fixed)
+            _atomic_write_text(file_path, fixed)
             result = yaml.safe_load(fixed) or {}
             self.log("YAML fix succeeded (LaTeX escape -> single quotes)", "INFO")
             return result
@@ -142,8 +195,10 @@ class StateManager:
 
     def save_action_plan(self, action_plan: dict):
         try:
-            with open(self.action_plan_file, "w") as f:
-                yaml.dump(action_plan, f, default_flow_style=False, allow_unicode=True)
+            _atomic_write_yaml(
+                self.action_plan_file, action_plan,
+                default_flow_style=False, allow_unicode=True,
+            )
         except Exception as e:
             self.log(f"Failed to save action_plan.yaml: {e}", "ERROR")
 
@@ -174,8 +229,8 @@ class StateManager:
             if repaired is not None:
                 try:
                     backup = self.findings_file.with_suffix(".yaml.malformed")
-                    backup.write_text(text)
-                    self.findings_file.write_text(repaired)
+                    _atomic_write_text(backup, text)
+                    _atomic_write_text(self.findings_file, repaired)
                     findings = yaml.safe_load(repaired) or {}
                     detail = "; ".join(changes) if changes else "auto-repaired"
                     self.log(

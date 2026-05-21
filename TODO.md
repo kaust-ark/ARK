@@ -59,6 +59,19 @@
 - Need to verify: does Gemini CLI respect `~/.claude/skills/`? (probably not — skills are Claude Code specific)
 - May need a Gemini-native skill injection mechanism
 
+### [ ] Initialize PaperBanana submodule for AI concept figures
+- `submodules/PaperBanana` is registered in `.gitmodules` but uninitialized — empty dir gets rsynced to remote VMs, so every concept figure silently falls back to Nano Banana
+- Run `git submodule update --init submodules/PaperBanana` locally
+- Ensure VM/cluster bootstrap (e.g. `scripts/setup_gke_cluster.sh`, conda env install in `ark/cli.py`) pulls submodules so remote runs get the full 5-agent pipeline (Retriever → Planner → Stylist → Visualizer → Critic)
+- Verify `[research]` extras install PaperBanana's runtime deps (aiofiles, json_repair, etc.) — see comment at `ark/cli.py:3349`
+- Optional: download `PaperBananaBench` data for reference-retrieval mode (see `compiler.py:1340`)
+
+### [ ] Switch from Gemini CLI to Antigravity CLI
+- Replace `gemini` CLI invocations with the Antigravity CLI as the Gemini-family backend
+- Audit call sites: `ark/engines/`, deep-research invocations, any agent runner that shells out to `gemini`
+- Verify auth model, prompt/streaming API, and tool-use surface match (or shim if not)
+- Update install hints and docs (README, AGENTS.md) once migrated
+
 ## Cloud & Compute
 
 ### [ ] AWS cloud compute — end-to-end verification

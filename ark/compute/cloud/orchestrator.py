@@ -1,5 +1,6 @@
 import os
 import json
+import shlex
 import subprocess
 import time
 from datetime import datetime
@@ -249,32 +250,42 @@ class OrchestratorCloudBackend(GCPCloudBackend):
         max_iterations = self.config.get("max_iterations", 3)
         max_days = self.config.get("max_days", 3)
 
+        # conda run spawns a fresh process that does not inherit shell exports,
+        # so all API key vars must be passed explicitly via `env` after sourcing .env.
+        _env_forward_args = " ".join(
+            f'{v}="${{{v}}}"'
+            for v in _API_KEY_VARS
+        )
         start_cmd = (
             f"cd /home/{self.ssh_user}/ark_source && "
-            f"export ARK_PROJECT_DIR={remote_work_dir} && "
-            f"export ARK_SSH_KEY_PATH=/dev/shm/ark_id_rsa && "
             f"set -a; [ -f /dev/shm/.env ] && source /dev/shm/.env; set +a; "
             # conda run spawns a fresh process that does not inherit shell exports,
-            # so PYTHONPATH must be injected via `env` inside the conda run invocation.
-            # Use ark.orchestrator directly with --project-dir / --code-dir so the remote
-            # process finds the config in the synced project directory rather than looking
-            # under ark_source/projects/ (which does not exist on the remote VM).
+            # so PYTHONPATH and all API keys must be injected via `env` inside the
+            # conda run invocation.
             f"nohup conda run -n {conda_env} env "
             f"PYTHONPATH=/home/{self.ssh_user}/ark_source "
             f"ARK_PROJECT_DIR={remote_work_dir} "
             f"ARK_SSH_KEY_PATH=/dev/shm/ark_id_rsa "
+            f"{_env_forward_args} "
             f"python -m ark.orchestrator "
             f"--project {self.project_name} "
             f"--project-dir {remote_work_dir} "
             f"--code-dir {remote_work_dir} "
             f"--iterations {max_iterations} "
             f"--max-days {max_days} "
-            f"> {log_file} 2>&1 & "
+            f"</dev/null >{log_file} 2>&1 & "
             f"echo $! > {pid_file}"
         )
 
         self.log(f"Starting remote orchestrator process...")
-        self._ssh_exec(start_cmd, timeout=30)
+        # Wrap in `setsid sh -c '... </dev/null >/dev/null 2>&1 &'` so the SSH
+        # channel sees no inherited fds and closes immediately. Without this,
+        # OpenSSH waits up to its full timeout for the background process to
+        # close stdout/stderr — even though the inner command already redirects
+        # them — and we hit a 30s TimeoutExpired before reaching the state-file
+        # write below.
+        wrapped = f"setsid sh -c {shlex.quote(start_cmd)} </dev/null >/dev/null 2>&1"
+        self._ssh_exec(wrapped, timeout=30)
 
         # Read the PID back to confirm it started.
         # conda run exits quickly after spawning Python; prefer the PID written
@@ -286,6 +297,26 @@ class OrchestratorCloudBackend(GCPCloudBackend):
         except Exception as e:
             self.log(f"Failed to read remote orchestrator PID: {e}", "ERROR")
             return None
+        if not pid:
+            self.log("Remote orchestrator PID file empty — start likely failed", "ERROR")
+            return None
+
+        # Persist the orchestrator state file ASAP so the dashboard poller
+        # doesn't mark the project failed if any of the steps below (reaper
+        # start, .pid handoff) raises. We rewrite it at the end with the
+        # refined PID, but the early write means a partial failure no longer
+        # strands the project in `failed` with a live VM.
+        import yaml
+        self._state_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._state_file, "w") as f:
+            yaml.dump({
+                "instance_id": self._instance_id,
+                "public_ip": self._instance_ip,
+                "project_id": self.project_name,
+                "orchestrator_pid": pid,
+                "launched_at": datetime.utcnow().isoformat() + "Z",
+                "log_file": log_rel,
+            }, f, default_flow_style=False)
 
         # Give ark.orchestrator a moment to write its own .pid file, then prefer that
         time.sleep(3)
@@ -388,6 +419,20 @@ class OrchestratorCloudBackend(GCPCloudBackend):
 
     def teardown(self):
         """Final sync, tear down the GCP orchestrator VM, and clear state."""
+        # Re-load instance info from the state file if called from a fresh object
+        # (e.g. the webapp stop endpoint reconstructs the backend without calling setup())
+        if not self._instance_id and self._state_file.exists():
+            try:
+                import yaml
+                with open(self._state_file) as f:
+                    state = yaml.safe_load(f) or {}
+                self._instance_id = state.get("instance_id")
+                self._instance_ip = state.get("public_ip") or state.get("instance_ip")
+                if self._instance_id:
+                    self.log(f"Loaded orchestrator VM state for teardown: {self._instance_id}")
+            except Exception as e:
+                self.log(f"Failed to load orchestrator state for teardown: {e}", "WARN")
+
         remote_work_dir = f"/home/{self.ssh_user}/{self.project_name}"
 
         # Final pull before destroying (Phase 6)

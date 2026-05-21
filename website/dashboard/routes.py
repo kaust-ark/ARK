@@ -511,6 +511,47 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
 
 
+def _teardown_cloud_orchestrator_bg(pdir: Path, project_id: str):
+    """Reconstruct and teardown the cloud orchestrator VM and experiment VM in background threads."""
+    import threading
+
+    def _run_orchestrator():
+        config_file = pdir / "config.yaml"
+        if not config_file.exists():
+            logger.warning(f"Cannot teardown cloud orchestrator for {project_id}: config.yaml missing")
+            return
+        try:
+            import yaml
+            from ark.compute.cloud.orchestrator import OrchestratorCloudBackend
+            with open(config_file) as f:
+                config_dict = yaml.safe_load(f)
+            backend = OrchestratorCloudBackend.from_config(
+                config_dict, project_id, pdir, log_fn=logger.info
+            )
+            backend.teardown()
+        except Exception as e:
+            logger.error(f"Failed to teardown cloud orchestrator for {project_id}: {e}", exc_info=True)
+
+    def _run_experiment():
+        # Tear down the experiment VM if one was provisioned (state in cloud_instance.yaml)
+        config_file = pdir / "config.yaml"
+        state_file = pdir / "auto_research" / "state" / "cloud_instance.yaml"
+        if not state_file.exists() or not config_file.exists():
+            return
+        try:
+            import yaml
+            from ark.compute.cloud.base import CloudBackend
+            with open(config_file) as f:
+                config_dict = yaml.safe_load(f)
+            backend = CloudBackend.from_config(config_dict, project_id, pdir, log_fn=logger.info)
+            backend.teardown()
+        except Exception as e:
+            logger.error(f"Failed to teardown cloud experiment VM for {project_id}: {e}", exc_info=True)
+
+    threading.Thread(target=_run_orchestrator, daemon=True).start()
+    threading.Thread(target=_run_experiment, daemon=True).start()
+
+
 def _parse_cloud_provider(compute_backend: str) -> str:
     """Extract provider from 'cloud:gcp' style values; returns '' for plain 'cloud'."""
     if compute_backend and compute_backend.startswith("cloud:"):
@@ -1046,23 +1087,74 @@ async def _start_project_async(
             )
             return
 
-        try:
-            final_status = _try_submit_or_pending(
-                project, pdir, session, settings, is_admin=is_admin,
-            )
-        except Exception as e:
-            logger.error(f"Submit failed for {project_id}: {e}", exc_info=True)
-            update_project(session, project, status="failed", error_message=str(e))
-            send_telegram_notify(
-                f"❌ <b>{_pname(project)}</b> submission failed: {e}",
-                bot_token=token, chat_id=chat_id,
-            )
-            return
+        # Capture what we need before the session closes
+        pname = _pname(project)
+        venue = project.venue
+        max_iter = project.max_iterations
 
+    def _blocking_submit():
+        with get_session(settings.db_path) as session:
+            project = get_project(session, project_id)
+            if not project:
+                return None, None
+            try:
+                return _try_submit_or_pending(project, pdir, session, settings, is_admin=is_admin), None
+            except Exception as e:
+                logger.error(f"Submit failed for {project_id}: {e}", exc_info=True)
+                update_project(session, project, status="failed", error_message=str(e))
+                return None, str(e)
+
+    final_status, err = await asyncio.to_thread(_blocking_submit)
+    if err:
+        send_telegram_notify(
+            f"❌ <b>{pname}</b> submission failed: {err}",
+            bot_token=token, chat_id=chat_id,
+        )
+        return
+    if final_status:
+        send_telegram_notify(
+            f"🔬 <b>{pname}</b> {final_status}\n"
+            f"Venue: {venue} · {max_iter} iter\n"
+            f"<a href='{url}'>{url}</a>",
+            bot_token=token, chat_id=chat_id,
+        )
+
+
+async def _restart_project_async(
+    project_id: str,
+    pdir: Path,
+    is_admin: bool,
+    token: str,
+    chat_id: str,
+):
+    """Background task for restart/continue: offloads blocking GCP provisioning
+    to a thread so the event loop stays free to serve other requests."""
+    settings = get_settings()
+
+    def _blocking_submit():
+        with get_session(settings.db_path) as session:
+            project = get_project(session, project_id)
+            if not project:
+                return None, None, None
+            try:
+                final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=is_admin)
+                return final_status, _pname(project), None
+            except Exception as e:
+                logger.error(f"Restart failed for {project_id}: {e}", exc_info=True)
+                update_project(session, project, status="failed", error_message=str(e))
+                return None, _pname(project), str(e)
+
+    final_status, pname, err = await asyncio.to_thread(_blocking_submit)
+    if pname is None:
+        return
+    if err:
+        send_telegram_notify(
+            f"❌ <b>{pname}</b> restart failed: {err}",
+            bot_token=token, chat_id=chat_id,
+        )
+        return
     send_telegram_notify(
-        f"🔬 <b>{_pname(project)}</b> {final_status}\n"
-        f"Venue: {project.venue} · {project.max_iterations} iter\n"
-        f"<a href='{url}'>{url}</a>",
+        f"🔄 <b>{pname}</b> restarted ({final_status})",
         bot_token=token, chat_id=chat_id,
     )
 
@@ -1891,11 +1983,17 @@ async def api_get_project(project_id: str, request: Request):
         score = _read_project_score(pdir, project=project)
         pdf = _find_pdf(pdir)
         owner = session.get(User, project.user_id)
-        env_ready = project_env_ready(pdir)
-        if env_ready:
-            conda_env_display = str(project_env_prefix(pdir))
+        is_cloud = bool(project.slurm_job_id and project.slurm_job_id.startswith("cloud"))
+        if is_cloud:
+            owner_keys = _get_user_keys(owner) if owner else {}
+            conda_env_display = owner_keys.get("gcp_conda_env") or settings.cloud_conda_env or "ark-base"
+            env_ready = True
         else:
-            conda_env_display = settings.slurm_conda_env or ""
+            env_ready = project_env_ready(pdir)
+            if env_ready:
+                conda_env_display = str(project_env_prefix(pdir))
+            else:
+                conda_env_display = settings.slurm_conda_env or ""
         return JSONResponse({
             "id": project.id,
             "name": project.name,
@@ -1958,11 +2056,14 @@ async def api_stop_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         if project.slurm_job_id:
-            if project.slurm_job_id.startswith(("local:", "cloud:")):
-                prefix = "local:" if project.slurm_job_id.startswith("local:") else "cloud:"
-                pid_str = project.slurm_job_id[len(prefix):]
+            if project.slurm_job_id.startswith("local:"):
+                pid_str = project.slurm_job_id[len("local:"):]
                 if pid_str.isdigit():
                     cancel_local_job(int(pid_str))
+            elif project.slurm_job_id.startswith("cloud:"):
+                # The PID is on the remote VM — kill the VM instead of a local process
+                pdir = _project_dir(settings, project.user_id, project_id)
+                _teardown_cloud_orchestrator_bg(pdir, project_id)
             else:
                 cancel_job(project.slurm_job_id)
                 # Cascade: the orchestrator submits experimenter sub-jobs
@@ -2116,17 +2217,21 @@ async def api_restart_project(project_id: str, request: Request):
         if comment:
             _write_user_instructions(pdir, comment, source="webapp_restart")
 
+        project.status = "initializing"
+        tg_token = project.telegram_token
+        tg_chat = project.telegram_chat_id
         session.add(project)
         session.commit()
         session.refresh(project)
 
-        final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=_is_admin(user))
-        send_telegram_notify(
-            f"🔄 <b>{_pname(project)}</b> restarted ({final_status})",
-            bot_token=project.telegram_token,
-            chat_id=project.telegram_chat_id,
-        )
-        return JSONResponse({"ok": True, "status": final_status, "slurm_job_id": project.slurm_job_id})
+    asyncio.create_task(_restart_project_async(
+        project_id=project_id,
+        pdir=pdir,
+        is_admin=_is_admin(user),
+        token=tg_token,
+        chat_id=tg_chat,
+    ))
+    return JSONResponse({"ok": True, "status": "initializing", "slurm_job_id": ""})
 
 
 @router.delete("/api/projects/{project_id}")
@@ -2139,11 +2244,13 @@ async def api_delete_project(project_id: str, request: Request):
             raise HTTPException(404)
         pdir = _project_dir(settings, project.user_id, project_id)
         if project.slurm_job_id:
-            if project.slurm_job_id.startswith(("local:", "cloud:")):
-                prefix = "local:" if project.slurm_job_id.startswith("local:") else "cloud:"
-                pid_str = project.slurm_job_id[len(prefix):]
+            if project.slurm_job_id.startswith("local:"):
+                pid_str = project.slurm_job_id[len("local:"):]
                 if pid_str.isdigit():
                     cancel_local_job(int(pid_str))
+            elif project.slurm_job_id.startswith("cloud:"):
+                # The PID is on the remote VM — tear down the VM
+                _teardown_cloud_orchestrator_bg(pdir, project_id)
             else:
                 cancel_job(project.slurm_job_id)
                 # Cascade before we rmtree the project — any still-queued
@@ -2203,8 +2310,22 @@ async def api_continue_project(project_id: str, request: Request):
         if comment:
             _write_user_update(pdir, comment, source="webapp_continue")
             _write_user_instructions(pdir, comment, source="webapp_continue")
-        final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=_is_admin(user))
-        return JSONResponse({"ok": True, "status": final_status, "max_iterations": new_max})
+
+        tg_token = project.telegram_token
+        tg_chat = project.telegram_chat_id
+        project.status = "initializing"
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+
+    asyncio.create_task(_restart_project_async(
+        project_id=project_id,
+        pdir=pdir,
+        is_admin=_is_admin(user),
+        token=tg_token,
+        chat_id=tg_chat,
+    ))
+    return JSONResponse({"ok": True, "status": "initializing", "max_iterations": new_max})
 
 
 @router.get("/api/system/status")
@@ -2257,11 +2378,13 @@ async def api_admin_killall(request: Request):
         ).all()
         for p in active:
             if p.slurm_job_id:
-                if p.slurm_job_id.startswith(("local:", "cloud:")):
-                    prefix = "local:" if p.slurm_job_id.startswith("local:") else "cloud:"
-                    pid_str = p.slurm_job_id[len(prefix):]
+                if p.slurm_job_id.startswith("local:"):
+                    pid_str = p.slurm_job_id[len("local:"):]
                     if pid_str.isdigit():
                         cancel_local_job(int(pid_str))
+                elif p.slurm_job_id.startswith("cloud:"):
+                    pdir = _project_dir(settings, p.user_id, p.id)
+                    _teardown_cloud_orchestrator_bg(pdir, p.id)
                 else:
                     cancel_job(p.slurm_job_id)
                     pdir = _project_dir(settings, p.user_id, p.id)
