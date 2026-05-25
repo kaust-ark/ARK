@@ -50,3 +50,7 @@ ark-runner-gcp-key.json
 skills/library/*
 # …except site-specific skills we author in-tree (cluster/deployment refs)
 !skills/library/hpc/
+
+# Eval scripts and logs (local only)
+scripts/eval/
+logs/
