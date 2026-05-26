@@ -223,7 +223,7 @@ if (qsTerminal) qsObserver.observe(qsTerminal);
 const copyBtn = document.getElementById('copyBtn');
 if (copyBtn) {
   copyBtn.addEventListener('click', () => {
-    const commands = `git clone https://github.com/kaust-ark/ARK.git && cd ARK\npip install -e .\nark new mma\nark run mma\nark monitor mma`;
+    const commands = `# Download: https://anonymous.4open.science/r/ARK-3D8B/\ncd ARK\npip install -e .\nark new mma\nark run mma\nark monitor mma`;
     navigator.clipboard.writeText(commands).then(() => {
       copyBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline class="checkmark-path" points="20 6 9 17 4 12"/></svg> Copied!`;
       copyBtn.style.color = '#2dd4bf';
