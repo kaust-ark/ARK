@@ -943,8 +943,8 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             body
             [BODY_END_MARKER]
             \\clearpage
-            \\section*{LLM Usage Statement}        ← endmatter, on the refs page
-            ... LLM Usage content ...
+            \\section*{Acknowledgments}             ← endmatter, on the refs page
+            ... Acknowledgments content ...
             \\bibliographystyle{...}
             \\bibliography{...}
             \\clearpage
@@ -958,19 +958,19 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
         body→appendix→bibliography order; this routine reorders the file
         in place so the rendered PDF matches the venue convention.
 
-        Boilerplate sections (LLM Usage Statement, Acknowledgments, etc.)
+        Boilerplate sections (Acknowledgments, LLM Usage Statement, etc.)
         emitted between Conclusion and \\bibliography belong on the
         references page — *after* the body \\clearpage, *before*
         \\bibliography. Earlier versions of this routine left them in the
         body region, which silently consumed page-limit budget and pushed
         Conclusion / Limitations into a partial-fill last body page.
-        We now extract the LLM Usage block from the body and re-insert it
-        as endmatter on the references-page side of the \\clearpage.
+        We now extract the Acknowledgments block from the body and re-insert
+        it as endmatter on the references-page side of the \\clearpage.
 
         The body-end \\pdfsavepos marker is placed at the body / refs
         boundary (immediately before the \\clearpage that precedes
-        the LLM Usage Statement and \\bibliography), so page-count
-        metrics derived from the marker exclude the LLM Usage Statement,
+        the Acknowledgments and \\bibliography), so page-count
+        metrics derived from the marker exclude the Acknowledgments,
         the bibliography, and the appendix — matching venue page-limit
         conventions ("N pages excluding references and appendix").
 
@@ -1028,10 +1028,11 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 
             tail = content[end_doc_pos:].rstrip()
 
-            # Extract LLM Usage Statement (and any other boilerplate
-            # endmatter sections) from the body. They belong on the
-            # references-page side of the \clearpage, not in the body.
-            # Pattern: \section*{LLM Usage Statement} ... up to next
+            # Extract Acknowledgments (and any other boilerplate
+            # endmatter sections — including legacy LLM Usage Statement)
+            # from the body. They belong on the references-page side
+            # of the \clearpage, not in the body.
+            # Pattern: \section*{Acknowledgments} ... up to next
             # \section, \appendix, \bibliography, or \end{document}.
             ENDMATTER_TITLES = [
                 r'LLM Usage Statement',
