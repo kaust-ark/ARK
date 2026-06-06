@@ -142,9 +142,9 @@ section { padding: 5rem 0; }
 .nav-links .gh-link:hover { border-color: var(--teal); color: var(--teal); }
 /* KAUST co-brand logo (nav + footer) */
 .nav-links .nav-kaust { display: inline-flex; align-items: center; }
-.nav-links .nav-kaust img { height: 22px; width: auto; display: block; }
+.nav-links .nav-kaust img { height: 30px; width: auto; display: block; }
 .footer-kaust { display: inline-flex; align-items: center; }
-.footer-kaust img { height: 30px; width: auto; display: block; opacity: .9; transition: opacity .2s; }
+.footer-kaust img { height: 44px; width: auto; display: block; opacity: .9; transition: opacity .2s; }
 .footer-kaust:hover img { opacity: 1; }
 .hamburger { display: none; flex-direction: column; gap: 5px; }
 .hamburger span { display: block; width: 24px; height: 2px; background: var(--text-primary); transition: transform .3s, opacity .3s; }
