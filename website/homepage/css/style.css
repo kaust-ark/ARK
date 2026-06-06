@@ -102,13 +102,13 @@ section { padding: 5rem 0; }
   color: var(--text-muted); font-size: .9rem; font-weight: 500; transition: color .2s;
   position: relative;
 }
-.nav-links a:not(.gh-link):not(.lang-toggle):not(.lang-toggle-btn)::after {
+.nav-links a:not(.gh-link):not(.lang-toggle):not(.lang-toggle-btn):not(.nav-kaust)::after {
   content: '';
   position: absolute; bottom: -2px; left: 0; width: 0; height: 2px;
   background: var(--teal);
   transition: width .3s ease;
 }
-.nav-links a:not(.gh-link):not(.lang-toggle):not(.lang-toggle-btn):hover::after { width: 100%; }
+.nav-links a:not(.gh-link):not(.lang-toggle):not(.lang-toggle-btn):not(.nav-kaust):hover::after { width: 100%; }
 
 /* Language dropdown */
 .lang-dropdown { position: relative; }
@@ -140,6 +140,12 @@ section { padding: 5rem 0; }
   font-size: .85rem;
 }
 .nav-links .gh-link:hover { border-color: var(--teal); color: var(--teal); }
+/* KAUST co-brand logo (nav + footer) */
+.nav-links .nav-kaust { display: inline-flex; align-items: center; }
+.nav-links .nav-kaust img { height: 22px; width: auto; display: block; }
+.footer-kaust { display: inline-flex; align-items: center; }
+.footer-kaust img { height: 30px; width: auto; display: block; opacity: .9; transition: opacity .2s; }
+.footer-kaust:hover img { opacity: 1; }
 .hamburger { display: none; flex-direction: column; gap: 5px; }
 .hamburger span { display: block; width: 24px; height: 2px; background: var(--text-primary); transition: transform .3s, opacity .3s; }
 
