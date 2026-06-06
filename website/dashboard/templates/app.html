@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ARK · Research Harness</title>
+  <title>Idea2Paper · Research Harness</title>
   <script>
     // Injected by server. APP_BASE is the URL path prefix ("/dashboard" in
     // production, "" when served at root). All absolute in-app URLs below
@@ -590,7 +590,7 @@
 
 <!-- NAV -->
 <nav id="main-nav" style="display:none">
-  <a class="nav-brand" href="/" title="Back to homepage"><span>ARK</span><span class="brand-suffix"> Home</span></a>
+  <a class="nav-brand" href="/" title="Back to homepage"><span>Idea2Paper</span><span class="brand-suffix"> Home</span></a>
   <span id="nav-admin-link" style="display:none"></span>
   <a href="{{ app_base }}/#feedback" onclick="event.preventDefault();navigate('feedback')"
      style="font-size:.85rem;font-weight:600;color:var(--text-second);text-decoration:none;padding:4px 10px;border-radius:6px;border:1px solid var(--border)">
@@ -620,8 +620,8 @@
         <button onclick="setLang('ar')">العربية</button>
       </div>
     </div>
-    <img src="{{ app_base }}/static/logo_ark_transparent.png" alt="ARK" class="login-logo" />
-    <h1>ARK</h1>
+    <img src="{{ app_base }}/static/logo_ark_transparent.png" alt="Idea2Paper" class="login-logo" />
+    <h1>Idea2Paper</h1>
     <p data-i18n="login_subtitle">Offload the labor. Steer the science.</p>
     <div class="login-features">
       <div class="login-feature">
@@ -688,8 +688,8 @@
        ondrop="event.preventDefault()">
     <div class="hero-card-header">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:2px">
-        <img src="{{ app_base }}/static/logo.png" alt="ARK" style="height:48px;width:auto;flex-shrink:0" />
-        <h2 style="margin:0" data-i18n="hero_title">Build your next paper with ARK</h2>
+        <img src="{{ app_base }}/static/logo.png" alt="Idea2Paper" style="height:48px;width:auto;flex-shrink:0" />
+        <h2 style="margin:0" data-i18n="hero_title">Build your next paper with Idea2Paper</h2>
       </div>
     </div>
     <form id="hero-form" onsubmit="submitNewProject(event)">
@@ -717,7 +717,7 @@
              onchange="heroFileSelected(this)" style="display:none" />
 
       <div id="hero-instructions-wrap" class="hero-instructions-wrap">
-        <label data-i18n-html="instructions_label">Instructions for ARK <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+        <label data-i18n-html="instructions_label">Instructions for Idea2Paper <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
         <textarea name="comment" class="hero-instructions-textarea"
           data-i18n-placeholder="placeholder_instructions"
           placeholder="e.g. Focus on comparing against baseline X, use PyTorch, run on 2 GPUs, write in a formal style…"></textarea>
@@ -1747,7 +1747,7 @@ const TRANSLATIONS = {
     disable_submissions: 'Disable Submissions',
     stop_all: 'Stop All',
     // hero
-    hero_title: 'Build your next paper with ARK',
+    hero_title: 'Build your next paper with Idea2Paper',
     attach: 'Attach', venue: 'Venue', max_iterations: 'Max iterations',
     telegram_notifications: 'Telegram Notifications',
     tg_how: '<b>How to set up:</b> 1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp; 2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID',
@@ -1755,11 +1755,11 @@ const TRANSLATIONS = {
     advanced_options: 'Advanced options',
     paper_title_label: 'Paper title <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
     project_id_label: 'Project ID <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
-    instructions_label: 'Instructions for ARK <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
+    instructions_label: 'Instructions for Idea2Paper <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
     model: 'Model',
     launch_research: 'Launch Research',
     launch_confirm_title: 'Before you launch',
-    launch_confirm_body: '<p>ARK is currently in <strong>closed beta</strong>. By launching this research run, you acknowledge the following:</p><ul style="padding-left:18px;margin:10px 0"><li><strong>Where it runs.</strong> Your idea, attached files, and all generated artifacts will execute on ARK\'s research infrastructure (the <strong>ROCS testbed</strong>) and are accessible to the ARK team.</li><li><strong>How it\'s used.</strong> Your idea is forwarded to third-party language models (e.g. <strong>Claude Code</strong>, <strong>Gemini</strong>) as part of the research pipeline. Standard provider terms apply.</li><li><strong>Telemetry.</strong> During the beta, the ARK team reviews execution logs and intermediate outputs to diagnose issues and improve the framework.</li><li><strong>Confidentiality.</strong> The ARK team will <strong>not</strong> publish your idea or share it outside the team.</li><li><strong>Academic Integrity.</strong> You acknowledge the risks of LLM-generated content (hallucinations, fabricated citations, unintentional plagiarism). You will carefully review all outputs, bear ultimate responsibility for accuracy and originality, and disclose ARK/LLM usage in any public dissemination of this work.</li></ul><p>If your idea is subject to NDA, embargo, or other confidentiality obligations, please do not submit it during the beta.</p>',
+    launch_confirm_body: '<p>Idea2Paper is currently in <strong>closed beta</strong>. By launching this research run, you acknowledge the following:</p><ul style="padding-left:18px;margin:10px 0"><li><strong>Where it runs.</strong> Your idea, attached files, and all generated artifacts will execute on Idea2Paper\'s research infrastructure (the <strong>ROCS testbed</strong>) and are accessible to the Idea2Paper team.</li><li><strong>How it\'s used.</strong> Your idea is forwarded to third-party language models (e.g. <strong>Claude Code</strong>, <strong>Gemini</strong>) as part of the research pipeline. Standard provider terms apply.</li><li><strong>Telemetry.</strong> During the beta, the Idea2Paper team reviews execution logs and intermediate outputs to diagnose issues and improve the framework.</li><li><strong>Confidentiality.</strong> The Idea2Paper team will <strong>not</strong> publish your idea or share it outside the team.</li><li><strong>Academic Integrity.</strong> You acknowledge the risks of LLM-generated content (hallucinations, fabricated citations, unintentional plagiarism). You will carefully review all outputs, bear ultimate responsibility for accuracy and originality, and disclose Idea2Paper/LLM usage in any public dissemination of this work.</li></ul><p>If your idea is subject to NDA, embargo, or other confidentiality obligations, please do not submit it during the beta.</p>',
     launch_confirm_ack: 'I understand and agree to proceed.',
     launch_confirm_cancel: 'Cancel',
     launch_confirm_proceed: 'Confirm & Launch',
@@ -1863,7 +1863,7 @@ const TRANSLATIONS = {
     enable_submissions: 'تفعيل التقديم',
     disable_submissions: 'تعطيل التقديم',
     stop_all: 'إيقاف الكل',
-    hero_title: 'ابنِ ورقتك البحثية القادمة مع ARK',
+    hero_title: 'ابنِ ورقتك البحثية القادمة مع Idea2Paper',
     attach: 'إرفاق', venue: 'المؤتمر', max_iterations: 'الحد الأقصى للتكرارات',
     telegram_notifications: 'إشعارات Telegram',
     tg_how: '<b>طريقة الإعداد:</b> 1. أرسل <code>/newbot</code> إلى <a href="https://t.me/BotFather" target="_blank">@BotFather</a> للحصول على Bot Token &nbsp;·&nbsp; 2. أرسل رسالة إلى <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> للحصول على Chat ID',
@@ -1871,11 +1871,11 @@ const TRANSLATIONS = {
     advanced_options: 'خيارات متقدمة',
     paper_title_label: 'عنوان الورقة <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
     project_id_label: 'معرف المشروع <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
-    instructions_label: 'تعليمات لـ ARK <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
+    instructions_label: 'تعليمات لـ Idea2Paper <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
     model: 'النموذج',
     launch_research: 'إطلاق البحث',
     launch_confirm_title: 'قبل الإطلاق',
-    launch_confirm_body: '<p>ARK حالياً في <strong>إصدار تجريبي مغلق</strong>. بإطلاق هذه التجربة، فإنك تُقرّ بما يلي:</p><ul style="padding-right:18px;padding-left:0;margin:10px 0"><li><strong>مكان التشغيل.</strong> ستُنفَّذ فكرتك والملفات المرفقة وجميع المخرجات على البنية البحثية الخاصة بـ ARK (<strong>ROCS testbed</strong>)، ويمكن لفريق ARK الاطلاع عليها.</li><li><strong>طريقة الاستخدام.</strong> تُمرَّر فكرتك إلى نماذج لغوية تابعة لجهات خارجية (مثل <strong>Claude Code</strong> و<strong>Gemini</strong>) ضمن خط الأنابيب البحثي، وتسري عليها شروط مزوّدي الخدمة.</li><li><strong>سجلات التشغيل.</strong> خلال الإصدار التجريبي، يراجع فريق ARK سجلات التنفيذ والمخرجات الوسيطة لتشخيص المشكلات وتحسين الإطار.</li><li><strong>السرية.</strong> <strong>لن</strong> ينشر فريق ARK فكرتك ولن يشاركها خارج الفريق.</li><li><strong>النزاهة الأكاديمية.</strong> أنت تُقرّ بمخاطر المحتوى المُولَّد بواسطة نماذج اللغة الكبيرة (هلوسات، استشهادات مُلفّقة، انتحال غير مقصود). وستراجع جميع المخرجات بعناية، وتتحمّل المسؤولية النهائية عن دقّتها وأصالتها، وتُفصِح عن استخدام ARK/LLM في أيّ نشر علنيّ لهذا العمل.</li></ul><p>إذا كانت فكرتك خاضعة لاتفاقية عدم إفشاء أو حظر نشر، فيُرجى عدم تقديمها خلال فترة الإصدار التجريبي.</p>',
+    launch_confirm_body: '<p>Idea2Paper حالياً في <strong>إصدار تجريبي مغلق</strong>. بإطلاق هذه التجربة، فإنك تُقرّ بما يلي:</p><ul style="padding-right:18px;padding-left:0;margin:10px 0"><li><strong>مكان التشغيل.</strong> ستُنفَّذ فكرتك والملفات المرفقة وجميع المخرجات على البنية البحثية الخاصة بـ Idea2Paper (<strong>ROCS testbed</strong>)، ويمكن لفريق Idea2Paper الاطلاع عليها.</li><li><strong>طريقة الاستخدام.</strong> تُمرَّر فكرتك إلى نماذج لغوية تابعة لجهات خارجية (مثل <strong>Claude Code</strong> و<strong>Gemini</strong>) ضمن خط الأنابيب البحثي، وتسري عليها شروط مزوّدي الخدمة.</li><li><strong>سجلات التشغيل.</strong> خلال الإصدار التجريبي، يراجع فريق Idea2Paper سجلات التنفيذ والمخرجات الوسيطة لتشخيص المشكلات وتحسين الإطار.</li><li><strong>السرية.</strong> <strong>لن</strong> ينشر فريق Idea2Paper فكرتك ولن يشاركها خارج الفريق.</li><li><strong>النزاهة الأكاديمية.</strong> أنت تُقرّ بمخاطر المحتوى المُولَّد بواسطة نماذج اللغة الكبيرة (هلوسات، استشهادات مُلفّقة، انتحال غير مقصود). وستراجع جميع المخرجات بعناية، وتتحمّل المسؤولية النهائية عن دقّتها وأصالتها، وتُفصِح عن استخدام Idea2Paper/LLM في أيّ نشر علنيّ لهذا العمل.</li></ul><p>إذا كانت فكرتك خاضعة لاتفاقية عدم إفشاء أو حظر نشر، فيُرجى عدم تقديمها خلال فترة الإصدار التجريبي.</p>',
     launch_confirm_ack: 'لقد قرأت ووافقت على المتابعة.',
     launch_confirm_cancel: 'إلغاء',
     launch_confirm_proceed: 'تأكيد وإطلاق',
@@ -1966,7 +1966,7 @@ const TRANSLATIONS = {
     enable_submissions: '启用提交',
     disable_submissions: '禁用提交',
     stop_all: '全部停止',
-    hero_title: '用 ARK 构建你的下一篇论文',
+    hero_title: '用 Idea2Paper 构建你的下一篇论文',
     attach: '附件', venue: '投稿会议', max_iterations: '最大迭代次数',
     telegram_notifications: 'Telegram 通知',
     tg_how: '<b>设置方法：</b>1. 向 <a href="https://t.me/BotFather" target="_blank">@BotFather</a> 发送 <code>/newbot</code> 获取 Bot Token &nbsp;·&nbsp; 2. 向 <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> 发送消息获取 Chat ID',
@@ -1974,11 +1974,11 @@ const TRANSLATIONS = {
     advanced_options: '高级选项',
     paper_title_label: '论文标题 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
     project_id_label: '项目 ID <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
-    instructions_label: '给 ARK 的指令 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
+    instructions_label: '给 Idea2Paper 的指令 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
     model: '模型',
     launch_research: '启动研究',
     launch_confirm_title: '启动前请确认',
-    launch_confirm_body: '<p>ARK 目前处于<strong>封闭内测阶段</strong>。点击启动即表示你了解并同意以下事项：</p><ul style="padding-left:18px;margin:10px 0"><li><strong>运行位置。</strong>你的 idea、附件以及所有生成内容将在 ARK 的科研基础设施（<strong>ROCS testbed</strong>）上运行，ARK 团队可访问这些数据。</li><li><strong>使用方式。</strong>你的 idea 会作为研究流程的一部分被转发到第三方大语言模型（例如 <strong>Claude Code</strong>、<strong>Gemini</strong>），并受相应服务条款约束。</li><li><strong>遥测与日志。</strong>内测期间，ARK 团队会查看运行日志和中间产物，用于排查问题、优化框架。</li><li><strong>保密承诺。</strong>ARK 团队<strong>不会</strong>主动公开你的 idea，也不会在团队外分享。</li><li><strong>学术诚信。</strong>你了解大模型生成内容的潜在风险（幻觉、伪造引用、无意识抄袭等），承诺仔细审查所有输出，对内容的正确性与原创性承担最终责任，并在任何公开传播中披露 ARK / LLM 的使用情况。</li></ul><p>如你的 idea 涉及 NDA、禁发期或其他保密义务，请勿在内测期间提交。</p>',
+    launch_confirm_body: '<p>Idea2Paper 目前处于<strong>封闭内测阶段</strong>。点击启动即表示你了解并同意以下事项：</p><ul style="padding-left:18px;margin:10px 0"><li><strong>运行位置。</strong>你的 idea、附件以及所有生成内容将在 Idea2Paper 的科研基础设施（<strong>ROCS testbed</strong>）上运行，Idea2Paper 团队可访问这些数据。</li><li><strong>使用方式。</strong>你的 idea 会作为研究流程的一部分被转发到第三方大语言模型（例如 <strong>Claude Code</strong>、<strong>Gemini</strong>），并受相应服务条款约束。</li><li><strong>遥测与日志。</strong>内测期间，Idea2Paper 团队会查看运行日志和中间产物，用于排查问题、优化框架。</li><li><strong>保密承诺。</strong>Idea2Paper 团队<strong>不会</strong>主动公开你的 idea，也不会在团队外分享。</li><li><strong>学术诚信。</strong>你了解大模型生成内容的潜在风险（幻觉、伪造引用、无意识抄袭等），承诺仔细审查所有输出，对内容的正确性与原创性承担最终责任，并在任何公开传播中披露 Idea2Paper / LLM 的使用情况。</li></ul><p>如你的 idea 涉及 NDA、禁发期或其他保密义务，请勿在内测期间提交。</p>',
     launch_confirm_ack: '我已阅读并同意以上事项。',
     launch_confirm_cancel: '取消',
     launch_confirm_proceed: '确认并启动',
