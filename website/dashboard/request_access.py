@@ -80,7 +80,7 @@ async def request_access(payload: AccessRequest, request: Request):
     affiliation = _sanitize(payload.affiliation or "", MAX_NAME_LEN)
     purpose = _sanitize(payload.purpose or "", MAX_PURPOSE_LEN)
 
-    subject = f"[ARK] Access request from {email}"
+    subject = f"[Idea2Paper] Access request from {email}"
     body = (
         f"A new access request was submitted via idea2paper.org/request-access:\n\n"
         f"  Email:       {email}\n"

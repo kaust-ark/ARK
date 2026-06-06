@@ -1514,7 +1514,7 @@ async def auth_google_callback(request: Request):
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Access Denied — ARK</title>
+  <title>Access Denied — Idea2Paper</title>
   <style>
     body {{ font-family: sans-serif; display: flex; align-items: center; justify-content: center;
            min-height: 100vh; margin: 0; background: #f0fdfa; }}
@@ -1529,7 +1529,7 @@ async def auth_google_callback(request: Request):
 <body>
   <div class="card">
     <h2>Access Denied</h2>
-    <p>Your Google account (<strong>{email}</strong>) is not authorized to access ARK.</p>
+    <p>Your Google account (<strong>{email}</strong>) is not authorized to access Idea2Paper.</p>
     <p>To request access, contact<br/>
        <a href="mailto:contact@idea2paper.org">contact@idea2paper.org</a></p>
     <a class="back" href="{_home}">← Back to login</a>
@@ -1773,7 +1773,7 @@ async def api_list_projects(request: Request, scope: str = "mine"):
             paper_title = _read_paper_title(pdir)
             if paper_title and paper_title != p.title:
                 update_project(session, p, title=paper_title, name=paper_title)
-            display_title = paper_title or p.title or "\u23f0 Pending: ARK will decide later"
+            display_title = paper_title or p.title or "\u23f0 Pending: Idea2Paper will decide later"
             d = {
                 "id": p.id,
                 "name": p.name,

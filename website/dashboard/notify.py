@@ -71,7 +71,7 @@ def send_telegram_notify(text: str, bot_token: str = None, chat_id: str = None) 
 def send_telegram_login_link(link: str) -> bool:
     """Send a magic login link via Telegram. Returns True on success."""
     return send_telegram_notify(
-        f"🔑 <b>ARK login link</b>\n<a href='{link}'>{link}</a>\nExpires in 1 hour."
+        f"🔑 <b>Idea2Paper login link</b>\n<a href='{link}'>{link}</a>\nExpires in 1 hour."
     )
 
 
@@ -146,7 +146,7 @@ def send_completion_email(
 
     logo_path = Path(__file__).parent / "static" / "logo_ark_transparent.png"
 
-    subject = f"[ARK] '{project_name}' finished — {score:.1f}/10"
+    subject = f"[Idea2Paper] '{project_name}' finished — {score:.1f}/10"
 
     has_paper = bool(pdf_path and Path(pdf_path).exists())
     has_summary = bool(
@@ -166,7 +166,7 @@ def send_completion_email(
 
     # ── Plain-text fallback ──────────────────────────────────────────
     plain_lines = [
-        f"Your ARK project '{project_name}' finished.",
+        f"Your Idea2Paper project '{project_name}' finished.",
         "",
         f"Score: {score:.1f} / 10  ({rating_label})",
         f"Dashboard: {project_url}",
@@ -179,7 +179,7 @@ def send_completion_email(
         if has_summary:
             plain_lines.append("  - Run summary PDF (what landed, what didn't, next steps)")
         plain_lines.append("")
-    plain_lines.append("-- ARK Team")
+    plain_lines.append("-- Idea2Paper Team")
     plain = "\n".join(plain_lines)
 
     # ── HTML ─────────────────────────────────────────────────────────
@@ -222,8 +222,8 @@ def send_completion_email(
   <!-- Banner -->
   <tr><td bgcolor="#0d9488" style="background:#0d9488;background:linear-gradient(135deg,#0d9488 0%,#134e4a 100%);padding:40px 40px 36px;text-align:center;">
     <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px;"><tr>
-      <td><img src="cid:ark_logo" alt="ARK" height="52" style="display:block;" /></td>
-      <td style="padding-left:14px;color:#ccfbf1;font-size:38px;font-weight:300;letter-spacing:6px;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;">ARK</td>
+      <td><img src="cid:ark_logo" alt="Idea2Paper" height="52" style="display:block;" /></td>
+      <td style="padding-left:14px;color:#ccfbf1;font-size:38px;font-weight:300;letter-spacing:6px;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;">Idea2Paper</td>
     </tr></table>
     <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.3px;">
       Project Finished
@@ -242,7 +242,7 @@ def send_completion_email(
   <!-- Body -->
   <tr><td style="padding:20px 44px 10px;">
     <p style="margin:0 0 20px;color:#333;font-size:15px;line-height:1.7;">
-      Your ARK project just finished its review loop. The manuscript and a
+      Your Idea2Paper project just finished its review loop. The manuscript and a
       run-summary report are attached below &mdash; the summary walks through
       what the idea asked for, what landed in the paper, what was deferred
       or blocked, and a short list of recommended next steps.
@@ -274,7 +274,7 @@ def send_completion_email(
   <!-- Footer -->
   <tr><td style="background:#f8fffe;padding:22px 44px;border-top:1px solid #e0f2f1;">
     <p style="margin:0;color:#999;font-size:12px;line-height:1.5;text-align:center;">
-      ARK &mdash; Automatic Research Kit<br/>
+      Idea2Paper<br/>
       You received this email because a project you submitted just finished.
     </p>
   </td></tr>
@@ -304,7 +304,7 @@ def send_completion_email(
     alt.attach(html_related)
     msg.attach(alt)
 
-    msg["From"] = f"ARK Team <{from_addr}>"
+    msg["From"] = f"Idea2Paper Team <{from_addr}>"
     msg["To"] = to_email
     msg["Subject"] = subject
     msg["Date"] = formatdate(localtime=True)
@@ -382,15 +382,15 @@ def send_welcome_email(settings, to_email: str, user_name: str, base_url: str) -
 
     logo_path = Path(__file__).parent / "static" / "logo_ark_transparent.png"
 
-    subject = "Welcome to ARK — Automatic Research Kit"
+    subject = "Welcome to Idea2Paper"
 
     plain = f"""\
 Hi {user_name},
 
-Thanks for joining ARK -- an AI-powered platform that automates the
+Thanks for joining Idea2Paper -- an AI-powered platform that automates the
 research pipeline from idea to polished paper.
 
-What ARK does:
+What Idea2Paper does:
 - End-to-end research automation: planning, coding, experiments, LaTeX
 - Multi-venue support: NeurIPS, ICML, ACL, CVPR, IEEE, ACM and more
 - Live dashboard: track progress, download PDFs, review scores
@@ -400,7 +400,7 @@ Get started: {base_url}
 We are actively iterating and would love your feedback. Just reply to
 this email or reach out at contact@idea2paper.org.
 
--- ARK Team
+-- Idea2Paper Team
 """
 
     html = f"""\
@@ -415,8 +415,8 @@ this email or reach out at contact@idea2paper.org.
   <!-- Banner -->
   <tr><td bgcolor="#0d9488" style="background:#0d9488;background:linear-gradient(135deg,#0d9488 0%,#134e4a 100%);padding:40px 40px 36px;text-align:center;">
     <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px;"><tr>
-      <td><img src="cid:ark_logo" alt="ARK" height="52" style="display:block;" /></td>
-      <td style="padding-left:14px;color:#ccfbf1;font-size:38px;font-weight:300;letter-spacing:6px;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;">ARK</td>
+      <td><img src="cid:ark_logo" alt="Idea2Paper" height="52" style="display:block;" /></td>
+      <td style="padding-left:14px;color:#ccfbf1;font-size:38px;font-weight:300;letter-spacing:6px;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;">Idea2Paper</td>
     </tr></table>
     <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:700;letter-spacing:-0.5px;">
       Welcome Onboard!
@@ -429,9 +429,9 @@ this email or reach out at contact@idea2paper.org.
       Hi <strong>{user_name}</strong>,
     </p>
     <p style="margin:0 0 20px;color:#333;font-size:15px;line-height:1.7;">
-      Thanks for joining <strong>ARK</strong> &mdash; an AI-powered platform that automates
+      Thanks for joining <strong>Idea2Paper</strong> &mdash; an AI-powered platform that automates
       the research pipeline from idea to polished paper. Upload an idea, pick a venue,
-      and let ARK handle literature review, experimentation, writing, and compilation.
+      and let Idea2Paper handle literature review, experimentation, writing, and compilation.
     </p>
 
     <!-- Feature highlights -->
@@ -449,7 +449,7 @@ this email or reach out at contact@idea2paper.org.
         <td style="padding:12px 16px;background:#f0fdfa;border-radius:10px;border-left:4px solid #0d9488;">
           <p style="margin:0;color:#134e4a;font-size:14px;line-height:1.6;">
             <strong style="color:#0d9488;">Multi-Venue Support</strong><br/>
-            NeurIPS, ICML, ACL, IEEE, ACM &mdash; ARK formats for your target venue automatically.
+            NeurIPS, ICML, ACL, IEEE, ACM &mdash; Idea2Paper formats for your target venue automatically.
           </p>
         </td>
       </tr>
@@ -470,7 +470,7 @@ this email or reach out at contact@idea2paper.org.
         <a href="{base_url}" style="display:inline-block;background:#0d9488;color:#fff;
            font-size:15px;font-weight:600;padding:14px 36px;border-radius:8px;
            text-decoration:none;letter-spacing:0.3px;">
-          Open ARK Dashboard
+          Open Idea2Paper Dashboard
         </a>
       </td></tr>
     </table>
@@ -489,8 +489,8 @@ this email or reach out at contact@idea2paper.org.
   <!-- Footer -->
   <tr><td style="background:#f8fffe;padding:24px 44px;border-top:1px solid #e0f2f1;">
     <p style="margin:0;color:#999;font-size:12px;line-height:1.5;text-align:center;">
-      ARK &mdash; Automatic Research Kit<br/>
-      You received this email because you signed up for ARK.
+      Idea2Paper<br/>
+      You received this email because you signed up for Idea2Paper.
     </p>
   </td></tr>
 
@@ -518,7 +518,7 @@ this email or reach out at contact@idea2paper.org.
         html_related.attach(logo)
     msg.attach(html_related)
 
-    msg["From"] = f"ARK Team <{from_addr}>"
+    msg["From"] = f"Idea2Paper Team <{from_addr}>"
     msg["To"] = to_email
     msg["Subject"] = subject
     msg["Date"] = formatdate(localtime=True)
@@ -553,13 +553,13 @@ this email or reach out at contact@idea2paper.org.
 
 def send_magic_link_email(settings, to_email: str, link: str) -> bool:
     """Send a magic login link email. Returns True on success."""
-    subject = "[ARK] Your login link"
+    subject = "[Idea2Paper] Your login link"
     body = f"""\
-<p>Click the link below to sign in to ARK Research Portal:</p>
+<p>Click the link below to sign in to the Idea2Paper Research Portal:</p>
 <p><a href="{link}">{link}</a></p>
 <p>This link expires in 1 hour.</p>
 <p>If you did not request this, ignore this email.</p>
-<p>— ARK Automatic Research Kit</p>
+<p>— Idea2Paper</p>
 """
     from_addr = getattr(settings, "smtp_from", "") or "contact@idea2paper.org"
     msg = MIMEMultipart()
@@ -607,10 +607,10 @@ def send_access_granted_email(settings, to_email: str, dashboard_url: str) -> bo
 
     logo_path = Path(__file__).parent / "static" / "logo_ark_transparent.png"
 
-    subject = "You're in — ARK Dashboard access granted"
+    subject = "You're in — Idea2Paper Dashboard access granted"
 
     plain = f"""\
-You've been granted access to the ARK Dashboard.
+You've been granted access to the Idea2Paper Dashboard.
 
 Sign in: {dashboard_url}
 
@@ -624,7 +624,7 @@ window, try an incognito / private window instead.
 
 If you weren't expecting this, you can ignore this email.
 
--- ARK Team
+-- Idea2Paper Team
 """
 
     from html import escape as _esc
@@ -640,14 +640,14 @@ If you weren't expecting this, you can ignore this email.
   <!-- Banner -->
   <tr><td bgcolor="#0d9488" style="background:#0d9488;background:linear-gradient(135deg,#0d9488 0%,#134e4a 100%);padding:40px 40px 36px;text-align:center;">
     <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px;"><tr>
-      <td><img src="cid:ark_logo" alt="ARK" height="52" style="display:block;" /></td>
-      <td style="padding-left:14px;color:#ccfbf1;font-size:38px;font-weight:300;letter-spacing:6px;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;">ARK</td>
+      <td><img src="cid:ark_logo" alt="Idea2Paper" height="52" style="display:block;" /></td>
+      <td style="padding-left:14px;color:#ccfbf1;font-size:38px;font-weight:300;letter-spacing:6px;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;">Idea2Paper</td>
     </tr></table>
     <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.3px;">
       Access Granted
     </h1>
     <p style="margin:10px 0 0;color:#ccfbf1;font-size:14px;">
-      ARK Dashboard &mdash; Automatic Research Kit
+      Idea2Paper Dashboard
     </p>
   </td></tr>
 
@@ -655,7 +655,7 @@ If you weren't expecting this, you can ignore this email.
   <tr><td style="padding:32px 44px 10px;">
     <p style="margin:0 0 18px;color:#333;font-size:15px;line-height:1.7;">
       Good news &mdash; <strong>{_esc(to_email)}</strong> has been added to the
-      ARK Dashboard allowlist. You can now sign in and start running projects.
+      Idea2Paper Dashboard allowlist. You can now sign in and start running projects.
     </p>
 
     <table width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 6px;">
@@ -688,7 +688,7 @@ If you weren't expecting this, you can ignore this email.
         <a href="{dashboard_url}" style="display:inline-block;background:#0d9488;color:#fff;
            font-size:15px;font-weight:600;padding:14px 36px;border-radius:8px;
            text-decoration:none;letter-spacing:0.3px;">
-          Open ARK Dashboard
+          Open Idea2Paper Dashboard
         </a>
       </td></tr>
     </table>
@@ -705,8 +705,8 @@ If you weren't expecting this, you can ignore this email.
   <!-- Footer -->
   <tr><td style="background:#f8fffe;padding:22px 44px;border-top:1px solid #e0f2f1;">
     <p style="margin:0;color:#999;font-size:12px;line-height:1.5;text-align:center;">
-      ARK &mdash; Automatic Research Kit<br/>
-      Sent because your email was added to the ARK Dashboard allowlist.
+      Idea2Paper<br/>
+      Sent because your email was added to the Idea2Paper Dashboard allowlist.
     </p>
   </td></tr>
 
@@ -732,7 +732,7 @@ If you weren't expecting this, you can ignore this email.
         html_related.attach(logo)
     msg.attach(html_related)
 
-    msg["From"] = f"ARK Team <{from_addr}>"
+    msg["From"] = f"Idea2Paper Team <{from_addr}>"
     msg["To"] = to_email
     msg["Subject"] = subject
     msg["Date"] = formatdate(localtime=True)

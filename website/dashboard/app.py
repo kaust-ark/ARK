@@ -657,7 +657,7 @@ def create_app():
 
     # ── Dashboard sub-app (webapp routes + static assets) ──────────────
     dashboard = FastAPI(
-        title="ARK Dashboard",
+        title="Idea2Paper Dashboard",
         description="Lab-facing project submission & monitoring",
         version="0.1.0",
     )
@@ -677,7 +677,7 @@ def create_app():
     dashboard.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # ── Outer app (homepage + dashboard mount) ─────────────────────────
-    outer = FastAPI(title="ARK Research Portal", lifespan=lifespan)
+    outer = FastAPI(title="Idea2Paper Research Portal", lifespan=lifespan)
 
     # Starlette's Mount matches /dashboard/ but NOT bare /dashboard (it
     # passes empty string to the sub-app which 404s). Register a redirect
