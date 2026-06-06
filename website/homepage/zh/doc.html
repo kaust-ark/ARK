@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>文档 — ARK</title>
-  <meta name="description" content="ARK 完整文档 — 自动科研套件。安装、配置、CLI 参考和进阶用法。">
+  <title>文档 — Idea2Paper</title>
+  <meta name="description" content="Idea2Paper 完整文档 — 自动科研套件。安装、配置、CLI 参考和进阶用法。">
   <link rel="icon" href="../assets/logo_ark_transparent.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -177,8 +177,8 @@
 <nav class="navbar" id="navbar" style="background:rgba(248,250,252,.95);backdrop-filter:blur(12px)">
   <div class="container">
     <a href="index.html" class="nav-brand">
-      <img src="../assets/logo_ark_transparent.png" alt="ARK logo">
-      ARK
+      <img src="../assets/logo_ark_transparent.png" alt="Idea2Paper logo">
+      Idea2Paper
     </a>
     <div class="nav-links" id="navLinks">
       <a href="index.html#features">功能</a>
@@ -242,7 +242,7 @@
   <!-- Main content -->
   <main class="doc-content">
     <h1>文档</h1>
-    <p>这份文档覆盖 ARK 从安装到进阶配置的完整流程，包括文献调研、实验设计与执行、论文写作和迭代审稿。</p>
+    <p>这份文档覆盖 Idea2Paper 从安装到进阶配置的完整流程，包括文献调研、实验设计与执行、论文写作和迭代审稿。</p>
 
     <!-- ===== GETTING STARTED ===== -->
     <h2 id="installation">安装</h2>
@@ -263,7 +263,7 @@
         </ul>
       </li>
       <li><strong>LaTeX 工具链</strong>（可选）— <code>pdflatex</code>、<code>bibtex</code>，编译 PDF 用</li>
-      <li><strong>PyYAML</strong> — 装 ARK 时自动装好</li>
+      <li><strong>PyYAML</strong> — 装 Idea2Paper 时自动装好</li>
     </ul>
 
     <div class="callout">
@@ -271,7 +271,7 @@
     </div>
 
     <h2 id="quickstart">快速开始</h2>
-    <p>建个项目，填标题和想法，剩下的交给 ARK：</p>
+    <p>建个项目，填标题和想法，剩下的交给 Idea2Paper：</p>
     <pre><code># 创建新项目（交互式向导）
 ark new my-project
 
@@ -477,7 +477,7 @@ def create_figures(config, state):
     </ol>
 
     <h2 id="review-phase">阶段三：审稿</h2>
-    <p>这是 ARK 的核心。每轮迭代：</p>
+    <p>这是 Idea2Paper 的核心。每轮迭代：</p>
     <ol>
       <li><strong>编译</strong> — LaTeX → PDF，生成页面截图供视觉审查</li>
       <li><strong>审稿</strong> — Reviewer 打分（1-10）并写详细反馈</li>
@@ -492,10 +492,10 @@ def create_figures(config, state):
       <li>你手动 <code>ark stop</code></li>
     </ul>
 
-    <p>达到目标分数后，ARK 会再执行一轮收尾迭代处理遗留问题，再输出最终 PDF。</p>
+    <p>达到目标分数后，Idea2Paper 会再执行一轮收尾迭代处理遗留问题，再输出最终 PDF。</p>
 
     <h2 id="memory-system">记忆系统</h2>
-    <p>ARK 跨迭代追踪进展，防止死循环和停滞：</p>
+    <p>Idea2Paper 跨迭代追踪进展，防止死循环和停滞：</p>
     <pre><code># 存储在 auto_research/state/memory.yaml
 scores: [5.0, 5.5, 6.0, 6.2, 6.5, 7.0, 7.2]
 best_score: 7.2
@@ -505,7 +505,7 @@ stagnation_count: 0</code></pre>
     <p>保留最近 20 轮审稿分数历史，用于衡量进展和触发干预。</p>
 
     <h3>停滞检测</h3>
-    <p>分数连续多轮不涨，ARK 会：</p>
+    <p>分数连续多轮不涨，Idea2Paper 会：</p>
     <ol>
       <li>给 Planner 标记停滞状态</li>
       <li>触发 <strong>Meta-debugger</strong> 做系统级诊断</li>
@@ -513,14 +513,14 @@ stagnation_count: 0</code></pre>
     </ol>
 
     <h3>问题重复跟踪</h3>
-    <p>记录每个问题在审稿中反复出现的次数。修了还不行？ARK 会封掉无效策略，换条路走。</p>
+    <p>记录每个问题在审稿中反复出现的次数。修了还不行？Idea2Paper 会封掉无效策略，换条路走。</p>
 
     <h3>目标锚点</h3>
     <p>每次 Agent 调用都带上目标锚点 &mdash; 项目核心目标的固定描述，防止 Agent 跑偏。</p>
 
     <!-- ===== ADVANCED ===== -->
     <h2 id="telegram-bot">Telegram 集成</h2>
-    <p>ARK 通过 Telegram 推送实时通知，也能接收运行中指令：</p>
+    <p>Idea2Paper 通过 Telegram 推送实时通知，也能接收运行中指令：</p>
 
     <h3>设置</h3>
     <pre><code># 交互式设置
@@ -540,7 +540,7 @@ telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
     </ul>
 
     <h2 id="slurm">Slurm / HPC</h2>
-    <p>ARK 支持在 Slurm 管理的 HPC 集群上运行实验：</p>
+    <p>Idea2Paper 支持在 Slurm 管理的 HPC 集群上运行实验：</p>
     <pre><code># config.yaml
 use_slurm: true
 slurm_job_prefix: EXP_       # 作业名前缀
@@ -582,7 +582,7 @@ python -m ark.orchestrator --project my-project --model gemini</code></pre>
     └── *.log                  # 每轮迭代的 Agent 日志</code></pre>
 
     <h3>检查点与恢复</h3>
-    <p>ARK 每轮迭代后自动存档。中断了？再跑一次 <code>ark run</code> 就从上次断点继续。</p>
+    <p>Idea2Paper 每轮迭代后自动存档。中断了？再跑一次 <code>ark run</code> 就从上次断点继续。</p>
 
     <h3>从头再来</h3>
     <p>想从零开始？清掉状态文件：</p>
@@ -602,7 +602,7 @@ python -m ark.orchestrator --project my-project --model gemini</code></pre>
     <p>看 <code>auto_research/logs/</code> 下的日志。常见原因：</p>
     <ul>
       <li>Claude Code CLI 没登录 — 跑一次 <code>claude</code> 完成认证</li>
-      <li>速率限制 — ARK 有内置重试和退避</li>
+      <li>速率限制 — Idea2Paper 有内置重试和退避</li>
       <li>上下文太长 — 试试精简目标锚点</li>
     </ul>
 
@@ -631,8 +631,8 @@ python -m ark.orchestrator --project my-project --model gemini</code></pre>
 <footer class="footer">
   <div class="container">
     <div class="footer-brand">
-      <img src="../assets/logo_ark_transparent.png" alt="ARK">
-      ARK
+      <img src="../assets/logo_ark_transparent.png" alt="Idea2Paper">
+      Idea2Paper
     </div>
     <div class="footer-links">
       <a href="https://github.com/kaust-ark/ARK/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0 许可证</a>

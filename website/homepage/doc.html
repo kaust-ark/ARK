@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Documentation — ARK</title>
-  <meta name="description" content="Complete documentation for ARK — Automatic Research Kit. Installation, configuration, CLI reference, and advanced usage.">
+  <title>Documentation — Idea2Paper</title>
+  <meta name="description" content="Complete documentation for Idea2Paper. Installation, configuration, CLI reference, and advanced usage.">
   <link rel="icon" href="assets/logo_ark_transparent.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -177,8 +177,8 @@
 <nav class="navbar" id="navbar" style="background:rgba(248,250,252,.95);backdrop-filter:blur(12px)">
   <div class="container">
     <a href="index.html" class="nav-brand">
-      <img src="assets/logo_ark_transparent.png" alt="ARK logo">
-      ARK
+      <img src="assets/logo_ark_transparent.png" alt="Idea2Paper logo">
+      Idea2Paper
     </a>
     <div class="nav-links" id="navLinks">
       <a href="index.html#features">Features</a>
@@ -242,7 +242,7 @@
   <!-- Main content -->
   <main class="doc-content">
     <h1>Documentation</h1>
-    <p>Complete guide to using ARK — from installation to advanced configuration. ARK automates the full research lifecycle: literature survey, experiment design, execution, paper writing, and iterative review.</p>
+    <p>Complete guide to using Idea2Paper — from installation to advanced configuration. Idea2Paper automates the full research lifecycle: literature survey, experiment design, execution, paper writing, and iterative review.</p>
 
     <!-- ===== GETTING STARTED ===== -->
     <h2 id="installation">Installation</h2>
@@ -285,15 +285,15 @@ ark doctor</code></pre>
         </ul>
       </li>
       <li><strong>LaTeX toolchain</strong> (optional) — <code>pdflatex</code>, <code>bibtex</code> for PDF compilation</li>
-      <li><strong>PyYAML</strong> — installed automatically with ARK</li>
+      <li><strong>PyYAML</strong> — installed automatically with Idea2Paper</li>
     </ul>
 
     <div class="callout">
-      <strong>💡 Tip:</strong> Claude Code with a Max subscription is recommended. ARK agents are very token-intensive — a single paper run can use 50k+ lines of agent output across all iterations.
+      <strong>💡 Tip:</strong> Claude Code with a Max subscription is recommended. Idea2Paper agents are very token-intensive — a single paper run can use 50k+ lines of agent output across all iterations.
     </div>
 
     <h2 id="quickstart">Quick Start</h2>
-    <p>Create a new project, provide your paper title and idea, then let ARK handle the rest:</p>
+    <p>Create a new project, provide your paper title and idea, then let Idea2Paper handle the rest:</p>
     <pre><code># Create a new project (interactive wizard)
 ark new my-project
 
@@ -343,7 +343,7 @@ ark status my-project</code></pre>
     </table>
 
     <div class="callout">
-      <strong>📝 Note:</strong> In <code>paper</code> mode, ARK runs the full 3-phase pipeline (research → development → review). In <code>research</code> mode, it focuses on experiment design and execution without paper writing.
+      <strong>📝 Note:</strong> In <code>paper</code> mode, Idea2Paper runs the full 3-phase pipeline (research → development → review). In <code>research</code> mode, it focuses on experiment design and execution without paper writing.
     </div>
 
     <p>You can also invoke the orchestrator directly for more control:</p>
@@ -429,7 +429,7 @@ telegram_bot_token: "YOUR_BOT_TOKEN"
 telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
 
     <h2 id="venue-presets">Venue Presets</h2>
-    <p>ARK includes precise LaTeX geometry presets for 11+ venues, ensuring figures and tables fit perfectly:</p>
+    <p>Idea2Paper includes precise LaTeX geometry presets for 11+ venues, ensuring figures and tables fit perfectly:</p>
     <table>
       <tr><th>Venue</th><th>Format Key</th><th>Text Width</th><th>Pages</th></tr>
       <tr><td>NeurIPS</td><td><code>neurips</code></td><td>5.5in</td><td>9</td></tr>
@@ -514,10 +514,10 @@ def create_figures(config, state):
       <li>You manually stop with <code>ark stop</code></li>
     </ul>
 
-    <p>When the score threshold is reached, ARK runs one final cleanup iteration for any remaining minor issues before producing the final PDF.</p>
+    <p>When the score threshold is reached, Idea2Paper runs one final cleanup iteration for any remaining minor issues before producing the final PDF.</p>
 
     <h2 id="memory-system">Memory System</h2>
-    <p>ARK tracks progress across iterations to prevent loops and detect stagnation:</p>
+    <p>Idea2Paper tracks progress across iterations to prevent loops and detect stagnation:</p>
     <pre><code># Stored in auto_research/state/memory.yaml
 scores: [5.0, 5.5, 6.0, 6.2, 6.5, 7.0, 7.2]
 best_score: 7.2
@@ -527,7 +527,7 @@ stagnation_count: 0</code></pre>
     <p>Maintains a history of reviewer scores (last 20 iterations). Used to measure progress and trigger interventions.</p>
 
     <h3>Stagnation Detection</h3>
-    <p>If the score doesn't improve for several consecutive iterations, ARK:</p>
+    <p>If the score doesn't improve for several consecutive iterations, Idea2Paper:</p>
     <ol>
       <li>Flags the stagnation to the planner</li>
       <li>Triggers the <strong>meta-debugger</strong> agent for system-level diagnosis</li>
@@ -535,14 +535,14 @@ stagnation_count: 0</code></pre>
     </ol>
 
     <h3>Issue Repeat Tracking</h3>
-    <p>Counts how many times each issue reappears across reviews. If a fix keeps failing, ARK bans the ineffective strategy and tries alternative approaches.</p>
+    <p>Counts how many times each issue reappears across reviews. If a fix keeps failing, Idea2Paper bans the ineffective strategy and tries alternative approaches.</p>
 
     <h3>Goal Anchor</h3>
     <p>Every agent invocation includes the Goal Anchor — a constant description of the project's core objectives. This prevents agents from drifting off-topic over many iterations.</p>
 
     <!-- ===== ADVANCED ===== -->
     <h2 id="telegram-bot">Telegram Integration</h2>
-    <p>ARK can send real-time notifications and receive mid-run instructions via Telegram:</p>
+    <p>Idea2Paper can send real-time notifications and receive mid-run instructions via Telegram:</p>
 
     <h3>Setup</h3>
     <pre><code># Interactive setup
@@ -562,7 +562,7 @@ telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
     </ul>
 
     <h2 id="slurm">Slurm / HPC</h2>
-    <p>ARK supports running experiments on Slurm-managed HPC clusters:</p>
+    <p>Idea2Paper supports running experiments on Slurm-managed HPC clusters:</p>
     <pre><code># config.yaml
 use_slurm: true
 slurm_job_prefix: EXP_       # Prefix for job names
@@ -579,7 +579,7 @@ conda_env: my-env             # Conda environment to activate</code></pre>
     <p>For non-Slurm environments, experiments run locally or on any SSH-accessible server.</p>
 
     <h2 id="multi-model">Multi-Model Support</h2>
-    <p>ARK supports three AI backends. Set the model in <code>config.yaml</code> or via CLI:</p>
+    <p>Idea2Paper supports three AI backends. Set the model in <code>config.yaml</code> or via CLI:</p>
     <table>
       <tr><th>Model</th><th>CLI</th><th>Best For</th></tr>
       <tr><td>Claude Code</td><td><code>claude</code></td><td>Best overall quality, recommended for paper writing</td></tr>
@@ -604,7 +604,7 @@ python -m ark.orchestrator --project my-project --model gemini</code></pre>
     └── *.log                  # Per-iteration agent logs</code></pre>
 
     <h3>Checkpointing &amp; Resume</h3>
-    <p>ARK automatically checkpoints after each iteration. If a run is interrupted, simply run <code>ark run</code> again — it will resume from the last checkpoint.</p>
+    <p>Idea2Paper automatically checkpoints after each iteration. If a run is interrupted, simply run <code>ark run</code> again — it will resume from the last checkpoint.</p>
 
     <h3>Fresh Start</h3>
     <p>To restart from scratch, clear the state files:</p>
@@ -624,7 +624,7 @@ python -m ark.orchestrator --project my-project --model gemini</code></pre>
     <p>Check the agent logs under <code>auto_research/logs/</code>. Common causes:</p>
     <ul>
       <li>Claude Code CLI not authenticated — run <code>claude</code> and complete login</li>
-      <li>Rate limiting — ARK has built-in retry with backoff</li>
+      <li>Rate limiting — Idea2Paper has built-in retry with backoff</li>
       <li>Insufficient context — try simplifying the goal anchor</li>
     </ul>
 
@@ -653,8 +653,8 @@ python -m ark.orchestrator --project my-project --model gemini</code></pre>
 <footer class="footer">
   <div class="container">
     <div class="footer-brand">
-      <img src="assets/logo_ark_transparent.png" alt="ARK">
-      ARK
+      <img src="assets/logo_ark_transparent.png" alt="Idea2Paper">
+      Idea2Paper
     </div>
     <div class="footer-links">
       <a href="https://github.com/kaust-ark/ARK/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0 License</a>
