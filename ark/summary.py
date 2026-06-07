@@ -169,28 +169,14 @@ def generate_project_summary(
         venue_name=config.get("venue") or config.get("venue_format") or "Unknown",
     )
 
-    cmd = [
-        claude_cmd, "-p", prompt,
-        "--permission-mode", "bypassPermissions",
-        "--no-session-persistence",
-        "--output-format", "json",
-        "--model", model,
-    ]
-    env = os.environ.copy()
-    proc = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=timeout, env=env,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"claude -p exited {proc.returncode}: {proc.stderr[:500]}"
-        )
-    try:
-        parsed = json.loads(proc.stdout)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"claude output was not JSON: {e}; raw: {proc.stdout[:500]}")
-    md = parsed.get("result") or parsed.get("text") or ""
+    # One-shot generation via LiteLLM (provider-agnostic). `model` may be a
+    # LiteLLM string (anthropic/… , gemini/… , openai/…); if it is empty or in
+    # the legacy bare form, fall back to a cheap model for whichever key exists.
+    from ark.llm_lite import complete, utility_model
+    mdl = model if (model and "/" in model) else utility_model()
+    md = complete(prompt, model=mdl, timeout=timeout, max_tokens=4000)
     if not md.strip():
-        raise RuntimeError(f"claude returned empty result: {parsed!r}")
+        raise RuntimeError("LLM returned an empty project summary")
     return md
 
 

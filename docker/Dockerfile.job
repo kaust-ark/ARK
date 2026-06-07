@@ -97,14 +97,17 @@ RUN set -x && \
     && conda env create -f /app/environment.yml
 
 # ---------------------------------------------------------------------------
-# 1.7. Node.js & Claude CLI
-#      Required for agents to use the Claude Code interface.
+# 1.7. OpenHands CLI (agent runtime)
+#      All agents run through `openhands --headless`. uv installs it with its
+#      own bundled Python 3.12 (independent of the ark-base conda env). The
+#      entry point goes to /usr/local/bin and the tool venv to /opt/uv-tools
+#      (world-readable) so the non-root `ark` user can run it.
 # ---------------------------------------------------------------------------
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && npm install -g @anthropic-ai/claude-code \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+ENV UV_TOOL_DIR=/opt/uv-tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin
+RUN pip install --no-cache-dir uv \
+    && uv tool install --python 3.12 openhands \
+    && chmod -R a+rX /opt/uv-tools
 
 # ---------------------------------------------------------------------------
 # 2. Install the ARK package

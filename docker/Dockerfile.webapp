@@ -117,6 +117,15 @@ COPY website/ ./website/
 # Install as a proper package so `import ark` and `import website` work
 RUN pip install --no-cache-dir -e ".[webapp]"
 
+# OpenHands CLI (agent runtime) — needed when this container spawns an
+# orchestrator run (single-container docker-compose deploy). uv brings its own
+# Python 3.12; the entry point goes to /usr/local/bin so it's on PATH.
+ENV UV_TOOL_DIR=/opt/uv-tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin
+RUN pip install --no-cache-dir uv \
+    && uv tool install --python 3.12 openhands \
+    && chmod -R a+rX /opt/uv-tools
+
 # ---------------------------------------------------------------------------
 # 4. Runtime configuration
 # ---------------------------------------------------------------------------

@@ -213,45 +213,31 @@ extras="webapp"
 run "$ARK_PY" -m pip install --upgrade pip
 run "$ARK_PY" -m pip install -e "$PREFIX[$extras]"
 
-# ─── 4b. Agent CLIs (Claude Code, Gemini) ─────────────────────────────
-# ARK invokes `claude` and `gemini` via subprocess. We install both into
-# the ark conda env (via Node.js from conda-forge) so they live alongside
-# the python that runs ark.cli, no system root required. Skip individually
-# if the user already has them on $PATH.
+# ─── 4b. Agent runtime (OpenHands CLI) ────────────────────────────────
+# ARK runs every agent through the OpenHands CLI (`openhands --headless`),
+# which routes to Anthropic / OpenAI / Google via LiteLLM. It ships its own
+# Python 3.12 (installed as an isolated `uv` tool, independent of the ark
+# conda envs). Skip if it's already on $PATH.
 if [ "$DRY_RUN" -eq 0 ]; then
-  ARK_ENV_BIN="$(dirname "$ARK_PY")"
-  need_claude=1
-  need_gemini=1
-  command -v claude >/dev/null 2>&1 && need_claude=0
-  command -v gemini >/dev/null 2>&1 && need_gemini=0
-
-  if [ "$need_claude" -eq 1 ] || [ "$need_gemini" -eq 1 ]; then
-    step "Installing Node.js (for agent CLIs)"
-    if [ ! -x "$ARK_ENV_BIN/npm" ]; then
-      run conda install -n ark -y -c conda-forge "nodejs>=20"
-    else
-      note "Node.js already in ark env"
+  if command -v openhands >/dev/null 2>&1; then
+    note "OpenHands CLI already on PATH"
+  else
+    if ! command -v uv >/dev/null 2>&1; then
+      step "Installing uv (manages the OpenHands runtime)"
+      run sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+      PATH="$HOME/.local/bin:$PATH"; export PATH
     fi
-    # npm's shebang is `#!/usr/bin/env node`, so it needs `node` on PATH.
-    # Without this, `npm install` fails: env: 'node': No such file or directory.
-    PATH="$ARK_ENV_BIN:$PATH"; export PATH
-    if [ "$need_claude" -eq 1 ]; then
-      step "Installing Claude Code CLI"
-      run "$ARK_ENV_BIN/npm" install -g @anthropic-ai/claude-code
-    fi
-    if [ "$need_gemini" -eq 1 ]; then
-      step "Installing Gemini CLI"
-      run "$ARK_ENV_BIN/npm" install -g @google/gemini-cli
-    fi
+    step "Installing OpenHands CLI (uv tool, bundles Python 3.12)"
+    run uv tool install --python 3.12 openhands
   fi
 fi
 
 # Create user-level shim so `ark` is on PATH without activating the env.
-# - Prepends the ark env's bin to PATH so subprocesses (claude, gemini) inherit
-#   it even when the user runs `ark` from a shell without `conda activate`.
-# - Sources ~/.ark/webapp.env so API keys (ANTHROPIC_API_KEY, GEMINI_API_KEY,
-#   CLAUDE_CODE_OAUTH_TOKEN) flow into the orchestrator's environment for CLI
-#   runs. The webapp service gets the same file via systemd EnvironmentFile.
+# - Prepends ~/.local/bin to PATH so the openhands CLI is found even when the
+#   user runs `ark` from a shell without `conda activate`.
+# - Sources ~/.ark/webapp.env so API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY,
+#   GEMINI_API_KEY) flow into the orchestrator's environment for CLI runs.
+#   The webapp service gets the same file via systemd EnvironmentFile.
 SHIM_DIR="${HOME}/.local/bin"
 SHIM="$SHIM_DIR/ark"
 # Use the source dir's .ark/ — this is what get_config_dir() resolves to
@@ -304,26 +290,31 @@ upsert_env() {
   chmod 600 "$ARK_ENV_FILE"
 }
 
-# Env-var fallbacks for automation/CI: set ARK_GEMINI_KEY,
-# ARK_CLAUDE_OAUTH, ARK_LOGIN_EMAIL to pre-fill any of the three answers.
-# Anything not set falls through to an interactive prompt (if a TTY is
-# attached) or is silently skipped under --noninteractive.
+# Env-var fallbacks for automation/CI: set ARK_ANTHROPIC_KEY, ARK_OPENAI_KEY,
+# ARK_GEMINI_KEY, ARK_LOGIN_EMAIL to pre-fill any answer. Anything not set
+# falls through to an interactive prompt (if a TTY is attached) or is silently
+# skipped under --noninteractive.
 LOGIN_EMAIL="${ARK_LOGIN_EMAIL:-}"
+AKEY="${ARK_ANTHROPIC_KEY:-}"
+OKEY="${ARK_OPENAI_KEY:-}"
 GKEY="${ARK_GEMINI_KEY:-}"
-CKEY="${ARK_CLAUDE_OAUTH:-}"
 INTERACTIVE_OK=0
 [ "$DRY_RUN" -eq 0 ] && [ "$NONINTERACTIVE" -eq 0 ] && [ -e /dev/tty ] && [ -r /dev/tty ] && INTERACTIVE_OK=1
 
 if [ "$INTERACTIVE_OK" -eq 1 ] && \
-   { [ -z "$GKEY" ] || [ -z "$CKEY" ] || [ -z "$LOGIN_EMAIL" ]; }; then
-  step "Configure API keys (press Enter to skip any prompt)"
-  if [ -z "$GKEY" ]; then
-    printf '   Gemini API key   (https://aistudio.google.com/apikey): '
-    IFS= read -r GKEY < /dev/tty || GKEY=""
+   { [ -z "$AKEY" ] || [ -z "$OKEY" ] || [ -z "$GKEY" ] || [ -z "$LOGIN_EMAIL" ]; }; then
+  step "Configure API keys (fill the provider(s) you'll use; Enter to skip)"
+  if [ -z "$AKEY" ]; then
+    printf '   Anthropic API key (sk-ant-api...) for Claude: '
+    IFS= read -r AKEY < /dev/tty || AKEY=""
   fi
-  if [ -z "$CKEY" ]; then
-    printf '   Claude OAuth token (sk-ant-oat01-...) or Enter to use `claude` browser flow: '
-    IFS= read -r CKEY < /dev/tty || CKEY=""
+  if [ -z "$OKEY" ]; then
+    printf '   OpenAI API key    (sk-...) for GPT: '
+    IFS= read -r OKEY < /dev/tty || OKEY=""
+  fi
+  if [ -z "$GKEY" ]; then
+    printf '   Gemini API key    (aistudio.google.com/apikey, also powers Deep Research): '
+    IFS= read -r GKEY < /dev/tty || GKEY=""
   fi
   if [ -z "$LOGIN_EMAIL" ]; then
     printf '   Email for dashboard login: '
@@ -333,9 +324,10 @@ if [ "$INTERACTIVE_OK" -eq 1 ] && \
 fi
 
 if [ "$DRY_RUN" -eq 0 ]; then
-  upsert_env GEMINI_API_KEY "$GKEY"
-  upsert_env GOOGLE_API_KEY "$GKEY"
-  [ -n "$CKEY" ] && upsert_env CLAUDE_CODE_OAUTH_TOKEN "$CKEY"
+  [ -n "$AKEY" ] && upsert_env ANTHROPIC_API_KEY "$AKEY"
+  [ -n "$OKEY" ] && upsert_env OPENAI_API_KEY "$OKEY"
+  [ -n "$GKEY" ] && upsert_env GEMINI_API_KEY "$GKEY"
+  [ -n "$GKEY" ] && upsert_env GOOGLE_API_KEY "$GKEY"
   # SECRET_KEY signs magic-link tokens. Without an explicit value in
   # webapp.env, every Python process generates a fresh random secret →
   # tokens minted by `ark webapp login` won't verify against the running

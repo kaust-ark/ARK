@@ -404,36 +404,42 @@ Output ONLY the summary, no preamble.
 ---
 {raw_text}"""
     try:
-        import subprocess as sp
-        result = sp.run(
-            ["claude", "-p", prompt, "--no-session-persistence", "--output-format", "text",
-             "--model", "claude-haiku-4-5"],
-            capture_output=True, text=True, timeout=60,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()[:8000]
+        from ark.llm_lite import complete, utility_model
+        out = complete(prompt, model=utility_model(), timeout=60)
+        if out:
+            return out[:8000]
     except Exception:
         pass
     # Fallback: raw truncated text
     return raw_text[:8000]
 
 
+def _to_litellm_model(m: str) -> str:
+    """Convert a Settings model value to a LiteLLM model string (provider/model).
+
+    Already-LiteLLM strings (with '/') pass through; bare names are mapped by
+    prefix so any provider works, not just the mainstream three.
+    """
+    m = (m or "").strip()
+    if not m:
+        return "anthropic/claude-sonnet-4-6"
+    if "/" in m:
+        return m
+    if m in ("gemini", "gemini-auto"):
+        return "gemini/gemini-2.5-flash"
+    if m.startswith("claude"):
+        return f"anthropic/{m}"
+    if m.startswith(("gpt", "o1", "o3", "o4")):
+        return f"openai/{m}"
+    if m.startswith("gemini"):
+        return f"gemini/{m}"
+    return m
+
+
 def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, settings, model: str = "claude-sonnet-4-6"):
     """Write config.yaml that ark orchestrator will read."""
-    # Map webapp model value to orchestrator model backend.
-    MODEL_MAP = {
-        "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
-        "claude-opus-4-7": ("claude", "claude-opus-4-7"),
-        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
-        "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
-        "gemini": ("gemini", "auto"),
-        "gemini-auto": ("gemini", "auto"),
-        "gemini-3.1-pro-preview": ("gemini", "gemini-3.1-pro-preview"),
-        "gemini-3-flash-preview": ("gemini", "gemini-3-flash-preview"),
-        "gemini-3.1-flash-lite-preview": ("gemini", "gemini-3.1-flash-lite-preview"),
-        "gemini-2.5-pro": ("gemini", "gemini-2.5-pro"),
-    }
-    model_backend, model_variant = MODEL_MAP.get(model, ("claude", "claude-sonnet-4-6"))
+    # All agents run through OpenHands; the orchestrator wants a LiteLLM string.
+    model_str = _to_litellm_model(model)
 
     config = {
         "project": project.name,
@@ -443,8 +449,8 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
         "venue_format": project.venue_format,
         "venue_pages": project.venue_pages,
         "mode": project.mode,
-        "model": model_backend,
-        "model_variant": model_variant,
+        "model": model_str,
+        "model_variant": "",
         "max_iterations": project.max_iterations,
         "max_dev_iterations": project.max_dev_iterations,
         "language": "en",

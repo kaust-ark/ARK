@@ -76,8 +76,8 @@ curl -fsSL https://idea2paper.org/install.sh | bash
 
 The script:
 
-1. Detects your OS, installs miniforge if missing, builds the `ark-base` and `ark` conda envs, pip-installs ARK editable into `~/ARK`, and adds the Claude Code + Gemini CLIs.
-2. Asks you for: **Gemini API key**, **Claude OAuth token** (`sk-ant-oat01-…` from `claude /login`), and **email for dashboard login**. Press Enter to skip any.
+1. Detects your OS, installs miniforge if missing, builds the `ark-base` and `ark` conda envs, pip-installs ARK editable into `~/ARK`, and installs the OpenHands CLI (the agent runtime, via `uv` — it bundles its own Python 3.12).
+2. Asks you for **Anthropic / OpenAI / Gemini API keys** (fill whichever provider(s) you'll use; the Gemini key also powers Deep Research) and an **email for dashboard login**. Press Enter to skip any.
 3. Installs the dashboard as a `systemd --user` service on port `9527` (use `--no-webapp` to opt out).
 4. Prints a one-time **magic-link URL** for your email — click it once and you're logged into the local dashboard. No SMTP, no Google OAuth.
 
@@ -105,7 +105,7 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 ## Requirements
 
 - **Python 3.10+** with `pyyaml` and `PyMuPDF`
-- **Agent CLI**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended, Claude Max subscription), [OpenAI Codex](https://github.com/openai/codex), **or** [Gemini CLI](https://github.com/google-gemini/gemini-cli) &mdash; selectable per project
+- **Agent runtime**: [OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI) (installed via `uv`, bundles its own Python 3.12) &mdash; one runtime that drives Claude / GPT / Gemini / any [LiteLLM](https://docs.litellm.ai/docs/providers) model, selected per project via `model` in `config.yaml`
 - **Optional**: LaTeX (`pdflatex` + `bibtex`), Slurm, `google-genai` for AI figures
 
 <details>
@@ -530,7 +530,18 @@ Alternatively, use the **Google Cloud Console**:
 
 #### 6. `config.yaml` Reference (advanced / CLI only)
 
-The webapp generates this automatically from your Settings. For manual or CLI-driven projects, use the two-backend model:
+The webapp generates this automatically from your Settings. For manual or CLI-driven projects, see [`config.example.yaml`](config.example.yaml) for the full template. The model + keys (all agents run through OpenHands → LiteLLM):
+
+```yaml
+model: anthropic/claude-sonnet-4-6     # agents run this — any LiteLLM model
+                                       # (gemini/… , openai/… , deepseek/… , …)
+bot_model: anthropic/claude-haiku-4-5  # cheap model for light helpers (titles, summaries)
+anthropic_api_key: "sk-ant-..."        # fill the provider(s) you use — the model
+openai_api_key:    "sk-..."            #   prefix picks which key is used
+gemini_api_key:    "..."               # gemini key also powers Deep Research (optional)
+```
+
+Compute uses two backends (orchestrator VM + experiment VM):
 
 ```yaml
 # Orchestrator VM: runs Researcher, Planner, Writer, LaTeX (no GPU needed)

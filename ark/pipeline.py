@@ -560,27 +560,57 @@ class PipelineMixin:
         self._asked_this_iteration = True
 
     def check_dependencies(self):
-        """Check that required CLI tools are available."""
-        model_tools = {
-            "gemini": "gemini",
-            "claude": "claude",
-            "codex": "codex",
-        }
-        tool = model_tools.get(self.model)
-        if not tool:
-            self.log(f"Error: Unsupported model backend: {self.model}", "ERROR")
+        """Check the OpenHands CLI is installed and the selected model + key are valid.
+
+        All agents run through OpenHands, which routes to ANY LiteLLM provider, so
+        the only required binary is ``openhands``. We fail fast on a model with no
+        provider prefix or a missing API key — a clear message beats a cryptic
+        mid-run error.
+        """
+        import os
+        import shutil
+        from ark.llm_lite import provider_key_env
+
+        # 1. The OpenHands CLI must be installed.
+        if not shutil.which("openhands"):
+            self.log(
+                "Error: 'openhands' command not found. Install with: "
+                "uv tool install --python 3.12 openhands",
+                "ERROR",
+            )
             sys.exit(1)
 
-        try:
-            subprocess.run([tool, "--version"], capture_output=True, check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            if self.model == "gemini":
-                self.log("Error: 'gemini' command not found. Please install: npm install -g @google/gemini-cli", "ERROR")
-            elif self.model == "claude":
-                self.log("Error: 'claude' command not found. Please install: npm install -g @anthropic-ai/claude-code", "ERROR")
-            else:
-                self.log("Error: 'codex' command not found. Please install Codex CLI and ensure it is available in PATH.", "ERROR")
+        # 2. The model must be a LiteLLM string (<provider>/<model>) and that
+        #    provider's key must exist. Any OpenHands/LiteLLM provider is allowed
+        #    — anthropic/openai/gemini are just the common ones.
+        model = self.model or ""
+        provider = model.split("/", 1)[0] if "/" in model else ""
+        if not provider:
+            self.log(
+                f"Error: model '{model}' is not a LiteLLM model string. Set `model` "
+                f"in config.yaml as <provider>/<model>, e.g. "
+                f"anthropic/claude-sonnet-4-6, gemini/gemini-2.5-flash, "
+                f"deepseek/deepseek-chat.",
+                "ERROR",
+            )
             sys.exit(1)
+        cfg_field = f"{provider}_api_key"
+        env_var = provider_key_env(provider)
+        if not (self.config.get(cfg_field) or os.environ.get(env_var)):
+            self.log(
+                f"Error: model is '{model}' but no key found — set {cfg_field} in "
+                f"config.yaml (or {env_var} in the environment).",
+                "ERROR",
+            )
+            sys.exit(1)
+
+        # 3. Deep Research is Gemini-only; warn (don't fail) when no gemini key.
+        if not (self.config.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY")):
+            self.log(
+                "Note: no gemini_api_key set — Gemini Deep Research will be "
+                "skipped (optional feature).",
+                "WARN",
+            )
 
         # Paper mode always needs LaTeX tools.
         self._check_latex_dependencies()

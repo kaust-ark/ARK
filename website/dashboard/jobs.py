@@ -198,22 +198,20 @@ def find_gemini_binary() -> str | None:
 
 def build_subprocess_path(extra: list[str] | None = None) -> str:
     """
-    Build a PATH string suitable for spawning ARK subprocesses (orchestrator,
-    claude CLI, etc.) when the parent process has a bare systemd PATH.
-    Prepends: claude binary dir, ~/.local/bin, texlive 2025 bin, plus any
-    caller-supplied dirs, then the existing PATH.
+    Build a PATH string suitable for spawning ARK subprocesses (the orchestrator,
+    the OpenHands CLI, etc.) when the parent process has a bare systemd PATH.
+    Prepends: the openhands binary dir, ~/.local/bin (uv tool install location),
+    texlive 2025 bin, plus any caller-supplied dirs, then the existing PATH.
     """
+    import shutil
     parts: list[str] = list(extra or [])
     home = Path(os.path.expanduser("~"))
 
-    claude = find_claude_binary()
-    if claude:
-        parts.append(str(Path(claude).parent))
+    openhands = shutil.which("openhands")
+    if openhands:
+        parts.append(str(Path(openhands).parent))
 
-    gemini = find_gemini_binary()
-    if gemini:
-        parts.append(str(Path(gemini).parent))
-
+    # `uv tool install` puts the openhands entry point here.
     parts.append(str(home / ".local" / "bin"))
 
     texlive = home / "texlive" / "2025" / "bin" / "x86_64-linux"

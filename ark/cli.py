@@ -42,15 +42,16 @@ def get_projects_dir() -> Path:
     return pdir
 
 
-def _get_configured_model(default: str = "claude-sonnet-4-6") -> str:
+def _get_configured_model(default: str = "") -> str:
     """
-    Return the default ARK model.
+    Return a model string for ARK's config-less light helpers.
 
-    No global config fallback — ARK is multi-tenant; per-project config.yaml
-    must declare its own model. Callers needing a project-specific model
-    should read it from the project's own config.yaml.
+    These CLI helpers (idea analysis, status summary, …) have no project
+    config to read, so we default to a cheap utility model for whichever
+    provider key is present — letting a single non-Anthropic key run them too.
     """
-    return default
+    from ark.llm_lite import utility_model
+    return default or utility_model()
 
 
 def get_project_config(name: str) -> dict:
@@ -241,12 +242,8 @@ def _analyze_research_idea(idea: str) -> dict:
         "TITLE: <suggested paper title>"
     )
     try:
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        result = subprocess.run(
-            ["claude", "--print", "--model", _get_configured_model(), "-p", prompt],
-            capture_output=True, text=True, timeout=60, env=env,
-        )
-        response = result.stdout.strip()
+        from ark.llm_lite import complete
+        response = complete(prompt, model=_get_configured_model(), timeout=60)
         if not response:
             return {"summary": "", "suggested_title": ""}
         summary = ""
@@ -929,12 +926,8 @@ def _extract_spec_from_pdf(pdf_path: str, instructions: str = "") -> dict:
         )
 
     try:
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        result = subprocess.run(
-            ["claude", "--print", "--model", _get_configured_model(), "-p", prompt],
-            capture_output=True, text=True, timeout=90, env=env,
-        )
-        response = result.stdout.strip()
+        from ark.llm_lite import complete
+        response = complete(prompt, model=_get_configured_model(), timeout=90)
         if response:
             spec = _parse_spec_analysis(response, text)
             if spec.get("title"):
@@ -1336,34 +1329,27 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
 
     # ── Step 6: AI Model ──────────────────────────────────────
     _wizard_step_header(6, "AI Model")
+    print("  Which model drives the pipeline? (runs via OpenHands; any LiteLLM model)")
     models = [
-        ("Claude", "claude"),
-        ("Gemini", "gemini"),
-        ("Codex", "codex"),
+        ("Claude Sonnet 4.6", "anthropic/claude-sonnet-4-6"),
+        ("Claude Opus 4.8", "anthropic/claude-opus-4-8"),
+        ("GPT-5", "openai/gpt-5"),
+        ("Gemini 2.5 Pro", "gemini/gemini-2.5-pro"),
+        ("Other (enter a LiteLLM model string)", "__other__"),
     ]
     for i, (display, _) in enumerate(models, 1):
         rec = " (recommended)" if i == 1 else ""
         print(f"  {_c(f'{i}.', Colors.BOLD)} {display}{rec}")
     model_idx = prompt_choice("Select model", models, default=1)
     model = models[model_idx][1]
-    print(f"  {_c('✓', Colors.GREEN)} Selected: {model}")
-
+    if model == "__other__":
+        model = prompt_input(
+            "  LiteLLM model string (e.g. deepseek/deepseek-chat, xai/grok-3)",
+            "anthropic/claude-sonnet-4-6",
+        ).strip() or "anthropic/claude-sonnet-4-6"
+    # Unified scheme: the full LiteLLM string lives in `model`; no separate variant.
     model_variant = ""
-    if model == "gemini":
-        gemini_variants = [
-            ("Auto (router picks)", "auto"),
-            ("Gemini 3.1 Pro (preview)", "gemini-3.1-pro-preview"),
-            ("Gemini 3 Flash (preview)", "gemini-3-flash-preview"),
-            ("Gemini 3.1 Flash Lite (preview)", "gemini-3.1-flash-lite-preview"),
-            ("Gemini 2.5 Pro", "gemini-2.5-pro"),
-        ]
-        print()
-        for i, (display, _) in enumerate(gemini_variants, 1):
-            rec = " (recommended)" if i == 1 else ""
-            print(f"  {_c(f'{i}.', Colors.BOLD)} {display}{rec}")
-        variant_idx = prompt_choice("Select Gemini variant", gemini_variants, default=1)
-        model_variant = gemini_variants[variant_idx][1]
-        print(f"  {_c('✓', Colors.GREEN)} Variant: {model_variant}")
+    print(f"  {_c('✓', Colors.GREEN)} Selected: {model}")
     _wizard_step_footer()
 
     # ── Step 7: Figure Generation ────────────────────────────
@@ -1623,7 +1609,7 @@ def _finalize_project(name: str, project_dir: Path, config: dict,
                     max_iterations=config.get("max_iterations", 2),
                     max_dev_iterations=config.get("max_dev_iterations", 3),
                     mode=config.get("mode", "paper"),
-                    model=config.get("model", "claude"),
+                    model=config.get("model", "anthropic/claude-sonnet-4-6"),
                     model_variant=config.get("model_variant", ""),
                     code_dir=str(code_dir),
                     language=config.get("language", "en"),
@@ -1813,7 +1799,7 @@ def cmd_run(args):
             pid_file.unlink(missing_ok=True)
 
     code_dir = config.get("code_dir", str(get_ark_root().parent))
-    model = args.model or config.get("model", "claude")
+    model = args.model or config.get("model", "anthropic/claude-sonnet-4-6")
     model_variant = getattr(args, "model_variant", None) or config.get("model_variant", "")
     mode = "paper"  # only mode supported; flag kept for slurm-script compat
     max_iterations = args.iterations or 3
@@ -2321,17 +2307,10 @@ Write a concise status summary in 3-5 sentences in English. Cover:
 Be direct and specific. No greetings, no markdown headers. Just the summary text."""
 
     try:
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        result = subprocess.run(
-            ["claude", "-p", prompt,
-             "--model", _get_configured_model(),
-             "--no-session-persistence",
-             "--output-format", "text"],
-            capture_output=True, text=True, timeout=30,
-            stdin=subprocess.DEVNULL, env=env,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+        from ark.llm_lite import complete
+        text = complete(prompt, model=_get_configured_model(), timeout=30)
+        if text:
+            return text
     except Exception:
         pass
     return ""
@@ -2661,12 +2640,8 @@ def _classify_update_type(message: str) -> bool:
         "Reply with exactly one word: PERSISTENT or ONETIME"
     )
     try:
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        result = subprocess.run(
-            ["claude", "--print", "--model", "claude-haiku-4-5", "-p", prompt],
-            capture_output=True, text=True, timeout=30, env=env,
-        )
-        answer = result.stdout.strip().upper()
+        from ark.llm_lite import complete, utility_model
+        answer = complete(prompt, model=utility_model(), timeout=30).upper()
         return "PERSISTENT" in answer
     except Exception:
         # Default to persistent (safer — won't lose instructions)
@@ -4158,7 +4133,7 @@ def cmd_cite_debug(args):
         project=args.project,
         max_iterations=1,
         mode="paper",
-        model=config.get("model", "claude"),
+        model=config.get("model", "anthropic/claude-sonnet-4-6"),
         code_dir=str(code_dir),
         project_dir=str(project_dir),
     )
@@ -4209,6 +4184,17 @@ Do NOT write other sections — only Related Work.
 # ============================================================
 
 def main():
+    # Load global .ark/config.yaml API keys into os.environ so the LiteLLM light
+    # helpers (title, idea analysis, classify) work for direct CLI commands —
+    # they run before/outside a project's Orchestrator, which does the same.
+    try:
+        from ark.llm_lite import load_api_keys_into_env
+        _gcfg = get_config_dir() / "config.yaml"
+        if _gcfg.exists():
+            load_api_keys_into_env(yaml.safe_load(_gcfg.read_text()) or {})
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(
         prog="ark",
         description="ARK - Automatic Research Kit: AI-powered idea-to-paper automation",
@@ -4252,8 +4238,9 @@ def main():
     # only the paper pipeline is supported now.
     p_run.add_argument("--mode", choices=["paper"], default=None,
                        help=argparse.SUPPRESS)
-    p_run.add_argument("--model", choices=["claude", "gemini", "codex"], default=None,
-                       help="AI model backend")
+    p_run.add_argument("--model", default=None,
+                       help="LiteLLM model string, e.g. anthropic/claude-sonnet-4-6, "
+                            "gemini/gemini-2.5-flash, openai/gpt-5 (overrides config.yaml `model`)")
     p_run.add_argument("--model-variant", default=None,
                        help="Specific model id (e.g. claude-sonnet-4-6, "
                             "gemini-3.1-pro-preview, gemini-3-flash-preview, "

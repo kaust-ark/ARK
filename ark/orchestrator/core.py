@@ -66,6 +66,10 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
             project, ARK_ROOT, project_dir=project_dir, code_dir=code_dir, logger=self.log
         )
         self.config = self.workspace.config
+        # Bridge config.yaml API keys into os.environ so the OpenHands runtime
+        # (OpenHandsCLI.build_env) and the LiteLLM light helpers can find them.
+        from ark.llm_lite import load_api_keys_into_env
+        load_api_keys_into_env(self.config)
         self.project_path = self.workspace.project_path
         self.code_dir = self.workspace.code_dir
         PROJECT_DIR = self.code_dir  # legacy global
@@ -97,7 +101,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self.hooks = self.workspace.setup_workspace()
 
         # Resolve model
-        self.model = self._model_arg or self.config.get("model") or "claude"
+        self.model = self._model_arg or self.config.get("model") or "anthropic/claude-sonnet-4-6"
         if model_variant:
             self.config["model_variant"] = model_variant
 
@@ -498,7 +502,8 @@ a {{ color: #0d9488; }}
         Prefers a per-project ``bot_model`` from the project config; falls
         back to the default. No global config fallback — ARK is multi-tenant.
         """
-        return self.config.get("bot_model") or "claude-sonnet-4-6"
+        from ark.llm_lite import default_utility_model
+        return self.config.get("bot_model") or default_utility_model()
 
     def _handle_telegram_message(self, text: str):
         """Handle incoming Telegram message via Claude agent."""
@@ -599,16 +604,10 @@ a {{ color: #0d9488; }}
 {text}"""
 
         try:
-            env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-            result = subprocess.run(
-                ["claude", "--print", "--model", self._get_bot_model(), "-p", prompt],
-                capture_output=True, text=True, timeout=90, env=env,
-            )
-            response = result.stdout.strip()
+            from ark.llm_lite import complete
+            response = complete(prompt, model=self._get_bot_model(), timeout=90)
             if not response:
-                response = result.stderr.strip()[:500] or "Sorry, unable to respond right now."
-        except subprocess.TimeoutExpired:
-            response = "Sorry, response timed out."
+                response = "Sorry, unable to respond right now."
         except Exception as e:
             response = f"Error: {e}"
 
@@ -2536,8 +2535,9 @@ def main():
     parser.add_argument("--mode", type=str, default="paper", choices=["paper"],
                         help=argparse.SUPPRESS)
     parser.add_argument("--project", type=str, required=True, help="Project name (e.g., prouter)")
-    parser.add_argument("--model", type=str, default=None, choices=["claude", "gemini", "codex"],
-                        help="Model backend: 'claude', 'gemini', or 'codex'")
+    parser.add_argument("--model", type=str, default=None,
+                        help="LiteLLM model string, e.g. anthropic/claude-sonnet-4-6, "
+                             "gemini/gemini-2.5-flash, openai/gpt-5 (overrides config.yaml `model`)")
     parser.add_argument("--model-variant", type=str, default=None,
                         help="Specific model id (e.g. claude-sonnet-4-6, "
                              "gemini-3.1-pro-preview, gemini-3-flash-preview, "
