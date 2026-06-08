@@ -128,6 +128,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self._rate_limit_notified = False
         self._agent_empty_count = 0
         self._quota_exhausted = False
+        self._terminal_error = None
         self._asked_this_iteration = False
         self._agent_stats = []
         self._latest_pdf = None

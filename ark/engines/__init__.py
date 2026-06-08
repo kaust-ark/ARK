@@ -443,7 +443,13 @@ Execute the task and update the corresponding files.
                         "PermissionDeniedError", "BadRequestError",
                     }
                     if oh_error_code in _TERMINAL_ERRORS:
-                        self._quota_exhausted = True
+                        # Non-retryable (bad key / model / permission). Use a
+                        # DISTINCT flag — NOT _quota_exhausted, which makes the
+                        # pipeline pause 30min for "quota reset" that will never
+                        # come. _terminal_error aborts the run fast instead.
+                        self._terminal_error = (
+                            f"{oh_error_code}: {(oh_error_detail or '')[:200]}"
+                        )
                         self.send_notification(
                             "Agent Error",
                             f"{agent_type}: {oh_error_code} — check the API key / "

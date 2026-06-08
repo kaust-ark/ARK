@@ -433,7 +433,11 @@ def _to_litellm_model(m: str) -> str:
         return f"openai/{m}"
     if m.startswith("gemini"):
         return f"gemini/{m}"
-    return m
+    # Unrecognized bare name (no provider prefix) — can't be routed by LiteLLM.
+    # Fall back to the default rather than emit an unroutable model string.
+    # Users on other providers (deepseek, xai, …) pass a full "provider/model"
+    # string, which is handled by the '/' passthrough above.
+    return "anthropic/claude-sonnet-4-6"
 
 
 def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, settings, model: str = "claude-sonnet-4-6"):

@@ -224,7 +224,13 @@ if [ "$DRY_RUN" -eq 0 ]; then
   else
     if ! command -v uv >/dev/null 2>&1; then
       step "Installing uv (manages the OpenHands runtime)"
-      run sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+      # Download the installer first, then run it — avoids piping curl
+      # straight into a shell, so a truncated download fails cleanly and the
+      # script can be inspected before it executes.
+      _uv_installer="$(mktemp)"
+      run curl -LsSf https://astral.sh/uv/install.sh -o "$_uv_installer"
+      run sh "$_uv_installer"
+      rm -f "$_uv_installer"
       PATH="$HOME/.local/bin:$PATH"; export PATH
     fi
     step "Installing OpenHands CLI (uv tool, bundles Python 3.12)"
@@ -233,11 +239,13 @@ if [ "$DRY_RUN" -eq 0 ]; then
 fi
 
 # Create user-level shim so `ark` is on PATH without activating the env.
-# - Prepends ~/.local/bin to PATH so the openhands CLI is found even when the
-#   user runs `ark` from a shell without `conda activate`.
-# - Sources ~/.ark/webapp.env so API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY,
-#   GEMINI_API_KEY) flow into the orchestrator's environment for CLI runs.
-#   The webapp service gets the same file via systemd EnvironmentFile.
+# - Prepends the env's bin AND ~/.local/bin (the uv tool bin dir) to PATH so
+#   the openhands CLI is found even when the user runs `ark` from a shell
+#   without `conda activate`.
+# - Sources ${PREFIX}/.ark/webapp.env so API keys (ANTHROPIC_API_KEY,
+#   OPENAI_API_KEY, GEMINI_API_KEY) flow into the orchestrator's environment
+#   for CLI runs. The webapp service gets the same file via systemd
+#   EnvironmentFile.
 SHIM_DIR="${HOME}/.local/bin"
 SHIM="$SHIM_DIR/ark"
 # Use the source dir's .ark/ — this is what get_config_dir() resolves to
@@ -251,7 +259,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
   ARK_ENV_BIN="$(dirname "$ARK_PY")"
   cat > "$SHIM" <<EOF
 #!/usr/bin/env bash
-export PATH="$ARK_ENV_BIN:\$PATH"
+export PATH="$ARK_ENV_BIN:$SHIM_DIR:\$PATH"
 if [ -f "$ARK_ENV_FILE" ]; then
   set -a
   while IFS='=' read -r _k _v; do

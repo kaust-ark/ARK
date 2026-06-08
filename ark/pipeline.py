@@ -96,6 +96,10 @@ class PipelineMixin:
         # 4. Execute
         self._step_execute(4, total_steps, resume_step, action_plan, planner_output)
 
+        # Non-retryable agent error (bad key / model) → abort fast, no waiting.
+        if getattr(self, "_terminal_error", None):
+            return self._handle_terminal_error(score)
+
         # Quota exhaustion check (set by _step_execute if it calls run_agent)
         if self._quota_exhausted:
             return self._handle_quota_exhausted(score)
@@ -121,6 +125,7 @@ class PipelineMixin:
         self.iteration += 1
         self._iteration_start = datetime.now()
         self._quota_exhausted = False
+        self._terminal_error = None
         self._asked_this_iteration = False
 
         # Load persistent user instructions
@@ -521,6 +526,23 @@ class PipelineMixin:
             return False
 
         return self._handle_stagnation(score, current_score, review_output)
+
+    def _handle_terminal_error(self, score: float) -> bool:
+        """Abort the run fast on a non-retryable agent error (bad key / model /
+        permission). No quota-style wait — the error won't fix itself."""
+        # This iteration didn't complete; roll the counter back so a re-run
+        # (once the user fixes the key/model) redoes it instead of skipping it.
+        self.iteration -= 1
+        detail = getattr(self, "_terminal_error", "") or "non-retryable agent error"
+        self.log("", "RAW")
+        self.log_summary_box(
+            "Run ABORTED (non-retryable error)",
+            [f"Score: {score}/10 (unchanged)", str(detail)[:300],
+             "Check the API key / model name in config.yaml"],
+            inside_phase=False,
+        )
+        self.save_checkpoint()
+        return False  # stop the run; do NOT wait
 
     def _handle_quota_exhausted(self, score: float, detail: str = "") -> bool:
         self.iteration -= 1
