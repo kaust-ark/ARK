@@ -188,7 +188,7 @@ class TestIntegration:
                 assert stat["cache_read_tokens"] == 800
                 assert stat["cache_creation_tokens"] == 200
                 assert stat["cost_usd"] == controller.json_cost_per_call
-                assert stat["model"] == "claude-opus-4-7[1m]"
+                assert stat["model"] == "test-model"
 
         # cost_report.yaml is written live and aggregates correctly
         report_path = orch.state_dir / "cost_report.yaml"
@@ -213,8 +213,8 @@ class TestIntegration:
         """When claude stdout is not valid JSON, agents fall back to plain
         text without crashing and stats append with zero cost fields."""
         orch, controller = mock_integration_project
-        # json_mode stays False — mock returns plain text, which should
-        # fail _parse_claude_json and trigger the fallback path
+        # json_mode stays False — the mock writes no base_state.json, so the
+        # orchestrator reads no token/cost and records zero-cost stats
         orch.run_paper_iteration()
         assert orch._agent_stats, "expected at least one agent call"
         for stat in orch._agent_stats:

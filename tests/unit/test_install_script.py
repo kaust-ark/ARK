@@ -152,16 +152,13 @@ def test_no_webapp_skips_service(script_path: Path, fake_home: Path) -> None:
     assert "ark.cli webapp install" not in r.stdout, "webapp install should be skipped"
 
 
-def test_script_installs_agent_clis(script_path: Path) -> None:
-    """ARK invokes claude/gemini via subprocess, so the installer has to
-    bootstrap them when missing. Make sure that branch isn't lost in a
-    refactor."""
+def test_script_installs_openhands(script_path: Path) -> None:
+    """All agents run through the OpenHands CLI now; the installer must
+    bootstrap it (via uv) when missing. Guard that branch isn't lost."""
     text = script_path.read_text()
-    assert "@anthropic-ai/claude-code" in text, "missing claude-code npm install"
-    assert "@google/gemini-cli" in text, "missing gemini-cli npm install"
-    assert "command -v claude" in text, "missing skip-if-installed guard for claude"
-    assert "command -v gemini" in text, "missing skip-if-installed guard for gemini"
-    assert "nodejs" in text, "must install Node.js for the npm CLIs"
+    assert "uv tool install" in text, "missing uv tool install for openhands"
+    assert "openhands" in text, "missing openhands install"
+    assert "command -v openhands" in text, "missing skip-if-installed guard for openhands"
 
 
 def test_shim_extends_path_for_subprocesses(script_path: Path) -> None:

@@ -63,11 +63,13 @@ def load_api_keys_into_env(config: dict) -> None:
         if not (isinstance(field, str) and field.endswith("_api_key") and val):
             continue
         env_var = provider_key_env(field[: -len("_api_key")])
-        if not os.environ.get(env_var):
+        # Only fill when truly unset (None). Do NOT clobber an explicitly-set
+        # value — including an explicit empty string, which means "no key".
+        if os.environ.get(env_var) is None:
             os.environ[env_var] = str(val)
     # GOOGLE_API_KEY alias that some Google SDKs read.
     gkey = config.get("gemini_api_key")
-    if gkey and not os.environ.get("GOOGLE_API_KEY"):
+    if gkey and os.environ.get("GOOGLE_API_KEY") is None:
         os.environ["GOOGLE_API_KEY"] = str(gkey)
 
 

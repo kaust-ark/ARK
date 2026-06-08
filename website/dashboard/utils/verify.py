@@ -314,15 +314,9 @@ def run_verification_suite(user_id: str, projects_root: Path, keys: Dict[str, st
     if keys.get("openai"):
         results["openai"] = verify_openai(keys["openai"])
 
-        
-    # 2. Claude CLI
-    if keys.get("claude_oauth_token"):
-        results["claude_token"] = verify_claude_cli(user_id, projects_root, keys)
-        
-    # 3. Gemini CLI
-    if keys.get("gemini_oauth_json"):
-        results["gemini_oauth"] = verify_gemini_oauth(user_id, projects_root, keys)
-    elif keys.get("gemini") or keys.get("gemini_api_key"):
-        results["gemini_cli"] = verify_gemini_cli(user_id, projects_root, keys)
-        
+    # NOTE: the old Claude/Gemini *CLI* verifications were removed — all agents
+    # now run through OpenHands/LiteLLM, so verifying the provider API keys above
+    # is sufficient. (verify_claude_cli / verify_gemini_cli / verify_gemini_oauth
+    # remain defined but unused; the CLIs they probed are no longer installed.)
+
     return results

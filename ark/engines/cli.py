@@ -301,8 +301,13 @@ class OpenHandsCLI(AgentCLI):
         """
         import json
         try:
-            bs = (Path.home() / ".openhands" / "conversations"
-                  / conv_id / "base_state.json")
+            # Production: openhands persists under the orchestrator's
+            # $HOME/.openhands (it inherits HOME), so Path.home() matches.
+            # ARK_OPENHANDS_CONV_DIR is a test-only override (unset in prod).
+            conv_root = os.environ.get("ARK_OPENHANDS_CONV_DIR")
+            base = (Path(conv_root) if conv_root
+                    else Path.home() / ".openhands" / "conversations")
+            bs = base / conv_id / "base_state.json"
             if not bs.exists():
                 return None
             data = json.loads(bs.read_text())
