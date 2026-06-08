@@ -224,3 +224,46 @@ class TestIntegration:
             assert stat.get("output_tokens", 0) == 0
         # Live cost report still written even with zero costs
         assert (orch.state_dir / "cost_report.yaml").exists()
+
+    def test_terminal_error_in_review_aborts_fast(self, mock_integration_project_factory):
+        """A non-retryable agent error (bad key/model) during the REVIEW step
+        must abort the run (return False) — not get swallowed by the empty-review
+        'retry' branch and loop forever. Regression test for the terminal-error
+        fast-abort: the reviewer is the first agent call, so the check has to
+        happen right after review, before plan/execute."""
+        from io import BytesIO
+        from unittest.mock import MagicMock
+        from tests.conftest import MockController
+
+        class AuthErrorController(MockController):
+            """Reviewer call returns an OpenHands ConversationErrorEvent
+            (AuthenticationError) instead of a normal MessageEvent."""
+            def subprocess_popen(self, cmd, **kwargs):
+                prompt = " ".join(str(c) for c in cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+                agent_type = self._detect_agent(prompt)
+                self.agent_calls.append(agent_type)
+                if agent_type == "reviewer":
+                    out = ("Conversation ID: testconverr\n" + json.dumps({
+                        "kind": "ConversationErrorEvent",
+                        "code": "AuthenticationError",
+                        "detail": "invalid x-api-key",
+                    }) + "\n")
+                    proc = MagicMock()
+                    proc.communicate.return_value = (out, "")
+                    proc.returncode = 0
+                    proc.stdout = BytesIO(out.encode())
+                    proc.stderr = BytesIO(b"")
+                    return proc
+                return super().subprocess_popen(cmd, **kwargs)
+
+        orch, controller = mock_integration_project_factory(
+            project_name="test_terminal", controller_cls=AuthErrorController
+        )
+        result = orch.run_paper_iteration()
+
+        # Aborted, not retried
+        assert result is False
+        assert orch._terminal_error and "AuthenticationError" in orch._terminal_error
+        # Bailed out at review — never reached planning or writing
+        assert "planner" not in controller.agent_calls
+        assert "writer" not in controller.agent_calls

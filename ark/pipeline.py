@@ -82,6 +82,12 @@ class PipelineMixin:
 
         # 2. Review
         review_output, score, issue_ids = self._step_review(2, total_steps, resume_step, paper_state, current_score)
+        # A terminal agent error (bad key/model/permission) during review must
+        # abort NOW. Otherwise the empty-review branch below reads it as a
+        # transient error and returns True, so the outer loop retries the whole
+        # iteration forever (each retry re-clears the flag) instead of stopping.
+        if getattr(self, "_terminal_error", None):
+            return self._handle_terminal_error(score)
         if not review_output and score == current_score and not issue_ids:
             return True # Error in review, retry
 
@@ -92,6 +98,9 @@ class PipelineMixin:
 
         # 3. Plan
         action_plan, planner_output = self._step_plan(3, total_steps, resume_step, review_output)
+        # Same fast-abort after planning (the planner is the next agent call).
+        if getattr(self, "_terminal_error", None):
+            return self._handle_terminal_error(score)
 
         # 4. Execute
         self._step_execute(4, total_steps, resume_step, action_plan, planner_output)

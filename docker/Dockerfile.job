@@ -104,10 +104,15 @@ RUN set -x && \
 #      (world-readable) so the non-root `ark` user can run it.
 # ---------------------------------------------------------------------------
 ENV UV_TOOL_DIR=/opt/uv-tools \
-    UV_TOOL_BIN_DIR=/usr/local/bin
+    UV_TOOL_BIN_DIR=/usr/local/bin \
+    UV_PYTHON_INSTALL_DIR=/opt/uv-python
 RUN pip install --no-cache-dir uv \
     && uv tool install --python 3.12 openhands \
-    && chmod -R a+rX /opt/uv-tools
+    # uv downloads its own Python under UV_PYTHON_INSTALL_DIR; without an
+    # explicit dir it lands in /root/.local (mode 700), so the non-root `ark`
+    # user can't reach the interpreter the openhands shebang points at →
+    # "Permission denied". Put it in /opt and make the whole tree world-rX.
+    && chmod -R a+rX /opt/uv-tools /opt/uv-python
 
 # ---------------------------------------------------------------------------
 # 2. Install the ARK package
