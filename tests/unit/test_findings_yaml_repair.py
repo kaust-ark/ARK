@@ -171,3 +171,55 @@ def test_repair_real_world_paper1_pattern():
     assert set(parsed.keys()) == {"coverage", "findings", "sanity_report"}
     assert len(parsed["findings"]) == 3
     assert len(parsed["sanity_report"]["acknowledged"]) == 2
+
+
+# ────────────────────────────────────────────────────────────────────────
+#  Second pattern: a key/value containing an unescaped ``: ``
+# ────────────────────────────────────────────────────────────────────────
+
+
+def test_repair_quotes_key_with_inner_colon():
+    """Agent writes a mapping key that itself contains ``: `` (e.g. an
+    experiment title), which YAML rejects with 'mapping values are not
+    allowed here'. We quote the offending key and recover."""
+    bad = (
+        "coverage:\n"
+        "  Experiment 1: Framework Design & Initial Eval:\n"
+        "    status: deferred\n"
+    )
+    repaired, changes = attempt_repair(bad)
+    assert repaired is not None
+    assert any("quoted" in c.lower() for c in changes)
+    parsed = yaml.safe_load(repaired)
+    assert (
+        parsed["coverage"]["Experiment 1: Framework Design & Initial Eval"]["status"]
+        == "deferred"
+    )
+
+
+def test_repair_quotes_multiple_inner_colon_lines():
+    """A file repeating the inner-colon mistake on several lines is fully
+    recovered by the bounded re-parse loop."""
+    bad = (
+        "coverage:\n"
+        "  Exp A: alpha beta:\n"
+        "    status: done\n"
+        "  Exp B: gamma delta:\n"
+        "    status: pending\n"
+    )
+    repaired, _ = attempt_repair(bad)
+    assert repaired is not None
+    parsed = yaml.safe_load(repaired)
+    assert set(parsed["coverage"].keys()) == {"Exp A: alpha beta", "Exp B: gamma delta"}
+
+
+def test_repair_quotes_value_with_inner_colon():
+    """A scalar VALUE containing ``: `` (colon-SPACE) breaks YAML with
+    'mapping values are not allowed here'; we quote the value, not the key.
+    (A bare ``3:1`` with no following space is valid YAML and needs no repair.)
+    """
+    bad = "notes:\n  ratio: 3: 1 split was used\n"
+    repaired, _ = attempt_repair(bad)
+    assert repaired is not None
+    parsed = yaml.safe_load(repaired)
+    assert parsed["notes"]["ratio"] == "3: 1 split was used"

@@ -233,10 +233,21 @@ def attempt_repair(text: str) -> tuple[Optional[str], list[str]]:
     if colon_fixed is not None:
         return colon_fixed, [*changes, *colon_changes]
 
-    diagnostics = [*changes, *colon_changes]
-    if not diagnostics:
-        diagnostics = ["YAML parse error did not match the known indent-misplacement pattern"]
-    return None, diagnostics
+    all_changes = [*changes, *colon_changes]
+    if not all_changes:
+        return None, ["YAML parse error did not match the known indent-misplacement pattern"]
+
+    # We applied at least one targeted repair but the file still doesn't parse
+    # (e.g. it also contains an unrelated error). Surface that, preserving the
+    # long-standing "still malformed" diagnostic that callers/tests rely on.
+    try:
+        yaml.safe_load(repaired_text)
+    except yaml.YAMLError as e:
+        all_changes.append(
+            f"After {len(all_changes)} repair(s), YAML still malformed: "
+            f"{e.__class__.__name__}"
+        )
+    return None, all_changes
 
 
 def validate_findings(
