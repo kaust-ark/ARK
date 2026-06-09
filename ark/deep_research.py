@@ -14,6 +14,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
+# Silence google-genai's repeated "Both GOOGLE_API_KEY and GEMINI_API_KEY are
+# set. Using GOOGLE_API_KEY." notice. ARK deliberately sets BOTH to the SAME key
+# (GEMINI_API_KEY for litellm/OpenHands, GOOGLE_API_KEY for the genai SDK and
+# PaperBanana) and passes the key explicitly to genai.Client, so this is pure
+# noise. Filter only that one message; keep every other genai log intact. The
+# logger is process-global, so installing the filter here covers all genai use.
+import logging as _logging
+_logging.getLogger("google_genai._api_client").addFilter(
+    lambda _r: "Both GOOGLE_API_KEY and GEMINI_API_KEY" not in _r.getMessage()
+)
+
 
 def get_gemini_api_key() -> str:
     """
