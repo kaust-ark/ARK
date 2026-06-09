@@ -104,6 +104,13 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self.model = self._model_arg or self.config.get("model") or "anthropic/claude-sonnet-4-6"
         if model_variant:
             self.config["model_variant"] = model_variant
+        # Export the selected model so every light helper (title / summary /
+        # ethical review / classify) runs on the SAME verified-key model as the
+        # agents — not a separate bot_model that might have no working key and
+        # break the run half-way. Special models (deep research, figures) opt
+        # out by choosing their own model directly.
+        if self.model and "/" in self.model:
+            os.environ["ARK_UTILITY_MODEL"] = self.model
 
         from ark.config.defaults import DEFAULT_PAPER_ACCEPT_THRESHOLD
         self.paper_accept_threshold = self.config.get("paper_accept_threshold", DEFAULT_PAPER_ACCEPT_THRESHOLD)
@@ -504,7 +511,11 @@ a {{ color: #0d9488; }}
         back to the default. No global config fallback — ARK is multi-tenant.
         """
         from ark.llm_lite import default_utility_model
-        return self.config.get("bot_model") or default_utility_model()
+        # Default to the run's selected model (config ``model``) so the bot
+        # replies on the same verified-key model as everything else; an explicit
+        # ``bot_model`` still overrides. Falls back to a cheap model only when no
+        # model is configured at all.
+        return self.config.get("bot_model") or self.config.get("model") or default_utility_model()
 
     def _handle_telegram_message(self, text: str):
         """Handle incoming Telegram message via Claude agent."""

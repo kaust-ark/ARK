@@ -12,14 +12,6 @@ block legitimate research.
 from __future__ import annotations
 
 import json
-import os
-import urllib.error
-import urllib.request
-from typing import Optional
-
-
-_API_URL = "https://api.anthropic.com/v1/messages"
-_ANTHROPIC_VERSION = "2023-06-01"
 
 _SYSTEM_PROMPT = """You are an ethics reviewer for ARK, an autonomous research framework. You receive a research idea submitted by a user and decide whether ARK should run it.
 
@@ -44,75 +36,46 @@ Return STRICT JSON only, with NO surrounding prose, NO markdown code fences:
 
 def review_idea(
     idea_text: str,
-    model: str = "claude-sonnet-4-6",
+    model: str = "",
     api_key: str = "",
     timeout: float = 30.0,
 ) -> dict:
-    """Run ethical review on a research idea.
+    """Run ethical review on a research idea, using the run's SELECTED model.
 
     Returns a dict with keys ``decision`` (``"allow"`` | ``"block"``),
-    ``category``, and ``reason``.
+    ``category``, ``reason``, and ``reviewed`` — ``reviewed`` is True only when
+    the model actually returned a parseable verdict, so the caller can tell a
+    real pass from a fail-open skip.
 
-    Fail-open behavior: if the API key is missing, the network call fails, or
-    the response cannot be parsed, returns ``decision="allow"`` with the
-    failure noted in ``reason``. We prefer not to block legitimate research
-    just because telemetry was unreachable.
+    Fail-open: if no model is configured, the call fails, or the response can't
+    be parsed, returns ``decision="allow"`` with ``reviewed=False`` and the
+    cause in ``reason``. We don't block legitimate research on an infra hiccup,
+    but such a skip is no longer reported as a genuine "pass".
+
+    The model is provider-agnostic (resolved via LiteLLM inside ``complete``),
+    so the review runs on whatever model — and already-verified key — the run
+    uses, instead of a hardcoded Anthropic endpoint.
     """
     if not idea_text or not idea_text.strip():
-        return {"decision": "allow", "category": "none", "reason": "empty idea"}
+        return {"decision": "allow", "category": "none", "reason": "empty idea", "reviewed": False}
+    if not model:
+        return {"decision": "allow", "category": "none", "reason": "review skipped — no model configured", "reviewed": False}
 
-    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return {
-            "decision": "allow",
-            "category": "none",
-            "reason": "review skipped — no ANTHROPIC_API_KEY available",
-        }
-
-    payload = {
-        "model": model,
-        "max_tokens": 200,
-        "temperature": 0.0,
-        "system": _SYSTEM_PROMPT,
-        "messages": [
-            {
-                "role": "user",
-                "content": (
-                    f"Idea to review:\n\n{idea_text}\n\n"
-                    f"Return JSON now."
-                ),
-            }
-        ],
-    }
-
+    from ark.llm_lite import complete
     try:
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            _API_URL,
-            data=data,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": _ANTHROPIC_VERSION,
-                "content-type": "application/json",
-            },
+        text = complete(
+            f"Idea to review:\n\n{idea_text}\n\nReturn JSON now.",
+            model=model,
+            system=_SYSTEM_PROMPT,
+            api_key=api_key or None,
+            timeout=int(timeout),
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8")
-        parsed = json.loads(body)
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, ValueError) as e:
-        return {"decision": "allow", "category": "none", "reason": f"review error: {e}"}
     except Exception as e:  # noqa: BLE001 — fail-open by design
-        return {"decision": "allow", "category": "none", "reason": f"review error: {e}"}
+        return {"decision": "allow", "category": "none", "reason": f"review error: {e}", "reviewed": False}
 
-    text = ""
-    for block in parsed.get("content", []) or []:
-        if block.get("type") == "text":
-            text = (block.get("text") or "").strip()
-            if text:
-                break
-
+    text = (text or "").strip()
     if not text:
-        return {"decision": "allow", "category": "none", "reason": "empty model response"}
+        return {"decision": "allow", "category": "none", "reason": "review error: empty model response", "reviewed": False}
 
     if text.startswith("```"):
         text = text.split("\n", 1)[1] if "\n" in text else text
@@ -123,12 +86,12 @@ def review_idea(
     start = text.find("{")
     end = text.rfind("}")
     if start < 0 or end <= start:
-        return {"decision": "allow", "category": "none", "reason": "could not parse response"}
+        return {"decision": "allow", "category": "none", "reason": "could not parse response", "reviewed": False}
 
     try:
         obj = json.loads(text[start : end + 1])
     except Exception as e:  # noqa: BLE001
-        return {"decision": "allow", "category": "none", "reason": f"parse error: {e}"}
+        return {"decision": "allow", "category": "none", "reason": f"parse error: {e}", "reviewed": False}
 
     decision = str(obj.get("decision", "allow")).strip().lower()
     if decision not in ("allow", "block"):
@@ -137,4 +100,5 @@ def review_idea(
         "decision": decision,
         "category": str(obj.get("category", "none")),
         "reason": str(obj.get("reason", ""))[:500],
+        "reviewed": True,
     }

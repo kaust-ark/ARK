@@ -442,26 +442,53 @@ Execute the task and update the corresponding files.
                         f"{(oh_error_detail or '')[:200]}",
                         "WARN",
                     )
-                    _TERMINAL_ERRORS = {
-                        "AuthenticationError", "NotFoundError",
-                        "PermissionDeniedError", "BadRequestError",
-                    }
-                    if oh_error_code in _TERMINAL_ERRORS:
-                        # Non-retryable (bad key / model / permission). Use a
-                        # DISTINCT flag — NOT _quota_exhausted, which makes the
-                        # pipeline pause 30min for "quota reset" that will never
-                        # come. _terminal_error aborts the run fast instead.
-                        self._terminal_error = (
-                            f"{oh_error_code}: {(oh_error_detail or '')[:200]}"
+                    # OpenHands' LLM layer already retried transient failures
+                    # internally (num_retries=5, exponential backoff) before
+                    # surfacing this ConversationErrorEvent. So a surfaced error
+                    # is effectively final for this invocation. We do NOT re-
+                    # classify by matching error strings, and we do NOT busy-wait
+                    # for a "quota reset" that only resets on a billing date.
+                    #
+                    # Default: surface the real error verbatim and abort fast —
+                    # the detail IS the correct message (bad key, usage/spend cap,
+                    # bad model, context overflow, …). The ONE exception is a
+                    # clearly-transient code (rate limit / 5xx / timeout): give it
+                    # a single bounded wait-and-retry in case the window reopened.
+                    _TRANSIENT = (
+                        "RateLimitError", "ServiceUnavailableError", "TimeoutError",
+                    )
+                    if (any(oh_error_code.endswith(t) for t in _TRANSIENT)
+                            and attempt < MAX_RETRIES):
+                        wait_s = min(self._parse_rate_limit_wait(oh_error_detail or ""), 120)
+                        self.log(
+                            f"  Transient ({oh_error_code}) — waiting {wait_s}s, then "
+                            f"one retry (attempt {attempt + 1}/{MAX_RETRIES})",
+                            "INFO",
                         )
-                        self.send_notification(
-                            "Agent Error",
-                            f"{agent_type}: {oh_error_code} — check the API key / "
-                            f"model name in config.yaml",
-                            priority="critical",
-                        )
-                        result = ""
-                        break  # do not retry a terminal error
+                        if not self._rate_limit_notified:
+                            self._rate_limit_notified = True
+                            self.send_notification(
+                                "Rate Limit",
+                                f"{agent_type}: {oh_error_code}, retrying in {wait_s}s",
+                                priority="critical",
+                            )
+                        timer.stop()
+                        RateLimitCountdown(wait_s).run()
+                        self._rate_limit_notified = False
+                        start_time = time.time()
+                        continue  # one bounded transient retry
+                    # Not transient (or transient retries exhausted): surface the
+                    # provider's real error and abort. No guessing, no 30min wait.
+                    self._terminal_error = (
+                        f"{oh_error_code}: {(oh_error_detail or '')[:300]}"
+                    )
+                    self.send_notification(
+                        "Agent Error",
+                        f"{agent_type}: {oh_error_code} — {(oh_error_detail or '')[:160]}",
+                        priority="critical",
+                    )
+                    result = ""
+                    break
 
                 if stderr:
                     stderr_lower = stderr.lower()
@@ -523,17 +550,11 @@ Execute the task and update the corresponding files.
                         self.log(f"  stdout: {result.strip()[:200]}", "WARN")
                     self.log(f"  prompt length: {len(full_prompt)} chars", "WARN")
 
-                    # Detect quota exhaustion specifically
-                    combined_output = (result.strip() + " " + (stderr or "")).lower()
-                    if any(phrase in combined_output for phrase in [
-                        "out of extra usage", "out of usage",
-                        "you've hit your limit", "hit your limit",
-                        "usage limit", "resets ",
-                    ]):
-                        self._quota_exhausted = True
-                        self.log(f"API quota exhausted detected — flagging for phase abort", "ERROR")
-                        self._agent_empty_count += 1
-                        break  # no point retrying, quota won't recover soon
+                    # NOTE: real quota / rate-limit / auth failures surface as a
+                    # ConversationErrorEvent and are handled above (surfaced +
+                    # aborted, or one bounded transient retry). A bare empty result
+                    # with no error event means a hang or a parse miss — retry once
+                    # then give up. We deliberately do NOT string-match "quota" here.
 
                     # Wall-clock timeout that produced nothing: skip retry. Rerunning
                     # the same prompt for another full timeout window is cargo-cult —
@@ -561,20 +582,12 @@ Execute the task and update the corresponding files.
                         start_time = time.time()  # reset for next attempt
                         continue  # retry
                     else:
-                        # All retries exhausted
-                        self.log(f"  Possible cause: API rate limit / token exhaustion / connection failure", "WARN")
+                        # Retries exhausted on a no-error empty run. Give up and
+                        # let the caller handle the empty result — no busy-wait.
+                        # (Transient API errors were already retried by OpenHands
+                        # internally and would have surfaced as an error event.)
+                        self.log(f"  Empty after {MAX_RETRIES} attempts with no error event — giving up on this agent run", "WARN")
                         self._agent_empty_count += 1
-                        if self._agent_empty_count >= 3:
-                            self._quota_exhausted = True  # flag for pipeline-level abort
-                            wait_time = 300
-                            self.log(f"Consecutive {self._agent_empty_count} agent empty-runs, pausing {wait_time}s waiting for API recovery", "ERROR")
-                            self.send_notification(
-                                "Rate Limit",
-                                f"Agent empty {self._agent_empty_count}x in a row, likely rate-limited\nPausing 5min...",
-                                priority="critical"
-                            )
-                            RateLimitCountdown(wait_time).run()
-                            self._agent_empty_count = 0
                 else:
                     self._agent_empty_count = 0
 

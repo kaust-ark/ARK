@@ -547,7 +547,8 @@ class PipelineMixin:
         self.log_summary_box(
             "Run ABORTED (non-retryable error)",
             [f"Score: {score}/10 (unchanged)", str(detail)[:300],
-             "Check the API key / model name in config.yaml"],
+             "See the error above — bad API key/model, usage or billing limit, "
+             "or context overflow. Fix it (or switch provider) and re-run."],
             inside_phase=False,
         )
         self.save_checkpoint()
@@ -3264,17 +3265,11 @@ provide the title.
             return True
 
         from ark.ethical_review import review_idea
-        api_key = (
-            os.environ.get("ANTHROPIC_API_KEY", "")
-            or self.config.get("anthropic_api_key", "")
-        )
-        variant = self.config.get("model_variant") or ""
-        # Ethical review always uses Anthropic's API directly — coerce non-Claude
-        # variants (e.g. Gemini ids) to a Claude default so the call doesn't 404.
-        model = variant if variant.startswith("claude-") else "claude-sonnet-4-6"
-
+        # Use the run's SELECTED model (same verified key as the agents), not a
+        # hardcoded Anthropic default. The provider key is resolved from the
+        # model prefix inside complete().
         self.log_step("Pre-launch ethical review...", "progress")
-        result = review_idea(idea, model=model, api_key=api_key)
+        result = review_idea(idea, model=self.model)
 
         if result.get("decision") == "block":
             category = result.get("category", "unknown")
@@ -3301,10 +3296,18 @@ provide the title.
 
         review_file.parent.mkdir(parents=True, exist_ok=True)
         review_file.write_text(json.dumps(result, indent=2))
-        self.log_step(
-            f"Ethical review passed: {result.get('reason', '')[:80]}",
-            "success",
-        )
+        if result.get("reviewed"):
+            self.log_step(
+                f"Ethical review passed: {result.get('reason', '')[:80]}",
+                "success",
+            )
+        else:
+            # Fail-open: the review did not actually run (no key / API error /
+            # unparseable). Don't claim it "passed" — report it as skipped.
+            self.log(
+                f"⚠ Ethical review skipped ({result.get('reason', '')[:80]}) — proceeding (fail-open)",
+                "WARN",
+            )
         return True
 
     def run(self):

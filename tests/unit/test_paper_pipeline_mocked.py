@@ -267,3 +267,51 @@ class TestIntegration:
         # Bailed out at review — never reached planning or writing
         assert "planner" not in controller.agent_calls
         assert "writer" not in controller.agent_calls
+
+    def test_quota_cap_surfaces_real_error_and_aborts_fast(self, mock_integration_project_factory):
+        """A workspace usage/spend cap (LiteLLM 'LLMBadRequestError' whose detail
+        is a usage-limit message) must SURFACE the provider's real message and
+        abort fast — not be misread as a transient rate-limit and busy-wait.
+        Regression for the real prod event: OpenHands already retried internally,
+        so a surfaced error is final; we abort with the real detail, no 300s/30min.
+        The error code carries an 'LLM' prefix, which the old exact-match terminal
+        set missed entirely."""
+        from io import BytesIO
+        from unittest.mock import MagicMock
+        from tests.conftest import MockController
+
+        class QuotaCapController(MockController):
+            def subprocess_popen(self, cmd, **kwargs):
+                prompt = " ".join(str(c) for c in cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+                agent_type = self._detect_agent(prompt)
+                self.agent_calls.append(agent_type)
+                if agent_type == "reviewer":
+                    out = ("Conversation ID: testquota\n" + json.dumps({
+                        "kind": "ConversationErrorEvent",
+                        "code": "LLMBadRequestError",
+                        "detail": ("litellm.BadRequestError: AnthropicException - "
+                                   "You have reached your specified workspace API "
+                                   "usage limits. You will regain access on 2026-07-01."),
+                    }) + "\n")
+                    proc = MagicMock()
+                    proc.communicate.return_value = (out, "")
+                    proc.returncode = 0
+                    proc.stdout = BytesIO(out.encode())
+                    proc.stderr = BytesIO(b"")
+                    return proc
+                return super().subprocess_popen(cmd, **kwargs)
+
+        orch, controller = mock_integration_project_factory(
+            project_name="test_quota", controller_cls=QuotaCapController
+        )
+        result = orch.run_paper_iteration()
+
+        # Aborted fast with the REAL provider message — not a busy-wait, not a
+        # misleading "check your key".
+        assert result is False
+        assert orch._terminal_error
+        assert "LLMBadRequestError" in orch._terminal_error
+        assert "usage limit" in orch._terminal_error.lower()
+        # Bailed at review — never reached planning or writing
+        assert "planner" not in controller.agent_calls
+        assert "writer" not in controller.agent_calls

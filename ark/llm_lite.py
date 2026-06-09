@@ -88,12 +88,24 @@ def default_utility_model() -> str:
 
 
 def utility_model() -> str:
-    """Model for the config-less light helpers (title / idea analysis / classify).
+    """Model for the light helpers (title / idea analysis / classify / summary).
 
-    Prefers the global ``.ark/config.yaml`` ``bot_model`` (then ``model``) so the
-    user CAN specify what these use — falling back to a cheap model for whichever
-    API key is present. This is how a config-less helper still honours user intent.
+    Priority:
+    1. ``ARK_UTILITY_MODEL`` env var — the orchestrator exports the run's
+       SELECTED model here, so every helper uses the same model (and the same
+       already-verified API key) as the agents. This is what keeps a run from
+       breaking half-way because a helper silently used a different provider's
+       key that may be missing or capped.
+    2. Global ``.ark/config.yaml`` ``bot_model`` then ``model`` (explicit
+       override for standalone CLI use).
+    3. A cheap model for whichever API key is present (last-resort fallback).
+
+    Special-purpose models (Gemini Deep Research, Nano-Banana figures) are
+    chosen elsewhere and are intentionally NOT routed through here.
     """
+    env_m = os.environ.get("ARK_UTILITY_MODEL")
+    if env_m and "/" in env_m:
+        return env_m
     try:
         import yaml
         from ark.paths import get_config_dir
