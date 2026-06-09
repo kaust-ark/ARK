@@ -97,14 +97,22 @@ RUN set -x && \
     && conda env create -f /app/environment.yml
 
 # ---------------------------------------------------------------------------
-# 1.7. Node.js & Claude CLI
-#      Required for agents to use the Claude Code interface.
+# 1.7. OpenHands CLI (agent runtime)
+#      All agents run through `openhands --headless`. uv installs it with its
+#      own bundled Python 3.12 (independent of the ark-base conda env). The
+#      entry point goes to /usr/local/bin and the tool venv to /opt/uv-tools
+#      (world-readable) so the non-root `ark` user can run it.
 # ---------------------------------------------------------------------------
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y nodejs \
-    && npm install -g @anthropic-ai/claude-code \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+ENV UV_TOOL_DIR=/opt/uv-tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin \
+    UV_PYTHON_INSTALL_DIR=/opt/uv-python
+RUN pip install --no-cache-dir uv \
+    && uv tool install --python 3.12 openhands \
+    # uv downloads its own Python under UV_PYTHON_INSTALL_DIR; without an
+    # explicit dir it lands in /root/.local (mode 700), so the non-root `ark`
+    # user can't reach the interpreter the openhands shebang points at →
+    # "Permission denied". Put it in /opt and make the whole tree world-rX.
+    && chmod -R a+rX /opt/uv-tools /opt/uv-python
 
 # ---------------------------------------------------------------------------
 # 2. Install the ARK package

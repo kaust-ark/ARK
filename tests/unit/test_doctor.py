@@ -43,7 +43,7 @@ def test_doctor_runs_and_emits_known_sections() -> None:
         "python",
         "ark package importable",
         "conda found",
-        "agent CLI",
+        "agent runtime",
         "API key",
         "LaTeX",
         "webapp service",
@@ -68,6 +68,7 @@ def test_doctor_warns_on_missing_api_key(monkeypatch: pytest.MonkeyPatch) -> Non
     env = {
         # Force-clear any inherited keys.
         "ANTHROPIC_API_KEY": "",
+        "OPENAI_API_KEY": "",
         "GEMINI_API_KEY": "",
         "GOOGLE_API_KEY": "",
     }

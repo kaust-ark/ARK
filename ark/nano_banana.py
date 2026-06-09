@@ -20,6 +20,14 @@ import yaml
 from pathlib import Path
 from typing import Optional
 
+# Silence google-genai's repeated "Both GOOGLE_API_KEY and GEMINI_API_KEY are
+# set" notice — ARK sets both env vars to the same key on purpose and passes the
+# key explicitly to genai.Client. Drop only that message; keep other genai logs.
+import logging as _logging
+_logging.getLogger("google_genai._api_client").addFilter(
+    lambda _r: "Both GOOGLE_API_KEY and GEMINI_API_KEY" not in _r.getMessage()
+)
+
 
 # ══════════════════════════════════════════════════════════════
 #  Models

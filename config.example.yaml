@@ -1,0 +1,43 @@
+# =============================================================================
+# ARK config — template
+#
+# Copy this to your live config (global at .ark/config.yaml, or per-project)
+# and fill it in:
+#     cp config.example.yaml .ark/config.yaml
+#
+# ARK runs every agent through OpenHands, which routes to Anthropic / OpenAI /
+# Google via LiteLLM. You pick the model; the model's prefix (anthropic/ ,
+# openai/ , gemini/) decides which API key is used.
+# =============================================================================
+
+# ── Which model to run ───────────────────────────────────────────────────────
+# Heavy research agents (researcher / reviewer / planner / writer /
+# experimenter / coder). Change this one line to switch provider.
+# Overridable at run time with `--model <string>` (CLI) or the webapp dropdown.
+model: anthropic/claude-sonnet-4-6
+#   anthropic/claude-sonnet-4-6      (Claude — recommended default)
+#   anthropic/claude-opus-4-8
+#   gemini/gemini-2.5-pro            (Gemini)
+#   openai/gpt-5                     (OpenAI)
+#   ANY OpenHands/LiteLLM provider also works: deepseek/… , xai/… ,
+#   mistral/… , groq/… , bedrock/… , ollama/… — the three above are just
+#   the common ones. (exact model ids: see the LiteLLM provider docs)
+
+# Light helpers (paper title, iteration summary, Telegram bot replies, message
+# classification). These are simple one-shot LLM calls (via LiteLLM, NOT the
+# agent loop) — a cheap model is plenty.
+bot_model: anthropic/claude-haiku-4-5
+
+# ── API keys ─────────────────────────────────────────────────────────────────
+# Fill the key(s) for the provider(s) you use. Only the SELECTED model's key is
+# strictly required — but filling all three lets you switch models freely
+# without editing keys again.
+anthropic_api_key: ""     # required if model / bot_model uses  anthropic/*
+openai_api_key:    ""     # required if model / bot_model uses  openai/*
+gemini_api_key:    ""     # required if model / bot_model uses  gemini/*
+                          # ★ ALSO powers Gemini Deep Research, which is
+                          #   Gemini-ONLY and runs regardless of `model`.
+                          #   No gemini key  ->  Deep Research is skipped
+                          #   (optional feature, not an error).
+# For any other provider, add  <provider>_api_key  — e.g. deepseek_api_key,
+# xai_api_key, mistral_api_key. It is bridged to <PROVIDER>_API_KEY automatically.

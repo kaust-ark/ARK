@@ -15,141 +15,6 @@ from pathlib import Path
 from .cli import get_cli_for_model
 
 
-def _parse_claude_json(stdout: str) -> dict | None:
-    """Parse output of `claude --output-format json`. Returns None on any failure.
-
-    Tolerates trailing whitespace and the rare case where stdout has leading
-    non-JSON debug output by scanning for the final result-shaped object.
-    Never raises — callers fall back to treating stdout as plain text.
-    """
-    text = (stdout or "").strip()
-    if not text:
-        return None
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        # Last-resort: locate the final result envelope
-        marker = '{"type":"result"'
-        start = text.rfind(marker)
-        if start == -1:
-            return None
-        try:
-            return json.loads(text[start:])
-        except json.JSONDecodeError:
-            return None
-
-
-def _extract_usage(parsed: dict) -> dict:
-    """Pull token/cost fields out of parsed claude JSON. Zero-default so callers
-    don't need null checks. Always returns a complete dict shape."""
-    parsed = parsed or {}
-    u = parsed.get("usage") or {}
-    model_usage = parsed.get("modelUsage") or {}
-    model = next(iter(model_usage), "")
-    return {
-        "model": model,
-        "input_tokens": int(u.get("input_tokens") or 0),
-        "output_tokens": int(u.get("output_tokens") or 0),
-        "cache_read_tokens": int(u.get("cache_read_input_tokens") or 0),
-        "cache_creation_tokens": int(u.get("cache_creation_input_tokens") or 0),
-        "cost_usd": float(parsed.get("total_cost_usd") or 0.0),
-        "duration_api_ms": int(parsed.get("duration_api_ms") or 0),
-    }
-
-
-def _parse_gemini_json(stdout: str) -> dict | None:
-    """Parse output of `gemini -o json`. Returns None on failure."""
-    text = (stdout or "").strip()
-    if not text:
-        return None
-    try:
-        # gemini -o json usually outputs the JSON object directly,
-        # but may have leading "Loaded cached credentials" etc.
-        if "{" in text:
-            text = text[text.find("{"):]
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None
-
-
-def _calculate_gemini_cost(model_id: str, input_tok: int, output_tok: int) -> float:
-    """
-    Calculate estimated cost for Gemini models (April 2026 pricing).
-    """
-    input_tok = int(input_tok or 0)
-    output_tok = int(output_tok or 0)
-    model_lower = (model_id or "").lower()
-
-    # Pricing per 1M tokens (check most-specific substrings first)
-    if "flash-lite" in model_lower:
-        in_rate = 0.15
-        out_rate = 0.60
-    elif "3.1-pro" in model_lower:
-        in_rate = 2.00
-        out_rate = 12.00
-    elif "3-pro" in model_lower:
-        in_rate = 2.00
-        out_rate = 12.00
-    elif "3.1-flash" in model_lower or "3-flash" in model_lower:
-        in_rate = 0.50
-        out_rate = 3.00
-    elif "2.5-pro" in model_lower:
-        in_rate = 1.25
-        out_rate = 10.00
-    elif "2.5-flash" in model_lower:
-        in_rate = 0.30
-        out_rate = 2.50
-    else:
-        # Default to pro
-        in_rate = 2.00
-        out_rate = 12.00
-
-    return (input_tok / 1_000_000 * in_rate) + (output_tok / 1_000_000 * out_rate)
-
-
-def _extract_gemini_usage(parsed: dict) -> dict:
-    """Aggregate token usage info from Gemini CLI's nested stats schema."""
-    parsed = parsed or {}
-    stats = parsed.get("stats", {})
-    models = stats.get("models") or stats.get("model") or {}
-
-    total_in = 0
-    total_out = 0
-    total_cached = 0
-    total_thoughts = 0
-    total_latency = 0
-    main_model = ""
-
-    for mid, info in models.items():
-        t = info.get("tokens", {})
-        total_in += int(t.get("input") or 0)
-        total_out += int(t.get("candidates") or 0)
-        total_cached += int(t.get("cached") or 0)
-        total_thoughts += int(t.get("thoughts") or 0)
-        
-        api = info.get("api", {})
-        total_latency += int(api.get("totalLatencyMs") or 0)
-        
-        # Heuristic for the "main" model being used for the response
-        if "roles" in info and "main" in info["roles"]:
-            main_model = mid
-    
-    if not main_model and models:
-        main_model = next(iter(models))
-
-    cost_usd = _calculate_gemini_cost(main_model, total_in, total_out)
-
-    return {
-        "model": main_model,
-        "input_tokens": total_in,
-        "output_tokens": total_out,
-        "cache_read_tokens": total_cached,
-        "cache_creation_tokens": 0, # Gemini schema doesn't distinguish creation
-        "cost_usd": cost_usd,
-        "duration_api_ms": total_latency,
-    }
-
-
 def _fmt_tok(n: int) -> str:
     """Format a token count as compact human-readable (e.g. 12.3k, 1.2M)."""
     n = int(n or 0)
@@ -525,10 +390,14 @@ Execute the task and update the corresponding files.
         MAX_RETRIES = 2
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                ark_model = self._get_ark_model()
-                self.log(f"Backend model: {self.model} | Model: {ark_model or 'default'}", "INFO")
+                # self.model is the full LiteLLM string (e.g.
+                # "gemini/gemini-3.5-flash"), already resolved from --model →
+                # config → default. Do NOT pass the legacy config `model_variant`
+                # as an override: OpenHandsCLI prefers the variant, which would
+                # silently revert a --model override back to the config model.
+                self.log(f"Model: {self.model}", "INFO")
 
-                cli_runner = get_cli_for_model(self.model, ark_model)
+                cli_runner = get_cli_for_model(self.model)
                 timer.start()
                 
                 returncode, stdout, stderr, elapsed, timeout_expired = cli_runner.execute(
@@ -545,25 +414,81 @@ Execute the task and update the corresponding files.
                 
                 result = ""
                 usage_record = None
+                oh_error_code = None
+                oh_error_detail = None
 
-                # JSON envelope is usually missing on timeout (truncated mid-stream).
-                # Try once; on failure fall back to raw text and let empty-run handle it.
-                if self.model == "claude":
-                    parsed = _parse_claude_json(stdout)
-                    if parsed is not None:
-                        result = parsed.get("result", "") or ""
-                        usage_record = _extract_usage(parsed)
-                    else:
-                        result = stdout
-                elif self.model == "gemini":
-                    parsed = _parse_gemini_json(stdout)
-                    if parsed is not None:
-                        result = parsed.get("response", "") or ""
-                        usage_record = _extract_gemini_usage(parsed)
-                    else:
-                        result = stdout
+                # OpenHands `--json` output: the CLI runner extracts the final agent
+                # message, token/cost (from openhands' persisted state), and any
+                # ConversationErrorEvent. NOTE: openhands exits 0 even on
+                # auth/quota/model failure — failures surface through the event
+                # stream, never the return code.
+                if hasattr(cli_runner, "parse_output"):
+                    parsed = cli_runner.parse_output(stdout)
+                    result = parsed.get("result", "") or ""
+                    usage_record = parsed.get("usage")
+                    oh_error_code = parsed.get("error_code")
+                    oh_error_detail = parsed.get("error_detail")
                 else:
                     result = stdout
+
+                # Minimal error guard (Q4=A): OpenHands/LiteLLM already retry rate
+                # limits per-request; here we only classify terminal vs transient.
+                # Terminal (bad key / bad model / permission) -> abort the phase
+                # instead of burning retries. Transient -> fall through to the
+                # empty-run retry below.
+                if oh_error_code:
+                    self.log(
+                        f"  [{agent_type}] OpenHands error: {oh_error_code} — "
+                        f"{(oh_error_detail or '')[:200]}",
+                        "WARN",
+                    )
+                    # OpenHands' LLM layer already retried transient failures
+                    # internally (num_retries=5, exponential backoff) before
+                    # surfacing this ConversationErrorEvent. So a surfaced error
+                    # is effectively final for this invocation. We do NOT re-
+                    # classify by matching error strings, and we do NOT busy-wait
+                    # for a "quota reset" that only resets on a billing date.
+                    #
+                    # Default: surface the real error verbatim and abort fast —
+                    # the detail IS the correct message (bad key, usage/spend cap,
+                    # bad model, context overflow, …). The ONE exception is a
+                    # clearly-transient code (rate limit / 5xx / timeout): give it
+                    # a single bounded wait-and-retry in case the window reopened.
+                    _TRANSIENT = (
+                        "RateLimitError", "ServiceUnavailableError", "TimeoutError",
+                    )
+                    if (any(oh_error_code.endswith(t) for t in _TRANSIENT)
+                            and attempt < MAX_RETRIES):
+                        wait_s = min(self._parse_rate_limit_wait(oh_error_detail or ""), 120)
+                        self.log(
+                            f"  Transient ({oh_error_code}) — waiting {wait_s}s, then "
+                            f"one retry (attempt {attempt + 1}/{MAX_RETRIES})",
+                            "INFO",
+                        )
+                        if not self._rate_limit_notified:
+                            self._rate_limit_notified = True
+                            self.send_notification(
+                                "Rate Limit",
+                                f"{agent_type}: {oh_error_code}, retrying in {wait_s}s",
+                                priority="critical",
+                            )
+                        timer.stop()
+                        RateLimitCountdown(wait_s).run()
+                        self._rate_limit_notified = False
+                        start_time = time.time()
+                        continue  # one bounded transient retry
+                    # Not transient (or transient retries exhausted): surface the
+                    # provider's real error and abort. No guessing, no 30min wait.
+                    self._terminal_error = (
+                        f"{oh_error_code}: {(oh_error_detail or '')[:300]}"
+                    )
+                    self.send_notification(
+                        "Agent Error",
+                        f"{agent_type}: {oh_error_code} — {(oh_error_detail or '')[:160]}",
+                        priority="critical",
+                    )
+                    result = ""
+                    break
 
                 if stderr:
                     stderr_lower = stderr.lower()
@@ -625,17 +550,11 @@ Execute the task and update the corresponding files.
                         self.log(f"  stdout: {result.strip()[:200]}", "WARN")
                     self.log(f"  prompt length: {len(full_prompt)} chars", "WARN")
 
-                    # Detect quota exhaustion specifically
-                    combined_output = (result.strip() + " " + (stderr or "")).lower()
-                    if any(phrase in combined_output for phrase in [
-                        "out of extra usage", "out of usage",
-                        "you've hit your limit", "hit your limit",
-                        "usage limit", "resets ",
-                    ]):
-                        self._quota_exhausted = True
-                        self.log(f"API quota exhausted detected — flagging for phase abort", "ERROR")
-                        self._agent_empty_count += 1
-                        break  # no point retrying, quota won't recover soon
+                    # NOTE: real quota / rate-limit / auth failures surface as a
+                    # ConversationErrorEvent and are handled above (surfaced +
+                    # aborted, or one bounded transient retry). A bare empty result
+                    # with no error event means a hang or a parse miss — retry once
+                    # then give up. We deliberately do NOT string-match "quota" here.
 
                     # Wall-clock timeout that produced nothing: skip retry. Rerunning
                     # the same prompt for another full timeout window is cargo-cult —
@@ -663,20 +582,12 @@ Execute the task and update the corresponding files.
                         start_time = time.time()  # reset for next attempt
                         continue  # retry
                     else:
-                        # All retries exhausted
-                        self.log(f"  Possible cause: API rate limit / token exhaustion / connection failure", "WARN")
+                        # Retries exhausted on a no-error empty run. Give up and
+                        # let the caller handle the empty result — no busy-wait.
+                        # (Transient API errors were already retried by OpenHands
+                        # internally and would have surfaced as an error event.)
+                        self.log(f"  Empty after {MAX_RETRIES} attempts with no error event — giving up on this agent run", "WARN")
                         self._agent_empty_count += 1
-                        if self._agent_empty_count >= 3:
-                            self._quota_exhausted = True  # flag for pipeline-level abort
-                            wait_time = 300
-                            self.log(f"Consecutive {self._agent_empty_count} agent empty-runs, pausing {wait_time}s waiting for API recovery", "ERROR")
-                            self.send_notification(
-                                "Rate Limit",
-                                f"Agent empty {self._agent_empty_count}x in a row, likely rate-limited\nPausing 5min...",
-                                priority="critical"
-                            )
-                            RateLimitCountdown(wait_time).run()
-                            self._agent_empty_count = 0
                 else:
                     self._agent_empty_count = 0
 

@@ -188,7 +188,7 @@ class TestIntegration:
                 assert stat["cache_read_tokens"] == 800
                 assert stat["cache_creation_tokens"] == 200
                 assert stat["cost_usd"] == controller.json_cost_per_call
-                assert stat["model"] == "claude-opus-4-7[1m]"
+                assert stat["model"] == "test-model"
 
         # cost_report.yaml is written live and aggregates correctly
         report_path = orch.state_dir / "cost_report.yaml"
@@ -213,8 +213,8 @@ class TestIntegration:
         """When claude stdout is not valid JSON, agents fall back to plain
         text without crashing and stats append with zero cost fields."""
         orch, controller = mock_integration_project
-        # json_mode stays False — mock returns plain text, which should
-        # fail _parse_claude_json and trigger the fallback path
+        # json_mode stays False — the mock writes no base_state.json, so the
+        # orchestrator reads no token/cost and records zero-cost stats
         orch.run_paper_iteration()
         assert orch._agent_stats, "expected at least one agent call"
         for stat in orch._agent_stats:
@@ -224,3 +224,94 @@ class TestIntegration:
             assert stat.get("output_tokens", 0) == 0
         # Live cost report still written even with zero costs
         assert (orch.state_dir / "cost_report.yaml").exists()
+
+    def test_terminal_error_in_review_aborts_fast(self, mock_integration_project_factory):
+        """A non-retryable agent error (bad key/model) during the REVIEW step
+        must abort the run (return False) — not get swallowed by the empty-review
+        'retry' branch and loop forever. Regression test for the terminal-error
+        fast-abort: the reviewer is the first agent call, so the check has to
+        happen right after review, before plan/execute."""
+        from io import BytesIO
+        from unittest.mock import MagicMock
+        from tests.conftest import MockController
+
+        class AuthErrorController(MockController):
+            """Reviewer call returns an OpenHands ConversationErrorEvent
+            (AuthenticationError) instead of a normal MessageEvent."""
+            def subprocess_popen(self, cmd, **kwargs):
+                prompt = " ".join(str(c) for c in cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+                agent_type = self._detect_agent(prompt)
+                self.agent_calls.append(agent_type)
+                if agent_type == "reviewer":
+                    out = ("Conversation ID: testconverr\n" + json.dumps({
+                        "kind": "ConversationErrorEvent",
+                        "code": "AuthenticationError",
+                        "detail": "invalid x-api-key",
+                    }) + "\n")
+                    proc = MagicMock()
+                    proc.communicate.return_value = (out, "")
+                    proc.returncode = 0
+                    proc.stdout = BytesIO(out.encode())
+                    proc.stderr = BytesIO(b"")
+                    return proc
+                return super().subprocess_popen(cmd, **kwargs)
+
+        orch, controller = mock_integration_project_factory(
+            project_name="test_terminal", controller_cls=AuthErrorController
+        )
+        result = orch.run_paper_iteration()
+
+        # Aborted, not retried
+        assert result is False
+        assert orch._terminal_error and "AuthenticationError" in orch._terminal_error
+        # Bailed out at review — never reached planning or writing
+        assert "planner" not in controller.agent_calls
+        assert "writer" not in controller.agent_calls
+
+    def test_quota_cap_surfaces_real_error_and_aborts_fast(self, mock_integration_project_factory):
+        """A workspace usage/spend cap (LiteLLM 'LLMBadRequestError' whose detail
+        is a usage-limit message) must SURFACE the provider's real message and
+        abort fast — not be misread as a transient rate-limit and busy-wait.
+        Regression for the real prod event: OpenHands already retried internally,
+        so a surfaced error is final; we abort with the real detail, no 300s/30min.
+        The error code carries an 'LLM' prefix, which the old exact-match terminal
+        set missed entirely."""
+        from io import BytesIO
+        from unittest.mock import MagicMock
+        from tests.conftest import MockController
+
+        class QuotaCapController(MockController):
+            def subprocess_popen(self, cmd, **kwargs):
+                prompt = " ".join(str(c) for c in cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+                agent_type = self._detect_agent(prompt)
+                self.agent_calls.append(agent_type)
+                if agent_type == "reviewer":
+                    out = ("Conversation ID: testquota\n" + json.dumps({
+                        "kind": "ConversationErrorEvent",
+                        "code": "LLMBadRequestError",
+                        "detail": ("litellm.BadRequestError: AnthropicException - "
+                                   "You have reached your specified workspace API "
+                                   "usage limits. You will regain access on 2026-07-01."),
+                    }) + "\n")
+                    proc = MagicMock()
+                    proc.communicate.return_value = (out, "")
+                    proc.returncode = 0
+                    proc.stdout = BytesIO(out.encode())
+                    proc.stderr = BytesIO(b"")
+                    return proc
+                return super().subprocess_popen(cmd, **kwargs)
+
+        orch, controller = mock_integration_project_factory(
+            project_name="test_quota", controller_cls=QuotaCapController
+        )
+        result = orch.run_paper_iteration()
+
+        # Aborted fast with the REAL provider message — not a busy-wait, not a
+        # misleading "check your key".
+        assert result is False
+        assert orch._terminal_error
+        assert "LLMBadRequestError" in orch._terminal_error
+        assert "usage limit" in orch._terminal_error.lower()
+        # Bailed at review — never reached planning or writing
+        assert "planner" not in controller.agent_calls
+        assert "writer" not in controller.agent_calls

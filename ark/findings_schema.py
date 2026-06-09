@@ -90,6 +90,75 @@ _KNOWN_TOP_LEVEL_KEYS = frozenset({
 })
 
 
+def _dq(scalar: str) -> str:
+    """Double-quote a scalar, escaping backslashes and quotes so the result is
+    a valid YAML double-quoted string."""
+    return '"' + scalar.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _is_quoted(scalar: str) -> bool:
+    s = scalar.strip()
+    return len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"')
+
+
+# ────────────────────────────────────────────────────────────────────────
+#  Second auto-repair: unquoted scalars containing an inner ``: ``
+# ────────────────────────────────────────────────────────────────────────
+#
+# Symptom: an agent writes a mapping key (or value) that itself contains a
+# colon-space, e.g.
+#
+#     coverage:
+#       Experiment 1: Framework Design & Initial Eval:   <- intended as a KEY
+#         status: deferred
+#
+# PyYAML reads `Experiment 1` as the key, opens a value, then hits the second
+# `:` and raises ScannerError "mapping values are not allowed here". The fix is
+# to wrap the offending scalar in double quotes. We drive the repair off the
+# parser's own ``problem_mark`` so only the genuinely failing line is touched,
+# and re-parse after each fix (bounded) to walk a file that repeats the mistake.
+
+def _repair_unquoted_colon(text: str) -> tuple[Optional[str], list[str]]:
+    """Quote scalars whose inner ``: `` makes YAML raise "mapping values are
+    not allowed here". Returns ``(repaired_or_None, changes)``; never raises."""
+    changes: list[str] = []
+    cur = text
+    for _ in range(25):  # bounded: each pass fixes one offending line
+        try:
+            yaml.safe_load(cur)
+            return (cur, changes) if changes else (None, [])
+        except yaml.YAMLError as e:
+            problem = getattr(e, "problem", "") or ""
+            mark = getattr(e, "problem_mark", None)
+            if mark is None or "mapping values are not allowed" not in problem:
+                break
+            lines = cur.split("\n")
+            i = mark.line
+            if not (0 <= i < len(lines)):
+                break
+            line = lines[i]
+            fixed: Optional[str] = None
+            # Case 1: an indented scalar ending in ':' is meant to be a mapping
+            # KEY but contains an inner colon — quote the whole key.
+            m = re.match(r'^(\s*)(.*\S)\s*:\s*$', line)
+            if m and ":" in m.group(2) and not _is_quoted(m.group(2)):
+                fixed = f"{m.group(1)}{_dq(m.group(2))}:"
+            else:
+                # Case 2: `key: value : with colon` — quote the VALUE.
+                m2 = re.match(r'^(\s*)([^:#\n]+):\s+(.*\S)\s*$', line)
+                if m2 and ":" in m2.group(3) and not _is_quoted(m2.group(3)):
+                    fixed = f"{m2.group(1)}{m2.group(2)}: {_dq(m2.group(3))}"
+            if not fixed or fixed == line:
+                break
+            lines[i] = fixed
+            changes.append(
+                f"line {i+1}: quoted a scalar whose inner ':' YAML "
+                f"misread as a nested mapping"
+            )
+            cur = "\n".join(lines)
+    return (None, changes)
+
+
 def attempt_repair(text: str) -> tuple[Optional[str], list[str]]:
     """Best-effort fix for the common indent-of-sibling-key error.
 
@@ -149,19 +218,36 @@ def attempt_repair(text: str) -> tuple[Optional[str], list[str]]:
         # Once dedented, we are now in the new top-level scope.
         inside_findings_list = False
 
-    if not changes:
+    # If the indent-dedent pass already makes the text parse, return it.
+    # Otherwise fall through to the colon-quoting heuristic, operating on the
+    # partially-repaired text so the two fixes can compose.
+    repaired_text = "\n".join(repaired)
+    if changes:
+        try:
+            yaml.safe_load(repaired_text)
+            return repaired_text, changes
+        except yaml.YAMLError:
+            pass  # keep the dedents; the file still needs the colon fix
+
+    colon_fixed, colon_changes = _repair_unquoted_colon(repaired_text)
+    if colon_fixed is not None:
+        return colon_fixed, [*changes, *colon_changes]
+
+    all_changes = [*changes, *colon_changes]
+    if not all_changes:
         return None, ["YAML parse error did not match the known indent-misplacement pattern"]
 
-    repaired_text = "\n".join(repaired)
+    # We applied at least one targeted repair but the file still doesn't parse
+    # (e.g. it also contains an unrelated error). Surface that, preserving the
+    # long-standing "still malformed" diagnostic that callers/tests rely on.
     try:
         yaml.safe_load(repaired_text)
     except yaml.YAMLError as e:
-        return None, [
-            *changes,
-            f"After {len(changes)} repair(s), YAML still malformed: {e.__class__.__name__}",
-        ]
-
-    return repaired_text, changes
+        all_changes.append(
+            f"After {len(all_changes)} repair(s), YAML still malformed: "
+            f"{e.__class__.__name__}"
+        )
+    return None, all_changes
 
 
 def validate_findings(

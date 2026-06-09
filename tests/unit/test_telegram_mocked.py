@@ -495,13 +495,9 @@ class TestDaemonRouting:
 
 class TestAgentDirectives:
     def _run(self, orch, canned_response):
-        """Run _agent_respond_telegram with a mocked claude CLI."""
-        class _Proc:
-            stdout = canned_response
-            stderr = ""
-            returncode = 0
-
-        with patch("subprocess.run", return_value=_Proc):
+        """Run _agent_respond_telegram with a mocked LLM call (the bot now
+        replies via llm_lite.complete, not a claude subprocess)."""
+        with patch("ark.llm_lite.complete", return_value=canned_response):
             orch._agent_respond_telegram("user message")
 
     def test_action_tag_writes_user_updates(self, tmp_path, fake_telegram):

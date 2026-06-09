@@ -62,15 +62,12 @@ def generate_title_via_llm(idea_text: str, timeout: int = 60) -> str:
         "- Between 10 and 200 characters\n\n"
         f"Research summary:\n{idea_text[:4000]}"
     )
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
     try:
-        result = subprocess.run(
-            ["claude", "--print", "-p", prompt],
-            capture_output=True, text=True, timeout=timeout, env=env,
-        )
-        if result.returncode != 0:
+        from ark.llm_lite import complete, utility_model
+        title = complete(prompt, model=utility_model(), timeout=timeout)
+        if not title:
             return ""
-        title = result.stdout.strip().strip('"').strip("'").strip()
+        title = title.strip('"').strip("'").strip()
         # Strip common LLM prefix leaks
         for prefix in ("Title:", "title:", "Title :", "Generated title:"):
             if title.lower().startswith(prefix.lower()):

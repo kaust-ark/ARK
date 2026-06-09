@@ -34,7 +34,14 @@ REAL_TEMPLATE_DIR = Path(
 
 
 def _has_real_template() -> bool:
-    return (REAL_TEMPLATE_DIR / "main.tex").exists()
+    # The path is hardcoded to the original author's machine; on any other
+    # host it either doesn't exist (clean skip) or — on a shared box where
+    # that home exists but isn't readable — raises PermissionError. Treat both
+    # as "no real template" so these tests skip instead of erroring.
+    try:
+        return (REAL_TEMPLATE_DIR / "main.tex").exists()
+    except OSError:
+        return False
 
 
 @pytest.fixture

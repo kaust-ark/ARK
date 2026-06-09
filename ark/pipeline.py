@@ -82,6 +82,12 @@ class PipelineMixin:
 
         # 2. Review
         review_output, score, issue_ids = self._step_review(2, total_steps, resume_step, paper_state, current_score)
+        # A terminal agent error (bad key/model/permission) during review must
+        # abort NOW. Otherwise the empty-review branch below reads it as a
+        # transient error and returns True, so the outer loop retries the whole
+        # iteration forever (each retry re-clears the flag) instead of stopping.
+        if getattr(self, "_terminal_error", None):
+            return self._handle_terminal_error(score)
         if not review_output and score == current_score and not issue_ids:
             return True # Error in review, retry
 
@@ -92,9 +98,16 @@ class PipelineMixin:
 
         # 3. Plan
         action_plan, planner_output = self._step_plan(3, total_steps, resume_step, review_output)
+        # Same fast-abort after planning (the planner is the next agent call).
+        if getattr(self, "_terminal_error", None):
+            return self._handle_terminal_error(score)
 
         # 4. Execute
         self._step_execute(4, total_steps, resume_step, action_plan, planner_output)
+
+        # Non-retryable agent error (bad key / model) → abort fast, no waiting.
+        if getattr(self, "_terminal_error", None):
+            return self._handle_terminal_error(score)
 
         # Quota exhaustion check (set by _step_execute if it calls run_agent)
         if self._quota_exhausted:
@@ -121,6 +134,7 @@ class PipelineMixin:
         self.iteration += 1
         self._iteration_start = datetime.now()
         self._quota_exhausted = False
+        self._terminal_error = None
         self._asked_this_iteration = False
 
         # Load persistent user instructions
@@ -522,6 +536,24 @@ class PipelineMixin:
 
         return self._handle_stagnation(score, current_score, review_output)
 
+    def _handle_terminal_error(self, score: float) -> bool:
+        """Abort the run fast on a non-retryable agent error (bad key / model /
+        permission). No quota-style wait — the error won't fix itself."""
+        # This iteration didn't complete; roll the counter back so a re-run
+        # (once the user fixes the key/model) redoes it instead of skipping it.
+        self.iteration -= 1
+        detail = getattr(self, "_terminal_error", "") or "non-retryable agent error"
+        self.log("", "RAW")
+        self.log_summary_box(
+            "Run ABORTED (non-retryable error)",
+            [f"Score: {score}/10 (unchanged)", str(detail)[:300],
+             "See the error above — bad API key/model, usage or billing limit, "
+             "or context overflow. Fix it (or switch provider) and re-run."],
+            inside_phase=False,
+        )
+        self.save_checkpoint()
+        return False  # stop the run; do NOT wait
+
     def _handle_quota_exhausted(self, score: float, detail: str = "") -> bool:
         self.iteration -= 1
         self.log("", "RAW")
@@ -560,27 +592,57 @@ class PipelineMixin:
         self._asked_this_iteration = True
 
     def check_dependencies(self):
-        """Check that required CLI tools are available."""
-        model_tools = {
-            "gemini": "gemini",
-            "claude": "claude",
-            "codex": "codex",
-        }
-        tool = model_tools.get(self.model)
-        if not tool:
-            self.log(f"Error: Unsupported model backend: {self.model}", "ERROR")
+        """Check the OpenHands CLI is installed and the selected model + key are valid.
+
+        All agents run through OpenHands, which routes to ANY LiteLLM provider, so
+        the only required binary is ``openhands``. We fail fast on a model with no
+        provider prefix or a missing API key — a clear message beats a cryptic
+        mid-run error.
+        """
+        import os
+        import shutil
+        from ark.llm_lite import provider_key_env
+
+        # 1. The OpenHands CLI must be installed.
+        if not shutil.which("openhands"):
+            self.log(
+                "Error: 'openhands' command not found. Install with: "
+                "uv tool install --python 3.12 openhands",
+                "ERROR",
+            )
             sys.exit(1)
 
-        try:
-            subprocess.run([tool, "--version"], capture_output=True, check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            if self.model == "gemini":
-                self.log("Error: 'gemini' command not found. Please install: npm install -g @google/gemini-cli", "ERROR")
-            elif self.model == "claude":
-                self.log("Error: 'claude' command not found. Please install: npm install -g @anthropic-ai/claude-code", "ERROR")
-            else:
-                self.log("Error: 'codex' command not found. Please install Codex CLI and ensure it is available in PATH.", "ERROR")
+        # 2. The model must be a LiteLLM string (<provider>/<model>) and that
+        #    provider's key must exist. Any OpenHands/LiteLLM provider is allowed
+        #    — anthropic/openai/gemini are just the common ones.
+        model = self.model or ""
+        provider = model.split("/", 1)[0] if "/" in model else ""
+        if not provider:
+            self.log(
+                f"Error: model '{model}' is not a LiteLLM model string. Set `model` "
+                f"in config.yaml as <provider>/<model>, e.g. "
+                f"anthropic/claude-sonnet-4-6, gemini/gemini-2.5-flash, "
+                f"deepseek/deepseek-chat.",
+                "ERROR",
+            )
             sys.exit(1)
+        cfg_field = f"{provider}_api_key"
+        env_var = provider_key_env(provider)
+        if not (self.config.get(cfg_field) or os.environ.get(env_var)):
+            self.log(
+                f"Error: model is '{model}' but no key found — set {cfg_field} in "
+                f"config.yaml (or {env_var} in the environment).",
+                "ERROR",
+            )
+            sys.exit(1)
+
+        # 3. Deep Research is Gemini-only; warn (don't fail) when no gemini key.
+        if not (self.config.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY")):
+            self.log(
+                "Note: no gemini_api_key set — Gemini Deep Research will be "
+                "skipped (optional feature).",
+                "WARN",
+            )
 
         # Paper mode always needs LaTeX tools.
         self._check_latex_dependencies()
@@ -3203,17 +3265,11 @@ provide the title.
             return True
 
         from ark.ethical_review import review_idea
-        api_key = (
-            os.environ.get("ANTHROPIC_API_KEY", "")
-            or self.config.get("anthropic_api_key", "")
-        )
-        variant = self.config.get("model_variant") or ""
-        # Ethical review always uses Anthropic's API directly — coerce non-Claude
-        # variants (e.g. Gemini ids) to a Claude default so the call doesn't 404.
-        model = variant if variant.startswith("claude-") else "claude-sonnet-4-6"
-
+        # Use the run's SELECTED model (same verified key as the agents), not a
+        # hardcoded Anthropic default. The provider key is resolved from the
+        # model prefix inside complete().
         self.log_step("Pre-launch ethical review...", "progress")
-        result = review_idea(idea, model=model, api_key=api_key)
+        result = review_idea(idea, model=self.model)
 
         if result.get("decision") == "block":
             category = result.get("category", "unknown")
@@ -3240,10 +3296,18 @@ provide the title.
 
         review_file.parent.mkdir(parents=True, exist_ok=True)
         review_file.write_text(json.dumps(result, indent=2))
-        self.log_step(
-            f"Ethical review passed: {result.get('reason', '')[:80]}",
-            "success",
-        )
+        if result.get("reviewed"):
+            self.log_step(
+                f"Ethical review passed: {result.get('reason', '')[:80]}",
+                "success",
+            )
+        else:
+            # Fail-open: the review did not actually run (no key / API error /
+            # unparseable). Don't claim it "passed" — report it as skipped.
+            self.log(
+                f"⚠ Ethical review skipped ({result.get('reason', '')[:80]}) — proceeding (fail-open)",
+                "WARN",
+            )
         return True
 
     def run(self):

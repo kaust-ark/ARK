@@ -122,7 +122,7 @@ class TelegramDaemon:
         """Get model ID for 'bot' or 'ark'. Falls back to sonnet."""
         state = self._load_state()
         models = state.get("models", {})
-        return models.get(kind, "claude-sonnet-4-6")
+        return models.get(kind, "anthropic/claude-sonnet-4-6")
 
     def _set_model(self, kind: str, model_id: str):
         """Set model ID for 'bot' or 'ark'."""
@@ -466,19 +466,10 @@ If the user wants the PDF, add [SEND_PDF] on a new line at the end."""
 {text}"""
 
         try:
-            env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-            result = subprocess.run(
-                ["claude", "--print", "--model", self._get_model("bot"), "-p", prompt],
-                capture_output=True, text=True, timeout=90, env=env,
-            )
-            response = result.stdout.strip()
+            from ark.llm_lite import complete
+            response = complete(prompt, model=self._get_model("bot"), timeout=90)
             if not response:
-                response = result.stderr.strip()[:500] or "Sorry, unable to respond right now."
-        except subprocess.TimeoutExpired:
-            response = "Sorry, response timed out."
-        except FileNotFoundError:
-            # claude CLI not available — fallback to basic response
-            response = f"⏸ *{project}* is stopped. Use `ark run {project}` to resume."
+                response = f"⏸ *{project}* is stopped. Use `ark run {project}` to resume."
         except Exception as e:
             response = f"Error: {e}"
 

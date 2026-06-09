@@ -83,6 +83,7 @@ class MockController:
         self._reviewer_call_count = 0
         self.json_mode = False
         self.json_cost_per_call = 0.025
+        self._conv_counter = 0
 
     def subprocess_run(self, cmd, **kwargs):
         if not cmd: return self._ok("")
@@ -94,7 +95,7 @@ class MockController:
         if exe == "bibtex": return self._ok("")
         if exe == "git": return self._handle_git(cmd, **kwargs)
         if exe in ("mail", "squeue", "python", "bash"): return self._ok("")
-        if exe == "claude": return self._ok("claude-code 1.0.0")
+        if exe == "openhands": return self._ok("OpenHands CLI 1.16.0")
         return self._ok("")
 
     def subprocess_popen(self, cmd, **kwargs):
@@ -108,21 +109,48 @@ class MockController:
         elif agent_type == "planner":
             self._write_action_plan()
 
+        # Emit OpenHands-format output: a "Conversation ID:" line plus a
+        # MessageEvent JSONL line carrying the agent's text (so the orchestrator's
+        # parser extracts it). In json_mode we also write the persisted
+        # base_state.json the orchestrator reads for token/cost.
+        self._conv_counter += 1
+        conv_id = f"testconv{self._conv_counter:06d}"
+        out = (
+            f"Conversation ID: {conv_id}\n"
+            + json.dumps({
+                "kind": "MessageEvent", "source": "agent",
+                "llm_message": {"content": [{"type": "text", "text": stdout_text}]},
+            })
+            + "\n"
+        )
         if self.json_mode:
-            envelope = {
-                "type": "result", "subtype": "success", "is_error": False, "result": stdout_text,
-                "duration_ms": 1500, "duration_api_ms": 1400, "total_cost_usd": self.json_cost_per_call,
-                "usage": {"input_tokens": 100, "cache_creation_input_tokens": 200, "cache_read_input_tokens": 800, "output_tokens": 50},
-                "modelUsage": {"claude-opus-4-7[1m]": {"inputTokens": 100, "outputTokens": 50, "cacheReadInputTokens": 800, "cacheCreationInputTokens": 200, "costUSD": self.json_cost_per_call}},
-            }
-            stdout_text = json.dumps(envelope)
+            self._write_openhands_state(conv_id)
 
         proc = MagicMock()
-        proc.communicate.return_value = (stdout_text, "")
+        proc.communicate.return_value = (out, "")
         proc.returncode = 0
-        proc.stdout = BytesIO(stdout_text.encode())
+        proc.stdout = BytesIO(out.encode())
         proc.stderr = BytesIO(b"")
         return proc
+
+    def _write_openhands_state(self, conv_id: str) -> None:
+        """Write the base_state.json the orchestrator reads for token/cost
+        (mirrors openhands' persisted conversation state)."""
+        import os
+        root = os.environ.get("ARK_OPENHANDS_CONV_DIR")
+        if not root:
+            return
+        d = Path(root) / conv_id
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "base_state.json").write_text(json.dumps({"stats": {"usage_to_metrics": {
+            "agent": {
+                "accumulated_cost": self.json_cost_per_call,
+                "accumulated_token_usage": {
+                    "model": "test-model", "prompt_tokens": 100, "completion_tokens": 50,
+                    "cache_read_tokens": 800, "cache_write_tokens": 200,
+                },
+            },
+        }}}))
 
     def _ok(self, stdout, returncode=0):
         m = MagicMock()
@@ -243,6 +271,7 @@ def mock_integration_project_factory(tmp_path):
             patch("subprocess.Popen", side_effect=controller.subprocess_popen),
             patch.dict("sys.modules", {"fitz": mock_fitz}),
             patch("time.sleep", return_value=None),
+            patch.dict("os.environ", {"ARK_OPENHANDS_CONV_DIR": str(tmp_path / "_oh_conv")}),
         ]
         for p in p_list:
             p.start()

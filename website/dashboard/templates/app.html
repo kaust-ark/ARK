@@ -302,6 +302,17 @@
     .settings-content-area { flex: 1; min-width: 0; }
     .settings-tab-pane { display: none; animation: fadeIn .2s ease; }
     .settings-tab-pane.active { display: block; }
+    .apikey-card { background: var(--surface-raised, #f8fafc); border: 1px solid var(--card-border); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+    .apikey-card--other { border-style: dashed; margin-top: 18px; }
+    .apikey-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 9px; }
+    .apikey-name { font-weight: 700; font-size: .92rem; }
+    .apikey-use { font-size: .7rem; color: var(--text-muted); }
+    .apikey-badge { margin-left: auto; font-size: 1.05rem; }
+    .apikey-input { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--card-border); border-radius: 8px; font-size: .85rem; font-family: inherit; }
+    .apikey-input:focus { outline: none; border-color: var(--teal); }
+    .apikey-current { font-size: .68rem; margin-top: 4px; color: var(--text-muted); line-height: 1.4; }
+    .apikey-select { flex: 0 0 150px; padding: 8px 8px; border: 1px solid var(--card-border); border-radius: 8px; font-size: .82rem; font-family: inherit; background: #fff; }
+    .apikey-other-list { margin-bottom: 8px; }
     @media (max-width: 600px) {
       .settings-layout { flex-direction: column; gap: 16px; }
       .settings-sidebar { flex-direction: row; overflow-x: auto; padding-right: 0; border-right: none; border-bottom: 1px solid var(--card-border); padding-bottom: 12px; }
@@ -504,6 +515,7 @@
     .hero-adv-field textarea { resize: vertical; min-height: 70px; }
     .model-option { display: inline-flex; align-items: center; cursor: pointer; }
     .model-option input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
+    .model-group-label { width: 100%; font-size: .68rem; color: var(--text-muted); font-weight: 700; margin: 0 0 1px; }
     .model-chip {
       display: inline-block; padding: 6px 14px; border-radius: 20px;
       border: 1.5px solid var(--card-border); background: var(--bg);
@@ -800,55 +812,85 @@
       </div>
 
       <div class="hero-advanced">
-        <button type="button" class="hero-advanced-toggle" aria-expanded="false"
+        <button type="button" class="hero-advanced-toggle" aria-expanded="true"
                 onclick="toggleHeroAdvanced()">
           <span class="adv-arrow">▶</span> <span data-i18n="advanced_options">Advanced options</span>
         </button>
-        <div class="hero-advanced-body" id="hero-advanced-body">
+        <div class="hero-advanced-body open" id="hero-advanced-body">
           <div class="hero-adv-field">
             <label data-i18n="model">Model</label>
-            <div style="display:flex;gap:8px;flex-wrap:wrap" id="model-options">
-              <label class="model-option">
+            <div style="font-size:.7rem;color:#0d9488;font-weight:600;margin:0 0 3px">✓ Verified</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="var u=document.getElementById('model-unverified'); if(u) u.value='';">
+              <div class="model-group-label">Anthropic <span style="color:#0d9488">· recommended</span></div>
+              <label class="model-option" data-provider="anthropic">
+                <input type="radio" name="model" value="claude-opus-4-8" />
+                <span class="model-chip">Opus 4.8</span>
+              </label>
+              <label class="model-option" data-provider="anthropic">
                 <input type="radio" name="model" value="claude-sonnet-4-6" checked />
-                <span class="model-chip">Sonnet 4.6 <span style="opacity:.6;font-weight:400">· default</span></span>
+                <span class="model-chip">Sonnet 4.6</span>
               </label>
-              <label class="model-option">
-                <input type="radio" name="model" value="claude-opus-4-7" />
-                <span class="model-chip">Opus 4.7</span>
-              </label>
-              <label class="model-option">
-                <input type="radio" name="model" value="claude-opus-4-6" />
-                <span class="model-chip">Opus 4.6</span>
-              </label>
-              <label class="model-option">
+              <label class="model-option" data-provider="anthropic">
                 <input type="radio" name="model" value="claude-haiku-4-5" />
                 <span class="model-chip">Haiku 4.5</span>
               </label>
-              <label class="model-option">
-                <input type="radio" name="model" value="gemini-auto" />
-                <span class="model-chip">Gemini Auto</span>
+              <div class="model-group-label" style="margin-top:7px">OpenAI</div>
+              <label class="model-option" data-provider="openai">
+                <input type="radio" name="model" value="gpt-5.5" />
+                <span class="model-chip">GPT-5.5</span>
               </label>
-              <label class="model-option">
-                <input type="radio" name="model" value="gemini-3.1-pro-preview" />
-                <span class="model-chip">Gemini 3.1 Pro (preview)</span>
+              <label class="model-option" data-provider="openai">
+                <input type="radio" name="model" value="gpt-5.5-pro" />
+                <span class="model-chip">GPT-5.5 Pro</span>
               </label>
-              <label class="model-option">
-                <input type="radio" name="model" value="gemini-3-flash-preview" />
-                <span class="model-chip">Gemini 3 Flash (preview)</span>
+              <label class="model-option" data-provider="openai">
+                <input type="radio" name="model" value="gpt-5-codex" />
+                <span class="model-chip">GPT-5 Codex</span>
               </label>
-              <label class="model-option">
-                <input type="radio" name="model" value="gemini-3.1-flash-lite-preview" />
-                <span class="model-chip">Gemini 3.1 Flash Lite (preview)</span>
+              <label class="model-option" data-provider="openai">
+                <input type="radio" name="model" value="gpt-5.4-mini" />
+                <span class="model-chip">GPT-5.4 mini</span>
               </label>
-              <label class="model-option">
+              <div class="model-group-label" style="margin-top:7px">Gemini</div>
+              <label class="model-option" data-provider="gemini">
+                <input type="radio" name="model" value="gemini-3.5-flash" />
+                <span class="model-chip">Gemini 3.5 Flash</span>
+              </label>
+              <label class="model-option" data-provider="gemini">
                 <input type="radio" name="model" value="gemini-2.5-pro" />
                 <span class="model-chip">Gemini 2.5 Pro</span>
               </label>
-              <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon">
-                <input type="radio" name="model" value="gpt" disabled />
-                <span class="model-chip">GPT</span>
+              <label class="model-option" data-provider="gemini">
+                <input type="radio" name="model" value="gemini-2.5-flash" />
+                <span class="model-chip">Gemini 2.5 Flash</span>
               </label>
             </div>
+            <div style="font-size:.7rem;color:var(--text-muted);font-weight:600;margin:10px 0 3px">⚠ Unverified — OpenHands-supported</div>
+            <select id="model-unverified" onchange="onUnverifiedPick(this,'model')" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:360px">
+              <option value="">none</option>
+              <optgroup label="DeepSeek">
+                <option value="deepseek/deepseek-chat">deepseek-chat</option>
+                <option value="deepseek/deepseek-reasoner">deepseek-reasoner</option>
+              </optgroup>
+              <optgroup label="xAI (Grok)">
+                <option value="xai/grok-4">grok-4</option>
+                <option value="xai/grok-3">grok-3</option>
+              </optgroup>
+              <optgroup label="Mistral">
+                <option value="mistral/mistral-large-latest">mistral-large</option>
+              </optgroup>
+              <optgroup label="Groq">
+                <option value="groq/llama-3.3-70b-versatile">llama-3.3-70b</option>
+              </optgroup>
+              <optgroup label="Moonshot">
+                <option value="moonshot/kimi-k2.5">kimi-k2.5</option>
+                <option value="moonshot/kimi-latest">kimi-latest</option>
+              </optgroup>
+              <optgroup label="Cohere">
+                <option value="cohere_chat/command-a-03-2025">command-a</option>
+                <option value="cohere_chat/command-r-plus">command-r-plus</option>
+              </optgroup>
+            </select>
           </div>
           <div style="display:flex;gap:16px;margin-top:12px">
             <div class="hero-adv-field" style="flex:1">
@@ -1161,16 +1203,16 @@
       <div class="form-group" style="flex:2">
         <label>Model</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap" id="continue-model-options">
-          <label class="model-option"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6 <span style="opacity:.6;font-weight:400">· default</span></span></label>
-          <label class="model-option"><input type="radio" name="continue-model" value="claude-opus-4-7" /><span class="model-chip">Opus 4.7</span></label>
-          <label class="model-option"><input type="radio" name="continue-model" value="claude-opus-4-6" /><span class="model-chip">Opus 4.6</span></label>
-          <label class="model-option"><input type="radio" name="continue-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
-          <label class="model-option"><input type="radio" name="continue-model" value="gemini-auto" /><span class="model-chip">Gemini Auto</span></label>
-          <label class="model-option"><input type="radio" name="continue-model" value="gemini-3.1-pro-preview" /><span class="model-chip">Gemini 3.1 Pro (preview)</span></label>
-          <label class="model-option"><input type="radio" name="continue-model" value="gemini-3-flash-preview" /><span class="model-chip">Gemini 3 Flash (preview)</span></label>
-          <label class="model-option"><input type="radio" name="continue-model" value="gemini-3.1-flash-lite-preview" /><span class="model-chip">Gemini 3.1 Flash Lite (preview)</span></label>
-          <label class="model-option"><input type="radio" name="continue-model" value="gemini-2.5-pro" /><span class="model-chip">Gemini 2.5 Pro</span></label>
-          <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="continue-model" value="gpt" disabled /><span class="model-chip">GPT</span></label>
+          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-opus-4-8" /><span class="model-chip">Opus 4.8</span></label>
+          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span></label>
+          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
+          <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.5" /><span class="model-chip">GPT-5.5</span></label>
+          <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.5-pro" /><span class="model-chip">GPT-5.5 Pro</span></label>
+          <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5-codex" /><span class="model-chip">GPT-5 Codex</span></label>
+          <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.4-mini" /><span class="model-chip">GPT-5.4 mini</span></label>
+          <label class="model-option" data-provider="gemini"><input type="radio" name="continue-model" value="gemini-3.5-flash" /><span class="model-chip">Gemini 3.5 Flash</span></label>
+          <label class="model-option" data-provider="gemini"><input type="radio" name="continue-model" value="gemini-2.5-pro" /><span class="model-chip">Gemini 2.5 Pro</span></label>
+          <label class="model-option" data-provider="gemini"><input type="radio" name="continue-model" value="gemini-2.5-flash" /><span class="model-chip">Gemini 2.5 Flash</span></label>
         </div>
       </div>
     </div>
@@ -1280,16 +1322,16 @@
     <div class="form-group">
       <label>Model</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="restart-model-options">
-        <label class="model-option"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6 <span style="opacity:.6;font-weight:400">· default</span></span></label>
-        <label class="model-option"><input type="radio" name="restart-model" value="claude-opus-4-7" /><span class="model-chip">Opus 4.7</span></label>
-        <label class="model-option"><input type="radio" name="restart-model" value="claude-opus-4-6" /><span class="model-chip">Opus 4.6</span></label>
-        <label class="model-option"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
-        <label class="model-option"><input type="radio" name="restart-model" value="gemini-auto" /><span class="model-chip">Gemini Auto</span></label>
-        <label class="model-option"><input type="radio" name="restart-model" value="gemini-3.1-pro-preview" /><span class="model-chip">Gemini 3.1 Pro (preview)</span></label>
-        <label class="model-option"><input type="radio" name="restart-model" value="gemini-3-flash-preview" /><span class="model-chip">Gemini 3 Flash (preview)</span></label>
-        <label class="model-option"><input type="radio" name="restart-model" value="gemini-3.1-flash-lite-preview" /><span class="model-chip">Gemini 3.1 Flash Lite (preview)</span></label>
-        <label class="model-option"><input type="radio" name="restart-model" value="gemini-2.5-pro" /><span class="model-chip">Gemini 2.5 Pro</span></label>
-        <label class="model-option" style="opacity:.45;pointer-events:none" title="Coming soon"><input type="radio" name="restart-model" value="gpt" disabled /><span class="model-chip">GPT</span></label>
+        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-opus-4-8" /><span class="model-chip">Opus 4.8</span></label>
+        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span></label>
+        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
+        <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.5" /><span class="model-chip">GPT-5.5</span></label>
+        <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.5-pro" /><span class="model-chip">GPT-5.5 Pro</span></label>
+        <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5-codex" /><span class="model-chip">GPT-5 Codex</span></label>
+        <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.4-mini" /><span class="model-chip">GPT-5.4 mini</span></label>
+        <label class="model-option" data-provider="gemini"><input type="radio" name="restart-model" value="gemini-3.5-flash" /><span class="model-chip">Gemini 3.5 Flash</span></label>
+        <label class="model-option" data-provider="gemini"><input type="radio" name="restart-model" value="gemini-2.5-pro" /><span class="model-chip">Gemini 2.5 Pro</span></label>
+        <label class="model-option" data-provider="gemini"><input type="radio" name="restart-model" value="gemini-2.5-flash" /><span class="model-chip">Gemini 2.5 Flash</span></label>
       </div>
     </div>
     <div class="form-group">
@@ -1513,97 +1555,77 @@
     <div class="settings-layout">
       <!-- Sidebar -->
       <div class="settings-sidebar">
-        <button class="settings-tab-btn active" onclick="switchSettingsTab('tab-llms')" id="btn-tab-llms">LLM Providers</button>
-        <button class="settings-tab-btn" onclick="switchSettingsTab('tab-clis')" id="btn-tab-clis">CLI Agents</button>
+        <button class="settings-tab-btn active" onclick="switchSettingsTab('tab-llms')" id="btn-tab-llms">API Keys</button>
         <button class="settings-tab-btn" onclick="switchSettingsTab('tab-cloud')" id="btn-tab-cloud">Cloud Compute</button>
       </div>
 
       <!-- Content Area -->
       <div class="settings-content-area">
         
-        <!-- Tab: LLMs -->
+        <!-- Tab: API Keys -->
         <div class="settings-tab-pane active" id="tab-llms">
-          <div class="form-group">
-            <label>Gemini API Key <span style="color:#ef4444;font-size:.75rem">* required</span></label>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input type="password" id="settings-gemini" placeholder="AIza..." style="flex:1" />
-              <span id="settings-gemini-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+          <p style="font-size:.8rem;color:var(--text-second);margin:0 0 18px;line-height:1.5">
+            Add a key for any provider you want to use — <strong>at least one</strong>.
+            Keys are stored encrypted, per&nbsp;user.
+          </p>
+
+          <!-- Anthropic -->
+          <div class="apikey-card">
+            <div class="apikey-head">
+              <span class="apikey-name">Anthropic</span>
+              <span class="apikey-use">Claude · Opus 4.8 / Sonnet 4.6 / Haiku 4.5</span>
+              <span id="settings-anthropic-status" class="apikey-badge"></span>
             </div>
-            <div style="display:flex; justify-content:space-between; margin-top:2px; font-size:.7rem;">
-              <div id="status-gemini" style="color:var(--text-muted)"></div>
-              <div id="status-gemini-cli" style="color:var(--text-muted)"></div>
-            </div>
+            <input type="password" id="settings-anthropic" class="apikey-input" placeholder="sk-ant-…" />
+            <div id="status-anthropic" class="apikey-current"></div>
           </div>
 
-          <div class="form-group">
-            <label>Anthropic API Key <span style="color:var(--text-muted);font-weight:400;font-size:.75rem">(optional)</span></label>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input type="password" id="settings-anthropic" placeholder="sk-ant-..." style="flex:1" />
-              <span id="settings-anthropic-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+          <!-- OpenAI -->
+          <div class="apikey-card">
+            <div class="apikey-head">
+              <span class="apikey-name">OpenAI</span>
+              <span class="apikey-use">GPT · 5.5 Pro / 5.5 / Codex / 5.4 mini</span>
+              <span id="settings-openai-status" class="apikey-badge"></span>
             </div>
-            <div id="status-anthropic" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
+            <input type="password" id="settings-openai" class="apikey-input" placeholder="sk-…" />
+            <div id="status-openai" class="apikey-current"></div>
           </div>
 
-          <div class="form-group">
-            <label>OpenAI API Key <span style="color:var(--text-muted);font-weight:400;font-size:.75rem">(optional)</span></label>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input type="password" id="settings-openai" placeholder="sk-..." style="flex:1" />
-              <span id="settings-openai-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
+          <!-- Gemini -->
+          <div class="apikey-card">
+            <div class="apikey-head">
+              <span class="apikey-name">Gemini</span>
+              <span class="apikey-use">Gemini · 3.5 Flash / 2.5 Pro / 2.5 Flash</span>
+              <span id="settings-gemini-status" class="apikey-badge"></span>
             </div>
-            <div id="status-openai" style="font-size:.7rem;margin-top:2px;color:var(--text-muted)"></div>
+            <input type="password" id="settings-gemini" class="apikey-input" placeholder="AIza…" />
+            <div class="apikey-current">If left empty, Deep Research + figure generation are skipped.</div>
+            <div id="status-gemini" class="apikey-current"></div>
+          </div>
+
+          <!-- Other (unverified) providers -->
+          <div class="apikey-card apikey-card--other">
+            <div class="apikey-head">
+              <span class="apikey-name">Other provider</span>
+              <span class="apikey-use">⚠ Unverified — pick one and paste its key</span>
+            </div>
+            <div id="other-providers-list" class="apikey-other-list"></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="other-provider-name" class="apikey-select">
+                <option value="">Provider…</option>
+                <option value="deepseek">DeepSeek</option>
+                <option value="xai">xAI (Grok)</option>
+                <option value="mistral">Mistral</option>
+                <option value="groq">Groq</option>
+                <option value="moonshot">Moonshot</option>
+                <option value="cohere_chat">Cohere</option>
+              </select>
+              <input type="password" id="other-provider-key" class="apikey-input" style="flex:1" placeholder="API key" />
+              <button type="button" class="btn-secondary" style="white-space:nowrap" onclick="addOtherProvider()">+ Add</button>
+            </div>
           </div>
         </div>
 
-        <!-- Tab: CLI Agents -->
-        <div class="settings-tab-pane" id="tab-clis">
-          <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px; margin-bottom:20px;">
-            <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#d946ef"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              <span style="font-weight:600; font-size:.95rem">Claude CLI Session (Headless)</span>
-              <span style="color:#ef4444;font-size:.7rem;margin-left:auto">* required</span>
-            </div>
-            <div style="background:#fff7ed; border:1px solid #fed7aa; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#9a3412">
-              <strong style="display:block; margin-bottom:4px">How to get these?</strong>
-              <ol style="padding-left:16px; margin:0">
-                <li>On your local PC, run: <code style="background:#ffedd5; padding:2px 4px; border-radius:4px; font-family:monospace">claude setup-token</code></li>
-                <li>Copy the token and paste it below.</li>
-              </ol>
-            </div>
-
-            <div class="form-group" style="margin-bottom:0">
-              <label style="font-size:.75rem">OAuth Token (sk-ant-oat01-...)</label>
-              <div style="display:flex;gap:8px;align-items:center">
-                <input type="password" id="settings-claude-token" placeholder="sk-ant-oat01-..." style="flex:1" />
-                <span id="settings-claude_token-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
-              </div>
-              <div id="status-claude-token" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
-            </div>
-          </div>
-
-          <div style="background:#f8fafc; border:1px solid var(--card-border); border-radius:12px; padding:16px;">
-            <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#0d9488"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-              <span style="font-weight:600; font-size:.95rem">Gemini CLI Session (Headless)</span>
-              <span style="color:var(--text-muted);font-weight:400;font-size:.7rem;margin-left:auto">(optional)</span>
-            </div>
-            <div style="background:#f0fdfa; border:1px solid #99f6e4; border-radius:8px; padding:12px; margin-bottom:14px; font-size:.78rem; line-height:1.4; color:#0f766e">
-              <strong style="display:block; margin-bottom:4px">How to get these?</strong>
-              <ol style="padding-left:16px; margin:0">
-                <li>On your local PC, run: <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">gemini auth login</code></li>
-                <li>Copy the contents of <code style="background:#ccfbf1; padding:2px 4px; border-radius:4px; font-family:monospace">~/.gemini/oauth_creds.json</code> and paste it below.</li>
-              </ol>
-            </div>
-
-            <div class="form-group" style="margin-bottom:0">
-              <label style="font-size:.75rem">OAuth JSON (~/.gemini/oauth_creds.json)</label>
-              <div style="display:flex;gap:8px;align-items:center">
-                <textarea id="settings-gemini-oauth" placeholder='{"client_id": "...", "client_secret": "...", ...}' style="flex:1; font-family:monospace; font-size:.8rem; min-height:80px;"></textarea>
-                <span id="settings-gemini_oauth-status" style="font-size:1.1rem;min-width:24px;text-align:center"></span>
-              </div>
-              <div id="status-gemini-oauth" style="font-size:.65rem;margin-top:2px;color:var(--text-muted)"></div>
-            </div>
-          </div>
-        </div>
 
         <!-- Tab: Cloud Compute -->
         <div class="settings-tab-pane" id="tab-cloud">
@@ -2430,6 +2452,10 @@ async function loadGateBanner() {
       const uData = await uRes.json();
       if (uData.cloud_available) window._sysCloud = true;
       window._userCloudProviders = uData.cloud_providers || [];
+      // Drive home-page model gating from saved keys (so it's correct on first
+      // load, not only after opening Settings).
+      window._userKeyProviders = {anthropic: !!uData.anthropic, openai: !!uData.openai, gemini: !!uData.gemini};
+      if (typeof applyModelGating === 'function') applyModelGating();
       window._userGcpDefaults = {
         zone:          uData.gcp_zone          || '',
         instance_type: uData.gcp_instance_type || '',
@@ -3380,6 +3406,10 @@ async function performLaunch(form) {
 
   const fd = new FormData(form);
 
+  // An unverified model picked from the dropdown overrides the verified radio.
+  const _uns = document.getElementById('model-unverified');
+  if (_uns && _uns.value) fd.set('model', _uns.value);
+
   // Inject GCP per-project overrides if GCP backend is selected
   const heroBackend = fd.get('compute_backend') || 'local';
   if (heroBackend === 'cloud:gcp') {
@@ -4074,12 +4104,10 @@ async function openSettingsModal() {
   try {
     const res = await fetch(APP_BASE + '/api/user/settings');
     const data = await res.json();
-    document.getElementById('settings-gemini').value = data.gemini || '';
     document.getElementById('settings-anthropic').value = data.anthropic || '';
     document.getElementById('settings-openai').value = data.openai || '';
-    
-    document.getElementById('settings-claude-token').value = data.claude_oauth_token || '';
-    document.getElementById('settings-gemini-oauth').value = data.gemini_oauth_json || '';
+    document.getElementById('settings-gemini').value = data.gemini || '';
+    _loadOtherProviders(data);
 
     document.getElementById('settings-aws-access-key-id').value = data.aws_access_key_id || '';
     document.getElementById('settings-aws-secret-access-key').value = data.aws_secret_access_key || '';
@@ -4100,13 +4128,89 @@ async function openSettingsModal() {
     document.getElementById('settings-azure-tenant-id').value = data.azure_tenant_id || '';
     document.getElementById('settings-azure-subscription-id').value = data.azure_subscription_id || '';
 
-    document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
-    document.getElementById('status-claude-token').textContent = data.claude_oauth_token ? 'Current: ' + data.claude_oauth_token : '';
-    document.getElementById('status-gemini-oauth').textContent = data.gemini_oauth_json ? 'Current: [JSON Config]' : '';
+    document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
+    window._userKeyProviders = {anthropic: !!data.anthropic, openai: !!data.openai, gemini: !!data.gemini};
+    applyModelGating();
 
   } catch(e) {}
+}
+
+// ── Other providers (any OpenHands/LiteLLM provider) + model gating ──
+let _otherProviders = {};
+const _STD_KEYS = new Set(['anthropic','openai','gemini',
+  'aws_access_key_id','aws_secret_access_key','aws_default_region',
+  'gcp_service_account_json','gcp_project','gcp_zone','gcp_instance_type',
+  'gcp_image_family','gcp_image_project','gcp_ssh_private_key','gcp_ssh_user',
+  'gcp_conda_env','gcp_network','gcp_subnet','azure_client_id',
+  'azure_client_secret','azure_tenant_id','azure_subscription_id',
+  'claude_oauth_token','gemini_oauth_json','gcp_accelerator_type',
+  'gcp_accelerator_count','verification',
+  'has_keys','cloud_available','cloud_providers']);
+function _loadOtherProviders(data) {
+  _otherProviders = {};
+  // Only string-valued, non-standard fields are other-provider keys — this skips
+  // metadata like has_keys (bool) / cloud_providers (array).
+  for (const k in data) { if (!_STD_KEYS.has(k) && typeof data[k] === 'string' && data[k]) _otherProviders[k] = data[k]; }
+  renderOtherProviders();
+}
+function _maskKeyFront(k) {
+  if (!k) return '';
+  if (k.includes('...') || k.includes('…')) return k;  // already masked (from server)
+  return k.length <= 8 ? '••••' : k.slice(0, 4) + '…' + k.slice(-4);
+}
+function renderOtherProviders() {
+  const list = document.getElementById('other-providers-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const ver = window._otherVerify || {};
+  for (const prov in _otherProviders) {
+    if (!_otherProviders[prov]) continue;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+    const r = ver[prov];
+    let badge = '';
+    if (r) badge = r.ok
+      ? '<span style="color:var(--green);font-size:.85rem">✓</span>'
+      : '<span style="color:var(--red);font-size:.72rem" title="' + (r.msg || 'Failed').replace(/"/g, '&quot;') + '">✗ ' + (r.msg || 'Failed').slice(0, 36) + '</span>';
+    row.innerHTML = '<span style="flex:0 0 120px;font-size:.8rem;font-weight:600">' + prov + '</span>'
+      + '<span style="flex:1;font-size:.78rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + _maskKeyFront(_otherProviders[prov]) + '</span>'
+      + badge
+      + '<button type="button" class="btn-secondary" style="padding:2px 8px" onclick="removeOtherProvider(\'' + prov + '\')">✕</button>';
+    list.appendChild(row);
+  }
+}
+function addOtherProvider() {
+  const nameEl = document.getElementById('other-provider-name');
+  const keyEl = document.getElementById('other-provider-key');
+  const prov = (nameEl.value || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+  const key = (keyEl.value || '').trim();
+  if (!prov || !key) return;
+  if (_STD_KEYS.has(prov)) { alert('Use the dedicated field above for ' + prov + '.'); return; }
+  _otherProviders[prov] = key;
+  nameEl.value = ''; keyEl.value = '';
+  renderOtherProviders();
+}
+function removeOtherProvider(prov) { _otherProviders[prov] = ''; renderOtherProviders(); }
+function _otherProvidersBody() { return Object.assign({}, _otherProviders); }
+// Unverified-model dropdown: picking one clears the verified radio, clearing it restores the default.
+function onUnverifiedPick(sel, group) {
+  const radios = document.querySelectorAll('input[name="' + group + '"]');
+  if (sel.value) { radios.forEach(x => { x.checked = false; }); }
+  else { const def = document.querySelector('input[name="' + group + '"][value="claude-sonnet-4-6"]'); if (def) def.checked = true; }
+}
+// Grey out model options whose provider has no saved key.
+function applyModelGating() {
+  const have = window._userKeyProviders || {};
+  document.querySelectorAll('.model-option[data-provider]').forEach(lbl => {
+    const prov = lbl.getAttribute('data-provider');
+    const ok = !!have[prov];
+    lbl.style.opacity = ok ? '' : '.4';
+    lbl.style.pointerEvents = ok ? '' : 'none';
+    lbl.title = ok ? '' : 'Add a ' + prov + ' API key in Settings → API Keys to use this model';
+    const input = lbl.querySelector('input'); if (input) input.disabled = !ok;
+  });
 }
 
 function switchSettingsTab(tabId) {
@@ -4125,7 +4229,7 @@ function switchCloudProviderTab(cpId) {
 
 async function saveUserSettings() {
   const btn = document.getElementById('settings-save-btn');
-  const providers = ['gemini', 'gemini_cli', 'anthropic', 'openai', 'claude_token', 'gemini_oauth'];
+  const providers = ['anthropic', 'openai', 'gemini'];
   
   // Clear previous statuses
   providers.forEach(p => {
@@ -4143,11 +4247,10 @@ async function saveUserSettings() {
   
   try {
     const body = {
-      gemini: document.getElementById('settings-gemini').value.trim(),
       anthropic: document.getElementById('settings-anthropic').value.trim(),
       openai: document.getElementById('settings-openai').value.trim(),
-      claude_oauth_token: document.getElementById('settings-claude-token').value.trim(),
-      gemini_oauth_json: document.getElementById('settings-gemini-oauth').value.trim(),
+      gemini: document.getElementById('settings-gemini').value.trim(),
+      ..._otherProvidersBody(),
       aws_access_key_id: document.getElementById('settings-aws-access-key-id').value.trim(),
       aws_secret_access_key: document.getElementById('settings-aws-secret-access-key').value.trim(),
       aws_default_region: document.getElementById('settings-aws-default-region').value.trim(),
@@ -4173,8 +4276,6 @@ async function saveUserSettings() {
     if (body.gemini && !body.gemini.includes('...')) document.getElementById('settings-gemini-status').innerHTML = '⏳';
     if (body.anthropic && !body.anthropic.includes('...')) document.getElementById('settings-anthropic-status').innerHTML = '⏳';
     if (body.openai && !body.openai.includes('...')) document.getElementById('settings-openai-status').innerHTML = '⏳';
-    if (body.claude_oauth_token && !body.claude_oauth_token.includes('...')) document.getElementById('settings-claude_token-status').innerHTML = '⏳';
-    if (body.gemini_oauth_json && !body.gemini_oauth_json.includes('...')) document.getElementById('settings-gemini_oauth-status').innerHTML = '⏳';
 
     const res = await fetch(APP_BASE + '/api/user/settings', {
       method: 'POST',
@@ -4212,6 +4313,18 @@ async function saveUserSettings() {
           if (statusEl) statusEl.innerHTML = '';
         }
       }
+
+      // Refresh home-page model gating from the freshly-saved keys (no reload).
+      window._userKeyProviders = {
+        anthropic: !!document.getElementById('settings-anthropic').value.trim(),
+        openai: !!document.getElementById('settings-openai').value.trim(),
+        gemini: !!document.getElementById('settings-gemini').value.trim(),
+      };
+      if (typeof applyModelGating === 'function') applyModelGating();
+
+      // Show per-row verification status on other providers too.
+      window._otherVerify = ver;
+      if (typeof renderOtherProviders === 'function') renderOtherProviders();
 
       if (allOk) {
         showToast('Settings verified and saved.');

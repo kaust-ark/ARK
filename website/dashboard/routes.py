@@ -404,36 +404,46 @@ Output ONLY the summary, no preamble.
 ---
 {raw_text}"""
     try:
-        import subprocess as sp
-        result = sp.run(
-            ["claude", "-p", prompt, "--no-session-persistence", "--output-format", "text",
-             "--model", "claude-haiku-4-5"],
-            capture_output=True, text=True, timeout=60,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()[:8000]
+        from ark.llm_lite import complete, utility_model
+        out = complete(prompt, model=utility_model(), timeout=60)
+        if out:
+            return out[:8000]
     except Exception:
         pass
     # Fallback: raw truncated text
     return raw_text[:8000]
 
 
+def _to_litellm_model(m: str) -> str:
+    """Convert a Settings model value to a LiteLLM model string (provider/model).
+
+    Already-LiteLLM strings (with '/') pass through; bare names are mapped by
+    prefix so any provider works, not just the mainstream three.
+    """
+    m = (m or "").strip()
+    if not m:
+        return "anthropic/claude-sonnet-4-6"
+    if "/" in m:
+        return m
+    if m in ("gemini", "gemini-auto"):
+        return "gemini/gemini-2.5-flash"
+    if m.startswith("claude"):
+        return f"anthropic/{m}"
+    if m.startswith(("gpt", "o1", "o3", "o4")):
+        return f"openai/{m}"
+    if m.startswith("gemini"):
+        return f"gemini/{m}"
+    # Unrecognized bare name (no provider prefix) — can't be routed by LiteLLM.
+    # Fall back to the default rather than emit an unroutable model string.
+    # Users on other providers (deepseek, xai, …) pass a full "provider/model"
+    # string, which is handled by the '/' passthrough above.
+    return "anthropic/claude-sonnet-4-6"
+
+
 def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, settings, model: str = "claude-sonnet-4-6"):
     """Write config.yaml that ark orchestrator will read."""
-    # Map webapp model value to orchestrator model backend.
-    MODEL_MAP = {
-        "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
-        "claude-opus-4-7": ("claude", "claude-opus-4-7"),
-        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
-        "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
-        "gemini": ("gemini", "auto"),
-        "gemini-auto": ("gemini", "auto"),
-        "gemini-3.1-pro-preview": ("gemini", "gemini-3.1-pro-preview"),
-        "gemini-3-flash-preview": ("gemini", "gemini-3-flash-preview"),
-        "gemini-3.1-flash-lite-preview": ("gemini", "gemini-3.1-flash-lite-preview"),
-        "gemini-2.5-pro": ("gemini", "gemini-2.5-pro"),
-    }
-    model_backend, model_variant = MODEL_MAP.get(model, ("claude", "claude-sonnet-4-6"))
+    # All agents run through OpenHands; the orchestrator wants a LiteLLM string.
+    model_str = _to_litellm_model(model)
 
     config = {
         "project": project.name,
@@ -443,8 +453,8 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
         "venue_format": project.venue_format,
         "venue_pages": project.venue_pages,
         "mode": project.mode,
-        "model": model_backend,
-        "model_variant": model_variant,
+        "model": model_str,
+        "model_variant": "",
         "max_iterations": project.max_iterations,
         "max_dev_iterations": project.max_dev_iterations,
         "language": "en",
@@ -1613,12 +1623,18 @@ async def api_get_user_settings(request: Request):
         cfg = _build_cloud_config(user, settings)
         if cfg:
             available_providers.append(settings.cloud_provider)
-    return JSONResponse({
-        "gemini": _mask_key(keys.get("gemini")),
+    _STD_KEY_FIELDS = {
+        "gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
+        "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
+        "gcp_service_account_json", "gcp_project", "gcp_zone", "gcp_instance_type",
+        "gcp_image_family", "gcp_image_project", "gcp_ssh_user", "gcp_conda_env",
+        "gcp_network", "gcp_subnet", "gcp_ssh_private_key", "azure_subscription_id",
+        "azure_tenant_id", "azure_client_id", "azure_client_secret",
+    }
+    _resp = {
         "anthropic": _mask_key(keys.get("anthropic")),
         "openai": _mask_key(keys.get("openai")),
-        "claude_oauth_token": _mask_key(keys.get("claude_oauth_token")),
-        "gemini_oauth_json": _mask_json(keys.get("gemini_oauth_json")),
+        "gemini": _mask_key(keys.get("gemini")),
         "aws_access_key_id": _mask_key(keys.get("aws_access_key_id")),
         "aws_secret_access_key": _mask_key(keys.get("aws_secret_access_key")),
         "aws_default_region": keys.get("aws_default_region") or "",
@@ -1641,7 +1657,12 @@ async def api_get_user_settings(request: Request):
         "has_keys": any(keys.values()),
         "cloud_available": bool(available_providers),
         "cloud_providers": available_providers,
-    })
+    }
+    # Surface any other-provider keys (deepseek, xai, …) so the UI can list them.
+    for _k, _v in keys.items():
+        if _k not in _STD_KEY_FIELDS and _v:
+            _resp[_k] = _mask_key(_v)
+    return JSONResponse(_resp)
 
 
 @router.post("/api/user/settings")
@@ -1655,7 +1676,7 @@ async def api_save_user_settings(request: Request):
     
     # Update keys based on body
     fields = [
-        "gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
+        "gemini", "anthropic", "openai",
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
         "gcp_service_account_json", "gcp_project",
         "gcp_zone", "gcp_instance_type", "gcp_image_family", "gcp_image_project",
@@ -1674,7 +1695,7 @@ async def api_save_user_settings(request: Request):
             continue
 
         # JSON/key blob fields: skip placeholder sentinels
-        if field in ("gemini_oauth_json", "gcp_service_account_json"):
+        if field == "gcp_service_account_json":
             if val != "[JSON Config]":
                 current_keys[field] = val
         elif field == "gcp_ssh_private_key":
@@ -1685,47 +1706,32 @@ async def api_save_user_settings(request: Request):
             if "..." not in val:
                 current_keys[field] = val
 
+    # Other (unverified / long-tail) providers — any extra <provider> key in the
+    # body that isn't a standard field. Stored verbatim into encrypted_keys so
+    # any OpenHands/LiteLLM provider works (deepseek, xai, mistral, groq, …).
+    _reserved = set(fields) | {"verification"}
+    for field, raw in body.items():
+        if not isinstance(field, str) or field in _reserved:
+            continue
+        v = (raw or "").strip() if isinstance(raw, str) else ""
+        if not v:
+            current_keys[field] = ""
+        elif "..." not in v:
+            current_keys[field] = v
+
 
     # Run verification suite
     from website.dashboard.utils.verify import run_verification_suite
     settings = get_settings()
 
-    # Mutual exclusion check: Anthropic API Key OR Claude CLI Session
-    if current_keys.get("anthropic") and current_keys.get("claude_oauth_token"):
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=400,
-            detail="Conflict: You cannot provide both an Anthropic API Key and a Claude CLI Session token. Please clear one of them."
-        )
-    
-    # run_verification_suite will verify the updated keys.
-
-    # even if they weren't all updated in this request.
+    # Verify the three first-class providers (anthropic/openai/gemini); other
+    # providers are stored without verification (they're flagged unverified).
     verification_results = await asyncio.to_thread(run_verification_suite, user.id, settings.projects_root, current_keys)
-    
-    # Revert failed keys
-    # 1. LLM API Keys
-    for p in ["gemini", "anthropic", "openai"]:
-        res = verification_results.get(p)
+
+    # Revert any key whose verification failed (first-class + other providers).
+    for p, res in verification_results.items():
         if res and not res.get("ok"):
-            # Verification failed, revert to old value
             current_keys[p] = old_keys.get(p, "")
-        
-    # 2. Claude CLI
-    claude_res = verification_results.get("claude_token")
-    if claude_res and not claude_res.get("ok"):
-        # Verification failed, revert Claude token
-        current_keys["claude_oauth_token"] = old_keys.get("claude_oauth_token", "")
-
-    # 3. Gemini CLI (API key auth)
-    gemini_cli_res = verification_results.get("gemini_cli")
-    if gemini_cli_res and not gemini_cli_res.get("ok"):
-        current_keys["gemini"] = old_keys.get("gemini", "")
-
-    # 4. Gemini CLI (OAuth auth)
-    gemini_oauth_res = verification_results.get("gemini_oauth")
-    if gemini_oauth_res and not gemini_oauth_res.get("ok"):
-        current_keys["gemini_oauth_json"] = old_keys.get("gemini_oauth_json", "")
 
     with get_session(settings.db_path) as session:
         db_user = get_user(session, user.id)
@@ -1908,18 +1914,21 @@ async def api_create_project(
 
     # Map model to backend + variant for DB.
     MODEL_MAP = {
-        "claude-sonnet-4-6": ("claude", "claude-sonnet-4-6"),
-        "claude-opus-4-7": ("claude", "claude-opus-4-7"),
-        "claude-opus-4-6": ("claude", "claude-opus-4-6"),
-        "claude-haiku-4-5": ("claude", "claude-haiku-4-5"),
-        "gemini": ("gemini", "auto"),
-        "gemini-auto": ("gemini", "auto"),
-        "gemini-3.1-pro-preview": ("gemini", "gemini-3.1-pro-preview"),
-        "gemini-3-flash-preview": ("gemini", "gemini-3-flash-preview"),
-        "gemini-3.1-flash-lite-preview": ("gemini", "gemini-3.1-flash-lite-preview"),
+        # Anthropic
+        "claude-opus-4-8": ("anthropic", "claude-opus-4-8"),
+        "claude-sonnet-4-6": ("anthropic", "claude-sonnet-4-6"),
+        "claude-haiku-4-5": ("anthropic", "claude-haiku-4-5"),
+        # OpenAI
+        "gpt-5.5-pro": ("openai", "gpt-5.5-pro"),
+        "gpt-5.5": ("openai", "gpt-5.5"),
+        "gpt-5-codex": ("openai", "gpt-5-codex"),
+        "gpt-5.4-mini": ("openai", "gpt-5.4-mini"),
+        # Gemini (agent-verified after the FinishAction parse fix)
+        "gemini-3.5-flash": ("gemini", "gemini-3.5-flash"),
         "gemini-2.5-pro": ("gemini", "gemini-2.5-pro"),
+        "gemini-2.5-flash": ("gemini", "gemini-2.5-flash"),
     }
-    model_backend, model_variant = MODEL_MAP.get(model, ("claude", "claude-sonnet-4-6"))
+    model_backend, model_variant = MODEL_MAP.get(model, ("anthropic", "claude-sonnet-4-6"))
 
     with get_session(settings.db_path) as session:
         project = create_project(

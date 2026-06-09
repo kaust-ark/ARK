@@ -176,7 +176,8 @@ ARK/
 │   ├── execution.py         # Agent execution and skill injection
 │   ├── cli.py               # CLI commands (ark new/run/status/access/...)
 │   ├── compute/             # Compute backends (Local, Slurm, AWS, GCP, Azure)
-│   ├── engines/             # Agent orchestration and backend runtimes (Claude, Gemini)
+│   ├── engines/             # Agent orchestration; runs every agent through OpenHands (any LiteLLM model)
+│   ├── llm_lite.py          # Lightweight LiteLLM helper for non-agent text calls (titles, summaries, bot)
 │   ├── orchestrator/        # State and Workspace management
 │   ├── telegram/            # Telegram notifications + bidirectional bot
 │   ├── website/             # Dashboard and Homepage (FastAPI + SQLite)

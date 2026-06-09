@@ -63,7 +63,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && unzip awscliv2.zip && ./aws/install && rm -rf awscliv2.zip ./aws \
     # Google Cloud SDK
     && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] http://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list \
-    && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key --keyring /usr/share/keyrings/cloud.google.gpg add - \
+    # apt-key was removed in Debian 12 (bookworm, the python:3.11-slim base);
+    # dearmor the key straight into the keyring the signed-by= line references.
+    && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
     && apt-get update && apt-get install -y google-cloud-cli \
     # Azure CLI
     && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
@@ -116,6 +118,20 @@ COPY website/ ./website/
 
 # Install as a proper package so `import ark` and `import website` work
 RUN pip install --no-cache-dir -e ".[webapp]"
+
+# OpenHands CLI (agent runtime) — needed when this container spawns an
+# orchestrator run (single-container docker-compose deploy). uv brings its own
+# Python 3.12; the entry point goes to /usr/local/bin so it's on PATH.
+ENV UV_TOOL_DIR=/opt/uv-tools \
+    UV_TOOL_BIN_DIR=/usr/local/bin \
+    UV_PYTHON_INSTALL_DIR=/opt/uv-python
+RUN pip install --no-cache-dir uv \
+    && uv tool install --python 3.12 openhands \
+    # uv downloads its own Python under UV_PYTHON_INSTALL_DIR; without an
+    # explicit dir it lands in /root/.local (mode 700), so a non-root user
+    # can't reach the interpreter the openhands shebang points at. Put it in
+    # /opt and make the whole tree world-rX so any container user can run it.
+    && chmod -R a+rX /opt/uv-tools /opt/uv-python
 
 # ---------------------------------------------------------------------------
 # 4. Runtime configuration
