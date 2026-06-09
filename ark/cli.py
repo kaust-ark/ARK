@@ -1888,6 +1888,8 @@ def cmd_run(args):
         cmd.extend(["--db-path", db_path])
     if project_id:
         cmd.extend(["--project-id", project_id])
+    if getattr(args, "no_research", False):
+        cmd.append("--no-research")
 
     # Strip CLAUDECODE so orchestrator can call claude CLI freely
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}

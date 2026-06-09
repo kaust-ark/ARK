@@ -94,6 +94,31 @@ def verify_openai(api_key: str) -> Dict[str, Any]:
     except Exception as e:
         return {"ok": False, "msg": f"Error: {str(e)}"}
 
+def verify_litellm_provider(provider: str, api_key: str) -> Dict[str, Any]:
+    """Verify any other (LiteLLM/OpenHands) provider key with a minimal request.
+
+    The key IS validated here (a real request is sent). 'Unverified' on the home
+    page refers only to whether ARK has agent-tested those *models* — not the key.
+    """
+    if not api_key:
+        return {"ok": False, "msg": "No API key provided"}
+    _TEST_MODEL = {
+        "deepseek": "deepseek/deepseek-chat",
+        "xai": "xai/grok-3",
+        "mistral": "mistral/mistral-large-latest",
+        "groq": "groq/llama-3.3-70b-versatile",
+        "moonshot": "moonshot/kimi-k2.5",
+        "cohere_chat": "cohere_chat/command-r-plus",
+    }
+    model = _TEST_MODEL.get(provider, f"{provider}/")
+    try:
+        import litellm
+        litellm.completion(model=model, messages=[{"role": "user", "content": "Hello"}],
+                           api_key=api_key, timeout=20)
+        return {"ok": True, "msg": "Functional"}
+    except Exception as e:
+        return {"ok": False, "msg": f"Failed: {str(e).splitlines()[0][:120]}"}
+
 def verify_claude_cli(user_id: str, projects_root: Path, keys: Dict[str, str]) -> Dict[str, Any]:
     """Verify Claude CLI headless setup in a user-specific temporary directory."""
     token = keys.get("claude_oauth_token")
@@ -304,19 +329,25 @@ def run_verification_suite(user_id: str, projects_root: Path, keys: Dict[str, st
     # We can use ThreadPoolExecutor for real parallelization if needed, 
     # but for simplicity and small number of keys, sequential or simple async is fine.
     
-    # 1. LLM API Keys
+    # 1. First-class providers
     if keys.get("gemini"):
         results["gemini"] = verify_gemini(keys["gemini"])
-    
     if keys.get("anthropic"):
         results["anthropic"] = verify_anthropic(keys["anthropic"])
-        
     if keys.get("openai"):
         results["openai"] = verify_openai(keys["openai"])
 
-    # NOTE: the old Claude/Gemini *CLI* verifications were removed — all agents
-    # now run through OpenHands/LiteLLM, so verifying the provider API keys above
-    # is sufficient. (verify_claude_cli / verify_gemini_cli / verify_gemini_oauth
-    # remain defined but unused; the CLIs they probed are no longer installed.)
+    # 2. Other (LiteLLM/OpenHands) providers — validate their keys too. Their
+    # *models* are 'unverified' (not agent-tested by ARK), but the key is checked.
+    _STD = {"gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
+            "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
+            "gcp_service_account_json", "gcp_project", "gcp_zone", "gcp_instance_type",
+            "gcp_image_family", "gcp_image_project", "gcp_ssh_user", "gcp_conda_env",
+            "gcp_network", "gcp_subnet", "gcp_ssh_private_key", "azure_subscription_id",
+            "azure_tenant_id", "azure_client_id", "azure_client_secret"}
+    for k, v in keys.items():
+        if k not in _STD and v and isinstance(v, str):
+            results[k] = verify_litellm_provider(k, v)
 
+    # (Old Claude/Gemini CLI verifications removed — all agents run via OpenHands.)
     return results

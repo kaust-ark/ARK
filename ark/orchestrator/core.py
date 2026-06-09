@@ -2553,6 +2553,8 @@ def main():
                         help="Path to webapp SQLite DB for status sync")
     parser.add_argument("--project-id", type=str, default=None,
                         help="Project UUID in the webapp DB")
+    parser.add_argument("--no-research", action="store_true", default=False,
+                        help="Skip Gemini Deep Research")
     args = parser.parse_args()
     
     # Handle termination signals
@@ -2608,6 +2610,8 @@ def main():
         db_path=db_path,
         project_id=project_id,
     )
+    if args.no_research:
+        orchestrator.config["skip_deep_research"] = True
 
     # Mark as running in DB
     if db_path and project_id:
