@@ -819,7 +819,7 @@
           <div class="hero-adv-field">
             <label data-i18n="model">Model</label>
             <div style="font-size:.7rem;color:#0d9488;font-weight:600;margin:0 0 3px">✓ Verified</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap" id="model-options">
+            <div style="display:flex;gap:8px;flex-wrap:wrap" id="model-options" onchange="var u=document.getElementById('model-unverified'); if(u) u.value='';">
               <label class="model-option" data-provider="anthropic">
                 <input type="radio" name="model" value="claude-opus-4-8" />
                 <span class="model-chip">Opus 4.8</span>
@@ -1562,7 +1562,6 @@
         <div class="settings-tab-pane active" id="tab-llms">
           <p style="font-size:.8rem;color:var(--text-second);margin:0 0 18px;line-height:1.5">
             Add a key for any provider you want to use — <strong>at least one</strong>.
-            On the home page you can only pick models from a provider you've keyed.
             Keys are stored encrypted, per&nbsp;user.
           </p>
 
