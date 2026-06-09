@@ -255,6 +255,7 @@ class OpenHandsCLI(AgentCLI):
         error_code = None
         error_detail = None
         last_agent_msg = ""
+        finish_msg = ""
         for line in (stdout or "").splitlines():
             line = line.strip()
             if not line:
@@ -281,8 +282,18 @@ class OpenHandsCLI(AgentCLI):
                 )
                 if text.strip():
                     last_agent_msg = text
+            elif kind == "ActionEvent":
+                # Some models (notably Gemini) end the task with a FinishAction
+                # carrying the final message, and never emit a final
+                # MessageEvent/agent. Without this, parse_output returns "" and
+                # the orchestrator wrongly treats a successful run as empty.
+                action = evt.get("action") or {}
+                if isinstance(action, dict) and action.get("kind") == "FinishAction":
+                    fm = action.get("message")
+                    if isinstance(fm, str) and fm.strip():
+                        finish_msg = fm
         return {
-            "result": last_agent_msg,
+            "result": last_agent_msg or finish_msg,
             "usage": self._read_usage(conv_id) if conv_id else None,
             "error_code": error_code,
             "error_detail": error_detail,

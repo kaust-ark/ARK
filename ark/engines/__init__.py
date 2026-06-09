@@ -390,10 +390,14 @@ Execute the task and update the corresponding files.
         MAX_RETRIES = 2
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                ark_model = self._get_ark_model()
-                self.log(f"Backend model: {self.model} | Model: {ark_model or 'default'}", "INFO")
+                # self.model is the full LiteLLM string (e.g.
+                # "gemini/gemini-3.5-flash"), already resolved from --model →
+                # config → default. Do NOT pass the legacy config `model_variant`
+                # as an override: OpenHandsCLI prefers the variant, which would
+                # silently revert a --model override back to the config model.
+                self.log(f"Model: {self.model}", "INFO")
 
-                cli_runner = get_cli_for_model(self.model, ark_model)
+                cli_runner = get_cli_for_model(self.model)
                 timer.start()
                 
                 returncode, stdout, stderr, elapsed, timeout_expired = cli_runner.execute(

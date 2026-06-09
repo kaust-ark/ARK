@@ -1333,8 +1333,8 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
     models = [
         ("Claude Sonnet 4.6", "anthropic/claude-sonnet-4-6"),
         ("Claude Opus 4.8", "anthropic/claude-opus-4-8"),
-        ("GPT-5", "openai/gpt-5"),
-        ("Gemini 2.5 Pro", "gemini/gemini-2.5-pro"),
+        ("GPT-5.5", "openai/gpt-5.5"),
+        ("Gemini 3.1 Pro", "gemini/gemini-3.1-pro-preview"),
         ("Other (enter a LiteLLM model string)", "__other__"),
     ]
     for i, (display, _) in enumerate(models, 1):
@@ -3957,27 +3957,29 @@ def cmd_doctor(args):
                   else "create with `conda create -n ark python=3.11 && pip install -e .[webapp]`"
             line("WARN", f"conda env: {env}", msg)
 
-    # 4. Agent CLI
-    claude_cli = shutil.which("claude")
-    gemini_cli = shutil.which("gemini")
-    if claude_cli or gemini_cli:
-        found = []
-        if claude_cli: found.append(f"claude={claude_cli}")
-        if gemini_cli: found.append(f"gemini={gemini_cli}")
-        line("PASS", "agent CLI", ", ".join(found))
+    # 4. Agent runtime (OpenHands — every agent runs through it)
+    openhands_cli = shutil.which("openhands")
+    if openhands_cli:
+        line("PASS", "agent runtime", f"openhands={openhands_cli}")
     else:
-        line("WARN", "agent CLI", "install Claude Code or Gemini CLI to run projects")
+        line("WARN", "agent runtime",
+             "install with `uv tool install --python 3.12 openhands` — needed to run agents")
 
-    # 5. API keys
+    # 5. API keys (any LiteLLM provider works; the mainstream three are checked
+    #    explicitly — the model prefix in config.yaml picks which one is used)
     has_anthropic = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_gemini = bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
-    if has_anthropic or has_gemini:
+    if has_anthropic or has_openai or has_gemini:
         keys = []
         if has_anthropic: keys.append("ANTHROPIC_API_KEY")
+        if has_openai: keys.append("OPENAI_API_KEY")
         if has_gemini: keys.append("GEMINI_API_KEY")
         line("PASS", "API key", ", ".join(keys))
     else:
-        line("WARN", "API key", "set ANTHROPIC_API_KEY or GEMINI_API_KEY in your shell rc")
+        line("WARN", "API key",
+             "set your model provider's key (ANTHROPIC_API_KEY / OPENAI_API_KEY / "
+             "GEMINI_API_KEY / …) in your shell rc or .ark/config.yaml")
 
     # 6. LaTeX (for compilation)
     pdflatex = shutil.which("pdflatex")
