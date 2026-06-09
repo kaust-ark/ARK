@@ -811,11 +811,11 @@
       </div>
 
       <div class="hero-advanced">
-        <button type="button" class="hero-advanced-toggle" aria-expanded="false"
+        <button type="button" class="hero-advanced-toggle" aria-expanded="true"
                 onclick="toggleHeroAdvanced()">
           <span class="adv-arrow">▶</span> <span data-i18n="advanced_options">Advanced options</span>
         </button>
-        <div class="hero-advanced-body" id="hero-advanced-body">
+        <div class="hero-advanced-body open" id="hero-advanced-body">
           <div class="hero-adv-field">
             <label data-i18n="model">Model</label>
             <div style="font-size:.7rem;color:#0d9488;font-weight:600;margin:0 0 3px">✓ Verified</div>
@@ -1592,11 +1592,11 @@
           <div class="apikey-card">
             <div class="apikey-head">
               <span class="apikey-name">Gemini</span>
-              <span class="apikey-use">Gemini models · also runs Deep Research + figures</span>
+              <span class="apikey-use">Gemini · 3.5 Flash / 2.5 Pro / 2.5 Flash</span>
               <span id="settings-gemini-status" class="apikey-badge"></span>
             </div>
             <input type="password" id="settings-gemini" class="apikey-input" placeholder="AIza…" />
-            <div class="apikey-current">If left empty, Deep Research + figure generation are skipped; other providers still work.</div>
+            <div class="apikey-current">If left empty, Deep Research + figure generation are skipped.</div>
             <div id="status-gemini" class="apikey-current"></div>
           </div>
 
@@ -4152,16 +4152,28 @@ function _loadOtherProviders(data) {
   for (const k in data) { if (!_STD_KEYS.has(k) && typeof data[k] === 'string' && data[k]) _otherProviders[k] = data[k]; }
   renderOtherProviders();
 }
+function _maskKeyFront(k) {
+  if (!k) return '';
+  if (k.includes('...') || k.includes('…')) return k;  // already masked (from server)
+  return k.length <= 8 ? '••••' : k.slice(0, 4) + '…' + k.slice(-4);
+}
 function renderOtherProviders() {
   const list = document.getElementById('other-providers-list');
   if (!list) return;
   list.innerHTML = '';
+  const ver = window._otherVerify || {};
   for (const prov in _otherProviders) {
     if (!_otherProviders[prov]) continue;
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
-    row.innerHTML = '<span style="flex:1;max-width:200px;font-size:.8rem;font-weight:600">' + prov + '</span>'
-      + '<span style="flex:2;font-size:.8rem;color:var(--text-muted)">' + _otherProviders[prov] + '</span>'
+    const r = ver[prov];
+    let badge = '';
+    if (r) badge = r.ok
+      ? '<span style="color:var(--green);font-size:.85rem">✓</span>'
+      : '<span style="color:var(--red);font-size:.72rem" title="' + (r.msg || 'Failed').replace(/"/g, '&quot;') + '">✗ ' + (r.msg || 'Failed').slice(0, 36) + '</span>';
+    row.innerHTML = '<span style="flex:0 0 120px;font-size:.8rem;font-weight:600">' + prov + '</span>'
+      + '<span style="flex:1;font-size:.78rem;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + _maskKeyFront(_otherProviders[prov]) + '</span>'
+      + badge
       + '<button type="button" class="btn-secondary" style="padding:2px 8px" onclick="removeOtherProvider(\'' + prov + '\')">✕</button>';
     list.appendChild(row);
   }
@@ -4298,6 +4310,18 @@ async function saveUserSettings() {
           if (statusEl) statusEl.innerHTML = '';
         }
       }
+
+      // Refresh home-page model gating from the freshly-saved keys (no reload).
+      window._userKeyProviders = {
+        anthropic: !!document.getElementById('settings-anthropic').value.trim(),
+        openai: !!document.getElementById('settings-openai').value.trim(),
+        gemini: !!document.getElementById('settings-gemini').value.trim(),
+      };
+      if (typeof applyModelGating === 'function') applyModelGating();
+
+      // Show per-row verification status on other providers too.
+      window._otherVerify = ver;
+      if (typeof renderOtherProviders === 'function') renderOtherProviders();
 
       if (allOk) {
         showToast('Settings verified and saved.');
