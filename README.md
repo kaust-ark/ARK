@@ -127,7 +127,12 @@ pip install -e .                    # Core
 pip install -e ".[research]"       # + Gemini Deep Research & Nano Banana
 pip install -e ".[webapp]"         # + dashboard / systemd service support
 
-# 3. Verify
+# 3. Install the OpenHands CLI (the agent runtime). It is a standalone `uv`
+#    tool with its OWN bundled Python 3.12 — NOT a pip dependency — and must be
+#    on PATH for the orchestrator subprocess to find it.
+pip install uv && uv tool install --python 3.12 openhands
+
+# 4. Verify (checks the openhands runtime is on PATH, keys are present, etc.)
 ark doctor
 ```
 
