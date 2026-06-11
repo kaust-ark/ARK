@@ -128,6 +128,12 @@ def _apply_url_annotations(text: str, annotations: Iterable | None) -> str:
     ``[cite: N](url)`` in reverse offset order so earlier substitutions
     don't shift later indices.
 
+    The offsets are UTF-8 **byte** offsets, not character indices, so we
+    slice/insert in byte space and decode back. Treating them as str
+    indices drifts the insertion point past every multibyte character
+    (em-dashes, curly quotes, ...) that precedes the marker, jamming the
+    ``(url)`` into the following word.
+
     Annotations without a URL or with out-of-range offsets are skipped
     silently — the underlying body text already contains the marker, so
     a missing URL just means that citation stays unlinked rather than
@@ -135,6 +141,7 @@ def _apply_url_annotations(text: str, annotations: Iterable | None) -> str:
     """
     if not annotations:
         return text
+    data = text.encode("utf-8")
     spans: list[tuple[int, int, str]] = []
     for a in annotations:
         if getattr(a, "type", "") != "url_citation":
@@ -144,14 +151,13 @@ def _apply_url_annotations(text: str, annotations: Iterable | None) -> str:
         url = getattr(a, "url", None)
         if start is None or end is None or not url:
             continue
-        if start < 0 or end > len(text) or start >= end:
+        if start < 0 or end > len(data) or start >= end:  # bounds in bytes
             continue
         spans.append((start, end, url))
     spans.sort(key=lambda s: s[0], reverse=True)
     for start, end, url in spans:
-        marker = text[start:end]
-        text = text[:start] + f"{marker}({url})" + text[end:]
-    return text
+        data = data[:end] + f"({url})".encode("utf-8") + data[end:]
+    return data.decode("utf-8", errors="replace")
 
 
 def _assemble_report(outputs: Iterable, assets_dir: Path) -> str:

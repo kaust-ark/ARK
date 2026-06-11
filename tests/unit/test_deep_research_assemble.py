@@ -65,6 +65,34 @@ def test_annotations_apply_in_reverse_order():
     assert out == "A [cite: 1](https://a/) B [cite: 2](https://b/) C"
 
 
+def test_annotations_use_byte_offsets_not_char_offsets():
+    """The API returns UTF-8 *byte* offsets, not character indices.
+
+    With an em-dash (3 bytes / 1 char) before the marker, the byte offset
+    of ``]`` runs ahead of the character offset. The old char-index code
+    would slice past the marker and jam ``(url)`` into the next word
+    (the real symptom: ``[cite: 13, 15]. Th(https://…)is``). The fix must
+    insert ``(url)`` immediately after ``]``.
+    """
+    text = "Result—per cite [cite: 1] This continues."
+    marker = "[cite: 1]"
+    char_start = text.index(marker)
+    char_end = char_start + len(marker)
+    data = text.encode("utf-8")
+    byte_start = len(text[:char_start].encode("utf-8"))
+    byte_end = len(text[:char_end].encode("utf-8"))
+    # The em-dash makes byte offsets larger than char offsets.
+    assert byte_start == char_start + 2
+    assert byte_end == char_end + 2
+
+    out = _apply_url_annotations(text, [_ann(byte_start, byte_end, "http://x")])
+    # `(url)` lands right after `]`, not inside the following word.
+    assert "[cite: 1](http://x) This continues." in out
+    assert out == "Result—per cite [cite: 1](http://x) This continues."
+    # And crucially NOT jammed into the next word.
+    assert "Th(http://x)" not in out
+
+
 def test_annotations_skip_non_url_citation():
     """Future API versions may add other annotation kinds — ignore them."""
     text = "Hello [cite: 1] world"
