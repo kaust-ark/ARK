@@ -3464,11 +3464,13 @@ def _cmd_webapp_release(args):
     except OSError as e:
         print(f"  {_c(f'deploy marker warning: {e}', Colors.YELLOW)}")
 
-    # 7. Restart prod service if running. With a shared deployment the service
-    # usually belongs to another user — restart failure is fine there, the
-    # deploy marker (6b) makes the webapp recycle itself.
+    # 7. Restart prod service if running. NEVER in shared mode: a local
+    # ark-webapp unit (if any) serves a DIFFERENT deployment than the shared
+    # target — the deploy marker (6b) is what recycles the shared service.
     svc_path = _service_file_path(_PROD_SERVICE)
-    if svc_path.exists():
+    if release_root:
+        print(f"  Shared deploy — the running webapp picks up the marker and recycles itself within ~30s.")
+    elif svc_path.exists():
         print(f"  Restarting prod service...")
         rr = _sp.run(["systemctl", "--user", "restart", _PROD_SERVICE],
                      capture_output=True, text=True)
@@ -3476,8 +3478,6 @@ def _cmd_webapp_release(args):
             print(f"  {_c('Prod service restarted.', Colors.GREEN)}")
         else:
             print(f"  {_c('Service restart not possible from this account — the deploy marker will recycle the webapp within ~30s.', Colors.YELLOW)}")
-    elif release_root:
-        print(f"  No local service (shared deploy) — the deploy marker recycles the webapp within ~30s.")
     else:
         print(f"\n  Prod worktree ready. Install the service with:")
         print(f"    {_c('ark webapp install', Colors.BOLD)}")
