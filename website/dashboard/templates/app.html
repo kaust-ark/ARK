@@ -4298,6 +4298,7 @@ async function saveUserSettings() {
     if (body.gemini && !body.gemini.includes('...')) document.getElementById('settings-gemini-status').innerHTML = '⏳';
     if (body.anthropic && !body.anthropic.includes('...')) document.getElementById('settings-anthropic-status').innerHTML = '⏳';
     if (body.openai && !body.openai.includes('...')) document.getElementById('settings-openai-status').innerHTML = '⏳';
+    if (body.github_pat && !body.github_pat.includes('...')) document.getElementById('settings-github_pat-status').innerHTML = '⏳';
 
     const res = await fetch(APP_BASE + '/api/user/settings', {
       method: 'POST',
@@ -4336,15 +4337,25 @@ async function saveUserSettings() {
         }
       }
 
-      // GitHub PAT is stored (not verified) — reflect saved state directly.
+      // GitHub PAT/org verification result (from the verify suite).
       {
         const ghEl = document.getElementById('settings-github_pat-status');
         const ghFoot = document.getElementById('status-github_pat');
         const ghVal = document.getElementById('settings-github_pat').value.trim();
-        if (ghEl) ghEl.innerHTML = ghVal ? '✅' : '';
-        if (ghFoot) {
-          ghFoot.textContent = ghVal ? '✓ Saved (used by orchestrator only)' : '';
-          ghFoot.style.color = ghVal ? 'var(--green)' : '';
+        const gh = ver.github;
+        if (!ghVal) {
+          if (ghEl) ghEl.innerHTML = '';
+          if (ghFoot) { ghFoot.textContent = ''; ghFoot.style.color = ''; }
+        } else if (gh) {
+          if (ghEl) ghEl.innerHTML = gh.ok ? '✅' : '❌';
+          if (ghFoot) {
+            ghFoot.textContent = (gh.ok ? '✓ ' : '✗ ') + (gh.msg || (gh.ok ? 'OK' : 'Failed'));
+            ghFoot.style.color = gh.ok ? 'var(--green)' : 'var(--red)';
+          }
+          if (!gh.ok) allOk = false;
+        } else {
+          if (ghEl) ghEl.innerHTML = '✅';
+          if (ghFoot) { ghFoot.textContent = '✓ Saved'; ghFoot.style.color = 'var(--green)'; }
         }
       }
 

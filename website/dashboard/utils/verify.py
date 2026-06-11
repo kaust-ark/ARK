@@ -322,6 +322,43 @@ def verify_gemini_oauth(user_id: str, projects_root: Path, keys: Dict[str, str])
             except:
                 pass
 
+def verify_github(pat: str, org: str = "") -> Dict[str, Any]:
+    """Verify a GitHub PAT (and optional org) for project auto-push.
+
+    Checks: token auth, that it's a classic PAT with the ``repo`` scope
+    (fine-grained PATs cannot create repos), and that the org — if given —
+    exists and is reachable by the token. httpx verifies TLS via certifi.
+    """
+    pat = (pat or "").strip()
+    org = (org or "").strip()
+    if not pat:
+        return {"ok": False, "msg": "No PAT provided"}
+    if pat.startswith("github_pat_"):
+        return {"ok": False, "msg": "Fine-grained PATs can't create repos — use a classic PAT (ghp_…) with the 'repo' scope"}
+    headers = {"Authorization": f"Bearer {pat}",
+               "Accept": "application/vnd.github+json", "User-Agent": "ARK"}
+    try:
+        with httpx.Client(timeout=15) as c:
+            r = c.get("https://api.github.com/user", headers=headers)
+            if r.status_code != 200:
+                return {"ok": False, "msg": f"PAT auth failed (HTTP {r.status_code})"}
+            login = r.json().get("login", "?")
+            scopes = [s.strip() for s in r.headers.get("x-oauth-scopes", "").split(",")]
+            if "repo" not in scopes:
+                have = ", ".join(s for s in scopes if s) or "none"
+                return {"ok": False, "msg": f"PAT missing 'repo' scope (has: {have})"}
+            if org:
+                ro = c.get(f"https://api.github.com/orgs/{org}", headers=headers)
+                if ro.status_code == 404:
+                    return {"ok": False, "msg": f"Org '{org}' not found, or PAT can't access it"}
+                if ro.status_code != 200:
+                    return {"ok": False, "msg": f"Org '{org}' check failed (HTTP {ro.status_code})"}
+                return {"ok": True, "msg": f"OK as {login} — repos go to org '{org}'"}
+            return {"ok": True, "msg": f"OK as {login} — repos go to {login}/ark-*"}
+    except Exception as e:
+        return {"ok": False, "msg": f"Error: {str(e).splitlines()[0][:120]}"}
+
+
 def run_verification_suite(user_id: str, projects_root: Path, keys: Dict[str, str]) -> Dict[str, Any]:
     """Run all relevant verifications in parallel."""
     results = {}
@@ -336,10 +373,13 @@ def run_verification_suite(user_id: str, projects_root: Path, keys: Dict[str, st
         results["anthropic"] = verify_anthropic(keys["anthropic"])
     if keys.get("openai"):
         results["openai"] = verify_openai(keys["openai"])
+    if keys.get("github_pat"):
+        results["github"] = verify_github(keys.get("github_pat"), keys.get("github_org"))
 
     # 2. Other (LiteLLM/OpenHands) providers — validate their keys too. Their
     # *models* are 'unverified' (not agent-tested by ARK), but the key is checked.
     _STD = {"gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
+            "github_pat", "github_org",
             "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
             "gcp_service_account_json", "gcp_project", "gcp_zone", "gcp_instance_type",
             "gcp_image_family", "gcp_image_project", "gcp_ssh_user", "gcp_conda_env",
