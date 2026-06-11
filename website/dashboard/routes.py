@@ -445,6 +445,11 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     # All agents run through OpenHands; the orchestrator wants a LiteLLM string.
     model_str = _to_litellm_model(model)
 
+    # Auto-push each project to a private GitHub repo only when the owner has
+    # saved a GitHub PAT. The token itself is injected into the orchestrator
+    # env (ARK_GITHUB_PAT) at launch time — never written into config.yaml.
+    _owner_keys = _get_user_keys(user_obj) if user_obj else {}
+
     config = {
         "project": project.name,
         "title": project.title or project.name,
@@ -463,7 +468,7 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
         "figures_dir": "paper/figures",
         "figure_generation": "nano_banana",
         "nano_banana_model": "pro",
-        "auto_github_remote": False,
+        "auto_github_remote": bool(_owner_keys.get("github_pat")),
     }
 
     def _resolve_compute_config(chosen: str, is_orchestrator: bool = False):
@@ -1625,6 +1630,7 @@ async def api_get_user_settings(request: Request):
             available_providers.append(settings.cloud_provider)
     _STD_KEY_FIELDS = {
         "gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
+        "github_pat",
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
         "gcp_service_account_json", "gcp_project", "gcp_zone", "gcp_instance_type",
         "gcp_image_family", "gcp_image_project", "gcp_ssh_user", "gcp_conda_env",
@@ -1635,6 +1641,7 @@ async def api_get_user_settings(request: Request):
         "anthropic": _mask_key(keys.get("anthropic")),
         "openai": _mask_key(keys.get("openai")),
         "gemini": _mask_key(keys.get("gemini")),
+        "github_pat": _mask_key(keys.get("github_pat")),
         "aws_access_key_id": _mask_key(keys.get("aws_access_key_id")),
         "aws_secret_access_key": _mask_key(keys.get("aws_secret_access_key")),
         "aws_default_region": keys.get("aws_default_region") or "",
@@ -1676,7 +1683,7 @@ async def api_save_user_settings(request: Request):
     
     # Update keys based on body
     fields = [
-        "gemini", "anthropic", "openai",
+        "gemini", "anthropic", "openai", "github_pat",
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
         "gcp_service_account_json", "gcp_project",
         "gcp_zone", "gcp_instance_type", "gcp_image_family", "gcp_image_project",

@@ -1596,6 +1596,17 @@
             <div id="status-gemini" class="apikey-current"></div>
           </div>
 
+          <div class="apikey-card">
+            <div class="apikey-head">
+              <span class="apikey-name">GitHub (optional)</span>
+              <span class="apikey-use">Auto-push each project to a private repo</span>
+              <span id="settings-github_pat-status" class="apikey-badge"></span>
+            </div>
+            <input type="password" id="settings-github_pat" class="apikey-input" placeholder="github_pat_… or ghp_…" />
+            <div id="status-github_pat" class="apikey-current"></div>
+            <div class="apikey-current">PAT needs <code>repo</code> scope (classic) or Contents+Administration read/write (fine-grained). Stored encrypted; used only by the orchestrator, never exposed to agents.</div>
+          </div>
+
           <!-- Other (unverified) providers -->
           <div class="apikey-card apikey-card--other">
             <div class="apikey-head">
@@ -4100,6 +4111,7 @@ async function openSettingsModal() {
     document.getElementById('settings-anthropic').value = data.anthropic || '';
     document.getElementById('settings-openai').value = data.openai || '';
     document.getElementById('settings-gemini').value = data.gemini || '';
+    document.getElementById('settings-github_pat').value = data.github_pat || '';
     _loadOtherProviders(data);
 
     document.getElementById('settings-aws-access-key-id').value = data.aws_access_key_id || '';
@@ -4124,6 +4136,7 @@ async function openSettingsModal() {
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
     document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
+    document.getElementById('status-github_pat').textContent = data.github_pat ? 'Current: ' + data.github_pat : '';
     window._userKeyProviders = {anthropic: !!data.anthropic, openai: !!data.openai, gemini: !!data.gemini};
     applyModelGating();
 
@@ -4132,7 +4145,7 @@ async function openSettingsModal() {
 
 // ── Other providers (any OpenHands/LiteLLM provider) + model gating ──
 let _otherProviders = {};
-const _STD_KEYS = new Set(['anthropic','openai','gemini',
+const _STD_KEYS = new Set(['anthropic','openai','gemini','github_pat',
   'aws_access_key_id','aws_secret_access_key','aws_default_region',
   'gcp_service_account_json','gcp_project','gcp_zone','gcp_instance_type',
   'gcp_image_family','gcp_image_project','gcp_ssh_private_key','gcp_ssh_user',
@@ -4243,6 +4256,7 @@ async function saveUserSettings() {
       anthropic: document.getElementById('settings-anthropic').value.trim(),
       openai: document.getElementById('settings-openai').value.trim(),
       gemini: document.getElementById('settings-gemini').value.trim(),
+      github_pat: document.getElementById('settings-github_pat').value.trim(),
       ..._otherProvidersBody(),
       aws_access_key_id: document.getElementById('settings-aws-access-key-id').value.trim(),
       aws_secret_access_key: document.getElementById('settings-aws-secret-access-key').value.trim(),
@@ -4304,6 +4318,18 @@ async function saveUserSettings() {
         } else {
           // If no result returned (e.g. key was empty or hidden), clear status
           if (statusEl) statusEl.innerHTML = '';
+        }
+      }
+
+      // GitHub PAT is stored (not verified) — reflect saved state directly.
+      {
+        const ghEl = document.getElementById('settings-github_pat-status');
+        const ghFoot = document.getElementById('status-github_pat');
+        const ghVal = document.getElementById('settings-github_pat').value.trim();
+        if (ghEl) ghEl.innerHTML = ghVal ? '✅' : '';
+        if (ghFoot) {
+          ghFoot.textContent = ghVal ? '✓ Saved (used by orchestrator only)' : '';
+          ghFoot.style.color = ghVal ? 'var(--green)' : '';
         }
       }
 

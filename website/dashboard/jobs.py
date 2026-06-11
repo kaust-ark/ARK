@@ -649,6 +649,11 @@ def launch_local_job(
         for k, v in api_keys.items():
             if k == "claude_oauth_token":
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = v
+            elif k == "github_pat":
+                # Orchestrator-only GitHub PAT for auto-push. Exposed solely as
+                # ARK_GITHUB_PAT (never as GITHUB_TOKEN) and stripped from the
+                # agent subprocess env in ark/engines/cli.py.
+                env["ARK_GITHUB_PAT"] = v
             elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai"):
                 # Standard LLM keys
                 env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
