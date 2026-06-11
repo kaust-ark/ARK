@@ -819,9 +819,8 @@
         <div class="hero-advanced-body open" id="hero-advanced-body">
           <div class="hero-adv-field">
             <label data-i18n="model">Model</label>
-            <div style="font-size:.7rem;color:#0d9488;font-weight:600;margin:0 0 3px">✓ Verified</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="var u=document.getElementById('model-unverified'); if(u) u.value='';">
-              <div class="model-group-label">Anthropic <span style="color:#0d9488">· recommended</span></div>
+              <div class="model-group-label">Anthropic</div>
               <label class="model-option" data-provider="anthropic">
                 <input type="radio" name="model" value="claude-opus-4-8" />
                 <span class="model-chip">Opus 4.8</span>
@@ -829,6 +828,7 @@
               <label class="model-option" data-provider="anthropic">
                 <input type="radio" name="model" value="claude-sonnet-4-6" checked />
                 <span class="model-chip">Sonnet 4.6</span>
+                <span style="color:#0d9488;font-size:.68rem;font-weight:600;white-space:nowrap">★ Recommended</span>
               </label>
               <label class="model-option" data-provider="anthropic">
                 <input type="radio" name="model" value="claude-haiku-4-5" />
@@ -1200,7 +1200,7 @@
         <label>Model</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap" id="continue-model-options">
           <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-opus-4-8" /><span class="model-chip">Opus 4.8</span></label>
-          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span></label>
+          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span><span style="color:#0d9488;font-size:.68rem;font-weight:600;white-space:nowrap">★ Recommended</span></label>
           <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
           <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.5" /><span class="model-chip">GPT-5.5</span></label>
           <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.5-pro" /><span class="model-chip">GPT-5.5 Pro</span></label>
@@ -1318,7 +1318,7 @@
       <label>Model</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="restart-model-options">
         <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-opus-4-8" /><span class="model-chip">Opus 4.8</span></label>
-        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span></label>
+        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6</span><span style="color:#0d9488;font-size:.68rem;font-weight:600;white-space:nowrap">★ Recommended</span></label>
         <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
         <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.5" /><span class="model-chip">GPT-5.5</span></label>
         <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.5-pro" /><span class="model-chip">GPT-5.5 Pro</span></label>
