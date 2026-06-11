@@ -620,7 +620,7 @@ class CompilerMixin:
             self.figures_dir.mkdir(parents=True, exist_ok=True)
 
             result = subprocess.run(
-                ["bash", "-c", f"source ~/.bashrc && mamba activate {env_name} && python {script_path}"],
+                ["bash", "-c", f"source ~/.bashrc 2>/dev/null || true; mamba activate {env_name} && python {script_path}"],
                 capture_output=True,
                 text=True,
                 timeout=300,
@@ -1409,7 +1409,7 @@ output: NO_CONCEPT_FIGURES
         script_path = f"{self.config.get('scripts_dir', 'scripts')}/pdf_to_images.py"
         try:
             result = subprocess.run(
-                ["bash", "-c", f"source ~/.bashrc && mamba activate {env_name} && python {script_path} {self.latex_dir}/main.pdf --dpi 150"],
+                ["bash", "-c", f"source ~/.bashrc 2>/dev/null || true; mamba activate {env_name} && python {script_path} {self.latex_dir}/main.pdf --dpi 150"],
                 capture_output=True, text=True, timeout=120, cwd=self.code_dir,
             )
             if result.returncode == 0:
