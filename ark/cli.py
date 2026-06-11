@@ -3644,8 +3644,11 @@ def cmd_webapp(args):
             time.sleep(30)
             current = _read()
             if current and current != initial:
+                # flush=True: os._exit skips interpreter cleanup, so an
+                # unflushed line would be lost from the service log.
                 print(f"[deploy-watcher] new release {current} deployed "
-                      f"(was {initial or 'unknown'}) — recycling to load it")
+                      f"(was {initial or 'unknown'}) — recycling to load it",
+                      flush=True)
                 os._exit(86)
     import threading
     threading.Thread(target=_deploy_watcher, daemon=True, name="deploy-watcher").start()
