@@ -654,6 +654,9 @@ def launch_local_job(
                 # ARK_GITHUB_PAT (never as GITHUB_TOKEN) and stripped from the
                 # agent subprocess env in ark/engines/cli.py.
                 env["ARK_GITHUB_PAT"] = v
+            elif k == "github_org":
+                # Optional org to create project repos under (not secret).
+                env["ARK_GITHUB_ORG"] = v
             elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai"):
                 # Standard LLM keys
                 env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()

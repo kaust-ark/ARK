@@ -1630,7 +1630,7 @@ async def api_get_user_settings(request: Request):
             available_providers.append(settings.cloud_provider)
     _STD_KEY_FIELDS = {
         "gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
-        "github_pat",
+        "github_pat", "github_org",
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
         "gcp_service_account_json", "gcp_project", "gcp_zone", "gcp_instance_type",
         "gcp_image_family", "gcp_image_project", "gcp_ssh_user", "gcp_conda_env",
@@ -1642,6 +1642,7 @@ async def api_get_user_settings(request: Request):
         "openai": _mask_key(keys.get("openai")),
         "gemini": _mask_key(keys.get("gemini")),
         "github_pat": _mask_key(keys.get("github_pat")),
+        "github_org": keys.get("github_org") or "",
         "aws_access_key_id": _mask_key(keys.get("aws_access_key_id")),
         "aws_secret_access_key": _mask_key(keys.get("aws_secret_access_key")),
         "aws_default_region": keys.get("aws_default_region") or "",
@@ -1683,7 +1684,7 @@ async def api_save_user_settings(request: Request):
     
     # Update keys based on body
     fields = [
-        "gemini", "anthropic", "openai", "github_pat",
+        "gemini", "anthropic", "openai", "github_pat", "github_org",
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
         "gcp_service_account_json", "gcp_project",
         "gcp_zone", "gcp_instance_type", "gcp_image_family", "gcp_image_project",

@@ -2066,32 +2066,39 @@ a {{ color: #0d9488; }}
         """
         repo = "ark-" + re.sub(r"[^A-Za-z0-9._-]", "-", self.project_name)
 
-        # Resolve the authenticated username.
-        status, me = self._github_api("GET", "/user", pat)
-        username = (me or {}).get("login") if me else None
-        if not username:
-            self.log("Git: GitHub PAT auth failed; skipping remote setup", "WARN")
-            return
+        # Owner = the configured org if set (ARK_GITHUB_ORG), else the
+        # authenticated user. Org repos are created under /orgs/<org>/repos.
+        org = (os.environ.get("ARK_GITHUB_ORG") or "").strip()
+        if org:
+            owner = org
+            create_path = f"/orgs/{org}/repos"
+        else:
+            status, me = self._github_api("GET", "/user", pat)
+            owner = (me or {}).get("login") if me else None
+            if not owner:
+                self.log("Git: GitHub PAT auth failed; skipping remote setup", "WARN")
+                return
+            create_path = "/user/repos"
 
         # Create the private repo. 422 == already exists -> treat as success.
         status, _ = self._github_api(
-            "POST", "/user/repos", pat,
+            "POST", create_path, pat,
             body={"name": repo, "private": True, "auto_init": False},
         )
         if status not in (200, 201, 422):
-            self.log(f"Git: GitHub repo create returned HTTP {status}; skipping remote", "WARN")
+            self.log(f"Git: GitHub repo create under '{owner}' returned HTTP {status}; skipping remote", "WARN")
             return
 
         # Set remote WITHOUT any token in the URL.
         add = subprocess.run(
             ["git", "remote", "add", "origin",
-             f"https://github.com/{username}/{repo}.git"],
+             f"https://github.com/{owner}/{repo}.git"],
             cwd=self.code_dir, capture_output=True, text=True, timeout=10,
         )
         if add.returncode != 0 and "already exists" not in (add.stderr or ""):
             self.log(f"Git: failed to add remote: {add.stderr[:200]}", "WARN")
             return
-        self.log(f"Git: GitHub remote ready -> {username}/{repo} (private)", "INFO")
+        self.log(f"Git: GitHub remote ready -> {owner}/{repo} (private)", "INFO")
 
     def git_commit(self, message: str, files: list = None):
         """Auto git commit and push at key checkpoints."""

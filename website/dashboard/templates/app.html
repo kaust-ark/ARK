@@ -1602,9 +1602,10 @@
               <span class="apikey-use">Auto-push each project to a private repo</span>
               <span id="settings-github_pat-status" class="apikey-badge"></span>
             </div>
-            <input type="password" id="settings-github_pat" class="apikey-input" placeholder="github_pat_… or ghp_…" />
+            <input type="password" id="settings-github_pat" class="apikey-input" placeholder="ghp_… (classic PAT)" />
             <div id="status-github_pat" class="apikey-current"></div>
-            <div class="apikey-current">PAT needs <code>repo</code> scope (classic) or Contents+Administration read/write (fine-grained). Stored encrypted; used only by the orchestrator, never exposed to agents.</div>
+            <input type="text" id="settings-github_org" class="apikey-input" style="margin-top:8px" placeholder="Org (optional) — e.g. ark-repos; blank = your personal account" />
+            <div class="apikey-current">Use a <strong>classic PAT with <code>repo</code> scope</strong> (fine-grained PATs cannot create repos). If an org is set, repos are created there (you must be able to create repos in it). Each project → a private repo <code>ark-&lt;project&gt;</code>. Stored encrypted; used only by the orchestrator, never exposed to agents.</div>
           </div>
 
           <!-- Other (unverified) providers -->
@@ -4112,6 +4113,7 @@ async function openSettingsModal() {
     document.getElementById('settings-openai').value = data.openai || '';
     document.getElementById('settings-gemini').value = data.gemini || '';
     document.getElementById('settings-github_pat').value = data.github_pat || '';
+    document.getElementById('settings-github_org').value = data.github_org || '';
     _loadOtherProviders(data);
 
     document.getElementById('settings-aws-access-key-id').value = data.aws_access_key_id || '';
@@ -4145,7 +4147,7 @@ async function openSettingsModal() {
 
 // ── Other providers (any OpenHands/LiteLLM provider) + model gating ──
 let _otherProviders = {};
-const _STD_KEYS = new Set(['anthropic','openai','gemini','github_pat',
+const _STD_KEYS = new Set(['anthropic','openai','gemini','github_pat','github_org',
   'aws_access_key_id','aws_secret_access_key','aws_default_region',
   'gcp_service_account_json','gcp_project','gcp_zone','gcp_instance_type',
   'gcp_image_family','gcp_image_project','gcp_ssh_private_key','gcp_ssh_user',
@@ -4257,6 +4259,7 @@ async function saveUserSettings() {
       openai: document.getElementById('settings-openai').value.trim(),
       gemini: document.getElementById('settings-gemini').value.trim(),
       github_pat: document.getElementById('settings-github_pat').value.trim(),
+      github_org: document.getElementById('settings-github_org').value.trim(),
       ..._otherProvidersBody(),
       aws_access_key_id: document.getElementById('settings-aws-access-key-id').value.trim(),
       aws_secret_access_key: document.getElementById('settings-aws-secret-access-key').value.trim(),
