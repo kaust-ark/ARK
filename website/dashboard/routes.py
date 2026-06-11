@@ -1921,7 +1921,6 @@ async def api_create_project(
         # OpenAI
         "gpt-5.5-pro": ("openai", "gpt-5.5-pro"),
         "gpt-5.5": ("openai", "gpt-5.5"),
-        "gpt-5-codex": ("openai", "gpt-5-codex"),
         "gpt-5.4-mini": ("openai", "gpt-5.4-mini"),
         # Gemini (agent-verified after the FinishAction parse fix)
         "gemini-3.5-flash": ("gemini", "gemini-3.5-flash"),
