@@ -13,6 +13,8 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
+import urllib.error
 import yaml
 from datetime import datetime, timedelta
 import importlib.util
@@ -1983,6 +1985,13 @@ a {{ color: #0d9488; }}
             capture_output=True, text=True, cwd=code_dir, timeout=10,
         )
         if remote.returncode != 0:
+            # Prefer a user-supplied PAT (webapp path). The token is read from
+            # the orchestrator env only — never placed in argv, the remote URL,
+            # or .git/config.
+            pat = os.environ.get("ARK_GITHUB_PAT")
+            if pat:
+                self._setup_github_remote_pat(pat)
+                return
             # Create GitHub repo via gh CLI
             try:
                 result = subprocess.run(
@@ -2012,6 +2021,84 @@ a {{ color: #0d9488; }}
                 self.log("Git: gh CLI not found, skipping GitHub repo creation", "WARN")
             except Exception as e:
                 self.log(f"Git: GitHub repo creation failed: {e}", "WARN")
+
+    def _github_api(self, method, path, pat, body=None):
+        """Minimal GitHub REST helper using urllib (token in header, not argv).
+
+        Returns (status_code, parsed_json_or_None). Never raises for HTTP
+        errors; network/parse errors return (None, None).
+        """
+        url = "https://api.github.com" + path
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("Authorization", f"Bearer {pat}")
+        req.add_header("Accept", "application/vnd.github+json")
+        req.add_header("User-Agent", "ARK")
+        if data is not None:
+            req.add_header("Content-Type", "application/json")
+        # Conda envs often lack a system CA bundle, so urllib's default SSL
+        # context fails to verify api.github.com (curl works via the OS bundle).
+        # Use certifi's bundle. Never disable verification — this carries a token.
+        try:
+            import ssl, certifi
+            ctx = ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            ctx = None
+        try:
+            with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+                raw = resp.read().decode("utf-8")
+                return resp.status, (json.loads(raw) if raw else None)
+        except urllib.error.HTTPError as e:
+            try:
+                raw = e.read().decode("utf-8")
+                parsed = json.loads(raw) if raw else None
+            except Exception:
+                parsed = None
+            return e.code, parsed
+        except Exception:
+            return None, None
+
+    def _setup_github_remote_pat(self, pat):
+        """Create (or reuse) a private GitHub repo via PAT and add origin.
+
+        The remote URL contains NO token; the credential is supplied at
+        push time via an env-backed inline credential helper.
+        """
+        repo = "ark-" + re.sub(r"[^A-Za-z0-9._-]", "-", self.project_name)
+
+        # Owner = the configured org if set (ARK_GITHUB_ORG), else the
+        # authenticated user. Org repos are created under /orgs/<org>/repos.
+        org = (os.environ.get("ARK_GITHUB_ORG") or "").strip()
+        if org:
+            owner = org
+            create_path = f"/orgs/{org}/repos"
+        else:
+            status, me = self._github_api("GET", "/user", pat)
+            owner = (me or {}).get("login") if me else None
+            if not owner:
+                self.log("Git: GitHub PAT auth failed; skipping remote setup", "WARN")
+                return
+            create_path = "/user/repos"
+
+        # Create the private repo. 422 == already exists -> treat as success.
+        status, _ = self._github_api(
+            "POST", create_path, pat,
+            body={"name": repo, "private": True, "auto_init": False},
+        )
+        if status not in (200, 201, 422):
+            self.log(f"Git: GitHub repo create under '{owner}' returned HTTP {status}; skipping remote", "WARN")
+            return
+
+        # Set remote WITHOUT any token in the URL.
+        add = subprocess.run(
+            ["git", "remote", "add", "origin",
+             f"https://github.com/{owner}/{repo}.git"],
+            cwd=self.code_dir, capture_output=True, text=True, timeout=10,
+        )
+        if add.returncode != 0 and "already exists" not in (add.stderr or ""):
+            self.log(f"Git: failed to add remote: {add.stderr[:200]}", "WARN")
+            return
+        self.log(f"Git: GitHub remote ready -> {owner}/{repo} (private)", "INFO")
 
     def git_commit(self, message: str, files: list = None):
         """Auto git commit and push at key checkpoints."""
@@ -2056,15 +2143,30 @@ a {{ color: #0d9488; }}
 
             if result.returncode == 0:
                 self.log(f"Git commit: {message}", "INFO")
-                # Auto push
-                push = subprocess.run(
-                    ["git", "push", "-u", "origin", "HEAD"],
-                    capture_output=True, text=True, cwd=self.code_dir, timeout=60,
-                )
+                # Auto push. When a PAT is present, supply the credential at
+                # push time via an inline credential helper that reads the token
+                # from the env — the token never lands in argv or .git/config.
+                pat = os.environ.get("ARK_GITHUB_PAT")
+                if pat:
+                    helper = '!f() { echo username=x-access-token; echo "password=$ARK_GITHUB_PAT"; }; f'
+                    push = subprocess.run(
+                        ["git", "-c", "credential.helper=", "-c", f"credential.helper={helper}",
+                         "push", "-u", "origin", "HEAD"],
+                        capture_output=True, text=True, cwd=self.code_dir, timeout=120,
+                        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                    )
+                else:
+                    push = subprocess.run(
+                        ["git", "push", "-u", "origin", "HEAD"],
+                        capture_output=True, text=True, cwd=self.code_dir, timeout=60,
+                    )
                 if push.returncode == 0:
                     self.log("Git: pushed to GitHub", "INFO")
                 else:
-                    self.log(f"Git: push failed: {push.stderr[:200]}", "WARN")
+                    err = push.stderr or ""
+                    if pat:
+                        err = err.replace(pat, "***")
+                    self.log(f"Git: push failed: {err[:200]}", "WARN")
                 return True
             else:
                 self.log(f"Git commit failed: {result.stderr[:200]}", "WARN")

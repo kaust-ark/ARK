@@ -1549,6 +1549,7 @@
       <!-- Sidebar -->
       <div class="settings-sidebar">
         <button class="settings-tab-btn active" onclick="switchSettingsTab('tab-llms')" id="btn-tab-llms">API Keys</button>
+        <button class="settings-tab-btn" onclick="switchSettingsTab('tab-github')" id="btn-tab-github">GitHub</button>
         <button class="settings-tab-btn" onclick="switchSettingsTab('tab-cloud')" id="btn-tab-cloud">Cloud Compute</button>
       </div>
 
@@ -1619,6 +1620,29 @@
           </div>
         </div>
 
+
+        <!-- Tab: GitHub -->
+        <div class="settings-tab-pane" id="tab-github">
+          <p style="font-size:.8rem;color:var(--text-second);margin:0 0 18px;line-height:1.5">
+            Optionally auto-push every project to a private GitHub repo. Leave blank to skip.
+          </p>
+          <div class="apikey-card">
+            <div class="apikey-head">
+              <span class="apikey-name">GitHub Personal Access Token</span>
+              <span class="apikey-use">Auto-push each project to a private repo</span>
+              <span id="settings-github_pat-status" class="apikey-badge"></span>
+            </div>
+            <input type="password" id="settings-github_pat" class="apikey-input" placeholder="ghp_… (classic PAT)" />
+            <div id="status-github_pat" class="apikey-current"></div>
+            <input type="text" id="settings-github_org" class="apikey-input" style="margin-top:8px" placeholder="Org (optional) — e.g. ark-repos; blank = your personal account" />
+            <div class="apikey-current" style="line-height:1.65">
+              <strong>How to set up:</strong><br>
+              1. Create a <a href="https://github.com/settings/tokens/new?scopes=repo&amp;description=ARK%20auto-push" target="_blank" rel="noopener">classic PAT with the <code>repo</code> scope</a>, then paste it in the PAT box above. <em>(Fine-grained PATs can't create repos — use a classic one.)</em><br>
+              2. <strong>Organization (optional):</strong> to keep all project repos under one org, <a href="https://github.com/account/organizations/new" target="_blank" rel="noopener">create the org on GitHub first</a> — ARK can't create orgs for you — then put its name in the Org box. <strong>Leave blank to use your personal account.</strong><br>
+              Each project then auto-creates a private repo <code>ark-&lt;project&gt;</code> (in the org if set, else <code>&lt;you&gt;/ark-…</code>) and pushes its commits there. The PAT is stored encrypted and used only by the orchestrator — never exposed to the research agents.
+            </div>
+          </div>
+        </div>
 
         <!-- Tab: Cloud Compute -->
         <div class="settings-tab-pane" id="tab-cloud">
@@ -4100,6 +4124,8 @@ async function openSettingsModal() {
     document.getElementById('settings-anthropic').value = data.anthropic || '';
     document.getElementById('settings-openai').value = data.openai || '';
     document.getElementById('settings-gemini').value = data.gemini || '';
+    document.getElementById('settings-github_pat').value = data.github_pat || '';
+    document.getElementById('settings-github_org').value = data.github_org || '';
     _loadOtherProviders(data);
 
     document.getElementById('settings-aws-access-key-id').value = data.aws_access_key_id || '';
@@ -4124,6 +4150,7 @@ async function openSettingsModal() {
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
     document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
+    document.getElementById('status-github_pat').textContent = data.github_pat ? 'Current: ' + data.github_pat : '';
     window._userKeyProviders = {anthropic: !!data.anthropic, openai: !!data.openai, gemini: !!data.gemini};
     applyModelGating();
 
@@ -4132,7 +4159,7 @@ async function openSettingsModal() {
 
 // ── Other providers (any OpenHands/LiteLLM provider) + model gating ──
 let _otherProviders = {};
-const _STD_KEYS = new Set(['anthropic','openai','gemini',
+const _STD_KEYS = new Set(['anthropic','openai','gemini','github_pat','github_org',
   'aws_access_key_id','aws_secret_access_key','aws_default_region',
   'gcp_service_account_json','gcp_project','gcp_zone','gcp_instance_type',
   'gcp_image_family','gcp_image_project','gcp_ssh_private_key','gcp_ssh_user',
@@ -4243,6 +4270,8 @@ async function saveUserSettings() {
       anthropic: document.getElementById('settings-anthropic').value.trim(),
       openai: document.getElementById('settings-openai').value.trim(),
       gemini: document.getElementById('settings-gemini').value.trim(),
+      github_pat: document.getElementById('settings-github_pat').value.trim(),
+      github_org: document.getElementById('settings-github_org').value.trim(),
       ..._otherProvidersBody(),
       aws_access_key_id: document.getElementById('settings-aws-access-key-id').value.trim(),
       aws_secret_access_key: document.getElementById('settings-aws-secret-access-key').value.trim(),
@@ -4269,6 +4298,7 @@ async function saveUserSettings() {
     if (body.gemini && !body.gemini.includes('...')) document.getElementById('settings-gemini-status').innerHTML = '⏳';
     if (body.anthropic && !body.anthropic.includes('...')) document.getElementById('settings-anthropic-status').innerHTML = '⏳';
     if (body.openai && !body.openai.includes('...')) document.getElementById('settings-openai-status').innerHTML = '⏳';
+    if (body.github_pat && !body.github_pat.includes('...')) document.getElementById('settings-github_pat-status').innerHTML = '⏳';
 
     const res = await fetch(APP_BASE + '/api/user/settings', {
       method: 'POST',
@@ -4304,6 +4334,28 @@ async function saveUserSettings() {
         } else {
           // If no result returned (e.g. key was empty or hidden), clear status
           if (statusEl) statusEl.innerHTML = '';
+        }
+      }
+
+      // GitHub PAT/org verification result (from the verify suite).
+      {
+        const ghEl = document.getElementById('settings-github_pat-status');
+        const ghFoot = document.getElementById('status-github_pat');
+        const ghVal = document.getElementById('settings-github_pat').value.trim();
+        const gh = ver.github;
+        if (!ghVal) {
+          if (ghEl) ghEl.innerHTML = '';
+          if (ghFoot) { ghFoot.textContent = ''; ghFoot.style.color = ''; }
+        } else if (gh) {
+          if (ghEl) ghEl.innerHTML = gh.ok ? '✅' : '❌';
+          if (ghFoot) {
+            ghFoot.textContent = (gh.ok ? '✓ ' : '✗ ') + (gh.msg || (gh.ok ? 'OK' : 'Failed'));
+            ghFoot.style.color = gh.ok ? 'var(--green)' : 'var(--red)';
+          }
+          if (!gh.ok) allOk = false;
+        } else {
+          if (ghEl) ghEl.innerHTML = '✅';
+          if (ghFoot) { ghFoot.textContent = '✓ Saved'; ghFoot.style.color = 'var(--green)'; }
         }
       }
 

@@ -149,7 +149,10 @@ class AgentCLI(ABC):
         pass
 
     def build_env(self, code_dir: Optional[Path] = None) -> dict:
-        _strip = {"CLAUDECODE", "GEMINI_API_KEY", "GOOGLE_API_KEY"}
+        # ARK_GITHUB_PAT (and GITHUB_TOKEN) are orchestrator-only credentials
+        # used for auto-push; they must NEVER reach the autonomous agent
+        # sandbox, so they are stripped from the inherited environment here.
+        _strip = {"CLAUDECODE", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ARK_GITHUB_PAT", "GITHUB_TOKEN"}
         return {k: v for k, v in os.environ.items() if k not in _strip}
 
     def execute(self, prompt: str, path_boundary: str, code_dir: Path, timeout: int, log_fn=None) -> Tuple[int, str, str, int, bool]:
