@@ -2971,7 +2971,17 @@ def _service_file_path(service_name: str) -> Path:
 
 
 def _conda_env_python(env_name: str) -> str:
-    """Return the python binary path for a conda environment."""
+    """Return the python binary path for a conda environment.
+
+    Honors ARK_CONDA_ROOT (a shared miniforge install, e.g.
+    /data/fat/ark/conda) before the per-user locations, so a team can run
+    prod from one shared env set.
+    """
+    shared_root = os.environ.get("ARK_CONDA_ROOT")
+    if shared_root:
+        shared = Path(shared_root) / "envs" / env_name / "bin" / "python"
+        if shared.exists():
+            return str(shared)
     conda_base = Path.home() / "miniforge3" / "envs" / env_name / "bin" / "python"
     if conda_base.exists():
         return str(conda_base)
@@ -3095,6 +3105,10 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
         "ARK_WEBAPP_DB_PATH": str(db_path),
         "PROJECTS_ROOT": str(data_dir / "projects"),
     }
+    # Team installs: bake the shared conda root into the unit so the service
+    # (and the orchestrators it spawns) resolve the shared envs.
+    if os.environ.get("ARK_CONDA_ROOT"):
+        env_vars["ARK_CONDA_ROOT"] = os.environ["ARK_CONDA_ROOT"]
 
     if dev:
         env_vars["ARK_SESSION_COOKIE"] = "session_dev"
@@ -3251,36 +3265,96 @@ def _cmd_webapp_login(email: str, host: str = "0.0.0.0", port: int = None) -> No
     print()
 
 
+def _next_release_tag(repo_dir) -> str:
+    """Next vX.Y.Z tag: latest v* tag with the patch bumped (v0.1.0 if none)."""
+    import subprocess as _sp
+    try:
+        result = _sp.run(
+            ["git", "tag", "--list", "v*", "--sort=-v:refname"],
+            capture_output=True, text=True, cwd=repo_dir,
+        )
+        tags = [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
+    except Exception:
+        tags = []
+    if tags:
+        parts = tags[0].lstrip("v").split(".")
+        try:
+            parts[-1] = str(int(parts[-1]) + 1)
+            return "v" + ".".join(parts)
+        except (ValueError, IndexError):
+            return "v0.1.0"
+    return "v0.1.0"
+
+
+def _cmd_webapp_publish(args):
+    """Tag origin/main as the next release and push the tag.
+
+    Collaborator-facing trigger for tag-driven deployment: anyone with git
+    push rights runs this from their own clone. The deploy watcher on the
+    serving host sees the new tag and runs `ark webapp release` there.
+    Merging to main does NOT deploy — publishing is this explicit action.
+    """
+    import subprocess as _sp
+    ark_root = get_ark_root()
+
+    # Tag what's on origin/main (the reviewed, merged state) — not local HEAD.
+    r = _sp.run(["git", "fetch", "origin", "main", "--tags"],
+                capture_output=True, text=True, cwd=ark_root)
+    if r.returncode != 0:
+        print(f"  {_c('Error:', Colors.RED)} git fetch failed: {r.stderr.strip()[:200]}")
+        return 1
+    head = _sp.run(["git", "rev-parse", "--short", "origin/main"],
+                   capture_output=True, text=True, cwd=ark_root).stdout.strip()
+    subject = _sp.run(["git", "log", "-1", "--format=%s", "origin/main"],
+                      capture_output=True, text=True, cwd=ark_root).stdout.strip()
+
+    tag = getattr(args, 'tag', None) or _next_release_tag(ark_root)
+    print(f"  {_c('Publishing:', Colors.BOLD)} origin/main @ {head} — {subject[:70]}")
+    print(f"  {_c('Release tag:', Colors.BOLD)} {tag}")
+    if not getattr(args, 'yes', False):
+        if not prompt_yn("  Tag and push (this deploys to prod)?", default=True):
+            print("  Aborted.")
+            return 1
+
+    r = _sp.run(["git", "tag", "-a", tag, "origin/main", "-m", f"release {tag}"],
+                capture_output=True, text=True, cwd=ark_root)
+    if r.returncode != 0:
+        print(f"  {_c('Error:', Colors.RED)} {r.stderr.strip()[:200]}")
+        return 1
+    r = _sp.run(["git", "push", "origin", tag],
+                capture_output=True, text=True, cwd=ark_root)
+    if r.returncode != 0:
+        print(f"  {_c('Error:', Colors.RED)} push failed: {r.stderr.strip()[:200]}")
+        _sp.run(["git", "tag", "-d", tag], capture_output=True, cwd=ark_root)
+        return 1
+    print(f"  {_c('Pushed:', Colors.GREEN)} {tag} — the deploy watcher rolls it out within ~2 min.")
+    return 0
+
+
 def _cmd_webapp_release(args):
     """Tag current commit, create/update prod worktree, restart prod service."""
     import subprocess as _sp
 
     ark_root = get_ark_root()
 
-    # 1. Determine version tag
-    # Find latest vX.Y.Z tag and bump patch
-    try:
-        result = _sp.run(
-            ["git", "tag", "--list", "v*", "--sort=-v:refname"],
-            capture_output=True, text=True, cwd=ark_root,
-        )
-        tags = [t.strip() for t in result.stdout.strip().split("\n") if t.strip()]
-    except Exception:
-        tags = []
+    # Shared-deployment mode: when ARK_RELEASE_ROOT points at a shared ARK
+    # checkout (e.g. /data/fat/ark/ARK), the tag is created here, pushed to
+    # origin, and DEPLOYED there — so any team member can release prod from
+    # their own clone. Unset → classic single-host behaviour.
+    release_root = os.environ.get("ARK_RELEASE_ROOT", "").strip()
+    release_root = Path(release_root).expanduser() if release_root else None
+    if release_root and release_root.resolve() == Path(ark_root).resolve():
+        release_root = None  # deploying to ourselves — classic path
 
-    if tags:
-        latest = tags[0]  # e.g. v0.1.2
-        parts = latest.lstrip("v").split(".")
-        try:
-            parts[-1] = str(int(parts[-1]) + 1)
-            next_tag = "v" + ".".join(parts)
-        except (ValueError, IndexError):
-            next_tag = "v0.1.0"
-    else:
-        next_tag = "v0.1.0"
+    if release_root:
+        # See the full v* tag namespace before computing the next version.
+        _sp.run(["git", "fetch", "origin", "--tags"],
+                capture_output=True, text=True, cwd=ark_root)
 
-    tag = getattr(args, 'tag', None) or next_tag
+    tag = getattr(args, 'tag', None) or _next_release_tag(ark_root)
     print(f"  {_c('Release version:', Colors.BOLD)} {tag}")
+    if release_root:
+        print(f"  {_c('Deploy target:', Colors.BOLD)} {release_root} (shared)")
 
     # 2. Check for uncommitted changes
     status = _sp.run(["git", "status", "--porcelain"], capture_output=True, text=True, cwd=ark_root)
@@ -3300,13 +3374,28 @@ def _cmd_webapp_release(args):
     else:
         print(f"  {_c('Tagged:', Colors.GREEN)} {tag}")
 
+    # 3b. Shared deployment: the tag must reach the shared checkout via origin.
+    deploy_repo = ark_root
+    if release_root:
+        r = _sp.run(["git", "push", "origin", tag],
+                    capture_output=True, text=True, cwd=ark_root)
+        if r.returncode != 0 and "already exists" not in (r.stderr or ""):
+            print(f"  {_c(f'Error: tag push failed: {r.stderr.strip()[:200]}', Colors.RED)}")
+            return
+        r = _sp.run(["git", "fetch", "origin", "--tags"],
+                    capture_output=True, text=True, cwd=release_root)
+        if r.returncode != 0:
+            print(f"  {_c(f'Error: fetch in {release_root} failed: {r.stderr.strip()[:200]}', Colors.RED)}")
+            return
+        deploy_repo = release_root
+
     # 4. Create or update prod worktree
-    prod_dir = _get_prod_worktree_dir()
+    prod_dir = (release_root / ".ark" / "prod") if release_root else _get_prod_worktree_dir()
     if not prod_dir.exists():
         print(f"  Creating prod worktree at {_c(str(prod_dir), Colors.CYAN)}...")
         r = _sp.run(
             ["git", "worktree", "add", "--detach", str(prod_dir), tag],
-            capture_output=True, text=True, cwd=ark_root,
+            capture_output=True, text=True, cwd=deploy_repo,
         )
         if r.returncode != 0:
             print(f"  {_c(f'Error: {r.stderr.strip()}', Colors.RED)}")
@@ -3356,21 +3445,39 @@ def _cmd_webapp_release(args):
     if r.returncode != 0:
         print(f"  {_c(f'pip install warning: {r.stderr.strip()[:200]}', Colors.YELLOW)}")
 
-    # 6. Symlink shared webapp.env into prod worktree
+    # 6. Symlink shared webapp.env into prod worktree. In shared mode the env
+    # file lives under the SHARED checkout's .ark, not the releasing clone's.
     prod_ark_dir = prod_dir / ".ark"
     prod_ark_dir.mkdir(parents=True, exist_ok=True)
     prod_env_link = prod_ark_dir / "webapp.env"
-    main_env = get_config_dir() / "webapp.env"
+    main_env = (release_root / ".ark" / "webapp.env") if release_root else (get_config_dir() / "webapp.env")
     if main_env.exists():
         prod_env_link.unlink(missing_ok=True)
         prod_env_link.symlink_to(main_env)
 
-    # 7. Restart prod service if running
+    # 6b. Deploy marker: the running webapp watches this file and exits when
+    # the tag changes; its supervisor (systemd Restart=) brings it back up on
+    # the new code. This is what lets ANY team member release without owning
+    # the service. Written last so the new code is fully in place first.
+    try:
+        (prod_dir / ".deployed-tag").write_text(tag + "\n")
+    except OSError as e:
+        print(f"  {_c(f'deploy marker warning: {e}', Colors.YELLOW)}")
+
+    # 7. Restart prod service if running. With a shared deployment the service
+    # usually belongs to another user — restart failure is fine there, the
+    # deploy marker (6b) makes the webapp recycle itself.
     svc_path = _service_file_path(_PROD_SERVICE)
     if svc_path.exists():
         print(f"  Restarting prod service...")
-        _sp.run(["systemctl", "--user", "restart", _PROD_SERVICE], check=True)
-        print(f"  {_c('Prod service restarted.', Colors.GREEN)}")
+        rr = _sp.run(["systemctl", "--user", "restart", _PROD_SERVICE],
+                     capture_output=True, text=True)
+        if rr.returncode == 0:
+            print(f"  {_c('Prod service restarted.', Colors.GREEN)}")
+        else:
+            print(f"  {_c('Service restart not possible from this account — the deploy marker will recycle the webapp within ~30s.', Colors.YELLOW)}")
+    elif release_root:
+        print(f"  No local service (shared deploy) — the deploy marker recycles the webapp within ~30s.")
     else:
         print(f"\n  Prod worktree ready. Install the service with:")
         print(f"    {_c('ark webapp install', Colors.BOLD)}")
@@ -3469,6 +3576,8 @@ def cmd_webapp(args):
     if subcmd == 'release':
         _cmd_webapp_release(args)
         return
+    if subcmd == 'publish':
+        return _cmd_webapp_publish(args)
     if subcmd == 'login':
         _cmd_webapp_login(args.email, getattr(args, 'host', '0.0.0.0'),
                            getattr(args, 'port', _PROD_PORT))
@@ -3516,6 +3625,31 @@ def cmd_webapp(args):
         os.close(fd)
 
     print(f"\n  {_c('ARK Research Portal', Colors.BOLD)} — http://{host}:{port}\n")
+
+    # Self-restart on new deployment: `ark webapp release` writes the released
+    # tag to <ark root>/.deployed-tag. When that marker changes, exit non-zero
+    # so the supervisor (systemd Restart=) relaunches us on the new code. This
+    # is what makes releases work for team members who don't own the service.
+    # Dev checkouts have no marker, so the watcher never fires there.
+    def _deploy_watcher():
+        import time
+        marker = get_ark_root() / ".deployed-tag"
+        def _read():
+            try:
+                return marker.read_text().strip() or None
+            except OSError:
+                return None
+        initial = _read()
+        while True:
+            time.sleep(30)
+            current = _read()
+            if current and current != initial:
+                print(f"[deploy-watcher] new release {current} deployed "
+                      f"(was {initial or 'unknown'}) — recycling to load it")
+                os._exit(86)
+    import threading
+    threading.Thread(target=_deploy_watcher, daemon=True, name="deploy-watcher").start()
+
     app = create_app()
     uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -4340,6 +4474,9 @@ def main():
     p_svc_restart.add_argument("--dev", action="store_true", help="Restart dev service")
     p_release = webapp_sub.add_parser("release", help="Tag and deploy to prod environment")
     p_release.add_argument("--tag", type=str, default=None, help="Version tag (default: auto-increment)")
+    p_publish = webapp_sub.add_parser("publish", help="Tag origin/main as a release and push (deploy watcher rolls it out)")
+    p_publish.add_argument("--tag", type=str, default=None, help="Version tag (default: auto-increment)")
+    p_publish.add_argument("-y", "--yes", action="store_true", help="Skip confirmation")
     p_login = webapp_sub.add_parser("login", help="Generate a magic-link URL (self-host, no SMTP)")
     p_login.add_argument("email", help="Email to log in as (will be created on first use)")
     p_webapp.add_argument("--port", type=int, default=9527, help="Port (default: 9527)")

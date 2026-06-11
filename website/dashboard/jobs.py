@@ -36,6 +36,14 @@ def find_conda_binary() -> str | None:
     Environment=PATH=). Tries shutil.which, then $CONDA_EXE, then common
     install prefixes under $HOME.
     """
+    # Shared team install (e.g. /data/fat/ark/conda) takes precedence so every
+    # member resolves the same conda/envs.
+    shared_root = os.environ.get("ARK_CONDA_ROOT")
+    if shared_root:
+        for rel in ("condabin/conda", "bin/conda"):
+            cand = Path(shared_root) / rel
+            if cand.is_file():
+                return str(cand)
     found = shutil.which("conda")
     if found:
         return found
