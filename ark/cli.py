@@ -3363,6 +3363,24 @@ def _cmd_webapp_release(args):
         # Everything written into the shared tree must stay group-writable
         # regardless of the releasing user's shell umask.
         os.umask(0o002)
+        # Writing the shared tree needs its group active. Login sessions that
+        # predate the user's group membership don't have it — transparently
+        # re-exec this same release under `sg` so `ark webapp release` is a
+        # true one-command deploy from any shell.
+        gid = os.stat(release_root).st_gid
+        if gid not in os.getgroups() and not os.environ.get("ARK_SG_REEXEC"):
+            import grp as _grp
+            import shlex as _shlex
+            gname = _grp.getgrgid(gid).gr_name
+            argv = [sys.executable, "-m", "ark.cli", "webapp", "release"]
+            if getattr(args, "tag", None):
+                argv += ["--tag", args.tag]
+            print(f"  {_c('Note:', Colors.DIM)} activating group '{gname}' for this release (sg)...",
+                  flush=True)
+            env = {**os.environ, "ARK_SG_REEXEC": "1"}
+            rc = _sp.call(["sg", gname, "-c",
+                           " ".join(_shlex.quote(x) for x in argv)], env=env)
+            sys.exit(rc)
 
     if release_root:
         # See the full v* tag namespace before computing the next version.
