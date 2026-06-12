@@ -160,6 +160,28 @@ def _apply_url_annotations(text: str, annotations: Iterable | None) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _model_output_contents(interaction) -> list:
+    """Flatten an interaction's results into a list of content items.
+
+    The May-2026 API replaced the flat ``outputs`` array with a ``steps``
+    array (google-genai >= 2.0): model content now lives in
+    ``steps[].content`` on steps with ``type == "model_output"`` (other step
+    types — ``thought``, tool calls — carry no report content). Items keep
+    the same shape (.type/.text/.annotations/.data/.mime_type), so the rest
+    of this module is schema-agnostic. Falls back to ``outputs`` for the
+    legacy schema (old SDKs / recorded fixtures).
+    """
+    steps = getattr(interaction, "steps", None)
+    if steps is None:
+        return list(getattr(interaction, "outputs", None) or [])
+    items: list = []
+    for s in steps or []:
+        if getattr(s, "type", "") != "model_output":
+            continue
+        items.extend(list(getattr(s, "content", None) or []))
+    return items
+
+
 def _assemble_report(outputs: Iterable, assets_dir: Path) -> str:
     """Build the final markdown body from a Deep Research interaction.
 
@@ -304,9 +326,8 @@ def run_deep_research(
                 # interaction shape we expect.
                 output_dir.mkdir(parents=True, exist_ok=True)
                 assets_dir = output_dir / "deep_research_assets"
-                report_text = _assemble_report(
-                    list(interaction.outputs or []), assets_dir
-                )
+                contents = _model_output_contents(interaction)
+                report_text = _assemble_report(contents, assets_dir)
 
                 if not report_text.strip():
                     print("  Warning: Research completed but no text output found.")
@@ -326,9 +347,9 @@ def run_deep_research(
                 print()
                 print(f"  Research completed! ({elapsed_str})")
                 print(f"  Report saved: {report_path}")
-                print(f"  Outputs: {len(list(interaction.outputs or []))} items "
-                      f"({sum(1 for o in (interaction.outputs or []) if getattr(o, 'type', '') == 'text')} text, "
-                      f"{sum(1 for o in (interaction.outputs or []) if getattr(o, 'type', '') == 'image')} image)")
+                print(f"  Outputs: {len(contents)} items "
+                      f"({sum(1 for o in contents if getattr(o, 'type', '') == 'text')} text, "
+                      f"{sum(1 for o in contents if getattr(o, 'type', '') == 'image')} image)")
                 print()
 
                 return str(report_path)

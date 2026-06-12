@@ -215,3 +215,38 @@ def test_annotations_resolved_in_concatenated_output(tmp_path):
 def test_empty_outputs_returns_empty_string(tmp_path):
     assert _assemble_report([], tmp_path / "assets") == ""
     assert _assemble_report(None, tmp_path / "assets") == ""
+
+
+# ── May-2026 `steps` schema (google-genai >= 2.0) ────────────────────
+
+from ark.deep_research import _model_output_contents
+
+
+def test_steps_schema_flattens_model_output_content():
+    """v2 interactions carry content in steps[].content; thought/tool steps
+    carry none. Items must come back flat, in order, ready for
+    _assemble_report."""
+    it = SimpleNamespace(steps=[
+        SimpleNamespace(type="thought", content=[]),
+        SimpleNamespace(type="model_output", content=[_text("part one")]),
+        SimpleNamespace(type="tool_call", content=[_text("IGNORED")]),
+        SimpleNamespace(type="model_output",
+                        content=[_text("part two"), _image(b"png")]),
+    ])
+    items = _model_output_contents(it)
+    assert [getattr(i, "type") for i in items] == ["text", "text", "image"]
+    assert items[0].text == "part one" and items[1].text == "part two"
+
+
+def test_legacy_outputs_schema_still_supported():
+    """Old SDKs / recorded fixtures expose .outputs — fallback must work."""
+    it = SimpleNamespace(outputs=[_text("legacy body")])
+    assert [i.text for i in _model_output_contents(it)] == ["legacy body"]
+
+
+def test_steps_schema_assembles_into_report(tmp_path):
+    it = SimpleNamespace(steps=[
+        SimpleNamespace(type="model_output", content=[_text("Body."), _text("Sources.")]),
+    ])
+    out = _assemble_report(_model_output_contents(it), tmp_path / "assets")
+    assert "Body." in out and "Sources." in out
