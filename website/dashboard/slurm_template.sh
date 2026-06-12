@@ -19,10 +19,18 @@ source ~/.bashrc
 # Shared team locations first (ARK_TOOLS_BIN / ARK_TEXLIVE_BIN propagate via
 # sbatch's exported environment), then per-user fallbacks.
 export PATH="${ARK_TOOLS_BIN:+$ARK_TOOLS_BIN:}${ARK_TEXLIVE_BIN:+$ARK_TEXLIVE_BIN:}$HOME/.local/bin:$HOME/texlive/2025/bin/x86_64-linux:$PATH"
+# On a team deployment, ARK_CONDA_ROOT propagates via sbatch's exported
+# environment — make its conda function and shared envs available so the
+# fallback env resolves even when the user's personal conda lacks it.
+if [ -n "${ARK_CONDA_ROOT:-}" ] && [ -f "$ARK_CONDA_ROOT/etc/profile.d/conda.sh" ]; then
+    source "$ARK_CONDA_ROOT/etc/profile.d/conda.sh"
+fi
 # Prefer the project-local conda env (created at submission time);
 # fall back to the shared {{ conda_env }} env for legacy projects.
 if [ -d "{{ project_dir }}/.env/conda-meta" ]; then
     conda activate "{{ project_dir }}/.env"
+elif [ -n "${ARK_CONDA_ROOT:-}" ] && [ -d "$ARK_CONDA_ROOT/envs/{{ conda_env }}" ]; then
+    conda activate "$ARK_CONDA_ROOT/envs/{{ conda_env }}"
 else
     conda activate {{ conda_env }}
 fi
