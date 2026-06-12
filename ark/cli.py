@@ -3047,8 +3047,11 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
 
     from ark.paths import get_primary_ip
 
-    # Shared data directory for both dev and prod
-    data_dir = get_ark_root() / ".ark" / "data"
+    # Shared data directory for both dev and prod. When ARK_RELEASE_ROOT
+    # points at the team's shared checkout, dev/prod/CLI all use ITS data
+    # (one DB for everyone) regardless of which clone runs the service.
+    _shared = os.environ.get("ARK_RELEASE_ROOT", "").strip()
+    data_dir = (Path(_shared) if _shared else get_ark_root()) / ".ark" / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     db_path = data_dir / "webapp.db"
 
