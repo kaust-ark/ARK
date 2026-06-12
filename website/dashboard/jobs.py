@@ -37,8 +37,9 @@ def find_conda_binary() -> str | None:
     install prefixes under $HOME.
     """
     # Shared team install (e.g. /data/fat/ark/conda) takes precedence so every
-    # member resolves the same conda/envs.
-    shared_root = os.environ.get("ARK_CONDA_ROOT")
+    # member resolves the same conda/envs. Env var, else pyproject [tool.ark].
+    from ark.paths import get_team_config
+    shared_root = get_team_config().get("conda_root")
     if shared_root:
         for rel in ("condabin/conda", "bin/conda"):
             cand = Path(shared_root) / rel
@@ -215,12 +216,13 @@ def build_subprocess_path(extra: list[str] | None = None) -> str:
     parts: list[str] = list(extra or [])
     home = Path(os.path.expanduser("~"))
 
-    # Shared team locations first (set by the service unit / user shells on a
-    # team deployment) — then per-user fallbacks.
-    for env_key in ("ARK_TOOLS_BIN", "ARK_TEXLIVE_BIN"):
-        v = os.environ.get(env_key, "").strip()
-        if v and Path(v).is_dir():
-            parts.append(v)
+    # Shared team locations first (env vars or pyproject [tool.ark]) — then
+    # per-user fallbacks.
+    from ark.paths import get_team_config
+    _team = get_team_config()
+    for v in (_team.get("tools_bin"), os.environ.get("ARK_TEXLIVE_BIN", "").strip()):
+        if v and Path(str(v)).is_dir():
+            parts.append(str(v))
 
     openhands = shutil.which("openhands")
     if openhands:

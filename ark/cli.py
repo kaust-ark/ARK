@@ -2973,11 +2973,12 @@ def _service_file_path(service_name: str) -> Path:
 def _conda_env_python(env_name: str) -> str:
     """Return the python binary path for a conda environment.
 
-    Honors ARK_CONDA_ROOT (a shared miniforge install, e.g.
-    /data/fat/ark/conda) before the per-user locations, so a team can run
+    Honors the shared conda root (ARK_CONDA_ROOT env, else pyproject
+    [tool.ark] conda_root) before the per-user locations, so a team can run
     prod from one shared env set.
     """
-    shared_root = os.environ.get("ARK_CONDA_ROOT")
+    from ark.paths import get_team_config
+    shared_root = get_team_config().get("conda_root")
     if shared_root:
         shared = Path(shared_root) / "envs" / env_name / "bin" / "python"
         if shared.exists():
@@ -3047,10 +3048,12 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
 
     from ark.paths import get_primary_ip
 
-    # Shared data directory for both dev and prod. When ARK_RELEASE_ROOT
-    # points at the team's shared checkout, dev/prod/CLI all use ITS data
-    # (one DB for everyone) regardless of which clone runs the service.
-    _shared = os.environ.get("ARK_RELEASE_ROOT", "").strip()
+    # Shared data directory for both dev and prod. When a shared checkout is
+    # configured (ARK_RELEASE_ROOT env, else pyproject [tool.ark]), dev/prod/
+    # CLI all use ITS data (one DB for everyone) regardless of which clone
+    # runs the service.
+    from ark.paths import get_team_config
+    _shared = str(get_team_config().get("release_root") or "").strip()
     data_dir = (Path(_shared) if _shared else get_ark_root()) / ".ark" / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     db_path = data_dir / "webapp.db"
@@ -3109,10 +3112,15 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
         "PROJECTS_ROOT": str(data_dir / "projects"),
     }
     # Team installs: bake the shared roots into the unit so the service (and
-    # the orchestrators it spawns) resolve the shared envs/tools.
-    for _shared_key in ("ARK_CONDA_ROOT", "ARK_TOOLS_BIN", "ARK_TEXLIVE_BIN"):
-        if os.environ.get(_shared_key):
-            env_vars[_shared_key] = os.environ[_shared_key]
+    # the orchestrators it spawns) resolve the shared envs/tools. Sourced from
+    # env vars or pyproject [tool.ark] (env wins; missing paths dropped).
+    _team = get_team_config()
+    for _cfg_key, _shared_key in (("conda_root", "ARK_CONDA_ROOT"),
+                                  ("tools_bin", "ARK_TOOLS_BIN")):
+        if _team.get(_cfg_key):
+            env_vars[_shared_key] = str(_team[_cfg_key])
+    if os.environ.get("ARK_TEXLIVE_BIN"):
+        env_vars["ARK_TEXLIVE_BIN"] = os.environ["ARK_TEXLIVE_BIN"]
 
     if dev:
         env_vars["ARK_SESSION_COOKIE"] = "session_dev"
@@ -3341,14 +3349,20 @@ def _cmd_webapp_release(args):
 
     ark_root = get_ark_root()
 
-    # Shared-deployment mode: when ARK_RELEASE_ROOT points at a shared ARK
-    # checkout (e.g. /data/fat/ark/ARK), the tag is created here, pushed to
-    # origin, and DEPLOYED there — so any team member can release prod from
-    # their own clone. Unset → classic single-host behaviour.
-    release_root = os.environ.get("ARK_RELEASE_ROOT", "").strip()
+    # Shared-deployment mode: when a shared ARK checkout is configured
+    # (ARK_RELEASE_ROOT env, else pyproject [tool.ark] release_root), the tag
+    # is created here, pushed to origin, and DEPLOYED there — so any team
+    # member can release prod from their own clone. Unset → classic
+    # single-host behaviour.
+    from ark.paths import get_team_config
+    release_root = str(get_team_config().get("release_root") or "").strip()
     release_root = Path(release_root).expanduser() if release_root else None
     if release_root and release_root.resolve() == Path(ark_root).resolve():
         release_root = None  # deploying to ourselves — classic path
+    if release_root:
+        # Everything written into the shared tree must stay group-writable
+        # regardless of the releasing user's shell umask.
+        os.umask(0o002)
 
     if release_root:
         # See the full v* tag namespace before computing the next version.
@@ -4002,6 +4016,82 @@ def cmd_list(args):
 
 
 # ============================================================
+#  ark activate — drop into the shared-prod shell
+# ============================================================
+
+def cmd_activate(args):
+    """Open a subshell wired for the team's shared prod deployment.
+
+    Inside: shared conda env activated, ARK_RELEASE_ROOT/ARK_CONDA_ROOT/
+    ARK_TOOLS_BIN exported, umask 002, prompt badge, and the shared dir's
+    group made active (via ``sg``) if the current session lacks it. `exit`
+    returns to the user's own environment. ``-c CMD`` runs one command
+    non-interactively instead (for scripts/tests).
+    """
+    import grp as _grp
+    import shlex as _shlex
+    import subprocess as _sp
+    import tempfile as _tf
+    from ark.paths import get_team_config
+
+    team = get_team_config()
+    rr, cr = team.get("release_root"), team.get("conda_root")
+    tb = team.get("tools_bin", "")
+    if not (rr and cr):
+        print(f"{_c('Error:', Colors.RED)} no team deployment configured — "
+              "set [tool.ark] in pyproject.toml or ARK_RELEASE_ROOT/ARK_CONDA_ROOT.")
+        return 1
+    raw = getattr(args, "env", None) or "prod"
+    env_name = {"prod": "ark-prod", "base": "ark-base"}.get(raw, raw)
+    env_path = Path(cr) / "envs" / env_name
+    if not env_path.exists():
+        print(f"{_c('Error:', Colors.RED)} shared env not found: {env_path}")
+        return 1
+
+    setup = f"""
+[ -f ~/.bashrc ] && source ~/.bashrc
+export ARK_RELEASE_ROOT={_shlex.quote(str(rr))}
+export ARK_CONDA_ROOT={_shlex.quote(str(cr))}
+{f'export ARK_TOOLS_BIN={_shlex.quote(str(tb))}' if tb else ''}
+{f'export PATH={_shlex.quote(str(tb))}:$PATH' if tb else ''}
+umask 002
+source {_shlex.quote(str(Path(cr) / 'etc' / 'profile.d' / 'conda.sh'))}
+conda activate {_shlex.quote(str(env_path))}
+export PS1="(ark:{env_name}) $PS1"
+"""
+    # Make the shared dir's group active for this shell, so writes (release,
+    # pip into the shared env) work even when the login session predates the
+    # user's group membership.
+    gid = os.stat(rr).st_gid
+    need_sg = gid not in os.getgroups()
+    gname = _grp.getgrgid(gid).gr_name if need_sg else None
+
+    one_shot = getattr(args, "command", None)
+    with _tf.NamedTemporaryFile("w", suffix=".ark-activate.rc", delete=False) as f:
+        if one_shot:
+            f.write(setup + "\n" + one_shot + "\n")
+        else:
+            f.write(setup)
+        rcfile = f.name
+    try:
+        if one_shot:
+            inner = ["bash", rcfile]
+        else:
+            print(f"  {_c(f'Entering shared prod shell ({env_name})', Colors.CYAN)} — type {_c('exit', Colors.BOLD)} to leave.")
+            inner = ["bash", "--rcfile", rcfile, "-i"]
+        if need_sg:
+            r = _sp.call(["sg", gname, "-c", " ".join(_shlex.quote(x) for x in inner)])
+        else:
+            r = _sp.call(inner)
+        return r
+    finally:
+        try:
+            os.unlink(rcfile)
+        except OSError:
+            pass
+
+
+# ============================================================
 #  ark doctor — diagnose a self-host install
 # ============================================================
 
@@ -4451,6 +4541,11 @@ def main():
     p_list.set_defaults(func=cmd_list)
 
     # ark doctor
+    p_activate = subparsers.add_parser("activate", help="Open a shell wired for the shared prod deployment (exit to leave)")
+    p_activate.add_argument("env", nargs="?", default="prod", help="prod | base | a shared env name (default: prod)")
+    p_activate.add_argument("-c", "--command", type=str, default=None, help="Run one command in the prod shell instead of going interactive")
+    p_activate.set_defaults(func=cmd_activate)
+
     p_doctor = subparsers.add_parser("doctor", help="Diagnose a self-host install (python, envs, API keys, webapp)")
     p_doctor.set_defaults(func=cmd_doctor)
 

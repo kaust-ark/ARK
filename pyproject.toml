@@ -63,3 +63,12 @@ include = ["ark*", "website*"]
 [tool.setuptools.package-data]
 ark = ["templates/**/*"]
 website = ["dashboard/static/**/*", "dashboard/templates/**/*", "dashboard/slurm_template.sh"]
+
+[tool.ark]
+# Team deployment (shared prod). Used by `ark activate prod` and as the
+# fallback for ARK_RELEASE_ROOT / ARK_CONDA_ROOT / ARK_TOOLS_BIN when those
+# env vars are unset. Ignored automatically when the paths don't exist on
+# this machine (e.g. external self-hosters).
+release_root = "/data/fat/ark/ARK"
+conda_root   = "/data/fat/ark/conda"
+tools_bin    = "/data/fat/ark/tools/bin"
