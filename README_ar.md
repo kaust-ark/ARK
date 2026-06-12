@@ -284,6 +284,19 @@ ark run myproject
 
 </details>
 
+### النشر الجماعي (prod مشترك)
+
+يمكن للفريق تشغيل نسخة إنتاج واحدة من مجلد مشترك قابل للكتابة من قبل المجموعة، بينما يطوّر كل عضو في نسخته الخاصة وينشر بأمر واحد. في ملف shell rc لكل عضو:
+
+```bash
+export ARK_RELEASE_ROOT=/shared/path/ARK    # النسخة المشتركة: prod worktree وقاعدة البيانات والمشاريع
+export ARK_CONDA_ROOT=/shared/path/conda    # conda المشترك (بيئتا ark-prod / ark-base)
+export ARK_TOOLS_BIN=/shared/path/tools/bin # OpenHands CLI المشترك
+umask 002                                   # إبقاء الملفات الجديدة قابلة للكتابة من المجموعة
+```
+
+بعد الإعداد، يكفي أن يشغّل **أي عضو** الأمر `ark webapp release` من نسخته: يوسم الإصدار ويدفعه ويحدّث prod worktree المشترك ويثبّت في البيئة المشتركة؛ ثم يلاحظ تطبيق الويب تغيّر علامة `.deployed-tag` ويعيد تشغيل نفسه خلال ~30 ثانية — دون الحاجة لامتلاك الخدمة.
+
 <details>
 <summary><strong>الاستدعاء المباشر للمنسق</strong></summary>
 

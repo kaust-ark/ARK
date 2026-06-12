@@ -284,6 +284,19 @@ ARK 包含一个基于 Web 的仪表板，用于管理项目、查看分数和�
 
 </details>
 
+### 团队部署（共享 prod）
+
+团队可以从一个组可写的共享目录运行唯一的生产实例，每个成员在自己的 clone 里开发，一条命令发布。在每个成员的 shell rc 中设置：
+
+```bash
+export ARK_RELEASE_ROOT=/shared/path/ARK    # 共享 checkout: prod worktree、数据库、项目
+export ARK_CONDA_ROOT=/shared/path/conda    # 共享 conda (ark-prod / ark-base 环境)
+export ARK_TOOLS_BIN=/shared/path/tools/bin # 共享 OpenHands CLI
+umask 002                                   # 新文件保持组可写
+```
+
+设置后，**任何成员**在自己 clone 里运行 `ark webapp release` 即可：打版本 tag、推送、更新共享 prod worktree、安装进共享环境；运行中的 webapp 检测到 `.deployed-tag` 标记变化后约 30 秒内自动重启加载新版——无需拥有服务。`ark webapp install` 会把共享路径（以及 `$ARK_RELEASE_ROOT/.ark/data` 下的共享数据库）写入生成的服务单元。
+
 <details>
 <summary><strong>直接调用编排器</strong></summary>
 

@@ -301,6 +301,26 @@ Configured via `.ark/webapp.env` (auto-created on first `ark webapp` run). Set `
 
 </details>
 
+### Team Deployment (shared prod)
+
+A team can serve one production instance from a shared, group-writable
+directory while every member develops in their own clone and releases with a
+single command. Set in each member's shell rc:
+
+```bash
+export ARK_RELEASE_ROOT=/shared/path/ARK    # shared checkout: prod worktree, DB, projects
+export ARK_CONDA_ROOT=/shared/path/conda    # shared conda (ark-prod / ark-base envs)
+export ARK_TOOLS_BIN=/shared/path/tools/bin # shared OpenHands CLI
+umask 002                                   # keep new files group-writable
+```
+
+With these set, `ark webapp release` from **any member's clone** tags the
+release, pushes the tag, updates the shared prod worktree, and installs into
+the shared env; the running webapp notices the new `.deployed-tag` marker and
+recycles itself within ~30s — no service ownership needed. `ark webapp
+install` bakes the shared paths (and the shared DB under
+`$ARK_RELEASE_ROOT/.ark/data`) into the generated unit.
+
 <details>
 <summary><strong>Direct orchestrator invocation</strong></summary>
 
