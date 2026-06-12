@@ -3108,10 +3108,11 @@ def _cmd_webapp_install(host: str, port: int, dev: bool = False):
         "ARK_WEBAPP_DB_PATH": str(db_path),
         "PROJECTS_ROOT": str(data_dir / "projects"),
     }
-    # Team installs: bake the shared conda root into the unit so the service
-    # (and the orchestrators it spawns) resolve the shared envs.
-    if os.environ.get("ARK_CONDA_ROOT"):
-        env_vars["ARK_CONDA_ROOT"] = os.environ["ARK_CONDA_ROOT"]
+    # Team installs: bake the shared roots into the unit so the service (and
+    # the orchestrators it spawns) resolve the shared envs/tools.
+    for _shared_key in ("ARK_CONDA_ROOT", "ARK_TOOLS_BIN", "ARK_TEXLIVE_BIN"):
+        if os.environ.get(_shared_key):
+            env_vars[_shared_key] = os.environ[_shared_key]
 
     if dev:
         env_vars["ARK_SESSION_COOKIE"] = "session_dev"

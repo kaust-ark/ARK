@@ -215,6 +215,13 @@ def build_subprocess_path(extra: list[str] | None = None) -> str:
     parts: list[str] = list(extra or [])
     home = Path(os.path.expanduser("~"))
 
+    # Shared team locations first (set by the service unit / user shells on a
+    # team deployment) — then per-user fallbacks.
+    for env_key in ("ARK_TOOLS_BIN", "ARK_TEXLIVE_BIN"):
+        v = os.environ.get(env_key, "").strip()
+        if v and Path(v).is_dir():
+            parts.append(v)
+
     openhands = shutil.which("openhands")
     if openhands:
         parts.append(str(Path(openhands).parent))

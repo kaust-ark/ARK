@@ -16,7 +16,9 @@ echo "[ARK] Project: {{ project_id }}"
 echo "[ARK] Project dir: {{ project_dir }}"
 
 source ~/.bashrc
-export PATH="$HOME/.local/bin:$HOME/texlive/2025/bin/x86_64-linux:$PATH"
+# Shared team locations first (ARK_TOOLS_BIN / ARK_TEXLIVE_BIN propagate via
+# sbatch's exported environment), then per-user fallbacks.
+export PATH="${ARK_TOOLS_BIN:+$ARK_TOOLS_BIN:}${ARK_TEXLIVE_BIN:+$ARK_TEXLIVE_BIN:}$HOME/.local/bin:$HOME/texlive/2025/bin/x86_64-linux:$PATH"
 # Prefer the project-local conda env (created at submission time);
 # fall back to the shared {{ conda_env }} env for legacy projects.
 if [ -d "{{ project_dir }}/.env/conda-meta" ]; then
