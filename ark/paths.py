@@ -51,3 +51,32 @@ def get_primary_ip() -> str:
         return socket.gethostname()
     finally:
         s.close()
+
+
+def get_team_config() -> dict:
+    """Team-deployment settings from pyproject's ``[tool.ark]``.
+
+    Returns {release_root, conda_root, tools_bin} (whatever is present),
+    with two safety rules:
+    - env vars (ARK_RELEASE_ROOT / ARK_CONDA_ROOT / ARK_TOOLS_BIN) always win;
+    - a configured path that does NOT exist on this machine is dropped, so a
+      committed team config never breaks external self-hosters.
+    """
+    import os
+    cfg: dict = {}
+    pp = get_ark_root() / "pyproject.toml"
+    try:
+        import tomllib
+        with open(pp, "rb") as f:
+            cfg = dict(tomllib.load(f).get("tool", {}).get("ark", {}))
+    except Exception:
+        cfg = {}
+    for key, env in (("release_root", "ARK_RELEASE_ROOT"),
+                     ("conda_root", "ARK_CONDA_ROOT"),
+                     ("tools_bin", "ARK_TOOLS_BIN")):
+        v = os.environ.get(env, "").strip()
+        if v:
+            cfg[key] = v
+        elif cfg.get(key) and not Path(str(cfg[key])).exists():
+            cfg.pop(key, None)
+    return cfg
