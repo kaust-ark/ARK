@@ -944,6 +944,10 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             # instead of looping fruitlessly.
             stall_count = sum(1 for h in history[-3:] if abs(h["after"] - h["before"]) < 0.01)
             if stall_count >= 3:
+                if layout_mode == "relaxed":
+                    self.log(f"[{context}] Relaxed mode: page count stalled at "
+                             f"{page_count:.1f}/{venue_pages} — accepting as-is", "INFO")
+                    return True
                 self.log(f"[{context}] Page count stalled at {page_count:.1f} for 3 consecutive "
                          f"attempts — aborting page enforcement", "ERROR")
                 return False
