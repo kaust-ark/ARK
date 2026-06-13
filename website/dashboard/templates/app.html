@@ -753,6 +753,14 @@
           <label>Pages <span id="hero-pages-default" style="font-weight:400;color:var(--text-muted);font-size:.85em">(default: 9)</span></label>
           <input type="number" name="venue_pages" id="hero-venue-pages-input" value="9" min="1" max="50" />
         </div>
+        <div class="hero-field hero-field-iter">
+          <label data-i18n="page_fitting">Page fitting</label>
+          <select name="layout_mode" id="hero-layout-mode" title="How hard ARK works to hit the page limit. Relaxed is cheapest; Strict spends the most tokens fitting the page count exactly.">
+            <option value="relaxed" selected data-i18n="page_fitting_relaxed">Relaxed — stay close, tolerate gaps</option>
+            <option value="strict" data-i18n="page_fitting_strict">Strict — exact page limit</option>
+            <option value="off" data-i18n="page_fitting_off">Off — don't adjust</option>
+          </select>
+        </div>
       </div>
 
       <!-- Custom template upload (shown when venue = Customized) -->
@@ -1597,6 +1605,17 @@
             <div id="status-gemini" class="apikey-current"></div>
           </div>
 
+          <!-- OpenRouter -->
+          <div class="apikey-card">
+            <div class="apikey-head">
+              <span class="apikey-name">OpenRouter</span>
+              <span class="apikey-use">One key unlocks Anthropic · OpenAI · Gemini models</span>
+              <span id="settings-openrouter-status" class="apikey-badge"></span>
+            </div>
+            <input type="password" id="settings-openrouter" class="apikey-input" placeholder="sk-or-…" />
+            <div class="apikey-current">With an OpenRouter key, all first-party models light up and route through OpenRouter (used only when you have no direct key for that provider).</div>
+          </div>
+
           <!-- Other (unverified) providers -->
           <div class="apikey-card apikey-card--other">
             <div class="apikey-head">
@@ -1790,6 +1809,10 @@ const TRANSLATIONS = {
     // hero
     hero_title: 'Build your next paper with Idea2Paper',
     attach: 'Attach', venue: 'Venue', max_iterations: 'Max iterations',
+    page_fitting: 'Page fitting',
+    page_fitting_relaxed: 'Relaxed — stay close, tolerate gaps',
+    page_fitting_strict: 'Strict — exact page limit',
+    page_fitting_off: "Off — don't adjust",
     telegram_notifications: 'Telegram Notifications',
     tg_how: '<b>How to set up:</b> 1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp; 2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID',
     bot_token: 'Bot Token', chat_id: 'Chat ID',
@@ -1906,6 +1929,10 @@ const TRANSLATIONS = {
     stop_all: 'إيقاف الكل',
     hero_title: 'ابنِ ورقتك البحثية القادمة مع Idea2Paper',
     attach: 'إرفاق', venue: 'المؤتمر', max_iterations: 'الحد الأقصى للتكرارات',
+    page_fitting: 'ضبط الصفحات',
+    page_fitting_relaxed: 'مرن — قريب من الحد، مع تسامح',
+    page_fitting_strict: 'صارم — حد الصفحات بالضبط',
+    page_fitting_off: 'إيقاف — بدون ضبط',
     telegram_notifications: 'إشعارات Telegram',
     tg_how: '<b>طريقة الإعداد:</b> 1. أرسل <code>/newbot</code> إلى <a href="https://t.me/BotFather" target="_blank">@BotFather</a> للحصول على Bot Token &nbsp;·&nbsp; 2. أرسل رسالة إلى <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> للحصول على Chat ID',
     bot_token: 'Bot Token', chat_id: 'Chat ID',
@@ -2009,6 +2036,10 @@ const TRANSLATIONS = {
     stop_all: '全部停止',
     hero_title: '用 Idea2Paper 构建你的下一篇论文',
     attach: '附件', venue: '投稿会议', max_iterations: '最大迭代次数',
+    page_fitting: '排版严谨度',
+    page_fitting_relaxed: '宽松 — 接近页数，容忍留白',
+    page_fitting_strict: '严格 — 精确贴合页数上限',
+    page_fitting_off: '不调整 — 不做页数适配',
     telegram_notifications: 'Telegram 通知',
     tg_how: '<b>设置方法：</b>1. 向 <a href="https://t.me/BotFather" target="_blank">@BotFather</a> 发送 <code>/newbot</code> 获取 Bot Token &nbsp;·&nbsp; 2. 向 <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> 发送消息获取 Chat ID',
     bot_token: 'Bot Token', chat_id: 'Chat ID',
@@ -2471,7 +2502,7 @@ async function loadGateBanner() {
       window._userCloudProviders = uData.cloud_providers || [];
       // Drive home-page model gating from saved keys (so it's correct on first
       // load, not only after opening Settings).
-      window._userKeyProviders = {anthropic: !!uData.anthropic, openai: !!uData.openai, gemini: !!uData.gemini};
+      window._userKeyProviders = _computeKeyProviders(uData.anthropic, uData.openai, uData.gemini, uData.openrouter);
       if (typeof applyModelGating === 'function') applyModelGating();
       window._userGcpDefaults = {
         zone:          uData.gcp_zone          || '',
@@ -4124,6 +4155,7 @@ async function openSettingsModal() {
     document.getElementById('settings-anthropic').value = data.anthropic || '';
     document.getElementById('settings-openai').value = data.openai || '';
     document.getElementById('settings-gemini').value = data.gemini || '';
+    document.getElementById('settings-openrouter').value = data.openrouter || '';
     document.getElementById('settings-github_pat').value = data.github_pat || '';
     document.getElementById('settings-github_org').value = data.github_org || '';
     _loadOtherProviders(data);
@@ -4151,7 +4183,7 @@ async function openSettingsModal() {
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
     document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
     document.getElementById('status-github_pat').textContent = data.github_pat ? 'Current: ' + data.github_pat : '';
-    window._userKeyProviders = {anthropic: !!data.anthropic, openai: !!data.openai, gemini: !!data.gemini};
+    window._userKeyProviders = _computeKeyProviders(data.anthropic, data.openai, data.gemini, data.openrouter);
     applyModelGating();
 
   } catch(e) {}
@@ -4159,7 +4191,7 @@ async function openSettingsModal() {
 
 // ── Other providers (any OpenHands/LiteLLM provider) + model gating ──
 let _otherProviders = {};
-const _STD_KEYS = new Set(['anthropic','openai','gemini','github_pat','github_org',
+const _STD_KEYS = new Set(['anthropic','openai','gemini','openrouter','github_pat','github_org',
   'aws_access_key_id','aws_secret_access_key','aws_default_region',
   'gcp_service_account_json','gcp_project','gcp_zone','gcp_instance_type',
   'gcp_image_family','gcp_image_project','gcp_ssh_private_key','gcp_ssh_user',
@@ -4220,6 +4252,16 @@ function onUnverifiedPick(sel, group) {
   if (sel.value) { radios.forEach(x => { x.checked = false; }); }
   else { const def = document.querySelector('input[name="' + group + '"][value="claude-sonnet-4-6"]'); if (def) def.checked = true; }
 }
+// Which model providers are usable. An OpenRouter key proxies all major
+// families, so it lights up anthropic/openai/gemini even without a direct key.
+function _computeKeyProviders(anthropic, openai, gemini, openrouter) {
+  const viaOR = !!openrouter;
+  return {
+    anthropic: !!anthropic || viaOR,
+    openai: !!openai || viaOR,
+    gemini: !!gemini || viaOR,
+  };
+}
 // Grey out model options whose provider has no saved key.
 function applyModelGating() {
   const have = window._userKeyProviders || {};
@@ -4270,6 +4312,7 @@ async function saveUserSettings() {
       anthropic: document.getElementById('settings-anthropic').value.trim(),
       openai: document.getElementById('settings-openai').value.trim(),
       gemini: document.getElementById('settings-gemini').value.trim(),
+      openrouter: document.getElementById('settings-openrouter').value.trim(),
       github_pat: document.getElementById('settings-github_pat').value.trim(),
       github_org: document.getElementById('settings-github_org').value.trim(),
       ..._otherProvidersBody(),
@@ -4360,11 +4403,12 @@ async function saveUserSettings() {
       }
 
       // Refresh home-page model gating from the freshly-saved keys (no reload).
-      window._userKeyProviders = {
-        anthropic: !!document.getElementById('settings-anthropic').value.trim(),
-        openai: !!document.getElementById('settings-openai').value.trim(),
-        gemini: !!document.getElementById('settings-gemini').value.trim(),
-      };
+      window._userKeyProviders = _computeKeyProviders(
+        document.getElementById('settings-anthropic').value.trim(),
+        document.getElementById('settings-openai').value.trim(),
+        document.getElementById('settings-gemini').value.trim(),
+        document.getElementById('settings-openrouter').value.trim(),
+      );
       if (typeof applyModelGating === 'function') applyModelGating();
 
       // Show per-row verification status on other providers too.

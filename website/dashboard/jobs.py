@@ -674,8 +674,9 @@ def launch_local_job(
             elif k == "github_org":
                 # Optional org to create project repos under (not secret).
                 env["ARK_GITHUB_ORG"] = v
-            elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai"):
-                # Standard LLM keys
+            elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai", "openrouter"):
+                # Standard LLM keys. openrouter → OPENROUTER_API_KEY so LiteLLM
+                # can route first-party models through the OpenRouter proxy.
                 env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
                 env[env_key] = v
             elif k in ("aws_access_key_id", "aws_secret_access_key", "aws_default_region"):

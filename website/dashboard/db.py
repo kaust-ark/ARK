@@ -32,6 +32,7 @@ class Project(SQLModel, table=True):
     venue: str = ""
     venue_format: str = ""
     venue_pages: int = 9
+    layout_mode: str = "relaxed"  # page fitting: off | strict | relaxed
     max_iterations: int = 2       # review iterations
     max_dev_iterations: int = 3   # dev phase iterations
     mode: str = "paper"
@@ -140,6 +141,7 @@ def _migrate(engine):
             "experiment_compute_backend": "TEXT DEFAULT 'slurm'",
             "compute_backend": "TEXT DEFAULT 'slurm'",
             "source": "TEXT DEFAULT 'webapp'",
+            "layout_mode": "TEXT DEFAULT 'relaxed'",
             # Runtime status
             "phase": "TEXT DEFAULT ''",
             "iteration": "INTEGER DEFAULT 0",

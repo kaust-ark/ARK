@@ -920,17 +920,29 @@ Be thorough and faithful to the proposal.
 
             # 3.1: Generate project_context.md (web-verified)
             self.log_step("Generating project context (web-verified)...", "progress")
-            self.run_agent("researcher", """
+            # Gate B (idea-quality assessment) is folded into this call because it
+            # already loads idea.md + deep_research.md — no extra LLM call. When
+            # Deep Research did not run (no gemini key / skip_deep_research), the
+            # report is absent; degrade gracefully and never block on it.
+            dr_exists = (self.state_dir / "deep_research.md").exists()
+            dr_note = (
+                "Use your Read tool to load BOTH files in full."
+                if dr_exists else
+                "Use your Read tool to load `idea.md` in full. NOTE: no Deep "
+                "Research report is available for this run — assess novelty "
+                "conservatively from the idea alone and do not over-claim prior art."
+            )
+            self.run_agent("researcher", f"""
 Read the idea summary and deep research report, then generate a verified
 project context document.
 
 ## Source Material (MANDATORY — Read in full before writing)
 - `idea.md` — the research idea (user-authored)
-- `auto_research/state/deep_research.md` — the Gemini Deep Research report
+- `auto_research/state/deep_research.md` — the Gemini Deep Research report{" (MAY BE ABSENT — see note)" if not dr_exists else ""}
 
-Use your Read tool to load BOTH files in full. Do NOT skim or guess their
-contents — writing the context document without consulting them produces
-hallucinated systems and broken install instructions.
+{dr_note} Do NOT skim or guess their contents — writing the context document
+without consulting them produces hallucinated systems and broken install
+instructions.
 
 ## Your Task
 
@@ -943,9 +955,37 @@ to verify:
 
 Write `auto_research/state/project_context.md` with sections:
 ## External Systems, ## Environment Setup, ## Experiment Guidance, ## Credentials & Access
+
+## Idea Assessment (grounded in the literature above — advisory, NEVER refuse to write)
+Append these sections to project_context.md. The goal is to SHARPEN the project,
+not to kill it; be honest but constructive.
+
+### Novelty & Prior Art
+- Is this idea, or something essentially equivalent, already solved in the
+  literature? State exactly ONE verdict token: NOVEL_ENOUGH / PARTIAL_OVERLAP / ESSENTIALLY_SOLVED.
+- If PARTIAL_OVERLAP or ESSENTIALLY_SOLVED, cite the closest 1-3 works from the
+  report and say in one sentence what each already did.
+- If the literature is thin or absent, write "insufficient literature to assess
+  novelty" and continue with the rest from the idea alone.
+
+### Our Contribution
+- One crisp paragraph: given the prior art above, the specific, defensible delta
+  THIS project adds. If you wrote ESSENTIALLY_SOLVED, state the residual delta
+  honestly (it may be small, or mainly replication/engineering).
+
+### Narrowed Research Questions
+- 2-4 concrete, testable research questions a SMALL team could answer, derived
+  from the idea and the gaps the report reveals.
+
+### Scope Recommendation
+- If the idea as stated is too broad for a small group, propose ONE narrowed
+  version (the single most promising research question above) that is achievable,
+  and say what to cut.
 """, timeout=defaults.TIMEOUT_INITIALIZER)
             self.log_step("Project context generated", "success")
             self.notify_progress("Project context", "ready", level="done")
+            # Gate B: surface the idea assessment to the user (advisory only).
+            self._notify_idea_assessment(ctx_file)
 
             # 3.2: Specialize agent prompts (code-driven, one call per agent)
             # _sync_agent_prompt_bases already ran above (unconditionally),
@@ -3246,13 +3286,57 @@ provide the title.
             total_agent_calls=total_calls,
         )
 
-    def _run_ethical_review(self) -> bool:
-        """Pre-launch ethical screening of the submitted research idea.
+    def _notify_idea_assessment(self, ctx_file) -> None:
+        """Gate B: surface the idea-quality assessment written into
+        project_context.md (novelty / contribution / scope).
 
-        Hard-rejects clearly malicious / weaponization / explicit-sexual /
-        anti-human proposals. Allows everything else (including legitimate
-        dual-use security research). Result is cached at
-        ``state_dir/ethical_review.json`` so resumed runs skip re-review.
+        Advisory only — never blocks the run. Pings the user with the novelty
+        verdict and a nudge to read the scope recommendation; escalates the ping
+        to a warning when the literature says the idea is essentially solved, so
+        the user hears "this may already be done" early. Fail-soft: any read/parse
+        problem is swallowed.
+        """
+        try:
+            if not ctx_file.exists():
+                return
+            text = ctx_file.read_text(errors="ignore")
+        except Exception:  # noqa: BLE001 — advisory, never fatal
+            return
+
+        upper = text.upper()
+        if "ESSENTIALLY_SOLVED" in upper:
+            verdict, level = "essentially solved in prior work", "warn"
+        elif "PARTIAL_OVERLAP" in upper:
+            verdict, level = "partial overlap with prior work", "info"
+        elif "NOVEL_ENOUGH" in upper:
+            verdict, level = "looks novel enough", "info"
+        else:
+            # No machine token (e.g. "insufficient literature") — nothing firm
+            # to report; skip the ping rather than guess.
+            return
+
+        has_scope = "scope recommendation" in text.lower()
+        detail = verdict + (" · see Scope Recommendation in project context" if has_scope else "")
+        self.log(f"[Gate B] Idea assessment: {detail}", "INFO")
+        self.notify_progress("Idea assessment", detail, level=level)
+
+    def _run_ethical_review(self) -> bool:
+        """Pre-launch screening (Gate A) of the submitted research idea.
+
+        Judges ethics (malicious / weaponization / explicit-sexual / anti-human)
+        and basic scientific soundness (absurd / pseudoscientific / physically
+        impossible). Novelty / scope / contribution are judged later by Gate B,
+        after Deep Research. Verdict ladder:
+
+          - reject       → hard block, run fails (clear ethics/soundness breach)
+          - human_review → block pending a human's call (borderline ethics)
+          - refine       → proceed, but flag a soundness concern to the user
+          - proceed      → fine
+
+        A passing/refine/fail-open verdict is cached at
+        ``state_dir/ethical_review.json`` so resumed runs skip re-review. A
+        block (reject / human_review) is NEVER cached — otherwise a resumed run
+        would skip the gate and proceed.
 
         Returns True if the launch may proceed, False if blocked.
         """
@@ -3268,44 +3352,51 @@ provide the title.
         # Use the run's SELECTED model (same verified key as the agents), not a
         # hardcoded Anthropic default. The provider key is resolved from the
         # model prefix inside complete().
-        self.log_step("Pre-launch ethical review...", "progress")
+        self.log_step("Pre-launch idea review (Gate A)...", "progress")
         result = review_idea(idea, model=self.model)
+        verdict = result.get("verdict", "proceed")
+        category = result.get("category", "unknown")
+        reason = result.get("reason", "")
 
-        if result.get("decision") == "block":
-            category = result.get("category", "unknown")
-            reason = result.get("reason", "")
-            self.log_section("Ethical Review FAILED — launch blocked")
-            self.log(
-                f"Category: {category}\n"
-                f"Reason: {reason}\n\n"
-                f"This proposal appears to violate ARK's ethical-use principles "
-                f"(no clearly malicious / weaponization / explicit-sexual / "
-                f"anti-human research). Please revise and resubmit.",
-                "RAW",
-            )
+        if verdict in ("reject", "human_review"):
+            if verdict == "reject":
+                phase = "blocked_ethical"
+                headline = "Idea review REJECTED — launch blocked"
+                err = f"Idea rejected ({category}): {reason}"
+                tg_emoji, tg_title = "⛔", "Idea review blocked this project"
+            else:  # human_review
+                phase = "blocked_review"
+                headline = "Idea review — held for human review"
+                err = f"Idea held for human review: {reason}"
+                tg_emoji, tg_title = "🕵️", "Idea held for human review"
+            self.log_section(headline)
+            self.log(f"Category: {category}\nReason: {reason}", "RAW")
             if getattr(self, "telegram", None) and self.telegram.is_configured:
                 self.telegram.send(
-                    f"{self.tg_header('⛔')}\n"
-                    f"<b>Ethical review blocked this project</b>\n"
+                    f"{self.tg_header(tg_emoji)}\n"
+                    f"<b>{tg_title}</b>\n"
                     f"Category: <code>{_html.escape(str(category))}</code>\n"
                     f"Reason: {_html.escape(str(reason))}",
                     parse_mode="HTML",
                 )
-            self._sync_db(status="failed", phase="blocked_ethical")
+            # Do NOT cache a block — a resumed run must re-evaluate.
+            self._sync_db(status="failed", phase=phase, error_message=err)
             return False
 
         review_file.parent.mkdir(parents=True, exist_ok=True)
         review_file.write_text(json.dumps(result, indent=2))
-        if result.get("reviewed"):
-            self.log_step(
-                f"Ethical review passed: {result.get('reason', '')[:80]}",
-                "success",
-            )
+        if verdict == "refine":
+            # Admissible, but the reviewer flagged a soundness concern. Proceed,
+            # but surface it so the user can sharpen the idea.
+            self.log(f"⚠ Idea review: proceed with a concern — {reason[:120]}", "WARN")
+            self.notify_progress("Idea review", reason[:200], level="warn")
+        elif result.get("reviewed"):
+            self.log_step(f"Idea review passed: {reason[:80]}", "success")
         else:
             # Fail-open: the review did not actually run (no key / API error /
             # unparseable). Don't claim it "passed" — report it as skipped.
             self.log(
-                f"⚠ Ethical review skipped ({result.get('reason', '')[:80]}) — proceeding (fail-open)",
+                f"⚠ Idea review skipped ({reason[:80]}) — proceeding (fail-open)",
                 "WARN",
             )
         return True

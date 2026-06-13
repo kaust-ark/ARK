@@ -440,6 +440,55 @@ def _to_litellm_model(m: str) -> str:
     return "anthropic/claude-sonnet-4-6"
 
 
+# OpenRouter proxies all major model families behind a single key. When a user
+# has ONLY an OpenRouter key (no native anthropic/openai/gemini key) but picked a
+# first-party model, rewrite the LiteLLM string to route through OpenRouter.
+# LiteLLM's openrouter provider expects "openrouter/<openrouter-slug>"; the slug
+# namespace uses "google/" for Gemini (not "gemini/"). The model-id portion must
+# match an OpenRouter catalog slug — verify against https://openrouter.ai/models
+# when adding models. Users who need an exact slug can also type a full
+# "openrouter/…" string in the unverified-model field, which passes through.
+_OPENROUTER_SLUG = {
+    # Anthropic
+    "anthropic/claude-opus-4-8": "anthropic/claude-opus-4.8",
+    "anthropic/claude-sonnet-4-6": "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-haiku-4-5": "anthropic/claude-haiku-4.5",
+    # OpenAI
+    "openai/gpt-5.5-pro": "openai/gpt-5.5-pro",
+    "openai/gpt-5.5": "openai/gpt-5.5",
+    "openai/gpt-5.4-mini": "openai/gpt-5.4-mini",
+    # Gemini (OpenRouter namespaces Google models under "google/")
+    "gemini/gemini-3.5-flash": "google/gemini-3.5-flash",
+    "gemini/gemini-2.5-pro": "google/gemini-2.5-pro",
+    "gemini/gemini-2.5-flash": "google/gemini-2.5-flash",
+}
+
+_OPENROUTER_NATIVE_KEY = {"anthropic": "anthropic", "openai": "openai", "gemini": "gemini"}
+
+
+def _maybe_route_via_openrouter(model_str: str, keys: dict) -> str:
+    """If the model's native provider key is absent but an OpenRouter key is
+    present, rewrite ``provider/model`` to ``openrouter/<slug>`` so the run goes
+    through OpenRouter. Otherwise return ``model_str`` unchanged.
+
+    A native key always wins (direct is cheaper/lower-latency). Already-OpenRouter
+    strings pass through untouched.
+    """
+    if not keys or "/" not in model_str:
+        return model_str
+    provider = model_str.split("/", 1)[0]
+    if provider == "openrouter":
+        return model_str
+    native = _OPENROUTER_NATIVE_KEY.get(provider)
+    if native and keys.get(native):
+        return model_str  # user has the direct key — use it
+    if keys.get("openrouter"):
+        slug = _OPENROUTER_SLUG.get(model_str)
+        if slug:
+            return f"openrouter/{slug}"
+    return model_str
+
+
 def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, settings, model: str = "claude-sonnet-4-6"):
     """Write config.yaml that ark orchestrator will read."""
     # All agents run through OpenHands; the orchestrator wants a LiteLLM string.
@@ -450,6 +499,9 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     # env (ARK_GITHUB_PAT) at launch time — never written into config.yaml.
     _owner_keys = _get_user_keys(user_obj) if user_obj else {}
 
+    # If the user only has an OpenRouter key, route first-party models through it.
+    model_str = _maybe_route_via_openrouter(model_str, _owner_keys)
+
     config = {
         "project": project.name,
         "title": project.title or project.name,
@@ -457,6 +509,7 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
         "venue": project.venue,
         "venue_format": project.venue_format,
         "venue_pages": project.venue_pages,
+        "layout_mode": getattr(project, "layout_mode", "relaxed") or "relaxed",
         "mode": project.mode,
         "model": model_str,
         "model_variant": "",
@@ -1238,7 +1291,7 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
                 for k, v in api_keys.items():
                     if k == "claude_oauth_token":
                         env_lines.append(f"CLAUDE_CODE_OAUTH_TOKEN={v}")
-                    elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai"):
+                    elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai", "openrouter"):
                         env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
                         env_lines.append(f"{env_key}={v}")
                     elif k in ("aws_access_key_id", "aws_secret_access_key", "aws_default_region"):
@@ -1629,7 +1682,7 @@ async def api_get_user_settings(request: Request):
         if cfg:
             available_providers.append(settings.cloud_provider)
     _STD_KEY_FIELDS = {
-        "gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
+        "gemini", "anthropic", "openai", "openrouter", "claude_oauth_token", "gemini_oauth_json",
         "github_pat", "github_org",
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
         "gcp_service_account_json", "gcp_project", "gcp_zone", "gcp_instance_type",
@@ -1641,6 +1694,7 @@ async def api_get_user_settings(request: Request):
         "anthropic": _mask_key(keys.get("anthropic")),
         "openai": _mask_key(keys.get("openai")),
         "gemini": _mask_key(keys.get("gemini")),
+        "openrouter": _mask_key(keys.get("openrouter")),
         "github_pat": _mask_key(keys.get("github_pat")),
         "github_org": keys.get("github_org") or "",
         "aws_access_key_id": _mask_key(keys.get("aws_access_key_id")),
@@ -1818,6 +1872,7 @@ async def api_create_project(
     venue: str = Form("NeurIPS"),
     venue_format: str = Form("neurips"),
     venue_pages: int = Form(9),
+    layout_mode: str = Form("relaxed"),
     mode: str = Form("paper"),
     max_iterations: int = Form(1),
     max_dev_iterations: int = Form(1),
@@ -1937,6 +1992,11 @@ async def api_create_project(
     }
     model_backend, model_variant = MODEL_MAP.get(model, ("anthropic", "claude-sonnet-4-6"))
 
+    # Page fitting strictness (off | strict | relaxed). Relaxed is the default
+    # — it skips the cosmetic last-page-fill passes that burn the most tokens.
+    if layout_mode not in ("off", "strict", "relaxed"):
+        layout_mode = "relaxed"
+
     with get_session(settings.db_path) as session:
         project = create_project(
             session,
@@ -1948,6 +2008,7 @@ async def api_create_project(
             venue=venue,
             venue_format=venue_format,
             venue_pages=venue_pages,
+            layout_mode=layout_mode,
             max_iterations=max_iterations,
             max_dev_iterations=max_dev_iterations,
             mode=mode,

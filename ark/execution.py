@@ -786,6 +786,21 @@ After making all changes, you MUST verify the page count:
         if not venue_pages or self._quota_exhausted:
             return True
 
+        # Page-fitting strictness (per-project, set in the webapp):
+        #   off     — user opted out; do nothing (no compile, no passes).
+        #   relaxed — laissez-faire (DEFAULT): never expand to fill a short last
+        #             page, make at most a few best-effort compress passes if
+        #             over, then accept — never block or fail the run. This
+        #             removes the cosmetic last-page-fill passes (and the 20x
+        #             over-limit grind) that burn the most tokens.
+        #   strict  — original behaviour: hard ceiling + 70% fill, up to 20x.
+        layout_mode = (self.config.get("layout_mode") or "relaxed").lower()
+        if layout_mode not in ("off", "strict", "relaxed"):
+            layout_mode = "relaxed"
+        if layout_mode == "off":
+            self.log(f"[{context}] Page fitting OFF — skipping page enforcement", "INFO")
+            return True
+
         self.compile_latex()
         page_count = getattr(self, '_body_page_count', 0)
         if not page_count:
@@ -811,13 +826,21 @@ After making all changes, you MUST verify the page count:
         max_pages = venue_pages
         latex_dir = self.config.get("latex_dir", "paper")
 
+        # Relaxed: drop the 70%-fill floor entirely (never expand to fill a
+        # short last page) and cap to a few best-effort compress passes.
+        if layout_mode == "relaxed":
+            min_pages = 0.0
+            MAX_PAGE_ATTEMPTS = 3
+        else:  # strict
+            # Hard limit of 20 attempts to prevent infinite loops.
+            MAX_PAGE_ATTEMPTS = 20
+
         self.log(f"[{context}] Page check: {page_count:.1f} body pages "
-                 f"(target: {min_pages:.2f}–{max_pages:.1f}, {columns}-col)", "INFO")
+                 f"(target: {min_pages:.2f}–{max_pages:.1f}, {columns}-col, "
+                 f"{layout_mode} mode)", "INFO")
 
         # Loop until page count is in range.
         # Every 4 failed attempts, relax tolerance by 0.1 pages (both sides).
-        # Hard limit of 20 attempts to prevent infinite loops.
-        MAX_PAGE_ATTEMPTS = 20
         attempt = 0
         tolerance_relaxations = 0
         cur_min = min_pages
@@ -854,6 +877,12 @@ After making all changes, you MUST verify the page count:
                 continue
 
             if self._quota_exhausted:
+                # Relaxed mode never fails the run over page count — accept and
+                # move on. Strict mode escalates so the caller can handle it.
+                if layout_mode == "relaxed":
+                    self.log(f"[{context}] Quota exhausted; relaxed mode accepts "
+                             f"{page_count:.1f}/{venue_pages} pages as-is", "WARN")
+                    return True
                 self.log(f"[{context}] Quota exhausted, cannot enforce page count "
                          f"({page_count:.1f}/{venue_pages} pages)", "ERROR")
                 raise QuotaExhaustedError(page_count, venue_pages)
@@ -919,7 +948,12 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                          f"attempts — aborting page enforcement", "ERROR")
                 return False
 
-        # Exhausted max attempts
+        # Exhausted max attempts. In relaxed mode this is expected (a few
+        # best-effort passes, then accept) — log it softly, not as an error.
+        if layout_mode == "relaxed":
+            self.log(f"[{context}] Relaxed mode: accepting {page_count:.1f}/{venue_pages} "
+                     f"pages after {MAX_PAGE_ATTEMPTS} best-effort pass(es)", "INFO")
+            return True
         self.log(f"[{context}] Page enforcement failed after {MAX_PAGE_ATTEMPTS} attempts "
                  f"({page_count:.1f}/{venue_pages} pages)", "ERROR")
         return False
