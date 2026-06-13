@@ -36,6 +36,7 @@ class Project(SQLModel, table=True):
     max_iterations: int = 2       # review iterations
     max_dev_iterations: int = 3   # dev phase iterations
     mode: str = "paper"
+    figure_generation: str = "nano_banana"  # nano_banana | matplotlib_only | none
     status: str = "queued"      # queued | running | done | failed | stopped
     slurm_job_id: str = ""
     pdf_path: str = ""
@@ -142,6 +143,7 @@ def _migrate(engine):
             "compute_backend": "TEXT DEFAULT 'slurm'",
             "source": "TEXT DEFAULT 'webapp'",
             "layout_mode": "TEXT DEFAULT 'relaxed'",
+            "figure_generation": "TEXT DEFAULT 'nano_banana'",
             # Runtime status
             "phase": "TEXT DEFAULT ''",
             "iteration": "INTEGER DEFAULT 0",

@@ -105,7 +105,7 @@ from .jobs import (
 )
 from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email
 from .auth import make_token, verify_token, verify_share_token
-from .templates import copy_venue_template, has_venue_template
+from .templates import copy_venue_template, has_venue_template, copy_test_fixtures, read_test_idea
 
 router = APIRouter()
 
@@ -466,6 +466,21 @@ _OPENROUTER_SLUG = {
 _OPENROUTER_NATIVE_KEY = {"anthropic": "anthropic", "openai": "openai", "gemini": "gemini"}
 
 
+def _cheapest_model_for(keys: dict) -> str:
+    """Pick the cheapest first-party model for whichever provider the user has a
+    key for (used by the cheap test-project preset). Falls back to Haiku — which,
+    if only an OpenRouter key is present, gets routed through OpenRouter at launch.
+    """
+    keys = keys or {}
+    if keys.get("anthropic"):
+        return "claude-haiku-4-5"
+    if keys.get("openai"):
+        return "gpt-5.4-mini"
+    if keys.get("gemini"):
+        return "gemini-2.5-flash"
+    return "claude-haiku-4-5"
+
+
 def _maybe_route_via_openrouter(model_str: str, keys: dict) -> str:
     """If the model's native provider key is absent but an OpenRouter key is
     present, rewrite ``provider/model`` to ``openrouter/<slug>`` so the run goes
@@ -519,7 +534,7 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
         "code_dir": str(project_dir),
         "latex_dir": "paper",
         "figures_dir": "paper/figures",
-        "figure_generation": "nano_banana",
+        "figure_generation": getattr(project, "figure_generation", None) or "nano_banana",
         "nano_banana_model": "pro",
         "auto_github_remote": bool(_owner_keys.get("github_pat")),
     }
@@ -1885,6 +1900,7 @@ async def api_create_project(
     compute_backend: str = Form("local"),
     orchestrator_compute_backend: str = Form("local"),
     cloud_overrides: str = Form(""),
+    preset: str = Form(""),
 ):
     user = _require_user(request)
     _check_webapp_enabled()
@@ -1914,6 +1930,25 @@ async def api_create_project(
             cloud_cfg = _build_cloud_config(db_user or user, settings, provider_override=_parse_cloud_provider(compute_backend))
             if not cloud_cfg:
                 raise HTTPException(status_code=400, detail="Cloud compute is not configured. Please use local compute or add cloud credentials in Settings.")
+
+    # Cheap test-project preset (admin-only): a 2-page EuroMLSys paper with a
+    # trivial, self-contained sklearn experiment, NO live Deep Research (a canned
+    # report is seeded into the project below), NO AI figures (matplotlib only),
+    # the cheapest available model, and a single iteration. Lets us exercise the
+    # full pipeline end-to-end for a few cents.
+    figure_generation = "nano_banana"
+    if preset == "test":
+        if not _is_admin(user):
+            raise HTTPException(403, "The test-project preset is admin-only.")
+        venue, venue_format, venue_pages = "EuroMLSys", "euromlsys", 2
+        layout_mode, mode = "relaxed", "paper"
+        max_iterations, max_dev_iterations = 1, 1
+        figure_generation = "matplotlib_only"
+        compute_backend = orchestrator_compute_backend = "local"
+        model = _cheapest_model_for(keys)
+        idea = read_test_idea() or idea
+        if not title.strip():
+            title = "🧪 Cheap test run"
 
     # Generate project ID: full UUID
     project_id = str(uuid.uuid4())
@@ -1962,6 +1997,11 @@ async def api_create_project(
             paper_dir.mkdir(parents=True, exist_ok=True)
             (paper_dir / "figures").mkdir(exist_ok=True)
 
+    # Cheap test preset: seed the canned Deep Research report so the pipeline
+    # skips the live (expensive) Gemini call.
+    if preset == "test":
+        copy_test_fixtures(pdir)
+
     # Copy agent prompt templates (with variable substitution)
     _substitute_agent_templates(
         pdir, project_id, title,
@@ -2009,6 +2049,7 @@ async def api_create_project(
             venue_format=venue_format,
             venue_pages=venue_pages,
             layout_mode=layout_mode,
+            figure_generation=figure_generation,
             max_iterations=max_iterations,
             max_dev_iterations=max_dev_iterations,
             mode=mode,

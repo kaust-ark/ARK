@@ -13,6 +13,33 @@ from pathlib import Path
 # venue_templates/ lives at the ARK repo root
 _TEMPLATES_ROOT = Path(__file__).parent.parent.parent / "venue_templates"
 
+# test_fixtures/ (cheap "test project" preset) also lives at the repo root.
+_TEST_FIXTURES_ROOT = Path(__file__).parent.parent.parent / "test_fixtures" / "cheap_run"
+
+
+def read_test_idea() -> str:
+    """Return the canned idea text for the cheap test-project preset."""
+    f = _TEST_FIXTURES_ROOT / "idea.md"
+    return f.read_text() if f.exists() else ""
+
+
+def copy_test_fixtures(code_dir: Path) -> bool:
+    """Seed a project with the cheap test-project fixtures.
+
+    Drops the canned Deep Research report into the project state dir so the
+    pipeline SKIPS the (expensive) live Gemini Deep Research call — the Step-2
+    block skips when ``deep_research.md`` already exists. Returns True if the
+    report was copied. The idea text is seeded via the project's ``idea`` field
+    by the caller (read_test_idea), not here.
+    """
+    src = _TEST_FIXTURES_ROOT / "deep_research.md"
+    if not src.exists():
+        return False
+    state_dir = Path(code_dir) / "auto_research" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, state_dir / "deep_research.md")
+    return True
+
 
 def get_available_venues() -> list[str]:
     if not _TEMPLATES_ROOT.exists():
