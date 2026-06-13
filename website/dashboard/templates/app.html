@@ -1571,6 +1571,17 @@
             Keys are stored encrypted, per&nbsp;user.
           </p>
 
+          <!-- OpenRouter (recommended — one key unlocks every model) -->
+          <div class="apikey-card">
+            <div class="apikey-head">
+              <span class="apikey-name">OpenRouter <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span>
+              <span class="apikey-use">One key unlocks Anthropic · OpenAI · Gemini models</span>
+              <span id="settings-openrouter-status" class="apikey-badge"></span>
+            </div>
+            <input type="password" id="settings-openrouter" class="apikey-input" placeholder="sk-or-…" />
+            <div class="apikey-current">With an OpenRouter key, all first-party models light up and route through OpenRouter (used only when you have no direct key for that provider).</div>
+          </div>
+
           <!-- Anthropic -->
           <div class="apikey-card">
             <div class="apikey-head">
@@ -1603,17 +1614,6 @@
             <input type="password" id="settings-gemini" class="apikey-input" placeholder="AIza…" />
             <div class="apikey-current">If left empty, Deep Research + figure generation are skipped.</div>
             <div id="status-gemini" class="apikey-current"></div>
-          </div>
-
-          <!-- OpenRouter -->
-          <div class="apikey-card">
-            <div class="apikey-head">
-              <span class="apikey-name">OpenRouter</span>
-              <span class="apikey-use">One key unlocks Anthropic · OpenAI · Gemini models</span>
-              <span id="settings-openrouter-status" class="apikey-badge"></span>
-            </div>
-            <input type="password" id="settings-openrouter" class="apikey-input" placeholder="sk-or-…" />
-            <div class="apikey-current">With an OpenRouter key, all first-party models light up and route through OpenRouter (used only when you have no direct key for that provider).</div>
           </div>
 
           <!-- Other (unverified) providers -->
