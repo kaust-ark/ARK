@@ -4397,7 +4397,7 @@ function switchCloudProviderTab(cpId) {
 
 async function saveUserSettings() {
   const btn = document.getElementById('settings-save-btn');
-  const providers = ['anthropic', 'openai', 'gemini'];
+  const providers = ['anthropic', 'openai', 'gemini', 'openrouter'];
   
   // Clear previous statuses
   providers.forEach(p => {
@@ -4447,6 +4447,7 @@ async function saveUserSettings() {
     if (body.gemini && !body.gemini.includes('...')) document.getElementById('settings-gemini-status').innerHTML = '⏳';
     if (body.anthropic && !body.anthropic.includes('...')) document.getElementById('settings-anthropic-status').innerHTML = '⏳';
     if (body.openai && !body.openai.includes('...')) document.getElementById('settings-openai-status').innerHTML = '⏳';
+    if (body.openrouter && !body.openrouter.includes('...')) document.getElementById('settings-openrouter-status').innerHTML = '⏳';
     if (body.github_pat && !body.github_pat.includes('...')) document.getElementById('settings-github_pat-status').innerHTML = '⏳';
 
     const res = await fetch(APP_BASE + '/api/user/settings', {

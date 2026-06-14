@@ -94,6 +94,32 @@ def verify_openai(api_key: str) -> Dict[str, Any]:
     except Exception as e:
         return {"ok": False, "msg": f"Error: {str(e)}"}
 
+def verify_openrouter(api_key: str) -> Dict[str, Any]:
+    """Verify an OpenRouter key via the cheap GET /api/v1/key endpoint (no token
+    cost). Valid key -> 200 with usage/limit info; invalid -> 401.
+    """
+    if not api_key:
+        return {"ok": False, "msg": "No API key provided"}
+    try:
+        r = httpx.get(
+            "https://openrouter.ai/api/v1/key",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=20,
+        )
+        if r.status_code == 200:
+            try:
+                rem = (r.json().get("data") or {}).get("limit_remaining")
+            except Exception:
+                rem = None
+            msg = "Functional" + (f" · ${rem:.2f} left" if isinstance(rem, (int, float)) else "")
+            return {"ok": True, "msg": msg}
+        if r.status_code in (401, 403):
+            return {"ok": False, "msg": "Invalid key"}
+        return {"ok": False, "msg": f"Failed: HTTP {r.status_code}"}
+    except Exception as e:
+        return {"ok": False, "msg": f"Failed: {str(e).splitlines()[0][:120]}"}
+
+
 def verify_litellm_provider(provider: str, api_key: str) -> Dict[str, Any]:
     """Verify any other (LiteLLM/OpenHands) provider key with a minimal request.
 
@@ -373,12 +399,14 @@ def run_verification_suite(user_id: str, projects_root: Path, keys: Dict[str, st
         results["anthropic"] = verify_anthropic(keys["anthropic"])
     if keys.get("openai"):
         results["openai"] = verify_openai(keys["openai"])
+    if keys.get("openrouter"):
+        results["openrouter"] = verify_openrouter(keys["openrouter"])
     if keys.get("github_pat"):
         results["github"] = verify_github(keys.get("github_pat"), keys.get("github_org"))
 
     # 2. Other (LiteLLM/OpenHands) providers — validate their keys too. Their
     # *models* are 'unverified' (not agent-tested by ARK), but the key is checked.
-    _STD = {"gemini", "anthropic", "openai", "claude_oauth_token", "gemini_oauth_json",
+    _STD = {"gemini", "anthropic", "openai", "openrouter", "claude_oauth_token", "gemini_oauth_json",
             "github_pat", "github_org",
             "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
             "gcp_service_account_json", "gcp_project", "gcp_zone", "gcp_instance_type",
