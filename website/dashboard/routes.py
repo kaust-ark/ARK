@@ -482,25 +482,21 @@ def _cheapest_model_for(keys: dict) -> str:
 
 
 def _maybe_route_via_openrouter(model_str: str, keys: dict) -> str:
-    """Rewrite ``provider/model`` to ``openrouter/<slug>`` so the run goes through
-    OpenRouter, or return ``model_str`` unchanged.
-
-    Default: a native provider key WINS (direct is cheaper/lower-latency), and
-    OpenRouter is only the fallback when there's no direct key. If the user set
-    the ``prefer_openrouter`` toggle, OpenRouter wins even when a direct key
-    exists (unified billing/quota). Already-OpenRouter strings pass through.
+    """Graceful fallback: if a native vendor model was chosen but the user has no
+    key for that vendor (only an OpenRouter key), rewrite ``provider/model`` to
+    ``openrouter/<slug>`` so it still runs. Keys are parallel — a native key, when
+    present, is always used directly; explicit ``openrouter/…`` strings (the
+    OpenRouter model row) pass through untouched.
     """
     if not keys or "/" not in model_str:
         return model_str
     provider = model_str.split("/", 1)[0]
     if provider == "openrouter":
         return model_str
-    has_or = bool(keys.get("openrouter"))
-    prefer_or = has_or and bool(keys.get("prefer_openrouter"))
     native = _OPENROUTER_NATIVE_KEY.get(provider)
-    if native and keys.get(native) and not prefer_or:
-        return model_str  # user has the direct key and hasn't opted into OpenRouter
-    if has_or:
+    if native and keys.get(native):
+        return model_str  # user has the direct key — use it
+    if keys.get("openrouter"):
         slug = _OPENROUTER_SLUG.get(model_str)
         if slug:
             return f"openrouter/{slug}"
@@ -1700,7 +1696,7 @@ async def api_get_user_settings(request: Request):
         if cfg:
             available_providers.append(settings.cloud_provider)
     _STD_KEY_FIELDS = {
-        "gemini", "anthropic", "openai", "openrouter", "prefer_openrouter",
+        "gemini", "anthropic", "openai", "openrouter",
         "claude_oauth_token", "gemini_oauth_json",
         "github_pat", "github_org",
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
@@ -1714,7 +1710,6 @@ async def api_get_user_settings(request: Request):
         "openai": _mask_key(keys.get("openai")),
         "gemini": _mask_key(keys.get("gemini")),
         "openrouter": _mask_key(keys.get("openrouter")),
-        "prefer_openrouter": keys.get("prefer_openrouter") or "",
         "github_pat": _mask_key(keys.get("github_pat")),
         "github_org": keys.get("github_org") or "",
         "aws_access_key_id": _mask_key(keys.get("aws_access_key_id")),
@@ -1906,6 +1901,8 @@ async def api_create_project(
     orchestrator_compute_backend: str = Form("local"),
     cloud_overrides: str = Form(""),
     preset: str = Form(""),
+    test_deep_research: str = Form(""),
+    test_ai_figures: str = Form(""),
 ):
     user = _require_user(request)
     _check_webapp_enabled()
@@ -1948,7 +1945,8 @@ async def api_create_project(
         venue, venue_format, venue_pages = "EuroMLSys", "euromlsys", 2
         layout_mode, mode = "relaxed", "paper"
         max_iterations, max_dev_iterations = 1, 1
-        figure_generation = "matplotlib_only"
+        # Optional (default off): generate AI figures / run live Deep Research.
+        figure_generation = "nano_banana" if test_ai_figures else "matplotlib_only"
         compute_backend = orchestrator_compute_backend = "local"
         model = _cheapest_model_for(keys)
         idea = read_test_idea() or idea
@@ -2002,9 +2000,9 @@ async def api_create_project(
             paper_dir.mkdir(parents=True, exist_ok=True)
             (paper_dir / "figures").mkdir(exist_ok=True)
 
-    # Cheap test preset: seed the canned Deep Research report so the pipeline
-    # skips the live (expensive) Gemini call.
-    if preset == "test":
+    # Cheap test preset: unless the admin opted into live Deep Research, seed the
+    # canned report so the pipeline skips the expensive Gemini call.
+    if preset == "test" and not test_deep_research:
         copy_test_fixtures(pdir)
 
     # Copy agent prompt templates (with variable substitution)
