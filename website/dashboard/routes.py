@@ -482,22 +482,25 @@ def _cheapest_model_for(keys: dict) -> str:
 
 
 def _maybe_route_via_openrouter(model_str: str, keys: dict) -> str:
-    """If the model's native provider key is absent but an OpenRouter key is
-    present, rewrite ``provider/model`` to ``openrouter/<slug>`` so the run goes
-    through OpenRouter. Otherwise return ``model_str`` unchanged.
+    """Rewrite ``provider/model`` to ``openrouter/<slug>`` so the run goes through
+    OpenRouter, or return ``model_str`` unchanged.
 
-    A native key always wins (direct is cheaper/lower-latency). Already-OpenRouter
-    strings pass through untouched.
+    Default: a native provider key WINS (direct is cheaper/lower-latency), and
+    OpenRouter is only the fallback when there's no direct key. If the user set
+    the ``prefer_openrouter`` toggle, OpenRouter wins even when a direct key
+    exists (unified billing/quota). Already-OpenRouter strings pass through.
     """
     if not keys or "/" not in model_str:
         return model_str
     provider = model_str.split("/", 1)[0]
     if provider == "openrouter":
         return model_str
+    has_or = bool(keys.get("openrouter"))
+    prefer_or = has_or and bool(keys.get("prefer_openrouter"))
     native = _OPENROUTER_NATIVE_KEY.get(provider)
-    if native and keys.get(native):
-        return model_str  # user has the direct key — use it
-    if keys.get("openrouter"):
+    if native and keys.get(native) and not prefer_or:
+        return model_str  # user has the direct key and hasn't opted into OpenRouter
+    if has_or:
         slug = _OPENROUTER_SLUG.get(model_str)
         if slug:
             return f"openrouter/{slug}"
@@ -1697,7 +1700,8 @@ async def api_get_user_settings(request: Request):
         if cfg:
             available_providers.append(settings.cloud_provider)
     _STD_KEY_FIELDS = {
-        "gemini", "anthropic", "openai", "openrouter", "claude_oauth_token", "gemini_oauth_json",
+        "gemini", "anthropic", "openai", "openrouter", "prefer_openrouter",
+        "claude_oauth_token", "gemini_oauth_json",
         "github_pat", "github_org",
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
         "gcp_service_account_json", "gcp_project", "gcp_zone", "gcp_instance_type",
@@ -1710,6 +1714,7 @@ async def api_get_user_settings(request: Request):
         "openai": _mask_key(keys.get("openai")),
         "gemini": _mask_key(keys.get("gemini")),
         "openrouter": _mask_key(keys.get("openrouter")),
+        "prefer_openrouter": keys.get("prefer_openrouter") or "",
         "github_pat": _mask_key(keys.get("github_pat")),
         "github_org": keys.get("github_org") or "",
         "aws_access_key_id": _mask_key(keys.get("aws_access_key_id")),
@@ -2030,7 +2035,14 @@ async def api_create_project(
         "gemini-2.5-pro": ("gemini", "gemini-2.5-pro"),
         "gemini-2.5-flash": ("gemini", "gemini-2.5-flash"),
     }
-    model_backend, model_variant = MODEL_MAP.get(model, ("anthropic", "claude-sonnet-4-6"))
+    if model in MODEL_MAP:
+        model_backend, model_variant = MODEL_MAP[model]
+    else:
+        # Unverified / custom "provider/model" string (incl. openrouter/<slug>):
+        # keep it as-is so the DB-stored variant survives continue/restart
+        # instead of silently falling back to Sonnet.
+        model_variant = _to_litellm_model(model)
+        model_backend = model_variant.split("/", 1)[0] or "anthropic"
 
     # Page fitting strictness (off | strict | relaxed). Relaxed is the default
     # — it skips the cosmetic last-page-fill passes that burn the most tokens.
