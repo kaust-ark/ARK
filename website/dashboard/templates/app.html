@@ -828,7 +828,24 @@
           <div class="hero-adv-field">
             <label data-i18n="model">Model</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="var u=document.getElementById('model-unverified'); if(u) u.value='';">
-              <div class="model-group-label">Anthropic</div>
+              <div class="model-group-label">OpenRouter · cheap (needs OpenRouter key)</div>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/deepseek/deepseek-v3.2" />
+                <span class="model-chip">DeepSeek V3.2 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/z-ai/glm-4.6" />
+                <span class="model-chip">GLM-4.6</span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/moonshotai/kimi-k2" />
+                <span class="model-chip">Kimi K2</span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/qwen/qwen3-coder" />
+                <span class="model-chip">Qwen3-Coder</span>
+              </label>
+              <div class="model-group-label" style="margin-top:7px">Anthropic</div>
               <label class="model-option" data-provider="anthropic">
                 <input type="radio" name="model" value="claude-opus-4-8" />
                 <span class="model-chip">Opus 4.8</span>
@@ -871,13 +888,7 @@
             <div style="font-size:.7rem;color:var(--text-muted);font-weight:600;margin:10px 0 3px">⚠ Unverified — OpenHands-supported</div>
             <select id="model-unverified" onchange="onUnverifiedPick(this,'model')" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:360px">
               <option value="">none</option>
-              <optgroup label="OpenRouter · cheap (needs OpenRouter key)">
-                <option value="openrouter/deepseek/deepseek-v3.2">DeepSeek V3.2 — cheapest</option>
-                <option value="openrouter/z-ai/glm-4.6">GLM-4.6 (Zhipu)</option>
-                <option value="openrouter/moonshotai/kimi-k2">Kimi K2 (Moonshot)</option>
-                <option value="openrouter/qwen/qwen3-coder">Qwen3-Coder</option>
-              </optgroup>
-              <optgroup label="DeepSeek (native key)">
+              <optgroup label="DeepSeek">
                 <option value="deepseek/deepseek-chat">deepseek-chat</option>
                 <option value="deepseek/deepseek-reasoner">deepseek-reasoner</option>
               </optgroup>
@@ -4314,6 +4325,7 @@ function _computeKeyProviders(anthropic, openai, gemini, openrouter) {
     anthropic: !!anthropic || viaOR,
     openai: !!openai || viaOR,
     gemini: !!gemini || viaOR,
+    openrouter: viaOR,  // the dedicated OpenRouter model row
   };
 }
 // Grey out model options whose provider has no saved key.
