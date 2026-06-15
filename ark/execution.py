@@ -1701,8 +1701,10 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
         except Exception as e:
             self.log(f"Writing quality verification failed: {e}", "WARN")
 
-        # Only mark tasks completed if meaningful work was done
-        if total_added >= 5:
+        # Mark tasks completed if the writer actually changed the paper. A small
+        # but real edit (e.g. a one-line title or number fix) is still meaningful
+        # — only a completely empty diff (0 lines) counts as a failed writing pass.
+        if total_added >= 1:
             for issue in issues:
                 if issue.get("type") in ["WRITING_ONLY", "FIGURE_CODE_REQUIRED"]:
                     issue["status"] = "completed"

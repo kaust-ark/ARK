@@ -3,6 +3,7 @@
 import json
 import re
 import subprocess
+import sys
 import yaml
 from pathlib import Path
 from ark.latex import utils as latex_utils
@@ -179,9 +180,12 @@ class CompilerMixin:
 
             if blg_path.exists():
                 blg_text = blg_path.read_text(errors="replace")
-                # BibTeX errors
+                # BibTeX errors. NB: do NOT match the "(There were N error
+                # messages)" summary line — it's a count, not an error, and
+                # surfacing it made clean compiles look broken. Match the actual
+                # problems (parse errors / missing database entries) instead.
                 import re as _re
-                bib_errors = _re.findall(r"^.*error message.*$|^I was expecting.*$|^Warning--I didn't find a database entry.*$",
+                bib_errors = _re.findall(r"^I was expecting.*$|^Warning--I didn't find a database entry.*$",
                                          blg_text, _re.MULTILINE)
                 if bib_errors:
                     self._last_compile_errors.extend(bib_errors[:10])
@@ -615,12 +619,15 @@ class CompilerMixin:
             self.log(f"No figure script at {script_path}, skipping", "INFO")
             return True
 
-        env_name = self.config.get("conda_env", "base")
         try:
             self.figures_dir.mkdir(parents=True, exist_ok=True)
 
+            # Run the plotting script with the orchestrator's own interpreter
+            # (the project-local conda env, which ships matplotlib/numpy/pandas).
+            # Avoid `mamba activate` in a non-init shell — it emits a "libmamba
+            # Shell not initialized" warning and short-circuits the python call.
             result = subprocess.run(
-                ["bash", "-c", f"source ~/.bashrc 2>/dev/null || true; mamba activate {env_name} && python {script_path}"],
+                [sys.executable, script_path],
                 capture_output=True,
                 text=True,
                 timeout=300,
