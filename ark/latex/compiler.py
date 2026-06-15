@@ -1,6 +1,7 @@
 """CompilerMixin: LaTeX compilation, figure generation, PDF-to-image conversion."""
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -1091,9 +1092,11 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
                 pass  # Spec file corrupt, will re-generate
 
         # ── Phase 1: Get API key ──
+        # PaperBanana can route image generation through OpenRouter, so an
+        # OpenRouter key alone is enough — a Gemini key is no longer required.
         api_key = get_api_key()
-        if not api_key:
-            self.log("No Gemini API key found, skipping AI figure generation", "WARN")
+        if not api_key and not os.environ.get("OPENROUTER_API_KEY"):
+            self.log("No Gemini or OpenRouter API key found, skipping AI figure generation", "WARN")
             return 0
 
         venue = self.config.get("venue", "")
@@ -1313,9 +1316,18 @@ output: NO_CONCEPT_FIGURES
 
         # Set API key BEFORE importing PaperBanana — its generation_utils
         # module calls reinitialize_clients() at import time, which reads
-        # GOOGLE_API_KEY from the environment.
+        # GOOGLE_API_KEY / OPENROUTER_API_KEY from the environment.
         import os
-        os.environ["GOOGLE_API_KEY"] = api_key
+        if api_key:
+            os.environ["GOOGLE_API_KEY"] = api_key
+        # When an OpenRouter key is present, PaperBanana prefers OpenRouter for
+        # routing. Pin it to tested OpenRouter slugs so it doesn't fall back to
+        # bare Gemini model names (which logged "not configured" warnings and a
+        # spurious "returned no images" retry). One key (OpenRouter) then covers
+        # figure generation, and the cost lands on the OpenRouter bill.
+        if os.environ.get("OPENROUTER_API_KEY"):
+            os.environ["MAIN_MODEL_NAME"] = "google/gemini-2.5-flash"
+            os.environ["IMAGE_GEN_MODEL_NAME"] = "google/gemini-2.5-flash-image"
 
         try:
             import sys
