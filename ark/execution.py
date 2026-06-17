@@ -744,7 +744,7 @@ After making all changes, you MUST verify the page count:
 1. Ensure `\\clearpage` appears immediately before `\\bibliography{{...}}` so References starts on a fresh page
 2. Compile with `pdflatex -interaction=nonstopmode main.tex` (run twice for stable layout)
 3. Check the body page count (pages before the References section)
-4. If over {venue_pages} pages: move less essential subsections to `\\appendix`, condense verbose text
+4. If over {venue_pages} pages: condense verbose text and move less essential PROSE/tables to `\\appendix` — but KEEP FIGURES IN THE BODY (never move a method/result/concept figure to the appendix just to save space)
 5. If under {venue_pages} pages: you have room — do NOT pad with filler
 6. Repeat compile-and-check until body pages = {venue_pages} or fewer
 """

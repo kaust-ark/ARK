@@ -15,7 +15,7 @@ Page adjustment is surgery, not demolition. Every change must preserve the paper
 Before making any change, compile and measure:
 - **How many pages over/under?** This determines the scale of intervention.
 - **Small gap (< 0.3 pages):** Tighten or loosen prose — a sentence here, a paragraph there. No structural changes needed.
-- **Medium gap (0.3–1.0 pages):** May need to add/remove a paragraph, resize a figure, or move a subsection to appendix.
+- **Medium gap (0.3–1.0 pages):** May need to add/remove a paragraph, resize a figure, or move a TEXT subsection to appendix (keep figures in the body).
 - **Large gap (> 1.0 pages):** Structural changes — move entire subsections to/from appendix, add/remove a discussion section, consolidate related work.
 
 Match the intervention to the gap. Do not restructure the paper to fix a 0.2-page overshoot.
@@ -41,12 +41,15 @@ loop on a lossless strategy is always preferable to a lossy one.
 These move or compact content without deleting anything substantive. Try
 all of these before Priority 2.
 
-- **Move subsections to `\appendix`.** Detailed per-category breakdowns,
-  extended ablations, full proofs/derivations, hyperparameter sweeps,
-  prompt templates, implementation minutiae, dataset statistics beyond
-  a summary — these belong in appendix. Keep a 1–3 sentence body
-  summary with a forward reference. The body-page limit excludes
-  appendix, so this is net-positive reader experience.
+- **Move TEXT/tables to `\appendix` — NOT figures.** Detailed per-category
+  breakdowns, extended ablation *tables*, full proofs/derivations,
+  hyperparameter sweeps, prompt templates, implementation minutiae, dataset
+  statistics beyond a summary — these belong in appendix. Keep a 1–3 sentence
+  body summary with a forward reference. **Figures stay in the body**: never
+  relocate a method/result/concept figure to the appendix just to fit the page
+  limit (condense prose instead, or — under relaxed page-fitting — accept a
+  slightly over/short last page). A figure pushed to the appendix to save space
+  usually should not have been generated at all.
 - **Merge short related subsections.** Two adjacent subsections that
   each have fewer than three sentences or that discuss the same
   concept can become one subsection with a single heading.

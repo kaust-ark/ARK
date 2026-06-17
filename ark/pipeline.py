@@ -2477,7 +2477,8 @@ Output your evaluation in JSON format:
 
 ### 2. Appendix policy (use `\\appendix` only when content genuinely belongs there)
 - Belongs in appendix: full proofs/derivations, extended ablation tables, hyperparameter sweeps, prompt templates, implementation/config details, additional qualitative examples, dataset statistics beyond a summary
-- Belongs in body: problem, core method, headline results, primary ablation, key analysis
+- Belongs in body: problem, core method, headline results, primary ablation, key analysis, **and FIGURES** (method/result/concept figures)
+- **Figures stay in the body.** Never move a figure to the appendix just to meet the page limit — condense prose or move detailed text/tables there instead. A figure relegated to the appendix to save space usually should not have been generated. Only genuinely supplementary figures (extra examples beyond the main results) may go to the appendix.
 - The body-page limit excludes `\\appendix` — prefer appendix over cutting body when supplementary material is worth keeping
 - Do NOT create an empty or single-paragraph appendix just to have one
 

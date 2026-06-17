@@ -40,7 +40,15 @@ The flow is always: **experiment → result file → figure → paper text**. Ne
 Figures and tables are **protected zones** during page compression or expansion:
 
 - You may **resize** a figure (change `width`/`height` in `\includegraphics`)
-- You may **move** a figure to a different position in the LaTeX source or to the appendix
+- You may **move** a figure to a different position **within the body**
+- **Keep figures in the body. Do NOT move a method / result / concept figure to
+  the appendix to meet the page limit.** A figure that illustrates the work earns
+  its place in the main text — banishing it to the appendix to save space defeats
+  the reason it was generated. To save space, condense PROSE or move detailed
+  *text*/tables to the appendix instead; under "relaxed" page-fitting, tolerating
+  a slightly short/over last page is preferable to appendixing a figure. Only
+  genuinely *supplementary* figures (extra qualitative examples beyond the main
+  results) may live in the appendix.
 - You may **change float placement** (`[t]`, `[!htbp]`, `[p]`)
 - You must NOT **change the data** shown in the figure
 - You must NOT **regenerate the figure with different values**
