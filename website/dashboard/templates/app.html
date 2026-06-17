@@ -827,7 +827,7 @@
         <div class="hero-advanced-body open" id="hero-advanced-body">
           <div class="hero-adv-field">
             <label data-i18n="model_vendor">Model Vendor</label>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="document.getElementById('model-unverified').value='';document.getElementById('model-openrouter-more').value='';">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="if(event.target&&event.target.name==='model'){document.getElementById('model-unverified').value='';document.getElementById('model-openrouter-more').value='';}">
               <div class="model-group-label">OpenRouter</div>
               <label class="model-option" data-provider="openrouter">
                 <input type="radio" name="model" value="openrouter/anthropic/claude-sonnet-4.6" />
