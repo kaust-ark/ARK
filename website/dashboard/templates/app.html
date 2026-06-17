@@ -852,12 +852,16 @@
                 <span class="model-chip">Gemini 3.5 Flash <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span>
               </label>
               <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/moonshotai/kimi-k2" />
-                <span class="model-chip">Kimi K2</span>
+                <input type="radio" name="model" value="openrouter/moonshotai/kimi-k2.6" />
+                <span class="model-chip">Kimi K2.6</span>
               </label>
               <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/deepseek/deepseek-v3.2" />
-                <span class="model-chip">DeepSeek V3.2 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★★ Recommended</span></span>
+                <input type="radio" name="model" value="openrouter/deepseek/deepseek-v4-pro" />
+                <span class="model-chip">DeepSeek V4 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★★ Recommended</span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/minimax/minimax-m3" />
+                <span class="model-chip">MiniMax M3</span>
               </label>
               <select id="model-openrouter-more" onchange="onExtraModelPick(this)" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
                 <option value="">▾ more…</option>
@@ -874,10 +878,10 @@
                   <option value="openrouter/google/gemini-2.5-flash">Gemini 2.5 Flash</option>
                 </optgroup>
                 <optgroup label="Chinese / open">
-                  <option value="openrouter/z-ai/glm-4.6">GLM-4.6 (Zhipu)</option>
-                  <option value="openrouter/qwen/qwen3-coder">Qwen3-Coder</option>
-                  <option value="openrouter/deepseek/deepseek-chat-v3.1">DeepSeek Chat V3.1</option>
-                  <option value="openrouter/minimax/minimax-m3">MiniMax M3</option>
+                  <option value="openrouter/deepseek/deepseek-v4-flash">DeepSeek V4 Flash (cheapest)</option>
+                  <option value="openrouter/z-ai/glm-5.2">GLM-5.2 (Zhipu)</option>
+                  <option value="openrouter/qwen/qwen3.7-plus">Qwen3.7 Plus</option>
+                  <option value="openrouter/moonshotai/kimi-k2.7-code">Kimi K2.7 Code</option>
                 </optgroup>
               </select>
               <div class="model-group-label" style="margin-top:7px">Anthropic</div>
@@ -3357,9 +3361,12 @@ async function loadVenues() {
   const testOpt = (currentUser && currentUser.is_admin)
     ? '<option value="Test" data-format="euromlsys" data-pages="2" data-preset="test">🧪 Test (cheap smoke test)</option>'
     : '';
-  sel.innerHTML = venues.map(v =>
+  sel.innerHTML = testOpt + venues.map(v =>
     `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}(${v.year || 2025})${v.tag ? ' ' + v.tag : ''}</option>`
-  ).join('') + testOpt + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
+  ).join('') + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
+  // Test sits at the TOP of the list but must NOT be the default selection —
+  // default to the first real venue so normal projects aren't created as tests.
+  if (venues.length) sel.value = venues[0].name;
   heroVenueChanged(sel);
 }
 
