@@ -1901,8 +1901,8 @@ async def api_create_project(
     orchestrator_compute_backend: str = Form("local"),
     cloud_overrides: str = Form(""),
     preset: str = Form(""),
-    test_deep_research: str = Form(""),
-    test_ai_figures: str = Form(""),
+    skip_deep_research: str = Form(""),
+    skip_ai_figures: str = Form(""),
 ):
     user = _require_user(request)
     _check_webapp_enabled()
@@ -1941,17 +1941,20 @@ async def api_create_project(
     figure_generation = "nano_banana"
     if preset == "test":
         if not _is_admin(user):
-            raise HTTPException(403, "The test-project preset is admin-only.")
+            raise HTTPException(403, "The Test template is admin-only.")
         venue, venue_format, venue_pages = "EuroMLSys", "euromlsys", 2
         layout_mode, mode = "relaxed", "paper"
         max_iterations, max_dev_iterations = 1, 1
-        # Optional (default off): generate AI figures / run live Deep Research.
-        figure_generation = "nano_banana" if test_ai_figures else "matplotlib_only"
+        # Defaults to a full run (real Deep Research + real AI figures). The two
+        # "Skip …" boxes seed canned fixtures instead (see copy_test_fixtures
+        # below): skip_ai_figures pre-seeds a concept figure so the figure phase
+        # reuses it (Phase-0 skip, zero PaperBanana cost) — so keep nano_banana.
+        figure_generation = "nano_banana"
         compute_backend = orchestrator_compute_backend = "local"
         model = _cheapest_model_for(keys)
         idea = read_test_idea() or idea
         if not title.strip():
-            title = "🧪 Cheap test run"
+            title = "🧪 Test run"
 
     # Generate project ID: full UUID
     project_id = str(uuid.uuid4())
@@ -2000,10 +2003,16 @@ async def api_create_project(
             paper_dir.mkdir(parents=True, exist_ok=True)
             (paper_dir / "figures").mkdir(exist_ok=True)
 
-    # Cheap test preset: unless the admin opted into live Deep Research, seed the
-    # canned report so the pipeline skips the expensive Gemini call.
-    if preset == "test" and not test_deep_research:
-        copy_test_fixtures(pdir)
+    # Test template: each "Skip …" box seeds a canned fixture so that step is
+    # reused instead of run. Skip Deep Research → canned deep_research.md (Step 2
+    # skips the live call); Skip AI Figures → canned concept figure + manifest
+    # (the figure phase reuses it, zero PaperBanana cost). Neither box → full run.
+    if preset == "test" and (skip_deep_research or skip_ai_figures):
+        copy_test_fixtures(
+            pdir,
+            seed_deep_research=bool(skip_deep_research),
+            seed_figures=bool(skip_ai_figures),
+        )
 
     # Copy agent prompt templates (with variable substitution)
     _substitute_agent_templates(

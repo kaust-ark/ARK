@@ -1,0 +1,9 @@
+[
+  {
+    "name": "fig_concept",
+    "caption": "Feature standardization improves conditioning and accelerates L-BFGS convergence",
+    "section_context": "Concept diagram contrasting two pipelines on the breast-cancer dataset: raw features produce an ill-conditioned loss surface where L-BFGS needs ~1000 iterations (slow), while standardized features produce a well-conditioned surface where L-BFGS converges in ~18 iterations (fast) at equal-or-better accuracy.",
+    "latex_label": "fig:concept",
+    "placement": "full_width"
+  }
+]

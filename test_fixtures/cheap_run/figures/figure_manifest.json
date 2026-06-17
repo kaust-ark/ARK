@@ -1,0 +1,11 @@
+{
+  "figures": {
+    "fig_concept.png": {
+      "source": "paperbanana",
+      "protected": true,
+      "placement": "full_width",
+      "scalable": true,
+      "width_in": 7.0
+    }
+  }
+}

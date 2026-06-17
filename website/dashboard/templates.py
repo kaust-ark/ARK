@@ -23,22 +23,40 @@ def read_test_idea() -> str:
     return f.read_text() if f.exists() else ""
 
 
-def copy_test_fixtures(code_dir: Path) -> bool:
-    """Seed a project with the cheap test-project fixtures.
+def copy_test_fixtures(code_dir: Path, seed_deep_research: bool = True,
+                       seed_figures: bool = False) -> bool:
+    """Seed a project with cheap test-project fixtures (the "Test" venue).
 
-    Drops the canned Deep Research report into the project state dir so the
-    pipeline SKIPS the (expensive) live Gemini Deep Research call — the Step-2
-    block skips when ``deep_research.md`` already exists. Returns True if the
-    report was copied. The idea text is seeded via the project's ``idea`` field
-    by the caller (read_test_idea), not here.
+    - ``seed_deep_research``: drop the canned Deep Research report into the
+      project state dir so the pipeline SKIPS the (expensive) live Deep Research
+      call — Step 2 skips when ``deep_research.md`` already exists.
+    - ``seed_figures``: drop a canned concept figure + its spec + manifest into
+      ``paper/figures/`` so the AI-figure phase's Phase-0 check sees the concept
+      figures already exist and SKIPS generation (zero PaperBanana cost) while
+      the writer still includes the figure — i.e. reuse an existing figure.
+
+    The idea text is seeded via the project's ``idea`` field by the caller
+    (read_test_idea), not here. Returns True if anything was copied.
     """
-    src = _TEST_FIXTURES_ROOT / "deep_research.md"
-    if not src.exists():
-        return False
-    state_dir = Path(code_dir) / "auto_research" / "state"
-    state_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, state_dir / "deep_research.md")
-    return True
+    code_dir = Path(code_dir)
+    did = False
+    if seed_deep_research:
+        src = _TEST_FIXTURES_ROOT / "deep_research.md"
+        if src.exists():
+            state_dir = code_dir / "auto_research" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, state_dir / "deep_research.md")
+            did = True
+    if seed_figures:
+        fig_src = _TEST_FIXTURES_ROOT / "figures"
+        if fig_src.exists():
+            dest = code_dir / "paper" / "figures"
+            dest.mkdir(parents=True, exist_ok=True)
+            for item in fig_src.iterdir():
+                if item.is_file():
+                    shutil.copy2(item, dest / item.name)
+            did = True
+    return did
 
 
 def get_available_venues() -> list[str]:
