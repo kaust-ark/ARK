@@ -1942,7 +1942,7 @@ async def api_create_project(
     if preset == "test":
         if not _is_admin(user):
             raise HTTPException(403, "The Test template is admin-only.")
-        venue, venue_format, venue_pages = "EuroMLSys", "euromlsys", 2
+        venue, venue_format, venue_pages = "ACM SIGPLAN", "euromlsys", 2
         layout_mode, mode = "relaxed", "paper"
         max_iterations, max_dev_iterations = 1, 1
         # Defaults to a full run (real Deep Research + real AI figures). The two
@@ -2802,7 +2802,7 @@ async def api_venues():
         # Verified
         {"name": "ICML",         "format": "icml",     "pages": 9,  "year": 2025, "tag": "[Verified] (Default)"},
         {"name": "NeurIPS",      "format": "neurips",  "pages": 9,  "year": 2025, "tag": "[Verified]"},
-        {"name": "EuroMLSys",    "format": "euromlsys", "pages": 6, "year": 2025, "tag": "[Verified]"},
+        {"name": "ACM SIGPLAN",  "format": "euromlsys", "pages": 6, "year": 2025, "tag": "[Verified]"},
         # ML / AI
         {"name": "ICLR",         "format": "iclr",     "pages": 9,  "year": 2026},
         {"name": "ACL",          "format": "acl",      "pages": 8,  "year": 2025},
