@@ -378,6 +378,104 @@ def run_deep_research(
         return ""
 
 
+def run_deep_research_openrouter(
+    config: dict,
+    output_dir: Path,
+    custom_query: str = None,
+    api_key: str = None,
+    model: str = "perplexity/sonar-deep-research",
+    use_web_plugin: bool = True,
+) -> str:
+    """Run Deep Research via OpenRouter (Perplexity sonar-deep-research).
+
+    Unlike Gemini's Interactions API, this is a plain OpenAI-compatible chat
+    completion, so it runs fully through OpenRouter (one key, cost tracked) and
+    returns titled citations in ``message.annotations`` — which we render into a
+    ``## Sources`` section that the citation bootstrap can actually use (Gemini
+    DR only returned bare domains, no paper titles). The OpenRouter ``web``
+    plugin is enabled by default to force a live search + citations (the
+    deep-research model occasionally skips searching otherwise).
+
+    Returns the path to ``deep_research.md`` or "" on failure.
+    """
+    key = api_key or os.environ.get("OPENROUTER_API_KEY", "") or config.get("openrouter_api_key", "")
+    if not key:
+        print("Error: No OpenRouter API key found for Deep Research.")
+        return ""
+
+    query = custom_query or build_research_query(config)
+    body = {"model": model, "messages": [{"role": "user", "content": query}]}
+    if use_web_plugin:
+        body["plugins"] = [{"id": "web", "max_results": 8}]
+
+    import httpx
+    print(f"  Starting OpenRouter Deep Research ({model})...")
+    print("  This may take 2-10 minutes. You can safely wait.")
+    start = time.time()
+    try:
+        resp = httpx.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json=body, timeout=900,
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"  Deep Research error: {e}")
+        return ""
+
+    elapsed = int(time.time() - start)
+    elapsed_str = f"{elapsed // 60}m {elapsed % 60}s"
+    if resp.status_code != 200:
+        print(f"  Deep Research HTTP {resp.status_code}: {resp.text[:200]}")
+        return ""
+
+    try:
+        data = resp.json()
+        msg = data["choices"][0]["message"]
+    except Exception as e:  # noqa: BLE001
+        print(f"  Deep Research: could not parse response: {e}")
+        return ""
+
+    report_text = (msg.get("content") or "").strip()
+    if not report_text:
+        print("  Warning: Deep Research returned empty content.")
+        return ""
+
+    # Collect titled citations from message.annotations (url_citation), dedup.
+    seen, sources = set(), []
+    for a in (msg.get("annotations") or []):
+        if isinstance(a, dict) and a.get("type") == "url_citation":
+            uc = a.get("url_citation", {}) or {}
+            title = (uc.get("title") or "").strip()
+            url = (uc.get("url") or "").strip()
+            k = (title, url)
+            if (title or url) and k not in seen:
+                seen.add(k)
+                sources.append((title, url))
+
+    sources_md = ""
+    if sources:
+        sources_md = "\n\n## Sources\n\n" + "\n".join(
+            f"{i}. {title or '(untitled)'}" + (f" — {url}" if url else "")
+            for i, (title, url) in enumerate(sources, 1)
+        )
+
+    cost = (data.get("usage") or {}).get("cost")
+    cost_str = f" · cost ${cost:.3f}" if isinstance(cost, (int, float)) else ""
+    header = (
+        f"# Deep Research Report\n\n"
+        f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        f"**Project**: {config.get('title', 'Unknown')}\n"
+        f"**Backend**: OpenRouter / {model}\n"
+        f"**Duration**: {elapsed_str}{cost_str}\n\n"
+        f"---\n\n"
+    )
+    report_path = output_dir / "deep_research.md"
+    report_path.write_text(header + report_text + sources_md)
+    print(f"  Research completed! ({elapsed_str}, {len(sources)} sources)")
+    print(f"  Report saved: {report_path}")
+    return str(report_path)
+
+
 def run_deep_research_async(
     config: dict,
     output_dir: Path,

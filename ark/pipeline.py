@@ -855,12 +855,24 @@ Be thorough and faithful to the proposal.
         # ── Step 2: Deep Research ───────────────────────────────────────
         dr_file = self.state_dir / "deep_research.md"
         if not dr_file.exists():
-            self.log_step_header(2, 4, "Deep Research (Gemini)")
+            import os as _os
+            from ark.deep_research import (
+                run_deep_research, run_deep_research_openrouter, get_gemini_api_key,
+            )
+            # Backend selection. Default (auto): if an OpenRouter key is present,
+            # use Perplexity sonar-deep-research via OpenRouter (one key, cost
+            # tracked, returns TITLED citations — Gemini DR only gave bare
+            # domains). Else fall back to Gemini Deep Research. `config
+            # deep_research_backend` (openrouter|gemini|auto) can force one.
+            or_key = _os.environ.get("OPENROUTER_API_KEY", "") or self.config.get("openrouter_api_key", "")
+            gem_key = self.config.get("gemini_api_key", "") or get_gemini_api_key()
+            backend = (self.config.get("deep_research_backend", "auto") or "auto").lower()
+            use_or = bool(or_key) and backend in ("auto", "openrouter")
+            use_gem = bool(gem_key) and (backend == "gemini" or (backend == "auto" and not use_or))
+            label = "OpenRouter" if use_or else "Gemini"
+            self.log_step_header(2, 4, f"Deep Research ({label})")
 
-            from ark.deep_research import run_deep_research, get_gemini_api_key
-            api_key = self.config.get("gemini_api_key", "") or get_gemini_api_key()
-
-            if api_key:
+            if use_or or use_gem:
                 # Extract query from researcher output, or build from idea.md
                 query = None
                 if dr_query and "DEEP_RESEARCH_QUERY:" in dr_query:
@@ -885,23 +897,31 @@ Be thorough and faithful to the proposal.
                     )
 
                 try:
-                    result = run_deep_research(
-                        config=self.config,
-                        output_dir=self.state_dir,
-                        api_key=api_key,
-                        custom_query=query,
-                    )
+                    if use_or:
+                        result = run_deep_research_openrouter(
+                            config=self.config,
+                            output_dir=self.state_dir,
+                            api_key=or_key,
+                            custom_query=query,
+                        )
+                    else:
+                        result = run_deep_research(
+                            config=self.config,
+                            output_dir=self.state_dir,
+                            api_key=gem_key,
+                            custom_query=query,
+                        )
                     if result:
-                        self.log(f"Deep Research completed: {result}", "INFO")
+                        self.log(f"Deep Research completed ({label}): {result}", "INFO")
                         self._send_deep_research_telegram(result)
                     else:
                         self.log("Deep Research returned no result.", "WARN")
                 except Exception as e:
                     self.log(f"Deep Research failed: {e}", "WARN")
             else:
-                self.log("No Gemini API key — skipping Deep Research", "WARN")
+                self.log("No Deep Research key (OpenRouter/Gemini) — skipping", "WARN")
 
-            self.log_step_header(2, 4, "Deep Research (Gemini)", "end")
+            self.log_step_header(2, 4, f"Deep Research ({label})", "end")
         else:
             self.log_step("Deep research report exists, skipping", "info")
 
