@@ -1951,7 +1951,13 @@ async def api_create_project(
         # reuses it (Phase-0 skip, zero PaperBanana cost) — so keep nano_banana.
         figure_generation = "nano_banana"
         compute_backend = orchestrator_compute_backend = "local"
-        model = _cheapest_model_for(keys)
+        # Respect the model the user actually picked in the dropdown (e.g.
+        # MiniMax); only fall back to the cheapest available when they left the
+        # default (Sonnet). The model picker is visible for the Test venue, so a
+        # chosen model should win — Test's cheapness comes from 2 pages / 1
+        # iteration / the Skip boxes, not from forcing a model.
+        if not model or model == "claude-sonnet-4-6":
+            model = _cheapest_model_for(keys)
         idea = read_test_idea() or idea
         if not title.strip():
             title = "🧪 Test run"
