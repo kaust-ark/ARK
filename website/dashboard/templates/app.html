@@ -3361,16 +3361,27 @@ async function loadVenues() {
   const testOpt = (currentUser && currentUser.is_admin)
     ? '<option value="Test" data-format="euromlsys" data-pages="2" data-preset="test">🧪 Test (cheap smoke test)</option>'
     : '';
-  sel.innerHTML = testOpt + venues.map(v =>
-    `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}(${v.year || 2025})${v.tag ? ' ' + v.tag : ''}</option>`
+  sel.innerHTML = testOpt + venues.map((v, i) =>
+    `<option value="${v.name}" ${i === 0 ? 'selected' : ''} data-format="${v.format}" data-pages="${v.pages}">${v.name}(${v.year || 2025})${v.tag ? ' ' + v.tag : ''}</option>`
   ).join('') + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
-  // Test sits at the TOP of the list but must NOT be the default selection —
-  // default to the first real venue so normal projects aren't created as tests.
+  // Test sits at the TOP of the list but must NOT be the default selection — the
+  // first real venue carries `selected` so initial load AND form.reset() land on
+  // a real venue, not the Test template.
   if (venues.length) sel.value = venues[0].name;
   heroVenueChanged(sel);
 }
 
 let customTplFile = null;
+
+// Fixed idea shown (read-only) when the admin "Test" template is selected. The
+// canned Deep Research report + concept figure are about this exact study, so
+// the idea is pinned; the server uses its own canonical copy regardless.
+const TEST_IDEA_TEXT =
+  'Feature Standardization Accelerates Logistic Regression Convergence\n\n' +
+  'Study whether standardizing input features (zero mean, unit variance) reduces the number of ' +
+  'L-BFGS iterations a logistic-regression classifier needs to converge on the scikit-learn ' +
+  'breast-cancer dataset, without hurting accuracy. (Fixed Test-template idea — the canned ' +
+  'report and figure match it.)';
 
 function heroVenueChanged(sel) {
   const opt = sel.options[sel.selectedIndex];
@@ -3384,6 +3395,22 @@ function heroVenueChanged(sel) {
   if (presetInput) presetInput.value = isTest ? 'test' : '';
   const testOpts = document.getElementById('hero-test-opts');
   if (testOpts) testOpts.style.display = isTest ? '' : 'none';
+  // Pin the idea to the fixed Test idea (the canned report/figure match it; the
+  // server uses the canonical idea regardless — this just makes it visible).
+  const ideaEl = document.querySelector('#hero-form [name="idea"]');
+  if (ideaEl) {
+    if (isTest) {
+      if (!ideaEl.readOnly) window._savedIdea = ideaEl.value;  // stash user's idea once
+      ideaEl.value = TEST_IDEA_TEXT;
+      ideaEl.readOnly = true;
+      ideaEl.style.opacity = '.8';
+    } else if (ideaEl.readOnly) {
+      ideaEl.value = window._savedIdea || '';
+      ideaEl.readOnly = false;
+      ideaEl.style.opacity = '';
+    }
+    if (typeof heroIdeaInput === 'function') heroIdeaInput(ideaEl);
+  }
   if (isTest) {
     const lm = document.getElementById('hero-layout-mode');
     if (lm) lm.value = 'relaxed';  // Test always uses relaxed page fitting
@@ -3582,6 +3609,9 @@ async function performLaunch(form) {
     document.getElementById('custom-tpl-drop').style.borderColor = '';
     document.getElementById('custom-template-wrap').style.display = 'none';
     document.getElementById('hero-char-count').textContent = t('chars', 0);
+    // Re-sync venue-driven state (clears a pinned Test idea / preset / panel).
+    const _vs = document.getElementById('hero-venue-select');
+    if (_vs) { window._savedIdea = ''; heroVenueChanged(_vs); }
     navigate('detail', { id: proj.id });
   } finally {
     btn.disabled = false;
