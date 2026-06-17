@@ -1326,8 +1326,13 @@ output: NO_CONCEPT_FIGURES
         # spurious "returned no images" retry). One key (OpenRouter) then covers
         # figure generation, and the cost lands on the OpenRouter bill.
         if os.environ.get("OPENROUTER_API_KEY"):
-            os.environ["MAIN_MODEL_NAME"] = "google/gemini-2.5-flash"
-            os.environ["IMAGE_GEN_MODEL_NAME"] = "google/gemini-2.5-flash-image"
+            # Pin to the SAME (newer, higher-quality) models PaperBanana defaults
+            # to — just as explicit OpenRouter slugs so it routes through
+            # OpenRouter without the "not configured" warning. Using the older/
+            # cheaper gemini-2.5-flash-image here visibly downgraded figure
+            # quality vs the 3.1 default, so match the default instead.
+            os.environ["MAIN_MODEL_NAME"] = "google/gemini-3.1-pro-preview"
+            os.environ["IMAGE_GEN_MODEL_NAME"] = "google/gemini-3.1-flash-image-preview"
 
         try:
             import sys
