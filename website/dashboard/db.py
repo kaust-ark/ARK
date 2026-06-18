@@ -21,6 +21,28 @@ class User(SQLModel, table=True):
     telegram_chat_id: str = ""
     encrypted_keys: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Access tracking — "who accessed": set on each successful dashboard login.
+    last_login_at: Optional[datetime] = Field(default=None)
+    login_count: int = 0
+
+
+class AccessRequest(SQLModel, table=True):
+    """A dashboard access request — "who requested" + "who authorized".
+
+    Persisted when someone submits /api/request-access (previously the request
+    was only emailed, then lost). Flipped to ``authorized`` by ``ark access
+    add`` so the request -> grant trail is queryable.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    email: str = Field(index=True)
+    name: str = ""
+    affiliation: str = ""
+    purpose: str = ""
+    ip: str = ""
+    status: str = "pending"          # pending | authorized | rejected
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    authorized_at: Optional[datetime] = Field(default=None)
+    authorized_by: str = ""          # admin email, or "cli"
 
 
 class Project(SQLModel, table=True):
@@ -126,6 +148,12 @@ def _migrate(engine):
         if "encrypted_keys" not in existing:
             conn.execute(text("ALTER TABLE user ADD COLUMN encrypted_keys TEXT"))
             conn.commit()
+        if "last_login_at" not in existing:
+            conn.execute(text("ALTER TABLE user ADD COLUMN last_login_at TIMESTAMP"))
+            conn.commit()
+        if "login_count" not in existing:
+            conn.execute(text("ALTER TABLE user ADD COLUMN login_count INTEGER DEFAULT 0"))
+            conn.commit()
 
         # ── Project table migrations ──
         rows = conn.execute(text("PRAGMA table_info(project)")).fetchall()
@@ -204,6 +232,84 @@ def get_or_create_user_by_email(session: Session, email: str) -> tuple[User, boo
 
 def get_user(session: Session, user_id: str) -> Optional[User]:
     return session.get(User, user_id)
+
+
+def touch_user_login(session: Session, user: User) -> None:
+    """Record a successful dashboard login on the user ("who accessed")."""
+    user.last_login_at = datetime.utcnow()
+    user.login_count = (user.login_count or 0) + 1
+    session.add(user)
+    session.commit()
+
+
+def record_access_request(session: Session, email: str, name: str = "",
+                          affiliation: str = "", purpose: str = "",
+                          ip: str = "") -> Optional["AccessRequest"]:
+    """Persist an inbound access request ("who requested").
+
+    Upserts a single pending row per email — re-requests refresh the existing
+    pending row rather than piling up duplicates.
+    """
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    existing = session.exec(
+        select(AccessRequest).where(AccessRequest.email == email,
+                                    AccessRequest.status == "pending")
+    ).first()
+    if existing:
+        existing.created_at = datetime.utcnow()
+        existing.name = name or existing.name
+        existing.affiliation = affiliation or existing.affiliation
+        existing.purpose = purpose or existing.purpose
+        existing.ip = ip or existing.ip
+        session.add(existing)
+        session.commit()
+        return existing
+    req = AccessRequest(email=email, name=name, affiliation=affiliation,
+                        purpose=purpose, ip=ip)
+    session.add(req)
+    session.commit()
+    session.refresh(req)
+    return req
+
+
+def mark_access_authorized(session: Session, emails: list[str],
+                           by: str = "cli") -> int:
+    """Mark these emails as authorized ("who authorized"). Returns rows touched.
+
+    Flips any pending request to authorized; if an email has no request on file
+    (a direct ``ark access add``), inserts an authorized row so the grant is
+    still recorded.
+    """
+    n = 0
+    for email in emails:
+        email = (email or "").strip().lower()
+        if not email:
+            continue
+        rows = session.exec(
+            select(AccessRequest).where(AccessRequest.email == email,
+                                        AccessRequest.status == "pending")
+        ).all()
+        if not rows:
+            rows = [AccessRequest(email=email)]
+        for r in rows:
+            r.status = "authorized"
+            r.authorized_at = datetime.utcnow()
+            r.authorized_by = by
+            session.add(r)
+            n += 1
+    if n:
+        session.commit()
+    return n
+
+
+def list_access_requests(session: Session, status: Optional[str] = None) -> list["AccessRequest"]:
+    """List access requests, newest first; optionally filter by status."""
+    q = select(AccessRequest)
+    if status:
+        q = q.where(AccessRequest.status == status)
+    return list(session.exec(q.order_by(AccessRequest.created_at.desc())))
 
 
 def get_projects_for_user(session: Session, user_id: str) -> list[Project]:

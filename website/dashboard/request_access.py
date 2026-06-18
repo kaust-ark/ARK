@@ -123,4 +123,12 @@ async def request_access(payload: AccessRequest, request: Request):
 
     _last_submit[ip] = now
     logger.info(f"Access request sent from {email} (ip={ip})")
+    # Persist the request so it's queryable ("who requested") — best-effort;
+    # never fail the user's submission on a DB hiccup.
+    try:
+        from .db import get_session, record_access_request
+        with get_session(settings.db_path) as _s:
+            record_access_request(_s, email, name, affiliation, purpose, ip)
+    except Exception as e:
+        logger.warning(f"Failed to persist access request for {email}: {e}")
     return {"ok": True, "message": "Thanks — your request was sent. We'll be in touch."}

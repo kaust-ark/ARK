@@ -3566,6 +3566,8 @@ def cmd_access(args):
     try:
         if sub == 'list' or sub is None:
             return _access.cmd_list()
+        if sub == 'requests':
+            return _access.cmd_requests(getattr(args, 'status', 'pending'))
         if sub == 'add':
             return _access.cmd_add(args.emails, notify=not getattr(args, 'no_notify', False))
         if sub == 'remove':
@@ -4644,6 +4646,10 @@ def main():
     )
     access_sub = p_access.add_subparsers(dest="access_cmd")
     access_sub.add_parser("list", help="Show current allowed emails and domains")
+    p_acc_req = access_sub.add_parser("requests", help="List access requests (who requested / who's authorized)")
+    p_acc_req.add_argument("--status", default="pending",
+                           choices=["pending", "authorized", "rejected", "all"],
+                           help="Filter by status (default: pending)")
     p_acc_add = access_sub.add_parser("add", help="Add email(s) to allowlist")
     p_acc_add.add_argument("emails", nargs="+", help="Email address(es)")
     p_acc_add.add_argument("--no-notify", action="store_true",

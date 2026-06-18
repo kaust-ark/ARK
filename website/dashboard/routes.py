@@ -85,6 +85,7 @@ from .db import (
     get_project,
     get_projects_for_user,
     get_session,
+    touch_user_login,
     get_share_alias,
     get_user,
     update_project,
@@ -1536,6 +1537,7 @@ async def auth_verify(request: Request, token: str = ""):
     with get_session(settings.db_path) as session:
         user, is_new = get_or_create_user_by_email(session, email)
         request.session["user_id"] = user.id
+        touch_user_login(session, user)  # "who accessed" — record this login
         if is_new:
             asyncio.get_event_loop().run_in_executor(
                 None, send_welcome_email, settings, email, user.name, settings.base_url,
@@ -1624,6 +1626,7 @@ async def auth_google_callback(request: Request):
     with get_session(settings.db_path) as session:
         user, is_new = get_or_create_user_by_email(session, email)
         request.session["user_id"] = user.id
+        touch_user_login(session, user)  # "who accessed" — record this login
         if is_new:
             asyncio.get_event_loop().run_in_executor(
                 None, send_welcome_email, settings, email, user.name, settings.base_url,

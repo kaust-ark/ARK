@@ -210,6 +210,54 @@ def _notify_added(emails: list[str]) -> None:
         print(f"  {'✉' if ok else '✗'} notify {email}")
 
 
+def _record_authorized_in_db(emails: list[str], by: str = "cli") -> None:
+    """Flip persisted access requests for these emails to authorized ("who
+    authorized"). Best-effort — never blocks the actual CF Access grant."""
+    if not emails:
+        return
+    try:
+        from website.dashboard.config import get_settings  # noqa: WPS433
+        from website.dashboard.db import get_session, mark_access_authorized  # noqa: WPS433
+        settings = get_settings()
+        with get_session(settings.db_path) as s:
+            n = mark_access_authorized(s, emails, by=by)
+        if n:
+            print(f"  (recorded {n} authorization(s) in DB)")
+    except Exception as e:
+        print(f"  (skipped DB record: {e})", file=sys.stderr)
+
+
+def cmd_requests(status: str = "pending") -> int:
+    """List persisted access requests — who requested, who's authorized."""
+    try:
+        from website.dashboard.config import get_settings  # noqa: WPS433
+        from website.dashboard.db import get_session, list_access_requests  # noqa: WPS433
+    except Exception as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    settings = get_settings()
+    filt = None if status == "all" else status
+    with get_session(settings.db_path) as s:
+        rows = list_access_requests(s, status=filt)
+    if not rows:
+        print(f"No access requests ({status}).")
+        return 0
+    print(f"Access requests ({status}):  {len(rows)}\n")
+    for r in rows:
+        when = r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "?"
+        line = f"  [{r.status.upper()}] {r.email}  ({when})"
+        meta = " / ".join(x for x in (r.name, r.affiliation) if x)
+        if meta:
+            line += f"  — {meta}"
+        print(line)
+        if r.purpose:
+            print(f"        purpose: {r.purpose[:140]}")
+    pend = [r.email for r in rows if r.status == "pending"]
+    if pend:
+        print(f"\nauthorize all pending:\n  ark access add {' '.join(pend)}")
+    return 0
+
+
 def cmd_add(emails: list[str], notify: bool = True) -> int:
     cfg = _load_config()
     pol = _get_policy(cfg)
@@ -235,6 +283,7 @@ def cmd_add(emails: list[str], notify: bool = True) -> int:
     for e in added:
         print(f"  + {e}")
     print(f"\nadded {len(added)}  skipped {len(skipped)}")
+    _record_authorized_in_db(added)
     if notify:
         _notify_added(added)
     return 0
