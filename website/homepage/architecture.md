@@ -1,9 +1,9 @@
 # Architecture
 
-ARK uses a **mixin-based** architecture. The `Orchestrator` class inherits from four mixins, each responsible for a distinct concern:
+idea2paper uses a **mixin-based** architecture. The `Orchestrator` class inherits from four mixins, each responsible for a distinct concern:
 
 <p align="center">
-  <img src="assets/architecture.png" alt="ARK Architecture" width="700">
+  <img src="assets/architecture.png" alt="idea2paper Architecture" width="700">
 </p>
 
 ## Module Reference

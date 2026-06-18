@@ -1,4 +1,4 @@
-# ARK Architecture
+# idea2paper Architecture
 
 ## Design Principles
 
@@ -10,11 +10,11 @@
 
 ## Pipeline Overview
 
-ARK runs three phases in sequence:
+idea2paper runs three phases in sequence:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        ARK Pipeline                             │
+│                        idea2paper Pipeline                      │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  Phase 1: Research (5-step)                                     │
@@ -46,7 +46,7 @@ ARK runs three phases in sequence:
 
 | Step | Agent/Tool | What Happens |
 |:-----|:-----------|:-------------|
-| 0 | — | **Setup**: provision per-project conda env (clones ark-base — research stack only, no ARK code; orchestrator's ARK is injected via `PYTHONPATH`) |
+| 0 | — | **Setup**: provision per-project conda env (clones ark-base — research stack only, no idea2paper code; orchestrator's idea2paper is injected via `PYTHONPATH`) |
 | 1 | Researcher | **Analyze Proposal**: read uploaded PDF or idea → write `idea.md` (summary, methodology, systems); output Deep Research query; parse and commit paper title |
 | 2 | Gemini | **Deep Research**: literature survey → `deep_research.md`; PDF sent to user via Telegram |
 | 3 | Researcher | **Specialization**: generate `project_context.md` (web-verified); specialize agent prompt templates for the project; select relevant skills (0–5) |
@@ -136,7 +136,7 @@ Each project gets a sandboxed conda environment:
 
 ### 6. Compute Backends (`ark/compute/`)
 
-ARK supports multiple compute backends for running experiments:
+idea2paper supports multiple compute backends for running experiments:
 
 - **Local**: Runs experiments directly on the host machine.
 - **Slurm**: Submits jobs to HPC clusters using `sbatch`.

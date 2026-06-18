@@ -55,7 +55,7 @@ authors:
 
 ## Supported Venues
 
-ARK auto-configures page geometry, font sizes, and figure dimensions:
+idea2paper auto-configures page geometry, font sizes, and figure dimensions:
 
 | Venue | Format Key | Columns | Font | Column Width |
 |-------|-----------|---------|------|-------------|
@@ -99,4 +99,4 @@ def generate_figures_from_results(orch):
     pass
 ```
 
-If a hook function is not defined, ARK falls back to built-in behavior.
+If a hook function is not defined, idea2paper falls back to built-in behavior.

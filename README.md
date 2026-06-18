@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <img src="https://idea2paper.org/assets/logo_ark_transparent.png" alt="ARK" width="260">
+  <img src="https://idea2paper.org/assets/logo_ark_transparent.png" alt="idea2paper" width="260">
 </p>
 
-<h1 align="center">ARK &mdash; Automatic Research Kit</h1>
+<h1 align="center">idea2paper</h1>
 
 <p align="center">
   <em>Offload the labour. Steer the science.</em>
@@ -24,21 +24,21 @@
   <a href="https://idea2paper.org/"><strong>Website</strong></a> &bull;
   <a href="#quick-start">Quick Start</a> &bull;
   <a href="#requirements">Requirements</a> &bull;
-  <a href="#ark-pipeline">Pipeline</a> &bull;
-  <a href="#ark-agents">Agents</a> &bull;
+  <a href="#pipeline">Pipeline</a> &bull;
+  <a href="#agents">Agents</a> &bull;
   <a href="#cloud-compute">Cloud</a> &bull;
   <a href="#cli-reference">CLI</a>
 </p>
 
 ---
 
-ARK orchestrates **6 specialized AI agents** to turn a research idea into a paper &mdash; proposal analysis, literature search, Slurm experiments, LaTeX drafting, and iterative peer review &mdash; while you stay in control via **CLI**, **Dashboard**, or **Telegram**.
+idea2paper orchestrates **6 specialized AI agents** to turn a research idea into a paper &mdash; proposal analysis, literature search, Slurm experiments, LaTeX drafting, and iterative peer review &mdash; while you stay in control via **CLI**, **Dashboard**, or **Telegram**.
 
 ```
-Give it an idea and a venue. ARK handles the rest.
+Give it an idea and a venue. idea2paper handles the rest.
 ```
 
-## Papers Written by ARK
+## Papers Written by idea2paper
 
 <table align="center">
 <tr>
@@ -76,7 +76,7 @@ curl -fsSL https://idea2paper.org/install.sh | bash
 
 The script:
 
-1. Detects your OS, installs miniforge if missing, builds the `ark-base` and `ark` conda envs, pip-installs ARK editable into `~/ARK`, and installs the OpenHands CLI (the agent runtime, via `uv` — it bundles its own Python 3.12).
+1. Detects your OS, installs miniforge if missing, builds the `ark-base` and `ark` conda envs, pip-installs idea2paper editable into `~/ARK`, and installs the OpenHands CLI (the agent runtime, via `uv` — it bundles its own Python 3.12).
 2. Asks you for **Anthropic / OpenAI / Gemini API keys** (fill whichever provider(s) you'll use; the Gemini key also powers Deep Research) and an **email for dashboard login**. Press Enter to skip any.
 3. Installs the dashboard as a `systemd --user` service on port `9527` (use `--no-webapp` to opt out).
 4. Prints a one-time **magic-link URL** for your email — click it once and you're logged into the local dashboard. No SMTP, no Google OAuth.
@@ -98,7 +98,7 @@ Re-run `ark webapp login <email>` anytime for a fresh sign-in link. Full install
 ark new myproject --from-pdf proposal.pdf
 ```
 
-ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks off from the extracted spec.
+idea2paper parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks off from the extracted spec.
 
 ---
 
@@ -114,13 +114,13 @@ ARK parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks 
 The fastest path is the one-line installer in [Quick Start](#quick-start). It runs the steps below for you and prints onboarding hints. To do it by hand:
 
 ```bash
-# 1. Create the project research-stack template (no ARK code in here —
+# 1. Create the project research-stack template (no idea2paper code in here —
 #    each new project clones this env, so it must stay clean).
 conda env create -f environment.yml         # Linux (creates "ark-base")
 # OR for macOS:
 conda env create -f environment-macos.yml   # macOS (creates "ark-base")
 
-# 2. Install ARK itself into a SEPARATE env (not ark-base).
+# 2. Install idea2paper itself into a SEPARATE env (not ark-base).
 conda create -n ark python=3.11 -y
 conda activate ark
 pip install -e .                    # Core
@@ -140,19 +140,19 @@ ark doctor
 
 ---
 
-## ARK Framework
+## Framework
 
 <p align="center">
-  <img src="assets/framework.png" alt="ARK Framework" width="900">
+  <img src="assets/framework.png" alt="idea2paper framework" width="900">
 </p>
 
-ARK orchestrates three phases &mdash; **Initialization &amp; Research**, **Iterative Development**, and **Iterative Review** &mdash; coordinated through shared memory, a persistent **Goal Anchor** re-injected into every agent call to prevent drift, and human-in-the-loop steering via the web dashboard or Telegram.
+idea2paper orchestrates three phases &mdash; **Initialization &amp; Research**, **Iterative Development**, and **Iterative Review** &mdash; coordinated through shared memory, a persistent **Goal Anchor** re-injected into every agent call to prevent drift, and human-in-the-loop steering via the web dashboard or Telegram.
 
 ---
 
-## ARK Pipeline
+## Pipeline
 
-ARK runs three phases in sequence. The Review phase loops until the paper reaches the target score.
+idea2paper runs three phases in sequence. The Review phase loops until the paper reaches the target score.
 
 | Phase | What Happens |
 |:------|:-------------|
@@ -179,7 +179,7 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 
 ---
 
-## ARK Agents
+## Agents
 
 | Agent | Role |
 |:------|:-----|
@@ -192,9 +192,9 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 
 ---
 
-## What Sets ARK Apart
+## What Sets idea2paper Apart
 
-| | Other Tools | ARK |
+| | Other Tools | idea2paper |
 |---|:------------|:----|
 | **Control** | Fully autonomous &mdash; drifts from intent, no mid-run correction | Human-in-the-loop: pause at key decisions, steer via Telegram or web |
 | **Formatting** | Broken layouts, LaTeX errors, manual cleanup | Venue templates + sub-page length control to hit page limits exactly |
@@ -228,7 +228,7 @@ ark run myproject
 <details>
 <summary><strong>Skills System</strong></summary>
 
-ARK ships with **builtin skills** &mdash; modular instruction sets that agents load at runtime to enforce best practices:
+idea2paper ships with **builtin skills** &mdash; modular instruction sets that agents load at runtime to enforce best practices:
 
 | Skill | Purpose |
 |:------|:--------|
@@ -272,7 +272,7 @@ Skills live in `skills/builtin/` and are auto-installed during pipeline bootstra
 
 ## Dashboard
 
-ARK includes a web-based dashboard for managing projects, viewing scores, and steering agents. The dashboard shows **live phase badges** (Research / Dev / Review), per-project conda env status, and real-time cost tracking. It is served from a single FastAPI process that also hosts the homepage &mdash; one port, one systemd unit.
+idea2paper includes a web-based dashboard for managing projects, viewing scores, and steering agents. The dashboard shows **live phase badges** (Research / Dev / Review), per-project conda env status, and real-time cost tracking. It is served from a single FastAPI process that also hosts the homepage &mdash; one port, one systemd unit.
 
 ### Configuration
 
@@ -337,9 +337,9 @@ python -m ark.orchestrator --project myproject --mode dev
 <summary><strong>Docker Usage</strong></summary>
 
 > [!IMPORTANT]
-> The ARK research runtime depends on scientific libraries that are most stable on x86_64. If you are building on an **Apple Silicon (M1/M2/M3)** Mac, you must build for the `linux/amd64` platform.
+> The idea2paper research runtime depends on scientific libraries that are most stable on x86_64. If you are building on an **Apple Silicon (M1/M2/M3)** Mac, you must build for the `linux/amd64` platform.
 >
-> All ARK Dockerfiles and the `docker-compose.yml` are configured to force `linux/amd64` by default.
+> All idea2paper Dockerfiles and the `docker-compose.yml` are configured to force `linux/amd64` by default.
 
 **Running with Docker Compose**
 
@@ -424,7 +424,7 @@ The `--build` flag automatically builds the images for `linux/amd64` even when r
 
 ## Cloud Compute
 
-ARK's **v2 cloud architecture** decouples the *Control Plane* from the *Execution Plane*, enabling the full orchestrator to run on a remote cloud VM while you interact with a lightweight local webapp.
+idea2paper's **v2 cloud architecture** decouples the *Control Plane* from the *Execution Plane*, enabling the full orchestrator to run on a remote cloud VM while you interact with a lightweight local webapp.
 
 **How it works:**
 1. The local webapp (or CLI) acts as a lightweight launcher — it provisions a remote **Orchestrator VM**, syncs your project code and API keys over SSH, and triggers the orchestrator process.
@@ -438,7 +438,7 @@ ARK's **v2 cloud architecture** decouples the *Control Plane* from the *Executio
 <details>
 <summary><strong>Configuration Hierarchy</strong></summary>
 
-ARK uses a three-tier configuration model for cloud compute:
+idea2paper uses a three-tier configuration model for cloud compute:
 1. **System Defaults**: Set in `webapp.env` (e.g., `CLOUD_REGION`, `CLOUD_NETWORK`).
 2. **Global User Defaults**: Set in the **Settings** panel (⚙️). These apply to all your projects.
 3. **Project Overrides**: Set during project creation or restart. These have the highest priority.
@@ -496,7 +496,7 @@ You can inspect or hand-edit this file at any time (e.g., to tune instance type 
 ```bash
 export PROJECT_ID=your-gcp-project-id
 
-# Create a service account for ARK
+# Create a service account for idea2paper
 gcloud iam service-accounts create ark-runner \
   --display-name="ARK Research Runner"
 
@@ -522,7 +522,7 @@ gcloud services enable compute.googleapis.com --project=$PROJECT_ID
 
 #### 3. Build the Machine Image
 
-ARK uses a pre-baked Machine Image containing all system dependencies (Conda, LaTeX, Node.js) for fast boot times. Build it once:
+idea2paper uses a pre-baked Machine Image containing all system dependencies (Conda, LaTeX, Node.js) for fast boot times. Build it once:
 
 ```bash
 ./scripts/build_ark_gcp_image.sh [GCP_PROJECT_ID] [ZONE]
@@ -575,7 +575,7 @@ orchestrator_compute_backend:
   provider: gcp
   region: us-central1-a
   instance_type: n1-standard-2
-  image_family: ark-job              # Pre-baked ARK image
+  image_family: ark-job              # Pre-baked idea2paper image
 
 # Experiment VM: runs GPU-intensive workloads
 experiment_compute_backend:
@@ -602,7 +602,7 @@ experiment_compute_backend:
 #### 1. Create an IAM User
 
 ```bash
-# Create an IAM user for ARK
+# Create an IAM user for idea2paper
 aws iam create-user --user-name ark-runner
 
 # Attach policy (EC2 full access is sufficient)
@@ -648,7 +648,7 @@ experiment_compute_backend:
 ```
 
 > [!IMPORTANT]
-> Ensure your security group allows **inbound SSH (port 22)** from the IP of the machine running the webapp. Without this, ARK cannot connect to the provisioned instance.
+> Ensure your security group allows **inbound SSH (port 22)** from the IP of the machine running the webapp. Without this, idea2paper cannot connect to the provisioned instance.
 
 </details>
 
@@ -709,7 +709,7 @@ experiment_compute_backend:
 
 - **Log Streaming** — the Orchestrator VM maintains a `logs/latest.log` symlink; the webapp polls it periodically to show live progress.
 - **State Sync** — every 60 seconds, the launcher pulls the `auto_research/` state directory back from the VM to update the Dashboard UI.
-- **Re-attachment** — if you restart your local webapp, ARK detects the existing `orchestrator_instance.yaml`, probes the remote VM via SSH, and re-attaches to the running process without re-provisioning.
+- **Re-attachment** — if you restart your local webapp, idea2paper detects the existing `orchestrator_instance.yaml`, probes the remote VM via SSH, and re-attaches to the running process without re-provisioning.
 
 </details>
 
@@ -717,7 +717,7 @@ experiment_compute_backend:
 <summary><strong>Cost Control</strong></summary>
 
 > [!WARNING]
-> Cloud VMs are billed by the hour. ARK includes several safeguards to prevent runaway costs:
+> Cloud VMs are billed by the hour. idea2paper includes several safeguards to prevent runaway costs:
 >
 > - **Launcher Heartbeat** — every time the webapp polls the VM for state, it touches a `launcher_heartbeat` file on the remote VM.
 > - **VM Reaper** — a background daemon (`ark_vm_reaper.sh`) runs on the Orchestrator VM. If the orchestrator process finishes and the launcher heartbeat is stale for >30 minutes, the VM **automatically shuts itself down**.
@@ -749,7 +749,7 @@ What you get:
 
 ## Supported Venues
 
-LaTeX templates ship for **NeurIPS, ICML, ICLR, ACL, EMNLP, CVPR, MLSys, EuroMLSys, INFOCOM, OSDI, SOSP**, with format detection for the **IEEE**, **ACMART (SIGPLAN)**, **LNCS**, and **USENIX** families. Custom templates are accepted &mdash; ARK scans `.tex` / `.aux` / `.sty` to learn the layout, fixes compile errors, and enforces the venue page limit.
+LaTeX templates ship for **NeurIPS, ICML, ICLR, ACL, EMNLP, CVPR, MLSys, EuroMLSys, INFOCOM, OSDI, SOSP**, with format detection for the **IEEE**, **ACMART (SIGPLAN)**, **LNCS**, and **USENIX** families. Custom templates are accepted &mdash; idea2paper scans `.tex` / `.aux` / `.sty` to learn the layout, fixes compile errors, and enforces the venue page limit.
 
 ## License
 

@@ -1,4 +1,4 @@
-# ARK TODO & Known Issues
+# idea2paper TODO & Known Issues
 
 ## Recently Completed (v0.2)
 
@@ -42,9 +42,9 @@
 ### [ ] Integrate claude-scientific-skills
 - Repo: https://github.com/K-Dense-AI/claude-scientific-skills
 - 170+ domain skills (bioinformatics, chemistry, geospatial, finance, quantum, etc.)
-- Zero-code integration: copy skills to `~/.claude/skills/`, ARK agents auto-discover
+- Zero-code integration: copy skills to `~/.claude/skills/`, idea2paper agents auto-discover
 - Strategy: don't install all 170+, curate per-domain bundles to avoid token bloat
-- Add domain skill recommendation section to ARK docs
+- Add domain skill recommendation section to idea2paper docs
 - Test: verify skills load correctly when agent runs via `claude -p` with `--no-session-persistence`
 
 ### [ ] Codex backend — full feature parity

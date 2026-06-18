@@ -1,4 +1,4 @@
-# ARK 架构
+# idea2paper 架构
 
 ## 设计原则
 
@@ -10,11 +10,11 @@
 
 ## Pipeline 概览
 
-ARK 按三个阶段依次执行：
+idea2paper 按三个阶段依次执行：
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        ARK Pipeline                             │
+│                        idea2paper Pipeline                      │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  阶段 1：Research（5 步）                                        │
@@ -45,7 +45,7 @@ ARK 按三个阶段依次执行：
 
 | 步骤 | 智能体/工具 | 执行内容 |
 |:-----|:------------|:---------|
-| 0 | — | **配置**：配置项目级 conda 环境（克隆 ark-base —— 仅研究栈，不含 ARK 代码；orchestrator 的 ARK 通过 `PYTHONPATH` 注入） |
+| 0 | — | **配置**：配置项目级 conda 环境（克隆 ark-base —— 仅研究栈，不含 idea2paper 代码；orchestrator 的 idea2paper 通过 `PYTHONPATH` 注入） |
 | 1 | 研究员 | **分析提案**：读取上传 PDF 或创意 → 写入 `idea.md`（摘要、方法、系统）；输出 Deep Research 查询；解析并提交论文标题 |
 | 2 | Gemini | **Deep Research**：文献综述 → `deep_research.md`；通过 Telegram 将 PDF 发送给用户 |
 | 3 | 研究员 | **专项化**：生成 `project_context.md`（网页验证）；为项目定制智能体提示模板；选择相关 skills（0–15 个） |
@@ -135,7 +135,7 @@ Skills 在流水线引导（研究阶段第 4 步）期间自动安装。
 
 ### 6. 计算后端 (`ark/compute/`)
 
-ARK 支持多种计算后端运行实验：
+idea2paper 支持多种计算后端运行实验：
 
 - **Local**: 直接在宿主机上运行实验。
 - **Slurm**: 使用 `sbatch` 将作业提交到 HPC 集群。

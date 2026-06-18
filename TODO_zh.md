@@ -1,4 +1,4 @@
-# ARK 待办事项与已知问题
+# idea2paper 待办事项与已知问题
 
 ## 最近完成（v0.2）
 
@@ -42,9 +42,9 @@
 ### [ ] 集成 claude-scientific-skills
 - 仓库：https://github.com/K-Dense-AI/claude-scientific-skills
 - 170+ 领域 skills（生物信息学、化学、地理空间、金融、量子等）
-- 零代码集成：将 skills 复制到 `~/.claude/skills/`，ARK 智能体自动发现
+- 零代码集成：将 skills 复制到 `~/.claude/skills/`，idea2paper 智能体自动发现
 - 策略：不要安装全部 170+，按领域精选以避免 token 膨胀
-- 添加领域 skill 推荐部分到 ARK 文档
+- 添加领域 skill 推荐部分到 idea2paper 文档
 - 测试：验证 skills 在智能体通过 `claude -p` 配合 `--no-session-persistence` 运行时正确加载
 
 ### [ ] Codex 后端 — 完整功能对等

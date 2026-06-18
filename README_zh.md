@@ -3,10 +3,10 @@
 </p>
 
 <p align="center">
-  <img src="https://idea2paper.org/assets/logo_ark_transparent.png" alt="ARK" width="260">
+  <img src="https://idea2paper.org/assets/logo_ark_transparent.png" alt="idea2paper" width="260">
 </p>
 
-<h1 align="center">ARK &mdash; 自动化研究工具包 (Automatic Research Kit)</h1>
+<h1 align="center">idea2paper</h1>
 
 <p align="center">
   <em>减轻科研负担，掌舵科学方向。</em>
@@ -24,21 +24,21 @@
   <a href="https://idea2paper.org/"><strong>官方网站</strong></a> &bull;
   <a href="#快速上手">快速上手</a> &bull;
   <a href="#环境要求">环境要求</a> &bull;
-  <a href="#ark-流水线">工作流</a> &bull;
-  <a href="#ark-智能体">智能体</a> &bull;
+  <a href="#流水线">工作流</a> &bull;
+  <a href="#智能体">智能体</a> &bull;
   <a href="#云端计算">云端计算</a> &bull;
   <a href="#cli-参考">命令行参考</a>
 </p>
 
 ---
 
-ARK 协调 **6 个专业 AI 智能体**，将研究构想转化为完整论文 &mdash; 从方案分析、文献检索、Slurm 实验、LaTeX 撰写到迭代同行评审 &mdash; 同时通过 **命令行 (CLI)**、**仪表板 (Dashboard)** 或 **Telegram** 保持您的全程控制。
+idea2paper 协调 **6 个专业 AI 智能体**，将研究构想转化为完整论文 &mdash; 从方案分析、文献检索、Slurm 实验、LaTeX 撰写到迭代同行评审 &mdash; 同时通过 **命令行 (CLI)**、**仪表板 (Dashboard)** 或 **Telegram** 保持您的全程控制。
 
 ```
-提供想法和目标会议，剩下的交给 ARK。
+提供想法和目标会议，剩下的交给 idea2paper。
 ```
 
-## 由 ARK 撰写的论文
+## 由 idea2paper 撰写的论文
 
 <table align="center">
 <tr>
@@ -76,7 +76,7 @@ curl -fsSL https://idea2paper.org/install.sh | bash
 
 脚本会：
 
-1. 检测系统、按需安装 miniforge、创建 `ark-base` 与 `ark` 两个 conda env、以可编辑模式将 ARK 装到 `~/ARK`，并装好 Claude Code + Gemini CLI。
+1. 检测系统、按需安装 miniforge、创建 `ark-base` 与 `ark` 两个 conda env、以可编辑模式将 idea2paper 装到 `~/ARK`，并装好 Claude Code + Gemini CLI。
 2. 提示你输入：**Gemini API key**、**Claude OAuth token**（从 `claude /login` 拿到的 `sk-ant-oat01-…`）、**仪表板登录邮箱**。回车跳过任意一项。
 3. 把仪表板装成 `systemd --user` 服务（端口 `9527`，用 `--no-webapp` 退出）。
 4. 打印一个一次性的 **magic-link URL** 到你输入的邮箱地址——点一次链接就登录本地仪表板。**不需要 SMTP，也不需要 Google OAuth**。
@@ -98,7 +98,7 @@ ark monitor myproject
 ark new myproject --from-pdf proposal.pdf
 ```
 
-ARK 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息，并根据提取的规格开始工作。
+idea2paper 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息，并根据提取的规格开始工作。
 
 ---
 
@@ -113,13 +113,13 @@ ARK 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息，并根
 最简单的方式是 [快速上手](#快速上手) 中的一键安装脚本，它会替你执行下面这些步骤。手动安装如下：
 
 ```bash
-# 1. 创建项目研究栈模板（这里不要装 ARK —— 每个新项目都会克隆此环境，
+# 1. 创建项目研究栈模板（这里不要装 idea2paper —— 每个新项目都会克隆此环境，
 #    所以必须保持纯净）。
 conda env create -f environment.yml         # Linux 系统 (创建 "ark-base")
 # 或 macOS 系统:
 conda env create -f environment-macos.yml   # macOS 系统 (创建 "ark-base")
 
-# 2. 把 ARK 本体装进一个独立的 env（不要装进 ark-base）。
+# 2. 把 idea2paper 本体装进一个独立的 env（不要装进 ark-base）。
 conda create -n ark python=3.11 -y
 conda activate ark
 pip install -e .                    # 核心库
@@ -132,19 +132,19 @@ ark doctor
 
 ---
 
-## ARK 架构
+## 架构
 
 <p align="center">
-  <img src="assets/framework.png" alt="ARK Framework" width="900">
+  <img src="assets/framework.png" alt="idea2paper framework" width="900">
 </p>
 
-ARK 协调三个阶段 &mdash; **初始化与研究**、**迭代开发** 和 **迭代评审** &mdash; 通过共享记忆、在每次智能体调用时重新注入的 **Goal Anchor**（防止跨迭代漂移），以及经 Web 仪表板或 Telegram 的人机协同来协同工作。
+idea2paper 协调三个阶段 &mdash; **初始化与研究**、**迭代开发** 和 **迭代评审** &mdash; 通过共享记忆、在每次智能体调用时重新注入的 **Goal Anchor**（防止跨迭代漂移），以及经 Web 仪表板或 Telegram 的人机协同来协同工作。
 
 ---
 
-## ARK 流水线
+## 流水线
 
-ARK 按顺序运行三个阶段。评审阶段会循环进行，直到论文达到目标分数。
+idea2paper 按顺序运行三个阶段。评审阶段会循环进行，直到论文达到目标分数。
 
 | 阶段 | 过程内容 |
 |:------|:-------------|
@@ -168,7 +168,7 @@ ARK 按顺序运行三个阶段。评审阶段会循环进行，直到论文达�
 
 ---
 
-## ARK 智能体
+## 智能体
 
 | 智能体 | 职责 |
 |:------|:-----|
@@ -181,9 +181,9 @@ ARK 按顺序运行三个阶段。评审阶段会循环进行，直到论文达�
 
 ---
 
-## ARK 的独特之处
+## idea2paper 的独特之处
 
-| | 其他工具 | ARK |
+| | 其他工具 | idea2paper |
 |---|:------------|:----|
 | **控制力** | 完全自主 &mdash; 容易偏离意图，无法中途纠正 | 人机协同：在关键决策点暂停，通过 Telegram 或 Web 引导 |
 | **排版** | 布局损坏、LaTeX 错误、需要手动清理 | 会议模板 + 亚页级长度控制，精准卡住页数上限 |
@@ -213,7 +213,7 @@ ark run myproject
 
 ## 技能系统
 
-ARK 附带 **内置技能** &mdash; 智能体在运行时加载的模块化指令集，用于强制执行最佳实践：
+idea2paper 附带 **内置技能** &mdash; 智能体在运行时加载的模块化指令集，用于强制执行最佳实践：
 
 | 技能 | 目的 |
 |:------|:--------|
@@ -255,7 +255,7 @@ ARK 附带 **内置技能** &mdash; 智能体在运行时加载的模块化指�
 
 ## 仪表板 (Dashboard)
 
-ARK 包含一个基于 Web 的仪表板，用于管理项目、查看分数和引导智能体。仪表板显示 **实时阶段状态** (Research / Dev / Review)、项目环境状态以及实时成本跟踪。它由单个 FastAPI 进程提供服务 &mdash; 一个端口，一个 systemd 单元。
+idea2paper 包含一个基于 Web 的仪表板，用于管理项目、查看分数和引导智能体。仪表板显示 **实时阶段状态** (Research / Dev / Review)、项目环境状态以及实时成本跟踪。它由单个 FastAPI 进程提供服务 &mdash; 一个端口，一个 systemd 单元。
 
 ### 配置
 
@@ -314,13 +314,13 @@ python -m ark.orchestrator --project myproject --mode dev
 ### 架构要求
 
 > [!IMPORTANT]
-> ARK 研究运行时依赖的科学库在 x86_64 上最稳定。如果您在 **Apple Silicon (M1/M2/M3)** Mac 上构建，必须为 `linux/amd64` 平台构建。
+> idea2paper 研究运行时依赖的科学库在 x86_64 上最稳定。如果您在 **Apple Silicon (M1/M2/M3)** Mac 上构建，必须为 `linux/amd64` 平台构建。
 >
-> 所有的 ARK Dockerfile 和 `docker-compose.yml` 默认都配置为强制使用 `linux/amd64`。
+> 所有的 idea2paper Dockerfile 和 `docker-compose.yml` 默认都配置为强制使用 `linux/amd64`。
 
 ### 使用 Docker Compose 运行
 
-运行 ARK Web 门户最简单的方法是使用 `docker-compose`。在项目根目录下：
+运行 idea2paper Web 门户最简单的方法是使用 `docker-compose`。在项目根目录下：
 
 ```bash
 # 启动 Web 门户 (自动为 amd64 构建镜像)
@@ -336,7 +336,7 @@ docker compose -f docker/docker-compose.yml logs -f webapp
 
 ### 推送到 Google Cloud Platform (GCP)
 
-ARK 包含一个构建并推送镜像到 Google Artifact Registry 或 GCR 的脚本。
+idea2paper 包含一个构建并推送镜像到 Google Artifact Registry 或 GCR 的脚本。
 
 ```bash
 # 推送到 Artifact Registry (推荐)
@@ -363,7 +363,7 @@ cp .ark/webapp.env.example .ark/webapp.env
 
 ### 运行单个作业
 
-您可以使用 ARK 作业容器与 Web 应用程序一起运行隔离的研究作业。取消注释 `docker/docker-compose.yml` 中的 `job` 服务，然后运行：
+您可以使用 idea2paper 作业容器与 Web 应用程序一起运行隔离的研究作业。取消注释 `docker/docker-compose.yml` 中的 `job` 服务，然后运行：
 
 ```bash
 docker compose -f docker/docker-compose.yml run --rm job \
@@ -379,11 +379,11 @@ docker compose -f docker/docker-compose.yml run --rm job \
 
 ## 云端计算 (Cloud Compute)
 
-ARK 支持在远程云端虚拟机 (AWS, GCP, Azure) 上运行实验，同时保持编排器和 Web 门户在**本地**运行。这是在不管理 HPC 集群的情况下获得弹性计算能力的推荐设置。
+idea2paper 支持在远程云端虚拟机 (AWS, GCP, Azure) 上运行实验，同时保持编排器和 Web 门户在**本地**运行。这是在不管理 HPC 集群的情况下获得弹性计算能力的推荐设置。
 
 **工作原理：**
 1. Web 应用程序在本地或小型服务器上运行，处理项目管理和 UI。
-2. 提交项目时，ARK 预配置云端虚拟机，通过 SSH 传输项目代码，并远程管理整个实验生命周期。
+2. 提交项目时，idea2paper 预配置云端虚拟机，通过 SSH 传输项目代码，并远程管理整个实验生命周期。
 3. 结果会自动同步回来。虚拟机在运行完成后终止。
 
 ### 通过仪表板启用云端计算
@@ -398,7 +398,7 @@ ARK 支持在远程云端虚拟机 (AWS, GCP, Azure) 上运行实验，同时保
 
 ### 配置层级
 
-ARK 为云端计算使用三层配置模型：
+idea2paper 为云端计算使用三层配置模型：
 1. **系统默认值**: 在 `webapp.env` 中设置 (例如 `CLOUD_REGION`、`CLOUD_NETWORK`)。
 2. **全局用户默认值**: 在**设置**面板 (⚙️) 中设置。这些适用于您的所有项目。
 3. **项目覆盖**: 在项目创建或重启期间设置。这些具有最高优先级。
@@ -435,7 +435,7 @@ ARK 为云端计算使用三层配置模型：
 ```bash
 export PROJECT_ID=your-gcp-project-id
 
-# 为 ARK 创建服务账号
+# 为 idea2paper 创建服务账号
 gcloud iam service-accounts create ark-runner \
   --display-name="ARK Research Runner"
 
@@ -497,7 +497,7 @@ compute_backend:
   provider: gcp
   region: us-central1-a             # GCP 区域
   instance_type: n1-standard-8
-  image_id: ark-debian-base              # 自定义 ARK 基础镜像
+  image_id: ark-debian-base              # 自定义 idea2paper 基础镜像
   image_project: (your-project-id)
   ssh_key_path: ~/.ssh/id_rsa
   ssh_user: ubuntu
@@ -523,7 +523,7 @@ compute_backend:
 #### 1. 创建 IAM 用户
 
 ```bash
-# 为 ARK 创建 IAM 用户
+# 为 idea2paper 创建 IAM 用户
 aws iam create-user --user-name ark-runner
 
 # 附加策略 (EC2 full access 即可)
@@ -572,7 +572,7 @@ compute_backend:
 ```
 
 > [!IMPORTANT]
-> 确保您的安全组允许来自运行 Web 应用程序的机器 IP 的 **入站 SSH (端口 22)**。否则，ARK 无法连接到预配置的实例。
+> 确保您的安全组允许来自运行 Web 应用程序的机器 IP 的 **入站 SSH (端口 22)**。否则，idea2paper 无法连接到预配置的实例。
 
 </details>
 
@@ -634,7 +634,7 @@ compute_backend:
 ### 成本控制
 
 > [!WARNING]
-> 云端虚拟机按小时计费。ARK 在每次运行完成后自动终止实例。但是，如果 Web 应用程序进程被意外杀死，**孤儿救援 (Orphan Rescue)** 机制将在下次启动时检测到陈旧实例并将其标记为失败 &mdash; 但**不会自动终止云端虚拟机**。在意外关闭后，请务必在云端控制台中确认没有流浪实例在运行。
+> 云端虚拟机按小时计费。idea2paper 在每次运行完成后自动终止实例。但是，如果 Web 应用程序进程被意外杀死，**孤儿救援 (Orphan Rescue)** 机制将在下次启动时检测到陈旧实例并将其标记为失败 &mdash; 但**不会自动终止云端虚拟机**。在意外关闭后，请务必在云端控制台中确认没有流浪实例在运行。
 
 ---
 
@@ -655,7 +655,7 @@ ark setup-bot    # 一次性操作：粘贴 BotFather 令牌，自动检测聊�
 
 ## 支持的会议
 
-随仓库提供的 LaTeX 模板：**NeurIPS、ICML、ICLR、ACL、EMNLP、CVPR、MLSys、EuroMLSys、INFOCOM、OSDI、SOSP**；并对 **IEEE**、**ACMART (SIGPLAN)**、**LNCS**、**USENIX** 等模板族做格式识别。也接受自定义模板 &mdash; ARK 会扫描 `.tex` / `.aux` / `.sty` 学习排版、修编译错误、并精确控制页数。
+随仓库提供的 LaTeX 模板：**NeurIPS、ICML、ICLR、ACL、EMNLP、CVPR、MLSys、EuroMLSys、INFOCOM、OSDI、SOSP**；并对 **IEEE**、**ACMART (SIGPLAN)**、**LNCS**、**USENIX** 等模板族做格式识别。也接受自定义模板 &mdash; idea2paper 会扫描 `.tex` / `.aux` / `.sty` 学习排版、修编译错误、并精确控制页数。
 
 ## 许可证
 
