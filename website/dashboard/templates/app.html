@@ -526,6 +526,11 @@
       border-color: var(--teal); background: #f0fdfa; color: var(--teal); font-weight: 600;
     }
     .model-option:not(.model-option-disabled):hover .model-chip { border-color: var(--teal-light); }
+    .model-meta { font-size: .72rem; letter-spacing: .5px; margin-left: 3px; white-space: nowrap; }
+    .model-meta .rec { color: #f59e0b; }
+    .model-meta .cost { margin-left: 3px; filter: grayscale(.15); }
+    .model-legend { width: 100%; font-size: .68rem; color: var(--text-muted); margin: 3px 0 0; }
+    .model-legend .rec { color: #f59e0b; }
     .model-option-disabled { cursor: not-allowed; }
     .model-option-disabled .model-chip {
       opacity: .45; cursor: not-allowed; color: var(--text-muted);
@@ -838,90 +843,91 @@
           <div class="hero-adv-field">
             <label data-i18n="model_vendor">Model Vendor</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="if(event.target&&event.target.name==='model'){document.getElementById('model-unverified').value='';document.getElementById('model-openrouter-more').value='';}">
+              <div class="model-legend"><span class="rec">★</span> recommendation &nbsp;·&nbsp; 💰 relative cost (per token)</div>
               <div class="model-group-label">OpenRouter</div>
               <label class="model-option" data-provider="openrouter">
                 <input type="radio" name="model" value="openrouter/anthropic/claude-sonnet-4.6" />
-                <span class="model-chip">Claude Sonnet 4.6 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★★★ Recommended</span></span>
+                <span class="model-chip">Claude Sonnet 4.6 <span class="model-meta"><span class="rec">★★★</span><span class="cost">💰💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="openrouter">
                 <input type="radio" name="model" value="openrouter/openai/gpt-5.5" />
-                <span class="model-chip">GPT-5.5 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span>
+                <span class="model-chip">GPT-5.5 <span class="model-meta"><span class="rec">★☆☆</span><span class="cost">💰💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="openrouter">
                 <input type="radio" name="model" value="openrouter/google/gemini-3.5-flash" />
-                <span class="model-chip">Gemini 3.5 Flash <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span>
+                <span class="model-chip">Gemini 3.5 Flash <span class="model-meta"><span class="rec">★☆☆</span><span class="cost">💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="openrouter">
                 <input type="radio" name="model" value="openrouter/moonshotai/kimi-k2.6" />
-                <span class="model-chip">Kimi K2.6</span>
+                <span class="model-chip">Kimi K2.6 <span class="model-meta"><span class="cost">💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="openrouter">
                 <input type="radio" name="model" value="openrouter/deepseek/deepseek-v4-pro" />
-                <span class="model-chip">DeepSeek V4 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★★ Recommended</span></span>
+                <span class="model-chip">DeepSeek V4 <span class="model-meta"><span class="rec">★★☆</span><span class="cost">💰</span></span></span>
               </label>
               <label class="model-option" data-provider="openrouter">
                 <input type="radio" name="model" value="openrouter/minimax/minimax-m3" />
-                <span class="model-chip">MiniMax M3</span>
+                <span class="model-chip">MiniMax M3 <span class="model-meta"><span class="rec">★★☆</span><span class="cost">💰</span></span></span>
               </label>
               <select id="model-openrouter-more" onchange="onExtraModelPick(this)" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
                 <option value="">▾ more…</option>
                 <optgroup label="Anthropic">
-                  <option value="openrouter/anthropic/claude-opus-4.8">Claude Opus 4.8</option>
-                  <option value="openrouter/anthropic/claude-haiku-4.5">Claude Haiku 4.5</option>
+                  <option value="openrouter/anthropic/claude-opus-4.8">Claude Opus 4.8 — 💰💰💰</option>
+                  <option value="openrouter/anthropic/claude-haiku-4.5">Claude Haiku 4.5 — 💰💰</option>
                 </optgroup>
                 <optgroup label="OpenAI">
-                  <option value="openrouter/openai/gpt-5.5-pro">GPT-5.5 Pro</option>
-                  <option value="openrouter/openai/gpt-5.4-mini">GPT-5.4 mini</option>
+                  <option value="openrouter/openai/gpt-5.5-pro">GPT-5.5 Pro — 💰💰💰💰</option>
+                  <option value="openrouter/openai/gpt-5.4-mini">GPT-5.4 mini — 💰💰</option>
                 </optgroup>
                 <optgroup label="Gemini">
-                  <option value="openrouter/google/gemini-2.5-pro">Gemini 2.5 Pro</option>
-                  <option value="openrouter/google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+                  <option value="openrouter/google/gemini-2.5-pro">Gemini 2.5 Pro — 💰💰</option>
+                  <option value="openrouter/google/gemini-2.5-flash">Gemini 2.5 Flash — 💰</option>
                 </optgroup>
                 <optgroup label="Chinese / open">
-                  <option value="openrouter/deepseek/deepseek-v4-flash">DeepSeek V4 Flash (cheapest)</option>
-                  <option value="openrouter/z-ai/glm-5.2">GLM-5.2 (Zhipu)</option>
-                  <option value="openrouter/qwen/qwen3.7-plus">Qwen3.7 Plus</option>
-                  <option value="openrouter/moonshotai/kimi-k2.7-code">Kimi K2.7 Code</option>
+                  <option value="openrouter/deepseek/deepseek-v4-flash">DeepSeek V4 Flash — 💰 (cheapest)</option>
+                  <option value="openrouter/z-ai/glm-5.2">GLM-5.2 (Zhipu) — 💰💰</option>
+                  <option value="openrouter/qwen/qwen3.7-plus">Qwen3.7 Plus — 💰</option>
+                  <option value="openrouter/moonshotai/kimi-k2.7-code">Kimi K2.7 Code — 💰💰</option>
                 </optgroup>
               </select>
               <div class="model-group-label" style="margin-top:7px">Anthropic</div>
               <label class="model-option" data-provider="anthropic">
                 <input type="radio" name="model" value="claude-opus-4-8" />
-                <span class="model-chip">Opus 4.8</span>
+                <span class="model-chip">Opus 4.8 <span class="model-meta"><span class="cost">💰💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="anthropic">
                 <input type="radio" name="model" value="claude-sonnet-4-6" checked />
-                <span class="model-chip">Sonnet 4.6 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★★★ Recommended</span></span>
+                <span class="model-chip">Sonnet 4.6 <span class="model-meta"><span class="rec">★★★</span><span class="cost">💰💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="anthropic">
                 <input type="radio" name="model" value="claude-haiku-4-5" />
-                <span class="model-chip">Haiku 4.5</span>
+                <span class="model-chip">Haiku 4.5 <span class="model-meta"><span class="cost">💰💰</span></span></span>
               </label>
               <div class="model-group-label" style="margin-top:7px">OpenAI</div>
               <label class="model-option" data-provider="openai">
                 <input type="radio" name="model" value="gpt-5.5" />
-                <span class="model-chip">GPT-5.5 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span>
+                <span class="model-chip">GPT-5.5 <span class="model-meta"><span class="rec">★☆☆</span><span class="cost">💰💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="openai">
                 <input type="radio" name="model" value="gpt-5.5-pro" />
-                <span class="model-chip">GPT-5.5 Pro</span>
+                <span class="model-chip">GPT-5.5 Pro <span class="model-meta"><span class="cost">💰💰💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="openai">
                 <input type="radio" name="model" value="gpt-5.4-mini" />
-                <span class="model-chip">GPT-5.4 mini</span>
+                <span class="model-chip">GPT-5.4 mini <span class="model-meta"><span class="cost">💰💰</span></span></span>
               </label>
               <div class="model-group-label" style="margin-top:7px">Gemini</div>
               <label class="model-option" data-provider="gemini">
                 <input type="radio" name="model" value="gemini-3.5-flash" />
-                <span class="model-chip">Gemini 3.5 Flash <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span>
+                <span class="model-chip">Gemini 3.5 Flash <span class="model-meta"><span class="rec">★☆☆</span><span class="cost">💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="gemini">
                 <input type="radio" name="model" value="gemini-2.5-pro" />
-                <span class="model-chip">Gemini 2.5 Pro</span>
+                <span class="model-chip">Gemini 2.5 Pro <span class="model-meta"><span class="cost">💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="gemini">
                 <input type="radio" name="model" value="gemini-2.5-flash" />
-                <span class="model-chip">Gemini 2.5 Flash</span>
+                <span class="model-chip">Gemini 2.5 Flash <span class="model-meta"><span class="cost">💰</span></span></span>
               </label>
             </div>
             <div class="model-group-label" style="margin-top:10px">Others <span style="font-weight:400">(⚠ Unverified — native key required)</span></div>
@@ -1262,15 +1268,16 @@
       <div class="form-group" style="flex:2">
         <label>Model</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap" id="continue-model-options">
-          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-opus-4-8" /><span class="model-chip">Opus 4.8</span></label>
-          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★★★ Recommended</span></span></label>
-          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
-          <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.5" /><span class="model-chip">GPT-5.5 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span></label>
-          <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.5-pro" /><span class="model-chip">GPT-5.5 Pro</span></label>
-          <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.4-mini" /><span class="model-chip">GPT-5.4 mini</span></label>
-          <label class="model-option" data-provider="gemini"><input type="radio" name="continue-model" value="gemini-3.5-flash" /><span class="model-chip">Gemini 3.5 Flash <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span></label>
-          <label class="model-option" data-provider="gemini"><input type="radio" name="continue-model" value="gemini-2.5-pro" /><span class="model-chip">Gemini 2.5 Pro</span></label>
-          <label class="model-option" data-provider="gemini"><input type="radio" name="continue-model" value="gemini-2.5-flash" /><span class="model-chip">Gemini 2.5 Flash</span></label>
+          <div class="model-legend"><span class="rec">★</span> recommendation &nbsp;·&nbsp; 💰 relative cost (per token)</div>
+          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-opus-4-8" /><span class="model-chip">Opus 4.8 <span class="model-meta"><span class="cost">💰💰💰</span></span></span></label>
+          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6 <span class="model-meta"><span class="rec">★★★</span><span class="cost">💰💰💰</span></span></span></label>
+          <label class="model-option" data-provider="anthropic"><input type="radio" name="continue-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5 <span class="model-meta"><span class="cost">💰💰</span></span></span></label>
+          <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.5" /><span class="model-chip">GPT-5.5 <span class="model-meta"><span class="rec">★☆☆</span><span class="cost">💰💰💰</span></span></span></label>
+          <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.5-pro" /><span class="model-chip">GPT-5.5 Pro <span class="model-meta"><span class="cost">💰💰💰💰</span></span></span></label>
+          <label class="model-option" data-provider="openai"><input type="radio" name="continue-model" value="gpt-5.4-mini" /><span class="model-chip">GPT-5.4 mini <span class="model-meta"><span class="cost">💰💰</span></span></span></label>
+          <label class="model-option" data-provider="gemini"><input type="radio" name="continue-model" value="gemini-3.5-flash" /><span class="model-chip">Gemini 3.5 Flash <span class="model-meta"><span class="rec">★☆☆</span><span class="cost">💰💰</span></span></span></label>
+          <label class="model-option" data-provider="gemini"><input type="radio" name="continue-model" value="gemini-2.5-pro" /><span class="model-chip">Gemini 2.5 Pro <span class="model-meta"><span class="cost">💰💰</span></span></span></label>
+          <label class="model-option" data-provider="gemini"><input type="radio" name="continue-model" value="gemini-2.5-flash" /><span class="model-chip">Gemini 2.5 Flash <span class="model-meta"><span class="cost">💰</span></span></span></label>
         </div>
       </div>
     </div>
@@ -1380,15 +1387,16 @@
     <div class="form-group">
       <label>Model</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="restart-model-options">
-        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-opus-4-8" /><span class="model-chip">Opus 4.8</span></label>
-        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★★★ Recommended</span></span></label>
-        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5</span></label>
-        <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.5" /><span class="model-chip">GPT-5.5 <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span></label>
-        <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.5-pro" /><span class="model-chip">GPT-5.5 Pro</span></label>
-        <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.4-mini" /><span class="model-chip">GPT-5.4 mini</span></label>
-        <label class="model-option" data-provider="gemini"><input type="radio" name="restart-model" value="gemini-3.5-flash" /><span class="model-chip">Gemini 3.5 Flash <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span></label>
-        <label class="model-option" data-provider="gemini"><input type="radio" name="restart-model" value="gemini-2.5-pro" /><span class="model-chip">Gemini 2.5 Pro</span></label>
-        <label class="model-option" data-provider="gemini"><input type="radio" name="restart-model" value="gemini-2.5-flash" /><span class="model-chip">Gemini 2.5 Flash</span></label>
+        <div class="model-legend"><span class="rec">★</span> recommendation &nbsp;·&nbsp; 💰 relative cost (per token)</div>
+        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-opus-4-8" /><span class="model-chip">Opus 4.8 <span class="model-meta"><span class="cost">💰💰💰</span></span></span></label>
+        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-sonnet-4-6" checked /><span class="model-chip">Sonnet 4.6 <span class="model-meta"><span class="rec">★★★</span><span class="cost">💰💰💰</span></span></span></label>
+        <label class="model-option" data-provider="anthropic"><input type="radio" name="restart-model" value="claude-haiku-4-5" /><span class="model-chip">Haiku 4.5 <span class="model-meta"><span class="cost">💰💰</span></span></span></label>
+        <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.5" /><span class="model-chip">GPT-5.5 <span class="model-meta"><span class="rec">★☆☆</span><span class="cost">💰💰💰</span></span></span></label>
+        <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.5-pro" /><span class="model-chip">GPT-5.5 Pro <span class="model-meta"><span class="cost">💰💰💰💰</span></span></span></label>
+        <label class="model-option" data-provider="openai"><input type="radio" name="restart-model" value="gpt-5.4-mini" /><span class="model-chip">GPT-5.4 mini <span class="model-meta"><span class="cost">💰💰</span></span></span></label>
+        <label class="model-option" data-provider="gemini"><input type="radio" name="restart-model" value="gemini-3.5-flash" /><span class="model-chip">Gemini 3.5 Flash <span class="model-meta"><span class="rec">★☆☆</span><span class="cost">💰💰</span></span></span></label>
+        <label class="model-option" data-provider="gemini"><input type="radio" name="restart-model" value="gemini-2.5-pro" /><span class="model-chip">Gemini 2.5 Pro <span class="model-meta"><span class="cost">💰💰</span></span></span></label>
+        <label class="model-option" data-provider="gemini"><input type="radio" name="restart-model" value="gemini-2.5-flash" /><span class="model-chip">Gemini 2.5 Flash <span class="model-meta"><span class="cost">💰</span></span></span></label>
       </div>
     </div>
     <div class="form-group">
