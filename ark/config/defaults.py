@@ -12,7 +12,17 @@ TIMEOUT_INITIALIZER = 1200
 # Task-specific Agent Timeouts
 TIMEOUT_PAGE_ADJUSTMENT = 1800
 TIMEOUT_SCORE_RETRY = 600
-TIMEOUT_CITATIONS_EXTRACT = 300
+# Citation extraction reads the full Deep Research report (often 25+ sources)
+# and lists every cited paper — a non-trivial read+extract. 300s proved too
+# tight for slower OpenRouter models (MiniMax M3 hit the 300s wall-clock with
+# an empty result). 600s gives headroom while still bounding a genuine hang.
+TIMEOUT_CITATIONS_EXTRACT = 600
+# Per-agent prompt specialization: a one-shot ~300-word generation. 300s was
+# borrowed from CITATIONS_EXTRACT and proved too tight for slower OpenRouter
+# models (MiniMax M3 specialization calls ran 184-288s — one tipped over 300s
+# and was killed mid-generation, yielding an empty result). 600s gives ample
+# headroom while still bounding a genuine hang.
+TIMEOUT_AGENT_SPECIALIZE = 600
 TIMEOUT_LIT_REVIEW = 1200
 TIMEOUT_DEEP_RESEARCH_POLL = 1200
 TIMEOUT_NANO_BANANA_PLAN = 600

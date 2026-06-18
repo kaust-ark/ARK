@@ -1491,7 +1491,7 @@ in what that file actually says — do not guess.
 - For experimenter: emphasize project-isolated installs and checking existing services
 - For writer: include anonymity rules (no author names in title or text for blind review)
 - Do NOT repeat generic instructions already in the agent's base prompt
-""", timeout=defaults.TIMEOUT_CITATIONS_EXTRACT)
+""", timeout=defaults.TIMEOUT_AGENT_SPECIALIZE)
 
             if result and len(result.strip()) > 50:
                 # Append to prompt file

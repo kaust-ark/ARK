@@ -28,6 +28,24 @@ Every number displayed in a figure or table must be traceable to a file in `resu
    - Add a `% TODO` comment in the LaTeX caption
    - Do NOT invent a plausible value
 
+## Where Figures Belong (Initial Placement)
+
+This applies when you *first write* the paper, not only during page adjustment.
+
+- **AI concept figures (PaperBanana / Nano-Banana: overview, method, mechanism
+  schematics) belong in the BODY**, next to where the concept is introduced
+  (Introduction or Method) — never in `\appendix`. They illustrate the core
+  contribution; that is why they were generated.
+- **Do not create an `\appendix` solely to hold figures.** An appendix is for
+  supporting *text* (proofs, full tables, prompt templates, hyperparameter
+  grids, extra qualitative samples beyond the main results) — not for the
+  paper's main figures.
+- This holds **regardless of page count**. Even when the body is well under
+  the page limit (e.g. a short paper using 1.6 of 2 allowed pages), a concept
+  figure still goes in the body — being short is not a reason to appendix it.
+- A concept figure whose `\includegraphics` sits after `\appendix` is a
+  placement bug. Move it into the body.
+
 ## When the Paper Text Cites a Figure
 
 The flow is always: **experiment → result file → figure → paper text**. Never the reverse.
