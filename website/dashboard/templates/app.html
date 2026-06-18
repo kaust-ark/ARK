@@ -993,7 +993,12 @@
               </label>
             </div>
           </div>
-          <div class="hero-adv-field" style="margin-top:8px">
+          <!-- Orchestrator Backend picker hidden: the orchestrator is a lightweight
+               I/O-bound driver that now runs detached-local (its own systemd scope,
+               survives webapp restarts), so Slurm/cloud for it is wasteful. The hidden
+               local radio keeps submitting orchestrator_compute_backend=local; Slurm/
+               cloud remain reachable only as an API/DB expert override. -->
+          <div class="hero-adv-field" style="margin-top:8px;display:none">
             <label>Orchestrator Backend</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <label class="model-option">
@@ -1291,7 +1296,7 @@
         <label class="model-option" id="continue-backend-cloud-azure-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
       </div>
     </div>
-    <div class="form-group">
+    <div class="form-group" style="display:none"><!-- orchestrator runs detached-local; picker hidden -->
       <label>Orchestrator Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="continue-orch-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
@@ -1409,7 +1414,7 @@
         <label class="model-option" id="restart-backend-cloud-azure-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
       </div>
     </div>
-    <div class="form-group">
+    <div class="form-group" style="display:none"><!-- orchestrator runs detached-local; picker hidden -->
       <label>Orchestrator Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="restart-orch-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>

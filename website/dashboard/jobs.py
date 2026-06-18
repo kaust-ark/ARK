@@ -586,6 +586,87 @@ def _ensure_named_conda_env(conda_bin: str, env_name: str, log_path: Path) -> tu
         return False, f"conda env create raised {type(e).__name__}: {e}"
 
 
+def _systemd_user_available() -> bool:
+    """True when we can register a transient systemd --user service (i.e. the
+    orchestrator can be detached so it survives a webapp restart)."""
+    if not shutil.which("systemd-run"):
+        return False
+    xdg = os.environ.get("XDG_RUNTIME_DIR")
+    return bool(xdg) and os.path.exists(os.path.join(xdg, "bus"))
+
+
+def _launch_detached_orchestrator(wrapper, env, log_file, project_dir, project_id):
+    """Launch the orchestrator wrapper as a detached systemd --user transient
+    service. Returns its MainPID, or None to tell the caller to fall back to an
+    in-webapp child process.
+
+    Why: the orchestrator is a lightweight I/O-bound driver. As a webapp child
+    (the historical path) a ``webapp release`` recycles the systemd unit and
+    kills it mid-run (BrokenPipeError) — on shared prod any member's release
+    nukes everyone's running local jobs. A transient service lives in its own
+    cgroup, sibling to the webapp, so the webapp recycling leaves it untouched.
+
+    Secrets ride in a 0600 EnvironmentFile (read by systemd at exec, then
+    unlinked) — never on the command line where ``ps`` could see them.
+    """
+    if not _systemd_user_available():
+        return None
+
+    unit = f"ark-orch-{str(project_id)[:8]}-{int(time.time())}"
+    env_file = Path(project_dir) / ".orch_env"
+    try:
+        lines = []
+        for k, v in env.items():
+            # systemd env names are [A-Za-z_][A-Za-z0-9_]*; skip invalid names
+            # (e.g. exported bash functions) and multi-line values.
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", k):
+                continue
+            v = str(v)
+            if "\n" in v or "\r" in v:
+                continue
+            esc = v.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'{k}="{esc}"')
+        env_file.write_text("\n".join(lines) + "\n")
+        os.chmod(env_file, 0o600)
+
+        sd_cmd = [
+            "systemd-run", "--user", f"--unit={unit}", "--collect",
+            f"--property=StandardOutput=truncate:{log_file}",
+            "--property=StandardError=inherit",
+            f"--property=WorkingDirectory={project_dir}",
+            f"--property=EnvironmentFile={env_file}",
+            sys.executable, "-c", wrapper,
+        ]
+        r = subprocess.run(sd_cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"[launch] systemd-run failed ({r.returncode}): "
+                  f"{(r.stderr or '').strip()[:300]} — falling back to child process",
+                  file=sys.stderr)
+            return None
+
+        # systemd-run --unit blocks until the unit has started, so MainPID is set.
+        q = subprocess.run(
+            ["systemctl", "--user", "show", f"{unit}.service", "-p", "MainPID", "--value"],
+            capture_output=True, text=True,
+        )
+        pid = int((q.stdout or "0").strip() or 0)
+        if pid <= 0:
+            print(f"[launch] {unit}: no MainPID after start — falling back to child process",
+                  file=sys.stderr)
+            subprocess.run(["systemctl", "--user", "stop", f"{unit}.service"],
+                           capture_output=True)
+            return None
+        return pid
+    except Exception as e:
+        print(f"[launch] detached launch error: {e} — falling back to child process",
+              file=sys.stderr)
+        return None
+    finally:
+        # systemd has already consumed the EnvironmentFile at exec; drop the
+        # on-disk secrets immediately, regardless of outcome.
+        env_file.unlink(missing_ok=True)
+
+
 def launch_local_job(
     project_id: str,
     mode: str,
@@ -595,7 +676,11 @@ def launch_local_job(
     settings,
     api_keys: dict[str, str] = None,
 ) -> str:
-    """Launch orchestrator as a local subprocess. Returns 'local:{pid}'."""
+    """Launch orchestrator as a local subprocess. Returns 'local:{pid}'.
+
+    Prefers a detached systemd --user transient service (survives webapp
+    restarts); falls back to an in-webapp child where systemd isn't available.
+    """
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -710,6 +795,12 @@ def launch_local_job(
     # systemd's bare PATH doesn't include any of these.
     env["PATH"] = build_subprocess_path()
 
+    # Prefer a detached systemd --user service so the orchestrator survives a
+    # webapp restart/redeploy; fall back to an in-webapp child otherwise.
+    pid = _launch_detached_orchestrator(wrapper, env, log_file, project_dir, project_id)
+    if pid is not None:
+        return f"local:{pid}"
+
     with open(log_file, "w") as lf:
         proc = subprocess.Popen(
             [sys.executable, "-c", wrapper],
@@ -778,7 +869,22 @@ def poll_local_job(pid: int, log_dir: Path) -> str:
 
 
 def cancel_local_job(pid: int) -> bool:
-    """Send SIGTERM to the process group of a local job."""
+    """Cancel a local job.
+
+    If the orchestrator runs as a detached ``ark-orch-*`` systemd --user service
+    (the default when systemd is available), stop the whole unit so its entire
+    process tree — orchestrator plus all agent subprocesses — is killed. Else
+    fall back to signalling the process group of an in-webapp child.
+    """
+    try:
+        cg = Path(f"/proc/{pid}/cgroup").read_text()
+        m = re.search(r"/(ark-orch-[A-Za-z0-9:_.\-]+\.service)", cg)
+        if m:
+            subprocess.run(["systemctl", "--user", "stop", m.group(1)],
+                           capture_output=True)
+            return True
+    except Exception:
+        pass
     try:
         pgid = os.getpgid(pid)
         os.killpg(pgid, signal.SIGTERM)
