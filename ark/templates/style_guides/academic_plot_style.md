@@ -4,6 +4,16 @@
 
 Academic statistical plots should prioritize data clarity over decoration. White backgrounds, readable fonts, and colorblind-safe palettes are mandatory.
 
+## ⛔ Top layout failures — check these FIRST
+
+These three wreck more figures than any styling choice. Before returning a plot, verify:
+
+1. **Legend never overlaps the bars/lines.** A legend placed `loc='lower right'` (or any inside corner) on a tall-bar chart sits on top of the data. For grouped bars or any chart where data fills the corners, put the legend **outside** the axes: `ax.legend(loc='lower center', bbox_to_anchor=(0.5, 1.02), ncol=N, frameon=False)` (above the plot) — or drop the legend entirely if there are only two series you can label directly.
+2. **No long horizontal x-tick labels.** Multi-word category names (`positive-control`, `cap-recovery`) collide even rotated. Prefer a **horizontal bar chart** (`ax.barh`, labels on the y-axis), or use short codes (`PC`, `CR`) with the full names spelled out in the LaTeX caption.
+3. **Never put two different units on one axis.** Iteration count (0–3000) and accuracy (0–1) on the same bar chart is unreadable. Use **two subplots** (`plt.subplots(1, 2, constrained_layout=True)`) or a **twin axis** (`ax.twinx()`), one metric each.
+
+Always use `constrained_layout=True` so nothing clips. The detailed rules below elaborate; these three are non-negotiable.
+
 > ⚠️ **User overrides take precedence.** The defaults in this guide
 > (color palette, fonts, line styles, etc.) are reasonable choices for
 > typical academic papers. If the runtime prompt provides explicit user

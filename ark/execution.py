@@ -1250,12 +1250,21 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 
             log_text = log_path.read_text(errors="replace")
             import re as _re
+            # LaTeX reports two kinds of overfull \hbox: "in paragraph at
+            # lines" (prose running past the column) and "in alignment at
+            # lines" (a tabular/array too wide for its column). The latter is
+            # the one that makes a table spill past the margin — and rewording
+            # prose can never fix it, so we must detect it separately and give
+            # table-specific repair instructions.
             overfull_lines = _re.findall(
-                r'Overfull \\hbox \(([0-9.]+)pt too wide\) in paragraph at lines (\d+)--(\d+)',
+                r'Overfull \\hbox \(([0-9.]+)pt too wide\) in (paragraph|alignment) at lines (\d+)--(\d+)',
                 log_text
             )
             # Only fix significant ones (>3pt)
-            significant = [(float(pt), int(l1), int(l2)) for pt, l1, l2 in overfull_lines if float(pt) > 3.0]
+            significant = [
+                (float(pt), kind, int(l1), int(l2))
+                for pt, kind, l1, l2 in overfull_lines if float(pt) > 3.0
+            ]
 
             if not significant:
                 if attempt > 0:
@@ -1266,24 +1275,41 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 self.log(f"[{context}] {len(significant)} overfull warnings remain (quota exhausted)", "WARN")
                 return
 
-            self.log(f"[{context}] Fixing {len(significant)} overfull warnings (attempt {attempt + 1}/{MAX_ATTEMPTS})...", "WARN")
+            has_table = any(kind == "alignment" for _, kind, _, _ in significant)
+            self.log(f"[{context}] Fixing {len(significant)} overfull warnings (attempt {attempt + 1}/{MAX_ATTEMPTS}){' [includes table]' if has_table else ''}...", "WARN")
 
             overfull_desc = "\n".join(
-                f"- Lines {l1}-{l2}: {pt:.1f}pt too wide" for pt, l1, l2 in significant[:10]
+                f"- Lines {l1}-{l2}: {pt:.1f}pt too wide ({'TABLE/tabular' if kind == 'alignment' else 'prose'})"
+                for pt, kind, l1, l2 in significant[:10]
+            )
+
+            table_guidance = (
+                """
+For any line marked **TABLE/tabular** above, rewording prose will NOT help —
+the table itself is wider than the column. Fix the table by (in order of
+preference):
+- Abbreviate long cell labels (e.g. "Standardized (StandardScaler)" → "Std." with a caption note; "Preprocessing" → "Prep.")
+- Drop or merge a non-essential column (e.g. fold a yes/no column into a footnote symbol)
+- Wrap the tabular in \\resizebox{\\columnwidth}{!}{ ... } so it scales to the column width
+- Reduce the table font with \\footnotesize / \\scriptsize around the tabular
+- Only if it genuinely needs the full text width, promote it to a two-column-spanning table* environment
+Do NOT change any numeric values, drop data rows, or fabricate cells.
+"""
+                if has_table else ""
             )
 
             self.run_agent("writer", f"""## FIX OVERFULL HBOX (attempt {attempt + 1})
 
-The paper has {len(significant)} overfull \\hbox warnings (text extending past column margin):
+The paper has {len(significant)} overfull \\hbox warnings (content extending past column margin):
 
 {overfull_desc}
 
-Fix each by rewording the sentence to allow LaTeX better line breaking:
+For **prose** lines, reword the sentence to allow LaTeX better line breaking:
 - Shorten long compound words or phrases
 - Add \\- hyphenation hints for technical terms
 - Split long inline math or URLs
 - Rephrase to use shorter synonyms
-
+{table_guidance}
 Do NOT change figures, template, or page structure.
 After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.tex
 """, timeout=defaults.TIMEOUT_LATEX_COMPILE)
@@ -1291,7 +1317,7 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
             self.compile_latex()
 
         # Final check
-        remaining = len([1 for pt, _, _ in significant if float(pt) > 3.0]) if significant else 0
+        remaining = len([1 for pt, _, _, _ in significant if float(pt) > 3.0]) if significant else 0
         if remaining:
             self.log(f"[{context}] {remaining} overfull warnings remain after {MAX_ATTEMPTS} attempts", "WARN")
 

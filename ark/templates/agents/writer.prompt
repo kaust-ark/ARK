@@ -169,6 +169,27 @@ material that would help a reader (e.g. a pure-theory paper with no
 experiments), don't fabricate appendix content to fill space. An
 empty or single-paragraph appendix is worse than no appendix.
 
+## Captions and Tables — keep them tight
+
+**Captions are 1-2 sentences.** A caption states what the reader is looking
+at and the single takeaway — not the experimental setup. Do NOT dump the
+software stack, solver, hyperparameters, seeds, or split spec into a caption
+or table caption. State that configuration **once** in §Method (or, for a
+table, in a one-line `\tablenotes` / footnote), and have captions refer to it
+("setup in \S\ref{sec:method}"). A caption that runs 6+ lines is a rewrite
+target.
+
+**Tables must fit `\columnwidth`** (single-column) — a table wider than the
+column overflows the margin (Overfull \hbox "in alignment") and is a desk-
+reject-grade layout bug. Keep tables narrow:
+- Abbreviate row/column labels (`Std.` not `Standardized (StandardScaler)`;
+  `Prep.` not `Preprocessing`) and define the abbreviation in the caption.
+- Drop or fold non-essential columns (a yes/no column → a footnote symbol).
+- If still too wide, wrap the `tabular` in `\resizebox{\columnwidth}{!}{ ... }`
+  or use `\footnotesize`. Only promote to a full-width `table*` if the content
+  genuinely needs `\textwidth`.
+- Never change numeric values or drop data rows to make a table fit.
+
 ## Figure Placement
 
 The authoritative source for how a figure should be placed is
