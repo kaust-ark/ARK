@@ -1960,7 +1960,9 @@ async def api_create_project(
             model = _cheapest_model_for(keys)
         idea = read_test_idea() or idea
         if not title.strip():
-            title = "🧪 Test run"
+            # Plain ASCII — the title flows into the paper's \title{}, and a raw
+            # emoji (🧪) makes pdflatex fail with "Unicode character not set up".
+            title = "Test run"
 
     # Generate project ID: full UUID
     project_id = str(uuid.uuid4())

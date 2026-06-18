@@ -456,10 +456,30 @@ Execute the task and update the corresponding files.
                     # a single bounded wait-and-retry in case the window reopened.
                     _TRANSIENT = (
                         "RateLimitError", "ServiceUnavailableError", "TimeoutError",
+                        "InternalServerError", "APIConnectionError",
                     )
-                    if (any(oh_error_code.endswith(t) for t in _TRANSIENT)
-                            and attempt < MAX_RETRIES):
-                        wait_s = min(self._parse_rate_limit_wait(oh_error_detail or ""), 120)
+                    # Mid-stream network disconnects surface as a generic
+                    # APIError whose *code* isn't in _TRANSIENT — but the upstream
+                    # simply dropped the stream, so a retry usually completes.
+                    # Match these on the error *detail* text. This is the failure
+                    # that truncated a writer run into a 0.3-page stub on a
+                    # MiniMax/OpenRouter paper (incomplete chunked read).
+                    _TRANSIENT_DETAIL = (
+                        "incomplete chunked read", "peer closed connection",
+                        "connection reset", "connection aborted",
+                        "connection broken", "server disconnected",
+                        "eof occurred", "remoteprotocolerror",
+                    )
+                    _detail_l = (oh_error_detail or "").lower()
+                    _is_transient = (
+                        any(oh_error_code.endswith(t) for t in _TRANSIENT)
+                        or any(s in _detail_l for s in _TRANSIENT_DETAIL)
+                    )
+                    if _is_transient and attempt < MAX_RETRIES:
+                        # Network/stream disconnects clear immediately — retry
+                        # promptly; rate-limit codes honour the server's wait.
+                        _net = any(s in _detail_l for s in _TRANSIENT_DETAIL)
+                        wait_s = 5 if _net else min(self._parse_rate_limit_wait(oh_error_detail or ""), 120)
                         self.log(
                             f"  Transient ({oh_error_code}) — waiting {wait_s}s, then "
                             f"one retry (attempt {attempt + 1}/{MAX_RETRIES})",
