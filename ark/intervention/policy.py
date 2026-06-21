@@ -100,13 +100,15 @@ _SECRET_PATH_RE = re.compile(
     r"(\.aws/credentials|\.ssh/id_[a-z0-9]+|\.config/gcloud|\.netrc|"
     r"oauth_creds\.json|\.claude\.json|credentials\.json|secrets?\.(ya?ml|json|env))"
 )
-# Names that look like secrets (used for both detection and redaction).
+# Names that look like secrets (used for both detection and redaction). The
+# prefix is optional so bare `TOKEN`, `SECRET`, `API_KEY` are caught too — not
+# just `HF_TOKEN` / `OPENAI_API_KEY`.
 _SECRET_ENVNAME_RE = re.compile(
-    r"\b[A-Z][A-Z0-9_]*(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)\b"
+    r"\b[A-Z0-9_]*(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)\b"
 )
 # An inline assignment of a secret-looking name to a literal value.
 _SECRET_ASSIGN_RE = re.compile(
-    r"\b([A-Z][A-Z0-9_]*(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?))\s*=\s*([^\s'\"]{6,})"
+    r"\b([A-Z0-9_]*(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?))\s*=\s*([^\s'\"]{6,})"
 )
 
 

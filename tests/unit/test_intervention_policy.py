@@ -98,6 +98,18 @@ def test_redact_secrets_helper():
     assert "OPENAI_API_KEY=***" in out
 
 
+@pytest.mark.parametrize("cmd", [
+    "export TOKEN=sk_abc123def x",   # bare TOKEN (no HF_ prefix)
+    "SECRET=hunter2xx python y",
+    "API_KEY=abcdef123 z",
+])
+def test_bare_secret_assignment_asks_and_redacts(cmd):
+    d = std().classify_command(cmd, work_dirs=WORK)
+    assert d.action == ASK
+    assert d.category == Category.CREDENTIALS
+    assert "***" in d.detail
+
+
 # ── data_exfil ─────────────────────────────────────────────
 
 def test_scp_to_remote_asks():
