@@ -3416,11 +3416,19 @@ function heroVenueChanged(sel) {
   const presetInput = document.getElementById('hero-preset');
   if (presetInput) presetInput.value = isTest ? 'test' : '';
   const testOpts = document.getElementById('hero-test-opts');
-  if (testOpts) testOpts.style.display = isTest ? '' : 'none';
+  if (testOpts) {
+    testOpts.style.display = isTest ? '' : 'none';
+    // Clear hidden boxes — a hidden-but-checked input still submits.
+    if (!isTest) testOpts.querySelectorAll('input[type=checkbox]').forEach(c => { c.checked = false; });
+  }
   // The general Skip-Deep-Research toggle is redundant for the Test venue
   // (which has its own option), so hide it there to avoid two same-named boxes.
   const skipDr = document.getElementById('hero-skip-dr');
-  if (skipDr) skipDr.style.display = isTest ? 'none' : 'inline-flex';
+  if (skipDr) {
+    skipDr.style.display = isTest ? 'none' : 'inline-flex';
+    const cb = skipDr.querySelector('input[type=checkbox]');
+    if (cb && isTest) cb.checked = false;   // don't submit a stale hidden checkbox
+  }
   // Pin the idea to the fixed Test idea (the canned report/figure match it; the
   // server uses the canonical idea regardless — this just makes it visible).
   const ideaEl = document.querySelector('#hero-form [name="idea"]');

@@ -72,6 +72,13 @@ def test_spend_notify_is_nonblocking(tmp_path):
     assert ch.requests == []  # but not a blocking ask
 
 
+def test_spend_hardcap_denial_blocks(tmp_path):
+    # over the hard cap → ASK; a denial returns False so run_agent can abort.
+    ch = FakeChannel([ApprovalReply("deny")])
+    assert gate(ch, tmp_path).check_action("spend", total_usd=150) is False
+    assert ch.requests  # the human was asked
+
+
 # ── approval memory ────────────────────────────────────────
 
 def test_remember_category_skips_second_ask(tmp_path):

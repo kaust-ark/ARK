@@ -107,7 +107,9 @@ def main():
             if verdict == "allow":
                 _exec_real()
                 return
-            sys.stderr.write("ark: blocked by intervention policy: %s\\n" % " ".join(payload["argv"]))
+            # Do NOT echo argv — it may contain secrets (curl -H <token>,
+            # inline FOO=secret). The orchestrator log has the (redacted) detail.
+            sys.stderr.write("ark: blocked by intervention policy (see orchestrator log)\\n")
             sys.exit(13)
         time.sleep(0.2)
     sys.stderr.write("ark: intervention approval timed out — not running %s\\n" % EXE)
@@ -300,6 +302,9 @@ class ApprovalWatcher:
             req_path.unlink()
         except OSError:
             pass
+        # Drop the bookkeeping entry — the file is gone, so it won't be re-globbed.
+        # Keeps _seen from growing without bound over a long run.
+        self._seen.discard(req_path.name)
 
     def _write_response_dict(self, rid, payload: dict):
         if not rid:

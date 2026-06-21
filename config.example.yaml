@@ -68,11 +68,13 @@ intervention:
 
   # Toggle individual risk categories (all on by default).
   categories:
-    destructive_fs: true     # rm -rf, deletes outside the work area, git reset --hard
+    destructive_fs: true     # rm -rf, deletes outside the work area
     bulk_compute:   true      # job bursts, cloud instance provisioning
     credentials:    true      # requesting / hardcoding / printing secrets
-    data_exfil:     true      # git push, scp/rsync to external hosts, HTTP uploads
+    data_exfil:     true      # scp/rsync to external hosts, HTTP uploads
     spend:          true      # cumulative cost thresholds
+  # Note: agent `git` commands are intentionally NOT gated (too noisy). ARK still
+  # gates its OWN autonomous push and cloud provisioning.
 
   # Bulk-compute burst: ask once more than N jobs are launched within the window.
   max_jobs_in_window: 8

@@ -178,7 +178,7 @@ that stream line-by-line (instead of one blocking `communicate()`), so:
 | Layer | Where | What |
 |:------|:------|:-----|
 | **Policy** (`policy.py`) | pure logic | Classify a command/action → (category, severity) → decision (`allow`/`notify`/`ask`/`deny`) under an autonomy level. Categories: `destructive_fs`, `bulk_compute`, `credentials`, `data_exfil`, `spend`. |
-| **B — capability wrappers** (`wrappers.py`) | agent sandbox | Shadow-PATH shims for `rm`/`sbatch`/`gcloud`/`git`/`scp`/… sit first on PATH; they phone home to the gate **before** the real binary runs. A dumb shim + a smart `ApprovalWatcher` keeps all policy in one place. |
+| **B — capability wrappers** (`wrappers.py`) | agent sandbox | Shadow-PATH shims for `rm`/`sbatch`/`gcloud`/`scp`/… sit first on PATH; they phone home to the gate **before** the real binary runs. A dumb shim + a smart `ApprovalWatcher` keeps all policy in one place. (Agent `git` is intentionally not wrapped — too noisy.) |
 | **C — circuit breaker** (`manager.py`) | event stream | Backstop: watches the streamed actions and, on a wrapper **bypass** (absolute-path call to a risky binary), runs it through the gate and aborts the agent on denial. |
 
 The **gate** (`gate.py`) turns an `ask` into a human verdict over a pluggable

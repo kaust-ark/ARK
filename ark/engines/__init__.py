@@ -729,11 +729,19 @@ Execute the task and update the corresponding files.
 
         # Spend gate: notify at the soft threshold, ask at the hard cap. Runs on
         # cumulative cost across the whole run. No-op without an InterventionManager.
+        # A denial at the hard cap must STOP the run — flag a terminal error so the
+        # pipeline aborts at its next checkpoint (same mechanism as other terminal
+        # errors); otherwise the "ask at cap" guard would be toothless.
         _mgr = getattr(self, "_intervention", None)
         if _mgr is not None:
             try:
                 total = sum(float(s.get("cost_usd") or 0.0) for s in self._agent_stats)
-                _mgr.check_action("spend", total_usd=total)
+                if not _mgr.check_action("spend", total_usd=total):
+                    self._terminal_error = (
+                        f"Spend gate: human/policy declined to continue past "
+                        f"cumulative cost ${total:.2f}"
+                    )
+                    self.log(f"  {self._terminal_error} — stopping run", "ERROR")
             except Exception:
                 pass
 
