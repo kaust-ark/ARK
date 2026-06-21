@@ -89,6 +89,11 @@ from .db import (
     get_share_alias,
     get_user,
     update_project,
+    enqueue_command,
+    answer_decision,
+    get_decision,
+    get_open_decision,
+    set_autonomy,
 )
 from .crypto import encrypt_text, decrypt_text
 from .jobs import (
@@ -2188,6 +2193,11 @@ async def api_get_project(project_id: str, request: Request):
             "experiment_compute_backend": project.experiment_compute_backend or project.compute_backend or "slurm",
             "cloud_overrides": project.cloud_overrides or "",
             "error_message": project.error_message or "",
+            # HITL
+            "autonomy_level": project.autonomy_level or "collaborative",
+            "control_state": project.control_state or "",
+            "activity": project.activity or "",
+            "pending_decision": _decision_to_dict(get_open_decision(session, project_id)),
         })
 
 
@@ -2236,6 +2246,85 @@ async def api_stop_project(project_id: str, request: Request):
                     )
         update_project(session, project, status="stopped")
         return JSONResponse({"ok": True})
+
+
+# ── HITL control plane (webapp ↔ running orchestrator via the shared DB) ──────
+
+def _decision_to_dict(dec) -> Optional[dict]:
+    if not dec:
+        return None
+    try:
+        options = json.loads(dec.options or "[]")
+    except Exception:
+        options = []
+    return {
+        "id": dec.id, "kind": dec.kind, "question": dec.question,
+        "options": options, "context": dec.context,
+        "default_index": dec.default_index, "timeout_action": dec.timeout_action,
+        "deadline_at": dec.deadline_at.isoformat() if dec.deadline_at else None,
+    }
+
+
+@router.post("/api/projects/{project_id}/command")
+async def api_project_command(project_id: str, request: Request):
+    """Send a control command to a RUNNING project's orchestrator (the回程
+    channel the webapp lacked): pause | resume | stop | steer | set_autonomy."""
+    user = _require_user(request)
+    body = await request.json()
+    kind = (body.get("kind") or "").strip()
+    payload = (body.get("payload") or "").strip()
+    if kind not in ("pause", "resume", "stop", "steer", "set_autonomy"):
+        raise HTTPException(400, "unknown command")
+    if kind == "steer" and not payload:
+        raise HTTPException(400, "steer needs a message")
+    if kind == "set_autonomy" and payload not in ("full_auto", "collaborative", "hands_on"):
+        raise HTTPException(400, "bad autonomy level")
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project or not _can_access_project(user, project):
+            raise HTTPException(404)
+        if kind == "set_autonomy":
+            set_autonomy(session, project_id, payload)
+        enqueue_command(session, project_id, kind, payload=payload,
+                        source="webapp", created_by=user.email)
+    return JSONResponse({"ok": True})
+
+
+@router.get("/api/projects/{project_id}/decision")
+async def api_get_decision(project_id: str, request: Request):
+    """Current open decision the orchestrator is waiting on, if any."""
+    user = _require_user(request)
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project or not _can_access_project(user, project):
+            raise HTTPException(404)
+        return JSONResponse({"decision": _decision_to_dict(get_open_decision(session, project_id))})
+
+
+@router.post("/api/projects/{project_id}/decision")
+async def api_answer_decision(project_id: str, request: Request):
+    """Answer a pending decision from the webapp (index for a menu pick, or
+    free text). Mirrors a Telegram reply — whichever channel answers first wins."""
+    user = _require_user(request)
+    body = await request.json()
+    decision_id = (body.get("decision_id") or "").strip()
+    index = int(body.get("index", -1))
+    text = (body.get("text") or "").strip()
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project or not _can_access_project(user, project):
+            raise HTTPException(404)
+        dec = get_decision(session, decision_id) if decision_id else get_open_decision(session, project_id)
+        if not dec or dec.project_id != project_id:
+            raise HTTPException(404, "no open decision")
+        ok = answer_decision(session, dec.id, index=index, text=text,
+                             by=user.email, source="webapp")
+        if not ok:
+            raise HTTPException(409, "decision already closed")
+    return JSONResponse({"ok": True})
 
 
 @router.post("/api/projects/{project_id}/restart")
@@ -2782,6 +2871,11 @@ async def api_stream_log(project_id: str, request: Request):
                         "status": p.status,
                         "score": score,
                         "cost_report": _read_cost_report(pdir, project=p),
+                        # HITL live fields
+                        "control_state": p.control_state or "",
+                        "activity": p.activity or "",
+                        "autonomy_level": p.autonomy_level or "collaborative",
+                        "pending_decision": _decision_to_dict(get_open_decision(session, project_id)),
                     })
                     yield f"event: status\ndata: {payload}\n\n"
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -106,6 +107,57 @@ class Project(SQLModel, table=True):
     # ── Per-project cloud overrides ──
     cloud_overrides: str = ""   # JSON: {region, instance_type, image_id, ...}
 
+    # ── HITL control plane ──
+    # How much the orchestrator checks in with the human:
+    #   full_auto      — only hard blockers / ethics / irreversible gates ask
+    #   collaborative  — also ask at major forks (experiment, direction, drift)  [default]
+    #   hands_on       — confirm each major step
+    autonomy_level: str = "collaborative"
+    activity: str = ""          # current one-line activity, for live display
+    control_state: str = ""     # "" (running) | pausing | paused
+
+
+class ProjectCommand(SQLModel, table=True):
+    """Control-plane command from webapp/Telegram to a RUNNING orchestrator.
+
+    The detached orchestrator polls pending commands at safe checkpoints and
+    applies them (pause/resume/steer/answer/set_autonomy). This is the回程
+    channel the webapp previously lacked — it could only signal-kill a run.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    project_id: str = Field(index=True)
+    kind: str                   # pause | resume | stop | steer | answer | set_autonomy
+    payload: str = ""           # steer text / autonomy value / decision id+answer (JSON)
+    status: str = "pending"     # pending | consumed
+    source: str = "webapp"      # webapp | telegram | cli
+    created_by: str = ""        # email / "telegram" / "system"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    consumed_at: Optional[datetime] = Field(default=None)
+
+
+class PendingDecision(SQLModel, table=True):
+    """A decision the orchestrator is blocked on, answerable from EITHER the
+    webapp or Telegram. Replaces the old Telegram-only ask_user_decision so a
+    pending question is visible and answerable in both channels."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    project_id: str = Field(index=True)
+    kind: str = "decision"      # decision | clarification | gate_a | experiment_approval | drift | blocker
+    question: str = ""
+    options: str = "[]"         # JSON list[str]
+    context: str = ""           # extra detail (markdown ok)
+    default_index: int = 0
+    # On deadline with no answer: proceed_default (auto-pick default) or pause
+    # (park the run — for ethics / expensive / irreversible decisions).
+    timeout_action: str = "proceed_default"
+    deadline_at: Optional[datetime] = Field(default=None)
+    status: str = "pending"     # pending | answered | timed_out | cancelled
+    answer_index: int = -1
+    answer_text: str = ""
+    answered_by: str = ""
+    source: str = ""            # channel that answered: webapp | telegram | timeout
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    answered_at: Optional[datetime] = Field(default=None)
+
 
 class Feedback(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -191,6 +243,10 @@ def _migrate(engine):
             "error_message": "TEXT DEFAULT ''",
             # Per-project cloud overrides
             "cloud_overrides": "TEXT DEFAULT ''",
+            # HITL control plane
+            "autonomy_level": "TEXT DEFAULT 'collaborative'",
+            "activity": "TEXT DEFAULT ''",
+            "control_state": "TEXT DEFAULT ''",
         }
         added = []
         for col, typedef in _new_cols.items():
@@ -310,6 +366,135 @@ def list_access_requests(session: Session, status: Optional[str] = None) -> list
     if status:
         q = q.where(AccessRequest.status == status)
     return list(session.exec(q.order_by(AccessRequest.created_at.desc())))
+
+
+# ── HITL control plane ────────────────────────────────────────────────────────
+# These are the shared bus between the webapp/Telegram and the detached
+# orchestrator. The orchestrator polls commands + answers at checkpoints; the
+# webapp/Telegram enqueue commands and answer decisions.
+
+def enqueue_command(session: Session, project_id: str, kind: str, payload: str = "",
+                    source: str = "webapp", created_by: str = "") -> "ProjectCommand":
+    """Queue a control command for a running project's orchestrator."""
+    cmd = ProjectCommand(project_id=project_id, kind=kind, payload=payload,
+                         source=source, created_by=created_by)
+    session.add(cmd)
+    session.commit()
+    session.refresh(cmd)
+    return cmd
+
+
+def take_pending_commands(session: Session, project_id: str) -> list[dict]:
+    """Return + mark-consumed all pending commands for a project (FIFO).
+
+    Returns plain dicts so callers don't hold ORM objects past the session.
+    """
+    rows = session.exec(
+        select(ProjectCommand)
+        .where(ProjectCommand.project_id == project_id,
+               ProjectCommand.status == "pending")
+        .order_by(ProjectCommand.created_at)
+    ).all()
+    out = []
+    for r in rows:
+        out.append({"id": r.id, "kind": r.kind, "payload": r.payload,
+                    "source": r.source, "created_by": r.created_by})
+        r.status = "consumed"
+        r.consumed_at = datetime.utcnow()
+        session.add(r)
+    if rows:
+        session.commit()
+    return out
+
+
+def create_pending_decision(session: Session, project_id: str, question: str,
+                            options: list[str], kind: str = "decision",
+                            context: str = "", default_index: int = 0,
+                            timeout_action: str = "proceed_default",
+                            deadline_at: Optional[datetime] = None) -> str:
+    """Open a decision for the human. Cancels any prior open decision for the
+    project first (one live question at a time). Returns the decision id."""
+    for old in session.exec(
+        select(PendingDecision).where(PendingDecision.project_id == project_id,
+                                      PendingDecision.status == "pending")
+    ).all():
+        old.status = "cancelled"
+        session.add(old)
+    dec = PendingDecision(
+        project_id=project_id, kind=kind, question=question,
+        options=json.dumps(list(options or [])), context=context,
+        default_index=default_index, timeout_action=timeout_action,
+        deadline_at=deadline_at,
+    )
+    session.add(dec)
+    session.commit()
+    session.refresh(dec)
+    return dec.id
+
+
+def get_open_decision(session: Session, project_id: str) -> Optional["PendingDecision"]:
+    return session.exec(
+        select(PendingDecision).where(PendingDecision.project_id == project_id,
+                                      PendingDecision.status == "pending")
+        .order_by(PendingDecision.created_at.desc())
+    ).first()
+
+
+def get_decision(session: Session, decision_id: str) -> Optional["PendingDecision"]:
+    return session.get(PendingDecision, decision_id)
+
+
+def answer_decision(session: Session, decision_id: str, index: int = -1,
+                    text: str = "", by: str = "", source: str = "webapp") -> bool:
+    """Record a human's answer to a decision. Returns False if already closed."""
+    dec = session.get(PendingDecision, decision_id)
+    if not dec or dec.status != "pending":
+        return False
+    dec.status = "answered"
+    dec.answer_index = index
+    dec.answer_text = text or ""
+    dec.answered_by = by
+    dec.source = source
+    dec.answered_at = datetime.utcnow()
+    session.add(dec)
+    session.commit()
+    return True
+
+
+def expire_decision(session: Session, decision_id: str) -> None:
+    dec = session.get(PendingDecision, decision_id)
+    if dec and dec.status == "pending":
+        dec.status = "timed_out"
+        dec.source = "timeout"
+        dec.answered_at = datetime.utcnow()
+        session.add(dec)
+        session.commit()
+
+
+def set_activity(session: Session, project_id: str, text: str) -> None:
+    p = session.get(Project, project_id)
+    if p is not None:
+        p.activity = (text or "")[:300]
+        session.add(p)
+        session.commit()
+
+
+def set_control_state(session: Session, project_id: str, state: str) -> None:
+    p = session.get(Project, project_id)
+    if p is not None:
+        p.control_state = state or ""
+        session.add(p)
+        session.commit()
+
+
+def set_autonomy(session: Session, project_id: str, level: str) -> None:
+    if level not in ("full_auto", "collaborative", "hands_on"):
+        return
+    p = session.get(Project, project_id)
+    if p is not None:
+        p.autonomy_level = level
+        session.add(p)
+        session.commit()
 
 
 def get_projects_for_user(session: Session, user_id: str) -> list[Project]:

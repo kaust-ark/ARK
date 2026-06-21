@@ -137,6 +137,9 @@ class PipelineMixin:
         self._terminal_error = None
         self._asked_this_iteration = False
 
+        # HITL checkpoint: apply pending control commands, honor pause, stop cleanly.
+        self.checkpoint("review iteration")
+
         # Load persistent user instructions
         persistent_instructions = self.load_user_instructions()
         if persistent_instructions:
@@ -415,10 +418,25 @@ class PipelineMixin:
             self.log("Warning: repeating issues detected!", "WARN")
             for issue_id, count in repeat_issues: self.log(f"  - {issue_id}: appeared {count} times", "WARN")
 
+    def _record_intervention_choice(self, options, idx, reply, score):
+        """Make an intervention menu pick actually do something: record the
+        chosen option as next-iteration guidance. (Free-text replies are already
+        injected by ask_user_decision; a bare number used to be inert.)"""
+        if reply and not str(reply).strip().isdigit():
+            return  # free text already injected by ask_user_decision
+        if options and 0 <= idx < len(options):
+            choice = options[idx]
+            self.log(f"User decision: {choice}", "INFO")
+            try:
+                self.inject_user_update(f"[Your decision at {score:.1f}/10] {choice}")
+            except Exception:
+                pass
+
     def _proactive_intervention(self, score: float, review_output: str):
         question, options = self._build_intervention_options(score, 0, review_output, trigger="First review score is low")
         background = self._build_decision_background(review_output, options, score=score)
-        self.ask_user_decision(question, options, timeout=defaults.TIMEOUT_HITL_DECISION, what_happened=f"First review came back at {score}/10.", background=background, option_details=self._build_option_details(options, review_output), phase="first_review")
+        idx, reply = self.ask_user_decision(question, options, timeout=defaults.TIMEOUT_HITL_DECISION, what_happened=f"First review came back at {score}/10.", background=background, option_details=self._build_option_details(options, review_output), phase="first_review")
+        self._record_intervention_choice(options, idx, reply, score)
         self._asked_this_iteration = True
 
     def _check_acceptance(self, score: float, issue_ids: list[str], paper_state: dict) -> tuple[bool, bool, bool]:
@@ -588,7 +606,8 @@ class PipelineMixin:
         trigger = f"Stuck {self.memory.stagnation_count} rounds at {score}/10"
         question, options = self._build_intervention_options(score, current_score, review_src or "", trigger=trigger)
         background = self._build_decision_background(review_src or "", options, score=score)
-        self.ask_user_decision(question, options, timeout=defaults.TIMEOUT_HITL_DECISION, what_happened=f"Stagnation triggered at {score}/10.", background=background, option_details=self._build_option_details(options, review_src or ""), phase="stagnation_intervention")
+        idx, reply = self.ask_user_decision(question, options, timeout=defaults.TIMEOUT_HITL_DECISION, what_happened=f"Stagnation triggered at {score}/10.", background=background, option_details=self._build_option_details(options, review_src or ""), phase="stagnation_intervention")
+        self._record_intervention_choice(options, idx, reply, score)
         self._asked_this_iteration = True
 
     def check_dependencies(self):
@@ -2057,6 +2076,38 @@ Rules:
             phase=phase,
         )
 
+    def _experiment_approval_gate(self):
+        """Before running experiments, let the user approve the plan or steer it
+        (大实验前把关). Gated by autonomy level — skipped in full_auto."""
+        if not self._should_ask("experiment_approval"):
+            return
+        plan_summary = ""
+        for cand in ("experiment_plan.md", "experiments_plan.md", "plan.md", "action_plan.md"):
+            f = self.state_dir / cand
+            try:
+                if f.exists():
+                    plan_summary = f.read_text()[:1200]
+                    break
+            except Exception:
+                pass
+        idx, reply = self.ask_user_decision(
+            question="Experiment plan ready — approve and run it? (or type any changes)",
+            options=["Approve — run the experiments as planned"],
+            what_happened="The planner finished the experiment plan; about to execute it.",
+            background=[plan_summary] if plan_summary else None,
+            timeout=defaults.TIMEOUT_HITL_DECISION, default=0,
+            kind="experiment_approval", timeout_action="proceed_default",
+            phase="experiment_approval",
+        )
+        # A free-text reply is an adjustment — persist it so the experimenter
+        # (which now carries user_instructions) honors it on this very run.
+        if reply and not str(reply).strip().isdigit():
+            try:
+                self.add_user_instruction(reply, source="experiment_gate")
+                self.log("Applied your experiment adjustment.", "INFO")
+            except Exception:
+                pass
+
     def _run_dev_phase(self):
         """Run the Dev Phase: iterative experiments → initial paper draft.
 
@@ -2115,6 +2166,11 @@ Rules:
             # Step 1: Plan experiments
             self._plan_experiments(dev_iter, max_dev_iters, research_idea,
                                    findings_summary)
+
+            # HITL gate: on the first dev iteration, let the user approve or
+            # steer the experiment plan before spending compute (大实验前把关).
+            if dev_iter == start_iter + 1:
+                self._experiment_approval_gate()
 
             # Step 2: Run experiments
             self._run_experiments(dev_iter, max_dev_iters)
@@ -2945,6 +3001,7 @@ Produce the complete paper. Do not stop until all sections are written and it co
             phase="smart_intervention",
         )
         self._asked_this_iteration = True
+        self._record_intervention_choice(options, idx, reply, score)
         if reply:
             self.log(f"User intervention reply: {reply[:200]}", "INFO")
 
@@ -3379,29 +3436,45 @@ provide the title.
         category = result.get("category", "unknown")
         reason = result.get("reason", "")
 
-        if verdict in ("reject", "human_review"):
-            if verdict == "reject":
-                phase = "blocked_ethical"
-                headline = "Idea review REJECTED — launch blocked"
-                err = f"Idea rejected ({category}): {reason}"
-                tg_emoji, tg_title = "⛔", "Idea review blocked this project"
-            else:  # human_review
-                phase = "blocked_review"
-                headline = "Idea review — held for human review"
-                err = f"Idea held for human review: {reason}"
-                tg_emoji, tg_title = "🕵️", "Idea held for human review"
-            self.log_section(headline)
+        if verdict == "reject":
+            # Clear ethics/soundness breach — hard block, not overridable.
+            self.log_section("Idea review REJECTED — launch blocked")
             self.log(f"Category: {category}\nReason: {reason}", "RAW")
             if getattr(self, "telegram", None) and self.telegram.is_configured:
                 self.telegram.send(
-                    f"{self.tg_header(tg_emoji)}\n"
-                    f"<b>{tg_title}</b>\n"
+                    f"{self.tg_header('⛔')}\n"
+                    f"<b>Idea review blocked this project</b>\n"
                     f"Category: <code>{_html.escape(str(category))}</code>\n"
                     f"Reason: {_html.escape(str(reason))}",
                     parse_mode="HTML",
                 )
             # Do NOT cache a block — a resumed run must re-evaluate.
-            self._sync_db(status="failed", phase=phase, error_message=err)
+            self._sync_db(status="failed", phase="blocked_ethical",
+                          error_message=f"Idea rejected ({category}): {reason}")
+            return False
+
+        if verdict == "human_review":
+            # Borderline — ASK the human (webapp + Telegram) instead of silently
+            # failing. Pause and wait indefinitely; never auto-proceed on ethics.
+            self.log_section("Idea review — held for human review")
+            self.log(f"Category: {category}\nReason: {reason}", "RAW")
+            idx, reply = self.ask_user_decision(
+                question="This idea was flagged for human review before launch. Approve it?",
+                options=["Approve — proceed with the run", "Reject — block this run"],
+                what_happened=f"Gate A flagged this idea: {reason}",
+                background=[f"Category: {category}"],
+                timeout=int(self.config.get("telegram_decision_timeout", 3600)),
+                default=1, kind="gate_a", timeout_action="pause", phase="gate_a",
+            )
+            if idx == 0:  # approved
+                self.log_step("Idea review: approved by human — proceeding.", "success")
+                review_file.parent.mkdir(parents=True, exist_ok=True)
+                review_file.write_text(json.dumps(
+                    {**result, "verdict": "proceed", "human_approved": True}, indent=2))
+                return True
+            self.log_section("Idea review — rejected by human")
+            self._sync_db(status="failed", phase="blocked_review",
+                          error_message=f"Idea rejected by human after review: {reason}")
             return False
 
         review_file.parent.mkdir(parents=True, exist_ok=True)
@@ -3469,6 +3542,7 @@ provide the title.
             while (
                 datetime.now() < self.max_end_time
                 and self.iteration < max_iteration_target
+                and not self._stop_requested
             ):
                 should_continue = self.run_paper_iteration()
                 if not should_continue:

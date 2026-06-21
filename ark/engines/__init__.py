@@ -44,12 +44,15 @@ from ark.ui import (
 # their normal channels (prior_context, context_files). Ongoing instructions
 # added mid-run are still surfaced to planner/reviewer via memory.goal_anchor.
 AGENT_CONTEXT_PROFILES = {
+    # user_instructions = True wherever the user might steer the work, so HITL
+    # steer/adjust messages actually reach the agent doing it (not just the
+    # researcher). Reviewer stays False — it evaluates, it shouldn't be steered.
     "researcher":     {"memory": False, "deep_research": False, "prior_context": False, "context_files": True,  "user_instructions": True},
     "reviewer":       {"memory": True,  "deep_research": False, "prior_context": False, "context_files": False, "user_instructions": False},
-    "planner":        {"memory": True,  "deep_research": False, "prior_context": True,  "context_files": False, "user_instructions": False},
-    "writer":         {"memory": False, "deep_research": True,  "prior_context": True,  "context_files": False, "user_instructions": False},
-    "experimenter":   {"memory": False, "deep_research": True,  "prior_context": False, "context_files": True,  "user_instructions": False},
-    "coder":          {"memory": False, "deep_research": False, "prior_context": True,  "context_files": False, "user_instructions": False},
+    "planner":        {"memory": True,  "deep_research": False, "prior_context": True,  "context_files": False, "user_instructions": True},
+    "writer":         {"memory": False, "deep_research": True,  "prior_context": True,  "context_files": False, "user_instructions": True},
+    "experimenter":   {"memory": False, "deep_research": True,  "prior_context": False, "context_files": True,  "user_instructions": True},
+    "coder":          {"memory": False, "deep_research": False, "prior_context": True,  "context_files": False, "user_instructions": True},
 }
 
 # Default profile for unknown agent types (conservative: include everything)

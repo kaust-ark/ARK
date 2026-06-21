@@ -1111,6 +1111,43 @@
 
   <div class="detail-actions share-hide" id="detail-actions"></div>
 
+  <!-- HITL: decision card — shown when the orchestrator is waiting on a human -->
+  <div id="hitl-decision" class="share-hide" style="display:none;margin:4px 0 14px;padding:16px 18px;background:#fff7ed;border:1.5px solid #fb923c;border-radius:12px">
+    <div style="font-weight:700;color:#9a3412;margin-bottom:6px">⚠️ <span id="hitl-decision-kind">Decision needed</span></div>
+    <div id="hitl-decision-q" style="font-size:.95rem;color:var(--text-primary);margin-bottom:6px;line-height:1.5"></div>
+    <div id="hitl-decision-ctx" style="font-size:.84rem;color:var(--text-second);margin-bottom:10px;white-space:pre-wrap;line-height:1.5"></div>
+    <div id="hitl-decision-opts" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
+    <div style="display:flex;gap:8px">
+      <input id="hitl-decision-text" placeholder="…or type your own instruction" style="flex:1;padding:8px 10px;border:1px solid var(--card-border);border-radius:8px;font-size:.85rem"
+        onkeydown="if(event.key==='Enter')submitDecisionText()">
+      <button class="btn-primary" onclick="submitDecisionText()">Send</button>
+    </div>
+  </div>
+
+  <!-- HITL: live control bar — shown while the project is running -->
+  <div id="hitl-controls" class="share-hide" style="display:none;margin:4px 0 14px;padding:12px 16px;background:var(--bg-hover);border-radius:10px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-size:.78rem;color:var(--text-muted)">Activity</span>
+      <span id="hitl-activity" style="font-size:.85rem;color:var(--text-second);font-weight:500">—</span>
+      <span id="hitl-state-badge" style="display:none;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:10px;background:#fde68a;color:#92400e">PAUSED</span>
+      <span style="flex:1"></span>
+      <button id="hitl-pause-btn" class="btn-secondary" onclick="hitlPauseResume()">⏸ Pause</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <input id="hitl-steer" placeholder="Talk to it — steer the run (e.g. 'use a smaller baseline', 'focus on X')" style="flex:1;padding:8px 10px;border:1px solid var(--card-border);border-radius:8px;font-size:.85rem"
+        onkeydown="if(event.key==='Enter')hitlSteer()">
+      <button class="btn-secondary" onclick="hitlSteer()">🧭 Send</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+      <span style="font-size:.78rem;color:var(--text-muted)">Autonomy</span>
+      <select id="hitl-autonomy" onchange="hitlSetAutonomy()" style="padding:5px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem">
+        <option value="full_auto">Full auto — only blockers / ethics</option>
+        <option value="collaborative">Collaborative — ask at major forks</option>
+        <option value="hands_on">Hands-on — confirm each step</option>
+      </select>
+    </div>
+  </div>
+
   <div id="detail-queue-pos" style="display:none;margin-bottom:12px;padding:10px 14px;
     background:#e0e7ff;border-radius:8px;color:#3730a3;font-size:.9rem;font-weight:500"></div>
 
@@ -2820,6 +2857,7 @@ async function loadDetail(id) {
   renderScoreChart(p.score_history || []);
   renderCost(p.cost_report);
   renderDetailActions(p);
+  renderHitl(p);
 
   const qp = document.getElementById('detail-queue-pos');
   if (qp) {
@@ -3251,6 +3289,89 @@ async function stopProject(id) {
   loadDetail(id);
 }
 
+// ── HITL control plane (webapp side) ──────────────────────────────────────────
+let _hitlDecisionId = null;
+
+function renderHitl(p) {
+  if (!p) return;
+  const running = (p.status === 'running' || p.status === 'queued' || p.status === 'initializing');
+  const controls = document.getElementById('hitl-controls');
+  if (controls) controls.style.display = running ? 'block' : 'none';
+  const act = document.getElementById('hitl-activity');
+  if (act) act.textContent = p.activity || '—';
+  const paused = (p.control_state === 'paused');
+  const sb = document.getElementById('hitl-state-badge');
+  if (sb) sb.style.display = paused ? 'inline' : 'none';
+  const pb = document.getElementById('hitl-pause-btn');
+  if (pb) pb.textContent = paused ? '▶️ Resume' : '⏸ Pause';
+  const aut = document.getElementById('hitl-autonomy');
+  if (aut && p.autonomy_level && document.activeElement !== aut) aut.value = p.autonomy_level;
+  renderDecision(p.pending_decision);
+}
+
+function renderDecision(dec) {
+  const card = document.getElementById('hitl-decision');
+  if (!card) return;
+  if (!dec) { card.style.display = 'none'; _hitlDecisionId = null; return; }
+  _hitlDecisionId = dec.id;
+  card.style.display = 'block';
+  document.getElementById('hitl-decision-kind').textContent = (dec.kind || 'decision').replace(/_/g, ' ');
+  document.getElementById('hitl-decision-q').textContent = dec.question || '';
+  document.getElementById('hitl-decision-ctx').textContent = dec.context || '';
+  const optsEl = document.getElementById('hitl-decision-opts');
+  optsEl.innerHTML = '';
+  (dec.options || []).forEach((opt, i) => {
+    const b = document.createElement('button');
+    b.className = 'btn-secondary';
+    b.style.cssText = 'text-align:left;width:100%';
+    b.textContent = `${i + 1}. ${opt}` + (i === dec.default_index ? '  · default' : '');
+    b.onclick = () => answerDecision(i, '');
+    optsEl.appendChild(b);
+  });
+}
+
+async function answerDecision(index, text) {
+  if (!detailProjectId) return;
+  await fetch(`${APP_BASE}/api/projects/${detailProjectId}/decision`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision_id: _hitlDecisionId, index: index, text: text }),
+  });
+  document.getElementById('hitl-decision').style.display = 'none';
+}
+
+function submitDecisionText() {
+  const el = document.getElementById('hitl-decision-text');
+  const txt = (el.value || '').trim();
+  if (!txt) return;
+  answerDecision(-1, txt);
+  el.value = '';
+}
+
+async function hitlCommand(kind, payload) {
+  if (!detailProjectId) return;
+  await fetch(`${APP_BASE}/api/projects/${detailProjectId}/command`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, payload: payload || '' }),
+  });
+}
+
+function hitlPauseResume() {
+  const resuming = document.getElementById('hitl-pause-btn').textContent.includes('Resume');
+  hitlCommand(resuming ? 'resume' : 'pause', '');
+}
+
+function hitlSteer() {
+  const el = document.getElementById('hitl-steer');
+  const txt = (el.value || '').trim();
+  if (!txt) return;
+  hitlCommand('steer', txt);
+  el.value = '';
+}
+
+function hitlSetAutonomy() {
+  hitlCommand('set_autonomy', document.getElementById('hitl-autonomy').value);
+}
+
 async function startProject(id) {
   if (!confirm(t('confirm_restart'))) return;
   const res = await fetch(`${APP_BASE}/api/projects/${id}/restart`, { method: 'POST' });
@@ -3324,6 +3445,8 @@ function startDetailStream(id) {
     }
     if (data.score !== undefined) setScore(data.score);
     if (data.cost_report !== undefined) renderCost(data.cost_report);
+    // HITL live update (activity / pause state / pending decision / autonomy)
+    renderHitl(data);
     if (data.status === 'done' || data.status === 'failed' || data.status === 'stopped') {
       // Stop SSE — do NOT call loadDetail (would restart SSE → infinite loop)
       stopDetailStream();

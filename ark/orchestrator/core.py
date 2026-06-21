@@ -143,6 +143,11 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self._latest_pdf = None
         self._deep_research_thread = None
 
+        # ── HITL control plane (DB-backed; see _poll_control / ask_user_decision) ──
+        self._paused = False
+        self._stop_requested = False
+        self._autonomy_cache = None      # refreshed from DB at checkpoints
+
         # Memory
         self.memory = get_memory(state_dir=self.state_dir)
         self._last_score = 0.0
@@ -297,6 +302,144 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
             self._db_sync_errors += 1
             if self._db_sync_errors <= 3:
                 self.log(f"DB sync failed ({self._db_sync_errors}): {e}", "WARN")
+
+    # ========== HITL control plane ==========
+    # The detached orchestrator can't be reached by the webapp except via the
+    # shared DB. These poll a command queue + an autonomy level at safe
+    # checkpoints, and drive pause/resume/steer/stop. Decisions go through
+    # ask_user_decision (DB-backed, dual-channel: webapp + Telegram).
+
+    _AUTONOMY_ASK = {
+        # which decision *kinds* actually prompt the human, per autonomy level
+        "full_auto": {"blocker", "gate_a", "irreversible"},
+        "collaborative": {"blocker", "gate_a", "irreversible",
+                          "experiment_approval", "drift", "decision", "clarification"},
+        "hands_on": None,  # None = ask for everything
+    }
+
+    def _hitl_db(self):
+        """Yield a DB session if the control plane is available, else None."""
+        if not self._db_path or not self._project_id:
+            return None
+        try:
+            ark_root = str(Path(__file__).parent.parent.absolute())
+            if ark_root not in sys.path:
+                sys.path.insert(0, ark_root)
+            from website.dashboard import db as _db  # noqa: F401
+            return _db
+        except Exception:
+            return None
+
+    def _set_activity(self, text: str):
+        _db = self._hitl_db()
+        if not _db:
+            return
+        try:
+            with _db.get_session(self._db_path) as s:
+                _db.set_activity(s, self._project_id, text)
+        except Exception:
+            pass
+
+    def _set_control_state(self, state: str):
+        _db = self._hitl_db()
+        if not _db:
+            return
+        try:
+            with _db.get_session(self._db_path) as s:
+                _db.set_control_state(s, self._project_id, state)
+        except Exception:
+            pass
+
+    def autonomy(self) -> str:
+        """Current autonomy level (DB-backed, falls back to config/default)."""
+        _db = self._hitl_db()
+        if _db:
+            try:
+                with _db.get_session(self._db_path) as s:
+                    p = _db.get_project(s, self._project_id)
+                    if p and p.autonomy_level:
+                        self._autonomy_cache = p.autonomy_level
+            except Exception:
+                pass
+        return (self._autonomy_cache
+                or self.config.get("autonomy_level", "collaborative"))
+
+    def _should_ask(self, kind: str) -> bool:
+        """Whether a decision of this kind should actually prompt the human,
+        given the project's autonomy level."""
+        allow = self._AUTONOMY_ASK.get(self.autonomy(), set())
+        return True if allow is None else (kind in allow)
+
+    def _poll_control(self):
+        """Drain pending control commands from the DB and apply them."""
+        _db = self._hitl_db()
+        if not _db:
+            return
+        try:
+            with _db.get_session(self._db_path) as s:
+                cmds = _db.take_pending_commands(s, self._project_id)
+        except Exception:
+            return
+        for c in cmds:
+            kind, payload = c.get("kind"), c.get("payload", "")
+            if kind == "pause":
+                self._paused = True
+                self._set_control_state("paused")
+                self.log("⏸  Paused by user.", "INFO")
+            elif kind == "resume":
+                self._paused = False
+                self._set_control_state("")
+                self.log("▶️  Resumed by user.", "INFO")
+            elif kind == "stop":
+                self._stop_requested = True
+                self.log("⏹  Stop requested by user.", "WARN")
+            elif kind == "steer" and payload:
+                try:
+                    self.inject_user_update(payload)
+                except Exception:
+                    pass
+                self.log(f"🧭  Steer from user: {payload[:140]}", "INFO")
+            elif kind == "set_autonomy" and payload:
+                try:
+                    with _db.get_session(self._db_path) as s:
+                        _db.set_autonomy(s, self._project_id, payload)
+                    self._autonomy_cache = payload
+                    self.log(f"⚙️  Autonomy → {payload}", "INFO")
+                except Exception:
+                    pass
+
+    def _maybe_park(self):
+        """If paused, block (polling for resume/stop) until unparked."""
+        if not self._paused:
+            return
+        self.log("⏸  Parked — waiting for resume…", "INFO")
+        while self._paused and not self._stop_requested:
+            if datetime.now() >= self.max_end_time:
+                break
+            time.sleep(3)
+            self._poll_control()
+        if not self._paused:
+            self.log("▶️  Unparked — continuing.", "INFO")
+
+    def checkpoint(self, label: str = ""):
+        """Safe point between steps: surface activity, apply control commands,
+        honor pause, and break out on stop. Call liberally between major steps."""
+        if label:
+            self._set_activity(label)
+        self._poll_control()
+        self._maybe_park()
+        if self._stop_requested:
+            raise KeyboardInterrupt("stop requested via control command")
+
+    def _parse_decision_reply(self, reply, opts):
+        """(idx, is_freetext): a bare number selects an option; else free text."""
+        try:
+            idx = int(str(reply).strip()) - 1
+            if 0 <= idx < len(opts):
+                return idx, False
+        except (ValueError, TypeError):
+            pass
+        return -1, True
 
     # ========== Deep Research (background) ==========
 
@@ -1547,6 +1690,13 @@ a {{ color: #0d9488; }}
             header = f"┌─ {step_icon} STEP {step_num}/{total_steps}: {name} " + "─" * max(0, 48 - len(name))
             self.log(styled(header, Style.BOLD, Style.CYAN), "RAW")
             self.log(f"│ [{timestamp}] Starting...", "RAW")
+            # HITL: surface this step as the live activity + drain any pending
+            # control commands (cheap, fail-soft; full park/stop is at checkpoints).
+            try:
+                self._set_activity(f"Step {step_num}/{total_steps}: {name}")
+                self._poll_control()
+            except Exception:
+                pass
         else:
             self.log(f"│ [{timestamp}] {styled('✓ Completed', Style.GREEN)}", "RAW")
             self.log(styled("└" + "─" * 69, Style.DIM), "RAW")
@@ -2445,26 +2595,28 @@ a {{ color: #0d9488; }}
                           background: list = None,
                           option_details: list = None,
                           phase: str = "",
-                          polish: bool = True) -> tuple:
-        """Send a multiple-choice decision request via Telegram.
+                          polish: bool = True,
+                          kind: str = "decision",
+                          timeout_action: str = "proceed_default") -> tuple:
+        """Ask the human a multiple-choice decision — DUAL-CHANNEL (webapp + Telegram).
 
-        Backwards compatible: existing callers passing only positional args
-        continue to work. New keyword args (`what_happened`, `background`,
-        `option_details`, `phase`) opt in to the rich format. A "Custom"
-        escape option is always appended automatically so the user is never
-        forced into a canned choice.
+        Publishes a ``pending_decision`` row to the shared DB (so the webapp can
+        show + answer it) AND, if configured, sends a Telegram menu. Blocks until
+        EITHER channel answers, or the timeout fires.
 
-        Default timeout is 10 minutes so the pipeline doesn't block the user
-        for too long when they're away; override per-project with the
-        ``telegram_decision_timeout`` config key.
+        ``kind`` tags the decision (decision | clarification | gate_a |
+        experiment_approval | drift | blocker | irreversible) for the UI and for
+        autonomy gating. ``timeout_action``: ``proceed_default`` auto-picks the
+        default on timeout; ``pause`` parks the run and keeps waiting (use for
+        ethics / expensive / irreversible decisions).
 
-        Returns (idx, reply_text). If the user typed a number, idx is that
-        index and reply_text is the raw reply. If the user typed free text,
-        idx is len(options)-1 (the Custom slot) and reply_text is the text.
-        On timeout, returns (default, "").
+        A "Custom" escape option is always appended. Returns (idx, reply_text):
+        a numeric answer → that index; free text → (len(opts)-1, text).
         """
-        if not self.telegram.is_configured:
-            self.log(f"No Telegram configured, using default option {default}", "WARN")
+        has_telegram = self.telegram.is_configured
+        has_db = bool(self._db_path and self._project_id)
+        if not has_telegram and not has_db:
+            self.log(f"No HITL channel available, using default option {default}", "WARN")
             return default, ""
 
         timeout = self.config.get("telegram_decision_timeout", timeout)
@@ -2541,57 +2693,126 @@ a {{ color: #0d9488; }}
             except Exception:
                 polished = msg
 
-        # Send + wait for reply. ask_telegram_user wraps telegram.ask which
-        # uses send() (synchronous, then blocks on event). We pass the
-        # already-rendered HTML directly via telegram.ask to preserve format.
-        if not self.telegram.is_configured:
-            return default, ""
+        # ── Publish the decision to the DB so the webapp can see + answer it ──
+        _db = self._hitl_db()
+        decision_id = None
+        if has_db and _db:
+            try:
+                deadline = datetime.utcnow() + timedelta(seconds=timeout)
+                with _db.get_session(self._db_path) as s:
+                    decision_id = _db.create_pending_decision(
+                        s, self._project_id,
+                        question or what_happened or "Decision needed",
+                        opts, kind=kind, context=what_happened or "",
+                        default_index=default, timeout_action=timeout_action,
+                        deadline_at=deadline)
+                self._set_control_state("awaiting")
+            except Exception as e:
+                self.log(f"Could not publish decision to DB: {e}", "WARN")
 
-        self.log(f"Waiting for Telegram decision reply (timeout {timeout}s)...", "INFO")
-        # Use telegram.ask() but bypass its to_html re-conversion since we
-        # already produced HTML. Send directly then wait.
-        self.telegram.send(polished, parse_mode="HTML")
-        self.telegram._is_waiting = True
-        self.telegram._ask_reply = None
-        self.telegram._ask_event.clear()
+        # ── Second channel: Telegram (if configured) ──
+        if has_telegram:
+            self.log(f"Awaiting decision (Telegram + webapp, timeout {timeout}s)…", "INFO")
+            self.telegram.send(polished, parse_mode="HTML")
+            self.telegram._is_waiting = True
+            self.telegram._ask_reply = None
+            self.telegram._ask_event.clear()
+        else:
+            self.log(f"Awaiting decision (webapp, timeout {timeout}s)…", "INFO")
+
+        # ── Dual-channel wait loop: whichever channel answers first wins ──
+        start = time.time()
+        paused_for_decision = False
+        result = None
         try:
-            got = self.telegram._ask_event.wait(timeout=timeout)
-            reply = self.telegram._ask_reply if got else None
-            if got and reply:
-                self.telegram.send_raw("✅ Received, continuing...")
+            while result is None:
+                # 1) webapp / DB answer
+                if decision_id and _db:
+                    try:
+                        with _db.get_session(self._db_path) as s:
+                            dec = _db.get_decision(s, decision_id)
+                    except Exception:
+                        dec = None
+                    if dec is not None and dec.status == "answered":
+                        if dec.answer_text and (dec.answer_index is None or dec.answer_index < 0):
+                            try: self.inject_user_update(dec.answer_text)
+                            except Exception: pass
+                            result = (len(opts) - 1, dec.answer_text)
+                        else:
+                            ridx = dec.answer_index if (dec.answer_index is not None and 0 <= dec.answer_index < len(opts)) else default
+                            result = (ridx, dec.answer_text or "")
+                        break
+                    if dec is not None and dec.status == "cancelled":
+                        result = (default, ""); break
+                # 2) Telegram reply
+                if has_telegram and self.telegram._ask_event.wait(1.5):
+                    reply = self.telegram._ask_reply
+                    self.telegram._ask_event.clear()
+                    self.telegram._ask_reply = None
+                    if reply:
+                        idx, is_text = self._parse_decision_reply(reply, opts)
+                        if decision_id and _db:
+                            try:
+                                with _db.get_session(self._db_path) as s:
+                                    _db.answer_decision(s, decision_id,
+                                        index=(idx if not is_text else -1),
+                                        text=(reply if is_text else ""),
+                                        by="telegram", source="telegram")
+                            except Exception: pass
+                        self.telegram.send_raw("✅ Received, continuing...")
+                        if is_text:
+                            try: self.inject_user_update(reply)
+                            except Exception: pass
+                            result = (len(opts) - 1, reply)
+                        else:
+                            result = (idx, reply)
+                        break
+                elif not has_telegram:
+                    time.sleep(1.0)
+                # 3) control commands mid-wait (stop / steer)
+                self._poll_control()
+                if self._stop_requested:
+                    result = (default, ""); break
+                # 4) timeout
+                if time.time() - start >= timeout:
+                    if timeout_action == "pause":
+                        if not paused_for_decision:
+                            self.log("Decision timed out — PAUSING (awaiting human).", "WARN")
+                            self._paused = True
+                            self._set_control_state("paused")
+                            if has_telegram:
+                                self.telegram.send_async(
+                                    f"⏸ <b>{_html.escape(self.display_name)}</b>: "
+                                    f"no answer yet — paused, waiting for you.",
+                                    parse_mode="HTML", polish=False)
+                            paused_for_decision = True
+                        if datetime.now() >= self.max_end_time:
+                            result = (default, ""); break
+                        time.sleep(2); continue
+                    else:
+                        if decision_id and _db:
+                            try:
+                                with _db.get_session(self._db_path) as s:
+                                    _db.expire_decision(s, decision_id)
+                            except Exception: pass
+                        default_label = opts[default] if opts else "N/A"
+                        self.log(f"Decision timed out, using default: {default_label}", "WARN")
+                        if has_telegram:
+                            self.telegram.send_async(
+                                f"⏰ <b>{_html.escape(self.display_name)}</b>: timeout — "
+                                f"auto-selected option <b>#{default + 1}</b>: "
+                                f"{_html.escape(default_label)}",
+                                parse_mode="HTML", polish=False)
+                        result = (default, ""); break
         finally:
-            self.telegram._is_waiting = False
+            if has_telegram:
+                self.telegram._is_waiting = False
+            # An answer (or default) closes the gate — clear awaiting/pause.
+            if result is not None:
+                self._paused = False
+                self._set_control_state("")
 
-        if reply is None:
-            default_label = opts[default] if opts else "N/A"
-            self.log(f"Decision timed out, using default: {default_label}", "WARN")
-            self.telegram.send_async(
-                f"⏰ <b>{_html.escape(self.display_name)}</b>: timeout — "
-                f"auto-selected option <b>#{default + 1}</b>: "
-                f"{_html.escape(default_label)}",
-                parse_mode="HTML",
-                polish=False,
-            )
-            return default, ""
-
-        # Numeric reply → option index. A bare digit is just a menu selection;
-        # do NOT inject it as a user_update directive, otherwise downstream
-        # agents would see "2" as next-iteration guidance.
-        try:
-            idx = int(reply.strip()) - 1
-            if 0 <= idx < len(opts):
-                return idx, reply
-        except ValueError:
-            pass
-
-        # Free-text reply lands in the Custom slot (last option). This IS
-        # real user guidance, so inject it into user_updates.yaml so the
-        # next iteration's agents pick it up.
-        try:
-            self.inject_user_update(reply)
-        except Exception:
-            pass
-        return len(opts) - 1, reply
+        return result if result is not None else (default, "")
 
     def send_error_alert(self, error: str, phase: str, blocking: bool = False,
                          options: list = None) -> str:
