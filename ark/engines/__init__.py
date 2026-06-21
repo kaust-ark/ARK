@@ -378,6 +378,19 @@ Instead:
 Execute the task and update the corresponding files.
 """
 
+        # Credentials guidance — only when the intervention gate is active (the
+        # ark-request-secret command exists only then).
+        _mgr0 = getattr(self, "_intervention", None)
+        if _mgr0 is not None and getattr(_mgr0, "enabled", False):
+            full_prompt += (
+                "\n\n## CRITICAL RULES — Credentials\n"
+                "If you need an API key / token / password you do not already have, do NOT "
+                "hardcode, fabricate, or silently skip. Request it from the human:\n"
+                "    export NAME=$(ark-request-secret NAME \"why you need it\")\n"
+                "The value is supplied over Telegram and injected into your shell env only. "
+                "Never `echo` a secret or write it into a file.\n"
+            )
+
         # Brief task description for logging
         task_brief = task.split("\n")[0][:50].strip()
         if len(task.split("\n")[0]) > 50:
@@ -399,13 +412,28 @@ Execute the task and update the corresponding files.
 
                 cli_runner = get_cli_for_model(self.model)
                 timer.start()
-                
+
+                # Live step log + intervention sandbox. No-op unless the
+                # orchestrator attached an InterventionManager as self._intervention.
+                _on_event = None
+                _exec_env = None
+                _mgr = getattr(self, "_intervention", None)
+                if _mgr is not None:
+                    try:
+                        _on_event = _mgr.event_handler(agent_type, self.log_step)
+                        _exec_env = _mgr.sandbox_env(
+                            cli_runner.build_env(self.code_dir), agent_type)
+                    except Exception as e:
+                        self.log(f"  [intervention] setup skipped: {e}", "WARN")
+
                 returncode, stdout, stderr, elapsed, timeout_expired = cli_runner.execute(
                     prompt=full_prompt,
                     path_boundary=self._build_path_boundary(),
                     code_dir=self.code_dir,
                     timeout=timeout,
-                    log_fn=self.log
+                    log_fn=self.log,
+                    on_event=_on_event,
+                    env=_exec_env,
                 )
                 timer.stop()
 
@@ -698,5 +726,15 @@ Execute the task and update the corresponding files.
             self._write_cost_report()
         except Exception as exc:
             self.log(f"  cost report write failed: {exc}", "WARN")
+
+        # Spend gate: notify at the soft threshold, ask at the hard cap. Runs on
+        # cumulative cost across the whole run. No-op without an InterventionManager.
+        _mgr = getattr(self, "_intervention", None)
+        if _mgr is not None:
+            try:
+                total = sum(float(s.get("cost_usd") or 0.0) for s in self._agent_stats)
+                _mgr.check_action("spend", total_usd=total)
+            except Exception:
+                pass
 
         return result

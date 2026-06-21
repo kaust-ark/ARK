@@ -799,6 +799,15 @@
       <input type="hidden" name="venue_format" id="hero-venue-format" value="neurips" />
       <input type="hidden" name="preset" id="hero-preset" value="" />
 
+      <!-- Deep Research toggle (applies to every project). Unchecked = run the
+           literature survey (default). Checked = skip it for a faster, cheaper
+           start. Hidden for the Test venue, which has its own option. -->
+      <label id="hero-skip-dr" style="display:inline-flex;align-items:center;gap:8px;margin-top:12px;font-size:.85rem;color:var(--text-second);cursor:pointer">
+        <input type="checkbox" name="skip_deep_research" value="1" style="width:auto;margin:0" />
+        <span data-i18n="skip_deep_research">Skip Deep Research</span>
+        <span style="color:var(--text-muted)">— faster start, no literature survey</span>
+      </label>
+
       <!-- Test template options (shown only when the Test venue is selected) -->
       <div id="hero-test-opts" style="display:none;margin-top:10px;padding:10px 12px;border:1px dashed var(--card-border);border-radius:8px;background:var(--bg)">
         <div style="font-size:.78rem;color:var(--text-second);margin-bottom:6px">🧪 <b>Test template</b> — 2-page EuroMLSys smoke test (relaxed page fitting, cheapest model, 1 iteration). Tick a box to reuse a canned fixture instead of running that step:</div>
@@ -3408,6 +3417,10 @@ function heroVenueChanged(sel) {
   if (presetInput) presetInput.value = isTest ? 'test' : '';
   const testOpts = document.getElementById('hero-test-opts');
   if (testOpts) testOpts.style.display = isTest ? '' : 'none';
+  // The general Skip-Deep-Research toggle is redundant for the Test venue
+  // (which has its own option), so hide it there to avoid two same-named boxes.
+  const skipDr = document.getElementById('hero-skip-dr');
+  if (skipDr) skipDr.style.display = isTest ? 'none' : 'inline-flex';
   // Pin the idea to the fixed Test idea (the canned report/figure match it; the
   // server uses the canonical idea regardless — this just makes it visible).
   const ideaEl = document.querySelector('#hero-form [name="idea"]');

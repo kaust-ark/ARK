@@ -41,3 +41,43 @@ gemini_api_key:    ""     # required if model / bot_model uses  gemini/*
                           #   (optional feature, not an error).
 # For any other provider, add  <provider>_api_key  — e.g. deepseek_api_key,
 # xai_api_key, mistral_api_key. It is bridged to <PROVIDER>_API_KEY automatically.
+
+# ── Step log verbosity ───────────────────────────────────────────────────────
+# How much of each agent's per-action stream (bash commands, file edits,
+# observations) is written to the human-readable log. The structured journal
+# (auto_research/state/agent_steps.jsonl) is always full-fidelity regardless.
+#   quiet   — phase headers + final result only
+#   normal  — one line per command / edit / message (recommended)
+#   verbose — also observations + per-step detail
+#   debug   — also raw events
+log_verbosity: normal
+
+# ── Intervention (pre-action guardrails) ─────────────────────────────────────
+# Pause-and-ask-a-human before the high-stakes things an autonomous run can do:
+# delete files, launch many jobs, hand over credentials, push/exfil data, or
+# overspend. Approvals are relayed over Telegram; with no Telegram configured
+# the gate FAILS OPEN (auto-allows and just logs) so nothing ever hangs.
+intervention:
+  enabled: true              # master switch for the gate (step log stays on)
+
+  # How readily it asks:
+  #   cautious   — ask on anything it flags (even low-severity)
+  #   standard   — ask only on high-severity (rm -rf, job bursts, cloud, creds)
+  #   autonomous — ask only on critical (delete .git, blow the hard budget cap)
+  autonomy: standard
+
+  # Toggle individual risk categories (all on by default).
+  categories:
+    destructive_fs: true     # rm -rf, deletes outside the work area, git reset --hard
+    bulk_compute:   true      # job bursts, cloud instance provisioning
+    credentials:    true      # requesting / hardcoding / printing secrets
+    data_exfil:     true      # git push, scp/rsync to external hosts, HTTP uploads
+    spend:          true      # cumulative cost thresholds
+
+  # Bulk-compute burst: ask once more than N jobs are launched within the window.
+  max_jobs_in_window: 8
+  job_window_seconds: 600
+
+  # Spend: notify (non-blocking) at the soft threshold, ask (blocking) at the cap.
+  spend_notify_usd: 20
+  spend_ask_usd: 100
