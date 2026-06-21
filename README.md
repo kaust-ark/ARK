@@ -192,6 +192,31 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 
 ---
 
+## Guardrails & Step Log
+
+An autonomous run is watched and gated, not a black box.
+
+- **Live step log.** Every agent's actions — each bash command, file edit, and
+  result — stream into the log as they happen (no more 30-minute blank), and into
+  a structured `agent_steps.jsonl`. Secret values are redacted automatically.
+  Tune detail with `log_verbosity: quiet|normal|verbose|debug`.
+- **Pause-and-ask before the risky stuff.** Before deleting files, launching a
+  burst of jobs, provisioning a paid cloud instance, handling credentials,
+  pushing/exfiltrating data, or crossing a spend cap, idea2paper asks you on
+  **Telegram** and waits for approval (Approve / Deny / remember-this). It
+  remembers your answer so it doesn't re-ask, denies on timeout, and **fails open**
+  (auto-allows + logs) when no Telegram is configured — so nothing ever hangs.
+- **Two enforcement layers.** Shadow-PATH wrappers gate risky commands *before*
+  they run; a circuit breaker backstops anything that bypasses them. The
+  orchestrator's own autonomous cloud-provision / git-push / spend actions are
+  gated too — but commands you trigger yourself (`ark clear`, delete, stop) are not.
+
+Configure it all under the `intervention:` block in
+[`config.example.yaml`](config.example.yaml); the default autonomy level
+(`standard`) only interrupts you for genuinely high-stakes actions.
+
+---
+
 ## What Sets idea2paper Apart
 
 | | Other Tools | idea2paper |

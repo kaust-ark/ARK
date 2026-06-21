@@ -155,48 +155,100 @@ class AgentCLI(ABC):
         _strip = {"CLAUDECODE", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ARK_GITHUB_PAT", "GITHUB_TOKEN"}
         return {k: v for k, v in os.environ.items() if k not in _strip}
 
-    def execute(self, prompt: str, path_boundary: str, code_dir: Path, timeout: int, log_fn=None) -> Tuple[int, str, str, int, bool]:
-        """Runs the CLI and returns (returncode, stdout, stderr, elapsed_seconds, timeout_expired)."""
+    def execute(self, prompt: str, path_boundary: str, code_dir: Path, timeout: int,
+                log_fn=None, on_event=None, env=None) -> Tuple[int, str, str, int, bool]:
+        """Run the CLI, streaming stdout, and return
+        (returncode, stdout, stderr, elapsed_seconds, timeout_expired).
+
+        ``stdout`` is the full concatenated stream (identical to the old
+        ``communicate()`` result), so ``parse_output`` and every caller are
+        unaffected. The new ``on_event`` callback, if given, is invoked with each
+        raw stdout line *as it arrives* — the substrate for the live step log and
+        the circuit breaker. ``env`` lets the caller pass a sandbox environment
+        (e.g. with intervention wrappers prepended to PATH); defaults to
+        ``build_env()``.
+        """
         cmd = self.build_command(prompt, path_boundary, code_dir)
-        env = self.build_env(code_dir)
-        
+        env = env if env is not None else self.build_env(code_dir)
+
         start_time = time.time()
-        
+
         process = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            bufsize=1,                     # line-buffered for live streaming
             cwd=str(code_dir),
             env=env,
-            start_new_session=True
+            start_new_session=True,
         )
-        
+
         watchdog = _BlockingCommandWatchdog(process.pid, log_fn=log_fn)
         watchdog.start()
-        
-        stdout, stderr, timeout_expired = "", "", False
-        try:
-            stdout, stderr = process.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timeout_expired = True
-            watchdog.stop()
+
+        # Hard-timeout killer: fires even if the process emits no output at all
+        # (a plain read loop could otherwise block forever on a silent hang).
+        timeout_expired = {"v": False}
+        finished = threading.Event()
+
+        def _deadline_killer():
+            if finished.wait(timeout=timeout):
+                return
+            timeout_expired["v"] = True
             kill_process_tree(process.pid)
+
+        killer = threading.Thread(target=_deadline_killer, daemon=True)
+        killer.start()
+
+        # Drain stderr on a side thread so a full stderr pipe can't deadlock the
+        # stdout read loop.
+        stderr_chunks: list = []
+
+        def _to_str(raw):
+            return raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else raw
+
+        def _drain_stderr():
             try:
-                stdout, stderr = process.communicate(timeout=5)
+                if process.stderr:
+                    for line in process.stderr:
+                        stderr_chunks.append(_to_str(line))
             except Exception:
-                for pipe in (process.stdout, process.stderr):
-                    if pipe:
+                pass
+
+        err_thread = threading.Thread(target=_drain_stderr, daemon=True)
+        err_thread.start()
+
+        stdout_lines: list = []
+        try:
+            if process.stdout:
+                for raw in process.stdout:
+                    line = _to_str(raw)
+                    stdout_lines.append(line)
+                    if on_event:
                         try:
-                            pipe.close()
+                            if on_event(line) == "ABORT":
+                                kill_process_tree(process.pid)
+                                break
                         except Exception:
                             pass
-                stdout, stderr = "", ""
-                
+        except Exception:
+            pass
+
+        # stdout closed → process is ending (or was just killed by the deadline).
+        try:
+            process.wait(timeout=10)
+        except Exception:
+            kill_process_tree(process.pid)
+        finished.set()
+        killer.join(timeout=2)
         watchdog.stop()
+        err_thread.join(timeout=2)
+
         elapsed = int(time.time() - start_time)
-        return process.returncode, stdout or "", stderr or "", elapsed, timeout_expired
+        rc = process.returncode if process.returncode is not None else -1
+        return rc, "".join(stdout_lines), "".join(stderr_chunks), elapsed, timeout_expired["v"]
 
 class OpenHandsCLI(AgentCLI):
     """Drive the official OpenHands headless CLI (`openhands --headless --json`).

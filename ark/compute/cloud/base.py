@@ -77,6 +77,13 @@ class CloudBackend(ComputeBackend):
             self.log(f"Reusing existing instance {self._instance_id} ({self._instance_ip})")
             return self._context_dict()
 
+        # Orchestrator-autonomous, billable action — gate it when the
+        # orchestrator has wired an intervention check (no-op otherwise).
+        check = getattr(self, "_intervention_check", None)
+        if check is not None and not check(
+                "cloud_provision", provider=self.provider, instance_type=self.instance_type):
+            raise RuntimeError("Cloud provisioning denied by intervention policy")
+
         self.log(f"Provisioning {self.provider.upper()} instance ({self.instance_type})...", "INFO")
         self._provision()
 
