@@ -117,8 +117,8 @@ class InterventionManager:
             watcher.start()
             self._watcher = watcher
             self._wrappers_ready = True
-            self._log(f"  [intervention] active (autonomy={self.policy.autonomy}); "
-                      f"wrappers at {self.shim_dir}", "INFO")
+            self._log(f"  [intervention] active — autonomy={self.policy.autonomy}, "
+                      f"gating {len(self.policy.enabled)} categories", "INFO")
         except Exception as e:
             self._log(f"  [intervention] failed to start, continuing without gate: {e}", "WARN")
 
@@ -142,6 +142,7 @@ class InterventionManager:
             redactor=self.redactor,
             verbosity=self.verbosity,
             agent_type=agent_type,
+            base_dir=str(self.work_dirs[0]) if self.work_dirs else "",
         )
 
     def event_handler(self, agent_type: str, log_step_fn: Callable) -> Callable:

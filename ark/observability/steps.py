@@ -30,7 +30,7 @@ _VERBOSITY_TYPES = {
 }
 
 _TYPE_ICON = {
-    "command": "$", "edit": "✎", "read": "▸", "result": "→",
+    "command": "$", "edit": "✎", "read": "▸", "result": "↳",
     "thought": "💭", "finish": "✓", "error": "✗", "action": "•",
 }
 
@@ -101,33 +101,49 @@ def parse_line(line: str) -> Optional[StepEvent]:
     return None
 
 
+# OpenHands' file-editor tool passes its sub-verb in the `command` field — these
+# are NOT bash commands.
+_EDITOR_VERBS = {"create", "str_replace", "insert", "undo_edit", "append"}
+_VIEW_VERBS = {"view", "open"}
+_META_VERBS = {"plan", "think"}        # task-tracker / planning tools, not bash
+
+
 def _parse_action(evt: dict) -> Optional[StepEvent]:
     action = evt.get("action") or {}
     if not isinstance(action, dict):
         return None
     akind = action.get("kind") or ""
-
-    # bash / shell command
+    tool = (evt.get("tool_name") or action.get("tool_name") or "").lower()
     cmd = _first_str(action, "command", "cmd")
-    if cmd or "Bash" in akind or "Execute" in akind or "Cmd" in akind:
-        cmd = cmd or _first_str(action, "code")
-        # No "$ " prefix here — the logger renders the "$" icon for commands.
-        return StepEvent("command", _truncate(cmd), detail=cmd, raw_kind=akind)
+    path = _first_str(action, "path", "file_path", "filename")
+    verb = cmd.strip().lower() if cmd else ""    # single-word only matches a tool sub-verb
 
-    # file edit / write
-    if any(t in akind for t in ("Edit", "Write", "StrReplace", "Create")):
-        path = _first_str(action, "path", "file_path", "filename")
-        return StepEvent("edit", f"edit {path}".strip(), detail=path, raw_kind=akind)
+    # File ops (editor): a `path` is present, or the verb/kind says so. The
+    # editor's `command` is view/create/str_replace/... — never bash. Using
+    # path-presence as the discriminator keeps real bash (`cat x`, no path) out.
+    is_editor = (bool(path) or verb in _EDITOR_VERBS or verb in _VIEW_VERBS
+                 or any(t in akind for t in ("Edit", "Write", "StrReplace", "Create", "FileEditor", "View", "Read"))
+                 or "editor" in tool)
+    if is_editor:
+        if verb in _VIEW_VERBS or any(t in akind for t in ("Read", "View")):
+            return StepEvent("read", (f"read {path}").strip() if path else "read",
+                             detail=path, raw_kind=akind or verb)
+        label = (f"edit {path}").strip() if path else (f"edit ({verb})" if verb else "edit")
+        return StepEvent("edit", label, detail=path, raw_kind=akind or verb)
 
-    # file read
-    if any(t in akind for t in ("Read", "View", "Cat")):
-        path = _first_str(action, "path", "file_path", "filename")
-        return StepEvent("read", f"read {path}".strip(), detail=path, raw_kind=akind)
+    # Planner / task-tracker meta tools (not bash)
+    if verb in _META_VERBS or "task" in akind.lower() or "tracker" in tool:
+        return StepEvent("action", verb or "plan", detail=cmd, raw_kind=akind or verb)
 
-    # finish
-    if "Finish" in akind:
+    # Finish
+    if "Finish" in akind or tool == "finish":
         msg = _first_str(action, "message", "thought")
         return StepEvent("finish", _truncate(msg) or "finished", detail=msg, raw_kind=akind)
+
+    # Real bash command
+    if cmd or "Bash" in akind or "Execute" in akind or "Cmd" in akind or tool in ("bash", "terminal", "execute_bash"):
+        cmd = cmd or _first_str(action, "code")
+        return StepEvent("command", _truncate(cmd), detail=cmd, raw_kind=akind)
 
     # generic / unknown action
     thought = _first_str(action, "thought")
@@ -166,6 +182,7 @@ class StepLogger:
     redactor: Redactor = field(default_factory=Redactor)
     verbosity: str = "normal"
     agent_type: str = ""
+    base_dir: str = ""                          # stripped from paths for readability
     _count: int = 0
 
     def feed_line(self, line: str) -> Optional[StepEvent]:
@@ -175,10 +192,16 @@ class StepLogger:
         self.emit(evt)
         return evt
 
+    def _shorten(self, text: str) -> str:
+        """Strip the long project-dir prefix so lines read relative to the project."""
+        if self.base_dir and text:
+            text = text.replace(self.base_dir + "/", "").replace(self.base_dir, ".")
+        return text
+
     def emit(self, evt: StepEvent) -> None:
         self._count += 1
-        summary = self.redactor.redact(evt.summary)
-        detail = self.redactor.redact(evt.detail)
+        summary = self._shorten(self.redactor.redact(evt.summary))
+        detail = self._shorten(self.redactor.redact(evt.detail))
         self._write_jsonl(evt, summary, detail)
         if self._should_show(evt.type):
             icon = _TYPE_ICON.get(evt.type, "•")

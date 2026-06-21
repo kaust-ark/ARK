@@ -42,10 +42,10 @@ def test_delete_dotgit_is_critical():
     assert d.severity == Severity.CRITICAL
 
 
-def test_git_reset_hard_asks():
-    d = std().classify_command("git reset --hard HEAD~3", work_dirs=WORK)
-    assert d.action == ASK
-    assert d.category == Category.DESTRUCTIVE_FS
+def test_git_ops_not_gated():
+    # agent git operations are intentionally NOT gated (too noisy in practice).
+    assert std().classify_command("git reset --hard HEAD~3", work_dirs=WORK).action == ALLOW
+    assert std().classify_command("git clean -fdx", work_dirs=WORK).action == ALLOW
 
 
 # ── bulk_compute ───────────────────────────────────────────
@@ -111,10 +111,10 @@ def test_scp_to_localhost_allowed():
     assert d.action == ALLOW
 
 
-def test_git_push_asks():
-    d = std().classify_command("git push origin main", work_dirs=WORK)
-    assert d.action == ASK
-    assert d.category == Category.DATA_EXFIL
+def test_agent_git_push_not_gated():
+    # agent `git push` is not gated; ARK still gates its OWN autonomous push
+    # via classify_action("git_push") (see test_action_git_push_asks).
+    assert std().classify_command("git push origin main", work_dirs=WORK).action == ALLOW
 
 
 def test_normal_command_allowed():

@@ -223,8 +223,8 @@ class Gate:
     def _enforce(self, d: Decision, origin: str) -> bool:
         """Return True to proceed, False to block."""
         if d.action == ALLOW:
-            if d.category:
-                self._log(f"  [intervention] allow ({d.category}/{Severity.name(d.severity)}): {d.reason}", "INFO")
+            # Intentionally silent — allowed commands are the common case and
+            # logging every one drowns the log. Only NOTIFY/ASK/DENY are shown.
             return True
 
         if d.action == NOTIFY:

@@ -35,8 +35,9 @@ WRAPPED_EXES = (
     "rm", "rmdir", "shred",            # destructive_fs
     "sbatch", "srun", "qsub", "bsub",  # bulk_compute (jobs)
     "aws", "gcloud", "az",             # bulk_compute (cloud provision) + exfil (gsutil-ish)
-    "git",                             # destructive (reset --hard) + exfil (push)
     "scp", "rsync", "sftp",            # data_exfil
+    # NOTE: `git` is intentionally NOT wrapped — agent git ops were too noisy.
+    # ARK still gates its own autonomous push via classify_action("git_push").
 )
 
 _JOB_EXES = frozenset({"sbatch", "srun", "qsub", "bsub"})

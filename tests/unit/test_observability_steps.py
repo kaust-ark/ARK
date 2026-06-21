@@ -73,6 +73,44 @@ def test_command_summary_has_no_double_dollar():
     assert s.summary == "echo hi"
 
 
+def test_editor_create_is_edit_not_command():
+    # OpenHands editor passes command=create + a path — must NOT be "$ create"
+    s = parse_line(ev({"kind": "ActionEvent",
+                       "action": {"kind": "FileEditorAction", "command": "create", "path": "/p/exp.py"}}))
+    assert s.type == "edit"
+    assert "exp.py" in s.summary
+
+
+def test_editor_view_is_read():
+    s = parse_line(ev({"kind": "ActionEvent", "action": {"command": "view", "path": "/p/a.txt"}}))
+    assert s.type == "read"
+
+
+def test_editor_str_replace_is_edit():
+    s = parse_line(ev({"kind": "ActionEvent", "action": {"command": "str_replace", "path": "/p/a.txt"}}))
+    assert s.type == "edit"
+
+
+def test_planner_verb_not_labeled_bash():
+    s = parse_line(ev({"kind": "ActionEvent", "action": {"command": "plan"}}))
+    assert s.type != "command"
+
+
+def test_real_bash_still_command():
+    s = parse_line(ev({"kind": "ActionEvent", "action": {"command": "cat results/x.txt"}}))
+    assert s.type == "command"
+    assert s.summary == "cat results/x.txt"
+
+
+def test_steplogger_shortens_project_paths(tmp_path):
+    lg, seen = _logger(tmp_path)
+    lg.base_dir = "/home/u/proj/0a0f"
+    lg.feed_line(ev({"kind": "ActionEvent",
+                     "action": {"command": "cat /home/u/proj/0a0f/auto_research/state/x.yaml"}}))
+    assert seen and "/home/u/proj/0a0f/" not in seen[0][0]
+    assert "auto_research/state/x.yaml" in seen[0][0]
+
+
 def test_parse_noise_returns_none():
     assert parse_line("Conversation ID: abc123") is None
     assert parse_line("") is None

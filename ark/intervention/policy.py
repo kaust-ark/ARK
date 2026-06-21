@@ -91,7 +91,6 @@ class Decision:
 
 _RM_RECURSIVE_RE = re.compile(r"-[a-zA-Z]*r", )          # -r / -rf / -fr ...
 _RM_FORCE_RE = re.compile(r"-[a-zA-Z]*f")
-_GIT_DESTRUCTIVE_RE = re.compile(r"\b(reset\s+--hard|clean\s+-[a-zA-Z]*f|checkout\s+--\s+\.|branch\s+-D)\b")
 _CLOUD_PROVISION_RE = re.compile(
     r"\b(run-instances|instances\s+create|vm\s+create|compute\s+instances\s+create|"
     r"create-instances?|deployment\s+create)\b"
@@ -259,10 +258,9 @@ class InterventionPolicy:
             return self._resolve(Category.DESTRUCTIVE_FS, Severity.LOW,
                                  "single-file delete in work area", detail=joined)
 
-        if exe == "git" and _GIT_DESTRUCTIVE_RE.search(" ".join(rest)):
-            return self._resolve(Category.DESTRUCTIVE_FS, Severity.HIGH,
-                                 "destructive git op (reset --hard / clean -f / branch -D)",
-                                 detail=joined, consequence="Discards uncommitted work or history.")
+        # NOTE: agent git operations are intentionally NOT gated — they fired on
+        # nearly every agent and were too noisy. ARK still gates its own
+        # autonomous push via classify_action("git_push").
 
         # 2) Bulk compute --------------------------------------------------
         if exe in _JOB_SUBMIT_EXES:
@@ -305,10 +303,7 @@ class InterventionPolicy:
             return self._resolve(Category.DATA_EXFIL, Severity.HIGH,
                                  "transfer data to an external host",
                                  detail=joined, consequence="Sends data off-machine.")
-        if exe == "git" and rest[:1] == ["push"]:
-            return self._resolve(Category.DATA_EXFIL, Severity.HIGH,
-                                 "git push to a remote",
-                                 detail=joined, consequence="Publishes commits to a remote.")
+        # (agent `git push` intentionally not gated — see note above)
         if exe in ("curl", "wget") and _HTTP_UPLOAD_RE.search(" " + " ".join(rest)):
             # only outward when a remote URL is present
             if any(tok.startswith("http://") or tok.startswith("https://") for tok in rest):
