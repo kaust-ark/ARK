@@ -94,6 +94,8 @@ from .db import (
     get_decision,
     get_open_decision,
     set_autonomy,
+    add_message,
+    list_messages,
 )
 from .crypto import encrypt_text, decrypt_text
 from .jobs import (
@@ -2288,6 +2290,8 @@ async def api_project_command(project_id: str, request: Request):
             set_autonomy(session, project_id, payload)
         enqueue_command(session, project_id, kind, payload=payload,
                         source="webapp", created_by=user.email)
+        if kind == "steer":
+            add_message(session, project_id, "user", payload, kind="steer")
     return JSONResponse({"ok": True})
 
 
@@ -2324,7 +2328,61 @@ async def api_answer_decision(project_id: str, request: Request):
                              by=user.email, source="webapp")
         if not ok:
             raise HTTPException(409, "decision already closed")
+        # user bubble for the answer
+        try:
+            opts = json.loads(dec.options or "[]")
+        except Exception:
+            opts = []
+        bubble = text or (f"Option {index + 1}: {opts[index]}" if 0 <= index < len(opts) else "")
+        if bubble:
+            add_message(session, project_id, "user", bubble, kind="answer")
     return JSONResponse({"ok": True})
+
+
+def _message_to_dict(m) -> dict:
+    return {"id": m.id, "role": m.role, "kind": m.kind, "text": m.text,
+            "meta": (json.loads(m.meta) if m.meta else None),
+            "ts": m.created_at.isoformat()}
+
+
+@router.get("/api/projects/{project_id}/messages")
+async def api_get_messages(project_id: str, request: Request, after: str = ""):
+    """Conversation thread (chat bubbles). ``after`` = ISO cursor for incremental."""
+    user = _require_user(request)
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project or not _can_read_project(request, project):
+            raise HTTPException(404)
+        msgs = list_messages(session, project_id, after=after or None)
+        return JSONResponse({"messages": [_message_to_dict(m) for m in msgs]})
+
+
+@router.post("/api/projects/{project_id}/message")
+async def api_post_message(project_id: str, request: Request):
+    """User sends a chat message. If a decision is open, this answers it (free
+    text); otherwise it's a steering instruction to the running orchestrator.
+    Either way the user's bubble is recorded."""
+    user = _require_user(request)
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "empty message")
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project or not _can_access_project(user, project):
+            raise HTTPException(404)
+        dec = get_open_decision(session, project_id)
+        if dec:
+            answer_decision(session, dec.id, index=-1, text=text,
+                            by=user.email, source="webapp")
+            add_message(session, project_id, "user", text, kind="answer")
+        else:
+            enqueue_command(session, project_id, "steer", payload=text,
+                            source="webapp", created_by=user.email)
+            add_message(session, project_id, "user", text, kind="steer")
+    return JSONResponse({"ok": True, "answered_decision": bool(dec)})
 
 
 @router.post("/api/projects/{project_id}/restart")
@@ -2817,6 +2875,7 @@ async def api_stream_log(project_id: str, request: Request):
         current_file: Path | None = None
         sent_lines = 0
         first_iteration = True
+        last_msg_ts = None   # ISO cursor for chat-thread messages
         while True:
             if await request.is_disconnected():
                 break
@@ -2878,6 +2937,15 @@ async def api_stream_log(project_id: str, request: Request):
                         "pending_decision": _decision_to_dict(get_open_decision(session, project_id)),
                     })
                     yield f"event: status\ndata: {payload}\n\n"
+
+                # Emit new chat-thread bubbles since the last tick.
+                try:
+                    new_msgs = list_messages(session, project_id, after=last_msg_ts)
+                    for m in new_msgs:
+                        yield f"event: message\ndata: {json.dumps(_message_to_dict(m))}\n\n"
+                        last_msg_ts = m.created_at.isoformat()
+                except Exception:
+                    pass
 
             await asyncio.sleep(2)
 

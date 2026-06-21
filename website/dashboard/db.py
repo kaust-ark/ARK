@@ -159,6 +159,22 @@ class PendingDecision(SQLModel, table=True):
     answered_at: Optional[datetime] = Field(default=None)
 
 
+class ProjectMessage(SQLModel, table=True):
+    """One bubble in a project's conversation thread (the chat UI).
+
+    Both the orchestrator (agent/system bubbles: progress, decisions, acks) and
+    the user (steers, answers) append here; the webapp renders them as a thread
+    and streams new ones over SSE.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    project_id: str = Field(index=True)
+    role: str = "agent"         # agent | user | system
+    kind: str = "message"       # message | decision | answer | milestone | notice | steer
+    text: str = ""
+    meta: str = ""              # JSON (e.g. {"options":[...], "decision_id":..., "default_index":n})
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Feedback(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str = Field(index=True)
@@ -495,6 +511,34 @@ def set_autonomy(session: Session, project_id: str, level: str) -> None:
         p.autonomy_level = level
         session.add(p)
         session.commit()
+
+
+# ── Conversation thread (chat bubbles) ────────────────────────────────────────
+
+def add_message(session: Session, project_id: str, role: str, text: str,
+                kind: str = "message", meta: Optional[dict] = None) -> "ProjectMessage":
+    """Append a bubble to a project's conversation thread."""
+    m = ProjectMessage(project_id=project_id, role=role, kind=kind,
+                       text=(text or "")[:8000],
+                       meta=(json.dumps(meta) if meta else ""))
+    session.add(m)
+    session.commit()
+    session.refresh(m)
+    return m
+
+
+def list_messages(session: Session, project_id: str, after: Optional[str] = None,
+                  limit: int = 500) -> list["ProjectMessage"]:
+    """Thread for a project, oldest→newest. ``after`` is an ISO timestamp cursor
+    (microsecond precision) — returns only messages created strictly after it."""
+    q = select(ProjectMessage).where(ProjectMessage.project_id == project_id)
+    if after:
+        try:
+            cur = datetime.fromisoformat(after)
+            q = q.where(ProjectMessage.created_at > cur)
+        except Exception:
+            pass
+    return list(session.exec(q.order_by(ProjectMessage.created_at).limit(limit)))
 
 
 def get_projects_for_user(session: Session, user_id: str) -> list[Project]:

@@ -1111,40 +1111,24 @@
 
   <div class="detail-actions share-hide" id="detail-actions"></div>
 
-  <!-- HITL: decision card — shown when the orchestrator is waiting on a human -->
-  <div id="hitl-decision" class="share-hide" style="display:none;margin:4px 0 14px;padding:16px 18px;background:#fff7ed;border:1.5px solid #fb923c;border-radius:12px">
-    <div style="font-weight:700;color:#9a3412;margin-bottom:6px">⚠️ <span id="hitl-decision-kind">Decision needed</span></div>
-    <div id="hitl-decision-q" style="font-size:.95rem;color:var(--text-primary);margin-bottom:6px;line-height:1.5"></div>
-    <div id="hitl-decision-ctx" style="font-size:.84rem;color:var(--text-second);margin-bottom:10px;white-space:pre-wrap;line-height:1.5"></div>
-    <div id="hitl-decision-opts" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
-    <div style="display:flex;gap:8px">
-      <input id="hitl-decision-text" placeholder="…or type your own instruction" style="flex:1;padding:8px 10px;border:1px solid var(--card-border);border-radius:8px;font-size:.85rem"
-        onkeydown="if(event.key==='Enter')submitDecisionText()">
-      <button class="btn-primary" onclick="submitDecisionText()">Send</button>
-    </div>
-  </div>
-
-  <!-- HITL: live control bar — shown while the project is running -->
-  <div id="hitl-controls" class="share-hide" style="display:none;margin:4px 0 14px;padding:12px 16px;background:var(--bg-hover);border-radius:10px">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span style="font-size:.78rem;color:var(--text-muted)">Activity</span>
-      <span id="hitl-activity" style="font-size:.85rem;color:var(--text-second);font-weight:500">—</span>
-      <span id="hitl-state-badge" style="display:none;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:10px;background:#fde68a;color:#92400e">PAUSED</span>
-      <span style="flex:1"></span>
-      <button id="hitl-pause-btn" class="btn-secondary" onclick="hitlPauseResume()">⏸ Pause</button>
-    </div>
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <input id="hitl-steer" placeholder="Talk to it — steer the run (e.g. 'use a smaller baseline', 'focus on X')" style="flex:1;padding:8px 10px;border:1px solid var(--card-border);border-radius:8px;font-size:.85rem"
-        onkeydown="if(event.key==='Enter')hitlSteer()">
-      <button class="btn-secondary" onclick="hitlSteer()">🧭 Send</button>
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
-      <span style="font-size:.78rem;color:var(--text-muted)">Autonomy</span>
-      <select id="hitl-autonomy" onchange="hitlSetAutonomy()" style="padding:5px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem">
-        <option value="full_auto">Full auto — only blockers / ethics</option>
-        <option value="collaborative">Collaborative — ask at major forks</option>
-        <option value="hands_on">Hands-on — confirm each step</option>
+  <!-- HITL: conversation thread (chat). Shown while the project is active. -->
+  <div id="hitl-chat" class="share-hide" style="display:none;margin:4px 0 14px;border:1px solid var(--card-border);border-radius:12px;overflow:hidden">
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--bg-hover);border-bottom:1px solid var(--card-border)">
+      <span style="font-size:.74rem;color:var(--text-muted)">Activity</span>
+      <span id="hitl-activity" style="font-size:.82rem;color:var(--text-second);font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</span>
+      <span id="hitl-state-badge" style="display:none;font-size:.66rem;font-weight:700;padding:2px 8px;border-radius:10px;background:#fde68a;color:#92400e">PAUSED</span>
+      <button id="hitl-pause-btn" class="btn-secondary" style="padding:3px 10px;font-size:.76rem" onclick="hitlPauseResume()">⏸ Pause</button>
+      <select id="hitl-autonomy" onchange="hitlSetAutonomy()" title="How often it checks in with you" style="padding:3px 6px;border:1px solid var(--card-border);border-radius:6px;font-size:.72rem">
+        <option value="full_auto">Auto</option>
+        <option value="collaborative">Collaborative</option>
+        <option value="hands_on">Hands-on</option>
       </select>
+    </div>
+    <div id="hitl-thread" style="height:340px;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px;background:var(--bg)"></div>
+    <div style="display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--card-border);background:var(--bg-hover)">
+      <input id="hitl-input" placeholder="Message the project — steer it, or answer its question…" style="flex:1;padding:9px 13px;border:1px solid var(--card-border);border-radius:20px;font-size:.85rem;outline:none;background:var(--bg)"
+        onkeydown="if(event.key==='Enter')hitlSend()">
+      <button class="btn-primary" style="border-radius:20px;padding:8px 18px" onclick="hitlSend()">Send</button>
     </div>
   </div>
 
@@ -3289,14 +3273,17 @@ async function stopProject(id) {
   loadDetail(id);
 }
 
-// ── HITL control plane (webapp side) ──────────────────────────────────────────
-let _hitlDecisionId = null;
+// ── HITL conversation (chat) ──────────────────────────────────────────────────
+let _chatSeen = new Set();      // message ids already rendered
+let _chatThreadFor = null;      // which project the thread is loaded for
+let _hitlOpenDecision = null;   // decision_id of the currently-open decision
+let _pendingEcho = null;        // optimistic user bubble text to dedup vs SSE
 
 function renderHitl(p) {
   if (!p) return;
-  const running = (p.status === 'running' || p.status === 'queued' || p.status === 'initializing');
-  const controls = document.getElementById('hitl-controls');
-  if (controls) controls.style.display = running ? 'block' : 'none';
+  const active = (p.status === 'running' || p.status === 'queued' || p.status === 'initializing' || p.control_state === 'paused');
+  const chat = document.getElementById('hitl-chat');
+  if (chat) chat.style.display = active ? 'block' : 'none';
   const act = document.getElementById('hitl-activity');
   if (act) act.textContent = p.activity || '—';
   const paused = (p.control_state === 'paused');
@@ -3306,45 +3293,84 @@ function renderHitl(p) {
   if (pb) pb.textContent = paused ? '▶️ Resume' : '⏸ Pause';
   const aut = document.getElementById('hitl-autonomy');
   if (aut && p.autonomy_level && document.activeElement !== aut) aut.value = p.autonomy_level;
-  renderDecision(p.pending_decision);
+  _hitlOpenDecision = p.pending_decision ? p.pending_decision.id : _hitlOpenDecision;
+  if (!p.pending_decision && p.status && p.status !== 'running' && p.status !== 'queued' && p.status !== 'initializing') _hitlOpenDecision = null;
+  if (active && _chatThreadFor !== p.id) loadChatThread(p.id);
 }
 
-function renderDecision(dec) {
-  const card = document.getElementById('hitl-decision');
-  if (!card) return;
-  if (!dec) { card.style.display = 'none'; _hitlDecisionId = null; return; }
-  _hitlDecisionId = dec.id;
-  card.style.display = 'block';
-  document.getElementById('hitl-decision-kind').textContent = (dec.kind || 'decision').replace(/_/g, ' ');
-  document.getElementById('hitl-decision-q').textContent = dec.question || '';
-  document.getElementById('hitl-decision-ctx').textContent = dec.context || '';
-  const optsEl = document.getElementById('hitl-decision-opts');
-  optsEl.innerHTML = '';
-  (dec.options || []).forEach((opt, i) => {
-    const b = document.createElement('button');
-    b.className = 'btn-secondary';
-    b.style.cssText = 'text-align:left;width:100%';
-    b.textContent = `${i + 1}. ${opt}` + (i === dec.default_index ? '  · default' : '');
-    b.onclick = () => answerDecision(i, '');
-    optsEl.appendChild(b);
-  });
+async function loadChatThread(pid) {
+  _chatThreadFor = pid; _chatSeen = new Set();
+  const thread = document.getElementById('hitl-thread');
+  if (thread) thread.innerHTML = '';
+  try {
+    const r = await fetch(`${APP_BASE}/api/projects/${pid}/messages`);
+    if (r.ok) (await r.json()).messages.forEach(appendBubble);
+  } catch (e) {}
 }
 
-async function answerDecision(index, text) {
+function appendBubble(m) {
+  if (!m || (m.id && _chatSeen.has(m.id))) return;
+  // skip the echo of our own just-sent message
+  if (m.role === 'user' && _pendingEcho && m.text === _pendingEcho) { _pendingEcho = null; if (m.id) _chatSeen.add(m.id); return; }
+  if (m.id) _chatSeen.add(m.id);
+  const thread = document.getElementById('hitl-thread');
+  if (!thread) return;
+  const wrap = document.createElement('div');
+  const isUser = m.role === 'user';
+  const isSys = m.role === 'system' || m.kind === 'notice' || m.kind === 'milestone';
+  if (isSys) {
+    wrap.style.cssText = 'align-self:center;max-width:90%;font-size:.74rem;color:var(--text-muted);text-align:center';
+    wrap.textContent = m.text;
+  } else {
+    wrap.style.cssText = `align-self:${isUser ? 'flex-end' : 'flex-start'};max-width:82%`;
+    const bub = document.createElement('div');
+    bub.style.cssText = `padding:8px 12px;border-radius:14px;font-size:.86rem;line-height:1.45;white-space:pre-wrap;` +
+      (isUser ? 'background:var(--teal,#0d9488);color:#fff;border-bottom-right-radius:4px'
+              : 'background:var(--bg-hover);color:var(--text-primary);border-bottom-left-radius:4px');
+    if (m.kind === 'decision' && m.meta) {
+      const q = document.createElement('div'); q.style.fontWeight = '600'; q.textContent = '⚠️ ' + (m.text || 'Decision needed');
+      bub.appendChild(q);
+      if (m.meta.context) { const c = document.createElement('div'); c.style.cssText = 'font-size:.78rem;color:var(--text-second);margin-top:4px'; c.textContent = m.meta.context; bub.appendChild(c); }
+      const opts = document.createElement('div'); opts.style.cssText = 'display:flex;flex-direction:column;gap:5px;margin-top:8px';
+      (m.meta.options || []).forEach((opt, i) => {
+        const b = document.createElement('button'); b.className = 'btn-secondary';
+        b.style.cssText = 'text-align:left;width:100%;font-size:.82rem;padding:5px 10px';
+        b.textContent = `${i + 1}. ${opt}` + (i === m.meta.default_index ? '  · default' : '');
+        b.onclick = () => answerDecisionByIndex(m.meta.decision_id, i);
+        opts.appendChild(b);
+      });
+      bub.appendChild(opts);
+      const hint = document.createElement('div'); hint.style.cssText = 'font-size:.72rem;color:var(--text-muted);margin-top:6px'; hint.textContent = '…or just type your answer below.';
+      bub.appendChild(hint);
+    } else {
+      bub.textContent = m.text;
+    }
+    wrap.appendChild(bub);
+  }
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+async function answerDecisionByIndex(decisionId, index) {
   if (!detailProjectId) return;
+  _hitlOpenDecision = null;
   await fetch(`${APP_BASE}/api/projects/${detailProjectId}/decision`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ decision_id: _hitlDecisionId, index: index, text: text }),
+    body: JSON.stringify({ decision_id: decisionId, index: index, text: '' }),
   });
-  document.getElementById('hitl-decision').style.display = 'none';
 }
 
-function submitDecisionText() {
-  const el = document.getElementById('hitl-decision-text');
+async function hitlSend() {
+  const el = document.getElementById('hitl-input');
   const txt = (el.value || '').trim();
-  if (!txt) return;
-  answerDecision(-1, txt);
+  if (!txt || !detailProjectId) return;
   el.value = '';
+  _pendingEcho = txt;
+  appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // optimistic
+  await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: txt }),
+  });
 }
 
 async function hitlCommand(kind, payload) {
@@ -3358,14 +3384,6 @@ async function hitlCommand(kind, payload) {
 function hitlPauseResume() {
   const resuming = document.getElementById('hitl-pause-btn').textContent.includes('Resume');
   hitlCommand(resuming ? 'resume' : 'pause', '');
-}
-
-function hitlSteer() {
-  const el = document.getElementById('hitl-steer');
-  const txt = (el.value || '').trim();
-  if (!txt) return;
-  hitlCommand('steer', txt);
-  el.value = '';
 }
 
 function hitlSetAutonomy() {
@@ -3435,6 +3453,10 @@ function startDetailStream(id) {
     const data = JSON.parse(e.data);
     if (data.line !== undefined) renderLogLines([data.line]);
   };
+
+  es.addEventListener('message', (e) => {
+    try { appendBubble(JSON.parse(e.data)); } catch (err) {}
+  });
 
   es.addEventListener('status', (e) => {
     const data = JSON.parse(e.data);

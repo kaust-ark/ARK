@@ -399,6 +399,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
                 except Exception:
                     pass
                 self.log(f"🧭  Steer from user: {payload[:140]}", "INFO")
+                self._chat("agent", "Got it — I'll apply that as I continue.", kind="message")
             elif kind == "set_autonomy" and payload:
                 try:
                     with _db.get_session(self._db_path) as s:
@@ -440,6 +441,17 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         except (ValueError, TypeError):
             pass
         return -1, True
+
+    def _chat(self, role: str, text: str, kind: str = "message", meta: dict = None):
+        """Append a bubble to the project's conversation thread (fail-soft)."""
+        _db = self._hitl_db()
+        if not _db:
+            return
+        try:
+            with _db.get_session(self._db_path) as s:
+                _db.add_message(s, self._project_id, role, text, kind=kind, meta=meta)
+        except Exception:
+            pass
 
     # ========== Deep Research (background) ==========
 
@@ -2566,6 +2578,10 @@ a {{ color: #0d9488; }}
         non-critical events). Routes through send_async so it never blocks
         the orchestrator. Polish OFF — these are short status lines.
         """
+        # Always post to the in-app conversation thread (chat bubbles), even
+        # when Telegram isn't configured.
+        self._chat("agent", f"{stage}{(': ' + detail) if detail else ''}",
+                   kind="notice" if level in ("info", "working") else "milestone")
         if not self.telegram.is_configured:
             return
         if not self.config.get("telegram_progress_notify", True):
@@ -2708,6 +2724,11 @@ a {{ color: #0d9488; }}
                         default_index=default, timeout_action=timeout_action,
                         deadline_at=deadline)
                 self._set_control_state("awaiting")
+                # Post the question as an agent bubble in the chat thread.
+                self._chat("agent", question or what_happened or "Decision needed",
+                           kind="decision",
+                           meta={"options": opts, "decision_id": decision_id,
+                                 "default_index": default, "context": what_happened or ""})
             except Exception as e:
                 self.log(f"Could not publish decision to DB: {e}", "WARN")
 
@@ -2761,6 +2782,10 @@ a {{ color: #0d9488; }}
                                         by="telegram", source="telegram")
                             except Exception: pass
                         self.telegram.send_raw("✅ Received, continuing...")
+                        # user bubble for the Telegram answer (webapp answers get
+                        # their bubble from the route)
+                        self._chat("user", reply if is_text else f"Option {idx + 1}: {opts[idx]}",
+                                   kind="answer")
                         if is_text:
                             try: self.inject_user_update(reply)
                             except Exception: pass
