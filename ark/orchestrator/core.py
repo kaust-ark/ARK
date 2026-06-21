@@ -1690,11 +1690,12 @@ a {{ color: #0d9488; }}
             header = f"┌─ {step_icon} STEP {step_num}/{total_steps}: {name} " + "─" * max(0, 48 - len(name))
             self.log(styled(header, Style.BOLD, Style.CYAN), "RAW")
             self.log(f"│ [{timestamp}] Starting...", "RAW")
-            # HITL: surface this step as the live activity + drain any pending
-            # control commands (cheap, fail-soft; full park/stop is at checkpoints).
+            # HITL: surface this step as live activity, drain control commands,
+            # and park here if the user paused (step boundaries are safe points).
             try:
                 self._set_activity(f"Step {step_num}/{total_steps}: {name}")
                 self._poll_control()
+                self._maybe_park()
             except Exception:
                 pass
         else:
