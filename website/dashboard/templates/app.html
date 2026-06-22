@@ -3337,7 +3337,10 @@ function appendBubble(m) {
       (isUser ? 'background:var(--teal,#0d9488);color:#fff;border-bottom-right-radius:4px'
               : 'background:var(--bg-hover);color:var(--text-primary);border-bottom-left-radius:4px');
     if (m.kind === 'decision' && m.meta) {
-      const q = document.createElement('div'); q.style.fontWeight = '600'; q.textContent = '⚠️ ' + (m.text || 'Decision needed');
+      const guardrail = (m.meta.kind === 'guardrail');
+      if (guardrail) bub.style.cssText += ';border:1.5px solid #ef4444;background:#fef2f2;color:#7f1d1d';
+      const q = document.createElement('div'); q.style.fontWeight = '600';
+      q.textContent = (guardrail ? '🛑 Action needs approval: ' : '⚠️ ') + (m.text || 'Decision needed');
       bub.appendChild(q);
       if (m.meta.context) { const c = document.createElement('div'); c.style.cssText = 'font-size:.78rem;color:var(--text-second);margin-top:4px'; c.textContent = m.meta.context; bub.appendChild(c); }
       const opts = document.createElement('div'); opts.style.cssText = 'display:flex;flex-direction:column;gap:5px;margin-top:8px';

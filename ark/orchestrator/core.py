@@ -204,11 +204,18 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
                 self.config.get("gemini_api_key"), self.config.get("telegram_bot_token"),
                 os.environ.get("ARK_GITHUB_PAT"),
             ) if v]
+            # Wire the gate to a human channel if EITHER Telegram OR the webapp
+            # DB channel is available. _intervention_ask routes through the
+            # dual-channel ask_user_decision (webapp chat bubble + Telegram), so
+            # the webapp alone is now enough to approve a guarded action.
+            # Secret VALUES stay Telegram-only — never store a raw secret in the
+            # webapp message thread.
             _tg_ok = self.telegram.is_configured
+            _has_channel = _tg_ok or bool(self._db_path and self._project_id)
             self._intervention = InterventionManager(
                 self.config, self.state_dir, [self.code_dir],
-                ask_fn=(self._intervention_ask if _tg_ok else None),
-                notify_fn=((lambda t: self.telegram.send_raw(t)) if _tg_ok else None),
+                ask_fn=(self._intervention_ask if _has_channel else None),
+                notify_fn=(self._intervention_notify if _has_channel else None),
                 ask_secret_fn=(self._intervention_ask_secret if _tg_ok else None),
                 log_fn=self.log,
                 secret_values=_secret_vals,
@@ -2664,7 +2671,8 @@ a {{ color: #0d9488; }}
         deny_idx = next((i for i, o in enumerate(options) if o.get("id") == "deny"), 0)
         idx, text = self.ask_user_decision(
             question, titles, timeout=timeout_s, default=deny_idx,
-            option_details=details, phase="intervention", polish=False)
+            option_details=details, phase="intervention", polish=False,
+            kind="guardrail")
         text = (text or "").strip()
         if text == "" and idx == deny_idx:
             return None  # timeout signature → let the gate deny
@@ -2674,6 +2682,19 @@ a {{ color: #0d9488; }}
         if text.lower() in ("y", "yes", "ok", "approve", "allow", "go"):
             return {"option_id": "approve", "text": text}
         return {"option_id": "deny", "text": text}
+
+    def _intervention_notify(self, text: str):
+        """Relay a gate notification (e.g. an auto-allowed low-risk action, or a
+        blocked one) to the webapp chat thread, and Telegram when configured."""
+        try:
+            self._chat("agent", text, kind="notice")
+        except Exception:
+            pass
+        if self.telegram.is_configured:
+            try:
+                self.telegram.send_raw(text)
+            except Exception:
+                pass
 
     def _intervention_ask_secret(self, name: str, purpose: str, timeout_s: int):
         """Ask the human for a secret VALUE over Telegram; the reply text IS the
@@ -2814,7 +2835,8 @@ a {{ color: #0d9488; }}
                 self._chat("agent", question or what_happened or "Decision needed",
                            kind="decision",
                            meta={"options": opts, "decision_id": decision_id,
-                                 "default_index": default, "context": what_happened or ""})
+                                 "default_index": default, "context": what_happened or "",
+                                 "kind": kind})
             except Exception as e:
                 self.log(f"Could not publish decision to DB: {e}", "WARN")
 
