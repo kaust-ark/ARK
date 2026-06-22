@@ -3302,9 +3302,25 @@ function renderHitl(p) {
   if (pb) pb.textContent = paused ? '▶️ Resume' : '⏸ Pause';
   const aut = document.getElementById('hitl-autonomy');
   if (aut && p.autonomy_level && document.activeElement !== aut) aut.value = p.autonomy_level;
-  _hitlOpenDecision = p.pending_decision ? p.pending_decision.id : _hitlOpenDecision;
-  if (!p.pending_decision && p.status && p.status !== 'running' && p.status !== 'queued' && p.status !== 'initializing') _hitlOpenDecision = null;
+  _hitlOpenDecision = p.pending_decision ? p.pending_decision.id : null;
   if (active && _chatThreadFor !== p.id) loadChatThread(p.id);
+  closeStaleDecisions();   // disable buttons on any decision no longer open
+}
+
+function htmlToText(s) {
+  return (s || '').replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+}
+
+function closeStaleDecisions() {
+  document.querySelectorAll('#hitl-thread [data-decision-id]').forEach(el => {
+    if (el.dataset.decisionId !== _hitlOpenDecision && !el.dataset.closed) {
+      el.dataset.closed = '1';
+      el.querySelectorAll('button').forEach(b => { b.disabled = true; b.style.opacity = '.45'; b.style.cursor = 'default'; });
+      const note = el.querySelector('.dec-note'); if (note) note.textContent = '✓ closed (answered or auto-decided)';
+    }
+  });
 }
 
 async function loadChatThread(pid) {
@@ -3314,6 +3330,7 @@ async function loadChatThread(pid) {
   try {
     const r = await fetch(`${APP_BASE}/api/projects/${pid}/messages`);
     if (r.ok) (await r.json()).messages.forEach(appendBubble);
+    closeStaleDecisions();   // historical decisions are closed
   } catch (e) {}
 }
 
@@ -3329,7 +3346,7 @@ function appendBubble(m) {
   const isSys = m.role === 'system' || m.kind === 'notice' || m.kind === 'milestone';
   if (isSys) {
     wrap.style.cssText = 'align-self:center;max-width:90%;font-size:.74rem;color:var(--text-muted);text-align:center';
-    wrap.textContent = m.text;
+    wrap.textContent = htmlToText(m.text);
   } else {
     wrap.style.cssText = `align-self:${isUser ? 'flex-end' : 'flex-start'};max-width:82%`;
     const bub = document.createElement('div');
@@ -3339,23 +3356,24 @@ function appendBubble(m) {
     if (m.kind === 'decision' && m.meta) {
       const guardrail = (m.meta.kind === 'guardrail');
       if (guardrail) bub.style.cssText += ';border:1.5px solid #ef4444;background:#fef2f2;color:#7f1d1d';
+      bub.dataset.decisionId = m.meta.decision_id || '';
       const q = document.createElement('div'); q.style.fontWeight = '600';
-      q.textContent = (guardrail ? '🛑 Action needs approval: ' : '⚠️ ') + (m.text || 'Decision needed');
+      q.textContent = (guardrail ? '🛑 Action needs approval: ' : '⚠️ ') + htmlToText(m.text || 'Decision needed');
       bub.appendChild(q);
-      if (m.meta.context) { const c = document.createElement('div'); c.style.cssText = 'font-size:.78rem;color:var(--text-second);margin-top:4px'; c.textContent = m.meta.context; bub.appendChild(c); }
+      if (m.meta.context) { const c = document.createElement('div'); c.style.cssText = 'font-size:.78rem;color:var(--text-second);margin-top:4px'; c.textContent = htmlToText(m.meta.context); bub.appendChild(c); }
       const opts = document.createElement('div'); opts.style.cssText = 'display:flex;flex-direction:column;gap:5px;margin-top:8px';
       (m.meta.options || []).forEach((opt, i) => {
         const b = document.createElement('button'); b.className = 'btn-secondary';
         b.style.cssText = 'text-align:left;width:100%;font-size:.82rem;padding:5px 10px';
-        b.textContent = `${i + 1}. ${opt}` + (i === m.meta.default_index ? '  · default' : '');
-        b.onclick = () => answerDecisionByIndex(m.meta.decision_id, i);
+        b.textContent = `${i + 1}. ${htmlToText(opt)}` + (i === m.meta.default_index ? '  · default' : '');
+        b.onclick = () => answerDecisionByIndex(m.meta.decision_id, i, bub);
         opts.appendChild(b);
       });
       bub.appendChild(opts);
-      const hint = document.createElement('div'); hint.style.cssText = 'font-size:.72rem;color:var(--text-muted);margin-top:6px'; hint.textContent = '…or just type your answer below.';
-      bub.appendChild(hint);
+      const note = document.createElement('div'); note.className = 'dec-note'; note.style.cssText = 'font-size:.72rem;color:var(--text-muted);margin-top:6px'; note.textContent = '…or just type your answer below.';
+      bub.appendChild(note);
     } else {
-      bub.textContent = m.text;
+      bub.textContent = htmlToText(m.text);
     }
     wrap.appendChild(bub);
   }
@@ -3363,13 +3381,15 @@ function appendBubble(m) {
   thread.scrollTop = thread.scrollHeight;
 }
 
-async function answerDecisionByIndex(decisionId, index) {
+async function answerDecisionByIndex(decisionId, index, bubEl) {
   if (!detailProjectId) return;
   _hitlOpenDecision = null;
-  await fetch(`${APP_BASE}/api/projects/${detailProjectId}/decision`, {
+  if (bubEl) { bubEl.dataset.closed = '1'; bubEl.querySelectorAll('button').forEach(b => { b.disabled = true; b.style.opacity = '.45'; }); }
+  const r = await fetch(`${APP_BASE}/api/projects/${detailProjectId}/decision`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ decision_id: decisionId, index: index, text: '' }),
   });
+  if (bubEl) { const note = bubEl.querySelector('.dec-note'); if (note) note.textContent = r.ok ? '✓ answered' : '⏱ this decision already closed'; }
 }
 
 async function hitlSend() {
