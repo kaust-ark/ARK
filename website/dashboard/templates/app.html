@@ -3287,23 +3287,28 @@ let _chatSeen = new Set();      // message ids already rendered
 let _chatThreadFor = null;      // which project the thread is loaded for
 let _hitlOpenDecision = null;   // decision_id of the currently-open decision
 let _pendingEcho = null;        // optimistic user bubble text to dedup vs SSE
+let _hitlActive = false;        // is the project currently running (vs finished)
 
 function renderHitl(p) {
   if (!p) return;
   const active = (p.status === 'running' || p.status === 'queued' || p.status === 'initializing' || p.control_state === 'paused');
+  const finished = (p.status === 'done' || p.status === 'stopped' || p.status === 'failed');
+  _hitlActive = active;
   const chat = document.getElementById('hitl-chat');
-  if (chat) chat.style.display = active ? 'block' : 'none';
+  if (chat) chat.style.display = (active || finished) ? 'block' : 'none';
   const act = document.getElementById('hitl-activity');
-  if (act) act.textContent = p.activity || '—';
+  if (act) act.textContent = active ? (p.activity || '—') : (finished ? 'Finished — send a message to resume & refine' : (p.activity || '—'));
   const paused = (p.control_state === 'paused');
   const sb = document.getElementById('hitl-state-badge');
   if (sb) sb.style.display = paused ? 'inline' : 'none';
   const pb = document.getElementById('hitl-pause-btn');
-  if (pb) pb.textContent = paused ? '▶️ Resume' : '⏸ Pause';
+  if (pb) { pb.style.display = active ? '' : 'none'; pb.textContent = paused ? '▶️ Resume' : '⏸ Pause'; }
   const aut = document.getElementById('hitl-autonomy');
-  if (aut && p.autonomy_level && document.activeElement !== aut) aut.value = p.autonomy_level;
+  if (aut) { aut.style.display = active ? '' : 'none'; if (p.autonomy_level && document.activeElement !== aut) aut.value = p.autonomy_level; }
+  const inp = document.getElementById('hitl-input');
+  if (inp) inp.placeholder = active ? 'Message the project — steer it, or answer its question…' : 'Send instructions to resume & refine the project…';
   _hitlOpenDecision = p.pending_decision ? p.pending_decision.id : null;
-  if (active && _chatThreadFor !== p.id) loadChatThread(p.id);
+  if ((active || finished) && _chatThreadFor !== p.id) loadChatThread(p.id);
   closeStaleDecisions();   // disable buttons on any decision no longer open
 }
 
@@ -3396,6 +3401,26 @@ async function hitlSend() {
   const el = document.getElementById('hitl-input');
   const txt = (el.value || '').trim();
   if (!txt || !detailProjectId) return;
+
+  if (!_hitlActive) {
+    // Project finished → a message resumes it (one more iteration) with this
+    // instruction. Confirm since this relaunches the run.
+    if (!confirm('This will resume the project and run another iteration to act on your message. Continue?')) return;
+    el.value = '';
+    appendBubble({ id: null, role: 'user', kind: 'message', text: txt });
+    appendBubble({ id: null, role: 'system', kind: 'notice', text: 'Resuming the project with your instruction…' });
+    // record the bubble + queue the steer, then relaunch
+    await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: txt }),
+    });
+    await fetch(`${APP_BASE}/api/projects/${detailProjectId}/continue`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment: txt, additional_iterations: 1 }),
+    });
+    setTimeout(() => loadDetail(detailProjectId), 1000);  // refresh → reconnect SSE to the now-running project
+    return;
+  }
+
   el.value = '';
   _pendingEcho = txt;
   appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // optimistic
