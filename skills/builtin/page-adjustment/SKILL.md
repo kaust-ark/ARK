@@ -160,6 +160,13 @@ The correct ordering of sections at the end of the paper is:
 
 Never place `\appendix` before `\bibliography`. When adding appendix content, verify this ordering is maintained.
 
+**Stray `\clearpage`/`\newpage` between body sections is a top cause of a large
+blank gap at the bottom of a page.** The only page breaks in the body are the
+two above (before `\bibliography`, before `\appendix`). If you see a big
+vertical blank — especially mid-paper before a `\section{...}` — search for a
+`\clearpage` or `\newpage` between body sections and delete it; let the text
+flow continuously. Do NOT try to fill the gap with `\vspace` or padding.
+
 ## Verification After Adjustment
 
 After every page adjustment pass:

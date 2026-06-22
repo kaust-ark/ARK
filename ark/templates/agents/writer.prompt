@@ -128,6 +128,14 @@ Before making changes, check the current page count. Refer to the **page-adjustm
 
 Always ensure `\clearpage` appears before `\bibliography` so references start on a new page.
 
+**Never put `\clearpage` or `\newpage` between body sections.** The ONLY page
+breaks in the paper are `\clearpage` before `\bibliography` and (if present)
+`\clearpage` before `\appendix`. A `\clearpage` mid-body (e.g. before
+`\section{Method}`) force-flushes the current page and leaves a large blank gap
+at the bottom of the previous page — a common, ugly defect. Let sections flow
+continuously; LaTeX handles column/page breaks. If you find a stray
+`\clearpage`/`\newpage` between two body sections, delete it.
+
 ## Appendix is part of the paper, not an overflow buffer
 
 A complete deliverable has **two parts**: body (within the page limit)
