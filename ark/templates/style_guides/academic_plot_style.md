@@ -14,6 +14,30 @@ These three wreck more figures than any styling choice. Before returning a plot,
 
 Always use `constrained_layout=True` so nothing clips. The detailed rules below elaborate; these three are non-negotiable.
 
+## ✍️ Label concision — abbreviate like a human
+
+Agents default to spelling axis titles and tick labels out in full
+(`Standardized Features`, `Accuracy Percentage`, `Number of Iterations`).
+Humans abbreviate. A long axis **title** forces a wide margin and squeezes the
+data area; a long **tick** label collides with its neighbours. Both read as
+amateur and make the figure look unbalanced — this is a top aesthetic failure,
+on par with the three layout failures above.
+
+- **Axis titles: a short noun phrase or standard symbol, ~≤18 chars, units in
+  parens.** Put the full term in the LaTeX `\caption{}`, not on the axis.
+  - `Standardized Features` → `Std. features`  (or `Features (z-score)`)
+  - `Accuracy Percentage`   → `Acc. (%)`
+  - `Number of Iterations`  → `Iterations`  (or `Iter.`)
+  - `Mean Reciprocal Rank`  → `MRR`
+- **Tick labels: short codes — never a value crammed into the text.** A tick
+  like `model-a (acc. 0.947)` is two things at once and bloats the axis. Keep
+  the tick to the short label (`Model A`, `M-A`) and show the value as a **bar
+  annotation** or in the caption — not inside the tick string.
+- **Applies to BOTH axes.** A long y-title is as ugly as a long x-tick. The
+  same abbreviation discipline holds vertically and horizontally.
+- **Decode it once.** Spell a non-obvious abbreviation out in the caption or a
+  legend. Standard ones (`Acc.`, `Iter.`, `MRR`, `F1`, `σ`, `#`) need no gloss.
+
 > ⚠️ **User overrides take precedence.** The defaults in this guide
 > (color palette, fonts, line styles, etc.) are reasonable choices for
 > typical academic papers. If the runtime prompt provides explicit user
@@ -225,7 +249,10 @@ ax2.set_yticklabels([])  # remove duplicate y labels
 
 ## Axis Configuration
 
-- Label all axes with descriptive names and units (e.g., "Latency (ms)")
+- Label all axes **concisely** — a short noun phrase or standard abbreviation
+  plus units (e.g., "Latency (ms)", "Acc. (%)"), never a full sentence or a
+  multi-word descriptor. Spell non-obvious abbreviations out in the caption.
+  See "Label concision — abbreviate like a human" above.
 - No truncated axes unless explicitly justified (and if so, add axis break marks)
 - Use scientific notation for very large/small numbers
 - Rotate x-tick labels only as last resort (prefer shorter labels or horizontal bars)

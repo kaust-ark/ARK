@@ -3125,6 +3125,11 @@ provide the title.
 - Wong colorblind-safe palette: ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#E69F00', '#56B4E9']
 - Add hatching patterns for bar charts (colorblind accessibility)
 - Use horizontal bars when there are 5+ categories (avoids x-label overlap)
+- Abbreviate axis titles and tick labels like a human: short noun phrase or
+  standard symbol with units in parens, BOTH axes (e.g. "Acc. (%)" not
+  "Accuracy Percentage", "Std. features" not "Standardized Features",
+  "Iter." not "Number of Iterations"). Never cram a value into a tick label
+  (no "model-a (acc. 0.947)") — annotate the bar or spell it in the caption.
 - constrained_layout=True on all figures
 - DPI 300, sans-serif fonts exclusively
 - Light dashed grid lines behind data
