@@ -193,6 +193,37 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
                 except Exception as e:
                     self.log(f"Telegram polish hook setup failed: {e}", "WARN")
 
+        # Intervention + observability: pre-action guardrails (delete / bulk
+        # jobs / credentials / exfil) plus a live per-step log. Fail-open — with
+        # no Telegram channel the gate auto-allows and just logs, so a run is
+        # never blocked by a prompt no one can answer.
+        try:
+            from ark.intervention.manager import InterventionManager
+            _secret_vals = [v for v in (
+                self.config.get("anthropic_api_key"), self.config.get("openai_api_key"),
+                self.config.get("gemini_api_key"), self.config.get("telegram_bot_token"),
+                os.environ.get("ARK_GITHUB_PAT"),
+            ) if v]
+            _tg_ok = self.telegram.is_configured
+            self._intervention = InterventionManager(
+                self.config, self.state_dir, [self.code_dir],
+                ask_fn=(self._intervention_ask if _tg_ok else None),
+                notify_fn=((lambda t: self.telegram.send_raw(t)) if _tg_ok else None),
+                ask_secret_fn=(self._intervention_ask_secret if _tg_ok else None),
+                log_fn=self.log,
+                secret_values=_secret_vals,
+            )
+            self._intervention.start()
+            # Let the compute backend gate its own (billable) cloud provisioning.
+            if getattr(self, "_compute_backend", None) is not None:
+                try:
+                    self._compute_backend._intervention_check = self._intervention.check_action
+                except Exception:
+                    pass
+        except Exception as e:
+            self.log(f"Intervention manager init failed (continuing without): {e}", "WARN")
+            self._intervention = None
+
         # Telegram conversation history (in-memory, thread-safe)
         self._tg_chat_history: list[dict] = []
         self._tg_chat_lock = threading.Lock()
@@ -659,6 +690,12 @@ a {{ color: #0d9488; }}
         if self.telegram._is_waiting:
             self.telegram._ask_event.set()
         self.telegram.stop()
+        # Stop the intervention approval watcher thread.
+        if getattr(self, "_intervention", None) is not None:
+            try:
+                self._intervention.stop()
+            except Exception:
+                pass
 
     def _get_bot_model(self) -> str:
         """
@@ -2306,6 +2343,13 @@ a {{ color: #0d9488; }}
 
             if result.returncode == 0:
                 self.log(f"Git commit: {message}", "INFO")
+                # Gate the outward push (an autonomous, outward-facing action).
+                # Denied → keep the commit local and skip publishing.
+                _mgr = getattr(self, "_intervention", None)
+                if _mgr is not None and not _mgr.check_action(
+                        "git_push", remote="origin", branch="HEAD"):
+                    self.log("Git: push blocked by intervention policy (commit kept local)", "WARN")
+                    return True
                 # Auto push. When a PAT is present, supply the credential at
                 # push time via an inline credential helper that reads the token
                 # from the env — the token never lands in argv or .git/config.
@@ -2605,6 +2649,48 @@ a {{ color: #0d9488; }}
             self.telegram.send_async(msg, parse_mode="HTML", polish=False)
         except Exception as e:
             self.log(f"notify_progress failed: {e}", "WARN")
+
+    def _intervention_ask(self, question: str, options: list, timeout_s: int):
+        """Adapter: relay an intervention ApprovalRequest through the existing
+        ``ask_user_decision`` Telegram flow.
+
+        ``options`` is a list of ``{id, title, consequence}``. Returns
+        ``{"option_id", "text"}``, or ``None`` on timeout so the gate applies its
+        safe default (deny). The safe default index is the ``deny`` option, so a
+        timed-out decision never silently approves a risky action.
+        """
+        titles = [o.get("title") or o.get("id") for o in options]
+        details = [o.get("consequence", "") for o in options]
+        deny_idx = next((i for i, o in enumerate(options) if o.get("id") == "deny"), 0)
+        idx, text = self.ask_user_decision(
+            question, titles, timeout=timeout_s, default=deny_idx,
+            option_details=details, phase="intervention", polish=False)
+        text = (text or "").strip()
+        if text == "" and idx == deny_idx:
+            return None  # timeout signature → let the gate deny
+        if 0 <= idx < len(options):
+            return {"option_id": options[idx].get("id"), "text": text}
+        # free-text / custom slot → interpret an explicit yes, else deny
+        if text.lower() in ("y", "yes", "ok", "approve", "allow", "go"):
+            return {"option_id": "approve", "text": text}
+        return {"option_id": "deny", "text": text}
+
+    def _intervention_ask_secret(self, name: str, purpose: str, timeout_s: int):
+        """Ask the human for a secret VALUE over Telegram; the reply text IS the
+        value. Returns the value, or None on deny/timeout. The value is not
+        logged here (the gate redacts it downstream)."""
+        if not self.telegram.is_configured:
+            return None
+        why = f" — purpose: {purpose}" if purpose else ""
+        question = (f"🔑 An agent needs a secret value for <b>{name}</b>{why}.\n"
+                    f"Reply with the value to supply it, or 'deny' to refuse.")
+        reply = self.telegram.ask(question, timeout=timeout_s)
+        if not reply:
+            return None
+        reply = reply.strip()
+        if reply.lower() in ("deny", "no", "n", "refuse", "cancel"):
+            return None
+        return reply or None
 
     def ask_user_decision(self, question: str, options: list = None,
                           timeout: int = 600, default: int = 0,

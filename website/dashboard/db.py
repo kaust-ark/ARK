@@ -60,6 +60,7 @@ class Project(SQLModel, table=True):
     max_dev_iterations: int = 3   # dev phase iterations
     mode: str = "paper"
     figure_generation: str = "nano_banana"  # nano_banana | matplotlib_only | none
+    skip_deep_research: bool = False  # webapp toggle: skip the Gemini literature survey
     status: str = "queued"      # queued | running | done | failed | stopped
     slurm_job_id: str = ""
     pdf_path: str = ""
@@ -240,6 +241,7 @@ def _migrate(engine):
             "source": "TEXT DEFAULT 'webapp'",
             "layout_mode": "TEXT DEFAULT 'relaxed'",
             "figure_generation": "TEXT DEFAULT 'nano_banana'",
+            "skip_deep_research": "INTEGER DEFAULT 0",
             # Runtime status
             "phase": "TEXT DEFAULT ''",
             "iteration": "INTEGER DEFAULT 0",

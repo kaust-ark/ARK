@@ -154,6 +154,50 @@ Cloud backends handle the full lifecycle: provisioning, code transfer (rsync), s
 - **Visualizer**: Generates the image using Gemini image generation models.
 - **Critic**: Evaluates the figure and provides feedback for iterative improvement.
 
+### 8. Intervention & Observability (`ark/intervention/`, `ark/observability/`)
+
+Autonomous runs can take consequential actions — delete files, launch many
+compute jobs, request/expose credentials, push or exfiltrate data, overspend.
+This subsystem makes each step **visible** and the high-stakes ones **pause for
+a human** (over Telegram), without touching the webapp (an `ApprovalChannel`
+seam leaves room for a webapp approver later).
+
+**Observability** (`ark/observability/steps.py`). OpenHands' `--json` mode
+already streams a JSONL event per action. `OpenHandsCLI.execute()` now reads
+that stream line-by-line (instead of one blocking `communicate()`), so:
+
+- every bash command / file edit / observation / message becomes a typed
+  `StepEvent`, written to `auto_research/state/agent_steps.jsonl` (full fidelity)
+  and emitted as a one-line human-readable step (gated by `log_verbosity`);
+- a `Redactor` scrubs secret values (`NAME=value` and registered API keys)
+  before anything is logged;
+- the CLI `ark monitor` and the webapp's log tail show live progress for free.
+
+**Intervention** — three cooperating layers:
+
+| Layer | Where | What |
+|:------|:------|:-----|
+| **Policy** (`policy.py`) | pure logic | Classify a command/action → (category, severity) → decision (`allow`/`notify`/`ask`/`deny`) under an autonomy level. Categories: `destructive_fs`, `bulk_compute`, `credentials`, `data_exfil`, `spend`. |
+| **B — capability wrappers** (`wrappers.py`) | agent sandbox | Shadow-PATH shims for `rm`/`sbatch`/`gcloud`/`scp`/… sit first on PATH; they phone home to the gate **before** the real binary runs. A dumb shim + a smart `ApprovalWatcher` keeps all policy in one place. (Agent `git` is intentionally not wrapped — too noisy.) |
+| **C — circuit breaker** (`manager.py`) | event stream | Backstop: watches the streamed actions and, on a wrapper **bypass** (absolute-path call to a risky binary), runs it through the gate and aborts the agent on denial. |
+
+The **gate** (`gate.py`) turns an `ask` into a human verdict over a pluggable
+`ApprovalChannel` (Telegram today), with **approval memory** (remember this
+command shape / whole category), an **audit trail**
+(`intervention_audit.jsonl`), and a **safe default of deny on timeout**. It
+**fails open**: with no channel configured it auto-allows and logs, so existing
+projects and CI never block.
+
+The orchestrator's own autonomous actions are gated too — **cloud provisioning**
+(`compute/cloud/base.py`), **git push** (`core.git_commit`), and a
+**cumulative-spend** threshold (after each agent's cost is tallied) — but
+human-triggered operations (`ark clear`, delete, stop) are not.
+
+`InterventionManager` (`manager.py`) wires it all together and is attached to the
+orchestrator as `self._intervention`; `run_agent` consults it for the sandbox env
+and the per-line event handler. Configure via the `intervention:` block (see
+`config.example.yaml`).
+
 ## Agent List (6 agents)
 
 | Agent | Role |
@@ -177,6 +221,8 @@ ARK/
 │   ├── cli.py               # CLI commands (ark new/run/status/access/...)
 │   ├── compute/             # Compute backends (Local, Slurm, AWS, GCP, Azure)
 │   ├── engines/             # Agent orchestration; runs every agent through OpenHands (any LiteLLM model)
+│   ├── intervention/        # Pre-action guardrails: policy, approval gate, capability wrappers, watcher
+│   ├── observability/       # Stream OpenHands events → redacted live step log
 │   ├── llm_lite.py          # Lightweight LiteLLM helper for non-agent text calls (titles, summaries, bot)
 │   ├── orchestrator/        # State and Workspace management
 │   ├── telegram/            # Telegram notifications + bidirectional bot

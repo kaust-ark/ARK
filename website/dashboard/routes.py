@@ -602,6 +602,9 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     if project.idea:
         anchor_parts.append(f"**Research Idea**:\n{project.idea}")
     config["goal_anchor"] = "\n".join(anchor_parts)
+    # Deep Research toggle (webapp) — when set, the orchestrator skips the
+    # Gemini literature survey (pipeline handles a missing deep_research.md).
+    config["skip_deep_research"] = bool(getattr(project, "skip_deep_research", False))
     config_path = project_dir / "config.yaml"
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
 
@@ -2087,6 +2090,7 @@ async def api_create_project(
             venue_pages=venue_pages,
             layout_mode=layout_mode,
             figure_generation=figure_generation,
+            skip_deep_research=bool(skip_deep_research),
             max_iterations=max_iterations,
             max_dev_iterations=max_dev_iterations,
             mode=mode,
