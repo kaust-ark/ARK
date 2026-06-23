@@ -110,10 +110,38 @@ VENUE_PRESETS = {
         "font_family": "serif",
         "columns": 2,
     },
+    # *ACL (ACL/EMNLP/NAACL via acl.sty): 2-column, 10pt
+    "acl": {
+        "columnwidth_in": 3.05,
+        "textwidth_in": 6.3,
+        "columnsep_in": 0.2,
+        "font_size_pt": 10,
+        "font_family": "serif",
+        "columns": 2,
+    },
+    # CVF (CVPR/ICCV/WACV via cvpr.sty): 2-column, 10pt
+    "cvpr": {
+        "columnwidth_in": 3.25,
+        "textwidth_in": 6.875,
+        "columnsep_in": 0.3125,
+        "font_size_pt": 10,
+        "font_family": "serif",
+        "columns": 2,
+    },
+    # TMLR (Transactions on ML Research, JMLR-style): 1-column, 10pt
+    "tmlr": {
+        "columnwidth_in": 6.5,
+        "textwidth_in": 6.5,
+        "columnsep_in": 0,
+        "font_size_pt": 10,
+        "font_family": "serif",
+        "columns": 1,
+    },
 }
 
 # Aliases for common names
 VENUE_ALIASES = {
+    "acmart": "sigconf",   # consolidated acmart engine ships [sigconf] main.tex
     "sigplan": "acmart-sigplan",
     "acmsmall": "acmart-small",
     "acmlarge": "acmart-large",

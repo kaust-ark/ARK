@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 Agents">
-  <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
+  <img src="https://img.shields.io/badge/venues-20+-purple.svg" alt="20+ Venues">
 </p>
 
 <p align="center">
@@ -774,7 +774,7 @@ What you get:
 
 ## Supported Venues
 
-LaTeX templates ship for **NeurIPS, ICML, ICLR, ACL, EMNLP, CVPR, MLSys, EuroMLSys, INFOCOM, OSDI, SOSP**, with format detection for the **IEEE**, **ACMART (SIGPLAN)**, **LNCS**, and **USENIX** families. Custom templates are accepted &mdash; idea2paper scans `.tex` / `.aux` / `.sty` to learn the layout, fixes compile errors, and enforces the venue page limit.
+LaTeX templates ship for **NeurIPS, ICML, ICLR, AAAI, MLSys**, the **ACL** family (ACL / EMNLP / NAACL / EACL / AACL / COLING), the **CVF** family (CVPR / ICCV / WACV), the **ACM acmart** family (SOSP / EuroSys / ASPLOS / EuroMLSys), the **USENIX** family (OSDI / NSDI / ATC / FAST / Security), and **IEEE / IEEEtran** (INFOCOM and other IEEE venues) &mdash; all from official 2026 style files (MLSys reuses its unchanged 2025 kit) &mdash; plus a generic **article** fallback for TMLR, workshops, and technical reports. Custom templates are still accepted: idea2paper scans `.tex` / `.aux` / `.sty` to learn the layout, fixes compile errors, and enforces the venue page limit.
 
 ## License
 

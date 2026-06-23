@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 Agents">
-  <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
+  <img src="https://img.shields.io/badge/venues-20+-purple.svg" alt="20+ Venues">
 </p>
 
 <p align="center">
@@ -655,7 +655,7 @@ ark setup-bot    # 一次性操作：粘贴 BotFather 令牌，自动检测聊�
 
 ## 支持的会议
 
-随仓库提供的 LaTeX 模板：**NeurIPS、ICML、ICLR、ACL、EMNLP、CVPR、MLSys、EuroMLSys、INFOCOM、OSDI、SOSP**；并对 **IEEE**、**ACMART (SIGPLAN)**、**LNCS**、**USENIX** 等模板族做格式识别。也接受自定义模板 &mdash; idea2paper 会扫描 `.tex` / `.aux` / `.sty` 学习排版、修编译错误、并精确控制页数。
+随仓库提供的 LaTeX 模板：**NeurIPS、ICML、ICLR、AAAI、MLSys**，以及 **ACL** 族（ACL / EMNLP / NAACL / EACL / AACL / COLING）、**CVF** 族（CVPR / ICCV / WACV）、**ACM acmart** 族（SOSP / EuroSys / ASPLOS / EuroMLSys）、**USENIX** 族（OSDI / NSDI / ATC / FAST / Security）、**IEEE / IEEEtran**（INFOCOM 及其他 IEEE 会议）——全部取自官方 2026 样式文件（MLSys 沿用其未变的 2025 套件）——另含通用 **article** 兜底模板（TMLR、Workshop、技术报告）。同样接受自定义模板 &mdash; idea2paper 会扫描 `.tex` / `.aux` / `.sty` 学习排版、修编译错误、并精确控制页数。
 
 ## 许可证
 
