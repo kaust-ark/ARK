@@ -100,7 +100,7 @@ VENUES = [
     {"name": "ACL / EMNLP / NAACL",                 "format": "acl",     "pages": 8},
     {"name": "ACL / EMNLP / NAACL Short",           "format": "acl",     "pages": 4},
     {"name": "CVPR / ICCV / WACV",                  "format": "cvpr",    "pages": 8},
-    {"name": "TMLR (journal, no page limit)",       "format": "tmlr",    "pages": 0},
+    {"name": "TMLR (journal)",                      "format": "tmlr",    "pages": 12},
     {"name": "MLSys",                               "format": "mlsys",   "pages": 10},
     {"name": "EuroMLSys (ACM acmart)",              "format": "acmart",  "pages": 6},
     {"name": "SOSP / EuroSys / ASPLOS (ACM)",       "format": "acmart",  "pages": 12},
@@ -109,10 +109,10 @@ VENUES = [
 ]
 
 OTHER_VENUES = [
-    {"name": "Course Project",   "format": "article", "pages": 0},
+    {"name": "Course Project",   "format": "article", "pages": 8},
     {"name": "Workshop Paper",   "format": "article", "pages": 4},
-    {"name": "Technical Report", "format": "article", "pages": 0},
-    {"name": "Thesis Chapter",   "format": "article", "pages": 0},
+    {"name": "Technical Report", "format": "article", "pages": 10},
+    {"name": "Thesis Chapter",   "format": "article", "pages": 20},
 ]
 
 # format -> download info for LaTeX template files
