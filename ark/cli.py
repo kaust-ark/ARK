@@ -109,10 +109,8 @@ VENUES = [
 ]
 
 OTHER_VENUES = [
-    {"name": "Course Project",   "format": "article", "pages": 8},
     {"name": "Workshop Paper",   "format": "article", "pages": 4},
     {"name": "Technical Report", "format": "article", "pages": 10},
-    {"name": "Thesis Chapter",   "format": "article", "pages": 20},
 ]
 
 # format -> download info for LaTeX template files
