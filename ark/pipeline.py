@@ -38,6 +38,7 @@ from ark.hitl import (
     _update_hitl_decisions,
     _NONBLOCKING_URGENCIES,
 )
+from ark.quality_gate import extract_json, gate, has_fields
 
 
 class PipelineMixin:
@@ -1974,17 +1975,12 @@ Rules:
             if match:
                 text = match.group(1).strip()
 
-        # Try to find a JSON array in the text
-        # Look for the first [ ... ] block
-        start = text.find("[")
-        end = text.rfind("]")
-        if start != -1 and end != -1 and end > start:
-            try:
-                titles = json.loads(text[start:end + 1])
-                if isinstance(titles, list):
-                    return [t for t in titles if isinstance(t, str) and len(t) > 5]
-            except json.JSONDecodeError:
-                pass
+        # Pull a JSON array out of the (possibly fenced/prosey) LLM text.
+        arr = extract_json(text, want=list)
+        if arr is not None:
+            strs = [t for t in arr if isinstance(t, str) and len(t) > 5]
+            if strs:
+                return strs
 
         # Fallback: try line-by-line parsing (one title per line)
         titles = []
@@ -2469,19 +2465,19 @@ Output your evaluation in JSON format:
 """, timeout=defaults.TIMEOUT_INITIALIZER)
         self.log_step_header(4, 4, "Evaluate Completeness", "end")
 
-        # Parse evaluation
-        sufficient = False
-        try:
-            json_match = re.search(r'\{[^{}]*"sufficient"[^{}]*\}', eval_output, re.DOTALL)
-            if json_match:
-                eval_json = json.loads(json_match.group())
-                sufficient = eval_json.get("sufficient", False)
-            else:
-                sufficient = '"sufficient": true' in eval_output.lower()
-        except Exception:
-            sufficient = "sufficient.*true" in eval_output.lower()
-
-        return sufficient
+        # Parse the verdict through the quality gate: pull a JSON object out of
+        # the (possibly fenced/prosey) output and require a "sufficient" field.
+        # If the model returns garbage, the safe default is "not sufficient" —
+        # run more experiments rather than prematurely declaring the paper done.
+        ok, ev = gate(
+            extract_json(eval_output, want=dict),
+            [("has-sufficient", has_fields("sufficient"))],
+            label="completeness verdict", default=None, log=self.log,
+        )
+        if ok and ev is not None:
+            return bool(ev.get("sufficient", False))
+        # garbage verdict → only trust an explicit textual "sufficient": true
+        return '"sufficient": true' in eval_output.lower()
 
     def _generate_all_figures(self):
         """Generate all figures: geometry config, matplotlib plots, AI concept figures.
