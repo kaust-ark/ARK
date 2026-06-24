@@ -863,6 +863,25 @@
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="if(event.target&&event.target.name==='model'){document.getElementById('model-unverified').value='';document.getElementById('model-openrouter-more').value='';}">
               <div class="model-legend"><span class="rec">★</span> recommendation &nbsp;·&nbsp; 💰 relative cost (per token)</div>
               <div class="model-group-label">OpenRouter</div>
+              <!-- Row 1: open / cost-efficient models (★★) -->
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/deepseek/deepseek-v4-pro" />
+                <span class="model-chip">DeepSeek V4 <span class="model-meta"><span class="rec">★★☆</span><span class="cost">💰</span></span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/moonshotai/kimi-k2.6" />
+                <span class="model-chip">Kimi K2.6 <span class="model-meta"><span class="rec">★★☆</span><span class="cost">💰💰</span></span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/z-ai/glm-5.2" />
+                <span class="model-chip">GLM 5.2 <span class="model-meta"><span class="rec">★★☆</span><span class="cost">💰💰</span></span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/minimax/minimax-m3" />
+                <span class="model-chip">MiniMax M3 <span class="model-meta"><span class="rec">★★☆</span><span class="cost">💰</span></span></span>
+              </label>
+              <div class="model-row-break" style="flex-basis:100%;height:0"></div>
+              <!-- Row 2: frontier models -->
               <label class="model-option" data-provider="openrouter">
                 <input type="radio" name="model" value="openrouter/anthropic/claude-sonnet-4.6" />
                 <span class="model-chip">Claude Sonnet 4.6 <span class="model-meta"><span class="rec">★★★</span><span class="cost">💰💰💰</span></span></span>
@@ -875,18 +894,8 @@
                 <input type="radio" name="model" value="openrouter/google/gemini-3.5-flash" />
                 <span class="model-chip">Gemini 3.5 Flash <span class="model-meta"><span class="rec">★☆☆</span><span class="cost">💰💰</span></span></span>
               </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/moonshotai/kimi-k2.6" />
-                <span class="model-chip">Kimi K2.6 <span class="model-meta"><span class="cost">💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/deepseek/deepseek-v4-pro" />
-                <span class="model-chip">DeepSeek V4 <span class="model-meta"><span class="rec">★★☆</span><span class="cost">💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/minimax/minimax-m3" />
-                <span class="model-chip">MiniMax M3 <span class="model-meta"><span class="rec">★★☆</span><span class="cost">💰</span></span></span>
-              </label>
+              <div class="model-row-break" style="flex-basis:100%;height:0"></div>
+              <!-- Row 3: everything else -->
               <select id="model-openrouter-more" onchange="onExtraModelPick(this)" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
                 <option value="">▾ more…</option>
                 <optgroup label="Anthropic">
@@ -901,9 +910,8 @@
                   <option value="openrouter/google/gemini-2.5-pro">Gemini 2.5 Pro — 💰💰</option>
                   <option value="openrouter/google/gemini-2.5-flash">Gemini 2.5 Flash — 💰</option>
                 </optgroup>
-                <optgroup label="Chinese / open">
-                  <option value="openrouter/deepseek/deepseek-v4-flash">DeepSeek V4 Flash — 💰 (cheapest)</option>
-                  <option value="openrouter/z-ai/glm-5.2">GLM-5.2 (Zhipu) — 💰💰</option>
+                <optgroup label="Open">
+                  <option value="openrouter/deepseek/deepseek-v4-flash">DeepSeek V4 Flash — 💰</option>
                   <option value="openrouter/qwen/qwen3.7-plus">Qwen3.7 Plus — 💰</option>
                   <option value="openrouter/moonshotai/kimi-k2.7-code">Kimi K2.7 Code — 💰💰</option>
                 </optgroup>
@@ -948,7 +956,7 @@
                 <span class="model-chip">Gemini 2.5 Flash <span class="model-meta"><span class="cost">💰</span></span></span>
               </label>
             </div>
-            <div class="model-group-label" style="margin-top:10px">Others <span style="font-weight:400">(⚠ Unverified — native key required)</span></div>
+            <div class="model-group-label" style="margin-top:10px">Others</div>
             <select id="model-unverified" onchange="onExtraModelPick(this)" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:360px">
               <option value="">none</option>
               <optgroup label="DeepSeek">
@@ -4681,6 +4689,48 @@ function applyModelGating() {
     lbl.style.pointerEvents = ok ? '' : 'none';
     lbl.title = ok ? '' : 'Add a ' + prov + ' API key in Settings → API Keys to use this model';
     const input = lbl.querySelector('input'); if (input) input.disabled = !ok;
+  });
+  applyVendorCollapse();
+}
+
+// Req: a vendor group with no usable key (all chips greyed) is collapsed by
+// default — its label becomes a clickable "▸ Vendor (no key)" that expands it.
+// Walks #model-options grouping each .model-group-label with the chips that
+// follow it until the next label.
+function _vendorGroups() {
+  const container = document.getElementById('model-options');
+  if (!container) return [];
+  const groups = [];
+  let cur = null;
+  Array.from(container.children).forEach(el => {
+    if (el.classList && el.classList.contains('model-group-label')) {
+      cur = { label: el, items: [], prov: null };
+      groups.push(cur);
+    } else if (cur) {
+      cur.items.push(el);
+      const p = el.getAttribute && el.getAttribute('data-provider');
+      if (p && !cur.prov) cur.prov = p;
+    }
+  });
+  return groups;
+}
+function _setVendorCollapsed(g, collapsed) {
+  g.label.dataset.collapsed = collapsed ? '1' : '0';
+  g.items.forEach(it => { it.style.display = collapsed ? 'none' : ''; });
+  if (!g.label.dataset.baseText) g.label.dataset.baseText = g.label.textContent.replace(/^[▸▾]\s*/, '').trim();
+  g.label.textContent = (collapsed ? '▸ ' : '▾ ') + g.label.dataset.baseText + (collapsed ? '  · no key, click to show' : '');
+}
+function applyVendorCollapse() {
+  const have = window._userKeyProviders || {};
+  _vendorGroups().forEach(g => {
+    if (!g.prov) return;                       // skip non-vendor labels
+    g.label.style.cursor = 'pointer';
+    if (!g.label.dataset.wired) {
+      g.label.dataset.wired = '1';
+      g.label.addEventListener('click', () => { g.label.dataset.touched = '1'; _setVendorCollapsed(g, g.label.dataset.collapsed !== '1'); });
+    }
+    // collapse iff this vendor has no usable key; never override a manual expand
+    if (g.label.dataset.touched !== '1') _setVendorCollapsed(g, !have[g.prov]);
   });
 }
 
