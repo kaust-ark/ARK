@@ -1162,8 +1162,51 @@ output: NO_CONCEPT_FIGURES
 """, timeout=600)
 
         if not analysis_output or "NO_CONCEPT_FIGURES" in analysis_output:
-            self.log_step("Planner decided no concept figures needed", "info")
-            return 0
+            # Quality floor: a paper with any system / method / pipeline almost
+            # always wants one overview figure — a weak model emitting
+            # NO_CONCEPT_FIGURES is usually a miss, not a real absence (this is
+            # exactly how runs shipped figureless). Repair once with a stricter
+            # prompt; synthesize a grounded default if it still refuses. Opt out
+            # via config require_concept_figure=False.
+            if not self.config.get("require_concept_figure", True):
+                self.log_step("Planner decided no concept figures needed", "info")
+                return 0
+            self.log("Planner emitted NO_CONCEPT_FIGURES — repairing: forcing one grounded overview figure.", "WARN")
+            analysis_output = self.run_agent("planner", f"""You previously concluded this paper needs no concept figure. For a paper with
+any system, method, pipeline, or architecture that is almost never correct.
+
+Re-read the research context and output EXACTLY ONE system-overview / pipeline
+figure that best illustrates the paper's core contribution. "NO_CONCEPT_FIGURES"
+is NOT an allowed answer this time.
+
+## Research Context
+{paper_context}
+
+Save the JSON array (a single figure object) to {figures_dir_rel}/concept_figures.json
+and also output it in your response. Format:
+```json
+[{{"name": "fig_overview", "caption": "...", "section_context": "Be specific: the system's components, stages, connections, and data flow.", "latex_label": "fig:overview", "placement": "full_width"}}]
+```
+""", timeout=600)
+            if not analysis_output or "NO_CONCEPT_FIGURES" in analysis_output:
+                self.log("Repair still produced none — synthesizing a default overview figure spec.", "WARN")
+                fallback_fig = [{
+                    "name": "fig_overview",
+                    "caption": f"Overview of {title or 'the proposed approach'}.",
+                    "section_context": (
+                        f"A clean modern technical illustration giving a system overview for the "
+                        f"paper titled '{title}'. Show the main components, how they connect, the "
+                        f"processing/data flow between them, and the overall inputs and outputs."),
+                    "latex_label": "fig:overview",
+                    "placement": "full_width",
+                }]
+                try:
+                    spec_path.write_text(json.dumps(fallback_fig, indent=2))
+                    self.log_step("Synthesized a default overview concept figure (floor).", "info")
+                except Exception as e:
+                    self.log(f"Could not write synthesized concept spec: {e}", "WARN")
+                    return 0
+            # fall through to Phase 4 — spec_path / analysis_output now hold a figure
 
         # ── Phase 4: Read concept figure spec (2-level fallback) ──
         figures = []
