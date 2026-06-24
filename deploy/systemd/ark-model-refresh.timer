@@ -1,0 +1,9 @@
+[Unit]
+Description=ARK: refresh model-picker versions every 2 days
+
+[Timer]
+OnCalendar=*-*-1/2 04:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

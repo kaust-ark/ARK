@@ -1,0 +1,10 @@
+[Unit]
+Description=ARK: check OpenRouter catalog for newer model-picker versions
+Documentation=file:///home/xinj/ARK/scripts/refresh_model_versions.py
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/xinj/ARK
+# --check only (safe, detect+report). To make updates fully hands-off, append
+# --apply here AND a follow-on `systemctl --user restart ark-webapp-dev`.
+ExecStart=/home/xinj/miniforge3/envs/ark-dev/bin/python /home/xinj/ARK/scripts/refresh_model_versions.py
