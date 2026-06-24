@@ -2979,7 +2979,7 @@ async def api_venues():
         {"name": "NeurIPS", "format": "neurips", "pages": 9, "year": 2026},
         {"name": "ICLR",    "format": "iclr",    "pages": 9, "year": 2026},
         {"name": "AAAI",    "format": "aaai",    "pages": 7, "year": 2026},
-        {"name": "TMLR (journal — no page limit)", "format": "tmlr", "pages": 0, "year": 2026},
+        {"name": "TMLR (journal)", "format": "tmlr", "pages": 12, "year": 2026},
         # ── NLP — ACL style files (ACL / EMNLP / NAACL / EACL / AACL / COLING) ──
         {"name": "ACL / EMNLP / NAACL",       "format": "acl", "pages": 8, "year": 2026},
         {"name": "ACL / EMNLP / NAACL Short", "format": "acl", "pages": 4, "year": 2026},
@@ -2996,7 +2996,7 @@ async def api_venues():
         {"name": "INFOCOM (IEEE)", "format": "ieee", "pages": 9, "year": 2026},
         # ── Generic article (no conference-specific style) ──
         {"name": "Workshop Paper (generic article)", "format": "article", "pages": 4, "year": 2026},
-        {"name": "Technical Report (generic article — no page limit)", "format": "article", "pages": 0, "year": 2026},
+        {"name": "Technical Report (generic article)", "format": "article", "pages": 10, "year": 2026},
     ]
     return JSONResponse(venues)
 
