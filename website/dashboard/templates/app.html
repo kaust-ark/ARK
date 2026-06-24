@@ -535,6 +535,15 @@
     .model-option-disabled .model-chip {
       opacity: .45; cursor: not-allowed; color: var(--text-muted);
     }
+    /* HITL chat "thinking" indicator */
+    .tdot { width:6px; height:6px; border-radius:50%; background:var(--text-muted);
+            display:inline-block; animation:tbounce 1.2s infinite ease-in-out; }
+    .tdot:nth-child(2){ animation-delay:.18s; }
+    .tdot:nth-child(3){ animation-delay:.36s; }
+    @keyframes tbounce { 0%,80%,100%{opacity:.25;transform:translateY(0)} 40%{opacity:1;transform:translateY(-3px)} }
+    #hitl-model { font-size:.68rem; font-weight:600; padding:2px 8px; border-radius:10px;
+                  background:var(--bg); border:1px solid var(--card-border); color:var(--text-second);
+                  white-space:nowrap; }
     .hero-submit-row { display: flex; justify-content: flex-end; margin-top: 20px; }
     .hero-submit-btn {
       background: var(--teal); color: #fff; border: none; border-radius: 10px;
@@ -1132,6 +1141,7 @@
         <option value="collaborative">Collaborative</option>
         <option value="hands_on">Hands-on</option>
       </select>
+      <span id="hitl-model" title="Model this project runs on" style="display:none">🤖 —</span>
     </div>
     <div id="hitl-thread" style="height:340px;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px;background:var(--bg)"></div>
     <div style="display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--card-border);background:var(--bg-hover)">
@@ -3307,6 +3317,8 @@ function renderHitl(p) {
   if (aut) { aut.style.display = active ? '' : 'none'; if (p.autonomy_level && document.activeElement !== aut) aut.value = p.autonomy_level; }
   const inp = document.getElementById('hitl-input');
   if (inp) inp.placeholder = active ? 'Message the project — steer it, or answer its question…' : 'Send instructions to resume & refine the project…';
+  const mc = document.getElementById('hitl-model');
+  if (mc && p.model) { mc.textContent = '🤖 ' + prettyModelName(p.model); mc.style.display = ''; }
   _hitlOpenDecision = p.pending_decision ? p.pending_decision.id : null;
   if ((active || finished) && _chatThreadFor !== p.id) loadChatThread(p.id);
   closeStaleDecisions();   // disable buttons on any decision no longer open
@@ -3316,6 +3328,35 @@ function htmlToText(s) {
   return (s || '').replace(/<[^>]*>/g, '')
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
     .replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+}
+
+function prettyModelName(m) {
+  if (!m) return '—';
+  let s = String(m).split('/').pop().replace(/[-_]/g, ' ');
+  s = s.replace(/\bm(\d)/i, 'M$1');            // minimax m3 -> M3
+  return s.replace(/\b\w/g, c => c.toUpperCase());
+}
+
+let _thinkTimer = null;
+function showThinking(label) {
+  hideThinking();
+  const thread = document.getElementById('hitl-thread');
+  if (!thread) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'hitl-thinking';
+  wrap.style.cssText = 'align-self:flex-start;max-width:82%';
+  wrap.innerHTML = '<div style="padding:9px 14px;border-radius:14px;background:var(--bg-hover);border-bottom-left-radius:4px;display:flex;align-items:center;gap:5px">'
+    + '<span class="tdot"></span><span class="tdot"></span><span class="tdot"></span>'
+    + (label ? '<span style="font-size:.72rem;color:var(--text-muted);margin-left:5px">' + label + '</span>' : '') + '</div>';
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+  if (_thinkTimer) clearTimeout(_thinkTimer);
+  _thinkTimer = setTimeout(hideThinking, 40000);  // safety auto-hide
+}
+function hideThinking() {
+  if (_thinkTimer) { clearTimeout(_thinkTimer); _thinkTimer = null; }
+  const t = document.getElementById('hitl-thinking');
+  if (t) t.remove();
 }
 
 function closeStaleDecisions() {
@@ -3341,6 +3382,7 @@ async function loadChatThread(pid) {
 
 function appendBubble(m) {
   if (!m || (m.id && _chatSeen.has(m.id))) return;
+  if (m.role && m.role !== 'user') hideThinking();   // a reply arrived → stop the dots
   // skip the echo of our own just-sent message
   if (m.role === 'user' && _pendingEcho && m.text === _pendingEcho) { _pendingEcho = null; if (m.id) _chatSeen.add(m.id); return; }
   if (m.id) _chatSeen.add(m.id);
@@ -3407,7 +3449,8 @@ async function hitlSend() {
     // The agent's answer / "收到" ack streams back over SSE; just echo + post.
     el.value = '';
     _pendingEcho = txt;
-    appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // optimistic
+    appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // instant echo (right)
+    showThinking('thinking…');                                              // dots (left) until reply
     await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: txt }),
@@ -3419,6 +3462,8 @@ async function hitlSend() {
   // thread to show the reply. Only a STEER (instruction) resumes the run; an
   // ASK (a question about the finished paper) is simply answered in place.
   el.value = '';
+  appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // instant echo (right)
+  showThinking('thinking…');
   let routed = 'steer';
   try {
     const r = await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
@@ -3427,6 +3472,7 @@ async function hitlSend() {
     if (r.ok) { const j = await r.json(); routed = j.routed || 'steer'; }
   } catch (e) {}
   _pendingEcho = null;
+  hideThinking();
   await loadChatThread(detailProjectId);   // pull user msg + answer/ack from DB
   if (routed === 'steer') {
     if (!confirm('Resume the project and run another iteration to act on your instruction?')) return;
