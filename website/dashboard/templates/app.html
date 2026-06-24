@@ -3402,32 +3402,41 @@ async function hitlSend() {
   const txt = (el.value || '').trim();
   if (!txt || !detailProjectId) return;
 
-  if (!_hitlActive) {
-    // Project finished → a message resumes it (one more iteration) with this
-    // instruction. Confirm since this relaunches the run.
-    if (!confirm('This will resume the project and run another iteration to act on your message. Continue?')) return;
+  if (_hitlActive) {
+    // Running project → the message is classified server-side (ask vs steer).
+    // The agent's answer / "收到" ack streams back over SSE; just echo + post.
     el.value = '';
-    appendBubble({ id: null, role: 'user', kind: 'message', text: txt });
-    appendBubble({ id: null, role: 'system', kind: 'notice', text: 'Resuming the project with your instruction…' });
-    // record the bubble + queue the steer, then relaunch
+    _pendingEcho = txt;
+    appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // optimistic
     await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: txt }),
+    });
+    return;
+  }
+
+  // Finished project → no live SSE. Send, learn how it was routed, refresh the
+  // thread to show the reply. Only a STEER (instruction) resumes the run; an
+  // ASK (a question about the finished paper) is simply answered in place.
+  el.value = '';
+  let routed = 'steer';
+  try {
+    const r = await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: txt }),
     });
+    if (r.ok) { const j = await r.json(); routed = j.routed || 'steer'; }
+  } catch (e) {}
+  _pendingEcho = null;
+  await loadChatThread(detailProjectId);   // pull user msg + answer/ack from DB
+  if (routed === 'steer') {
+    if (!confirm('Resume the project and run another iteration to act on your instruction?')) return;
+    appendBubble({ id: null, role: 'system', kind: 'notice', text: 'Resuming the project with your instruction…' });
     await fetch(`${APP_BASE}/api/projects/${detailProjectId}/continue`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ comment: txt, additional_iterations: 1 }),
     });
-    setTimeout(() => loadDetail(detailProjectId), 1000);  // refresh → reconnect SSE to the now-running project
-    return;
+    setTimeout(() => loadDetail(detailProjectId), 1000);  // reconnect SSE to the now-running project
   }
-
-  el.value = '';
-  _pendingEcho = txt;
-  appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // optimistic
-  await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text: txt }),
-  });
 }
 
 async function hitlCommand(kind, payload) {

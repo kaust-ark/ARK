@@ -98,6 +98,7 @@ from .db import (
     list_messages,
 )
 from .crypto import encrypt_text, decrypt_text
+from . import sideband
 from .jobs import (
     cancel_job,
     cancel_local_job,
@@ -2364,15 +2365,24 @@ async def api_get_messages(project_id: str, request: Request, after: str = ""):
 
 @router.post("/api/projects/{project_id}/message")
 async def api_post_message(project_id: str, request: Request):
-    """User sends a chat message. If a decision is open, this answers it (free
-    text); otherwise it's a steering instruction to the running orchestrator.
-    Either way the user's bubble is recorded."""
+    """User sends a chat message — the sideband control channel. The message is
+    routed by intent:
+      • an open decision is waiting  → this answers it;
+      • ASK (a status/state question) → answered instantly from the project's DB
+        state read-model, without ever touching the running agent;
+      • STEER (an instruction)        → enqueued for the orchestrator + acked now.
+    The classification is automatic (cheap model + heuristic). The response's
+    ``routed`` field tells the client what happened (so a finished-project ASK
+    doesn't trigger a resume)."""
     user = _require_user(request)
     body = await request.json()
     text = (body.get("text") or "").strip()
     if not text:
         raise HTTPException(400, "empty message")
     settings = get_settings()
+    keys = _get_user_keys(user)
+
+    # Phase 1 (session open): auth, answer-a-decision short-circuit, snapshot state.
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
         if not project or not _can_access_project(user, project):
@@ -2382,11 +2392,33 @@ async def api_post_message(project_id: str, request: Request):
             answer_decision(session, dec.id, index=-1, text=text,
                             by=user.email, source="webapp")
             add_message(session, project_id, "user", text, kind="answer")
-        else:
+            return JSONResponse({"ok": True, "routed": "decision"})
+        running = (project.status == "running")
+        activity = project.activity or ""
+        state_text = sideband.build_state_readmodel(session, project)
+
+    # Phase 2 (no session held): classify; LLM calls are offloaded so the async
+    # event loop isn't blocked.
+    intent = await asyncio.to_thread(sideband.classify_message, text, keys)
+
+    if intent == "ask":
+        answer = await asyncio.to_thread(sideband.answer_from_state, text, state_text, keys)
+        with get_session(settings.db_path) as session:
+            add_message(session, project_id, "user", text, kind="ask")
+            add_message(session, project_id, "agent", answer, kind="message")
+        return JSONResponse({"ok": True, "routed": "ask"})
+
+    # STEER
+    with get_session(settings.db_path) as session:
+        add_message(session, project_id, "user", text, kind="steer")
+        if running:
             enqueue_command(session, project_id, "steer", payload=text,
                             source="webapp", created_by=user.email)
-            add_message(session, project_id, "user", text, kind="steer")
-    return JSONResponse({"ok": True, "answered_decision": bool(dec)})
+            where = f"「{activity}」" if activity else "the current step"
+            add_message(session, project_id, "agent",
+                        f"收到 ✅ 当前在 {where}。我会在这一步结束后应用这条指令。",
+                        kind="message")
+    return JSONResponse({"ok": True, "routed": "steer", "running": running})
 
 
 @router.post("/api/projects/{project_id}/restart")

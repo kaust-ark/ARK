@@ -147,6 +147,8 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self._paused = False
         self._stop_requested = False
         self._autonomy_cache = None      # refreshed from DB at checkpoints
+        self._control_lock = threading.Lock()  # serialize _poll_control across threads
+        self._control_poller = None      # background thread: picks up commands ~every 20s
 
         # Memory
         self.memory = get_memory(state_dir=self.state_dir)
@@ -408,16 +410,46 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         allow = self._AUTONOMY_ASK.get(self.autonomy(), set())
         return True if allow is None else (kind in allow)
 
+    def _ensure_control_poller(self):
+        """Start a daemon thread that drains control commands ~every 20s, so a
+        steer/pause/stop the user sends mid-step is picked up without waiting for
+        the current (possibly multi-minute) agent call to finish. Step-boundary
+        checkpoints still poll too; the lock serializes them. Idempotent."""
+        if self._control_poller is not None or not (self._db_path and self._project_id):
+            return
+
+        def _loop():
+            while not self._stop_requested:
+                time.sleep(20)
+                try:
+                    self._poll_control()
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_loop, name="ark-control-poller", daemon=True)
+        self._control_poller = t
+        t.start()
+
     def _poll_control(self):
-        """Drain pending control commands from the DB and apply them."""
+        """Drain pending control commands from the DB and apply them. Safe to
+        call from both the main thread (checkpoints) and the background poller —
+        a lock prevents two threads from racing on the same command batch."""
         _db = self._hitl_db()
         if not _db:
             return
+        if not self._control_lock.acquire(blocking=False):
+            return  # another thread is already draining; skip this tick
         try:
-            with _db.get_session(self._db_path) as s:
-                cmds = _db.take_pending_commands(s, self._project_id)
-        except Exception:
-            return
+            try:
+                with _db.get_session(self._db_path) as s:
+                    cmds = _db.take_pending_commands(s, self._project_id)
+            except Exception:
+                return
+            self._apply_control_commands(cmds)
+        finally:
+            self._control_lock.release()
+
+    def _apply_control_commands(self, cmds):
         for c in cmds:
             kind, payload = c.get("kind"), c.get("payload", "")
             if kind == "pause":
@@ -437,7 +469,9 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
                 except Exception:
                     pass
                 self.log(f"🧭  Steer from user: {payload[:140]}", "INFO")
-                self._chat("agent", "Got it — I'll apply that as I continue.", kind="message")
+                self._chat("agent",
+                           f"✅ Applied — I'll factor this into the upcoming steps: “{payload[:120]}”",
+                           kind="message")
             elif kind == "set_autonomy" and payload:
                 try:
                     with _db.get_session(self._db_path) as s:
@@ -465,6 +499,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         honor pause, and break out on stop. Call liberally between major steps."""
         if label:
             self._set_activity(label)
+        self._ensure_control_poller()
         self._poll_control()
         self._maybe_park()
         if self._stop_requested:
