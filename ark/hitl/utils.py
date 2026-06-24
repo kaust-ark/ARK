@@ -142,7 +142,7 @@ def _normalise_needs_human(raw) -> dict:
         "evidence": evidence,
         "options": _coerce_hitl_options(raw),
         "default_option": str(raw.get("default_option") or "").strip(),
-        "timeout_minutes": int(raw.get("timeout_minutes") or 60),
+        "timeout_minutes": int(raw.get("timeout_minutes") or 10),
         "urgency": _extract_hitl_urgency(raw),
         "fallbacks": _extract_hitl_fallbacks(raw),
     }

@@ -2888,6 +2888,7 @@ a {{ color: #0d9488; }}
         # ── Dual-channel wait loop: whichever channel answers first wins ──
         start = time.time()
         paused_for_decision = False
+        pause_deadline = None
         result = None
         try:
             while result is None:
@@ -2945,17 +2946,43 @@ a {{ color: #0d9488; }}
                 # 4) timeout
                 if time.time() - start >= timeout:
                     if timeout_action == "pause":
+                        # "pause" buys a sensitive decision (ethics / expensive /
+                        # irreversible) one extra grace window + a louder ping —
+                        # but it must NEVER block the run forever. After the grace
+                        # it auto-continues with the default (which for these is
+                        # the SAFE choice, e.g. Gate A → Reject).
                         if not paused_for_decision:
-                            self.log("Decision timed out — PAUSING (awaiting human).", "WARN")
+                            grace_min = max(timeout // 60, 1)
+                            self.log("Decision timed out — pausing + notifying; "
+                                     "auto-continues with the default after grace.", "WARN")
                             self._paused = True
                             self._set_control_state("paused")
+                            notice = (f"No answer yet — paused. I'll auto-continue with the "
+                                      f"default (option #{default + 1}) in ~{grace_min} min "
+                                      f"unless you respond.")
+                            self._chat("agent", "⏸ " + notice, kind="notice")
                             if has_telegram:
                                 self.telegram.send_async(
-                                    f"⏸ <b>{_html.escape(self.display_name)}</b>: "
-                                    f"no answer yet — paused, waiting for you.",
+                                    f"⏸ <b>{_html.escape(self.display_name)}</b>: {_html.escape(notice)}",
                                     parse_mode="HTML", polish=False)
                             paused_for_decision = True
-                        if datetime.now() >= self.max_end_time:
+                            pause_deadline = time.time() + timeout
+                        if datetime.now() >= self.max_end_time or (
+                                pause_deadline and time.time() >= pause_deadline):
+                            self._paused = False
+                            self._set_control_state("")
+                            if decision_id and _db:
+                                try:
+                                    with _db.get_session(self._db_path) as s:
+                                        _db.expire_decision(s, decision_id)
+                                except Exception: pass
+                            default_label = opts[default] if opts else "N/A"
+                            self.log(f"Pause grace elapsed — auto-continuing with default: {default_label}", "WARN")
+                            if has_telegram:
+                                self.telegram.send_async(
+                                    f"⏰ <b>{_html.escape(self.display_name)}</b>: still no answer — "
+                                    f"continuing with option <b>#{default + 1}</b>: {_html.escape(default_label)}",
+                                    parse_mode="HTML", polish=False)
                             result = (default, ""); break
                         time.sleep(2); continue
                     else:

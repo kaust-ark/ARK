@@ -28,7 +28,9 @@ TIMEOUT_DEEP_RESEARCH_POLL = 1200
 TIMEOUT_NANO_BANANA_PLAN = 600
 
 # Human-in-the-Loop Timeouts
-TIMEOUT_HITL_DECISION = 900  # 15 minutes
+# Every HITL decision auto-continues (with its default) once this elapses — no
+# prompt may block the run waiting on the user. 10 minutes by default.
+TIMEOUT_HITL_DECISION = 600  # 10 minutes
 TIMEOUT_TELEGRAM_ASK = 1800  # 30 minutes
 
 # LaTeX and Compilation

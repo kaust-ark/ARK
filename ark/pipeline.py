@@ -3482,8 +3482,10 @@ provide the title.
             return False
 
         if verdict == "human_review":
-            # Borderline — ASK the human (webapp + Telegram) instead of silently
-            # failing. Pause and wait indefinitely; never auto-proceed on ethics.
+            # Borderline — ASK the human (webapp + Telegram). "pause" gives this
+            # ethics gate an extra grace window, but it still auto-resolves: if
+            # no one answers, it continues with the SAFE default (Reject/block).
+            # No HITL prompt may block the run forever.
             self.log_section("Idea review — held for human review")
             self.log(f"Category: {category}\nReason: {reason}", "RAW")
             idx, reply = self.ask_user_decision(
@@ -3491,7 +3493,7 @@ provide the title.
                 options=["Approve — proceed with the run", "Reject — block this run"],
                 what_happened=f"Gate A flagged this idea: {reason}",
                 background=[f"Category: {category}"],
-                timeout=int(self.config.get("telegram_decision_timeout", 3600)),
+                timeout=int(self.config.get("telegram_decision_timeout", defaults.TIMEOUT_HITL_DECISION)),
                 default=1, kind="gate_a", timeout_action="pause", phase="gate_a",
             )
             if idx == 0:  # approved
