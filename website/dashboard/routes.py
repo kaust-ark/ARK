@@ -2969,31 +2969,34 @@ async def api_stream_log(project_id: str, request: Request):
 @router.get("/api/venues")
 async def api_venues():
     """Return supported venues list."""
+    # One entry per LaTeX engine (venue_templates/<format>/). The parenthetical
+    # in each name lists the specific conferences that template is valid for —
+    # they share the same .sty/.cls, differing only in \documentclass options
+    # and page budget.
     venues = [
-        # Verified
-        {"name": "ICML",         "format": "icml",     "pages": 9,  "year": 2025, "tag": "[Verified] (Default)"},
-        {"name": "NeurIPS",      "format": "neurips",  "pages": 9,  "year": 2025, "tag": "[Verified]"},
-        {"name": "ACM SIGPLAN",  "format": "euromlsys", "pages": 6, "year": 2025, "tag": "[Verified]"},
-        # ML / AI
-        {"name": "ICLR",         "format": "iclr",     "pages": 9,  "year": 2026},
-        {"name": "ACL",          "format": "acl",      "pages": 8,  "year": 2025},
-        {"name": "ACL Short",    "format": "acl",      "pages": 4,  "year": 2025},
-        {"name": "EMNLP",        "format": "emnlp",    "pages": 8,  "year": 2025},
-        {"name": "EMNLP Short",  "format": "emnlp",    "pages": 4,  "year": 2025},
-        {"name": "NAACL",        "format": "acl",      "pages": 8,  "year": 2025},
-        {"name": "NAACL Short",  "format": "acl",      "pages": 4,  "year": 2025},
-        {"name": "TMLR",         "format": "article",  "pages": 0,  "year": 2026},
-        {"name": "CVPR",         "format": "cvpr",     "pages": 8,  "year": 2025},
-        {"name": "MLSys",        "format": "mlsys",    "pages": 8,  "year": 2026},
-        # Systems
-        {"name": "SOSP",         "format": "sosp",     "pages": 14, "year": 2025},
-        {"name": "EuroSys",      "format": "sosp",     "pages": 12, "year": 2026},
-        {"name": "NSDI",         "format": "osdi",     "pages": 14, "year": 2025},
-        {"name": "OSDI",         "format": "osdi",     "pages": 14, "year": 2025},
-        {"name": "USENIX ATC",   "format": "osdi",     "pages": 12, "year": 2026},
-        {"name": "IEEE S&P",     "format": "neurips",  "pages": 13, "year": 2025},
-        # Networking
-        {"name": "INFOCOM",      "format": "infocom",  "pages": 9,  "year": 2025},
+        # ── ML / AI (single-template venues) ──
+        {"name": "ICML",    "format": "icml",    "pages": 8, "year": 2026},
+        {"name": "NeurIPS", "format": "neurips", "pages": 9, "year": 2026},
+        {"name": "ICLR",    "format": "iclr",    "pages": 9, "year": 2026},
+        {"name": "AAAI",    "format": "aaai",    "pages": 7, "year": 2026},
+        {"name": "TMLR (journal — no page limit)", "format": "tmlr", "pages": 12, "year": 2026},
+        # ── NLP — ACL style files (ACL / EMNLP / NAACL / EACL / AACL / COLING) ──
+        {"name": "ACL / EMNLP / NAACL",       "format": "acl", "pages": 8, "year": 2026},
+        {"name": "ACL / EMNLP / NAACL Short", "format": "acl", "pages": 4, "year": 2026},
+        # ── Computer Vision — CVF (CVPR / ICCV / WACV) ──
+        {"name": "CVPR / ICCV / WACV", "format": "cvpr", "pages": 8, "year": 2026},
+        # ── ML Systems ──
+        {"name": "MLSys",                  "format": "mlsys",  "pages": 10, "year": 2026},
+        {"name": "EuroMLSys (ACM acmart)", "format": "acmart", "pages": 6,  "year": 2026},
+        # ── Systems — ACM acmart (SOSP / EuroSys / ASPLOS) ──
+        {"name": "SOSP / EuroSys / ASPLOS (ACM)", "format": "acmart", "pages": 12, "year": 2026},
+        # ── Systems — USENIX (OSDI / NSDI / ATC / FAST / Security) ──
+        {"name": "OSDI / NSDI / USENIX ATC / Security", "format": "usenix", "pages": 13, "year": 2026},
+        # ── Networking — IEEE (INFOCOM / ICC / GLOBECOM / all IEEE) ──
+        {"name": "INFOCOM (IEEE)", "format": "ieee", "pages": 9, "year": 2026},
+        # ── Generic article (no conference-specific style) ──
+        {"name": "Workshop Paper (generic article)", "format": "article", "pages": 4, "year": 2026},
+        {"name": "Technical Report (generic article — no page limit)", "format": "article", "pages": 10, "year": 2026},
     ]
     return JSONResponse(venues)
 

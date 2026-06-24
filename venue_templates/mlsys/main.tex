@@ -1,5 +1,23 @@
 \documentclass{article}
+
+% MLSys 2025 (MLSys 2026 reuses the 2025 format). Recommended packages:
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+% Make hyperref and algorithmic cooperate:
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+% Blind review version (style file strips author info automatically):
 \usepackage{mlsys2025}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\mlsystitlerunning{Paper Title}
 
 \begin{document}
 
@@ -14,7 +32,7 @@
 
 \mlsysaffiliation{anon}{Anonymous Institution}
 
-\mlsyskeywords{}
+\mlsyskeywords{Machine Learning, MLSys}
 
 \vskip 0.3in
 
@@ -23,6 +41,7 @@ Abstract text goes here.
 \end{abstract}
 ]
 
+% Must go after the closing ] of \twocolumn[...]; leave empty if no equal contribution.
 \printAffiliationsAndNotice{}
 
 \section{Introduction}
@@ -35,8 +54,7 @@ Abstract text goes here.
 
 \section{Conclusion}
 
-\clearpage
-\bibliographystyle{mlsys2025}
 \bibliography{references}
+\bibliographystyle{mlsys2025}
 
 \end{document}

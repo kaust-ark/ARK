@@ -1,5 +1,24 @@
 \documentclass{article}
-\usepackage{icml2025}
+
+% ICML 2026. Recommended figure/typesetting packages:
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+% Make hyperref and algorithmic cooperate:
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+% Blind review version (style file strips author info automatically):
+\usepackage{icml2026}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\icmltitlerunning{Paper Title}
 
 \begin{document}
 
@@ -14,16 +33,17 @@
 
 \icmlaffiliation{anon}{Anonymous Institution}
 
-\icmlkeywords{}
+\icmlkeywords{Machine Learning, ICML}
 
 \vskip 0.3in
+]
+
+% Must go after the closing ] of \twocolumn[...]; required even if empty.
+\printAffiliationsAndNotice{}
 
 \begin{abstract}
 Abstract text goes here.
 \end{abstract}
-]
-
-\printAffiliationsAndNotice{}
 
 \section{Introduction}
 
@@ -35,8 +55,7 @@ Abstract text goes here.
 
 \section{Conclusion}
 
-\clearpage
-\bibliographystyle{icml2025}
 \bibliography{references}
+\bibliographystyle{icml2026}
 
 \end{document}

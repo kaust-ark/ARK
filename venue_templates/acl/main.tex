@@ -1,9 +1,24 @@
 \documentclass[11pt]{article}
+
+% *ACL (ACL / EMNLP / NAACL / EACL / AACL / COLING).
+% "review" = anonymous + line numbers. Change to "final" for camera-ready.
 \usepackage[review]{acl}
+
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
 
 \title{Paper Title}
 
-\author{Anonymous Author(s)}
+\author{Anonymous Author(s) \\
+Anonymous Institution \\
+\texttt{email@domain} \\}
 
 \begin{document}
 
@@ -23,8 +38,14 @@ Abstract text goes here.
 
 \section{Conclusion}
 
-\clearpage
-\bibliographystyle{acl_natbib}
+% A Limitations section is REQUIRED for all *ACL venues (not counted in the page limit).
+\section*{Limitations}
+
+% Ethics statement is optional.
+\section*{Ethics Statement}
+
+% NOTE: acl.sty already sets \bibliographystyle{acl_natbib}; do NOT repeat it
+% here (a second \bibliographystyle triggers "Illegal, another \bibstyle").
 \bibliography{references}
 
 \end{document}

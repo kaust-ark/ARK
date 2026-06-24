@@ -89,30 +89,28 @@ def ensure_project_symlinks(project_dir: Path, code_dir: str):
 #  Venue data
 # ============================================================
 
+# One entry per LaTeX engine (venue_templates/<format>/). The parenthetical in
+# each name lists the specific conferences that template is valid for — they
+# share the same .sty/.cls, differing only in \documentclass options + pages.
 VENUES = [
-    {"name": "NeurIPS",        "format": "neurips",  "pages": 9},
-    {"name": "ICML",           "format": "icml",     "pages": 9},
-    {"name": "ICLR",           "format": "iclr",     "pages": 9},
-    {"name": "ACL",            "format": "acl",      "pages": 8},
-    {"name": "ACL Short",      "format": "acl",      "pages": 4},
-    {"name": "EMNLP",          "format": "acl",      "pages": 8},
-    {"name": "EMNLP Short",    "format": "acl",      "pages": 4},
-    {"name": "NAACL",          "format": "acl",      "pages": 8},
-    {"name": "NAACL Short",    "format": "acl",      "pages": 4},
-    {"name": "TMLR",           "format": "article",  "pages": 0},
-    {"name": "CVPR",           "format": "cvpr",     "pages": 8},
-    {"name": "EuroMLSys",      "format": "sigplan",  "pages": 6},
-    {"name": "MLSys",          "format": "mlsys",    "pages": 12},
-    {"name": "INFOCOM",        "format": "ieee",     "pages": 9},
-    {"name": "OSDI",           "format": "usenix",   "pages": 14},
-    {"name": "SOSP",           "format": "sigplan",  "pages": 15},
+    {"name": "ICML",                                "format": "icml",    "pages": 8},
+    {"name": "NeurIPS",                             "format": "neurips", "pages": 9},
+    {"name": "ICLR",                                "format": "iclr",    "pages": 9},
+    {"name": "AAAI",                                "format": "aaai",    "pages": 7},
+    {"name": "ACL / EMNLP / NAACL",                 "format": "acl",     "pages": 8},
+    {"name": "ACL / EMNLP / NAACL Short",           "format": "acl",     "pages": 4},
+    {"name": "CVPR / ICCV / WACV",                  "format": "cvpr",    "pages": 8},
+    {"name": "TMLR (journal — no page limit)",      "format": "tmlr",    "pages": 12},
+    {"name": "MLSys",                               "format": "mlsys",   "pages": 10},
+    {"name": "EuroMLSys (ACM acmart)",              "format": "acmart",  "pages": 6},
+    {"name": "SOSP / EuroSys / ASPLOS (ACM)",       "format": "acmart",  "pages": 12},
+    {"name": "OSDI / NSDI / USENIX ATC / Security", "format": "usenix",  "pages": 13},
+    {"name": "INFOCOM (IEEE)",                      "format": "ieee",    "pages": 9},
 ]
 
 OTHER_VENUES = [
-    {"name": "Course Project",   "format": "article", "pages": 0},
-    {"name": "Workshop Paper",   "format": "article", "pages": 4},
-    {"name": "Technical Report", "format": "article", "pages": 0},
-    {"name": "Thesis Chapter",   "format": "article", "pages": 0},
+    {"name": "Workshop Paper",                 "format": "article", "pages": 4},
+    {"name": "Technical Report (no page limit)", "format": "article", "pages": 10},
 ]
 
 # format -> download info for LaTeX template files
@@ -151,8 +149,20 @@ TEMPLATE_SOURCES = {
         "in_texlive": True,
         "required": ["IEEEtran.cls"],
     },
+    # acmart engine: SOSP / EuroSys / ASPLOS / EuroMLSys (one .cls, different
+    # \documentclass options). in_texlive so a missing bundle still compiles.
+    "acmart": {
+        "urls": ["https://mirrors.ctan.org/macros/latex/contrib/acmart.zip"],
+        "in_texlive": True,
+        "required": ["acmart.cls"],
+    },
+    # Legacy aliases kept so old projects' venue_format still resolves a source.
     "acm": {"urls": [], "in_texlive": True, "required": ["acmart.cls"]},
     "sigplan": {"urls": [], "in_texlive": True, "required": ["acmart.cls"]},
+    "aaai": {
+        "urls": ["https://aaai.org/authorkit26-1/"],
+        "required": ["aaai2026.sty"],
+    },
     "usenix": {
         # Direct .sty download (not a zip) — handled by _download_template
         "urls": ["https://www.usenix.org/sites/default/files/usenix-2020-09.sty"],
@@ -164,6 +174,10 @@ TEMPLATE_SOURCES = {
             "https://media.mlsys.org/Conferences/MLSYS{prev_year}/mlsys{prev_year}style.zip",
         ],
         "required": ["mlsys"],
+    },
+    "tmlr": {
+        "urls": ["https://github.com/JmlrOrg/tmlr-style-file/archive/refs/heads/main.zip"],
+        "required": ["tmlr.sty"],
     },
     "article": {"urls": [], "in_texlive": True, "required": []},
 }
@@ -821,7 +835,7 @@ def _setup_latex_template(code_dir: str, config: dict):
     print(f"{_c('LaTeX Template Setup', Colors.BOLD)}")
 
     # Try bundled venue_templates/ first (same as webapp)
-    from website.dashboard.templates import has_venue_template, copy_venue_template
+    from website.dashboard.templates import has_venue_template, copy_venue_template, _resolve_venue_format
     downloaded = False
 
     _, required = _resolve_template_urls(venue_format)
@@ -852,12 +866,15 @@ def _setup_latex_template(code_dir: str, config: dict):
                     venue_format = "article"
 
     # Generate main.tex: prefer committed venue_templates/<format>/main.tex if available
-    venue_template_src = Path(__file__).parent.parent / "venue_templates" / venue_format / "main.tex"
+    venue_template_src = Path(__file__).parent.parent / "venue_templates" / _resolve_venue_format(venue_format) / "main.tex"
     if venue_template_src.exists():
         content = venue_template_src.read_text()
         # Substitute title/author placeholders
         if title:
-            content = content.replace("Paper Title", title, 1)
+            # Replace ALL occurrences: two-column venues (ICML/MLSys) carry the
+            # placeholder in both \icml(mlsys)title{} and \...titlerunning{}, so a
+            # single replace would leave the displayed title as "Paper Title".
+            content = content.replace("Paper Title", title)
         if authors:
             author_str = " \\and ".join(authors)
             content = content.replace("Author Name", author_str, 1)

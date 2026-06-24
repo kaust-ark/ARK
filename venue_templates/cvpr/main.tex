@@ -1,13 +1,30 @@
 \documentclass[10pt,twocolumn,letterpaper]{article}
+
+% CVPR / ICCV / WACV (CVF). "review" = anonymous + line numbers.
+% Use \usepackage{cvpr} for camera-ready, [pagenumbers] for an arXiv version.
 \usepackage[review]{cvpr}
-\input{preamble}
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+
+% hyperref (recommended); cvpr.sty already loads xcolor so cvprblue is available.
+\definecolor{cvprblue}{rgb}{0.21,0.49,0.74}
+\usepackage[pagebackref,breaklinks,colorlinks,allcolors=cvprblue]{hyperref}
+
+\def\paperID{0000} % *** Enter the Paper ID here for the review version
+\def\confName{CVPR}
+\def\confYear{2026}
 
 \title{Paper Title}
 
-\author{Anonymous Author(s)}
+\author{Anonymous Author(s)\\
+Anonymous Institution\\
+{\tt\small email@domain}
+}
 
 \begin{document}
-
 \maketitle
 
 \begin{abstract}
@@ -24,10 +41,7 @@ Abstract text goes here.
 
 \section{Conclusion}
 
-\clearpage
-{\small
 \bibliographystyle{ieeenat_fullname}
 \bibliography{references}
-}
 
 \end{document}

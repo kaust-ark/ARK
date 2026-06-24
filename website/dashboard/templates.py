@@ -13,6 +13,37 @@ from pathlib import Path
 # venue_templates/ lives at the ARK repo root
 _TEMPLATES_ROOT = Path(__file__).parent.parent.parent / "venue_templates"
 
+# Back-compat: pre-consolidation venue_format keys → the engine dir that now
+# holds the shared template files. The venue_templates/ tree was consolidated
+# to one directory per LaTeX engine (acl/acmart/usenix/ieee/cvpr/...), but
+# existing projects' saved venue_format, and the webapp's hardcoded "Test"
+# venue (data-format="euromlsys"), still pass the old per-venue keys. Resolve
+# them here so copy/has lookups keep working. A literal dir match always wins.
+_VENUE_FORMAT_ALIASES = {
+    # *ACL family → acl.sty
+    "emnlp": "acl", "naacl": "acl", "eacl": "acl", "aacl": "acl", "coling": "acl",
+    # ACM acmart family (different \documentclass options, one .cls)
+    "euromlsys": "acmart", "sigplan": "acmart", "sosp": "acmart",
+    "eurosys": "acmart", "asplos": "acmart", "acm": "acmart",
+    # IEEEtran
+    "infocom": "ieee",
+    # USENIX systems/security
+    "osdi": "usenix", "nsdi": "usenix", "atc": "usenix", "fast": "usenix",
+    # CVF
+    "iccv": "cvpr", "wacv": "cvpr",
+}
+
+
+def _resolve_venue_format(venue_format: str) -> str:
+    """Map a (possibly legacy) venue_format onto its bundled engine dir name.
+
+    A directory that literally matches ``venue_format`` always wins; only when
+    no such dir exists do we consult the legacy alias table.
+    """
+    if (_TEMPLATES_ROOT / venue_format).exists():
+        return venue_format
+    return _VENUE_FORMAT_ALIASES.get(venue_format, venue_format)
+
 # test_fixtures/ (cheap "test project" preset) also lives at the repo root.
 _TEST_FIXTURES_ROOT = Path(__file__).parent.parent.parent / "test_fixtures" / "cheap_run"
 
@@ -67,7 +98,7 @@ def get_available_venues() -> list[str]:
 
 def has_venue_template(venue_format: str) -> bool:
     """Return True if a bundled template exists for this venue format."""
-    return (_TEMPLATES_ROOT / venue_format).exists()
+    return (_TEMPLATES_ROOT / _resolve_venue_format(venue_format)).exists()
 
 
 def copy_venue_template(venue_format: str, dest_paper_dir: Path) -> bool:
@@ -77,7 +108,7 @@ def copy_venue_template(venue_format: str, dest_paper_dir: Path) -> bool:
     """
     dest_paper_dir.mkdir(parents=True, exist_ok=True)
 
-    src = _TEMPLATES_ROOT / venue_format
+    src = _TEMPLATES_ROOT / _resolve_venue_format(venue_format)
     if not src.exists():
         # No bundled template — caller should handle waiting_template flow
         return False

@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/license-Apache%202.0-green.svg" alt="Apache 2.0">
   <a href="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml"><img src="https://github.com/kaust-ark/ARK/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-6-orange.svg" alt="6 Agents">
-  <img src="https://img.shields.io/badge/venues-11+-purple.svg" alt="11+ Venues">
+  <img src="https://img.shields.io/badge/venues-20+-purple.svg" alt="20+ Venues">
 </p>
 
 <p align="center">
@@ -471,7 +471,7 @@ ark setup-bot    # لمرة واحدة: الصق توكن BotFather، وسيتم
 
 ## المؤتمرات العلمية المدعومة
 
-تأتي قوالب LaTeX جاهزة لـ **NeurIPS وICML وICLR وACL وEMNLP وCVPR وMLSys وEuroMLSys وINFOCOM وOSDI وSOSP**، مع كشف تلقائي لتنسيقات عائلات **IEEE** و**ACMART (SIGPLAN)** و**LNCS** و**USENIX**. كما يُقبل استخدام قوالب مخصّصة &mdash; إذ يفحص idea2paper ملفات `.tex` / `.aux` / `.sty` لاستيعاب التنسيق، ويصلح أخطاء التجميع، ويضبط حد الصفحات بدقة.
+تأتي قوالب LaTeX جاهزة لـ **NeurIPS وICML وICLR وAAAI وMLSys**، وعائلة **ACL** (ACL / EMNLP / NAACL / EACL / AACL / COLING)، وعائلة **CVF** (CVPR / ICCV / WACV)، وعائلة **ACM acmart** (SOSP / EuroSys / ASPLOS / EuroMLSys)، وعائلة **USENIX** (OSDI / NSDI / ATC / FAST / Security)، و**IEEE / IEEEtran** (INFOCOM وغيرها من مؤتمرات IEEE) &mdash; جميعها من ملفات الأنماط الرسمية لعام 2026 (يستخدم MLSys حزمة 2025 دون تغيير) &mdash; إضافةً إلى قالب **article** عام لـ TMLR وورش العمل والتقارير التقنية. كما يُقبل استخدام قوالب مخصّصة &mdash; إذ يفحص idea2paper ملفات `.tex` / `.aux` / `.sty` لاستيعاب التنسيق، ويصلح أخطاء التجميع، ويضبط حد الصفحات بدقة.
 
 ## الترخيص
 
