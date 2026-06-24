@@ -1283,6 +1283,29 @@ selected skill (why it matches, which phase will use it).
         if req["urgency"] in _NONBLOCKING_URGENCIES:
             return self._handle_nonblocking_hitl(req, stage, needs_file)
 
+        # A blocker with no summary, no failure detail, no evidence, and no
+        # explicit options carries nothing a human could act on — it surfaces as
+        # the useless "Agent blocked at <stage>" with an empty body. Never put
+        # that in front of the user: HITL prompts must have substance. Log it,
+        # tell the chat, and continue automatically.
+        has_detail = bool(
+            req["summary"] or req["what_failed"]
+            or req["evidence"].get("error_output")
+            or req["evidence"].get("tested_commands")
+            or req["options"]
+        )
+        if not has_detail:
+            self.log("needs_human.json had no actionable detail (no summary / error / "
+                     "options) — auto-continuing instead of blocking the human.", "WARN")
+            try:
+                self._chat("agent",
+                           "An agent briefly flagged it needed input but gave no detail to act on — continuing automatically.",
+                           kind="notice")
+            except Exception:
+                pass
+            needs_file.unlink(missing_ok=True)
+            return False
+
         # Derive ask_user_decision inputs
         options = [o["title"] or o["id"] for o in req["options"]] or ["Continue without action", "Pause and wait for me"]
         option_details = [o["consequence"] for o in req["options"]] or ["Skip the blocker.", "Hold until guidance."]
@@ -1295,10 +1318,14 @@ selected skill (why it matches, which phase will use it).
                     default_idx = i
                     break
 
+        # Build a question with substance: prefer the agent's summary, then the
+        # concrete failure, then a stage-qualified line — never a bare "blocked".
+        question = (req["summary"] or req["what_failed"]
+                    or f"An agent needs your input at {stage or 'this step'}")
         idx, reply = self.ask_user_decision(
-            req["summary"] or f"Agent blocked at {stage or 'unknown stage'}",
+            question,
             options, timeout=req["timeout_minutes"] * 60, default=default_idx,
-            what_happened=req["summary"], background=background,
+            what_happened=req["summary"] or req["what_failed"], background=background,
             option_details=option_details, phase="needs_human",
         )
 
