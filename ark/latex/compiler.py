@@ -1369,13 +1369,17 @@ and also output it in your response. Format:
         # spurious "returned no images" retry). One key (OpenRouter) then covers
         # figure generation, and the cost lands on the OpenRouter bill.
         if os.environ.get("OPENROUTER_API_KEY"):
-            # Pin to the SAME (newer, higher-quality) models PaperBanana defaults
-            # to — just as explicit OpenRouter slugs so it routes through
-            # OpenRouter without the "not configured" warning. Using the older/
-            # cheaper gemini-2.5-flash-image here visibly downgraded figure
-            # quality vs the 3.1 default, so match the default instead.
-            os.environ["MAIN_MODEL_NAME"] = "google/gemini-3.1-pro-preview"
-            os.environ["IMAGE_GEN_MODEL_NAME"] = "google/gemini-3.1-flash-image-preview"
+            # Route through OpenRouter with explicit slugs (no "not configured"
+            # warning). Concept figures are few (1-3/paper) but the most visible
+            # part of the paper, and the FLASH image tier was the bottleneck: it
+            # received a correct, detailed, paper-specific spec but rendered a
+            # generic stereotyped diagram (couldn't follow it). Use the PRO image
+            # tier, which follows structured diagram specs far more faithfully.
+            # Both overridable via config for cost tuning.
+            os.environ["MAIN_MODEL_NAME"] = self.config.get(
+                "paperbanana_text_model", "google/gemini-3.1-pro-preview")
+            os.environ["IMAGE_GEN_MODEL_NAME"] = self.config.get(
+                "paperbanana_image_model", "google/gemini-3-pro-image")
 
         try:
             import sys
