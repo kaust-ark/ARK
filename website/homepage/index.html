@@ -64,11 +64,11 @@
       <div class="hero-cta">
         <div class="hero-cta-row">
           <a href="/dashboard" class="btn btn-primary">
-            🚀 Launch Project
+            🚀 Launch Online
           </a>
-          <a href="doc.html#installation" class="btn btn-outline">
-            ⚡ Deploy Locally
-          </a>
+          <button type="button" class="btn btn-outline" onclick="openLocalInstall()">
+            💻 Launch Locally
+          </button>
         </div>
       </div>
       <p class="hero-accent">Offload the Labor. Steer the Science.</p>
@@ -431,6 +431,63 @@
     <polyline points="18 15 12 9 6 15"/>
   </svg>
 </button>
+
+<!-- ===== Launch Locally modal ===== -->
+<div id="local-install-modal" class="li-backdrop" onclick="if(event.target===this)closeLocalInstall()">
+  <div class="li-modal" role="dialog" aria-modal="true" aria-labelledby="li-title">
+    <button type="button" class="li-close" aria-label="Close" onclick="closeLocalInstall()">×</button>
+    <h3 id="li-title">💻 Launch Idea2Paper Locally</h3>
+    <p class="li-sub">Paste this to your coding agent (<strong>Claude Code</strong>, <strong>Codex</strong>, Cursor, …). It installs Idea2Paper on your machine — detecting your environment, wiring up Slurm + a systemd service, and starting the dashboard for you.</p>
+    <div class="li-snippet">
+      <pre id="li-snippet-text">Install and run Idea2Paper (the ARK research framework) on this machine.
+
+1. Detect the environment: OS (Linux/macOS), whether `conda`/`mamba` and `git` are present, and whether Slurm is available (`which sbatch`).
+2. Run the official installer:  curl -fsSL https://idea2paper.org/install.sh | bash
+   It builds the conda envs, installs the CLIs, and registers the dashboard as a `systemd --user` service.
+3. If Slurm is available, confirm the dashboard's Experiments Backend defaults to Slurm (it auto-detects).
+4. Verify the dashboard is up:  systemctl --user status ark-webapp  and  http://localhost:9527 . Give me the one-time magic-link sign-in URL it printed.
+5. If any step fails, read the install log, diagnose, fix it, and retry — don't stop until the dashboard is running.
+
+Then tell me the dashboard URL and how to add my API keys (Settings → API Keys).</pre>
+      <button type="button" class="li-copy" onclick="copyLocalSnippet(this)">Copy</button>
+    </div>
+    <div class="li-actions">
+      <a href="doc.html#installation" class="btn btn-outline li-manual">Manual Install →</a>
+    </div>
+  </div>
+</div>
+
+<style>
+  .li-backdrop { display:none; position:fixed; inset:0; z-index:1000; background:rgba(10,12,20,.6);
+    backdrop-filter:blur(3px); align-items:center; justify-content:center; padding:20px; }
+  .li-backdrop.open { display:flex; }
+  .li-modal { position:relative; width:100%; max-width:640px; max-height:88vh; overflow:auto;
+    background:#fff; border-radius:16px; padding:28px 28px 24px; box-shadow:0 20px 60px rgba(0,0,0,.3); }
+  .li-close { position:absolute; top:12px; right:16px; border:none; background:none; font-size:1.7rem;
+    line-height:1; color:#888; cursor:pointer; }
+  .li-modal h3 { margin:0 0 8px; font-size:1.35rem; }
+  .li-sub { color:#555; font-size:.95rem; line-height:1.5; margin:0 0 16px; }
+  .li-snippet { position:relative; }
+  .li-snippet pre { background:#0f1525; color:#e6edf3; border-radius:10px; padding:16px 16px 16px;
+    font-size:.82rem; line-height:1.5; white-space:pre-wrap; word-break:break-word; margin:0;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; max-height:42vh; overflow:auto; }
+  .li-copy { position:absolute; top:10px; right:10px; border:none; border-radius:7px; padding:5px 12px;
+    background:#2563eb; color:#fff; font-size:.8rem; font-weight:600; cursor:pointer; }
+  .li-actions { margin-top:18px; display:flex; justify-content:flex-end; }
+  .li-manual { font-size:.9rem; padding:8px 16px; }
+</style>
+<script>
+  function openLocalInstall(){ document.getElementById('local-install-modal').classList.add('open'); }
+  function closeLocalInstall(){ document.getElementById('local-install-modal').classList.remove('open'); }
+  document.addEventListener('keydown', function(e){ if(e.key==='Escape') closeLocalInstall(); });
+  function copyLocalSnippet(btn){
+    var txt = document.getElementById('li-snippet-text').innerText;
+    navigator.clipboard.writeText(txt).then(function(){
+      var old = btn.textContent; btn.textContent = 'Copied ✓';
+      setTimeout(function(){ btn.textContent = old; }, 1600);
+    });
+  }
+</script>
 
 <script src="js/main.js"></script>
 </body>
