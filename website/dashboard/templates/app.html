@@ -744,13 +744,6 @@
       <input type="file" id="hero-file-input" multiple
              onchange="heroFileSelected(this)" style="display:none" />
 
-      <div id="hero-instructions-wrap" class="hero-instructions-wrap">
-        <label data-i18n-html="instructions_label">Instructions for Idea2Paper <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
-        <textarea name="comment" class="hero-instructions-textarea"
-          data-i18n-placeholder="placeholder_instructions"
-          placeholder="e.g. Focus on comparing against baseline X, use PyTorch, run on 2 GPUs, write in a formal style…"></textarea>
-      </div>
-
       <div class="hero-adv-field" style="margin-top:12px">
         <label data-i18n-html="paper_title_label">Paper Title <span style="font-weight:400;color:var(--text-muted)">(optional — auto-generated if blank)</span></label>
         <input type="text" name="title" data-i18n-placeholder="placeholder_auto_title" placeholder="Auto-generated if blank" />
@@ -808,56 +801,18 @@
       <input type="hidden" name="venue_format" id="hero-venue-format" value="neurips" />
       <input type="hidden" name="preset" id="hero-preset" value="" />
 
-      <!-- Deep Research toggle (applies to every project). Unchecked = run the
-           literature survey (default). Checked = skip it for a faster, cheaper
-           start. Hidden for the Test venue, which has its own option. -->
-      <label id="hero-skip-dr" style="display:inline-flex;align-items:center;gap:8px;margin-top:12px;font-size:.85rem;color:var(--text-second);cursor:pointer">
-        <input type="checkbox" name="skip_deep_research" value="1" style="width:auto;margin:0" />
-        <span data-i18n="skip_deep_research">Skip Deep Research</span>
-        <span style="color:var(--text-muted)">— faster start, no literature survey</span>
-      </label>
-
-      <!-- Test template options (shown only when the Test venue is selected) -->
-      <div id="hero-test-opts" style="display:none;margin-top:10px;padding:10px 12px;border:1px dashed var(--card-border);border-radius:8px;background:var(--bg)">
-        <div style="font-size:.78rem;color:var(--text-second);margin-bottom:6px">🧪 <b>Test template</b> — 2-page EuroMLSys smoke test (relaxed page fitting, cheapest model, 1 iteration). Tick a box to reuse a canned fixture instead of running that step:</div>
-        <label style="font-size:.82rem;color:var(--text-second);display:inline-flex;align-items:center;gap:6px;margin-right:18px;cursor:pointer">
-          <input type="checkbox" name="skip_deep_research" value="1" style="width:auto;margin:0" /> <span data-i18n="skip_deep_research">Skip Deep Research</span> <span style="color:var(--text-muted)">(reuse canned report)</span></label>
-        <label style="font-size:.82rem;color:var(--text-second);display:inline-flex;align-items:center;gap:6px;cursor:pointer">
-          <input type="checkbox" name="skip_ai_figures" value="1" style="width:auto;margin:0" /> <span data-i18n="skip_ai_figures">Skip AI Figures</span> <span style="color:var(--text-muted)">(reuse canned figure)</span></label>
-      </div>
-
-      <!-- Telegram — always visible -->
-      <div class="tg-section" style="margin-top:16px">
-        <div class="tg-section-title">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex-shrink:0">
-            <circle cx="12" cy="12" r="12" fill="#29B6F6"/>
-            <path d="M5.5 11.5l10-4.5-1.5 9-3-2.5-2 2v-3l5-4.5-6.5 3.5-2-1z" fill="white"/>
-          </svg>
-          <span data-i18n="telegram_notifications">Telegram Notifications</span>
-        </div>
-        <div class="tg-how" data-i18n-html="tg_how">
-          <b>How to set up:</b>
-          1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp;
-          2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID
-        </div>
-        <div class="form-row" style="margin-top:10px">
-          <div class="form-group" style="margin-bottom:0">
-            <label data-i18n="bot_token">Bot Token</label>
-            <input type="text" name="telegram_token" placeholder="123456789:ABCdef…" autocomplete="off" />
-          </div>
-          <div class="form-group" style="margin-bottom:0">
-            <label data-i18n="chat_id">Chat ID</label>
-            <input type="text" name="telegram_chat_id" placeholder="1234567890" />
-          </div>
-        </div>
-      </div>
-
       <div class="hero-advanced">
         <button type="button" class="hero-advanced-toggle" aria-expanded="true"
                 onclick="toggleHeroAdvanced()">
           <span class="adv-arrow">▶</span> <span data-i18n="advanced_options">Advanced options</span>
         </button>
         <div class="hero-advanced-body open" id="hero-advanced-body">
+          <div class="hero-adv-field" id="hero-instructions-wrap" style="margin-bottom:14px">
+            <label data-i18n-html="instructions_label">Additional Instructions <span style="font-weight:400;color:var(--text-muted)">(optional)</span></label>
+            <textarea name="comment" class="hero-instructions-textarea"
+              data-i18n-placeholder="placeholder_instructions"
+              placeholder="e.g. Focus on comparing against baseline X, use PyTorch, run on 2 GPUs, write in a formal style…"></textarea>
+          </div>
           <div class="hero-adv-field">
             <label data-i18n="model_vendor">Model Vendor</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="if(event.target&&event.target.name==='model'){document.getElementById('model-unverified').value='';document.getElementById('model-openrouter-more').value='';}">
@@ -1094,6 +1049,49 @@
             </details>
           </div>
           <input type="hidden" name="cloud_overrides" id="hero-cloud-overrides" value="" />
+
+          <!-- Pipeline shortcuts — available for every template (Smoke Test
+               defaults both on to reuse its canned fixtures). -->
+          <div class="hero-adv-field" style="margin-top:14px">
+            <label>Pipeline</label>
+            <div style="display:flex;gap:18px;flex-wrap:wrap">
+              <label style="display:inline-flex;align-items:center;gap:8px;font-size:.85rem;color:var(--text-second);cursor:pointer">
+                <input type="checkbox" name="skip_deep_research" id="hero-skip-dr-cb" value="1" style="width:auto;margin:0" />
+                <span data-i18n="skip_deep_research">Skip Deep Research</span>
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:8px;font-size:.85rem;color:var(--text-second);cursor:pointer">
+                <input type="checkbox" name="skip_ai_figures" id="hero-skip-figs-cb" value="1" style="width:auto;margin:0" />
+                <span data-i18n="skip_ai_figures">Skip AI Figures</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Telegram notifications — optional. -->
+          <div class="tg-section" style="margin-top:14px">
+            <div class="tg-section-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex-shrink:0">
+                <circle cx="12" cy="12" r="12" fill="#29B6F6"/>
+                <path d="M5.5 11.5l10-4.5-1.5 9-3-2.5-2 2v-3l5-4.5-6.5 3.5-2-1z" fill="white"/>
+              </svg>
+              <span data-i18n="telegram_notifications">Telegram Notifications</span>
+              <span style="font-weight:400;color:var(--text-muted);font-size:.82rem">(optional)</span>
+            </div>
+            <div class="tg-how" data-i18n-html="tg_how">
+              <b>How to set up:</b>
+              1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp;
+              2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID
+            </div>
+            <div class="form-row" style="margin-top:10px">
+              <div class="form-group" style="margin-bottom:0">
+                <label data-i18n="bot_token">Bot Token</label>
+                <input type="text" name="telegram_token" placeholder="123456789:ABCdef…" autocomplete="off" />
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label data-i18n="chat_id">Chat ID</label>
+                <input type="text" name="telegram_chat_id" placeholder="1234567890" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1940,7 +1938,7 @@ const TRANSLATIONS = {
     advanced_options: 'Advanced options',
     paper_title_label: 'Paper title <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
     project_id_label: 'Project ID <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
-    instructions_label: 'Instructions for Idea2Paper <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
+    instructions_label: 'Additional Instructions <span style="font-weight:400;color:var(--text-muted)">(optional)</span>',
     model: 'Model',
     launch_research: 'Launch Research',
     launch_confirm_title: 'Before you launch',
@@ -2064,7 +2062,7 @@ const TRANSLATIONS = {
     advanced_options: 'خيارات متقدمة',
     paper_title_label: 'عنوان الورقة <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
     project_id_label: 'معرف المشروع <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
-    instructions_label: 'تعليمات لـ Idea2Paper <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
+    instructions_label: 'تعليمات إضافية <span style="font-weight:400;color:var(--text-muted)">(اختياري)</span>',
     model: 'النموذج',
     launch_research: 'إطلاق البحث',
     launch_confirm_title: 'قبل الإطلاق',
@@ -2175,7 +2173,7 @@ const TRANSLATIONS = {
     advanced_options: '高级选项',
     paper_title_label: '论文标题 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
     project_id_label: '项目 ID <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
-    instructions_label: '给 Idea2Paper 的指令 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
+    instructions_label: '附加指令 <span style="font-weight:400;color:var(--text-muted)">（可选）</span>',
     model: '模型',
     launch_research: '启动研究',
     launch_confirm_title: '启动前请确认',
@@ -3724,7 +3722,7 @@ async function loadVenues() {
   if (!sel) return;
   // Admin-only "Test" template: a cheap 2-page EuroMLSys smoke test.
   const testOpt = (currentUser && currentUser.is_admin)
-    ? '<option value="Test" data-format="euromlsys" data-pages="2" data-preset="test">🧪 Test (cheap smoke test)</option>'
+    ? '<option value="Test" data-format="euromlsys" data-pages="2" data-preset="test">🧪 Smoke Test</option>'
     : '';
   sel.innerHTML = testOpt + venues.map((v, i) =>
     `<option value="${v.name}" ${i === 0 ? 'selected' : ''} data-format="${v.format}" data-pages="${v.pages}">${v.name}(${v.year || 2025})${v.tag ? ' ' + v.tag : ''}</option>`
@@ -3754,24 +3752,16 @@ function heroVenueChanged(sel) {
   const isCustom = opt.value === 'Customized';
   document.getElementById('custom-template-wrap').style.display = isCustom ? '' : 'none';
 
-  // Test template: drive the cheap-test preset + reveal the Skip… options.
+  // Smoke Test template: drive the cheap-test preset and DEFAULT the skip options
+  // ON (reuse its canned fixtures). Those checkboxes live in Advanced Options and
+  // work for every template — Test just pre-checks them; other venues default off.
   const isTest = opt.dataset.preset === 'test';
   const presetInput = document.getElementById('hero-preset');
   if (presetInput) presetInput.value = isTest ? 'test' : '';
-  const testOpts = document.getElementById('hero-test-opts');
-  if (testOpts) {
-    testOpts.style.display = isTest ? '' : 'none';
-    // Clear hidden boxes — a hidden-but-checked input still submits.
-    if (!isTest) testOpts.querySelectorAll('input[type=checkbox]').forEach(c => { c.checked = false; });
-  }
-  // The general Skip-Deep-Research toggle is redundant for the Test venue
-  // (which has its own option), so hide it there to avoid two same-named boxes.
-  const skipDr = document.getElementById('hero-skip-dr');
-  if (skipDr) {
-    skipDr.style.display = isTest ? 'none' : 'inline-flex';
-    const cb = skipDr.querySelector('input[type=checkbox]');
-    if (cb && isTest) cb.checked = false;   // don't submit a stale hidden checkbox
-  }
+  const skipDrCb = document.getElementById('hero-skip-dr-cb');
+  const skipFigsCb = document.getElementById('hero-skip-figs-cb');
+  if (skipDrCb) skipDrCb.checked = isTest;
+  if (skipFigsCb) skipFigsCb.checked = isTest;
   // Pin the idea to the fixed Test idea (the canned report/figure match it; the
   // server uses the canonical idea regardless — this just makes it visible).
   const ideaEl = document.querySelector('#hero-form [name="idea"]');

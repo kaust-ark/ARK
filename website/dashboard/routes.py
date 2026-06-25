@@ -1964,6 +1964,11 @@ async def api_create_project(
     # the cheapest available model, and a single iteration. Lets us exercise the
     # full pipeline end-to-end for a few cents.
     figure_generation = "nano_banana"
+    # "Skip AI Figures" works for every template now: disable the AI concept-figure
+    # phase (matplotlib data figures still run). The Test preset re-enables it below
+    # because it seeds a canned concept figure instead.
+    if skip_ai_figures and preset != "test":
+        figure_generation = "none"
     if preset == "test":
         if not _is_admin(user):
             raise HTTPException(403, "The Test template is admin-only.")
