@@ -788,12 +788,13 @@ After making all changes, you MUST verify the page count:
 
         # Page-fitting strictness (per-project, set in the webapp):
         #   off     — user opted out; do nothing (no compile, no passes).
-        #   relaxed — laissez-faire (DEFAULT): never expand to fill a short last
-        #             page, make at most a few best-effort compress passes if
-        #             over, then accept — never block or fail the run. This
-        #             removes the cosmetic last-page-fill passes (and the 20x
-        #             over-limit grind) that burn the most tokens.
-        #   strict  — original behaviour: hard ceiling + 70% fill, up to 20x.
+        #   relaxed — DEFAULT: accept body in [limit-1.0, limit]. Expand if the
+        #             paper is more than ~1 page short (so the last page has
+        #             content), compress if over, accept within range — never
+        #             block or fail the run; capped at a few passes. Looser than
+        #             strict's 70%-fill floor, but not "anything goes".
+        #   strict  — hard ceiling + 70% last-page fill (limit-0.15 for 2-col),
+        #             up to 20 passes.
         layout_mode = (self.config.get("layout_mode") or "relaxed").lower()
         if layout_mode not in ("off", "strict", "relaxed"):
             layout_mode = "relaxed"
@@ -826,11 +827,14 @@ After making all changes, you MUST verify the page count:
         max_pages = venue_pages
         latex_dir = self.config.get("latex_dir", "paper")
 
-        # Relaxed: drop the 70%-fill floor entirely (never expand to fill a
-        # short last page) and cap to a few best-effort compress passes.
+        # Relaxed: looser than strict's 70%-fill floor, but NOT "anything goes".
+        # Require the body to reach within ~1 page of the limit so the last page
+        # actually has content — no grossly under-filled papers (e.g. 5.5/8).
+        # Strict still enforces the tight 70%-fill floor; relaxed tolerates up to
+        # one full page short, and caps the passes (vs strict's 20).
         if layout_mode == "relaxed":
-            min_pages = 0.0
-            MAX_PAGE_ATTEMPTS = 3
+            min_pages = max(venue_pages - 1.0, 0.0)
+            MAX_PAGE_ATTEMPTS = 5
         else:  # strict
             # Hard limit of 20 attempts to prevent infinite loops.
             MAX_PAGE_ATTEMPTS = 20
