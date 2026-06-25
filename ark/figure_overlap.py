@@ -374,10 +374,18 @@ def apply_auto_fixes(script_path: Path, overlap_report: dict,
             "except ImportError:  # pragma: no cover - optional dep\n"
             "    _ark_adjust_text = None\n\n"
         )
-        # Inject setup once near the top of the file (after the first
-        # non-comment, non-import statement is risky; placing at the
-        # top right after the shebang/docstring is safest).
-        script_content = adjusttext_setup + script_content
+        # Inject setup once near the top — but AFTER any
+        # ``from __future__ import ...`` lines. A bare prepend pushes an
+        # existing ``from __future__ import annotations`` off the top of the
+        # file and raises "SyntaxError: from __future__ imports must occur at
+        # the beginning of the file" (seen regenerating CVPR/ICCV figure
+        # scripts, which start with that import).
+        _future = list(re.finditer(r'(?m)^[ \t]*from __future__ import[^\n]*\n', script_content))
+        if _future:
+            _idx = _future[-1].end()
+            script_content = script_content[:_idx] + "\n" + adjusttext_setup + script_content[_idx:]
+        else:
+            script_content = adjusttext_setup + script_content
 
         # Inject adjust_text() call before every savefig (idempotent —
         # wrapped in try/except + None-check on the imported callable).
