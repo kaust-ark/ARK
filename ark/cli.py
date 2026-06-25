@@ -89,29 +89,25 @@ def ensure_project_symlinks(project_dir: Path, code_dir: str):
 #  Venue data
 # ============================================================
 
-# One entry per LaTeX engine (venue_templates/<format>/). The parenthetical in
-# each name lists the specific conferences that template is valid for — they
-# share the same .sty/.cls, differing only in \documentclass options + pages.
+# One entry per official template. Venues grouped on the same line share the
+# exact same LaTeX style files (verified against each venue's 2026 CFP); the
+# parenthetical names the official template/format.
 VENUES = [
     {"name": "ICML",                                "format": "icml",    "pages": 8},
     {"name": "NeurIPS",                             "format": "neurips", "pages": 9},
     {"name": "ICLR",                                "format": "iclr",    "pages": 9},
     {"name": "AAAI",                                "format": "aaai",    "pages": 7},
-    {"name": "ACL / EMNLP / NAACL",                 "format": "acl",     "pages": 8},
-    {"name": "ACL / EMNLP / NAACL Short",           "format": "acl",     "pages": 4},
-    {"name": "CVPR / ICCV / WACV",                  "format": "cvpr",    "pages": 8},
     {"name": "TMLR (journal — no page limit)",      "format": "tmlr",    "pages": 12},
+    {"name": "ACL / EMNLP / NAACL",                 "format": "acl",     "pages": 8},
+    {"name": "ACL / EMNLP / NAACL (short)",         "format": "acl",     "pages": 4},
+    {"name": "CVPR / ICCV / WACV",                  "format": "cvpr",    "pages": 8},
     {"name": "MLSys",                               "format": "mlsys",   "pages": 10},
-    {"name": "EuroMLSys (ACM acmart)",              "format": "acmart",  "pages": 6},
-    {"name": "SOSP / EuroSys / ASPLOS (ACM)",       "format": "acmart",  "pages": 12},
-    {"name": "OSDI / NSDI / USENIX ATC / Security", "format": "usenix",  "pages": 13},
-    {"name": "INFOCOM (IEEE)",                      "format": "ieee",    "pages": 9},
+    {"name": "SOSP / EuroSys / ASPLOS / EuroMLSys (ACM SIGPLAN)",         "format": "acmart", "pages": 12},
+    {"name": "OSDI / NSDI / USENIX ATC / FAST / USENIX Security (USENIX)", "format": "usenix", "pages": 13},
+    {"name": "INFOCOM (IEEE — IEEEtran)",           "format": "ieee",    "pages": 9},
 ]
 
-OTHER_VENUES = [
-    {"name": "Workshop Paper",                 "format": "article", "pages": 4},
-    {"name": "Technical Report (no page limit)", "format": "article", "pages": 10},
-]
+OTHER_VENUES = []
 
 # format -> download info for LaTeX template files
 # URLs may include {year} and {prev_year} placeholders (auto-filled at runtime)

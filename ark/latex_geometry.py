@@ -141,7 +141,7 @@ VENUE_PRESETS = {
 
 # Aliases for common names
 VENUE_ALIASES = {
-    "acmart": "sigconf",   # consolidated acmart engine ships [sigconf] main.tex
+    "acmart": "acmart-sigplan",   # consolidated acmart engine ships [sigplan] main.tex (SOSP/EuroSys/ASPLOS/EuroMLSys)
     "sigplan": "acmart-sigplan",
     "acmsmall": "acmart-small",
     "acmlarge": "acmart-large",

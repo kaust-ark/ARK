@@ -1,9 +1,12 @@
-\documentclass[sigconf,nonacm,balance=false]{acmart}
+\documentclass[sigplan,nonacm,balance=false]{acmart}
 
-% ACM conferences (SOSP / EuroSys / ASPLOS / EuroMLSys / SIGCOMM / ...).
-% Class option selects the layout: sigconf (default 2-column), sigplan, acmlarge.
+% ACM SIGPLAN proceedings format. Per the official 2026 CFPs, SOSP, EuroSys,
+% ASPLOS and EuroMLSys all use acmart with the [sigplan] option (NOT sigconf):
+%   SOSP 2026    \documentclass[sigplan,10pt]{acmart}
+%   EuroSys 2026 \documentclass[sigplan,twocolumn,review,anonymous]{acmart}
+%   ASPLOS       \documentclass[sigplan,nonacm]{acmart}
 % nonacm + the lines below strip ACM-specific copyright/reference furniture so
-% the template compiles cleanly for a generic submission.
+% the template compiles cleanly for a generic (non-camera-ready) submission.
 \settopmatter{printacmref=false}
 \renewcommand\footnotetextcopyrightpermission[1]{}
 \pagestyle{plain}
