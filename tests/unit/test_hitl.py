@@ -77,7 +77,7 @@ def test_normalise_legacy_needed_items_list():
 def test_normalise_no_options_yields_empty_list():
     req = _normalise_needs_human({"summary": "Vague help"})
     assert req["options"] == []
-    assert req["timeout_minutes"] == 60  # default
+    assert req["timeout_minutes"] == 10  # default (every HITL prompt auto-continues in 10 min)
 
 
 def test_normalise_string_evidence_coerced_to_dict():
