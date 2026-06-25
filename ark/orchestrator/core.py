@@ -3085,6 +3085,11 @@ def main():
                         help="Project UUID in the webapp DB")
     parser.add_argument("--no-research", action="store_true", default=False,
                         help="Skip Gemini Deep Research")
+    parser.add_argument("--apply-instruction", type=str, default=None,
+                        help="Apply ONE targeted change (no full iteration) and exit.")
+    parser.add_argument("--apply-scope", type=str, default="edit",
+                        choices=["edit", "experiment"],
+                        help="Granularity for --apply-instruction.")
     args = parser.parse_args()
     
     # Handle termination signals
@@ -3146,6 +3151,17 @@ def main():
     # Mark as running in DB
     if db_path and project_id:
         orchestrator._sync_db(status="running", pid=os.getpid())
+
+    # Lightweight apply path: one targeted change, then back to done — no loop.
+    if args.apply_instruction:
+        try:
+            orchestrator.apply_instruction(args.apply_instruction, args.apply_scope)
+        except Exception as e:
+            orchestrator.log(f"apply_instruction error: {e}", "ERROR")
+        finally:
+            if db_path and project_id:
+                orchestrator._sync_db(status="done", pid=0)
+        return
 
     try:
         orchestrator.run()

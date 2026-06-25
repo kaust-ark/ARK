@@ -3447,34 +3447,47 @@ async function answerDecisionByIndex(decisionId, index, bubEl) {
   if (bubEl) { const note = bubEl.querySelector('.dec-note'); if (note) note.textContent = r.ok ? '✓ answered' : '⏱ this decision already closed'; }
 }
 
-// Smooth, in-thread "resume to apply" offer for a finished project — replaces a
-// jarring browser confirm(). Only shown when the message was an instruction.
-function appendResumeAction(instruction) {
+// Smooth, in-thread offer to apply an instruction to a finished project — sized
+// to the change (edit / experiment / full iteration), no jarring browser popup.
+function appendResumeAction(instruction, scope) {
+  scope = scope || 'edit';
   const thread = document.getElementById('hitl-thread');
   if (!thread) return;
+  const PLAN = {
+    edit:       { msg: '✏️ I can apply this edit directly — one quick pass, no full run.', btn: '✏️ Apply edit',     prog: '✏️ Applying your edit…' },
+    experiment: { msg: '🧪 This needs running an experiment. I can run just that and fold the results in.', btn: '🧪 Run experiment', prog: '🧪 Running the experiment…' },
+    full:       { msg: '▶ This is a broad change — best done as a full iteration.', btn: '▶ Run a full iteration', prog: '▶ Resuming a full iteration…' },
+  };
+  const plan = PLAN[scope] || PLAN.edit;
   const wrap = document.createElement('div');
   wrap.style.cssText = 'align-self:flex-start;max-width:82%';
   const bub = document.createElement('div');
   bub.style.cssText = 'padding:10px 13px;border-radius:14px;border-bottom-left-radius:4px;background:var(--bg-hover);color:var(--text-primary);font-size:.84rem;line-height:1.45';
   const q = document.createElement('div');
-  q.textContent = '💡 To apply that, I can resume the project for one more iteration.';
-  q.style.marginBottom = '8px';
+  q.textContent = plan.msg; q.style.marginBottom = '8px';
   bub.appendChild(q);
   const row = document.createElement('div');
   row.style.cssText = 'display:flex;gap:6px';
   const yes = document.createElement('button');
   yes.className = 'btn-primary'; yes.style.cssText = 'font-size:.8rem;padding:5px 12px;border-radius:8px';
-  yes.textContent = '▶ Resume & apply';
+  yes.textContent = plan.btn;
   const no = document.createElement('button');
   no.className = 'btn-secondary'; no.style.cssText = 'font-size:.8rem;padding:5px 12px;border-radius:8px';
   no.textContent = 'Dismiss';
   yes.onclick = async () => {
     row.remove();
-    q.textContent = '▶ Resuming to apply your instruction…';
-    await fetch(`${APP_BASE}/api/projects/${detailProjectId}/continue`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ comment: instruction, additional_iterations: 1 }),
-    });
+    q.textContent = plan.prog;
+    if (scope === 'full') {
+      await fetch(`${APP_BASE}/api/projects/${detailProjectId}/continue`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment: instruction, additional_iterations: 1 }),
+      });
+    } else {
+      await fetch(`${APP_BASE}/api/projects/${detailProjectId}/apply`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instruction: instruction, scope: scope }),
+      });
+    }
     setTimeout(() => loadDetail(detailProjectId), 1000);  // reconnect SSE to the now-running project
   };
   no.onclick = () => { wrap.remove(); };
@@ -3509,20 +3522,20 @@ async function hitlSend() {
   el.value = '';
   appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // instant echo (right)
   showThinking('thinking…');
-  let routed = 'steer';
+  let routed = 'steer', scope = 'edit';
   try {
     const r = await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: txt }),
     });
-    if (r.ok) { const j = await r.json(); routed = j.routed || 'steer'; }
+    if (r.ok) { const j = await r.json(); routed = j.routed || 'steer'; scope = j.scope || 'edit'; }
   } catch (e) {}
   _pendingEcho = null;
   hideThinking();
   await loadChatThread(detailProjectId);   // pull user msg + answer/ack from DB
-  // A QUESTION is already answered in place above. Only an INSTRUCTION needs a
-  // new iteration — offer it inline (smooth, dismissible), never a modal popup.
+  // A QUESTION is already answered in place above. Only an INSTRUCTION needs work
+  // — offer the smallest mechanism inline (edit / experiment / full), dismissible.
   if (routed === 'steer') {
-    appendResumeAction(txt);
+    appendResumeAction(txt, scope);
   }
 }
 

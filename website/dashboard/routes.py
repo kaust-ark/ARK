@@ -1225,6 +1225,8 @@ async def _restart_project_async(
     is_admin: bool,
     token: str,
     chat_id: str,
+    apply_instruction: str = "",
+    apply_scope: str = "edit",
 ):
     """Background task for restart/continue: offloads blocking GCP provisioning
     to a thread so the event loop stays free to serve other requests."""
@@ -1292,7 +1294,8 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
         if not cloud_cfg:
              logger.warning(f"Cloud selected for {project.id} but not configured. Falling back to local.")
              job_id = launch_local_job(project.id, project.mode, project.max_iterations,
-                                       pdir, log_dir, settings, api_keys=api_keys)
+                                       pdir, log_dir, settings, api_keys=api_keys,
+                                       apply_instruction=apply_instruction, apply_scope=apply_scope)
              update_project(session, project, status="running", slurm_job_id=job_id)
              return "running"
              
@@ -1376,7 +1379,8 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> 
     else:
         # "local" or fallback for slurm
         job_id = launch_local_job(project.id, project.mode, project.max_iterations,
-                                  pdir, log_dir, settings, api_keys=api_keys)
+                                  pdir, log_dir, settings, api_keys=api_keys,
+                                  apply_instruction=apply_instruction, apply_scope=apply_scope)
         update_project(session, project, status="running", slurm_job_id=job_id)
         return "running"
 
@@ -2408,7 +2412,11 @@ async def api_post_message(project_id: str, request: Request):
             add_message(session, project_id, "agent", answer, kind="message")
         return JSONResponse({"ok": True, "routed": "ask"})
 
-    # STEER
+    # STEER. For a finished project, also classify the change's SCOPE so the
+    # client offers the smallest mechanism (edit vs experiment vs full iteration).
+    scope = "edit"
+    if not running:
+        scope = await asyncio.to_thread(sideband.classify_steer_scope, text, keys)
     with get_session(settings.db_path) as session:
         add_message(session, project_id, "user", text, kind="steer")
         if running:
@@ -2418,7 +2426,7 @@ async def api_post_message(project_id: str, request: Request):
             add_message(session, project_id, "agent",
                         f"收到 ✅ 当前在 {where}。我会在这一步结束后应用这条指令。",
                         kind="message")
-    return JSONResponse({"ok": True, "routed": "steer", "running": running})
+    return JSONResponse({"ok": True, "routed": "steer", "running": running, "scope": scope})
 
 
 @router.post("/api/projects/{project_id}/restart")
@@ -2667,6 +2675,51 @@ async def api_continue_project(project_id: str, request: Request):
         chat_id=tg_chat,
     ))
     return JSONResponse({"ok": True, "status": "initializing", "max_iterations": new_max})
+
+
+@router.post("/api/projects/{project_id}/apply")
+async def api_apply_change(project_id: str, request: Request):
+    """Apply ONE targeted change to a finished project WITHOUT a full iteration.
+
+    scope='edit' → a single writer/coder agent makes just this change + recompile;
+    scope='experiment' → run the requested experiment, regen its figure, fold it in.
+    Heavier "make it better overall" requests should use /continue instead."""
+    user = _require_user(request)
+    _check_webapp_enabled()
+    body = await request.json()
+    instruction = (body.get("instruction") or body.get("comment") or "").strip()
+    scope = (body.get("scope") or "edit").strip()
+    if scope not in ("edit", "experiment"):
+        scope = "edit"
+    if not instruction:
+        raise HTTPException(400, "instruction required")
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project or not _can_access_project(user, project):
+            raise HTTPException(404)
+        if project.status not in ("done", "stopped", "failed"):
+            raise HTTPException(400, "Only finished projects take a direct apply.")
+        active = [p for p in get_projects_for_user(session, project.user_id)
+                  if p.status in ("queued", "running", "initializing") and p.id != project_id]
+        if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
+            raise HTTPException(400, f"You already have {len(active)} active projects. "
+                                     f"Max {MAX_CONCURRENT_PER_USER} concurrent.")
+        pdir = _project_dir(settings, project.user_id, project_id)
+        model = _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
+        _write_config_yaml(pdir, project, user, settings, model=model)
+        tg_token = project.telegram_token
+        tg_chat = project.telegram_chat_id
+        project.status = "initializing"
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+    asyncio.create_task(_restart_project_async(
+        project_id=project_id, pdir=pdir, is_admin=_is_admin(user),
+        token=tg_token, chat_id=tg_chat,
+        apply_instruction=instruction, apply_scope=scope,
+    ))
+    return JSONResponse({"ok": True, "status": "initializing", "scope": scope})
 
 
 @router.get("/api/system/status")

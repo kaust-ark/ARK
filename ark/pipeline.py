@@ -3525,6 +3525,88 @@ provide the title.
             )
         return True
 
+    def _apply_context(self) -> str:
+        title = self.config.get("title", "") or self.project_name
+        return (f"Project: {title}\n"
+                f"Paper LaTeX: paper/main.tex (and includes). Figures: paper/figures/. "
+                f"Plotting scripts: scripts/. Experiment results: results/.\n"
+                f"Read the files you need before editing.")
+
+    def apply_instruction(self, instruction: str, scope: str = "edit"):
+        """Apply ONE targeted change WITHOUT the full review→plan→execute→evaluate
+        loop — the lightweight re-entry for chat instructions on a finished project.
+
+        scope='edit'       → a single writer (prose/LaTeX) or coder (figures) agent
+                             makes just this change, then recompile. Seconds–a minute.
+        scope='experiment' → scoped: run the requested experiment for real, regenerate
+                             its figure, fold results into the paper. Needs compute,
+                             but not a whole iteration.
+        """
+        self.check_dependencies()
+        self.start_telegram_listener()
+        self._ensure_control_poller()
+        nice = "experiment" if scope == "experiment" else "edit"
+        self._set_activity(f"Applying your {nice}…")
+        self._chat("agent", f"On it — applying your {nice} directly (no full iteration).", kind="notice")
+        try:
+            if scope == "experiment":
+                self._apply_experiment(instruction)
+            else:
+                self._apply_edit(instruction)
+        except Exception as e:
+            self.log(f"apply_instruction failed: {e}", "ERROR")
+            self._chat("agent", f"Hit an error applying that: {str(e)[:200]}", kind="notice")
+            return
+        self._set_activity("")
+        self._chat("agent", "Done — applied your change and recompiled. ✅", kind="milestone")
+
+    def _apply_edit(self, instruction: str):
+        """One focused writer/coder pass + recompile."""
+        figure_words = ("figure", "plot", "chart", "diagram", "axis", "axes", "fig ",
+                        "fig.", "colour", "color", "图", "图表", "坐标", "曲线", "配色")
+        is_figure = any(w in instruction.lower() for w in figure_words)
+        agent = "coder" if is_figure else "writer"
+        ctx = self._apply_context()
+        if agent == "coder":
+            task = (f"A user asked for this change to the paper's FIGURES:\n\n"
+                    f"\"{instruction}\"\n\n{ctx}\n\n"
+                    f"Make ONLY this change — edit the relevant plotting script under "
+                    f"scripts/ and respect the figure-integrity skill (never invent data). "
+                    f"Do NOT touch unrelated files. Do NOT run the whole pipeline.")
+        else:
+            task = (f"A user asked for this change to the paper:\n\n"
+                    f"\"{instruction}\"\n\n{ctx}\n\n"
+                    f"Make ONLY this change to the LaTeX (paper/main.tex or the relevant "
+                    f"include). Keep it focused — do not rewrite unrelated sections, do not "
+                    f"alter figure/table data. Ensure it still compiles afterward.")
+        self.run_agent(agent, task, timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
+        self._ensure_clearpage_before_bibliography()
+        self.compile_latex()
+
+    def _apply_experiment(self, instruction: str):
+        """Scoped experiment: run it for real → regen figures → fold into the paper."""
+        ctx = self._apply_context()
+        self._set_activity("Running the experiment…")
+        self.run_agent("experimenter",
+                       (f"A user asked to run/add this experiment:\n\n\"{instruction}\"\n\n{ctx}\n\n"
+                        f"Implement and RUN just this experiment. Write real results to "
+                        f"results/ as JSON/CSV — never fabricate numbers. Keep it scoped to "
+                        f"this request; do not redo the whole experiment suite."),
+                       timeout=defaults.TIMEOUT_EXPERIMENTER)
+        self._set_activity("Updating figures & paper…")
+        try:
+            self.generate_figures()
+        except Exception as e:
+            self.log(f"figure regen after experiment failed: {e}", "WARN")
+        self.run_agent("writer",
+                       (f"New experiment results were just produced for:\n\n\"{instruction}\"\n\n{ctx}\n\n"
+                        f"Update the paper to report these results — numbers strictly from the "
+                        f"results/ files (figure-integrity skill). Keep edits focused on this "
+                        f"experiment; don't rewrite unrelated sections."),
+                       timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
+        self._ensure_clearpage_before_bibliography()
+        self.compile_latex()
+
     def run(self):
         """Main loop."""
         self.check_dependencies()

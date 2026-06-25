@@ -138,6 +138,46 @@ def classify_message(text: str, keys: dict) -> str:
     return "ask"
 
 
+_EXPERIMENT_HINTS = re.compile(
+    r"\b(experiment|baseline|ablation|benchmark|evaluate|measure|re-?run|run the|run a|dataset)\b"
+    r"|实验|基线|消融|评测|跑(一|个|实验)|重新跑|数据集|复现|对比实验",
+    re.I,
+)
+_FULL_HINTS = re.compile(
+    r"\b(overall|improve everything|address (all|the) (review|reviewer)|make it better|polish the (whole|entire)|another iteration|full iteration)\b"
+    r"|整体|全面|从头|大改|所有(问题|意见)|再迭代|完整迭代|重写整篇",
+    re.I,
+)
+
+
+def classify_steer_scope(text: str, keys: dict) -> str:
+    """For a STEER, pick the smallest sufficient mechanism:
+      'edit'       — local prose/LaTeX/figure change → one agent, no loop.
+      'experiment' — needs real compute (run/add an experiment).
+      'full'       — broad "make it better overall" → a full iteration.
+    Heuristic first, cheap-LLM tiebreak, default 'edit' (the cheapest)."""
+    t = text or ""
+    if _FULL_HINTS.search(t):
+        return "full"
+    if _EXPERIMENT_HINTS.search(t):
+        return "experiment"
+    system = (
+        "A user gave an INSTRUCTION to change their finished research paper. Pick the "
+        "smallest mechanism, one word:\n"
+        "  'edit'       — a local change to text/LaTeX/a figure (rewrite, shorten, fix, "
+        "relabel, resize). One quick agent pass.\n"
+        "  'experiment' — requires running/adding a real experiment or new results.\n"
+        "  'full'       — a broad 'improve the whole paper / address all reviews' request.\n"
+        "Default to 'edit' unless it clearly needs an experiment or a full overhaul. "
+        "Reply with ONLY 'edit', 'experiment', or 'full'."
+    )
+    out = (_cheap_llm(keys, system, t, max_tokens=4, timeout=10) or "").lower()
+    for s in ("experiment", "full", "edit"):
+        if s in out:
+            return s
+    return "edit"
+
+
 def answer_from_state(question: str, state_text: str, keys: dict) -> str:
     """Answer a status question from the prebuilt state snapshot. Deterministic
     fallback (the raw snapshot) if no LLM key / the call fails."""
