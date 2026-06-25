@@ -3640,6 +3640,12 @@ function startDetailStream(id) {
       // Stop SSE — do NOT call loadDetail (would restart SSE → infinite loop)
       stopDetailStream();
       setProgressWidgetVisible(false);
+      hideThinking();
+      // The final chat answer is emitted in the SAME tick as this 'done' status,
+      // and stopping the stream can drop it — reload the thread from the DB so the
+      // answer (and any missed steps) always show without a manual refresh.
+      _chatThreadFor = null;            // force loadChatThread to actually reload
+      loadChatThread(id);
       // One-shot fetch to refresh actions (PDF button, etc.)
       fetch(`${APP_BASE}/api/projects/${id}`)
         .then(r => r.json())
