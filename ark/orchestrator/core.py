@@ -3088,8 +3088,8 @@ def main():
     parser.add_argument("--apply-instruction", type=str, default=None,
                         help="Apply ONE targeted change (no full iteration) and exit.")
     parser.add_argument("--apply-scope", type=str, default="edit",
-                        choices=["edit", "experiment"],
-                        help="Granularity for --apply-instruction.")
+                        choices=["edit", "experiment", "answer"],
+                        help="Granularity for --apply-instruction (answer = read-only Q&A).")
     args = parser.parse_args()
     
     # Handle termination signals

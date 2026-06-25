@@ -3516,19 +3516,26 @@ async function hitlSend() {
     return;
   }
 
-  // Finished project → no live SSE. Send, learn how it was routed, refresh the
-  // thread to show the reply. Only a STEER (instruction) resumes the run; an
-  // ASK (a question about the finished paper) is simply answered in place.
+  // Finished project. A status question is answered instantly; a CONTENT question
+  // spins up a read-only Claude agent that reads the files (answer streams via
+  // SSE); an instruction offers the right-sized apply.
   el.value = '';
+  _pendingEcho = txt;   // dedupe the SSE echo of our own message
   appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // instant echo (right)
   showThinking('thinking…');
-  let routed = 'steer', scope = 'edit';
+  let routed = 'steer', scope = 'edit', launching = false;
   try {
     const r = await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: txt }),
     });
-    if (r.ok) { const j = await r.json(); routed = j.routed || 'steer'; scope = j.scope || 'edit'; }
+    if (r.ok) { const j = await r.json(); routed = j.routed || 'steer'; scope = j.scope || 'edit'; launching = !!j.launching; }
   } catch (e) {}
+  if (launching) {
+    // A Claude agent is investigating the real files; its answer arrives via SSE.
+    showThinking('🔍 reading the files…');
+    setTimeout(() => loadDetail(detailProjectId), 800);  // reconnect SSE (same project → thread not cleared)
+    return;
+  }
   _pendingEcho = null;
   hideThinking();
   await loadChatThread(detailProjectId);   // pull user msg + answer/ack from DB

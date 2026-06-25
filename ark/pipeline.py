@@ -3545,6 +3545,18 @@ provide the title.
         self.check_dependencies()
         self.start_telegram_listener()
         self._ensure_control_poller()
+        # 'answer' is read-only Q&A (Claude-Code-level: read the real files, reply);
+        # it gets its own framing — nothing is changed or recompiled.
+        if scope == "answer":
+            self._set_activity("Looking into your question…")
+            self._chat("agent", "🔍 Let me check the actual files…", kind="notice")
+            try:
+                self._apply_answer(instruction)
+            except Exception as e:
+                self.log(f"apply answer failed: {e}", "ERROR")
+                self._chat("agent", f"Couldn't look that up: {str(e)[:200]}", kind="message")
+            self._set_activity("")
+            return
         nice = "experiment" if scope == "experiment" else "edit"
         self._set_activity(f"Applying your {nice}…")
         self._chat("agent", f"On it — applying your {nice} directly (no full iteration).", kind="notice")
@@ -3559,6 +3571,24 @@ provide the title.
             return
         self._set_activity("")
         self._chat("agent", "Done — applied your change and recompiled. ✅", kind="milestone")
+
+    def _apply_answer(self, question: str):
+        """Read-only investigation: a Claude agent reads the real artifacts (PDF,
+        LaTeX, results) and answers accurately — no files are changed."""
+        ctx = self._apply_context()
+        out = self.run_agent(
+            "writer",
+            (f"The user asked a question about their FINISHED paper:\n\n\"{question}\"\n\n{ctx}\n\n"
+             f"INVESTIGATE for real before answering — read the compiled PDF "
+             f"(paper/main.pdf; use pdfinfo / pdftotext as needed), paper/main.tex, and "
+             f"results/ files, using whatever shell commands you need. Then give the user a "
+             f"direct, accurate, concise answer grounded in what you actually found.\n\n"
+             f"This is STRICTLY READ-ONLY: do NOT edit, create, move, or delete any file. "
+             f"End your reply with the answer itself (it is shown to the user verbatim)."),
+            timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
+        ans = (out or "").strip()
+        self._chat("agent", ans[:3000] if ans else "I couldn't find a clear answer in the files.",
+                   kind="message")
 
     def _apply_edit(self, instruction: str):
         """One focused writer/coder pass + recompile."""

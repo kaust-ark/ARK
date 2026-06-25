@@ -179,6 +179,23 @@ def classify_steer_scope(text: str, keys: dict) -> str:
     return "edit"
 
 
+_STATUS_ASK = re.compile(
+    r"到哪|哪一?步|进展|状态|咋样|怎么样了?|完了吗|好了吗|done yet|how.?s it going|"
+    r"what step|progress|status|是否完成|跑完了?吗",
+    re.I,
+)
+
+
+def classify_ask_depth(text: str) -> str:
+    """A question is either:
+      'status'  — about overall progress/state → answer instantly from the DB
+                  snapshot (cheap, no file access needed).
+      'content' — about the actual paper/results (page count, what a section says,
+                  whether citations are real) → needs a Claude agent that reads the
+                  real files. Default 'content' so answers are Claude-Code-level."""
+    return "status" if _STATUS_ASK.search(text or "") else "content"
+
+
 def answer_from_state(question: str, state_text: str, keys: dict) -> str:
     """Answer a status question from the prebuilt state snapshot. Deterministic
     fallback (the raw snapshot) if no LLM key / the call fails."""

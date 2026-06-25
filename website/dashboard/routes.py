@@ -2406,11 +2406,35 @@ async def api_post_message(project_id: str, request: Request):
     intent = await asyncio.to_thread(sideband.classify_message, text, keys)
 
     if intent == "ask":
+        # A status/progress question → instant snapshot answer. A CONTENT question
+        # (page count, what a section says, are the citations real) on a FINISHED
+        # project → a read-only Claude agent that reads the real files and answers
+        # (Claude-Code-level). Running projects always use the snapshot (don't spawn
+        # a second agent over a live run).
+        depth = "status" if running else sideband.classify_ask_depth(text)
+        if depth == "content":
+            with get_session(settings.db_path) as session:
+                project = get_project(session, project_id)
+                add_message(session, project_id, "user", text, kind="ask")
+                pdir = _project_dir(settings, project.user_id, project_id)
+                model = _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
+                _write_config_yaml(pdir, project, user, settings, model=model)
+                tg_token = project.telegram_token
+                tg_chat = project.telegram_chat_id
+                project.status = "initializing"
+                session.add(project)
+                session.commit()
+                session.refresh(project)
+            asyncio.create_task(_restart_project_async(
+                project_id=project_id, pdir=pdir, is_admin=_is_admin(user),
+                token=tg_token, chat_id=tg_chat,
+                apply_instruction=text, apply_scope="answer"))
+            return JSONResponse({"ok": True, "routed": "ask", "depth": "content", "launching": True})
         answer = await asyncio.to_thread(sideband.answer_from_state, text, state_text, keys)
         with get_session(settings.db_path) as session:
             add_message(session, project_id, "user", text, kind="ask")
             add_message(session, project_id, "agent", answer, kind="message")
-        return JSONResponse({"ok": True, "routed": "ask"})
+        return JSONResponse({"ok": True, "routed": "ask", "depth": "status"})
 
     # STEER. For a finished project, also classify the change's SCOPE so the
     # client offers the smallest mechanism (edit vs experiment vs full iteration).
@@ -2689,7 +2713,7 @@ async def api_apply_change(project_id: str, request: Request):
     body = await request.json()
     instruction = (body.get("instruction") or body.get("comment") or "").strip()
     scope = (body.get("scope") or "edit").strip()
-    if scope not in ("edit", "experiment"):
+    if scope not in ("edit", "experiment", "answer"):
         scope = "edit"
     if not instruction:
         raise HTTPException(400, "instruction required")
