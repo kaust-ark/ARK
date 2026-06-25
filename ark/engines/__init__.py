@@ -488,6 +488,14 @@ Execute the task and update the corresponding files.
                     _TRANSIENT = (
                         "RateLimitError", "ServiceUnavailableError", "TimeoutError",
                         "InternalServerError", "APIConnectionError",
+                        # OpenHands renders agent/tool output through Rich. Tool
+                        # output containing Rich-markup-like text with a backslash
+                        # (e.g. a grep hit on LaTeX such as "[strat\\...]") makes
+                        # Rich's style parser raise MissingStyle / StyleSyntaxError.
+                        # That's a cosmetic runtime glitch, NOT a provider error —
+                        # the agent's real work usually completed. Retry once
+                        # instead of hard-aborting an otherwise-healthy run.
+                        "MissingStyle", "StyleSyntaxError",
                     )
                     # Mid-stream network disconnects surface as a generic
                     # APIError whose *code* isn't in _TRANSIENT — but the upstream
@@ -500,6 +508,10 @@ Execute the task and update the corresponding files.
                         "connection reset", "connection aborted",
                         "connection broken", "server disconnected",
                         "eof occurred", "remoteprotocolerror",
+                        # Rich style-parser crash on markup-like tool output (see
+                        # MissingStyle note above) — match by message text too, in
+                        # case the surfaced error_code is generic.
+                        "is not a valid color", "failed to get style",
                     )
                     _detail_l = (oh_error_detail or "").lower()
                     _is_transient = (
