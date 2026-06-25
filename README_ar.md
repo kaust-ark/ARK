@@ -473,6 +473,14 @@ ark setup-bot    # لمرة واحدة: الصق توكن BotFather، وسيتم
 
 تأتي قوالب LaTeX جاهزة لـ **NeurIPS وICML وICLR وAAAI وMLSys**، وعائلة **ACL** (ACL / EMNLP / NAACL / EACL / AACL / COLING)، وعائلة **CVF** (CVPR / ICCV / WACV)، وعائلة **ACM acmart** (SOSP / EuroSys / ASPLOS / EuroMLSys)، وعائلة **USENIX** (OSDI / NSDI / ATC / FAST / Security)، و**IEEE / IEEEtran** (INFOCOM وغيرها من مؤتمرات IEEE) &mdash; جميعها من ملفات الأنماط الرسمية لعام 2026 (يستخدم MLSys حزمة 2025 دون تغيير) &mdash; إضافةً إلى قالب **article** عام لـ TMLR وورش العمل والتقارير التقنية. كما يُقبل استخدام قوالب مخصّصة &mdash; إذ يفحص idea2paper ملفات `.tex` / `.aux` / `.sty` لاستيعاب التنسيق، ويصلح أخطاء التجميع، ويضبط حد الصفحات بدقة.
 
+## المجتمع
+
+<p align="center">
+  <strong>微信交流群 / Join our WeChat group</strong><br>
+  <img src="assets/wechat_qr.jpg" alt="WeChat group: Idea2Paper" width="240"><br>
+  <sub>يتم تحديث رمز QR لمجموعة WeChat دوريًا — افتح issue إذا انتهت صلاحيته.</sub>
+</p>
+
 ## الترخيص
 
 [Apache 2.0](LICENSE)

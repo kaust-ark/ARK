@@ -657,6 +657,14 @@ ark setup-bot    # 一次性操作：粘贴 BotFather 令牌，自动检测聊�
 
 随仓库提供的 LaTeX 模板：**NeurIPS、ICML、ICLR、AAAI、MLSys**，以及 **ACL** 族（ACL / EMNLP / NAACL / EACL / AACL / COLING）、**CVF** 族（CVPR / ICCV / WACV）、**ACM acmart** 族（SOSP / EuroSys / ASPLOS / EuroMLSys）、**USENIX** 族（OSDI / NSDI / ATC / FAST / Security）、**IEEE / IEEEtran**（INFOCOM 及其他 IEEE 会议）——全部取自官方 2026 样式文件（MLSys 沿用其未变的 2025 套件）——另含通用 **article** 兜底模板（TMLR、Workshop、技术报告）。同样接受自定义模板 &mdash; idea2paper 会扫描 `.tex` / `.aux` / `.sty` 学习排版、修编译错误、并精确控制页数。
 
+## 社区
+
+<p align="center">
+  <strong>微信交流群 / Join our WeChat group</strong><br>
+  <img src="assets/wechat_qr.jpg" alt="WeChat group: Idea2Paper" width="240"><br>
+  <sub>微信群二维码会定期更新；若已过期，请提 issue 联系我们。</sub>
+</p>
+
 ## 许可证
 
 [Apache 2.0](LICENSE)
