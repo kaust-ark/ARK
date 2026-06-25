@@ -3144,7 +3144,7 @@ async def api_venues():
         # ── Systems/Security — USENIX (one template for all) ──
         {"name": "OSDI / NSDI / USENIX ATC / FAST / USENIX Security (USENIX)", "format": "usenix", "pages": 13, "year": 2026},
         # ── Networking — IEEE (IEEEtran conference) ──
-        {"name": "INFOCOM (IEEE — IEEEtran)", "format": "ieee", "pages": 9, "year": 2026},
+        {"name": "INFOCOM (IEEEtran)", "format": "ieee", "pages": 9, "year": 2026},
     ]
     return JSONResponse(venues)
 

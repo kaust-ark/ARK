@@ -104,7 +104,7 @@ VENUES = [
     {"name": "MLSys",                               "format": "mlsys",   "pages": 10},
     {"name": "SOSP / EuroSys / ASPLOS / EuroMLSys (ACM SIGPLAN)",         "format": "acmart", "pages": 12},
     {"name": "OSDI / NSDI / USENIX ATC / FAST / USENIX Security (USENIX)", "format": "usenix", "pages": 13},
-    {"name": "INFOCOM (IEEE — IEEEtran)",           "format": "ieee",    "pages": 9},
+    {"name": "INFOCOM (IEEEtran)",                  "format": "ieee",    "pages": 9},
 ]
 
 OTHER_VENUES = []
