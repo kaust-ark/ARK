@@ -815,7 +815,7 @@
           </div>
           <div class="hero-adv-field">
             <label data-i18n="model_vendor">Model Vendor</label>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="if(event.target&&event.target.name==='model'){document.getElementById('model-unverified').value='';document.getElementById('model-openrouter-more').value='';}">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="if(event.target&&event.target.name==='model'){_userPickedModel=true;document.getElementById('model-unverified').value='';document.getElementById('model-openrouter-more').value='';}">
               <div class="model-legend"><span class="rec">★</span> Recommended &nbsp;·&nbsp; 💰 relative cost (per token)</div>
               <div class="model-group-label">OpenRouter</div>
               <!-- Row 1: open / cost-efficient models -->
@@ -4736,11 +4736,11 @@ function _otherProvidersBody() { return Object.assign({}, _otherProviders); }
 function onExtraModelPick(sel) {
   const others = ['model-openrouter-more', 'model-unverified'];
   if (sel.value) {
+    _userPickedModel = true;
     document.querySelectorAll('input[name="model"]').forEach(x => { x.checked = false; });
     others.forEach(id => { if (id !== sel.id) { const o = document.getElementById(id); if (o) o.value = ''; } });
   } else {
-    const def = document.querySelector('input[name="model"][value="claude-sonnet-4-6"]');
-    if (def) def.checked = true;
+    selectDefaultModel();   // back to the configured-key default
   }
 }
 // Which model rows are usable. Keys are PARALLEL — each vendor row lights up
@@ -4767,6 +4767,23 @@ function applyModelGating() {
     const input = lbl.querySelector('input'); if (input) input.disabled = !ok;
   });
   applyVendorCollapse();
+  selectDefaultModel();
+}
+
+// Default model selection follows configured keys, in vendor order (OpenRouter
+// first, then Anthropic/OpenAI/Gemini), and within a vendor the first model in
+// display order. With an OpenRouter key that lands on DeepSeek V4 (row-1, first
+// chip). Skips disabled (unconfigured) chips; never overrides a manual pick.
+let _userPickedModel = false;
+function selectDefaultModel() {
+  if (_userPickedModel) return;
+  const more = document.getElementById('model-openrouter-more');
+  const unver = document.getElementById('model-unverified');
+  if ((more && more.value) || (unver && unver.value)) return;  // a dropdown model is chosen
+  const radios = document.querySelectorAll('#model-options input[type="radio"][name="model"]');
+  for (const r of radios) {
+    if (!r.disabled) { r.checked = true; return; }
+  }
 }
 
 // Req: a vendor group with no usable key (all chips greyed) is collapsed by
