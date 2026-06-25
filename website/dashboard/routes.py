@@ -3141,10 +3141,10 @@ async def api_venues():
         {"name": "CVF (CVPR, ICCV, WACV)", "format": "cvpr", "pages": 8, "year": 2026},
         # ── ML Systems ──
         {"name": "MLSys", "format": "mlsys", "pages": 10, "year": 2026},
-        # ── ACM SIGPLAN — acmart [sigplan] (per 2026 CFPs) ──
-        {"name": "ACM SIGPLAN (SOSP, EuroSys, ASPLOS, EuroMLSys)", "format": "acmart", "pages": 12, "year": 2026},
+        # ── ACM SIGPLAN — acmart [sigplan] (verified each venue's 2026 CFP) ──
+        {"name": "ACM SIGPLAN (SOSP, EuroSys, ASPLOS, PPoPP)", "format": "acmart", "pages": 12, "year": 2026},
         # ── USENIX — one template for all ──
-        {"name": "USENIX (OSDI, NSDI, ATC, FAST, USENIX Security)", "format": "usenix", "pages": 13, "year": 2026},
+        {"name": "USENIX (OSDI, NSDI, FAST, USENIX Security)", "format": "usenix", "pages": 13, "year": 2026},
         # ── IEEEtran — IEEE conference mode ──
         {"name": "IEEEtran (INFOCOM, ICC, GLOBECOM, ICASSP)", "format": "ieee", "pages": 9, "year": 2026},
     ]

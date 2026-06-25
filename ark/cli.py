@@ -101,8 +101,8 @@ VENUES = [
     {"name": "ACL — short (ACL, EMNLP, NAACL)",            "format": "acl",     "pages": 4},
     {"name": "CVF (CVPR, ICCV, WACV)",                     "format": "cvpr",    "pages": 8},
     {"name": "MLSys",                                       "format": "mlsys",   "pages": 10},
-    {"name": "ACM SIGPLAN (SOSP, EuroSys, ASPLOS, EuroMLSys)",  "format": "acmart", "pages": 12},
-    {"name": "USENIX (OSDI, NSDI, ATC, FAST, USENIX Security)", "format": "usenix", "pages": 13},
+    {"name": "ACM SIGPLAN (SOSP, EuroSys, ASPLOS, PPoPP)",      "format": "acmart", "pages": 12},
+    {"name": "USENIX (OSDI, NSDI, FAST, USENIX Security)",      "format": "usenix", "pages": 13},
     {"name": "IEEEtran (INFOCOM, ICC, GLOBECOM, ICASSP)",  "format": "ieee",    "pages": 9},
 ]
 
