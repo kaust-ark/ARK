@@ -3454,9 +3454,8 @@ function appendResumeAction(instruction, scope) {
   const thread = document.getElementById('hitl-thread');
   if (!thread) return;
   const PLAN = {
-    edit:       { msg: '✏️ I can apply this edit directly — one quick pass, no full run.', btn: '✏️ Apply edit',     prog: '✏️ Applying your edit…' },
+    edit:       { msg: '✏️ I can apply this directly — one focused pass.', btn: '✏️ Apply', prog: '✏️ Applying…' },
     experiment: { msg: '🧪 This needs running an experiment. I can run just that and fold the results in.', btn: '🧪 Run experiment', prog: '🧪 Running the experiment…' },
-    full:       { msg: '▶ This is a broad change — best done as a full iteration.', btn: '▶ Run a full iteration', prog: '▶ Resuming a full iteration…' },
   };
   const plan = PLAN[scope] || PLAN.edit;
   const wrap = document.createElement('div');
@@ -3477,18 +3476,11 @@ function appendResumeAction(instruction, scope) {
   yes.onclick = async () => {
     row.remove();
     q.textContent = plan.prog;
-    if (scope === 'full') {
-      await fetch(`${APP_BASE}/api/projects/${detailProjectId}/continue`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comment: instruction, additional_iterations: 1 }),
-      });
-    } else {
-      await fetch(`${APP_BASE}/api/projects/${detailProjectId}/apply`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction: instruction, scope: scope }),
-      });
-    }
-    setTimeout(() => loadDetail(detailProjectId), 1000);  // reconnect SSE to the now-running project
+    await fetch(`${APP_BASE}/api/projects/${detailProjectId}/apply`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instruction: instruction, scope: (scope === 'experiment' ? 'experiment' : 'edit') }),
+    });
+    setTimeout(() => startDetailStream(detailProjectId), 800);  // reconnect SSE, keep the thread
   };
   no.onclick = () => { wrap.remove(); };
   row.appendChild(yes); row.appendChild(no);
@@ -3506,8 +3498,8 @@ async function hitlSend() {
     // Running project → the message is classified server-side (ask vs steer).
     // The agent's answer / "收到" ack streams back over SSE; just echo + post.
     el.value = '';
-    _pendingEcho = txt;
     appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // instant echo (right)
+    _pendingEcho = txt;                                                     // now dedupe the SSE re-delivery
     showThinking('thinking…');                                              // dots (left) until reply
     await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3520,8 +3512,8 @@ async function hitlSend() {
   // spins up a read-only Claude agent that reads the files (answer streams via
   // SSE); an instruction offers the right-sized apply.
   el.value = '';
-  _pendingEcho = txt;   // dedupe the SSE echo of our own message
   appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // instant echo (right)
+  _pendingEcho = txt;   // now dedupe the SSE re-delivery of this same message
   showThinking('thinking…');
   let routed = 'steer', scope = 'edit', launching = false;
   try {
@@ -3532,8 +3524,10 @@ async function hitlSend() {
   } catch (e) {}
   if (launching) {
     // A Claude agent is investigating the real files; its answer arrives via SSE.
+    // Reconnect the stream directly (NOT loadDetail — that re-renders and can drop
+    // the just-echoed message); the optimistic bubble + dots stay put.
     showThinking('🔍 reading the files…');
-    setTimeout(() => loadDetail(detailProjectId), 800);  // reconnect SSE (same project → thread not cleared)
+    startDetailStream(detailProjectId);
     return;
   }
   _pendingEcho = null;

@@ -144,38 +144,28 @@ _EXPERIMENT_HINTS = re.compile(
     r"|实验|基线|消融|评测|跑(一|个|实验)|重新跑|数据集|复现|对比实验",
     re.I,
 )
-_FULL_HINTS = re.compile(
-    r"\b(overall|improve everything|address (all|the) (review|reviewer)|make it better|polish the (whole|entire)|another iteration|full iteration)\b"
-    r"|整体|全面|从头|大改|所有(问题|意见)|再迭代|完整迭代|重写整篇",
-    re.I,
-)
-
-
 def classify_steer_scope(text: str, keys: dict) -> str:
-    """For a STEER, pick the smallest sufficient mechanism:
-      'edit'       — local prose/LaTeX/figure change → one agent, no loop.
-      'experiment' — needs real compute (run/add an experiment).
-      'full'       — broad "make it better overall" → a full iteration.
-    Heuristic first, cheap-LLM tiebreak, default 'edit' (the cheapest)."""
+    """For a STEER, pick the mechanism — the chat is out-of-band MANAGEMENT, so it
+    just executes the change; it never launches the heavy full-iteration loop.
+      'edit'       — any change the agent can make directly (prose/LaTeX/figure,
+                     including expanding/condensing the paper). One agent pass.
+      'experiment' — needs real compute (run/add an experiment for new results).
+    Heuristic first, cheap-LLM tiebreak, default 'edit'."""
     t = text or ""
-    if _FULL_HINTS.search(t):
-        return "full"
     if _EXPERIMENT_HINTS.search(t):
         return "experiment"
     system = (
-        "A user gave an INSTRUCTION to change their finished research paper. Pick the "
-        "smallest mechanism, one word:\n"
-        "  'edit'       — a local change to text/LaTeX/a figure (rewrite, shorten, fix, "
-        "relabel, resize). One quick agent pass.\n"
-        "  'experiment' — requires running/adding a real experiment or new results.\n"
-        "  'full'       — a broad 'improve the whole paper / address all reviews' request.\n"
-        "Default to 'edit' unless it clearly needs an experiment or a full overhaul. "
-        "Reply with ONLY 'edit', 'experiment', or 'full'."
+        "A user gave an INSTRUCTION to change their research paper. Pick one word:\n"
+        "  'edit'       — a change the writer can make directly: rewrite, shorten, "
+        "EXPAND/lengthen, fix, relabel, resize a figure, restructure prose.\n"
+        "  'experiment' — requires RUNNING or ADDING a real experiment / new results "
+        "(new data, a baseline, an ablation).\n"
+        "Default to 'edit' unless it clearly needs running an experiment. "
+        "Reply with ONLY 'edit' or 'experiment'."
     )
     out = (_cheap_llm(keys, system, t, max_tokens=4, timeout=10) or "").lower()
-    for s in ("experiment", "full", "edit"):
-        if s in out:
-            return s
+    if "experiment" in out:
+        return "experiment"
     return "edit"
 
 
