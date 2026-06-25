@@ -98,7 +98,6 @@ VENUES = [
     {"name": "AAAI",                                        "format": "aaai",    "pages": 7},
     {"name": "TMLR (journal — no page limit)",             "format": "tmlr",    "pages": 12},
     {"name": "ACL (ACL, EMNLP, NAACL, EACL, AACL, COLING)", "format": "acl",     "pages": 8},
-    {"name": "ACL — short (ACL, EMNLP, NAACL)",            "format": "acl",     "pages": 4},
     {"name": "CVF (CVPR, ICCV, WACV)",                     "format": "cvpr",    "pages": 8},
     {"name": "MLSys",                                       "format": "mlsys",   "pages": 10},
     {"name": "ACM SIGPLAN (SOSP, EuroSys, ASPLOS, PPoPP)",      "format": "acmart", "pages": 12},

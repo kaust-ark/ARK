@@ -3136,7 +3136,6 @@ async def api_venues():
         {"name": "TMLR (journal — no page limit)", "format": "tmlr", "pages": 12, "year": 2026},
         # ── ACL — Association for Computational Linguistics ──
         {"name": "ACL (ACL, EMNLP, NAACL, EACL, AACL, COLING)", "format": "acl", "pages": 8, "year": 2026},
-        {"name": "ACL — short (ACL, EMNLP, NAACL)",            "format": "acl", "pages": 4, "year": 2026},
         # ── CVF — Computer Vision Foundation ──
         {"name": "CVF (CVPR, ICCV, WACV)", "format": "cvpr", "pages": 8, "year": 2026},
         # ── ML Systems ──
