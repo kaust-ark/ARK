@@ -89,22 +89,21 @@ def ensure_project_symlinks(project_dir: Path, code_dir: str):
 #  Venue data
 # ============================================================
 
-# One entry per official template. Venues grouped on the same line share the
-# exact same LaTeX style files (verified against each venue's 2026 CFP); the
-# parenthetical names the official template/format.
+# Each entry's name is the template / organization; the parenthetical lists
+# example venues that use it (verified against the venues' official CFPs).
 VENUES = [
-    {"name": "ICML",                                "format": "icml",    "pages": 8},
-    {"name": "NeurIPS",                             "format": "neurips", "pages": 9},
-    {"name": "ICLR",                                "format": "iclr",    "pages": 9},
-    {"name": "AAAI",                                "format": "aaai",    "pages": 7},
-    {"name": "TMLR (journal — no page limit)",      "format": "tmlr",    "pages": 12},
-    {"name": "ACL / EMNLP / NAACL",                 "format": "acl",     "pages": 8},
-    {"name": "ACL / EMNLP / NAACL (short)",         "format": "acl",     "pages": 4},
-    {"name": "CVPR / ICCV / WACV",                  "format": "cvpr",    "pages": 8},
-    {"name": "MLSys",                               "format": "mlsys",   "pages": 10},
-    {"name": "SOSP / EuroSys / ASPLOS / EuroMLSys (ACM SIGPLAN)",         "format": "acmart", "pages": 12},
-    {"name": "OSDI / NSDI / USENIX ATC / FAST / USENIX Security (USENIX)", "format": "usenix", "pages": 13},
-    {"name": "INFOCOM (IEEEtran)",                  "format": "ieee",    "pages": 9},
+    {"name": "ICML",                                        "format": "icml",    "pages": 8},
+    {"name": "NeurIPS",                                     "format": "neurips", "pages": 9},
+    {"name": "ICLR",                                        "format": "iclr",    "pages": 9},
+    {"name": "AAAI",                                        "format": "aaai",    "pages": 7},
+    {"name": "TMLR (journal — no page limit)",             "format": "tmlr",    "pages": 12},
+    {"name": "ACL (ACL, EMNLP, NAACL, EACL, AACL, COLING)", "format": "acl",     "pages": 8},
+    {"name": "ACL — short (ACL, EMNLP, NAACL)",            "format": "acl",     "pages": 4},
+    {"name": "CVF (CVPR, ICCV, WACV)",                     "format": "cvpr",    "pages": 8},
+    {"name": "MLSys",                                       "format": "mlsys",   "pages": 10},
+    {"name": "ACM SIGPLAN (SOSP, EuroSys, ASPLOS, EuroMLSys)",  "format": "acmart", "pages": 12},
+    {"name": "USENIX (OSDI, NSDI, ATC, FAST, USENIX Security)", "format": "usenix", "pages": 13},
+    {"name": "IEEEtran (INFOCOM, ICC, GLOBECOM, ICASSP)",  "format": "ieee",    "pages": 9},
 ]
 
 OTHER_VENUES = []

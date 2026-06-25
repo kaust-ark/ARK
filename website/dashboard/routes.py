@@ -3125,26 +3125,28 @@ async def api_venues():
     # One entry per official template. Venues grouped on the same line share the
     # exact same LaTeX style files (verified against each venue's 2026 CFP); the
     # parenthetical names the official template/format.
+    # Each entry's name is the template / organization; the parenthetical lists
+    # example venues that use it (verified against the venues' official CFPs).
     venues = [
-        # ── ML / AI ──
+        # ── ML / AI (one template each) ──
         {"name": "ICML",    "format": "icml",    "pages": 8, "year": 2026},
         {"name": "NeurIPS", "format": "neurips", "pages": 9, "year": 2026},
         {"name": "ICLR",    "format": "iclr",    "pages": 9, "year": 2026},
         {"name": "AAAI",    "format": "aaai",    "pages": 7, "year": 2026},
         {"name": "TMLR (journal — no page limit)", "format": "tmlr", "pages": 12, "year": 2026},
-        # ── NLP — ACL style files (also EACL / AACL / COLING) ──
-        {"name": "ACL / EMNLP / NAACL",         "format": "acl", "pages": 8, "year": 2026},
-        {"name": "ACL / EMNLP / NAACL (short)", "format": "acl", "pages": 4, "year": 2026},
-        # ── Computer Vision — CVF style ──
-        {"name": "CVPR / ICCV / WACV", "format": "cvpr", "pages": 8, "year": 2026},
+        # ── ACL — Association for Computational Linguistics ──
+        {"name": "ACL (ACL, EMNLP, NAACL, EACL, AACL, COLING)", "format": "acl", "pages": 8, "year": 2026},
+        {"name": "ACL — short (ACL, EMNLP, NAACL)",            "format": "acl", "pages": 4, "year": 2026},
+        # ── CVF — Computer Vision Foundation ──
+        {"name": "CVF (CVPR, ICCV, WACV)", "format": "cvpr", "pages": 8, "year": 2026},
         # ── ML Systems ──
         {"name": "MLSys", "format": "mlsys", "pages": 10, "year": 2026},
-        # ── Systems — ACM SIGPLAN (acmart [sigplan]); per 2026 CFPs SOSP/EuroSys/ASPLOS/EuroMLSys all use sigplan ──
-        {"name": "SOSP / EuroSys / ASPLOS / EuroMLSys (ACM SIGPLAN)", "format": "acmart", "pages": 12, "year": 2026},
-        # ── Systems/Security — USENIX (one template for all) ──
-        {"name": "OSDI / NSDI / USENIX ATC / FAST / USENIX Security (USENIX)", "format": "usenix", "pages": 13, "year": 2026},
-        # ── Networking — IEEE (IEEEtran conference) ──
-        {"name": "INFOCOM (IEEEtran)", "format": "ieee", "pages": 9, "year": 2026},
+        # ── ACM SIGPLAN — acmart [sigplan] (per 2026 CFPs) ──
+        {"name": "ACM SIGPLAN (SOSP, EuroSys, ASPLOS, EuroMLSys)", "format": "acmart", "pages": 12, "year": 2026},
+        # ── USENIX — one template for all ──
+        {"name": "USENIX (OSDI, NSDI, ATC, FAST, USENIX Security)", "format": "usenix", "pages": 13, "year": 2026},
+        # ── IEEEtran — IEEE conference mode ──
+        {"name": "IEEEtran (INFOCOM, ICC, GLOBECOM, ICASSP)", "format": "ieee", "pages": 9, "year": 2026},
     ]
     return JSONResponse(venues)
 
