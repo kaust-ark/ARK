@@ -29,12 +29,13 @@ logger = logging.getLogger(__name__)
 # and act as the fallback when no key / the LLM call fails.
 _ASK_HINTS = re.compile(
     r"[?？]|^(what|how|why|when|where|which|who|is |are |did |does |can you tell|status|progress)"
-    r"|怎么|咋|啥|多少|进展|到哪|哪一?步|状态|为什么|为啥|是不是|有没有|完了吗|好了吗|过了吗|现在",
+    r"|怎么|咋|啥|多少|进展|到哪|哪一?步|状态|为什么|为啥|是不是|有没有|完了吗|好了吗|过了吗",
     re.I,
-)
+)  # NOTE: '现在' deliberately NOT an ask-hint — it appears in instructions too
+   # ("现在是6页，扩展到8页"). Only real question particles bias toward 'ask'.
 _STEER_HINTS = re.compile(
     r"^(please |pls |make |change |use |add |remove |focus|don'?t|do not|stop using|switch|set |avoid|prefer|should use|instead)"
-    r"|把|改成?|别|不要|换成|聚焦|加上|去掉|删掉|应该用|改用|换个|重新|重写|重做|扩写|缩短|补充|换成",
+    r"|把|改成?|别|不要|换成|聚焦|加上|去掉|删掉|应该用|改用|换个|重新|重写|重做|扩写|扩展|扩充|扩到|增加到|加到|补到|缩短|缩到|补充|换成",
     re.I,
 )
 
