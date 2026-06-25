@@ -3447,6 +3447,43 @@ async function answerDecisionByIndex(decisionId, index, bubEl) {
   if (bubEl) { const note = bubEl.querySelector('.dec-note'); if (note) note.textContent = r.ok ? '✓ answered' : '⏱ this decision already closed'; }
 }
 
+// Smooth, in-thread "resume to apply" offer for a finished project — replaces a
+// jarring browser confirm(). Only shown when the message was an instruction.
+function appendResumeAction(instruction) {
+  const thread = document.getElementById('hitl-thread');
+  if (!thread) return;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'align-self:flex-start;max-width:82%';
+  const bub = document.createElement('div');
+  bub.style.cssText = 'padding:10px 13px;border-radius:14px;border-bottom-left-radius:4px;background:var(--bg-hover);color:var(--text-primary);font-size:.84rem;line-height:1.45';
+  const q = document.createElement('div');
+  q.textContent = '💡 To apply that, I can resume the project for one more iteration.';
+  q.style.marginBottom = '8px';
+  bub.appendChild(q);
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px';
+  const yes = document.createElement('button');
+  yes.className = 'btn-primary'; yes.style.cssText = 'font-size:.8rem;padding:5px 12px;border-radius:8px';
+  yes.textContent = '▶ Resume & apply';
+  const no = document.createElement('button');
+  no.className = 'btn-secondary'; no.style.cssText = 'font-size:.8rem;padding:5px 12px;border-radius:8px';
+  no.textContent = 'Dismiss';
+  yes.onclick = async () => {
+    row.remove();
+    q.textContent = '▶ Resuming to apply your instruction…';
+    await fetch(`${APP_BASE}/api/projects/${detailProjectId}/continue`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ comment: instruction, additional_iterations: 1 }),
+    });
+    setTimeout(() => loadDetail(detailProjectId), 1000);  // reconnect SSE to the now-running project
+  };
+  no.onclick = () => { wrap.remove(); };
+  row.appendChild(yes); row.appendChild(no);
+  bub.appendChild(row); wrap.appendChild(bub);
+  thread.appendChild(wrap);
+  thread.scrollTop = thread.scrollHeight;
+}
+
 async function hitlSend() {
   const el = document.getElementById('hitl-input');
   const txt = (el.value || '').trim();
@@ -3482,14 +3519,10 @@ async function hitlSend() {
   _pendingEcho = null;
   hideThinking();
   await loadChatThread(detailProjectId);   // pull user msg + answer/ack from DB
+  // A QUESTION is already answered in place above. Only an INSTRUCTION needs a
+  // new iteration — offer it inline (smooth, dismissible), never a modal popup.
   if (routed === 'steer') {
-    if (!confirm('Resume the project and run another iteration to act on your instruction?')) return;
-    appendBubble({ id: null, role: 'system', kind: 'notice', text: 'Resuming the project with your instruction…' });
-    await fetch(`${APP_BASE}/api/projects/${detailProjectId}/continue`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ comment: txt, additional_iterations: 1 }),
-    });
-    setTimeout(() => loadDetail(detailProjectId), 1000);  // reconnect SSE to the now-running project
+    appendResumeAction(txt);
   }
 }
 

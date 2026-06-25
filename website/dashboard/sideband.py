@@ -34,7 +34,7 @@ _ASK_HINTS = re.compile(
 )
 _STEER_HINTS = re.compile(
     r"^(please |pls |make |change |use |add |remove |focus|don'?t|do not|stop using|switch|set |avoid|prefer|should use|instead)"
-    r"|把|改成?|别|不要|换成|聚焦|加上|去掉|删掉|应该用|改用|换个|重新",
+    r"|把|改成?|别|不要|换成|聚焦|加上|去掉|删掉|应该用|改用|换个|重新|重写|重做|扩写|缩短|补充|换成",
     re.I,
 )
 
@@ -118,10 +118,14 @@ def classify_message(text: str, keys: dict) -> str:
     if h:
         return h
     system = (
-        "Classify a user's chat message to their running AI research project as "
-        "exactly one word: 'ask' (they want information about status/progress/"
-        "state/results) or 'steer' (they are instructing the agent to change what "
-        "it does). Reply with ONLY 'ask' or 'steer'."
+        "Classify a user's chat message to their AI research project as exactly "
+        "one word:\n"
+        "  'ask'   — they want information: status, progress, results, why a "
+        "choice was made, what a figure/number means, how it's going. Questions.\n"
+        "  'steer' — a clear, actionable INSTRUCTION to change the work: add/"
+        "remove/redo something, use a different method, fix X, rewrite Y.\n"
+        "When in doubt, choose 'ask' — only answer 'steer' for an unmistakable "
+        "command to change something. Reply with ONLY 'ask' or 'steer'."
     )
     out = (_cheap_llm(keys, system, text or "", max_tokens=4, timeout=10) or "").lower()
     if "steer" in out:
