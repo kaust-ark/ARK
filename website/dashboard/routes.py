@@ -2431,6 +2431,15 @@ async def api_post_message(project_id: str, request: Request):
             token=tg_token, chat_id=tg_chat, chat_message=text))
         return JSONResponse({"ok": True, "routed": "chat", "launching": True})
 
+    # A chat turn is already in progress (it set activity "💬 …") — don't route
+    # this message into the steer void; tell the user to hold on.
+    if running and activity.startswith("💬"):
+        with get_session(settings.db_path) as session:
+            add_message(session, project_id, "user", text, kind="message")
+            add_message(session, project_id, "agent",
+                        "⏳ 我还在处理上一条，稍等一下再发。", kind="notice")
+        return JSONResponse({"ok": True, "routed": "busy"})
+
     # Phase 2 (no session held): classify; LLM calls are offloaded so the async
     # event loop isn't blocked.
     intent = await asyncio.to_thread(sideband.classify_message, text, keys)

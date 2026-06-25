@@ -3427,13 +3427,44 @@ function appendBubble(m) {
       bub.appendChild(opts);
       const note = document.createElement('div'); note.className = 'dec-note'; note.style.cssText = 'font-size:.72rem;color:var(--text-muted);margin-top:6px'; note.textContent = '…or just type your answer below.';
       bub.appendChild(note);
+    } else if (!isUser) {
+      bub.innerHTML = renderMarkdown(m.text);   // agent messages → rendered markdown
     } else {
-      bub.textContent = htmlToText(m.text);
+      bub.textContent = htmlToText(m.text);     // user messages → plain
     }
     wrap.appendChild(bub);
   }
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
+}
+
+// Minimal, XSS-safe markdown for chat bubbles: escape HTML first, then render
+// bold/italic/code/headings/lists/tables/links. Agent replies are markdown.
+function renderMarkdown(src) {
+  let s = (src || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // fenced code blocks
+  s = s.replace(/```[a-z]*\n?([\s\S]*?)```/g,
+    (m, c) => `<pre style="background:var(--bg);border:1px solid var(--card-border);border-radius:6px;padding:8px;overflow-x:auto;font-size:.8rem;margin:6px 0">${c.replace(/\n$/, '')}</pre>`);
+  // GitHub-style tables (| a | b | with a --- separator row)
+  s = s.replace(/(^\|.*\|\s*\n\|[\s:|-]+\|\s*\n(?:\|.*\|\s*\n?)*)/gm, (block) => {
+    const rows = block.trim().split('\n').filter(r => r.trim());
+    if (rows.length < 2) return block;
+    const cells = r => r.replace(/^\||\|$/g, '').split('|').map(x => x.trim());
+    let html = '<table style="border-collapse:collapse;margin:6px 0;font-size:.82rem">';
+    html += '<tr>' + cells(rows[0]).map(h => `<th style="border:1px solid var(--card-border);padding:3px 8px;text-align:left">${h}</th>`).join('') + '</tr>';
+    for (let i = 2; i < rows.length; i++)
+      html += '<tr>' + cells(rows[i]).map(d => `<td style="border:1px solid var(--card-border);padding:3px 8px">${d}</td>`).join('') + '</tr>';
+    return html + '</table>';
+  });
+  s = s.replace(/`([^`]+)`/g, '<code style="background:var(--bg);padding:1px 5px;border-radius:4px;font-size:.85em">$1</code>');
+  s = s.replace(/^###?\s+(.+)$/gm, '<strong>$1</strong>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  s = s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  s = s.replace(/^\s*[-*]\s+(.+)$/gm, '• $1');
+  // collapse leftover table-marker lines, then newlines → <br> (not inside block tags)
+  s = s.replace(/\n/g, '<br>').replace(/(<\/(?:pre|table)>)<br>/g, '$1');
+  return s;
 }
 
 async function answerDecisionByIndex(decisionId, index, bubEl) {
@@ -3501,10 +3532,13 @@ async function hitlSend() {
     appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // instant echo (right)
     _pendingEcho = txt;                                                     // now dedupe the SSE re-delivery
     showThinking('thinking…');                                              // dots (left) until reply
-    await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: txt }),
-    });
+    try {
+      const r = await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: txt }),
+      });
+      if (r.ok) { const j = await r.json(); if (j.routed === 'busy') hideThinking(); }
+    } catch (e) {}
     return;
   }
 
