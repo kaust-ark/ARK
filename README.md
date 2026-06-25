@@ -776,6 +776,14 @@ What you get:
 
 LaTeX templates ship for **NeurIPS, ICML, ICLR, AAAI, MLSys**, the **ACL** family (ACL / EMNLP / NAACL / EACL / AACL / COLING), the **CVF** family (CVPR / ICCV / WACV), the **ACM acmart** family (SOSP / EuroSys / ASPLOS / EuroMLSys), the **USENIX** family (OSDI / NSDI / ATC / FAST / Security), and **IEEE / IEEEtran** (INFOCOM and other IEEE venues) &mdash; all from official 2026 style files (MLSys reuses its unchanged 2025 kit) &mdash; plus a generic **article** fallback for TMLR, workshops, and technical reports. Custom templates are still accepted: idea2paper scans `.tex` / `.aux` / `.sty` to learn the layout, fixes compile errors, and enforces the venue page limit.
 
+## Community
+
+<p align="center">
+  <strong>微信交流群 / Join our WeChat group</strong><br>
+  <img src="assets/wechat_qr.jpg" alt="WeChat group: Idea2Paper" width="240"><br>
+  <sub>群二维码会定期更新；若已过期，请提 issue 联系我们 / QR refreshes periodically — open an issue if it has expired.</sub>
+</p>
+
 ## License
 
 [Apache 2.0](LICENSE)
