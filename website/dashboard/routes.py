@@ -1227,6 +1227,7 @@ async def _restart_project_async(
     chat_id: str,
     apply_instruction: str = "",
     apply_scope: str = "edit",
+    chat_message: str = "",
 ):
     """Background task for restart/continue: offloads blocking GCP provisioning
     to a thread so the event loop stays free to serve other requests."""
@@ -1239,7 +1240,8 @@ async def _restart_project_async(
                 return None, None, None
             try:
                 final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=is_admin,
-                                                      apply_instruction=apply_instruction, apply_scope=apply_scope)
+                                                      apply_instruction=apply_instruction, apply_scope=apply_scope,
+                                                      chat_message=chat_message)
                 return final_status, _pname(project), None
             except Exception as e:
                 logger.error(f"Restart failed for {project_id}: {e}", exc_info=True)
@@ -1262,7 +1264,8 @@ async def _restart_project_async(
 
 
 def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
-                           apply_instruction: str = "", apply_scope: str = "edit") -> str:
+                           apply_instruction: str = "", apply_scope: str = "edit",
+                           chat_message: str = "") -> str:
     from sqlmodel import select as _sel
     active = session.exec(
         _sel(Project).where(Project.status.in_(["queued", "running"]))
@@ -1297,7 +1300,8 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
              logger.warning(f"Cloud selected for {project.id} but not configured. Falling back to local.")
              job_id = launch_local_job(project.id, project.mode, project.max_iterations,
                                        pdir, log_dir, settings, api_keys=api_keys,
-                                       apply_instruction=apply_instruction, apply_scope=apply_scope)
+                                       apply_instruction=apply_instruction, apply_scope=apply_scope,
+                                       chat_message=chat_message)
              update_project(session, project, status="running", slurm_job_id=job_id)
              return "running"
              
@@ -1382,7 +1386,8 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
         # "local" or fallback for slurm
         job_id = launch_local_job(project.id, project.mode, project.max_iterations,
                                   pdir, log_dir, settings, api_keys=api_keys,
-                                  apply_instruction=apply_instruction, apply_scope=apply_scope)
+                                  apply_instruction=apply_instruction, apply_scope=apply_scope,
+                                  chat_message=chat_message)
         update_project(session, project, status="running", slurm_job_id=job_id)
         return "running"
 
@@ -2402,6 +2407,29 @@ async def api_post_message(project_id: str, request: Request):
         running = (project.status == "running")
         activity = project.activity or ""
         state_text = sideband.build_state_readmodel(session, project)
+
+    # FINISHED project → hand the message to the PERSISTENT OpenHands chat agent
+    # (Claude-Code-level: full memory + file access; it decides whether to answer,
+    # read, edit, or run, and streams its steps). Running projects keep the
+    # lightweight classify path below (the orchestrator is the live agent — we
+    # steer it rather than spawn a competitor).
+    if not running and project.status in ("done", "stopped", "failed"):
+        with get_session(settings.db_path) as session:
+            project = get_project(session, project_id)
+            add_message(session, project_id, "user", text, kind="message")
+            pdir = _project_dir(settings, project.user_id, project_id)
+            model = _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
+            _write_config_yaml(pdir, project, user, settings, model=model)
+            tg_token = project.telegram_token
+            tg_chat = project.telegram_chat_id
+            project.status = "initializing"
+            session.add(project)
+            session.commit()
+            session.refresh(project)
+        asyncio.create_task(_restart_project_async(
+            project_id=project_id, pdir=pdir, is_admin=_is_admin(user),
+            token=tg_token, chat_id=tg_chat, chat_message=text))
+        return JSONResponse({"ok": True, "routed": "chat", "launching": True})
 
     # Phase 2 (no session held): classify; LLM calls are offloaded so the async
     # event loop isn't blocked.

@@ -3523,10 +3523,10 @@ async function hitlSend() {
     if (r.ok) { const j = await r.json(); routed = j.routed || 'steer'; scope = j.scope || 'edit'; launching = !!j.launching; }
   } catch (e) {}
   if (launching) {
-    // A Claude agent is investigating the real files; its answer arrives via SSE.
-    // Reconnect the stream directly (NOT loadDetail — that re-renders and can drop
-    // the just-echoed message); the optimistic bubble + dots stay put.
-    showThinking('🔍 reading the files…');
+    // The persistent Claude agent is working (read/edit/run); its steps + reply
+    // stream in over SSE. Reconnect the stream directly (NOT loadDetail — that
+    // re-renders and can drop the just-echoed message); the bubble + dots stay.
+    showThinking('💬 working…');
     startDetailStream(detailProjectId);
     return;
   }

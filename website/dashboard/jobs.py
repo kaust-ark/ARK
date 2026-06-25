@@ -677,6 +677,7 @@ def launch_local_job(
     api_keys: dict[str, str] = None,
     apply_instruction: str = "",
     apply_scope: str = "edit",
+    chat_message: str = "",
 ) -> str:
     """Launch orchestrator as a local subprocess. Returns 'local:{pid}'.
 
@@ -727,6 +728,9 @@ def launch_local_job(
         # Lightweight targeted change instead of a full iteration loop.
         cmd += ["--apply-instruction", apply_instruction,
                 "--apply-scope", apply_scope or "edit"]
+    if chat_message:
+        # Persistent streaming chat turn (out-of-band management).
+        cmd += ["--chat-message", chat_message]
 
     # Inline wrapper (uses webapp's Python — only needs subprocess + pathlib).
     # Runs orchestrator in the correct env, then writes exit code to sentinel.

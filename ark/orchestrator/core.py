@@ -3090,6 +3090,9 @@ def main():
     parser.add_argument("--apply-scope", type=str, default="edit",
                         choices=["edit", "experiment", "answer"],
                         help="Granularity for --apply-instruction (answer = read-only Q&A).")
+    parser.add_argument("--chat-message", type=str, default=None,
+                        help="One out-of-band chat turn (persistent OpenHands "
+                             "conversation, streamed), then exit.")
     args = parser.parse_args()
     
     # Handle termination signals
@@ -3151,6 +3154,17 @@ def main():
     # Mark as running in DB
     if db_path and project_id:
         orchestrator._sync_db(status="running", pid=os.getpid())
+
+    # Persistent streaming chat turn (out-of-band management), then back to done.
+    if args.chat_message:
+        try:
+            orchestrator.chat_turn(args.chat_message)
+        except Exception as e:
+            orchestrator.log(f"chat_turn error: {e}", "ERROR")
+        finally:
+            if db_path and project_id:
+                orchestrator._sync_db(status="done", pid=0)
+        return
 
     # Lightweight apply path: one targeted change, then back to done — no loop.
     if args.apply_instruction:

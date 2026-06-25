@@ -3525,6 +3525,41 @@ provide the title.
             )
         return True
 
+    def chat_turn(self, message: str):
+        """Out-of-band chat: ONE turn of a PERSISTENT OpenHands conversation with
+        full memory + file access (Claude-Code-level). The agent itself decides
+        whether to answer, read, edit, or run; its tool steps stream to the chat
+        live, and the final reply is posted as the answer. The conversation id is
+        kept in the workspace so the next turn resumes with full context."""
+        from ark.chat_agent import run_chat_turn, load_conversation_id
+        self.start_telegram_listener()
+        self._ensure_control_poller()
+        self._set_activity("💬 Working on it…")
+        model = self.config.get("model_variant") or self.model
+        conv = load_conversation_id(self.code_dir)
+        _icon = {"command": "$", "edit": "✎", "read": "▸", "thought": "💭",
+                 "action": "•", "error": "✗"}
+
+        def on_step(step):
+            if step.type == "result":
+                return  # bare tool outputs are noisy
+            summary = (step.summary or "").strip()
+            if not summary:
+                return
+            self._chat("agent", f"{_icon.get(step.type, '•')} {summary[:300]}", kind="notice")
+
+        try:
+            answer, _conv_id, _ok = run_chat_turn(
+                workspace=self.code_dir, message=message, model=model,
+                conversation_id=conv, on_step=on_step, log=self.log)
+        except Exception as e:
+            self.log(f"chat_turn failed: {e}", "ERROR")
+            self._set_activity("")
+            self._chat("agent", f"Hit an error: {str(e)[:200]}", kind="message")
+            return
+        self._set_activity("")
+        self._chat("agent", answer or "Done.", kind="message")
+
     def _apply_context(self) -> str:
         title = self.config.get("title", "") or self.project_name
         return (f"Project: {title}\n"
