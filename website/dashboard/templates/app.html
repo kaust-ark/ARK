@@ -3613,7 +3613,7 @@ function scrollLogToBottom() {
 
 function startDetailStream(id) {
   if (detailEventSource) detailEventSource.close();
-  const es = new EventSource(`/api/projects/${id}/stream`);
+  const es = new EventSource(`${APP_BASE}/api/projects/${id}/stream`);
   detailEventSource = es;
 
   es.onmessage = (e) => {
