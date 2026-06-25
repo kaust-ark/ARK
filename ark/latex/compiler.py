@@ -1416,6 +1416,12 @@ and also output it in your response. Format:
             self.log(f"  Using PaperBanana without reference retrieval", "INFO")
 
         try:
+            # Pass the models EXPLICITLY. PaperBanana's ExpConfig otherwise loads
+            # configs/model_config.yaml, whose `main_model_name: gemini-flash-latest`
+            # (an invalid OpenRouter slug) takes precedence over our env vars — it
+            # 400-fails every text agent (planner/stylist/critic), so the image
+            # model draws blind and produces a generic off-topic diagram. Setting
+            # these here bypasses the bad file and restores the full pipeline.
             exp_config = ExpConfig(
                 dataset_name="PaperBananaBench",
                 task_name="diagram",
@@ -1423,6 +1429,8 @@ and also output it in your response. Format:
                 retrieval_setting=retrieval,
                 max_critic_rounds=3,
                 work_dir=pb_dir,
+                main_model_name=os.environ.get("MAIN_MODEL_NAME") or "gemini-3.1-pro-preview",
+                image_gen_model_name=os.environ.get("IMAGE_GEN_MODEL_NAME") or "gemini-3.1-flash-image-preview",
             )
 
             processor = PaperVizProcessor(
