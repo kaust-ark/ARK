@@ -952,10 +952,6 @@
           <div class="hero-adv-field" style="margin-top:12px">
             <label>Experiments Backend</label>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <label class="model-option">
-                <input type="radio" name="compute_backend" value="local" />
-                <span class="model-chip">🖥️ Local</span>
-              </label>
               <label class="model-option" id="hero-backend-slurm-label">
                 <input type="radio" name="compute_backend" value="slurm" checked />
                 <span class="model-chip">🔧 Slurm</span>
@@ -1335,8 +1331,7 @@
     <div class="form-group">
       <label>Experiments Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <label class="model-option"><input type="radio" name="continue-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
-        <label class="model-option"><input type="radio" name="continue-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
+        <label class="model-option"><input type="radio" name="continue-backend" value="slurm" checked /><span class="model-chip">🔧 Slurm</span></label>
         <label class="model-option" id="continue-backend-cloud-gcp-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
         <label class="model-option" id="continue-backend-cloud-aws-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
         <label class="model-option" id="continue-backend-cloud-azure-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
@@ -1453,8 +1448,7 @@
     <div class="form-group">
       <label>Experiments Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <label class="model-option"><input type="radio" name="restart-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
-        <label class="model-option"><input type="radio" name="restart-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
+        <label class="model-option"><input type="radio" name="restart-backend" value="slurm" checked /><span class="model-chip">🔧 Slurm</span></label>
         <label class="model-option" id="restart-backend-cloud-gcp-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
         <label class="model-option" id="restart-backend-cloud-aws-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
         <label class="model-option" id="restart-backend-cloud-azure-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
@@ -2364,7 +2358,13 @@ function _applyCloudProviderButtons() {
         if (!lbl) continue;
         const input = lbl.querySelector('input');
         const available = providers.includes(p);
-        lbl.style.display = available ? '' : 'none';
+        // Always SHOW cloud backends; grey out the ones not configured yet so the
+        // user knows the option exists (and where to enable it) rather than hiding it.
+        lbl.style.display = '';
+        lbl.style.opacity = available ? '' : '.4';
+        lbl.style.pointerEvents = available ? '' : 'none';
+        lbl.style.cursor = available ? '' : 'not-allowed';
+        lbl.title = available ? '' : `Add ${p.toUpperCase()} credentials in Settings → Cloud to use this backend`;
         if (input) input.disabled = !available;
       }
     }
@@ -2610,12 +2610,11 @@ async function loadGateBanner() {
   const orchSlurmLbl = document.getElementById('hero-orch-backend-slurm-label');
   if (orchSlurmLbl) orchSlurmLbl.style.display = window._sysSlurm ? '' : 'none';
   if (!window._sysSlurm) {
+    // No slurm on this host. "Local" was removed (Slurm vs Cloud), so the user
+    // must pick a cloud backend; the cloud-default logic below selects one if any
+    // is configured. Just uncheck the (hidden) slurm radio.
     const slurmRadio = document.querySelector('input[name="compute_backend"][value="slurm"]');
-    const localRadio = document.querySelector('input[name="compute_backend"][value="local"]');
-    if (slurmRadio && slurmRadio.checked && localRadio) {
-      slurmRadio.checked = false;
-      localRadio.checked = true;
-    }
+    if (slurmRadio) slurmRadio.checked = false;
   }
 
   // Also check user-level cloud credentials (user may supply their own keys
@@ -4088,7 +4087,7 @@ async function submitContinue() {
   const iter = Math.max(1, Math.min(5, parseInt(document.getElementById('continue-iter').value) || 1));
   const comment = document.getElementById('continue-comment').value.trim();
   const model = ([...document.querySelectorAll('input[name="continue-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-4-6';
-  const backend = ([...document.querySelectorAll('input[name="continue-backend"]')].find(r => r.checked) || {}).value || 'local';
+  const backend = ([...document.querySelectorAll('input[name="continue-backend"]')].find(r => r.checked) || {}).value || 'slurm';
   const orchBackend = ([...document.querySelectorAll('input[name="continue-orch-backend"]')].find(r => r.checked) || {}).value || 'local';
   const gcpOverrides = backend === 'cloud:gcp' ? _collectGcpOptions('continue') : null;
   const btn = document.getElementById('continue-btn');
@@ -4234,7 +4233,7 @@ async function submitRestart() {
       telegram_token: document.getElementById('restart-tg-token').value.trim(),
       telegram_chat_id: document.getElementById('restart-tg-chatid').value.trim(),
       comment: document.getElementById('restart-comment').value.trim(),
-      compute_backend: ([...document.querySelectorAll('input[name="restart-backend"]')].find(r => r.checked) || {}).value || 'local',
+      compute_backend: ([...document.querySelectorAll('input[name="restart-backend"]')].find(r => r.checked) || {}).value || 'slurm',
       orchestrator_compute_backend: ([...document.querySelectorAll('input[name="restart-orch-backend"]')].find(r => r.checked) || {}).value || 'local',
       redo_deep_research: !document.getElementById('restart-keep-dr').checked,
       keep_figures: document.getElementById('restart-keep-figures').checked,
