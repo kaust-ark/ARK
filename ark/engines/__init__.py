@@ -488,6 +488,10 @@ Execute the task and update the corresponding files.
                     _TRANSIENT = (
                         "RateLimitError", "ServiceUnavailableError", "TimeoutError",
                         "InternalServerError", "APIConnectionError",
+                        # 502/504 from the provider's gateway/proxy (Cloudflare etc.,
+                        # often returns an HTML error page instead of JSON) — purely
+                        # transient, so retry instead of hard-aborting the run.
+                        "BadGatewayError", "GatewayTimeoutError",
                         # OpenHands renders agent/tool output through Rich. Tool
                         # output containing Rich-markup-like text with a backslash
                         # (e.g. a grep hit on LaTeX such as "[strat\\...]") makes
@@ -508,6 +512,7 @@ Execute the task and update the corresponding files.
                         "connection reset", "connection aborted",
                         "connection broken", "server disconnected",
                         "eof occurred", "remoteprotocolerror",
+                        "bad gateway", "gateway timeout",
                         # Rich style-parser crash on markup-like tool output (see
                         # MissingStyle note above) — match by message text too, in
                         # case the surfaced error_code is generic.
