@@ -1238,7 +1238,8 @@ async def _restart_project_async(
             if not project:
                 return None, None, None
             try:
-                final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=is_admin)
+                final_status = _try_submit_or_pending(project, pdir, session, settings, is_admin=is_admin,
+                                                      apply_instruction=apply_instruction, apply_scope=apply_scope)
                 return final_status, _pname(project), None
             except Exception as e:
                 logger.error(f"Restart failed for {project_id}: {e}", exc_info=True)
@@ -1260,7 +1261,8 @@ async def _restart_project_async(
     )
 
 
-def _try_submit_or_pending(project, pdir, session, settings, is_admin=False) -> str:
+def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
+                           apply_instruction: str = "", apply_scope: str = "edit") -> str:
     from sqlmodel import select as _sel
     active = session.exec(
         _sel(Project).where(Project.status.in_(["queued", "running"]))
