@@ -3376,6 +3376,7 @@ function closeStaleDecisions() {
 
 async function loadChatThread(pid) {
   _chatThreadFor = pid; _chatSeen = new Set();
+  _pendingEcho = null;   // full reload from DB — never dedupe the user's own message away
   const thread = document.getElementById('hitl-thread');
   if (thread) thread.innerHTML = '';
   try {
@@ -3410,7 +3411,7 @@ function appendBubble(m) {
       if (guardrail) bub.style.cssText += ';border:1.5px solid #ef4444;background:#fef2f2;color:#7f1d1d';
       bub.dataset.decisionId = m.meta.decision_id || '';
       const q = document.createElement('div'); q.style.fontWeight = '600';
-      q.textContent = (guardrail ? '🛑 Action needs approval: ' : '⚠️ ') + htmlToText(m.text || 'Decision needed');
+      q.textContent = (guardrail ? '🛑 ' : '⚠️ ') + htmlToText(m.text || 'Decision needed');
       bub.appendChild(q);
       if (m.meta.context) { const c = document.createElement('div'); c.style.cssText = 'font-size:.78rem;color:var(--text-second);margin-top:4px'; c.textContent = htmlToText(m.meta.context); bub.appendChild(c); }
       const opts = document.createElement('div'); opts.style.cssText = 'display:flex;flex-direction:column;gap:5px;margin-top:8px';

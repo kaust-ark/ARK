@@ -61,8 +61,7 @@ class ApprovalRequest:
         """Human-readable approval card."""
         sev = Severity.name(self.severity)
         lines = [
-            f"⚠️ Approval needed — {self.origin}",
-            f"• Action: {self.reason}",
+            f"{self.origin} wants to: {self.reason}",
             f"• Command: {self.detail}",
         ]
         if self.consequence:
