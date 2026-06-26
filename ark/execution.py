@@ -787,19 +787,23 @@ After making all changes, you MUST verify the page count:
             return True
 
         # Page-fitting strictness (per-project, set in the webapp):
-        #   off     — user opted out; do nothing (no compile, no passes).
-        #   relaxed — DEFAULT: accept body in [limit-1.0, limit]. Expand if the
-        #             paper is more than ~1 page short (so the last page has
-        #             content), compress if over, accept within range — never
-        #             block or fail the run; capped at a few passes. Looser than
-        #             strict's 70%-fill floor, but not "anything goes".
-        #   strict  — hard ceiling + 70% last-page fill (limit-0.15 for 2-col),
-        #             up to 20 passes.
-        layout_mode = (self.config.get("layout_mode") or "relaxed").lower()
-        if layout_mode not in ("off", "strict", "relaxed"):
-            layout_mode = "relaxed"
+        #   relaxed  — no adjustment; take the paper as written (cheapest).
+        #   balanced — DEFAULT: keep the body within ~1 page of the limit. Expand
+        #              if more than ~1 page short (so the last page has content),
+        #              compress if over; accept within range, never block/fail;
+        #              capped at a few passes.
+        #   strict   — hard ceiling + 70% last-page fill (limit-0.15 for 2-col),
+        #              up to 20 passes.
+        # NOTE: 'relaxed' now means NO adjustment. The old [limit-1] floor that
+        # used to be called 'relaxed' is now 'balanced'. Back-compat: old 'off'
+        # configs map to the new 'relaxed' (both = no adjustment).
+        layout_mode = (self.config.get("layout_mode") or "balanced").lower()
         if layout_mode == "off":
-            self.log(f"[{context}] Page fitting OFF — skipping page enforcement", "INFO")
+            layout_mode = "relaxed"
+        if layout_mode not in ("relaxed", "balanced", "strict"):
+            layout_mode = "balanced"
+        if layout_mode == "relaxed":
+            self.log(f"[{context}] Page fitting: relaxed — no page adjustment", "INFO")
             return True
 
         self.compile_latex()
@@ -827,12 +831,12 @@ After making all changes, you MUST verify the page count:
         max_pages = venue_pages
         latex_dir = self.config.get("latex_dir", "paper")
 
-        # Relaxed: looser than strict's 70%-fill floor, but NOT "anything goes".
+        # Balanced: looser than strict's 70%-fill floor, but NOT "anything goes".
         # Require the body to reach within ~1 page of the limit so the last page
         # actually has content — no grossly under-filled papers (e.g. 5.5/8).
-        # Strict still enforces the tight 70%-fill floor; relaxed tolerates up to
-        # one full page short, and caps the passes (vs strict's 20).
-        if layout_mode == "relaxed":
+        # Strict enforces the tight 70%-fill floor; balanced tolerates up to one
+        # full page short, and caps the passes (vs strict's 20).
+        if layout_mode == "balanced":
             min_pages = max(venue_pages - 1.0, 0.0)
             MAX_PAGE_ATTEMPTS = 5
         else:  # strict
@@ -881,10 +885,10 @@ After making all changes, you MUST verify the page count:
                 continue
 
             if self._quota_exhausted:
-                # Relaxed mode never fails the run over page count — accept and
+                # Balanced mode never fails the run over page count — accept and
                 # move on. Strict mode escalates so the caller can handle it.
-                if layout_mode == "relaxed":
-                    self.log(f"[{context}] Quota exhausted; relaxed mode accepts "
+                if layout_mode == "balanced":
+                    self.log(f"[{context}] Quota exhausted; balanced mode accepts "
                              f"{page_count:.1f}/{venue_pages} pages as-is", "WARN")
                     return True
                 self.log(f"[{context}] Quota exhausted, cannot enforce page count "
@@ -948,18 +952,18 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             # instead of looping fruitlessly.
             stall_count = sum(1 for h in history[-3:] if abs(h["after"] - h["before"]) < 0.01)
             if stall_count >= 3:
-                if layout_mode == "relaxed":
-                    self.log(f"[{context}] Relaxed mode: page count stalled at "
+                if layout_mode == "balanced":
+                    self.log(f"[{context}] Balanced mode: page count stalled at "
                              f"{page_count:.1f}/{venue_pages} — accepting as-is", "INFO")
                     return True
                 self.log(f"[{context}] Page count stalled at {page_count:.1f} for 3 consecutive "
                          f"attempts — aborting page enforcement", "ERROR")
                 return False
 
-        # Exhausted max attempts. In relaxed mode this is expected (a few
+        # Exhausted max attempts. In balanced mode this is expected (a few
         # best-effort passes, then accept) — log it softly, not as an error.
-        if layout_mode == "relaxed":
-            self.log(f"[{context}] Relaxed mode: accepting {page_count:.1f}/{venue_pages} "
+        if layout_mode == "balanced":
+            self.log(f"[{context}] Balanced mode: accepting {page_count:.1f}/{venue_pages} "
                      f"pages after {MAX_PAGE_ATTEMPTS} best-effort pass(es)", "INFO")
             return True
         self.log(f"[{context}] Page enforcement failed after {MAX_PAGE_ATTEMPTS} attempts "

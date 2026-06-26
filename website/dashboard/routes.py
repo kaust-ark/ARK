@@ -532,7 +532,7 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
         "venue": project.venue,
         "venue_format": project.venue_format,
         "venue_pages": project.venue_pages,
-        "layout_mode": getattr(project, "layout_mode", "relaxed") or "relaxed",
+        "layout_mode": getattr(project, "layout_mode", "balanced") or "balanced",
         "mode": project.mode,
         "model": model_str,
         "model_variant": "",
@@ -1912,7 +1912,7 @@ async def api_create_project(
     venue: str = Form("NeurIPS"),
     venue_format: str = Form("neurips"),
     venue_pages: int = Form(9),
-    layout_mode: str = Form("relaxed"),
+    layout_mode: str = Form("balanced"),
     mode: str = Form("paper"),
     max_iterations: int = Form(1),
     max_dev_iterations: int = Form(1),
@@ -1973,7 +1973,7 @@ async def api_create_project(
         if not _is_admin(user):
             raise HTTPException(403, "The Test template is admin-only.")
         venue, venue_format, venue_pages = "ACM SIGPLAN", "euromlsys", 2
-        layout_mode, mode = "relaxed", "paper"
+        layout_mode, mode = "balanced", "paper"
         max_iterations, max_dev_iterations = 1, 1
         # Defaults to a full run (real Deep Research + real AI figures). The two
         # "Skip …" boxes seed canned fixtures instead (see copy_test_fixtures
@@ -2089,10 +2089,12 @@ async def api_create_project(
         model_variant = _to_litellm_model(model)
         model_backend = model_variant.split("/", 1)[0] or "anthropic"
 
-    # Page fitting strictness (off | strict | relaxed). Relaxed is the default
-    # — it skips the cosmetic last-page-fill passes that burn the most tokens.
-    if layout_mode not in ("off", "strict", "relaxed"):
+    # Page fitting strictness: relaxed (no adjustment) | balanced (within ~1 page,
+    # default) | strict (exact). Back-compat: old 'off' == new 'relaxed'.
+    if layout_mode == "off":
         layout_mode = "relaxed"
+    if layout_mode not in ("relaxed", "balanced", "strict"):
+        layout_mode = "balanced"
 
     with get_session(settings.db_path) as session:
         project = create_project(
