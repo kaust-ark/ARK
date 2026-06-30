@@ -761,3 +761,147 @@ If you weren't expecting this, you can ignore this email.
             logger.warning(f"SMTP failed ({e}), trying sendmail fallback…")
 
     return _sendmail_fallback(from_addr, to_email, msg_str)
+
+
+def send_access_declined_email(settings, to_email: str, user_name: str = "",
+                               reason: str = "") -> bool:
+    """Notify a user that their dashboard access request was declined.
+
+    ``reason`` is the admin-supplied explanation and is shown verbatim.
+    """
+    from email.utils import formatdate, make_msgid
+    from email.mime.image import MIMEImage
+    from html import escape as _esc
+
+    logo_path = Path(__file__).parent / "static" / "logo_ark_transparent.png"
+    greeting = user_name.strip() or "there"
+    reason = (reason or "").strip()
+
+    subject = "Update on your Idea2Paper access request"
+
+    plain = f"""\
+Hi {greeting},
+
+Thank you for your interest in the Idea2Paper Dashboard. After reviewing
+your request, we're unable to grant access at this time.
+
+{("Reason: " + reason) if reason else ""}
+
+If you think this was a mistake or your circumstances change, you're
+welcome to reply to this email or write to contact@idea2paper.org and
+we'll be happy to take another look.
+
+-- Idea2Paper Team
+"""
+
+    reason_block = ""
+    if reason:
+        reason_block = f"""\
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0 6px;">
+      <tr>
+        <td style="padding:14px 16px;background:#fef2f2;border-radius:10px;border-left:4px solid #dc2626;">
+          <p style="margin:0;color:#7f1d1d;font-size:14px;line-height:1.6;">
+            <strong style="color:#dc2626;">Reason</strong><br/>
+            {_esc(reason)}
+          </p>
+        </td>
+      </tr>
+    </table>"""
+
+    html = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/></head>
+<body style="margin:0;padding:0;background:#f0fdfa;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdfa;padding:32px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- Banner -->
+  <tr><td bgcolor="#0d9488" style="background:#0d9488;background:linear-gradient(135deg,#0d9488 0%,#134e4a 100%);padding:40px 40px 36px;text-align:center;">
+    <table cellpadding="0" cellspacing="0" style="margin:0 auto 16px;"><tr>
+      <td><img src="cid:ark_logo" alt="Idea2Paper" height="52" style="display:block;" /></td>
+      <td style="padding-left:14px;color:#ccfbf1;font-size:38px;font-weight:300;letter-spacing:6px;vertical-align:middle;font-family:Georgia,'Times New Roman',serif;">Idea2Paper</td>
+    </tr></table>
+    <h1 style="margin:0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.3px;">
+      Access Request Update
+    </h1>
+  </td></tr>
+
+  <!-- Body -->
+  <tr><td style="padding:32px 44px 18px;">
+    <p style="margin:0 0 18px;color:#333;font-size:15px;line-height:1.7;">
+      Hi <strong>{_esc(greeting)}</strong>,
+    </p>
+    <p style="margin:0 0 6px;color:#333;font-size:15px;line-height:1.7;">
+      Thank you for your interest in the Idea2Paper Dashboard. After reviewing
+      your request, we&rsquo;re unable to grant access at this time.
+    </p>
+    {reason_block}
+    <p style="margin:22px 0 0;color:#555;font-size:13px;line-height:1.7;">
+      If you think this was a mistake or your circumstances change, just reply
+      here or write to
+      <a href="mailto:contact@idea2paper.org" style="color:#0d9488;text-decoration:none;font-weight:600;">contact@idea2paper.org</a>
+      and we&rsquo;ll be happy to take another look.
+    </p>
+  </td></tr>
+
+  <!-- Footer -->
+  <tr><td style="background:#f8fffe;padding:22px 44px;border-top:1px solid #e0f2f1;">
+    <p style="margin:0;color:#999;font-size:12px;line-height:1.5;text-align:center;">
+      Idea2Paper<br/>
+      Sent in response to your Idea2Paper Dashboard access request.
+    </p>
+  </td></tr>
+
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+"""
+
+    from_addr = getattr(settings, "smtp_from", "") or "contact@idea2paper.org"
+
+    msg = MIMEMultipart("alternative")
+    msg.attach(MIMEText(plain, "plain"))
+
+    html_related = MIMEMultipart("related")
+    html_related.attach(MIMEText(html, "html"))
+    if logo_path.exists():
+        with open(logo_path, "rb") as f:
+            logo = MIMEImage(f.read(), _subtype="png")
+        logo.add_header("Content-ID", "<ark_logo>")
+        logo.add_header("Content-Disposition", "inline", filename="logo.png")
+        html_related.attach(logo)
+    msg.attach(html_related)
+
+    msg["From"] = f"Idea2Paper Team <{from_addr}>"
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain="idea2paper.org")
+    msg_str = msg.as_string()
+
+    relay = getattr(settings, "smtp_relay", "")
+    if relay:
+        try:
+            with smtplib.SMTP(relay, 25, timeout=10) as server:
+                server.sendmail(from_addr, to_email, msg_str)
+            logger.info(f"Access-declined email sent via relay to {to_email}")
+            return True
+        except Exception as e:
+            logger.warning(f"Relay failed ({e}), trying SMTP auth…")
+
+    if settings.smtp_user and settings.smtp_password:
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
+                server.starttls()
+                server.login(settings.smtp_user, settings.smtp_password)
+                server.sendmail(from_addr, to_email, msg_str)
+            logger.info(f"Access-declined email sent via SMTP to {to_email}")
+            return True
+        except Exception as e:
+            logger.warning(f"SMTP failed ({e}), trying sendmail fallback…")
+
+    return _sendmail_fallback(from_addr, to_email, msg_str)

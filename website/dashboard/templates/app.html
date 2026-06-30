@@ -86,21 +86,13 @@
     }
     .gate-banner .gate-dot { font-size: 1rem; }
 
-    /* ── admin panel ── */
-    .admin-panel {
-      background: #fef3c7; border: 1px solid #f59e0b; border-radius: 10px;
-      padding: 12px 18px; margin-bottom: 18px;
-      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    /* ── admin ── */
+    #nav-admin-link {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 32px; height: 32px; border-radius: 8px; color: var(--text-second);
+      border: 1px solid var(--border); text-decoration: none; transition: all .15s;
     }
-    .admin-panel .admin-label {
-      font-size: .8rem; font-weight: 700; color: #92400e;
-      text-transform: uppercase; letter-spacing: .05em; flex-shrink: 0;
-    }
-    .admin-panel .admin-status {
-      font-size: .9rem; font-weight: 500; flex: 1;
-    }
-    .admin-panel .admin-status.ok { color: #15803d; }
-    .admin-panel .admin-status.off { color: #dc2626; }
+    #nav-admin-link:hover { color: var(--teal); border-color: var(--teal); background: var(--teal-soft, #f0fdfa); }
     .btn-admin {
       font-size: .8rem; font-weight: 600; padding: 5px 14px; border-radius: 6px;
       border: none; cursor: pointer; transition: all .15s; flex-shrink: 0;
@@ -572,7 +564,38 @@
 
     /* ── admin page ── */
     .admin-page { padding: 32px 24px; max-width: 1200px; margin: 0 auto; }
-    .admin-controls { background: #fef3c7; border: 1px solid #f59e0b; border-radius: 10px; padding: 12px 18px; margin-bottom: 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .admin-head { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; flex-wrap: wrap; }
+    .admin-head h2 { font-size: 1.5rem; font-weight: 700; margin: 0; flex: 1; min-width: 0; }
+    .admin-head-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .admin-head-controls .admin-label { font-size: .8rem; font-weight: 700; color: var(--text-second); text-transform: uppercase; letter-spacing: .05em; }
+    .admin-back { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; font-weight: 600; color: var(--text-second); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer; transition: all .15s; }
+    .admin-back:hover { color: var(--teal); border-color: var(--teal); }
+    .admin-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--card-border); margin-bottom: 18px; }
+    .admin-tab { display: inline-flex; align-items: center; gap: 8px; font-size: .92rem; font-weight: 600; color: var(--text-second); background: none; border: none; border-bottom: 2px solid transparent; padding: 10px 16px; cursor: pointer; margin-bottom: -1px; transition: all .15s; }
+    .admin-tab:hover { color: var(--text); }
+    .admin-tab.active { color: var(--teal); border-bottom-color: var(--teal); }
+    .admin-tab-count { font-size: .72rem; font-weight: 700; background: var(--card-border); color: var(--text-second); border-radius: 20px; padding: 1px 8px; min-width: 18px; text-align: center; }
+    .admin-tab.active .admin-tab-count { background: var(--teal); color: #fff; }
+    .admin-tab-pane { display: none; }
+    .admin-tab-pane.active { display: block; }
+    .admin-req-list { display: flex; flex-direction: column; }
+    .admin-req-row { display: flex; align-items: flex-start; gap: 14px; padding: 14px 18px; border-bottom: 1px solid var(--card-border); }
+    .admin-req-row:last-child { border-bottom: none; }
+    .admin-req-main { flex: 1; min-width: 0; }
+    .admin-req-name { font-weight: 600; font-size: .95rem; }
+    .admin-req-email { font-size: .82rem; color: var(--text-second); }
+    .admin-req-meta { font-size: .82rem; color: var(--text-muted); margin-top: 3px; }
+    .admin-req-meta strong { color: var(--text-second); font-weight: 600; }
+    .admin-req-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+    .admin-req-empty { padding: 28px 18px; text-align: center; color: var(--text-muted); font-size: .9rem; }
+    .btn-approve { font-size: .82rem; font-weight: 600; padding: 6px 14px; border-radius: 7px; border: none; cursor: pointer; background: #15803d; color: #fff; transition: all .15s; }
+    .btn-approve:hover { background: #166534; }
+    .btn-approve:disabled { opacity: .55; cursor: default; }
+    .btn-decline { font-size: .82rem; font-weight: 600; padding: 6px 14px; border-radius: 7px; cursor: pointer; background: var(--bg); color: #dc2626; border: 1px solid #dc2626; transition: all .15s; }
+    .btn-decline:hover { background: #fef2f2; }
+    .req-badge { font-size: .7rem; font-weight: 700; padding: 2px 9px; border-radius: 20px; text-transform: uppercase; letter-spacing: .03em; }
+    .req-badge.authorized { background: #dcfce7; color: #166534; }
+    .req-badge.rejected { background: #fee2e2; color: #991b1b; }
     .admin-gate-badge { font-size: .8rem; font-weight: 700; padding: 3px 10px; border-radius: 20px; }
     .admin-gate-badge.enabled { background: #dcfce7; color: #166534; }
     .admin-gate-badge.disabled { background: #fee2e2; color: #991b1b; }
@@ -616,8 +639,10 @@
 
 <!-- NAV -->
 <nav id="main-nav" style="display:none">
-  <a class="nav-brand" href="/" title="Back to homepage"><span>Idea2Paper</span><span class="brand-suffix"> Home</span></a>
-  <span id="nav-admin-link" style="display:none"></span>
+  <a class="nav-brand" href="{{ app_base }}/" onclick="event.preventDefault();navigate('dashboard')" title="Dashboard"><span>Idea2Paper</span><span class="brand-suffix"> Home</span></a>
+  <a id="nav-admin-link" href="{{ app_base }}/#admin" onclick="event.preventDefault();navigate('admin')" title="Admin Console" aria-label="Admin Console" style="display:none">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+  </a>
   <a href="{{ app_base }}/#feedback" onclick="event.preventDefault();navigate('feedback')"
      style="font-size:.85rem;font-weight:600;color:var(--text-second);text-decoration:none;padding:4px 10px;border-radius:6px;border:1px solid var(--border)">
     Feedback
@@ -694,16 +719,6 @@
   <div id="gate-banner" class="gate-banner" style="display:none">
     <span class="gate-dot">🔴</span>
     <span data-i18n="gate_banner_text">Submissions are currently <strong>disabled</strong> by admin. New projects cannot be started.</span>
-  </div>
-
-  <!-- Admin panel — hidden until checkAuth confirms is_admin -->
-  <div id="admin-panel" class="admin-panel" style="display:none">
-    <span class="admin-label" data-i18n="nav_admin">Admin</span>
-    <div style="margin-left:auto;display:flex;gap:8px">
-      <button class="btn-admin btn-admin-toggle" id="btn-admin-toggle" onclick="adminToggle()" style="background:var(--teal);color:#fff;font-weight:600">…</button>
-      <button class="btn-admin btn-admin-kill" onclick="adminKillAll()" data-i18n="stop_all" style="background:var(--teal);color:#fff;font-weight:600">Stop All</button>
-      <button class="btn-admin" onclick="navigate('admin')" style="background:var(--teal);color:#fff;font-weight:600">Admin Console</button>
-    </div>
   </div>
 
   <!-- Hero creation card.
@@ -1065,32 +1080,9 @@ Strict — hit the exact page limit (spends the most tokens).">
             </div>
           </div>
 
-          <!-- Telegram notifications — optional. -->
-          <div class="tg-section" style="margin-top:14px">
-            <div class="tg-section-title">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex-shrink:0">
-                <circle cx="12" cy="12" r="12" fill="#29B6F6"/>
-                <path d="M5.5 11.5l10-4.5-1.5 9-3-2.5-2 2v-3l5-4.5-6.5 3.5-2-1z" fill="white"/>
-              </svg>
-              <span data-i18n="telegram_notifications">Telegram Notifications</span>
-              <span style="font-weight:400;color:var(--text-muted);font-size:.82rem">(optional)</span>
-            </div>
-            <div class="tg-how" data-i18n-html="tg_how">
-              <b>How to set up:</b>
-              1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp;
-              2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID
-            </div>
-            <div class="form-row" style="margin-top:10px">
-              <div class="form-group" style="margin-bottom:0">
-                <label data-i18n="bot_token">Bot Token</label>
-                <input type="text" name="telegram_token" placeholder="123456789:ABCdef…" autocomplete="off" />
-              </div>
-              <div class="form-group" style="margin-bottom:0">
-                <label data-i18n="chat_id">Chat ID</label>
-                <input type="text" name="telegram_chat_id" placeholder="1234567890" />
-              </div>
-            </div>
-          </div>
+          <!-- Telegram notifications are now a per-account setting (⚙️ Settings →
+               Telegram), so they persist across projects and can be cleared in one
+               place to stop notifications entirely. -->
         </div>
       </div>
 
@@ -1239,13 +1231,35 @@ Strict — hit the exact page limit (spends the most tokens).">
 
 <!-- ADMIN PAGE -->
 <div id="page-admin" class="page admin-page">
-  <h2 style="margin-bottom:20px;font-size:1.5rem;font-weight:700" data-i18n="admin_console">Admin Console</h2>
-  <div class="admin-controls">
-    <span class="admin-label" data-i18n="submissions">Submissions</span>
-    <span class="admin-gate-badge" id="admin-page-gate-badge">—</span>
-    <button class="btn-admin btn-admin-toggle" id="btn-admin-page-toggle" onclick="adminPageToggle()">…</button>
-    <button class="btn-admin btn-admin-kill" onclick="adminPageKillAll()" data-i18n="stop_all">Stop All</button>
+  <!-- Header bar: back to dashboard + title + submission controls -->
+  <div class="admin-head">
+    <button class="admin-back" onclick="navigate('dashboard')" title="Back to dashboard" aria-label="Back to dashboard">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>
+      <span data-i18n="back_to_dashboard">Dashboard</span>
+    </button>
+    <h2 data-i18n="admin_console">Admin Console</h2>
+    <div class="admin-head-controls">
+      <span class="admin-label" data-i18n="submissions">Submissions</span>
+      <span class="admin-gate-badge" id="admin-page-gate-badge">—</span>
+      <button class="btn-admin btn-admin-toggle" id="btn-admin-page-toggle" onclick="adminPageToggle()">…</button>
+      <button class="btn-admin btn-admin-kill" onclick="adminPageKillAll()" data-i18n="stop_all">Stop All</button>
+    </div>
   </div>
+
+  <!-- Section tabs -->
+  <div class="admin-tabs">
+    <button class="admin-tab active" data-tab="projects" onclick="adminShowTab('projects')">
+      <span data-i18n="all_projects">Projects</span>
+      <span class="admin-tab-count" id="admin-tab-projects-count">0</span>
+    </button>
+    <button class="admin-tab" data-tab="users" onclick="adminShowTab('users')">
+      <span data-i18n="users">Users &amp; Access</span>
+      <span class="admin-tab-count" id="admin-tab-users-count">0</span>
+    </button>
+  </div>
+
+  <!-- PROJECTS TAB -->
+  <div class="admin-tab-pane active" id="admin-pane-projects">
   <div class="admin-table-wrap">
     <div class="admin-table-header">
       <h3><span data-i18n="all_projects">All Projects</span> <span class="projects-count" id="admin-total-count" style="margin-left:6px">0</span></h3>
@@ -1278,6 +1292,49 @@ Strict — hit the exact page limit (spends the most tokens).">
       </table>
     </div>
   </div>
+  </div><!-- /admin-pane-projects -->
+
+  <!-- USERS & ACCESS TAB -->
+  <div class="admin-tab-pane" id="admin-pane-users">
+    <!-- Pending access requests -->
+    <div class="admin-table-wrap" style="margin-bottom:18px">
+      <div class="admin-table-header">
+        <h3><span data-i18n="pending_requests">Pending requests</span> <span class="projects-count" id="admin-pending-count" style="margin-left:6px">0</span></h3>
+      </div>
+      <div id="admin-requests-pending" class="admin-req-list"></div>
+    </div>
+
+    <!-- Registered users -->
+    <div class="admin-table-wrap" style="margin-bottom:18px">
+      <div class="admin-table-header">
+        <h3><span data-i18n="registered_users">Registered users</span> <span class="projects-count" id="admin-users-count" style="margin-left:6px">0</span></h3>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="admin-table">
+          <thead><tr>
+            <th data-i18n="user">User</th>
+            <th data-i18n="affiliation">Affiliation</th>
+            <th data-i18n="projects">Projects</th>
+            <th data-i18n="logins">Logins</th>
+            <th class="col-created" data-i18n="last_seen">Last seen</th>
+          </tr></thead>
+          <tbody id="admin-users-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Decided requests (authorized / declined) -->
+    <div class="admin-table-wrap">
+      <div class="admin-table-header">
+        <h3><span data-i18n="decided_requests">Decided requests</span></h3>
+        <div class="admin-filter-pills">
+          <button class="admin-filter-pill active" data-reqfilter="authorized" onclick="adminFilterRequests('authorized')" data-i18n="filter_authorized">Authorized</button>
+          <button class="admin-filter-pill" data-reqfilter="rejected" onclick="adminFilterRequests('rejected')" data-i18n="filter_declined">Declined</button>
+        </div>
+      </div>
+      <div id="admin-requests-decided" class="admin-req-list"></div>
+    </div>
+  </div><!-- /admin-pane-users -->
 </div>
 
 <!-- FEEDBACK PAGE -->
@@ -1654,6 +1711,30 @@ Strict — hit the exact page limit (spends the most tokens).">
   </div>
 </div>
 
+<!-- ADMIN DECLINE MODAL -->
+<div class="modal-backdrop" id="modal-admin-decline">
+  <div class="modal" style="max-width:520px">
+    <h3 data-i18n="decline_request">Decline access request</h3>
+    <p class="form-hint" style="margin:0 0 14px">
+      <span data-i18n="decline_hint">The applicant will be emailed the reason below. Keep it brief and respectful.</span>
+    </p>
+    <div class="form-group">
+      <label data-i18n="applicant">Applicant</label>
+      <input type="text" id="decline-email" readonly style="background:var(--bg-soft,#f8fafc);color:var(--text-second)" />
+    </div>
+    <div class="form-group">
+      <label data-i18n="reason">Reason</label>
+      <textarea id="decline-reason" rows="4" data-i18n-placeholder="decline_reason_ph"
+        placeholder="e.g. Access is currently limited to active research collaborators."
+        style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);font-size:14px;background:var(--bg);resize:vertical"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn-secondary" onclick="closeModal('modal-admin-decline')" data-i18n="cancel">Cancel</button>
+      <button class="btn-primary" id="decline-submit-btn" onclick="adminDeclineSubmit()" style="background:#dc2626;border-color:#dc2626" data-i18n="send_decline">Decline &amp; email</button>
+    </div>
+  </div>
+</div>
+
 <!-- SETTINGS MODAL -->
 <div class="modal-backdrop" id="modal-settings">
   <div class="modal" style="max-width:740px">
@@ -1671,6 +1752,7 @@ Strict — hit the exact page limit (spends the most tokens).">
         <button class="settings-tab-btn active" onclick="switchSettingsTab('tab-llms')" id="btn-tab-llms">API Keys</button>
         <button class="settings-tab-btn" onclick="switchSettingsTab('tab-github')" id="btn-tab-github">GitHub</button>
         <button class="settings-tab-btn" onclick="switchSettingsTab('tab-cloud')" id="btn-tab-cloud">Cloud Compute</button>
+        <button class="settings-tab-btn" onclick="switchSettingsTab('tab-telegram')" id="btn-tab-telegram" data-i18n="telegram">Telegram</button>
       </div>
 
       <!-- Content Area -->
@@ -1882,6 +1964,41 @@ Strict — hit the exact page limit (spends the most tokens).">
           </div>
         </div>
 
+        <!-- Tab: Telegram -->
+        <div class="settings-tab-pane" id="tab-telegram">
+          <p style="font-size:.8rem;color:var(--text-second);margin:0 0 16px;line-height:1.5">
+            <span data-i18n="telegram_settings_intro">Get progress updates and answer the project's questions from Telegram. This is optional — leave it blank, or clear it and save to stop all Telegram notifications.</span>
+          </p>
+          <div class="tg-section" style="margin-top:0">
+            <div class="tg-section-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="flex-shrink:0">
+                <circle cx="12" cy="12" r="12" fill="#29B6F6"/>
+                <path d="M5.5 11.5l10-4.5-1.5 9-3-2.5-2 2v-3l5-4.5-6.5 3.5-2-1z" fill="white"/>
+              </svg>
+              <span data-i18n="telegram_notifications">Telegram Notifications</span>
+              <span style="font-weight:400;color:var(--text-muted);font-size:.82rem">(optional)</span>
+            </div>
+            <div class="tg-how" data-i18n-html="tg_how">
+              <b>How to set up:</b>
+              1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp;
+              2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID
+            </div>
+            <div class="form-row" style="margin-top:10px">
+              <div class="form-group" style="margin-bottom:0">
+                <label data-i18n="bot_token">Bot Token</label>
+                <input type="text" id="settings-telegram-token" placeholder="123456789:ABCdef…" autocomplete="off" />
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label data-i18n="chat_id">Chat ID</label>
+                <input type="text" id="settings-telegram-chat-id" placeholder="1234567890" />
+              </div>
+            </div>
+            <p class="form-hint" style="margin:12px 0 0">
+              <span data-i18n="telegram_clear_hint">To turn Telegram off, clear both fields and save. New projects will no longer send messages.</span>
+            </p>
+          </div>
+        </div>
+
       </div> <!-- /settings-content-area -->
     </div> <!-- /settings-layout -->
 
@@ -1930,6 +2047,8 @@ const TRANSLATIONS = {
     page_fitting_strict: 'Strict — exact page limit',
     page_fitting_off: "Off — don't adjust",
     telegram_notifications: 'Telegram Notifications',
+    telegram_settings_intro: "Get progress updates and answer the project's questions from Telegram. This is optional — leave it blank, or clear it and save to stop all Telegram notifications.",
+    telegram_clear_hint: 'To turn Telegram off, clear both fields and save. New projects will no longer send messages.',
     tg_how: '<b>How to set up:</b> 1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp; 2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID',
     bot_token: 'Bot Token', chat_id: 'Chat ID',
     advanced_options: 'Advanced options',
@@ -1996,6 +2115,22 @@ const TRANSLATIONS = {
     admin_console: 'Admin Console',
     submissions: 'Submissions',
     all_projects: 'All Projects',
+    back_to_dashboard: 'Dashboard',
+    // admin users & access
+    users: 'Users & Access',
+    pending_requests: 'Pending requests',
+    registered_users: 'Registered users',
+    decided_requests: 'Decided requests',
+    affiliation: 'Affiliation', projects: 'Projects', logins: 'Logins', last_seen: 'Last seen',
+    filter_authorized: 'Authorized', filter_declined: 'Declined',
+    approve: 'Approve', decline: 'Decline',
+    decline_request: 'Decline access request',
+    decline_hint: 'The applicant will be emailed the reason below. Keep it brief and respectful.',
+    applicant: 'Applicant', reason: 'Reason', send_decline: 'Decline & email',
+    decline_reason_ph: 'e.g. Access is currently limited to active research collaborators.',
+    decline_reason_required: 'Please provide a reason.',
+    confirm_approve: 'Grant dashboard access to',
+    no_users: 'No users yet.', no_pending_requests: 'No pending requests.', no_requests: 'Nothing here yet.',
     user: 'User', status: 'Status', pages: 'Pages',
     max_iter: 'Max Iter', created: 'Created', actions: 'Actions',
     no_projects_found: 'No projects found',
@@ -2054,6 +2189,8 @@ const TRANSLATIONS = {
     page_fitting_strict: 'صارم — حد الصفحات بالضبط',
     page_fitting_off: 'إيقاف — بدون ضبط',
     telegram_notifications: 'إشعارات Telegram',
+    telegram_settings_intro: 'احصل على تحديثات التقدّم وأجب عن أسئلة المشروع عبر Telegram. هذا اختياري — اتركه فارغًا، أو امسحه واحفظ لإيقاف كل إشعارات Telegram.',
+    telegram_clear_hint: 'لإيقاف Telegram، امسح الحقلين واحفظ. لن ترسل المشاريع الجديدة أي رسائل.',
     tg_how: '<b>طريقة الإعداد:</b> 1. أرسل <code>/newbot</code> إلى <a href="https://t.me/BotFather" target="_blank">@BotFather</a> للحصول على Bot Token &nbsp;·&nbsp; 2. أرسل رسالة إلى <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> للحصول على Chat ID',
     bot_token: 'Bot Token', chat_id: 'Chat ID',
     advanced_options: 'خيارات متقدمة',
@@ -2112,6 +2249,22 @@ const TRANSLATIONS = {
     admin_console: 'لوحة الإدارة',
     submissions: 'التقديمات',
     all_projects: 'جميع المشاريع',
+    back_to_dashboard: 'لوحة التحكم',
+    // admin users & access
+    users: 'المستخدمون والوصول',
+    pending_requests: 'الطلبات المعلّقة',
+    registered_users: 'المستخدمون المسجّلون',
+    decided_requests: 'الطلبات المبتوتة',
+    affiliation: 'الجهة', projects: 'المشاريع', logins: 'تسجيلات الدخول', last_seen: 'آخر ظهور',
+    filter_authorized: 'مصرّح', filter_declined: 'مرفوض',
+    approve: 'موافقة', decline: 'رفض',
+    decline_request: 'رفض طلب الوصول',
+    decline_hint: 'سيتم إرسال السبب أدناه إلى مقدّم الطلب عبر البريد. اجعله موجزًا ومحترمًا.',
+    applicant: 'مقدّم الطلب', reason: 'السبب', send_decline: 'رفض وإرسال بريد',
+    decline_reason_ph: 'مثال: الوصول محصور حاليًا على المتعاونين البحثيين النشطين.',
+    decline_reason_required: 'يرجى إدخال سبب.',
+    confirm_approve: 'منح حق الوصول إلى لوحة التحكم لـ',
+    no_users: 'لا يوجد مستخدمون بعد.', no_pending_requests: 'لا توجد طلبات معلّقة.', no_requests: 'لا شيء هنا بعد.',
     user: 'المستخدم', status: 'الحالة', pages: 'الصفحات',
     max_iter: 'الحد الأقصى للتكرار', created: 'تاريخ الإنشاء', actions: 'الإجراءات',
     no_projects_found: 'لم يُعثر على مشاريع',
@@ -2165,6 +2318,8 @@ const TRANSLATIONS = {
     page_fitting_strict: '严格 — 精确贴合页数上限',
     page_fitting_off: '不调整 — 不做页数适配',
     telegram_notifications: 'Telegram 通知',
+    telegram_settings_intro: '通过 Telegram 接收进度更新并回答项目的提问。此项可选——留空，或清空后保存即可停止所有 Telegram 通知。',
+    telegram_clear_hint: '要关闭 Telegram，请清空两个字段并保存。新项目将不再发送消息。',
     tg_how: '<b>设置方法：</b>1. 向 <a href="https://t.me/BotFather" target="_blank">@BotFather</a> 发送 <code>/newbot</code> 获取 Bot Token &nbsp;·&nbsp; 2. 向 <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> 发送消息获取 Chat ID',
     bot_token: 'Bot Token', chat_id: 'Chat ID',
     advanced_options: '高级选项',
@@ -2223,6 +2378,22 @@ const TRANSLATIONS = {
     admin_console: '管理控制台',
     submissions: '提交',
     all_projects: '所有项目',
+    back_to_dashboard: '仪表盘',
+    // admin users & access
+    users: '用户与访问',
+    pending_requests: '待处理申请',
+    registered_users: '注册用户',
+    decided_requests: '已处理申请',
+    affiliation: '单位', projects: '项目', logins: '登录次数', last_seen: '最近活跃',
+    filter_authorized: '已授权', filter_declined: '已拒绝',
+    approve: '批准', decline: '拒绝',
+    decline_request: '拒绝访问申请',
+    decline_hint: '下方填写的理由将通过邮件发送给申请人，请简洁且得体。',
+    applicant: '申请人', reason: '理由', send_decline: '拒绝并发送邮件',
+    decline_reason_ph: '例如：目前访问权限仅向活跃的科研合作者开放。',
+    decline_reason_required: '请填写理由。',
+    confirm_approve: '授予仪表盘访问权限给',
+    no_users: '暂无用户。', no_pending_requests: '暂无待处理申请。', no_requests: '暂无内容。',
     user: '用户', status: '状态', pages: '页数',
     max_iter: '最大迭代', created: '创建时间', actions: '操作',
     no_projects_found: '未找到项目',
@@ -2548,15 +2719,8 @@ async function checkAuth() {
   currentUser = data;
   renderNavUser();
 
-  // Auto-fill telegram fields from user's last-used values
-  if (data.telegram_token) {
-    const el = document.querySelector('#hero-form input[name="telegram_token"]');
-    if (el && !el.value) el.value = data.telegram_token;
-  }
-  if (data.telegram_chat_id) {
-    const el = document.querySelector('#hero-form input[name="telegram_chat_id"]');
-    if (el && !el.value) el.value = data.telegram_chat_id;
-  }
+  // Telegram is managed in Settings (a user-level account setting) and inherited
+  // by new projects server-side, so there are no hero-form fields to auto-fill.
 
   // Model and iteration pickers are unlocked for all users (self-provisioned keys).
 
@@ -2655,50 +2819,18 @@ async function loadGateBanner() {
 }
 
 async function loadAdminPanel() {
+  // The dashboard-embedded admin bar was retired; admin tooling now lives on the
+  // dedicated Admin Console (reached via the shield icon in the nav). This just
+  // refreshes shared gate state and toggles the nav icon visibility.
   await loadGateBanner();
-  if (!currentUser || !currentUser.is_admin) return;
-  document.getElementById('admin-panel').style.display = 'flex';
-  _renderAdminStatus();
-}
-
-function _renderAdminStatus() {
-  const btn = document.getElementById('btn-admin-toggle');
-  btn.textContent = _adminDisabled ? t('enable_submissions') : t('disable_submissions');
-}
-
-async function adminToggle() {
-  const endpoint = _adminDisabled ? '/api/admin/enable' : '/api/admin/disable';
-  if (!confirm(_adminDisabled ? t('confirm_enable') : t('confirm_disable'))) return;
-  const res = await fetch(endpoint, {method: 'POST'});
-  if (!res.ok) { alert('Failed: ' + (await res.text())); return; }
-  const data = await res.json();
-  _adminDisabled = data.disabled;
-  _renderAdminStatus();
-  document.getElementById('gate-banner').style.display = data.disabled ? 'flex' : 'none';
-  const heroCard = document.getElementById('hero-card');
-  if (heroCard) heroCard.classList.toggle('gate-disabled', data.disabled);
-}
-
-async function adminKillAll() {
-  if (!confirm(t('confirm_kill_all'))) return;
-  const res = await fetch(APP_BASE + '/api/admin/killall', {method: 'POST'});
-  if (!res.ok) { alert('Failed: ' + (await res.text())); return; }
-  const data = await res.json();
-  alert(t('stopped_count', data.count));
-  loadDashboard();
+  const adminLink = document.getElementById('nav-admin-link');
+  if (adminLink) adminLink.style.display = (currentUser && currentUser.is_admin) ? '' : 'none';
 }
 
 // ══════════════════════════════════════════════════════
 //  Dashboard
 // ══════════════════════════════════════════════════════
 async function loadDashboard() {
-  // Re-fill telegram fields (may have been cleared by form.reset())
-  if (currentUser) {
-    const tgT = document.querySelector('#hero-form input[name="telegram_token"]');
-    const tgC = document.querySelector('#hero-form input[name="telegram_chat_id"]');
-    if (tgT && !tgT.value && currentUser.telegram_token) tgT.value = currentUser.telegram_token;
-    if (tgC && !tgC.value && currentUser.telegram_chat_id) tgC.value = currentUser.telegram_chat_id;
-  }
   loadAdminPanel();
   loadVenues();
   const res = await fetch(APP_BASE + '/api/projects');
@@ -4314,6 +4446,11 @@ async function loadAdminPage() {
 
   const totalEl = document.getElementById('admin-total-count');
   if (totalEl) { totalEl.textContent = _adminAllProjects.length; totalEl.style.display = 'inline'; }
+  const projTab = document.getElementById('admin-tab-projects-count');
+  if (projTab) projTab.textContent = _adminAllProjects.length;
+
+  // Load users + access requests in parallel (populates the Users tab).
+  loadAdminUsers();
 
   // Populate venue options for edit modal if needed
   if (venues.length) {
@@ -4398,6 +4535,179 @@ function renderAdminTable(filter) {
 
 function adminFilterProjects(status) {
   renderAdminTable(status);
+}
+
+// ── Admin tabs (Projects / Users) ──────────────────────
+function adminShowTab(tab) {
+  document.querySelectorAll('.admin-tab').forEach(b =>
+    b.classList.toggle('active', b.getAttribute('data-tab') === tab));
+  document.querySelectorAll('.admin-tab-pane').forEach(p =>
+    p.classList.toggle('active', p.id === `admin-pane-${tab}`));
+}
+
+// ── Users & access ─────────────────────────────────────
+let _adminRequests = { pending: [], authorized: [], rejected: [] };
+let _adminReqFilter = 'authorized';
+
+async function loadAdminUsers() {
+  try {
+    const [uRes, rRes] = await Promise.all([
+      fetch(APP_BASE + '/api/admin/users'),
+      fetch(APP_BASE + '/api/admin/access-requests'),
+    ]);
+    const uData = uRes.ok ? await uRes.json() : { users: [] };
+    _adminRequests = rRes.ok ? await rRes.json() : { pending: [], authorized: [], rejected: [] };
+    _adminRequests.pending = _adminRequests.pending || [];
+    _adminRequests.authorized = _adminRequests.authorized || [];
+    _adminRequests.rejected = _adminRequests.rejected || [];
+    renderAdminUsers(uData.users || []);
+    renderPendingRequests();
+    renderDecidedRequests();
+    const ut = document.getElementById('admin-tab-users-count');
+    if (ut) ut.textContent = _adminRequests.pending.length;
+  } catch (e) { /* non-fatal */ }
+}
+
+function renderAdminUsers(users) {
+  const countEl = document.getElementById('admin-users-count');
+  if (countEl) countEl.textContent = users.length;
+  const tbody = document.getElementById('admin-users-tbody');
+  if (!tbody) return;
+  if (!users.length) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--text-muted)">${t('no_users') || 'No users yet.'}</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = users.map(u => {
+    const adminTag = u.is_admin ? ' <span class="req-badge authorized" style="margin-left:6px">admin</span>' : '';
+    return `<tr>
+      <td><div style="font-weight:600">${esc(u.name || u.email.split('@')[0])}${adminTag}</div>
+          <div style="font-size:.8rem;color:var(--text-second)">${esc(u.email)}</div></td>
+      <td style="color:var(--text-second)">${esc(u.affiliation || '—')}</td>
+      <td>${u.projects || 0}</td>
+      <td>${u.login_count || 0}</td>
+      <td class="col-created" style="color:var(--text-muted);font-size:.8rem">${fmtRelDate(u.last_login_at)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function _reqRowHtml(r, withActions) {
+  const name = r.name || r.email.split('@')[0];
+  const purpose = r.purpose ? `<div class="admin-req-meta">${esc(r.purpose)}</div>` : '';
+  let right;
+  if (withActions) {
+    right = `<div class="admin-req-actions">
+      <button class="btn-approve" onclick="adminApprove(this,'${esc(r.email)}')" data-i18n="approve">Approve</button>
+      <button class="btn-decline" onclick="adminDeclineOpen('${esc(r.email)}','${esc(name)}')" data-i18n="decline">Decline</button>
+    </div>`;
+  } else {
+    const badge = r.status === 'authorized'
+      ? `<span class="req-badge authorized">${t('filter_authorized') || 'authorized'}</span>`
+      : `<span class="req-badge rejected">${t('filter_declined') || 'declined'}</span>`;
+    const reason = (r.status === 'rejected' && r.decline_reason)
+      ? `<div class="admin-req-meta"><strong>${t('reason') || 'Reason'}:</strong> ${esc(r.decline_reason)}</div>` : '';
+    right = `<div class="admin-req-actions">${badge}</div>`;
+    return `<div class="admin-req-row">
+      <div class="admin-req-main">
+        <div class="admin-req-name">${esc(name)}</div>
+        <div class="admin-req-email">${esc(r.email)}${r.affiliation ? ' · ' + esc(r.affiliation) : ''}</div>
+        ${reason}
+        <div class="admin-req-meta" style="opacity:.7">${fmtRelDate(r.decided_at || r.created_at)}${r.decided_by ? ' · ' + esc(r.decided_by) : ''}</div>
+      </div>
+      ${right}
+    </div>`;
+  }
+  const aff = r.affiliation ? `<div class="admin-req-meta"><strong>${t('affiliation') || 'Affiliation'}:</strong> ${esc(r.affiliation)}</div>` : '';
+  return `<div class="admin-req-row">
+    <div class="admin-req-main">
+      <div class="admin-req-name">${esc(name)}</div>
+      <div class="admin-req-email">${esc(r.email)}</div>
+      ${aff}${purpose}
+      <div class="admin-req-meta" style="opacity:.7">${fmtRelDate(r.created_at)}</div>
+    </div>
+    ${right}
+  </div>`;
+}
+
+function renderPendingRequests() {
+  const list = _adminRequests.pending || [];
+  const cEl = document.getElementById('admin-pending-count');
+  if (cEl) cEl.textContent = list.length;
+  const box = document.getElementById('admin-requests-pending');
+  if (!box) return;
+  box.innerHTML = list.length
+    ? list.map(r => _reqRowHtml(r, true)).join('')
+    : `<div class="admin-req-empty">${t('no_pending_requests') || 'No pending requests.'}</div>`;
+}
+
+function renderDecidedRequests() {
+  document.querySelectorAll('[data-reqfilter]').forEach(b =>
+    b.classList.toggle('active', b.getAttribute('data-reqfilter') === _adminReqFilter));
+  const list = _adminRequests[_adminReqFilter] || [];
+  const box = document.getElementById('admin-requests-decided');
+  if (!box) return;
+  box.innerHTML = list.length
+    ? list.map(r => _reqRowHtml(r, false)).join('')
+    : `<div class="admin-req-empty">${t('no_requests') || 'Nothing here yet.'}</div>`;
+}
+
+function adminFilterRequests(which) {
+  _adminReqFilter = which;
+  renderDecidedRequests();
+}
+
+async function adminApprove(btn, email) {
+  if (!confirm((t('confirm_approve') || 'Grant dashboard access to') + ` ${email}?`)) return;
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '…';
+  try {
+    const res = await fetch(APP_BASE + '/api/admin/access/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      alert(e.detail || 'Approve failed');
+      btn.disabled = false; btn.textContent = old;
+      return;
+    }
+    await loadAdminUsers();
+  } catch (e) {
+    alert('Approve failed: ' + e);
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+function adminDeclineOpen(email, name) {
+  document.getElementById('decline-email').value = email;
+  document.getElementById('decline-reason').value = '';
+  document.getElementById('modal-admin-decline').classList.add('open');
+  setTimeout(() => document.getElementById('decline-reason').focus(), 50);
+}
+
+async function adminDeclineSubmit() {
+  const email = document.getElementById('decline-email').value.trim();
+  const reason = document.getElementById('decline-reason').value.trim();
+  if (!reason) { alert(t('decline_reason_required') || 'Please provide a reason.'); return; }
+  const btn = document.getElementById('decline-submit-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(APP_BASE + '/api/admin/access/decline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, reason }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      alert(e.detail || 'Decline failed');
+      return;
+    }
+    closeModal('modal-admin-decline');
+    await loadAdminUsers();
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function adminEditProject(id) {
@@ -4647,6 +4957,8 @@ async function openSettingsModal() {
     document.getElementById('settings-openrouter').value = data.openrouter || '';
     document.getElementById('settings-github_pat').value = data.github_pat || '';
     document.getElementById('settings-github_org').value = data.github_org || '';
+    document.getElementById('settings-telegram-token').value = data.telegram_token || '';
+    document.getElementById('settings-telegram-chat-id').value = data.telegram_chat_id || '';
     _loadOtherProviders(data);
 
     document.getElementById('settings-aws-access-key-id').value = data.aws_access_key_id || '';
@@ -4687,7 +4999,7 @@ const _STD_KEYS = new Set(['anthropic','openai','gemini','openrouter','github_pa
   'gcp_conda_env','gcp_network','gcp_subnet','azure_client_id',
   'azure_client_secret','azure_tenant_id','azure_subscription_id',
   'claude_oauth_token','gemini_oauth_json','gcp_accelerator_type',
-  'gcp_accelerator_count','verification',
+  'gcp_accelerator_count','verification','telegram_token','telegram_chat_id',
   'has_keys','cloud_available','cloud_providers']);
 function _loadOtherProviders(data) {
   _otherProviders = {};
@@ -4871,6 +5183,9 @@ async function saveUserSettings() {
       openrouter: document.getElementById('settings-openrouter').value.trim(),
       github_pat: document.getElementById('settings-github_pat').value.trim(),
       github_org: document.getElementById('settings-github_org').value.trim(),
+      // Telegram (user-level account setting). Always sent — empty clears it.
+      telegram_token: document.getElementById('settings-telegram-token').value.trim(),
+      telegram_chat_id: document.getElementById('settings-telegram-chat-id').value.trim(),
       ..._otherProvidersBody(),
       aws_access_key_id: document.getElementById('settings-aws-access-key-id').value.trim(),
       aws_secret_access_key: document.getElementById('settings-aws-secret-access-key').value.trim(),

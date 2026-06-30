@@ -96,6 +96,9 @@ from .db import (
     set_autonomy,
     add_message,
     list_messages,
+    list_access_requests,
+    list_users,
+    mark_access_declined,
 )
 from .crypto import encrypt_text, decrypt_text
 from . import sideband
@@ -112,7 +115,7 @@ from .jobs import (
     slurm_state_to_status,
     submit_job,
 )
-from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email
+from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email, send_access_declined_email
 from .auth import make_token, verify_token, verify_share_token
 from .templates import copy_venue_template, has_venue_template, copy_test_fixtures, read_test_idea
 
@@ -1759,6 +1762,9 @@ async def api_get_user_settings(request: Request):
         "has_keys": any(keys.values()),
         "cloud_available": bool(available_providers),
         "cloud_providers": available_providers,
+        # Telegram is a user-level account setting (managed in Settings).
+        "telegram_token": user.telegram_token or "",
+        "telegram_chat_id": user.telegram_chat_id or "",
     }
     # Surface any other-provider keys (deepseek, xai, …) so the UI can list them.
     for _k, _v in keys.items():
@@ -1811,7 +1817,9 @@ async def api_save_user_settings(request: Request):
     # Other (unverified / long-tail) providers — any extra <provider> key in the
     # body that isn't a standard field. Stored verbatim into encrypted_keys so
     # any OpenHands/LiteLLM provider works (deepseek, xai, mistral, groq, …).
-    _reserved = set(fields) | {"verification"}
+    # Telegram lives on User columns, not in encrypted_keys — exclude it from the
+    # long-tail provider sweep so it isn't stored as a bogus provider key.
+    _reserved = set(fields) | {"verification", "telegram_token", "telegram_chat_id"}
     for field, raw in body.items():
         if not isinstance(field, str) or field in _reserved:
             continue
@@ -1839,12 +1847,19 @@ async def api_save_user_settings(request: Request):
         db_user = get_user(session, user.id)
         if db_user:
             db_user.encrypted_keys = encrypt_text(json.dumps(current_keys), user.id)
+            # Telegram is a user-level account setting. Honor whatever is sent —
+            # including empty strings — so the user can clear it here and stop
+            # receiving notifications on future projects.
+            if "telegram_token" in body:
+                db_user.telegram_token = (body.get("telegram_token") or "").strip()
+            if "telegram_chat_id" in body:
+                db_user.telegram_chat_id = (body.get("telegram_chat_id") or "").strip()
             session.add(db_user)
             session.commit()
 
-            
+
     return JSONResponse({
-        "ok": True, 
+        "ok": True,
         "verification": verification_results
     })
 
@@ -2097,6 +2112,15 @@ async def api_create_project(
         layout_mode = "balanced"
 
     with get_session(settings.db_path) as session:
+        # Telegram is now a user-level account setting (managed in Settings). New
+        # projects inherit the user's current Telegram credentials; if the user
+        # cleared them, the project gets none and stays silent.
+        if not telegram_token and not telegram_chat_id:
+            _du = get_user(session, user.id)
+            if _du:
+                telegram_token = _du.telegram_token or ""
+                telegram_chat_id = _du.telegram_chat_id or ""
+
         project = create_project(
             session,
             id=project_id,
@@ -2856,6 +2880,117 @@ async def api_admin_killall(request: Request):
             update_project(session, p, status="stopped")
             stopped.append(p.id)
     return JSONResponse({"stopped": stopped, "count": len(stopped)})
+
+
+def _req_dict(r) -> dict:
+    """Serialise an AccessRequest row for the admin console."""
+    return {
+        "id": r.id,
+        "email": r.email,
+        "name": r.name or "",
+        "affiliation": r.affiliation or "",
+        "purpose": r.purpose or "",
+        "status": r.status,
+        "decline_reason": getattr(r, "decline_reason", "") or "",
+        "created_at": r.created_at.isoformat() if r.created_at else "",
+        "decided_at": r.authorized_at.isoformat() if r.authorized_at else "",
+        "decided_by": r.authorized_by or "",
+    }
+
+
+@router.get("/api/admin/access-requests")
+async def api_admin_access_requests(request: Request):
+    """All access requests, grouped by status, for the admin Users panel."""
+    _require_admin(request)
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        rows = list_access_requests(session)
+        out = {"pending": [], "authorized": [], "rejected": []}
+        for r in rows:
+            out.setdefault(r.status, []).append(_req_dict(r))
+    return JSONResponse(out)
+
+
+@router.get("/api/admin/users")
+async def api_admin_users(request: Request):
+    """Registered dashboard users, enriched with affiliation from their request."""
+    _require_admin(request)
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        users = list_users(session)
+        reqs = list_access_requests(session)
+        # newest affiliation/purpose per email from access requests
+        meta: dict[str, dict] = {}
+        for r in sorted(reqs, key=lambda x: x.created_at or datetime.min):
+            meta[r.email.lower()] = {"affiliation": r.affiliation or "", "purpose": r.purpose or ""}
+        # project counts per user
+        counts: dict[str, int] = {}
+        for p in get_all_projects(session):
+            counts[p.user_id] = counts.get(p.user_id, 0) + 1
+        out = []
+        for u in users:
+            m = meta.get((u.email or "").lower(), {})
+            out.append({
+                "id": u.id,
+                "email": u.email,
+                "name": u.name or "",
+                "affiliation": m.get("affiliation", ""),
+                "projects": counts.get(u.id, 0),
+                "login_count": u.login_count or 0,
+                "last_login_at": u.last_login_at.isoformat() if u.last_login_at else "",
+                "created_at": u.created_at.isoformat() if u.created_at else "",
+                "is_admin": _is_admin(u),
+            })
+    return JSONResponse({"users": out})
+
+
+@router.post("/api/admin/access/approve")
+async def api_admin_access_approve(request: Request):
+    """Approve a pending request: add to the CF Access allowlist + email the user."""
+    admin = _require_admin(request)
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "A valid email is required.")
+
+    def _grant():
+        from ark import access as _access
+        # cmd_add adds to the Cloudflare allowlist, flips the DB request to
+        # authorized, and sends the access-granted email. Raises if CF creds
+        # are missing/misconfigured.
+        _access.cmd_add([email], notify=True)
+
+    try:
+        await asyncio.to_thread(_grant)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"admin approve failed for {email}: {e}")
+        raise HTTPException(502, f"Could not grant access: {e}")
+    logger.info(f"admin {admin.email} approved access for {email}")
+    return JSONResponse({"ok": True, "email": email, "status": "authorized"})
+
+
+@router.post("/api/admin/access/decline")
+async def api_admin_access_decline(request: Request):
+    """Decline a request with a reason and email the applicant the reason."""
+    admin = _require_admin(request)
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    reason = (body.get("reason") or "").strip()
+    if not email or "@" not in email:
+        raise HTTPException(400, "A valid email is required.")
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        req = mark_access_declined(session, email, reason=reason, by=admin.email)
+        name = (req.name if req else "") or ""
+    emailed = False
+    try:
+        emailed = await asyncio.to_thread(
+            send_access_declined_email, settings, email, name, reason
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"decline email failed for {email}: {e}")
+    logger.info(f"admin {admin.email} declined access for {email} (emailed={emailed})")
+    return JSONResponse({"ok": True, "email": email, "status": "rejected", "emailed": emailed})
 
 
 @router.get("/api/projects/{project_id}/pdf")

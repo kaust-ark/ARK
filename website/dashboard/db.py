@@ -44,6 +44,7 @@ class AccessRequest(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     authorized_at: Optional[datetime] = Field(default=None)
     authorized_by: str = ""          # admin email, or "cli"
+    decline_reason: str = ""         # admin-supplied reason, emailed on reject
 
 
 class Project(SQLModel, table=True):
@@ -224,6 +225,13 @@ def _migrate(engine):
             conn.execute(text("ALTER TABLE user ADD COLUMN login_count INTEGER DEFAULT 0"))
             conn.commit()
 
+        # ── AccessRequest table migrations ──
+        rows = conn.execute(text("PRAGMA table_info(accessrequest)")).fetchall()
+        existing = {row[1] for row in rows}
+        if rows and "decline_reason" not in existing:
+            conn.execute(text("ALTER TABLE accessrequest ADD COLUMN decline_reason TEXT DEFAULT ''"))
+            conn.commit()
+
         # ── Project table migrations ──
         rows = conn.execute(text("PRAGMA table_info(project)")).fetchall()
         existing = {row[1] for row in rows}
@@ -384,6 +392,40 @@ def list_access_requests(session: Session, status: Optional[str] = None) -> list
     if status:
         q = q.where(AccessRequest.status == status)
     return list(session.exec(q.order_by(AccessRequest.created_at.desc())))
+
+
+def mark_access_declined(session: Session, email: str, reason: str = "",
+                         by: str = "") -> Optional["AccessRequest"]:
+    """Reject an access request, recording the reason + who decided.
+
+    Flips the most recent pending/authorized row for this email to ``rejected``.
+    If no row exists, inserts a rejected one so the decision is recorded.
+    Returns the affected request (refreshed) or None.
+    """
+    email = (email or "").strip().lower()
+    if not email:
+        return None
+    req = session.exec(
+        select(AccessRequest).where(AccessRequest.email == email)
+        .order_by(AccessRequest.created_at.desc())
+    ).first()
+    if not req:
+        req = AccessRequest(email=email)
+    req.status = "rejected"
+    req.decline_reason = reason or ""
+    req.authorized_at = datetime.utcnow()
+    req.authorized_by = by
+    session.add(req)
+    session.commit()
+    session.refresh(req)
+    return req
+
+
+def list_users(session: Session) -> list["User"]:
+    """List all registered dashboard users, newest login first."""
+    return list(session.exec(
+        select(User).order_by(User.last_login_at.desc(), User.created_at.desc())
+    ))
 
 
 # ── HITL control plane ────────────────────────────────────────────────────────
