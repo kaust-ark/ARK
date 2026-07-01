@@ -42,6 +42,10 @@ export CLAUDE_CODE_OAUTH_TOKEN={{ v }}
 export {{ env_key }}={{ v }}
 {% endif %}
 {% endfor %}
+{% if control_plane_url %}
+# Control-plane bearer token via env (not argv) so it never shows in `ps`.
+export ARK_CONTROL_PLANE_TOKEN={{ control_plane_token }}
+{% endif %}
 export HOME="{{ project_dir }}"
 export XDG_CONFIG_HOME="{{ project_dir }}/.config"
 # Disable user-site discovery so the project's conda env is the only
@@ -60,7 +64,7 @@ python -m ark.orchestrator \
   --mode {{ mode }} \
   --iterations {{ max_iterations }} \
   --max-days 2 \
-  --db-path {{ db_path }} \
+  {% if control_plane_url %}--control-plane-url {{ control_plane_url }}{% else %}--db-path {{ db_path }}{% endif %} \
   --project-id {{ project_id }}
 
 echo "[ARK] Job finished: $(date)"

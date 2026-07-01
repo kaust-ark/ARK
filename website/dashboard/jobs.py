@@ -16,6 +16,27 @@ from jinja2 import Template
 
 _SLURM_TEMPLATE = Path(__file__).parent / "slurm_template.sh"
 
+# Per-run control-plane job token lifetime. Generous so long runs never outlive
+# their token; tokens are project-scoped and rotate with SECRET_KEY.
+CONTROL_PLANE_TOKEN_TTL_SECONDS = 14 * 86400
+
+
+def control_plane_transport(project_id: str, settings) -> tuple[str, str]:
+    """Choose the boundary transport for a launched orchestrator.
+
+    Returns ``(control_plane_url, control_plane_token)``. When
+    ``settings.control_plane_url`` is configured, mints a per-project bearer token
+    so the run reports over the /v1 HTTP API. Otherwise returns ``("", "")`` and
+    callers fall back to the legacy in-process ``--db-path`` path (keeps SLURM /
+    local single-node working unchanged until an operator opts in)."""
+    url = (getattr(settings, "control_plane_url", "") or "").strip()
+    if not url:
+        return "", ""
+    from .auth import make_job_token
+    token = make_job_token(project_id, settings.secret_key,
+                           ttl_seconds=CONTROL_PLANE_TOKEN_TTL_SECONDS)
+    return url, token
+
 # Per-project conda env: lives at <project_dir>/.env as a `--prefix` env cloned
 # from the configured base env. Detected via the conda-meta directory which
 # every conda env has, even an empty one.
@@ -393,8 +414,10 @@ def submit_job(
 
     safe_api_keys = {k: shlex.quote(v) for k, v in (api_keys or {}).items()}
 
+    # HTTP /v1 transport when configured, else legacy shared DB path.
+    cp_url, cp_token = control_plane_transport(project_id, settings)
     from website.dashboard.db import resolve_db_path
-    db_path = resolve_db_path()
+    db_path = "" if cp_url else resolve_db_path()
 
     template_text = _SLURM_TEMPLATE.read_text()
     script = Template(template_text).render(
@@ -410,6 +433,8 @@ def submit_job(
         conda_env=settings.slurm_conda_env,
         api_keys=safe_api_keys,
         db_path=db_path,
+        control_plane_url=shlex.quote(cp_url) if cp_url else "",
+        control_plane_token=shlex.quote(cp_token) if cp_token else "",
         ark_code_root=str(Path(__file__).resolve().parents[2]),
     )
 
@@ -710,9 +735,11 @@ def launch_local_job(
     else:
         python_prefix = [sys.executable]
 
-    # Resolve DB path so orchestrator can sync status
+    # Choose the control-plane transport: HTTP /v1 when configured, else the
+    # legacy shared-DB path. The token (if any) rides in via env, not argv.
+    cp_url, cp_token = control_plane_transport(project_id, settings)
     from website.dashboard.db import resolve_db_path
-    db_path = resolve_db_path()
+    db_path = "" if cp_url else resolve_db_path()
 
     cmd = python_prefix + [
         "-m", "ark.orchestrator",
@@ -721,9 +748,12 @@ def launch_local_job(
         "--code-dir", str(project_dir),
         "--mode", mode,
         "--iterations", str(max_iterations),
-        "--db-path", db_path,
         "--project-id", project_id,
     ]
+    if cp_url:
+        cmd += ["--control-plane-url", cp_url]
+    else:
+        cmd += ["--db-path", db_path]
     if apply_instruction:
         # Lightweight targeted change instead of a full iteration loop.
         cmd += ["--apply-instruction", apply_instruction,
@@ -755,6 +785,10 @@ def launch_local_job(
 
     # Prepare environment with user keys and home isolation
     env = os.environ.copy()
+    # Control-plane bearer token via env (never argv) — carried in the 0600
+    # EnvironmentFile for the detached systemd unit, then unlinked.
+    if cp_token:
+        env["ARK_CONTROL_PLANE_TOKEN"] = cp_token
     if api_keys:
         provision_claude_session(project_dir, api_keys)
         provision_gemini_session(project_dir, api_keys)

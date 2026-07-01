@@ -104,6 +104,13 @@ PROJECTS_ROOT={_root / '.ark' / 'data' / 'projects'}
 SECRET_KEY={secrets.token_hex(32)}
 DB_PATH={_root / '.ark' / 'data' / 'webapp.db'}
 
+# Control-plane API for launched orchestrators. Leave blank to keep the legacy
+# in-process shared-DB path. Set to the /v1 base URL to make runs report over
+# HTTP (required for remote/BYOC; the orchestrator must be able to reach it):
+#   CONTROL_PLANE_URL=http://127.0.0.1:9527/v1   (same-host)
+#   CONTROL_PLANE_URL=https://your-host/v1       (remote)
+CONTROL_PLANE_URL=
+
 # Optional SLURM settings (auto-detected if blank)
 SLURM_PARTITION=
 SLURM_ACCOUNT=
@@ -150,6 +157,11 @@ class Settings:
             or merged.get("DB_PATH")
             or str(_root / ".ark" / "data" / "webapp.db")
         )
+        # Base URL of the /v1 control-plane API. When set, launched orchestrators
+        # report over HTTP (network-only boundary) instead of the shared SQLite
+        # DB; empty keeps the legacy in-process --db-path path. Should include the
+        # /v1 suffix, e.g. "http://127.0.0.1:9527/v1" or "https://host/v1".
+        self.control_plane_url: str = merged.get("CONTROL_PLANE_URL", "").rstrip("/")
         self.slurm_partition: str = merged.get("SLURM_PARTITION", "")
         self.slurm_account: str = merged.get("SLURM_ACCOUNT", "")
         self.slurm_conda_env: str = merged.get("SLURM_CONDA_ENV", "ark-base")

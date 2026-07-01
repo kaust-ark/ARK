@@ -3051,8 +3051,11 @@ def main():
     #  • otherwise            → in-process LocalDb path; discover the DB and, if
     #    needed, resolve project_id by name.
     from ark.controlplane import default_db_path, resolve_project_id_by_name
-    control_plane_url = args.control_plane_url
-    control_plane_token = args.control_plane_token
+    # URL may come on the CLI or via env; the TOKEN is passed via env only
+    # (ARK_CONTROL_PLANE_TOKEN) so it never appears in `ps`/argv.
+    control_plane_url = args.control_plane_url or os.environ.get("ARK_CONTROL_PLANE_URL") or None
+    control_plane_token = (args.control_plane_token
+                           or os.environ.get("ARK_CONTROL_PLANE_TOKEN") or None)
     db_path = args.db_path
     project_id = args.project_id
     if not control_plane_url:

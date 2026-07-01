@@ -233,8 +233,14 @@ Short-lived + refreshable; scope = one project's endpoints only.
    `/v1`; `--control-plane-url` / `--control-plane-token` CLI args wired into
    `main()` and the constructor. **Remaining:** event *storage* + dashboard
    live-log rendering (the `/events` endpoint currently accepts-and-drops).
-5. ⏳ *Next.* Update launchers (`jobs.py`) to pass `--control-plane-url` + token;
-   SLURM template switches from `--db-path` to the API URL/token.
+5. ✅ *Done.* Launchers (`jobs.py`: `submit_job` SLURM + `launch_local_job`, which
+   `launch_cloud_job` wraps) pick the transport via `control_plane_transport`:
+   when `settings.control_plane_url` (`CONTROL_PLANE_URL`) is set they pass
+   `--control-plane-url` and mint a per-project token carried in the job **env**
+   (`ARK_CONTROL_PLANE_TOKEN`, never argv); otherwise legacy `--db-path`. SLURM
+   template is transport-conditional. Opt-in: empty `CONTROL_PLANE_URL` preserves
+   today's behavior, so SLURM/local stay unchanged until an operator flips it.
+   *(The `ark run` CLI launcher still uses `--db-path` — a small follow-up.)*
 6. ⏳ HITL fan-out migration (D1) — move Telegram send/receive to the CP; delete
    the transitional `answer_decision`/`expire_decision`.
 
@@ -250,9 +256,11 @@ Short-lived + refreshable; scope = one project's endpoints only.
   token auth (`tests/integration/test_control_plane_api.py`): fetch/report/
   autonomy/commands-peek-ack/decisions, plus 401 (no token), 403 (wrong project),
   401 (bad signature), 200 (valid).
-- ⏳ A full orchestrator run over Http end-to-end (pending launcher wiring, step 5).
-- ⏳ A **SLURM** run reporting via the API (`--control-plane-url`), proving the
-  boundary is network-only (pending step 5).
+- ✅ Launchers wired (step 5): `control_plane_transport` selection + SLURM
+  template both modes render valid bash and mint a scoped token
+  (`tests/unit/test_job_transport.py`). ⏳ A full *live* orchestrator run over Http
+  (and a SLURM node reaching the API) still needs an integrated environment to
+  exercise end-to-end.
 - ⏳ HITL: opening a decision notifies the human (Telegram/webapp) and the answer
   resolves the orchestrator's poll — via the CP (D1, step 6).
 - ⏳ Live logs render in the dashboard from `/v1/.../events`, with **no shared
