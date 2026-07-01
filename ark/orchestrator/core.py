@@ -57,10 +57,15 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self._model_arg = model
         self.project_name = project
 
-        # ── DB awareness ──
+        # ── Control-plane boundary ──
+        # All status / command / decision / message crossings go through
+        # self.cp — the orchestrator never touches website.dashboard.db directly
+        # (see CONTROL_PLANE_BOUNDARY.md). The legacy _db_path/_project_id attrs
+        # are retained only for backward-compatible references.
         self._db_path = db_path
         self._project_id = project_id
-        self._db_sync_errors = 0
+        from ark.controlplane import build_client
+        self.cp = build_client(db_path=db_path, project_id=project_id, log_fn=self.log)
         self._display_name = None
 
         # 1. Initialize Workspace Manager
@@ -213,7 +218,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
             # Secret VALUES stay Telegram-only — never store a raw secret in the
             # webapp message thread.
             _tg_ok = self.telegram.is_configured
-            _has_channel = _tg_ok or bool(self._db_path and self._project_id)
+            _has_channel = _tg_ok or self.cp.available
             self._intervention = InterventionManager(
                 self.config, self.state_dir, [self.code_dir],
                 ask_fn=(self._intervention_ask if _has_channel else None),
@@ -316,38 +321,20 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
             )
         return f"{emoji} <b>ARK Project-{_html.escape(short)}</b>"
 
-    # ========== DB Sync ==========
+    # ========== Control-plane sync ==========
 
     def _sync_db(self, **kwargs):
-        """Update project record in the webapp DB. Fail-soft: errors are logged, never raised."""
-        if not self._db_path or not self._project_id:
-            return
-        try:
-            import sqlalchemy  # noqa: F401 — availability check
-        except ImportError:
-            self._db_path = None  # disable future sync attempts silently
-            return
-        # Ensure ARK root is on sys.path (pipeline chdir's to project dir)
-        ark_root = str(Path(__file__).parent.parent.absolute())
-        if ark_root not in sys.path:
-            sys.path.insert(0, ark_root)
-        try:
-            from website.dashboard.db import get_session, get_project, update_project
-            with get_session(self._db_path) as session:
-                project = get_project(session, self._project_id)
-                if project:
-                    update_project(session, project, **kwargs)
-            self._db_sync_errors = 0
-        except Exception as e:
-            self._db_sync_errors += 1
-            if self._db_sync_errors <= 3:
-                self.log(f"DB sync failed ({self._db_sync_errors}): {e}", "WARN")
+        """Report run state to the control plane. Fail-soft (handled by the client).
+
+        Named ``_sync_db`` for call-site compatibility; it now routes through
+        self.cp.report_status rather than touching the DB directly."""
+        self.cp.report_status(**kwargs)
 
     # ========== HITL control plane ==========
-    # The detached orchestrator can't be reached by the webapp except via the
-    # shared DB. These poll a command queue + an autonomy level at safe
-    # checkpoints, and drive pause/resume/steer/stop. Decisions go through
-    # ask_user_decision (DB-backed, dual-channel: webapp + Telegram).
+    # The detached orchestrator can't be reached by the webapp directly. These
+    # poll a command queue + an autonomy level at safe checkpoints, and drive
+    # pause/resume/steer/stop. Decisions go through ask_user_decision. Everything
+    # crosses the boundary via self.cp (see CONTROL_PLANE_BOUNDARY.md).
 
     _AUTONOMY_ASK = {
         # which decision *kinds* actually prompt the human, per autonomy level
@@ -357,50 +344,17 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         "hands_on": None,  # None = ask for everything
     }
 
-    def _hitl_db(self):
-        """Yield a DB session if the control plane is available, else None."""
-        if not self._db_path or not self._project_id:
-            return None
-        try:
-            ark_root = str(Path(__file__).parent.parent.absolute())
-            if ark_root not in sys.path:
-                sys.path.insert(0, ark_root)
-            from website.dashboard import db as _db  # noqa: F401
-            return _db
-        except Exception:
-            return None
-
     def _set_activity(self, text: str):
-        _db = self._hitl_db()
-        if not _db:
-            return
-        try:
-            with _db.get_session(self._db_path) as s:
-                _db.set_activity(s, self._project_id, text)
-        except Exception:
-            pass
+        self.cp.set_activity(text)
 
     def _set_control_state(self, state: str):
-        _db = self._hitl_db()
-        if not _db:
-            return
-        try:
-            with _db.get_session(self._db_path) as s:
-                _db.set_control_state(s, self._project_id, state)
-        except Exception:
-            pass
+        self.cp.set_control_state(state)
 
     def autonomy(self) -> str:
-        """Current autonomy level (DB-backed, falls back to config/default)."""
-        _db = self._hitl_db()
-        if _db:
-            try:
-                with _db.get_session(self._db_path) as s:
-                    p = _db.get_project(s, self._project_id)
-                    if p and p.autonomy_level:
-                        self._autonomy_cache = p.autonomy_level
-            except Exception:
-                pass
+        """Current autonomy level (control-plane-backed, falls back to config/default)."""
+        level = self.cp.get_autonomy()
+        if level:
+            self._autonomy_cache = level
         return (self._autonomy_cache
                 or self.config.get("autonomy_level", "collaborative"))
 
@@ -415,7 +369,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         steer/pause/stop the user sends mid-step is picked up without waiting for
         the current (possibly multi-minute) agent call to finish. Step-boundary
         checkpoints still poll too; the lock serializes them. Idempotent."""
-        if self._control_poller is not None or not (self._db_path and self._project_id):
+        if self._control_poller is not None or not self.cp.available:
             return
 
         def _loop():
@@ -431,18 +385,16 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         t.start()
 
     def _poll_control(self):
-        """Drain pending control commands from the DB and apply them. Safe to
-        call from both the main thread (checkpoints) and the background poller —
-        a lock prevents two threads from racing on the same command batch."""
-        _db = self._hitl_db()
-        if not _db:
+        """Drain pending control commands and apply them. Safe to call from both
+        the main thread (checkpoints) and the background poller — a lock prevents
+        two threads from racing on the same command batch."""
+        if not self.cp.available:
             return
         if not self._control_lock.acquire(blocking=False):
             return  # another thread is already draining; skip this tick
         try:
             try:
-                with _db.get_session(self._db_path) as s:
-                    cmds = _db.take_pending_commands(s, self._project_id)
+                cmds = self.cp.poll_commands()
             except Exception:
                 return
             self._apply_control_commands(cmds)
@@ -451,7 +403,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
 
     def _apply_control_commands(self, cmds):
         for c in cmds:
-            kind, payload = c.get("kind"), c.get("payload", "")
+            kind, payload = c.kind, (c.payload or "")
             if kind == "pause":
                 self._paused = True
                 self._set_control_state("paused")
@@ -473,13 +425,10 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
                            f"✅ Applied — I'll factor this into the upcoming steps: “{payload[:120]}”",
                            kind="message")
             elif kind == "set_autonomy" and payload:
-                try:
-                    with _db.get_session(self._db_path) as s:
-                        _db.set_autonomy(s, self._project_id, payload)
-                    self._autonomy_cache = payload
-                    self.log(f"⚙️  Autonomy → {payload}", "INFO")
-                except Exception:
-                    pass
+                self.cp.set_autonomy(payload)
+                self._autonomy_cache = payload
+                self.log(f"⚙️  Autonomy → {payload}", "INFO")
+            self.cp.ack_command(c.id)
 
     def _maybe_park(self):
         """If paused, block (polling for resume/stop) until unparked."""
@@ -517,14 +466,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
 
     def _chat(self, role: str, text: str, kind: str = "message", meta: dict = None):
         """Append a bubble to the project's conversation thread (fail-soft)."""
-        _db = self._hitl_db()
-        if not _db:
-            return
-        try:
-            with _db.get_session(self._db_path) as s:
-                _db.add_message(s, self._project_id, role, text, kind=kind, meta=meta)
-        except Exception:
-            pass
+        self.cp.append_message(role, text, kind=kind, meta=meta)
 
     # ========== Deep Research (background) ==========
 
@@ -2773,7 +2715,7 @@ a {{ color: #0d9488; }}
         a numeric answer → that index; free text → (len(opts)-1, text).
         """
         has_telegram = self.telegram.is_configured
-        has_db = bool(self._db_path and self._project_id)
+        has_db = self.cp.available
         if not has_telegram and not has_db:
             self.log(f"No HITL channel available, using default option {default}", "WARN")
             return default, ""
@@ -2852,28 +2794,26 @@ a {{ color: #0d9488; }}
             except Exception:
                 polished = msg
 
-        # ── Publish the decision to the DB so the webapp can see + answer it ──
-        _db = self._hitl_db()
+        # ── Publish the decision so the webapp can see + answer it ──
         decision_id = None
-        if has_db and _db:
+        if has_db:
             try:
                 deadline = datetime.utcnow() + timedelta(seconds=timeout)
-                with _db.get_session(self._db_path) as s:
-                    decision_id = _db.create_pending_decision(
-                        s, self._project_id,
-                        question or what_happened or "Decision needed",
-                        opts, kind=kind, context=what_happened or "",
-                        default_index=default, timeout_action=timeout_action,
-                        deadline_at=deadline)
-                self._set_control_state("awaiting")
-                # Post the question as an agent bubble in the chat thread.
-                self._chat("agent", question or what_happened or "Decision needed",
-                           kind="decision",
-                           meta={"options": opts, "decision_id": decision_id,
-                                 "default_index": default, "context": what_happened or "",
-                                 "kind": kind})
+                decision_id = self.cp.open_decision(
+                    question or what_happened or "Decision needed",
+                    opts, kind=kind, context=what_happened or "",
+                    default_index=default, timeout_action=timeout_action,
+                    deadline_at=deadline)
+                if decision_id:
+                    self._set_control_state("awaiting")
+                    # Post the question as an agent bubble in the chat thread.
+                    self._chat("agent", question or what_happened or "Decision needed",
+                               kind="decision",
+                               meta={"options": opts, "decision_id": decision_id,
+                                     "default_index": default, "context": what_happened or "",
+                                     "kind": kind})
             except Exception as e:
-                self.log(f"Could not publish decision to DB: {e}", "WARN")
+                self.log(f"Could not publish decision: {e}", "WARN")
 
         # ── Second channel: Telegram (if configured) ──
         if has_telegram:
@@ -2892,11 +2832,10 @@ a {{ color: #0d9488; }}
         result = None
         try:
             while result is None:
-                # 1) webapp / DB answer
-                if decision_id and _db:
+                # 1) webapp / control-plane answer
+                if decision_id:
                     try:
-                        with _db.get_session(self._db_path) as s:
-                            dec = _db.get_decision(s, decision_id)
+                        dec = self.cp.get_decision(decision_id)
                     except Exception:
                         dec = None
                     if dec is not None and dec.status == "answered":
@@ -2917,14 +2856,15 @@ a {{ color: #0d9488; }}
                     self.telegram._ask_reply = None
                     if reply:
                         idx, is_text = self._parse_decision_reply(reply, opts)
-                        if decision_id and _db:
-                            try:
-                                with _db.get_session(self._db_path) as s:
-                                    _db.answer_decision(s, decision_id,
-                                        index=(idx if not is_text else -1),
-                                        text=(reply if is_text else ""),
-                                        by="telegram", source="telegram")
-                            except Exception: pass
+                        if decision_id:
+                            # TRANSITIONAL: the orchestrator still owns the
+                            # Telegram channel, so it records the answer. Removed
+                            # when HITL fan-out moves to the control plane (D1).
+                            self.cp.answer_decision(
+                                decision_id,
+                                index=(idx if not is_text else -1),
+                                text=(reply if is_text else ""),
+                                by="telegram", source="telegram")
                         self.telegram.send_raw("✅ Received, continuing...")
                         # user bubble for the Telegram answer (webapp answers get
                         # their bubble from the route)
@@ -2971,11 +2911,8 @@ a {{ color: #0d9488; }}
                                 pause_deadline and time.time() >= pause_deadline):
                             self._paused = False
                             self._set_control_state("")
-                            if decision_id and _db:
-                                try:
-                                    with _db.get_session(self._db_path) as s:
-                                        _db.expire_decision(s, decision_id)
-                                except Exception: pass
+                            if decision_id:
+                                self.cp.expire_decision(decision_id)
                             default_label = opts[default] if opts else "N/A"
                             self.log(f"Pause grace elapsed — auto-continuing with default: {default_label}", "WARN")
                             if has_telegram:
@@ -2986,11 +2923,8 @@ a {{ color: #0d9488; }}
                             result = (default, ""); break
                         time.sleep(2); continue
                     else:
-                        if decision_id and _db:
-                            try:
-                                with _db.get_session(self._db_path) as s:
-                                    _db.expire_decision(s, decision_id)
-                            except Exception: pass
+                        if decision_id:
+                            self.cp.expire_decision(decision_id)
                         default_label = opts[default] if opts else "N/A"
                         self.log(f"Decision timed out, using default: {default_label}", "WARN")
                         if has_telegram:
@@ -3101,15 +3035,15 @@ def main():
         sys.exit(0)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Resolve DB path: explicit arg > env > webapp.env > default
+    # Resolve DB path: explicit arg > env > webapp.env > default. The
+    # controlplane helper wraps webapp discovery so bootstrap doesn't import
+    # website.dashboard.db directly (absent on a remote VM, and gone entirely
+    # once the HTTP boundary is the only path).
+    from ark.controlplane import default_db_path, resolve_project_id_by_name
     db_path = args.db_path
     project_id = args.project_id
     if not db_path:
-        try:
-            from website.dashboard.db import resolve_db_path
-            db_path = resolve_db_path()
-        except ImportError:
-            pass  # webapp deps not available (e.g. running on remote VM)
+        db_path = default_db_path()  # None when webapp deps unavailable
 
     # Load project config to resolve code_dir if not specified
     project_dir = args.project_dir
@@ -3121,20 +3055,9 @@ def main():
             cfg = _yaml.safe_load(f) or {}
         code_dir = cfg.get("code_dir")
 
-    # Auto-resolve project_id from DB if not provided
+    # Auto-resolve project_id (by name, or a bare id) if not provided.
     if not project_id and db_path and Path(db_path).exists():
-        try:
-            from website.dashboard.db import get_session, get_project_by_name, get_project
-            with get_session(db_path) as session:
-                # Try looking up by project name or by project_dir matching id
-                p = get_project_by_name(session, args.project)
-                if not p:
-                    # Maybe --project is actually a UUID
-                    p = get_project(session, args.project)
-                if p:
-                    project_id = p.id
-        except Exception:
-            pass
+        project_id = resolve_project_id_by_name(db_path, args.project)
 
     orchestrator = Orchestrator(
         max_days=args.max_days,

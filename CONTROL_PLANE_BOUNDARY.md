@@ -174,15 +174,24 @@ fail. `report_status`/`append_events` should batch/coalesce to avoid chatty HTTP
 ## 6. Key design decisions
 
 - **D1 — Move human fan-out (Telegram/webapp/email) to the control plane.**
-  *Recommended.* Today the orchestrator formats and sends Telegram messages and
-  records answers itself. Under BYOC that would force Telegram creds and
-  account-level notification settings into the user's cloud. Instead: the
-  orchestrator only `open_decision` + `get_decision`; the CP owns notification and
-  answer collection. This removes `answer_decision`/`expire_decision` from the
-  orchestrator, keeps creds on our servers, and centralizes HITL. *Cost:* message
-  formatting (currently rich HTML in `ask_user_decision`) migrates to the CP.
-  *Phasing option:* start with a `POST …/notify` relay (orchestrator still formats,
-  CP just delivers), then migrate formatting server-side.
+  **ACCEPTED (clean end-state, 2026-07-01).** Today the orchestrator formats and
+  sends Telegram messages and records answers itself (per-orchestrator
+  `TelegramDispatcher` in `ark/telegram/client.py`, plus the standalone
+  `TelegramDaemon` mailbox router in `ark/telegram/daemon.py`). Under BYOC that
+  would force Telegram creds and account-level notification settings into the
+  user's cloud. End-state: the orchestrator only `open_decision` + `get_decision`;
+  the CP owns notification *and* answer collection across all channels. This
+  removes `answer_decision`/`expire_decision` from the orchestrator's surface,
+  keeps creds on our servers, and centralizes HITL.
+  - *Scope note:* fully relocating Telegram send/receive off the orchestrator is a
+    **large workstream of its own** (touches `client.py`, `daemon.py`'s mailbox
+    routing, webapp routes, `notify.py`). It is a **later step within Phase 1**,
+    not part of the initial client scaffold.
+  - *Transitional:* until that migration lands, the orchestrator still owns its
+    Telegram channel, so `answer_decision` / `expire_decision` remain on the
+    `ControlPlaneClient` **marked transitional** and are called only by the
+    not-yet-migrated Telegram path in `ask_user_decision`. They are deleted when
+    HITL fan-out moves server-side.
 
 - **D2 — Ack-based command delivery** instead of consume-on-read. A dropped/lost
   HTTP GET must not silently discard a `stop`/`steer`. Commands stay `pending`
@@ -225,9 +234,12 @@ Short-lived + refreshable; scope = one project's endpoints only.
 
 ## 8. Acceptance criteria
 
-- `grep -rn "website.dashboard.db" ark/` returns **only** the
-  `LocalDbControlPlaneClient` adapter — no other `ark/` module imports it, and
-  `--db-path` is gone from the orchestrator's own logic.
+- Within the orchestrator runtime, the sole importer of `website.dashboard.db`
+  is `ark/controlplane/local_db.py`: `grep -rn "website.dashboard.db"
+  ark/orchestrator/` finds only comments, and all crossings route through
+  `self.cp`. (CLI/webapp-adjacent helpers — `cli.py`, `share.py`, `access.py` —
+  still use the DB directly; they are out of scope for the orchestrator boundary.)
+  ✅ *Done in the scaffold.*
 - A full local run works through **each** client: Null, LocalDb, and Http
   (loopback API).
 - A **SLURM** run works end-to-end reporting via the API (`--control-plane-url`),
