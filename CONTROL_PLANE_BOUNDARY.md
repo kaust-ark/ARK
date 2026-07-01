@@ -217,20 +217,26 @@ project-scoped bearer token** minted by the CP when it launches the job (passed 
 Short-lived + refreshable; scope = one project's endpoints only.
 
 **Migration (ordered, each step independently mergeable):**
-1. Add `ark/controlplane/` with the `Protocol`, `ProjectView`/`Command`/
+1. ✅ *Done.* Add `ark/controlplane/` with the ABC, `ProjectView`/`Command`/
    `DecisionView` dataclasses, and `LocalDbControlPlaneClient` (wraps current
    `db.py` calls) + `NullControlPlaneClient`.
-2. Refactor `core.py` to route **all** boundary calls through `self.cp`; delete
-   `_sync_db`/`_hitl_db` direct `website.dashboard.db` usage. Wire client
-   selection in `main()` (`--control-plane-url` → Http, `--db-path` → LocalDb,
-   else Null). **Behavior identical** on the LocalDb path.
-3. Build the `/v1` FastAPI router in `website/dashboard/` as a **thin wrapper over
-   the same `db.py` helpers** (low risk — same functions, new transport). Add
-   token auth.
-4. Implement `HttpControlPlaneClient` against `/v1`; add `append_events` +
-   dashboard live-log rendering from events (removes shared-FS log reads).
-5. Update launchers (`jobs.py`) to pass `--control-plane-url` + token. SLURM
-   template (`slurm_template.sh`) switches from `--db-path` to the API URL/token.
+2. ✅ *Done.* Refactor `core.py` to route **all** boundary calls through
+   `self.cp`; delete `_sync_db`/`_hitl_db` direct `website.dashboard.db` usage.
+   Wire client selection in `main()` (`--control-plane-url` → Http, `--db-path` →
+   LocalDb, else Null). **Behavior identical** on the LocalDb path.
+3. ✅ *Done.* Build the `/v1` FastAPI router (`website/dashboard/api.py`) as a
+   **thin wrapper over the same `db.py` helpers**, mounted on the outer app.
+   Per-project bearer-token auth (`auth.make_job_token`/`verify_job_token`) with a
+   reportable-fields whitelist. Command delivery is peek + ack (D2) via new
+   `db.list_pending_commands` / `db.mark_command_consumed`.
+4. ✅ *Done (client + args).* `HttpControlPlaneClient` (stdlib urllib) against
+   `/v1`; `--control-plane-url` / `--control-plane-token` CLI args wired into
+   `main()` and the constructor. **Remaining:** event *storage* + dashboard
+   live-log rendering (the `/events` endpoint currently accepts-and-drops).
+5. ⏳ *Next.* Update launchers (`jobs.py`) to pass `--control-plane-url` + token;
+   SLURM template switches from `--db-path` to the API URL/token.
+6. ⏳ HITL fan-out migration (D1) — move Telegram send/receive to the CP; delete
+   the transitional `answer_decision`/`expire_decision`.
 
 ## 8. Acceptance criteria
 
@@ -240,16 +246,20 @@ Short-lived + refreshable; scope = one project's endpoints only.
   `self.cp`. (CLI/webapp-adjacent helpers — `cli.py`, `share.py`, `access.py` —
   still use the DB directly; they are out of scope for the orchestrator boundary.)
   ✅ *Done in the scaffold.*
-- A full local run works through **each** client: Null, LocalDb, and Http
-  (loopback API).
-- A **SLURM** run works end-to-end reporting via the API (`--control-plane-url`),
-  proving the boundary is network-only.
-- HITL: opening a decision notifies the human (Telegram/webapp) and the answer
-  resolves the orchestrator's poll — via the CP (D1).
-- Live logs render in the dashboard from `/v1/.../events`, with **no shared
-  filesystem** between orchestrator and control plane.
-- Existing test suite green; new tests: a fake `ControlPlaneClient` for
-  orchestrator unit tests, and API contract tests over the `db.py` helpers.
+- ✅ The `/v1` API + `HttpControlPlaneClient` round-trip over a real socket with
+  token auth (`tests/integration/test_control_plane_api.py`): fetch/report/
+  autonomy/commands-peek-ack/decisions, plus 401 (no token), 403 (wrong project),
+  401 (bad signature), 200 (valid).
+- ⏳ A full orchestrator run over Http end-to-end (pending launcher wiring, step 5).
+- ⏳ A **SLURM** run reporting via the API (`--control-plane-url`), proving the
+  boundary is network-only (pending step 5).
+- ⏳ HITL: opening a decision notifies the human (Telegram/webapp) and the answer
+  resolves the orchestrator's poll — via the CP (D1, step 6).
+- ⏳ Live logs render in the dashboard from `/v1/.../events`, with **no shared
+  filesystem** (event storage/rendering — remainder of step 4).
+- ✅ New tests: LocalDb round-trip over the real `db.py` helpers + Null +
+  `build_client` selection (`tests/unit/test_controlplane.py`), and the live
+  `/v1` integration suite above.
 
 ## 9. Out of scope for Phase 1 (later phases)
 - Postgres (Phase 2) — the `/v1` API is DB-agnostic; SQLite stays for now.

@@ -13,6 +13,7 @@ import pytest
 from ark.controlplane import (
     NullControlPlaneClient,
     LocalDbControlPlaneClient,
+    HttpControlPlaneClient,
     build_client,
 )
 from ark.controlplane.types import Command, DecisionView
@@ -168,6 +169,13 @@ def test_build_client_localdb_when_db_and_project(db_and_project):
     assert isinstance(cp, LocalDbControlPlaneClient)
 
 
-def test_build_client_http_not_implemented():
-    with pytest.raises(NotImplementedError):
-        build_client(control_plane_url="https://cp.example.com", project_id="p1")
+def test_build_client_http_when_url():
+    cp = build_client(control_plane_url="https://cp.example.com/v1",
+                      token="t", project_id="p1")
+    assert isinstance(cp, HttpControlPlaneClient)
+    assert cp.available is True
+
+
+def test_build_client_http_requires_project_id():
+    with pytest.raises(ValueError):
+        build_client(control_plane_url="https://cp.example.com/v1", token="t")

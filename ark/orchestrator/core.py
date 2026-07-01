@@ -47,7 +47,8 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
     def __init__(self, project: str, max_days: float = 3, max_iterations: int = 100,
                  model: str = None, model_variant: str = None, code_dir: str = None,
                  project_dir: str = None, db_path: str = None, project_id: str = None,
-                 mode: str = "paper"):
+                 mode: str = "paper", control_plane_url: str = None,
+                 control_plane_token: str = None):
         global PROJECT_DIR
 
         self.max_end_time = datetime.now() + timedelta(days=max_days)
@@ -65,7 +66,10 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self._db_path = db_path
         self._project_id = project_id
         from ark.controlplane import build_client
-        self.cp = build_client(db_path=db_path, project_id=project_id, log_fn=self.log)
+        self.cp = build_client(control_plane_url=control_plane_url,
+                               token=control_plane_token,
+                               db_path=db_path, project_id=project_id,
+                               log_fn=self.log)
         self._display_name = None
 
         # 1. Initialize Workspace Manager
@@ -3017,6 +3021,12 @@ def main():
                         help="Path to webapp SQLite DB for status sync")
     parser.add_argument("--project-id", type=str, default=None,
                         help="Project UUID in the webapp DB")
+    parser.add_argument("--control-plane-url", type=str, default=None,
+                        help="Base URL of the /v1 control-plane API (e.g. "
+                             "https://cp.example.com/v1). When set, status/commands/"
+                             "decisions go over HTTP instead of a shared DB.")
+    parser.add_argument("--control-plane-token", type=str, default=None,
+                        help="Per-run project-scoped bearer token for the /v1 API.")
     parser.add_argument("--no-research", action="store_true", default=False,
                         help="Skip Gemini Deep Research")
     parser.add_argument("--apply-instruction", type=str, default=None,
@@ -3035,15 +3045,19 @@ def main():
         sys.exit(0)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # Resolve DB path: explicit arg > env > webapp.env > default. The
-    # controlplane helper wraps webapp discovery so bootstrap doesn't import
-    # website.dashboard.db directly (absent on a remote VM, and gone entirely
-    # once the HTTP boundary is the only path).
+    # Two boundary transports (see CONTROL_PLANE_BOUNDARY.md):
+    #  • --control-plane-url  → remote HTTP path; no local DB. project_id must be
+    #    supplied via --project-id (no by-name resolution off-box).
+    #  • otherwise            → in-process LocalDb path; discover the DB and, if
+    #    needed, resolve project_id by name.
     from ark.controlplane import default_db_path, resolve_project_id_by_name
+    control_plane_url = args.control_plane_url
+    control_plane_token = args.control_plane_token
     db_path = args.db_path
     project_id = args.project_id
-    if not db_path:
-        db_path = default_db_path()  # None when webapp deps unavailable
+    if not control_plane_url:
+        if not db_path:
+            db_path = default_db_path()  # None when webapp deps unavailable
 
     # Load project config to resolve code_dir if not specified
     project_dir = args.project_dir
@@ -3055,8 +3069,8 @@ def main():
             cfg = _yaml.safe_load(f) or {}
         code_dir = cfg.get("code_dir")
 
-    # Auto-resolve project_id (by name, or a bare id) if not provided.
-    if not project_id and db_path and Path(db_path).exists():
+    # Auto-resolve project_id (by name, or a bare id) on the LocalDb path only.
+    if not project_id and not control_plane_url and db_path and Path(db_path).exists():
         project_id = resolve_project_id_by_name(db_path, args.project)
 
     orchestrator = Orchestrator(
@@ -3070,12 +3084,14 @@ def main():
         project_dir=project_dir,
         db_path=db_path,
         project_id=project_id,
+        control_plane_url=control_plane_url,
+        control_plane_token=control_plane_token,
     )
     if args.no_research:
         orchestrator.config["skip_deep_research"] = True
 
-    # Mark as running in DB
-    if db_path and project_id:
+    # Mark as running via whichever control-plane transport is active.
+    if orchestrator.cp.available:
         orchestrator._sync_db(status="running", pid=os.getpid())
 
     # Persistent streaming chat turn (out-of-band management), then back to done.
@@ -3085,7 +3101,7 @@ def main():
         except Exception as e:
             orchestrator.log(f"chat_turn error: {e}", "ERROR")
         finally:
-            if db_path and project_id:
+            if orchestrator.cp.available:
                 orchestrator._sync_db(status="done", pid=0)
         return
 
@@ -3096,14 +3112,14 @@ def main():
         except Exception as e:
             orchestrator.log(f"apply_instruction error: {e}", "ERROR")
         finally:
-            if db_path and project_id:
+            if orchestrator.cp.available:
                 orchestrator._sync_db(status="done", pid=0)
         return
 
     try:
         orchestrator.run()
-        # Mark completion in DB
-        if db_path and project_id:
+        # Mark completion via the active control-plane transport
+        if orchestrator.cp.available:
             paper_state = orchestrator.load_paper_state()
             final_status = "done"
             if paper_state.get("status") in ("accepted", "accepted_pending_cleanup"):

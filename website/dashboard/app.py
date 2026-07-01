@@ -679,6 +679,11 @@ def create_app():
     # ── Outer app (homepage + dashboard mount) ─────────────────────────
     outer = FastAPI(title="Idea2Paper Research Portal", lifespan=lifespan)
 
+    # /v1 control-plane API for orchestrators (token-auth, no session cookie).
+    # On the outer app so it's a clean top-level path outside the dashboard.
+    from .api import router as control_plane_router
+    outer.include_router(control_plane_router)
+
     # Starlette's Mount matches /dashboard/ but NOT bare /dashboard (it
     # passes empty string to the sub-app which 404s). Register a redirect
     # BEFORE the mount so /dashboard → /dashboard/ works.

@@ -37,6 +37,35 @@ def make_user_share_token(user_id: str, secret: str, ttl_days: int = 90) -> str:
     return URLSafeTimedSerializer(secret).dumps(payload, salt=_SHARE_SALT)
 
 
+# Per-run orchestrator job token. Minted by the control plane when it launches a
+# run; the orchestrator presents it as a Bearer token on every /v1 API call. It
+# is scoped to exactly one project and carries its own expiry. Rotate
+# settings.secret_key to invalidate all outstanding job tokens at once.
+_JOB_SALT = "orchestrator-job"
+
+
+def make_job_token(project_id: str, secret: str, ttl_seconds: int = 7 * 86400) -> str:
+    """Mint a project-scoped token for a run's orchestrator (default 7-day TTL)."""
+    payload = {"pid": project_id, "exp": int(time.time()) + int(ttl_seconds)}
+    return URLSafeTimedSerializer(secret).dumps(payload, salt=_JOB_SALT)
+
+
+def verify_job_token(token: str, secret: str) -> str | None:
+    """Return the project_id a job token is scoped to if valid + unexpired, else None."""
+    try:
+        data = URLSafeTimedSerializer(secret).loads(
+            token, salt=_JOB_SALT, max_age=_SHARE_ABS_MAX_AGE,
+        )
+    except (SignatureExpired, BadSignature):
+        return None
+    if not isinstance(data, dict):
+        return None
+    exp = data.get("exp", 0)
+    if not isinstance(exp, int) or exp < int(time.time()):
+        return None
+    return data.get("pid") or None
+
+
 def verify_share_token(token: str, secret: str) -> tuple[str, str] | None:
     """Return (kind, id) if valid and not expired, else None.
 

@@ -467,6 +467,33 @@ def take_pending_commands(session: Session, project_id: str) -> list[dict]:
     return out
 
 
+def list_pending_commands(session: Session, project_id: str) -> list[dict]:
+    """Peek pending commands (FIFO) WITHOUT consuming them.
+
+    For the HTTP boundary (D2): the orchestrator pulls with this, applies each,
+    then acknowledges via ``mark_command_consumed`` — at-least-once delivery, so
+    a dropped response can't silently discard a stop/steer. The in-process
+    LocalDb path keeps the consume-on-read ``take_pending_commands`` instead."""
+    rows = session.exec(
+        select(ProjectCommand)
+        .where(ProjectCommand.project_id == project_id,
+               ProjectCommand.status == "pending")
+        .order_by(ProjectCommand.created_at)
+    ).all()
+    return [{"id": r.id, "kind": r.kind, "payload": r.payload,
+             "source": r.source, "created_by": r.created_by} for r in rows]
+
+
+def mark_command_consumed(session: Session, command_id: str) -> None:
+    """Mark a single command consumed (ack for the peek/ack HTTP model)."""
+    r = session.get(ProjectCommand, command_id)
+    if r is not None and r.status == "pending":
+        r.status = "consumed"
+        r.consumed_at = datetime.utcnow()
+        session.add(r)
+        session.commit()
+
+
 def create_pending_decision(session: Session, project_id: str, question: str,
                             options: list[str], kind: str = "decision",
                             context: str = "", default_index: int = 0,
