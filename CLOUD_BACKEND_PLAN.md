@@ -164,6 +164,11 @@ HTTP API. No `website.dashboard.db` import, no `--db-path`, no shared-FS reads.
 Everything keeps running **on-box** (loopback API) so SLURM and local paths are
 unaffected in behavior.
 
+> **Detailed design:** [`CONTROL_PLANE_BOUNDARY.md`](CONTROL_PLANE_BOUNDARY.md) —
+> ownership table, the full inventory of current boundary crossings, the `/v1`
+> API surface, the `ControlPlaneClient` contract, and the key design decisions
+> (HITL fan-out ownership, ack-based commands, checkpoint/timeout ownership).
+
 **Tasks**
 1. Define the control-plane API (FastAPI, alongside the existing dashboard in
    `website/dashboard/`). Endpoints map 1:1 onto today's DB access:
