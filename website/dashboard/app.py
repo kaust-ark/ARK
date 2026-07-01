@@ -43,39 +43,67 @@ def _pname(p) -> str:
     return p.title if p.title else p.name
 
 
-def _advance_pending_queue(session, settings):
-    """Promote the oldest pending project whose owner has room and global cap allows.
+def _gc_project_env(pdir, project_id: str = ""):
+    """Reclaim disk by deleting the per-project conda env once terminal.
 
-    Respects MAX_CONCURRENT_PER_USER and MAX_CONCURRENT_GLOBAL from routes.
-    Keeps looping until no more slots are available.
+    The env (<project_dir>/.conda_env, ~1-2 GB cloned from ark-base) is only
+    needed while the pipeline runs. Research Phase Step 0 is idempotent, so a
+    later continue/restart transparently re-provisions it (~200s). Best-effort —
+    never raises into the poll loop.
+    """
+    try:
+        from .jobs import project_env_prefix
+        env = project_env_prefix(pdir)
+        if env.exists():
+            import shutil
+            shutil.rmtree(env, ignore_errors=True)
+            logger.info(f"GC: removed conda env for {project_id or pdir.name} ({env})")
+    except Exception as e:
+        logger.warning(f"conda env GC failed for {pdir}: {e}")
+
+
+def _advance_pending_queue(session, settings):
+    """Promote the oldest pending project whose LANE has room.
+
+    Two independent FIFO lanes (see routes.py caps):
+      • regular lane: per-user MAX_CONCURRENT_PER_USER, global MAX_CONCURRENT_REGULAR_GLOBAL
+      • admin  lane: global MAX_CONCURRENT_ADMIN_GLOBAL
+    Regular and admin pools never block each other. Loops until no lane has room.
     """
     from .db import update_project, Project, get_user
     from .routes import (
         _get_user_keys,
+        _admin_user_ids,
         MAX_CONCURRENT_PER_USER,
-        MAX_CONCURRENT_GLOBAL,
+        MAX_CONCURRENT_REGULAR_GLOBAL,
+        MAX_CONCURRENT_ADMIN_GLOBAL,
     )
     from sqlmodel import select
 
     while True:
+        admin_ids = _admin_user_ids(session)
         active = session.exec(
             select(Project).where(Project.status.in_(["queued", "running"]))
         ).all()
-        if len(active) >= MAX_CONCURRENT_GLOBAL:
-            return
+        admin_active = [p for p in active if p.user_id in admin_ids]
+        regular_active = [p for p in active if p.user_id not in admin_ids]
         per_user: dict[str, int] = {}
-        for p in active:
+        for p in regular_active:
             per_user[p.user_id] = per_user.get(p.user_id, 0) + 1
+        admin_room = len(admin_active) < MAX_CONCURRENT_ADMIN_GLOBAL
+        regular_room = len(regular_active) < MAX_CONCURRENT_REGULAR_GLOBAL
 
         pending_list = session.exec(
             select(Project).where(Project.status == "pending")
             .order_by(Project.created_at.asc())
         ).all()
-        pending = next(
-            (p for p in pending_list
-             if per_user.get(p.user_id, 0) < MAX_CONCURRENT_PER_USER),
-            None,
-        )
+
+        def _promotable(p):
+            if p.user_id in admin_ids:
+                return admin_room
+            return regular_room and per_user.get(p.user_id, 0) < MAX_CONCURRENT_PER_USER
+
+        pending = next((p for p in pending_list if _promotable(p)), None)
         if not pending:
             return
 
@@ -136,6 +164,7 @@ async def _poll_jobs(app: FastAPI):
                             update_project(session, p, **kwargs)
                             logger.info(f"Local project {p.id}: {p.status} → {new_status}")
                             if new_status in ("done", "failed", "stopped"):
+                                _gc_project_env(pdir, p.id)
                                 _advance_pending_queue(session, settings)
                             if new_status == "done":
                                 score = 0.0
@@ -289,6 +318,8 @@ async def _poll_jobs(app: FastAPI):
                             kwargs = {"status": new_status}
                             update_project(session, p, **kwargs)
                             logger.info(f"Cloud orchestrator {p.id}: {p.status} → {new_status}")
+                            if new_status in ("done", "failed", "stopped"):
+                                _gc_project_env(pdir, p.id)
                             _advance_pending_queue(session, settings)
 
                             if new_status == "done":
@@ -366,6 +397,7 @@ async def _poll_jobs(app: FastAPI):
                         update_project(session, p, status=new_status)
                         logger.info(f"Project {p.id}: {p.status} → {new_status}")
                         if new_status in ("done", "failed", "stopped"):
+                            _gc_project_env(pdir, p.id)
                             _advance_pending_queue(session, settings)
 
                         if new_status == "running":

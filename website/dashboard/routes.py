@@ -20,11 +20,18 @@ import subprocess
 
 logger = logging.getLogger("website.dashboard.routes")
 
-MAX_PROJECTS_PER_USER = 10
+MAX_PROJECTS_PER_USER = 5       # regular host cap (bounds disk: one workspace/conda env each)
 MAX_PROJECTS_PER_ADMIN = 25
 MAX_ITER_PER_START = 5
-MAX_CONCURRENT_PER_USER = 3
-MAX_CONCURRENT_GLOBAL = 10
+# Two concurrency LANES so regular users and admins never block each other, and
+# each lane drains as a simple FIFO queue:
+#   • regular lane: at most 1 active per user, at most 3 active across all regulars
+#   • admin  lane: at most 5 active across all admins (separate pool)
+# Overflow → status "pending" (queued), promoted by app.py::_advance_pending_queue.
+MAX_CONCURRENT_PER_USER = 1          # regular: one running/queued at a time
+MAX_CONCURRENT_REGULAR_GLOBAL = 3    # regular lane global cap
+MAX_CONCURRENT_ADMIN_GLOBAL = 5      # admin lane global cap
+MAX_CONCURRENT_GLOBAL = MAX_CONCURRENT_REGULAR_GLOBAL  # back-compat alias (regular lane)
 from ark.paths import get_ark_root as _get_ark_root
 _DISABLED_FLAG = None  # lazy
 
@@ -326,6 +333,20 @@ def _require_admin(request: Request) -> User:
     if not _is_admin(user):
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
+
+def _admin_user_ids(session) -> set:
+    """User IDs whose email is in the admin allowlist (for lane partitioning).
+
+    The users table is tiny, so a full scan is cheap and avoids threading admin
+    status through every project row.
+    """
+    from sqlmodel import select as _sel
+    settings = get_settings()
+    if not settings.admin_emails:
+        return set()
+    rows = session.exec(_sel(User.id, User.email)).all()
+    return {uid for uid, email in rows if (email or "").lower() in settings.admin_emails}
 
 
 def _can_access_project(user: User, project: Project) -> bool:
@@ -1119,16 +1140,23 @@ def _check_webapp_enabled():
 
 
 def _queue_position(project_id: str, session) -> int:
-    from sqlmodel import func, select as _sel
+    """1-based position within the project's OWN lane (regular vs admin).
+
+    Regular and admin queues drain independently, so a regular user's position
+    should only count other regular pending projects ahead of them.
+    """
+    from sqlmodel import select as _sel
     project = get_project(session, project_id)
     if not project or project.status != "pending":
         return 0
-    count = session.exec(
-        _sel(func.count(Project.id))
-        .where(Project.status == "pending")
+    admin_ids = _admin_user_ids(session)
+    owner_is_admin = project.user_id in admin_ids
+    ahead = session.exec(
+        _sel(Project).where(Project.status == "pending")
         .where(Project.created_at < project.created_at)
-    ).one()
-    return int(count) + 1
+    ).all()
+    same_lane = [p for p in ahead if (p.user_id in admin_ids) == owner_is_admin]
+    return len(same_lane) + 1
 
 
 def _write_user_update(project_dir: Path, message: str, source: str = "webapp"):
@@ -1274,13 +1302,22 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
         _sel(Project).where(Project.status.in_(["queued", "running"]))
         .where(Project.id != project.id)
     ).all()
-    user_active = [p for p in active if p.user_id == project.user_id]
-    if not is_admin and (
-        len(user_active) >= MAX_CONCURRENT_PER_USER
-        or len(active) >= MAX_CONCURRENT_GLOBAL
-    ):
-        update_project(session, project, status="pending")
-        return "pending"
+    # Lane-aware admission: regular users and admins are separate pools so one
+    # can't starve the other. Overflow queues as "pending".
+    admin_ids = _admin_user_ids(session)
+    owner_is_admin = project.user_id in admin_ids
+    if owner_is_admin:
+        admin_active = [p for p in active if p.user_id in admin_ids]
+        if len(admin_active) >= MAX_CONCURRENT_ADMIN_GLOBAL:
+            update_project(session, project, status="pending")
+            return "pending"
+    else:
+        regular_active = [p for p in active if p.user_id not in admin_ids]
+        user_active = [p for p in regular_active if p.user_id == project.user_id]
+        if (len(user_active) >= MAX_CONCURRENT_PER_USER
+                or len(regular_active) >= MAX_CONCURRENT_REGULAR_GLOBAL):
+            update_project(session, project, status="pending")
+            return "pending"
     
     # Fetch user keys
     user_obj = get_user(session, project.user_id)
@@ -1679,6 +1716,8 @@ async def api_me(request: Request):
         "is_admin": _is_admin(user),
         "telegram_token": user.telegram_token or "",
         "telegram_chat_id": user.telegram_chat_id or "",
+        # Drives the first-run onboarding nudge (configure an API key).
+        "has_keys": any(_get_user_keys(user).values()),
     })
 
 
@@ -1954,19 +1993,16 @@ async def api_create_project(
         project_cap = MAX_PROJECTS_PER_ADMIN if _is_admin(user) else MAX_PROJECTS_PER_USER
         if len(user_projects) >= project_cap:
             raise HTTPException(400, f"Max {project_cap} projects per user.")
-        active = [p for p in user_projects if p.status in ("queued", "running", "initializing")]
-        if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
-            raise HTTPException(
-                400,
-                f"You already have {len(active)} active projects. "
-                f"Max {MAX_CONCURRENT_PER_USER} concurrent — wait for one to finish.",
-            )
-            
+        # NOTE: no hard concurrent-reject here anymore. Extra submissions are
+        # accepted and QUEUED (status "pending") by _try_submit_or_pending, then
+        # promoted FIFO within the user's lane by _advance_pending_queue. The
+        # host cap above (5 regular / 25 admin) is what bounds total footprint.
+
         # Check for configured keys
         db_user = get_user(_s, user.id)
         keys = _get_user_keys(db_user) if db_user else {}
         if not any(keys.values()):
-            raise HTTPException(400, "Please configure at least one API key or link your Claude account in Settings first.")
+            raise HTTPException(400, "Please add at least one API key in Settings first (e.g. OpenRouter — one key unlocks every model).")
 
         if compute_backend.startswith("cloud"):
             cloud_cfg = _build_cloud_config(db_user or user, settings, provider_override=_parse_cloud_provider(compute_backend))
