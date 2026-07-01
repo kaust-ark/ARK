@@ -394,6 +394,15 @@ Execute the task and update the corresponding files.
                 "Never `echo` a secret or write it into a file.\n"
             )
 
+        # Experiment sandbox — route agent-generated experiment execution through
+        # Apptainer (isolated from the host). No-op unless the base image exists.
+        if agent_type in ("experimenter", "coder"):
+            try:
+                from ark.sandbox import experimenter_directive
+                full_prompt += experimenter_directive()
+            except Exception:
+                pass
+
         # Brief task description for logging
         task_brief = task.split("\n")[0][:50].strip()
         if len(task.split("\n")[0]) > 50:

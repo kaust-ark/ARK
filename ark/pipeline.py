@@ -806,6 +806,18 @@ class PipelineMixin:
                 self.log_step("Conda env already exists", "success")
         except ImportError as e:
             self.log(f"Conda env provisioning skipped (webapp.jobs unavailable): {e}", "WARN")
+
+        # Seed the Apptainer experiment-sandbox helper so experiments run isolated
+        # from the host. Best-effort: no-op if apptainer / base image are missing.
+        try:
+            from ark.sandbox import write_sandbox_helper, sandbox_available, sandbox_sif_path
+            if sandbox_available():
+                if write_sandbox_helper(self.code_dir):
+                    self.log_step("Experiment sandbox ready (Apptainer): ./sandbox/run.sh", "success")
+            else:
+                self.log(f"Experiment sandbox unavailable (apptainer/image at {sandbox_sif_path()} missing) — experiments will run on host", "WARN")
+        except Exception as e:
+            self.log(f"Sandbox helper seeding skipped: {e}", "WARN")
         self.log_step_header(0, 4, "Setup", "end")
 
         # ── Step 1: Analyze Proposal ────────────────────────────────────
