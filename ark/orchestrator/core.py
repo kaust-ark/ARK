@@ -463,16 +463,6 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         if self._stop_requested:
             raise KeyboardInterrupt("stop requested via control command")
 
-    def _parse_decision_reply(self, reply, opts):
-        """(idx, is_freetext): a bare number selects an option; else free text."""
-        try:
-            idx = int(str(reply).strip()) - 1
-            if 0 <= idx < len(opts):
-                return idx, False
-        except (ValueError, TypeError):
-            pass
-        return -1, True
-
     def _chat(self, role: str, text: str, kind: str = "message", meta: dict = None):
         """Append a bubble to the project's conversation thread (fail-soft)."""
         self.cp.append_message(role, text, kind=kind, meta=meta)
@@ -687,11 +677,16 @@ a {{ color: #0d9488; }}
         return "\n".join(lines)
 
     def start_telegram_listener(self):
-        """Start the Telegram dispatcher for bidirectional communication."""
+        """Start the Telegram dispatcher — SEND-ONLY.
+
+        Inbound (decision answers, steers, commands) is owned by the control-plane
+        HITL engine + daemon (D1): the daemon is the sole Telegram poller and feeds
+        replies into the decision/command queues the orchestrator already drains.
+        Starting with poll=False avoids two pollers competing for the same token."""
         self._tg_history_load(max_entries=50)
-        self.telegram.start(on_message=self._handle_telegram_message)
+        self.telegram.start(on_message=self._handle_telegram_message, poll=False)
         if self.telegram.is_configured:
-            self.log("Telegram dispatcher started", "INFO")
+            self.log("Telegram dispatcher started (send-only; daemon owns inbound)", "INFO")
 
     def stop_telegram_listener(self):
         """Stop the Telegram dispatcher.
@@ -2767,234 +2762,80 @@ a {{ color: #0d9488; }}
         A "Custom" escape option is always appended. Returns (idx, reply_text):
         a numeric answer → that index; free text → (len(opts)-1, text).
         """
-        has_telegram = self.telegram.is_configured
-        has_db = self.cp.available
-        if not has_telegram and not has_db:
-            self.log(f"No HITL channel available, using default option {default}", "WARN")
+        if not self.cp.available:
+            self.log(f"No control plane for HITL — using default option {default}", "WARN")
             return default, ""
 
         timeout = self.config.get("telegram_decision_timeout", timeout)
-        timeout_min = max(timeout // 60, 1)
 
-        # Always offer a Custom escape (auto-appended if missing)
+        # Always offer a Custom escape so the human can always free-text.
         opts = list(options or [])
-        details = list(option_details or [])
         if not opts or not any("custom" in (o or "").lower() for o in opts):
             opts.append("Custom — type your own instruction")
-            details.append("Free text. Whatever you reply becomes the next directive.")
-        # Pad details so indices line up
-        while len(details) < len(opts):
-            details.append("")
 
-        # Build the rich message
-        import html as _html
-        parts = [self._status_block(), "━━━━━━━━━━━━━━━━━━━━━",
-                 "⚠️ <b>Decision needed</b>"]
-
-        if what_happened:
-            parts.append("")
-            parts.append("<b>What happened</b>")
-            parts.append(_html.escape(what_happened))
-
+        # Fold any background bullets into the decision context.
+        context = what_happened or ""
         if background:
-            parts.append("")
-            parts.append("<b>Background</b>")
-            for b in background:
-                if b:
-                    parts.append(f"• {_html.escape(str(b))}")
+            extra = "\n".join(f"• {b}" for b in background if b)
+            context = (context + "\n\n" + extra).strip() if context else extra
 
-        # If no rich context was supplied, fall back to using `question`
-        # itself as the "what happened" body so legacy callers still get
-        # a sensible message.
-        if not what_happened and not background and question:
-            parts.append("")
-            parts.append(_html.escape(question))
+        # Open the decision on the control plane and poll for the outcome. The CP
+        # owns everything else now (D1): notifying the human over Telegram/webapp/
+        # email, capturing the answer from any channel, and enforcing the timeout.
+        deadline = datetime.utcnow() + timedelta(seconds=timeout)
+        decision_id = self.cp.open_decision(
+            question or what_happened or "Decision needed", opts,
+            kind=kind, context=context, default_index=default,
+            timeout_action=timeout_action, deadline_at=deadline)
+        if not decision_id:
+            self.log(f"Could not open decision — using default option {default}", "WARN")
+            return default, ""
 
-        parts.append("")
-        parts.append(
-            f"<b>Options</b> (auto-pick <b>#{default + 1}</b> in {timeout_min} min)"
-        )
-        for i, (opt, det) in enumerate(zip(opts, details), 1):
-            mark = "  ← default" if (i - 1) == default else ""
-            parts.append(f"<b>{i}.</b> {_html.escape(opt)}{mark}")
-            if det:
-                parts.append(f"   ↳ <i>{_html.escape(det)}</i>")
+        self._set_control_state("awaiting")
+        self._chat("agent", question or what_happened or "Decision needed",
+                   kind="decision",
+                   meta={"options": opts, "decision_id": decision_id,
+                         "default_index": default, "context": context, "kind": kind})
+        self.log(f"Awaiting decision via control plane (timeout {timeout}s)…", "INFO")
 
-        parts.append("")
-        parts.append(f"Reply <b>1–{len(opts)}</b>, or type your own message.")
-
-        msg = "\n".join(parts)
-
-        # Apply polish synchronously for ask() (which needs to send first,
-        # then block on the reply event). Same fail-soft semantics as the
-        # async sender thread.
-        polished = msg
-        if polish and self.telegram._polish_fn is not None:
-            try:
-                ctx = self._polish_ctx("decision", phase=phase)
-                result = [msg]
-                def _run():
-                    try:
-                        r = self.telegram._polish_fn(msg, ctx)
-                        if r and isinstance(r, str):
-                            result[0] = r
-                    except Exception:
-                        pass
-                t = threading.Thread(target=_run, daemon=True)
-                t.start()
-                t.join(timeout=getattr(self.telegram, "_polish_timeout", 8.0))
-                polished = result[0]
-            except Exception:
-                polished = msg
-
-        # ── Publish the decision so the webapp can see + answer it ──
-        decision_id = None
-        if has_db:
-            try:
-                deadline = datetime.utcnow() + timedelta(seconds=timeout)
-                decision_id = self.cp.open_decision(
-                    question or what_happened or "Decision needed",
-                    opts, kind=kind, context=what_happened or "",
-                    default_index=default, timeout_action=timeout_action,
-                    deadline_at=deadline)
-                if decision_id:
-                    self._set_control_state("awaiting")
-                    # Post the question as an agent bubble in the chat thread.
-                    self._chat("agent", question or what_happened or "Decision needed",
-                               kind="decision",
-                               meta={"options": opts, "decision_id": decision_id,
-                                     "default_index": default, "context": what_happened or "",
-                                     "kind": kind})
-            except Exception as e:
-                self.log(f"Could not publish decision: {e}", "WARN")
-
-        # ── Second channel: Telegram (if configured) ──
-        if has_telegram:
-            self.log(f"Awaiting decision (Telegram + webapp, timeout {timeout}s)…", "INFO")
-            self.telegram.send(polished, parse_mode="HTML")
-            self.telegram._is_waiting = True
-            self.telegram._ask_reply = None
-            self.telegram._ask_event.clear()
-        else:
-            self.log(f"Awaiting decision (webapp, timeout {timeout}s)…", "INFO")
-
-        # ── Dual-channel wait loop: whichever channel answers first wins ──
-        start = time.time()
-        paused_for_decision = False
-        pause_deadline = None
+        # Poll until the CP resolves it (answered / timed_out / cancelled). A local
+        # safety window guards against the CP timeout sweep not running; on any
+        # terminal state or the safety window we fall back to the safe default.
+        safety_deadline = time.time() + timeout + 180
         result = None
         try:
             while result is None:
-                # 1) webapp / control-plane answer
-                if decision_id:
-                    try:
-                        dec = self.cp.get_decision(decision_id)
-                    except Exception:
-                        dec = None
-                    if dec is not None and dec.status == "answered":
-                        if dec.answer_text and (dec.answer_index is None or dec.answer_index < 0):
-                            try: self.inject_user_update(dec.answer_text)
-                            except Exception: pass
-                            result = (len(opts) - 1, dec.answer_text)
-                        else:
-                            ridx = dec.answer_index if (dec.answer_index is not None and 0 <= dec.answer_index < len(opts)) else default
-                            result = (ridx, dec.answer_text or "")
-                        break
-                    if dec is not None and dec.status == "cancelled":
-                        result = (default, ""); break
-                # 2) Telegram reply
-                if has_telegram and self.telegram._ask_event.wait(1.5):
-                    reply = self.telegram._ask_reply
-                    self.telegram._ask_event.clear()
-                    self.telegram._ask_reply = None
-                    if reply:
-                        idx, is_text = self._parse_decision_reply(reply, opts)
-                        if decision_id:
-                            # TRANSITIONAL: the orchestrator still owns the
-                            # Telegram channel, so it records the answer. Removed
-                            # when HITL fan-out moves to the control plane (D1).
-                            self.cp.answer_decision(
-                                decision_id,
-                                index=(idx if not is_text else -1),
-                                text=(reply if is_text else ""),
-                                by="telegram", source="telegram")
-                        self.telegram.send_raw("✅ Received, continuing...")
-                        # user bubble for the Telegram answer (webapp answers get
-                        # their bubble from the route)
-                        self._chat("user", reply if is_text else f"Option {idx + 1}: {opts[idx]}",
-                                   kind="answer")
-                        if is_text:
-                            try: self.inject_user_update(reply)
-                            except Exception: pass
-                            result = (len(opts) - 1, reply)
-                        else:
-                            result = (idx, reply)
-                        break
-                elif not has_telegram:
-                    time.sleep(1.0)
-                # 3) control commands mid-wait (stop / steer)
+                try:
+                    dec = self.cp.get_decision(decision_id)
+                except Exception:
+                    dec = None
+                if dec is not None and dec.status == "answered":
+                    if dec.answer_text and (dec.answer_index is None or dec.answer_index < 0):
+                        # Free-text answer becomes the next directive.
+                        try:
+                            self.inject_user_update(dec.answer_text)
+                        except Exception:
+                            pass
+                        result = (len(opts) - 1, dec.answer_text)
+                    else:
+                        ridx = (dec.answer_index if (dec.answer_index is not None
+                                and 0 <= dec.answer_index < len(opts)) else default)
+                        result = (ridx, dec.answer_text or "")
+                    break
+                if dec is not None and dec.status in ("cancelled", "timed_out"):
+                    result = (default, ""); break
+                # Honor stop/steer arriving mid-wait.
                 self._poll_control()
                 if self._stop_requested:
                     result = (default, ""); break
-                # 4) timeout
-                if time.time() - start >= timeout:
-                    if timeout_action == "pause":
-                        # "pause" buys a sensitive decision (ethics / expensive /
-                        # irreversible) one extra grace window + a louder ping —
-                        # but it must NEVER block the run forever. After the grace
-                        # it auto-continues with the default (which for these is
-                        # the SAFE choice, e.g. Gate A → Reject).
-                        if not paused_for_decision:
-                            grace_min = max(timeout // 60, 1)
-                            self.log("Decision timed out — pausing + notifying; "
-                                     "auto-continues with the default after grace.", "WARN")
-                            self._paused = True
-                            self._set_control_state("paused")
-                            notice = (f"No answer yet — paused. I'll auto-continue with the "
-                                      f"default (option #{default + 1}) in ~{grace_min} min "
-                                      f"unless you respond.")
-                            self._chat("agent", "⏸ " + notice, kind="notice")
-                            if has_telegram:
-                                self.telegram.send_async(
-                                    f"⏸ <b>{_html.escape(self.display_name)}</b>: {_html.escape(notice)}",
-                                    parse_mode="HTML", polish=False)
-                            paused_for_decision = True
-                            pause_deadline = time.time() + timeout
-                        if datetime.now() >= self.max_end_time or (
-                                pause_deadline and time.time() >= pause_deadline):
-                            self._paused = False
-                            self._set_control_state("")
-                            if decision_id:
-                                self.cp.expire_decision(decision_id)
-                            default_label = opts[default] if opts else "N/A"
-                            self.log(f"Pause grace elapsed — auto-continuing with default: {default_label}", "WARN")
-                            if has_telegram:
-                                self.telegram.send_async(
-                                    f"⏰ <b>{_html.escape(self.display_name)}</b>: still no answer — "
-                                    f"continuing with option <b>#{default + 1}</b>: {_html.escape(default_label)}",
-                                    parse_mode="HTML", polish=False)
-                            result = (default, ""); break
-                        time.sleep(2); continue
-                    else:
-                        if decision_id:
-                            self.cp.expire_decision(decision_id)
-                        default_label = opts[default] if opts else "N/A"
-                        self.log(f"Decision timed out, using default: {default_label}", "WARN")
-                        if has_telegram:
-                            self.telegram.send_async(
-                                f"⏰ <b>{_html.escape(self.display_name)}</b>: timeout — "
-                                f"auto-selected option <b>#{default + 1}</b>: "
-                                f"{_html.escape(default_label)}",
-                                parse_mode="HTML", polish=False)
-                        result = (default, ""); break
+                if time.time() >= safety_deadline:
+                    self.log("Decision wait exceeded safety window — using default", "WARN")
+                    result = (default, ""); break
+                time.sleep(1.5)
         finally:
-            if has_telegram:
-                self.telegram._is_waiting = False
-            # An answer (or default) closes the gate — clear awaiting/pause.
             if result is not None:
                 self._paused = False
                 self._set_control_state("")
-
         return result if result is not None else (default, "")
 
     def send_error_alert(self, error: str, phase: str, blocking: bool = False,

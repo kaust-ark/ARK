@@ -105,15 +105,22 @@ class TelegramDispatcher:
 
     # ── Lifecycle ──────────────────────────────────────────
 
-    def start(self, on_message: Callable[[str], None] = None):
-        """Start background polling and the async sender thread."""
+    def start(self, on_message: Callable[[str], None] = None, poll: bool = True):
+        """Start the async sender thread and, if ``poll`` is True, the inbound
+        getUpdates poller.
+
+        Under the control-plane HITL model (D1) the standalone daemon is the sole
+        Telegram poller — it captures decision answers and routes commands into the
+        control-plane queues. The orchestrator therefore starts with ``poll=False``
+        (send-only) so it never competes with the daemon for updates."""
         if not self.is_configured:
             return
 
         self._on_message = on_message
         self._stop_event.clear()
-        self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
-        self._poll_thread.start()
+        if poll:
+            self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
+            self._poll_thread.start()
 
         # Start the async sender thread for non-blocking send_async()
         self._sender_thread = threading.Thread(target=self._sender_loop, daemon=True)

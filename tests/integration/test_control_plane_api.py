@@ -112,13 +112,11 @@ def test_http_client_full_roundtrip(live_server):
     cp.append_events([{"type": "bash", "cmd": "ls"}])
     cp.register_artifact(kind="pdf", path="/tmp/x.pdf")
 
-    # decision: open → pending → answer → answered
+    # decision: open → pending (answering is owned by the CP HITL engine, not
+    # exposed to the orchestrator over /v1 — see test_controlplane_hitl.py).
     did = cp.open_decision("Proceed?", ["Yes", "No"], default_index=1)
     assert did
     assert cp.get_decision(did).status == "pending"
-    cp.answer_decision(did, index=0, by="telegram", source="telegram")
-    dv = cp.get_decision(did)
-    assert dv.status == "answered" and dv.answer_index == 0
 
 
 # ── Auth enforcement ────────────────────────────────────────────────────────────

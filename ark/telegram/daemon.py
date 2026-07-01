@@ -98,6 +98,13 @@ class TelegramDaemon:
                     self._stop_event.wait(timeout=5)
                     continue
 
+                # Control-plane HITL tick: notify newly-opened decisions over
+                # Telegram and expire any past their deadline (D1).
+                try:
+                    self._hitl_tick()
+                except Exception as e:
+                    self._log(f"HITL tick error: {e}")
+
                 self._stop_event.wait(timeout=1)
         finally:
             self._release_lock()
@@ -367,11 +374,83 @@ class TelegramDaemon:
 
         # Dispatch
         if target in active:
-            # Running → deliver to mailbox (orchestrator picks it up)
-            self._deliver_to_mailbox(target, remainder, update_id)
+            # Running → route into the control-plane queues (D1): answer an open
+            # decision, or enqueue a command the orchestrator drains. Fall back to
+            # the legacy mailbox only if the control-plane DB is unreachable.
+            if not self._route_to_control_plane(target, remainder):
+                self._deliver_to_mailbox(target, remainder, update_id)
         else:
             # Stopped → handle directly
             self._handle_stopped_project(target, remainder)
+
+    # ── Control-plane HITL (D1): sole Telegram poller feeds the CP queues ──────────
+
+    def _cp_db(self):
+        """Return (db_module, hitl_module, db_path) or (None, None, None)."""
+        try:
+            from website.dashboard import db as _db
+            from website.dashboard import hitl as _hitl
+            db_path = _db.resolve_db_path()
+            return (_db, _hitl, db_path) if db_path else (None, None, None)
+        except Exception:
+            return None, None, None
+
+    def _hitl_send(self, bot_token: str, chat_id: str, text: str) -> bool:
+        """Send an outbound decision notification via a project's own bot token."""
+        import ssl
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        data = json.dumps({"chat_id": chat_id, "text": text,
+                           "parse_mode": "HTML"}).encode("utf-8")
+        req = urllib.request.Request(url, data=data,
+                                     headers={"Content-Type": "application/json"})
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            urllib.request.urlopen(req, timeout=15, context=ctx)
+            return True
+        except Exception as e:
+            self._log(f"HITL send failed: {e}")
+            return False
+
+    def _hitl_tick(self):
+        """Notify undelivered decisions and sweep expired ones (all projects)."""
+        _db, _hitl, db_path = self._cp_db()
+        if not _db:
+            return
+        with _db.get_session(db_path) as s:
+            _hitl.deliver_pending(s, self._hitl_send)
+            _hitl.sweep(s)
+
+    def _route_to_control_plane(self, project_name: str, text: str) -> bool:
+        """Answer an open decision, else enqueue a control command, for a running
+        project. Returns False if the control-plane DB is unavailable so the
+        caller can fall back to the legacy mailbox."""
+        _db, _hitl, db_path = self._cp_db()
+        if not _db:
+            return False
+        try:
+            with _db.get_session(db_path) as s:
+                proj = _db.get_project_by_name(s, project_name)
+                if not proj:
+                    return False
+                pid = proj.id
+                if _hitl.apply_reply(s, pid, text):
+                    self._send("✅ Received, continuing…", parse_mode="HTML")
+                    return True
+                low = text.strip().lower()
+                if low in ("pause", "resume", "stop"):
+                    _db.enqueue_command(s, pid, low, source="telegram",
+                                        created_by="telegram")
+                    self._send(f"✅ {low} sent.", parse_mode="HTML")
+                else:
+                    _db.enqueue_command(s, pid, "steer", payload=text,
+                                        source="telegram", created_by="telegram")
+                    self._send("✅ Steer sent.", parse_mode="HTML")
+                return True
+        except Exception as e:
+            self._log(f"control-plane route failed: {e}")
+            return False
 
     def _handle_stopped_project(self, project: str, text: str):
         """Handle all messages for a stopped project via Claude agent."""

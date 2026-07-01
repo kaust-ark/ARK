@@ -174,7 +174,8 @@ fail. `report_status`/`append_events` should batch/coalesce to avoid chatty HTTP
 ## 6. Key design decisions
 
 - **D1 — Move human fan-out (Telegram/webapp/email) to the control plane.**
-  **ACCEPTED (clean end-state, 2026-07-01).** Today the orchestrator formats and
+  **ACCEPTED + IMPLEMENTED (clean end-state, 2026-07-01; see migration step 6).**
+  The orchestrator used to format and
   sends Telegram messages and records answers itself (per-orchestrator
   `TelegramDispatcher` in `ark/telegram/client.py`, plus the standalone
   `TelegramDaemon` mailbox router in `ark/telegram/daemon.py`). Under BYOC that
@@ -246,8 +247,15 @@ Short-lived + refreshable; scope = one project's endpoints only.
    template is transport-conditional. Opt-in: empty `CONTROL_PLANE_URL` preserves
    today's behavior, so SLURM/local stay unchanged until an operator flips it.
    *(The `ark run` CLI launcher still uses `--db-path` — a small follow-up.)*
-6. ⏳ HITL fan-out migration (D1) — move Telegram send/receive to the CP; delete
-   the transitional `answer_decision`/`expire_decision`.
+6. ✅ *Done.* HITL fan-out migrated to the control plane (D1). New
+   `website/dashboard/hitl.py` engine (format + notify + `apply_reply` + `sweep`,
+   Telegram transport injected → unit-tested). The **daemon is now the sole
+   Telegram poller**: it notifies opened decisions, answers replies via
+   `apply_reply`, routes other messages into the command queue, and sweeps
+   timeouts; the webapp lifespan starts it and also sweeps as a backstop. The
+   orchestrator's dispatcher is **send-only** (`start(poll=False)`) and
+   `ask_user_decision` is open+poll-only. `answer_decision`/`expire_decision`
+   removed from the `ControlPlaneClient` surface and the `/v1` API.
 
 ## 8. Acceptance criteria
 
@@ -266,8 +274,11 @@ Short-lived + refreshable; scope = one project's endpoints only.
   (`tests/unit/test_job_transport.py`). ⏳ A full *live* orchestrator run over Http
   (and a SLURM node reaching the API) still needs an integrated environment to
   exercise end-to-end.
-- ⏳ HITL: opening a decision notifies the human (Telegram/webapp) and the answer
-  resolves the orchestrator's poll — via the CP (D1, step 6).
+- ✅ HITL: the CP HITL engine notifies opened decisions, maps replies onto the
+  open decision, and sweeps timeouts (`tests/unit/test_controlplane_hitl.py`); the
+  orchestrator only opens + polls. ⏳ The live daemon/orchestrator Telegram wiring
+  (sole-poller, send-only dispatcher) is compile-checked only — needs a real
+  environment (bot token + full stack) to exercise end-to-end.
 - ✅ Live logs: `/events` stores pushed lines (`ProjectEvent`), the orchestrator
   buffers+flushes `log()` output over Http, and the dashboard `/log` + `/stream`
   render from the store (fallback to `.out` files) — **no shared filesystem** for

@@ -57,13 +57,6 @@ class NullControlPlaneClient(ControlPlaneClient):
     def get_decision(self, decision_id: str) -> Optional[DecisionView]:
         return None
 
-    def answer_decision(self, decision_id: str, *, index: int = -1,
-                        text: str = "", by: str = "", source: str = "") -> None:
-        pass
-
-    def expire_decision(self, decision_id: str) -> None:
-        pass
-
     def append_events(self, lines: list[dict]) -> None:
         pass
 

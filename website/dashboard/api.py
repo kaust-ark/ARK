@@ -195,30 +195,9 @@ def get_decision(decision_id: str, project_id: str = Depends(require_project)) -
         }
 
 
-# TRANSITIONAL (D1): removed once HITL fan-out is fully owned by the control
-# plane. Until then the orchestrator's own Telegram path records answers here.
-@router.post("/projects/{project_id}/decisions/{decision_id}/answer")
-def answer_decision(decision_id: str, project_id: str = Depends(require_project),
-                    body: dict[str, Any] = Body(default_factory=dict)) -> dict:
-    with db.get_session(_db_path()) as s:
-        dec = db.get_decision(s, decision_id)
-        if dec is None or dec.project_id != project_id:
-            raise HTTPException(status_code=404, detail="decision not found")
-        db.answer_decision(s, decision_id,
-                           index=int(body.get("index", -1)),
-                           text=body.get("text", ""),
-                           by=body.get("by", ""), source=body.get("source", ""))
-    return {"ok": True}
-
-
-@router.post("/projects/{project_id}/decisions/{decision_id}/expire")
-def expire_decision(decision_id: str, project_id: str = Depends(require_project)) -> dict:
-    with db.get_session(_db_path()) as s:
-        dec = db.get_decision(s, decision_id)
-        if dec is None or dec.project_id != project_id:
-            raise HTTPException(status_code=404, detail="decision not found")
-        db.expire_decision(s, decision_id)
-    return {"ok": True}
+# Note: answering + expiring decisions are owned by the control-plane HITL engine
+# (website.dashboard.hitl) and the webapp routes — not exposed to the orchestrator
+# (D1). The orchestrator only opens (above) and polls (GET) decisions.
 
 
 # ── Live output (accepted now; storage/rendering wired in later steps) ────────────

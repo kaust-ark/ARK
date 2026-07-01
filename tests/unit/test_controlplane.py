@@ -102,7 +102,9 @@ def test_localdb_commands_consume_on_read(db_and_project):
     cp.ack_command(cmds[0].id)  # no-op, must not raise
 
 
-def test_localdb_decision_answer_flow(db_and_project):
+def test_localdb_open_and_poll_decision(db_and_project):
+    # The orchestrator only opens + polls; answering/expiring are owned by the
+    # control-plane HITL engine (tested in test_controlplane_hitl.py).
     db, db_path, pid = db_and_project
     cp = LocalDbControlPlaneClient(db_path, pid)
     did = cp.open_decision("Proceed?", ["Yes", "No"], default_index=1)
@@ -110,19 +112,19 @@ def test_localdb_decision_answer_flow(db_and_project):
     dv = cp.get_decision(did)
     assert isinstance(dv, DecisionView) and dv.status == "pending"
 
-    cp.answer_decision(did, index=0, by="telegram", source="telegram")
+    # An answer recorded control-plane-side becomes visible to the poller.
+    with db.get_session(db_path) as s:
+        db.answer_decision(s, did, index=0, by="webapp", source="webapp")
     dv = cp.get_decision(did)
-    assert dv.status == "answered"
-    assert dv.answer_index == 0
+    assert dv.status == "answered" and dv.answer_index == 0
 
 
-def test_localdb_decision_expire_flow(db_and_project):
+def test_client_has_no_answer_or_expire(db_and_project):
+    # D1: these are removed from the orchestrator's surface.
     db, db_path, pid = db_and_project
     cp = LocalDbControlPlaneClient(db_path, pid)
-    did = cp.open_decision("Proceed?", ["Yes", "No"])
-    cp.expire_decision(did)
-    dv = cp.get_decision(did)
-    assert dv.status == "timed_out"
+    assert not hasattr(cp, "answer_decision")
+    assert not hasattr(cp, "expire_decision")
 
 
 def test_localdb_events_and_artifacts_are_noops(db_and_project):
@@ -172,8 +174,6 @@ def test_null_client_is_inert():
     cp.set_control_state("paused")
     cp.set_autonomy("hands_on")
     cp.append_message("agent", "hi")
-    cp.answer_decision("id")
-    cp.expire_decision("id")
     cp.ack_command("id")
     cp.append_events([])
     cp.register_artifact()

@@ -101,18 +101,12 @@ class ControlPlaneClient(ABC):
 
     @abstractmethod
     def get_decision(self, decision_id: str) -> Optional[DecisionView]:
-        """Poll a decision's current state."""
+        """Poll a decision's current state.
 
-    # -- Transitional: removed when HITL fan-out moves to the control plane (D1).
-    #    Only the not-yet-migrated orchestrator-owned Telegram path calls these.
-    @abstractmethod
-    def answer_decision(self, decision_id: str, *, index: int = -1,
-                        text: str = "", by: str = "", source: str = "") -> None:
-        """TRANSITIONAL. Record an answer the orchestrator received via Telegram."""
-
-    @abstractmethod
-    def expire_decision(self, decision_id: str) -> None:
-        """TRANSITIONAL. Mark a decision timed-out on deadline."""
+        Note: the orchestrator only *opens* and *polls* decisions (D1). Notifying
+        the human, capturing the answer from any channel, and enforcing the
+        timeout are owned by the control-plane HITL engine
+        (``website.dashboard.hitl``), not the orchestrator."""
 
     # ── Live output (new capability; removes shared-FS log/artifact reads) ──────
     @abstractmethod

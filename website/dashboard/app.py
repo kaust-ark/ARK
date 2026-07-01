@@ -111,6 +111,15 @@ async def _poll_jobs(app: FastAPI):
     while True:
         try:
             await asyncio.sleep(60)
+            # Control-plane timeout enforcement (D1/D4): expire decisions past
+            # their deadline even if the Telegram daemon isn't running, so a run
+            # whose orchestrator died mid-decision can't hang a pending question.
+            try:
+                from . import hitl
+                with get_session(settings.db_path) as session:
+                    hitl.sweep(session)
+            except Exception:
+                pass
             with get_session(settings.db_path) as session:
                 projects = get_running_projects(session)
                 for p in projects:
@@ -628,6 +637,15 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"ARK Webapp starting. DB: {settings.db_path}")
     logger.info(f"Projects root: {settings.projects_root}")
+
+    # Start the Telegram daemon — the control-plane HITL engine (D1). It is the
+    # sole Telegram poller: it notifies opened decisions, captures replies into the
+    # decision/command queues, and sweeps timeouts. No-op if Telegram unconfigured.
+    try:
+        from ark.telegram.daemon import ensure_daemon
+        ensure_daemon()
+    except Exception as e:
+        logger.warning(f"Telegram daemon start failed (non-fatal): {e}")
 
     poll_task = asyncio.create_task(_poll_jobs(app))
     yield

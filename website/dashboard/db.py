@@ -157,6 +157,9 @@ class PendingDecision(SQLModel, table=True):
     answer_text: str = ""
     answered_by: str = ""
     source: str = ""            # channel that answered: webapp | telegram | timeout
+    # Whether the control-plane HITL engine has sent the outbound notification
+    # (Telegram) for this decision — set once so the daemon tick doesn't resend.
+    notified: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     answered_at: Optional[datetime] = Field(default=None)
 
@@ -244,6 +247,13 @@ def _migrate(engine):
         existing = {row[1] for row in rows}
         if rows and "decline_reason" not in existing:
             conn.execute(text("ALTER TABLE accessrequest ADD COLUMN decline_reason TEXT DEFAULT ''"))
+            conn.commit()
+
+        # ── PendingDecision table migrations ──
+        rows = conn.execute(text("PRAGMA table_info(pendingdecision)")).fetchall()
+        existing = {row[1] for row in rows}
+        if rows and "notified" not in existing:
+            conn.execute(text("ALTER TABLE pendingdecision ADD COLUMN notified BOOLEAN DEFAULT 0"))
             conn.commit()
 
         # ── Project table migrations ──
@@ -570,6 +580,48 @@ def expire_decision(session: Session, decision_id: str) -> None:
         dec.answered_at = datetime.utcnow()
         session.add(dec)
         session.commit()
+
+
+# ── Control-plane HITL engine helpers (outbound notify + timeout sweep) ──────────
+
+def list_undelivered_decisions(session: Session) -> list["PendingDecision"]:
+    """Open decisions across all projects that still need an outbound notification
+    (Telegram). The daemon's HITL tick sends these and marks them notified."""
+    return list(session.exec(
+        select(PendingDecision).where(PendingDecision.status == "pending",
+                                      PendingDecision.notified == False)  # noqa: E712
+        .order_by(PendingDecision.created_at)
+    ))
+
+
+def mark_decision_notified(session: Session, decision_id: str) -> None:
+    dec = session.get(PendingDecision, decision_id)
+    if dec is not None and not dec.notified:
+        dec.notified = True
+        session.add(dec)
+        session.commit()
+
+
+def sweep_expired_decisions(session: Session) -> list[str]:
+    """Mark every pending decision past its deadline as timed_out. Returns the
+    ids swept. This is the control plane owning timeout enforcement (D1/D4): a run
+    whose orchestrator died mid-decision no longer hangs a pending question."""
+    now = datetime.utcnow()
+    rows = session.exec(
+        select(PendingDecision).where(PendingDecision.status == "pending",
+                                      PendingDecision.deadline_at != None)  # noqa: E711
+    ).all()
+    swept: list[str] = []
+    for dec in rows:
+        if dec.deadline_at and dec.deadline_at <= now:
+            dec.status = "timed_out"
+            dec.source = "timeout"
+            dec.answered_at = now
+            session.add(dec)
+            swept.append(dec.id)
+    if swept:
+        session.commit()
+    return swept
 
 
 def set_activity(session: Session, project_id: str, text: str) -> None:

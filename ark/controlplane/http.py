@@ -170,18 +170,6 @@ class HttpControlPlaneClient(ControlPlaneClient):
             source=data.get("source", "") or "",
         )
 
-    def answer_decision(self, decision_id: str, *, index: int = -1,
-                        text: str = "", by: str = "", source: str = "") -> None:
-        if not self.available or not decision_id:
-            return
-        self._request("POST", f"/decisions/{decision_id}/answer",
-                      {"index": index, "text": text, "by": by, "source": source})
-
-    def expire_decision(self, decision_id: str) -> None:
-        if not self.available or not decision_id:
-            return
-        self._request("POST", f"/decisions/{decision_id}/expire")
-
     # ── live output ───────────────────────────────────────────────────────────────────────
     def append_events(self, lines: list[dict]) -> None:
         if not self.available or not lines:

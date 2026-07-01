@@ -244,28 +244,6 @@ class LocalDbControlPlaneClient(ControlPlaneClient):
         except Exception:
             return None
 
-    def answer_decision(self, decision_id: str, *, index: int = -1,
-                        text: str = "", by: str = "", source: str = "") -> None:
-        db = self._db()
-        if not (db and self._db_path):
-            return
-        try:
-            with db.get_session(self._db_path) as s:
-                db.answer_decision(s, decision_id, index=index, text=text,
-                                   by=by, source=source)
-        except Exception:
-            pass
-
-    def expire_decision(self, decision_id: str) -> None:
-        db = self._db()
-        if not (db and self._db_path):
-            return
-        try:
-            with db.get_session(self._db_path) as s:
-                db.expire_decision(s, decision_id)
-        except Exception:
-            pass
-
     # ── live output (no-ops on shared-FS single-node) ───────────────────────────────
     def append_events(self, lines: list[dict]) -> None:
         # Single-node dashboard reads agent_steps.jsonl from disk directly.
