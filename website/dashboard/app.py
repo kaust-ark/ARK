@@ -62,6 +62,30 @@ def _gc_project_env(pdir, project_id: str = ""):
         logger.warning(f"conda env GC failed for {pdir}: {e}")
 
 
+def _gc_terminal_envs(session, settings):
+    """Sweep: remove .conda_env for finished projects.
+
+    The transition-based GC (in the poll loop) only fires when the webapp itself
+    observes running→terminal. But the orchestrator often self-reports `done`
+    straight to the DB, so `get_running_projects` never returns the project and
+    that hook is missed. This sweep is the reliable path: it GCs any terminal
+    project whose env still exists. Safe — the orchestrator process has already
+    exited, and a later continue/restart re-provisions (Research Step 0).
+    """
+    from .db import Project
+    from sqlmodel import select
+    try:
+        terminal = session.exec(
+            select(Project).where(Project.status.in_(["done", "failed", "stopped"]))
+        ).all()
+        for p in terminal:
+            pdir = settings.projects_root / p.user_id / p.id
+            if (pdir / ".conda_env" / "conda-meta").is_dir():
+                _gc_project_env(pdir, p.id)
+    except Exception as e:
+        logger.warning(f"terminal env GC sweep failed: {e}")
+
+
 def _advance_pending_queue(session, settings):
     """Promote the oldest pending project whose LANE has room.
 
@@ -475,6 +499,9 @@ async def _poll_jobs(app: FastAPI):
 
                 # Always try to advance queue at end of each poll cycle
                 _advance_pending_queue(session, settings)
+                # Reclaim disk from finished projects' conda envs (reliable sweep;
+                # the transition-based GC above misses orchestrator-self-reported done)
+                _gc_terminal_envs(session, settings)
 
         except asyncio.CancelledError:
             break
