@@ -36,6 +36,13 @@ class ControlPlaneClient(ABC):
         """True when a real control plane is reachable (replaces the old
         ``self._db_path and self._project_id`` guards)."""
 
+    @property
+    def emits_events(self) -> bool:
+        """Whether ``append_events`` does real work — True only for transports
+        without a shared filesystem (HTTP). Lets the orchestrator skip event
+        buffering when the dashboard reads logs off the shared FS (LocalDb)."""
+        return False
+
     # ── Bootstrap / config (reads) ──────────────────────────────────────────────
     @abstractmethod
     def fetch_project(self) -> Optional[ProjectView]:

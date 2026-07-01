@@ -134,6 +134,25 @@ def _raw_get(base_url, project_id, token=None):
         return e.code
 
 
+def _raw_post(base_url, path, project_id, token, body):
+    import json
+    req = urllib.request.Request(
+        f"{base_url}/projects/{project_id}{path}",
+        data=json.dumps(body).encode(), method="POST")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return r.status, json.loads(r.read())
+
+
+def test_events_endpoint_stores(live_server):
+    base_url, project_id, secret = live_server
+    status, out = _raw_post(base_url, "/events", project_id, _token(project_id, secret),
+                            {"lines": [{"ts": "t", "line": "hello"}, {"line": "world"}]})
+    assert status == 200
+    assert out["stored"] == 2
+
+
 def test_missing_token_is_401(live_server):
     base_url, project_id, secret = live_server
     assert _raw_get(base_url, project_id, token=None) == 401

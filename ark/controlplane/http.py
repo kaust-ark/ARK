@@ -68,6 +68,11 @@ class HttpControlPlaneClient(ControlPlaneClient):
     def available(self) -> bool:
         return bool(self._base and self._token and self._project_id)
 
+    @property
+    def emits_events(self) -> bool:
+        # No shared filesystem over HTTP → the dashboard needs pushed log lines.
+        return True
+
     # ── bootstrap / reads ──────────────────────────────────────────────────────────
     def fetch_project(self) -> Optional[ProjectView]:
         if not self.available:

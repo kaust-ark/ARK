@@ -229,10 +229,15 @@ Short-lived + refreshable; scope = one project's endpoints only.
    Per-project bearer-token auth (`auth.make_job_token`/`verify_job_token`) with a
    reportable-fields whitelist. Command delivery is peek + ack (D2) via new
    `db.list_pending_commands` / `db.mark_command_consumed`.
-4. ✅ *Done (client + args).* `HttpControlPlaneClient` (stdlib urllib) against
-   `/v1`; `--control-plane-url` / `--control-plane-token` CLI args wired into
-   `main()` and the constructor. **Remaining:** event *storage* + dashboard
-   live-log rendering (the `/events` endpoint currently accepts-and-drops).
+4. ✅ *Done.* `HttpControlPlaneClient` (stdlib urllib) against `/v1`;
+   `--control-plane-url` / `--control-plane-token` CLI args wired into `main()` +
+   constructor. Event storage + live-log rendering complete: new `ProjectEvent`
+   table + `db.append_events`/`list_events` (integer-id cursor); `/events` stores;
+   the orchestrator mirrors `log()` lines to the control plane via a buffered
+   background flusher, but only when the transport has no shared FS
+   (`cp.emits_events`, True for Http). The dashboard `/log` + `/stream` routes
+   prefer the pushed event store when present and fall back to on-disk `.out`
+   files otherwise — so HTTP/remote runs get live logs with no shared filesystem.
 5. ✅ *Done.* Launchers (`jobs.py`: `submit_job` SLURM + `launch_local_job`, which
    `launch_cloud_job` wraps) pick the transport via `control_plane_transport`:
    when `settings.control_plane_url` (`CONTROL_PLANE_URL`) is set they pass
@@ -263,8 +268,11 @@ Short-lived + refreshable; scope = one project's endpoints only.
   exercise end-to-end.
 - ⏳ HITL: opening a decision notifies the human (Telegram/webapp) and the answer
   resolves the orchestrator's poll — via the CP (D1, step 6).
-- ⏳ Live logs render in the dashboard from `/v1/.../events`, with **no shared
-  filesystem** (event storage/rendering — remainder of step 4).
+- ✅ Live logs: `/events` stores pushed lines (`ProjectEvent`), the orchestrator
+  buffers+flushes `log()` output over Http, and the dashboard `/log` + `/stream`
+  render from the store (fallback to `.out` files) — **no shared filesystem** for
+  HTTP/remote runs. (db + `/events` endpoint + orchestrator glue covered by tests;
+  dashboard-route glue is a thin `list_events` call, verified by compile.)
 - ✅ New tests: LocalDb round-trip over the real `db.py` helpers + Null +
   `build_client` selection (`tests/unit/test_controlplane.py`), and the live
   `/v1` integration suite above.

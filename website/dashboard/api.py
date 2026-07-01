@@ -226,9 +226,9 @@ def expire_decision(decision_id: str, project_id: str = Depends(require_project)
 @router.post("/projects/{project_id}/events")
 def append_events(project_id: str = Depends(require_project),
                   body: dict[str, Any] = Body(default_factory=dict)) -> dict:
-    # Accept and drop for now — event storage + dashboard rendering land in a
-    # follow-up step of Phase 1 (removes the shared-FS log read).
-    return {"ok": True, "accepted": len(body.get("lines") or [])}
+    with db.get_session(_db_path()) as s:
+        stored = db.append_events(s, project_id, body.get("lines") or [])
+    return {"ok": True, "stored": stored}
 
 
 @router.post("/projects/{project_id}/artifacts")

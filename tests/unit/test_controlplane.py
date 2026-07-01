@@ -133,6 +133,29 @@ def test_localdb_events_and_artifacts_are_noops(db_and_project):
     cp.register_artifact(kind="pdf", path="/tmp/x.pdf")
 
 
+def test_db_events_store_list_and_cursor(db_and_project):
+    db, db_path, pid = db_and_project
+    with db.get_session(db_path) as s:
+        n = db.append_events(s, pid, [{"ts": "t1", "line": "a"}, "b", {"line": "c"}])
+    assert n == 3
+    with db.get_session(db_path) as s:
+        evs = db.list_events(s, pid, after_id=0)
+    assert [e["line"] for e in evs] == ["a", "b", "c"]
+    # integer-id cursor: after the first row, only later rows come back
+    with db.get_session(db_path) as s:
+        rest = db.list_events(s, pid, after_id=evs[0]["id"])
+    assert [e["line"] for e in rest] == ["b", "c"]
+
+
+# ── emits_events capability (drives orchestrator log-push) ──────────────────────
+
+def test_emits_events_flags(db_and_project):
+    db, db_path, pid = db_and_project
+    assert NullControlPlaneClient().emits_events is False
+    assert LocalDbControlPlaneClient(db_path, pid).emits_events is False
+    assert HttpControlPlaneClient("https://cp/v1", "t", "p").emits_events is True
+
+
 # ── Null client ──────────────────────────────────────────────────────────────
 
 def test_null_client_is_inert():

@@ -70,6 +70,11 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
                                token=control_plane_token,
                                db_path=db_path, project_id=project_id,
                                log_fn=self.log)
+        # Live-log push buffer — only active when the transport has no shared FS
+        # (HTTP/remote); the dashboard then renders from these pushed lines.
+        self._event_buf: list = []
+        self._event_lock = threading.Lock()
+        self._event_flusher = None
         self._display_name = None
 
         # 1. Initialize Workspace Manager
@@ -471,6 +476,46 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
     def _chat(self, role: str, text: str, kind: str = "message", meta: dict = None):
         """Append a bubble to the project's conversation thread (fail-soft)."""
         self.cp.append_message(role, text, kind=kind, meta=meta)
+
+    # ── Live-log push (only for transports without a shared filesystem) ──
+
+    def _push_event(self, line: str):
+        """Queue one human-readable log line for the control plane. No-op unless
+        the transport needs pushed logs (HTTP/remote); cheap otherwise."""
+        if not line or not self.cp.emits_events:
+            return
+        with self._event_lock:
+            self._event_buf.append(line)
+        self._ensure_event_flusher()
+
+    def _ensure_event_flusher(self):
+        """Start a daemon thread that flushes buffered log lines ~every 2s."""
+        if self._event_flusher is not None:
+            return
+
+        def _loop():
+            while not getattr(self, "_stop_requested", False):
+                time.sleep(2)
+                try:
+                    self._flush_events()
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_loop, name="ark-event-flusher", daemon=True)
+        self._event_flusher = t
+        t.start()
+
+    def _flush_events(self):
+        """Push and clear the buffered log lines (fail-soft via the client)."""
+        if not self.cp.emits_events:
+            return
+        with self._event_lock:
+            if not self._event_buf:
+                return
+            batch = self._event_buf
+            self._event_buf = []
+        ts = datetime.now().isoformat()
+        self.cp.append_events([{"ts": ts, "line": ln} for ln in batch])
 
     # ========== Deep Research (background) ==========
 
@@ -1702,10 +1747,14 @@ a {{ color: #0d9488; }}
         else:
             log_message = f"[{timestamp}] {message}"
 
+        clean = strip_ansi(log_message)
         print(log_message, flush=True)
         with open(self.log_file, "a") as f:
-            f.write(strip_ansi(log_message) + "\n")
+            f.write(clean + "\n")
             f.flush()
+        # Mirror to the control plane when it has no shared FS (HTTP/remote), so
+        # the dashboard can render live logs without reading this file.
+        self._push_event(clean)
 
     def log_section(self, title: str, char: str = "═"):
         """Print major section header."""
@@ -3104,6 +3153,7 @@ def main():
         except Exception as e:
             orchestrator.log(f"chat_turn error: {e}", "ERROR")
         finally:
+            orchestrator._flush_events()
             if orchestrator.cp.available:
                 orchestrator._sync_db(status="done", pid=0)
         return
@@ -3115,6 +3165,7 @@ def main():
         except Exception as e:
             orchestrator.log(f"apply_instruction error: {e}", "ERROR")
         finally:
+            orchestrator._flush_events()
             if orchestrator.cp.available:
                 orchestrator._sync_db(status="done", pid=0)
         return
@@ -3133,6 +3184,8 @@ def main():
     except Exception:
         orchestrator._sync_db(status="failed", pid=0)
         raise
+    finally:
+        orchestrator._flush_events()
 
 
 if __name__ == "__main__":

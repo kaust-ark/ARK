@@ -177,6 +177,20 @@ class ProjectMessage(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ProjectEvent(SQLModel, table=True):
+    """One live log line pushed by a remote orchestrator over /v1/.../events.
+
+    Replaces the shared-filesystem log tail for the HTTP transport: when the
+    orchestrator runs off-box there is no .out file the dashboard can read, so it
+    streams its human-readable log lines here and the dashboard renders from this
+    table instead. The integer PK doubles as a monotonic cursor for tailing."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: str = Field(index=True)
+    ts: str = ""                # client-side timestamp (ISO), for display only
+    line: str = ""              # one human-readable log line
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Feedback(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str = Field(index=True)
@@ -610,6 +624,36 @@ def list_messages(session: Session, project_id: str, after: Optional[str] = None
         except Exception:
             pass
     return list(session.exec(q.order_by(ProjectMessage.created_at).limit(limit)))
+
+
+def append_events(session: Session, project_id: str, lines: list) -> int:
+    """Append pushed log lines. Each item is ``{"ts":..., "line":...}`` (or a bare
+    string). Returns the number stored."""
+    n = 0
+    for item in lines or []:
+        if isinstance(item, str):
+            ts, line = "", item
+        elif isinstance(item, dict):
+            ts = item.get("ts", "") or ""
+            line = item.get("line", "") or item.get("text", "") or ""
+        else:
+            continue
+        session.add(ProjectEvent(project_id=project_id, ts=ts, line=line[:4000]))
+        n += 1
+    if n:
+        session.commit()
+    return n
+
+
+def list_events(session: Session, project_id: str, after_id: int = 0,
+                limit: int = 1000) -> list[dict]:
+    """Return pushed log lines with id > after_id, oldest→newest (id is the cursor)."""
+    rows = session.exec(
+        select(ProjectEvent)
+        .where(ProjectEvent.project_id == project_id, ProjectEvent.id > after_id)
+        .order_by(ProjectEvent.id).limit(limit)
+    ).all()
+    return [{"id": r.id, "ts": r.ts, "line": r.line} for r in rows]
 
 
 def get_projects_for_user(session: Session, user_id: str) -> list[Project]:

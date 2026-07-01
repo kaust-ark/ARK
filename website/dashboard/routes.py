@@ -96,6 +96,7 @@ from .db import (
     set_autonomy,
     add_message,
     list_messages,
+    list_events,
     list_access_requests,
     list_users,
     mark_access_declined,
@@ -3117,6 +3118,14 @@ async def api_get_log(project_id: str, request: Request, lines: int = 200):
         if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
+    # HTTP/remote transport: the orchestrator pushes log lines to the event
+    # store since there's no shared .out file. Prefer it when present.
+    with get_session(settings.db_path) as session:
+        evs = list_events(session, project_id, after_id=0, limit=5000)
+    if evs:
+        return JSONResponse({"lines": [e["line"] for e in evs[-lines:]],
+                             "log_file": "control-plane"})
+
     pdir = _project_dir(settings, owner_id, project_id)
     log_dirs = [pdir / "logs", pdir / "auto_research" / "logs"]
 
@@ -3170,48 +3179,66 @@ async def api_stream_log(project_id: str, request: Request):
         sent_lines = 0
         first_iteration = True
         last_msg_ts = None   # ISO cursor for chat-thread messages
+        # Log source: pushed events (HTTP/remote transport, no shared FS) take
+        # over as soon as any exist; otherwise tail the on-disk .out files
+        # (local/SLURM). The latch means a project that starts emitting events
+        # mid-stream switches over and never double-renders from files.
+        last_event_id = 0
+        saw_events = False
         while True:
             if await request.is_disconnected():
                 break
 
-            # Find latest log file across all candidate dirs
-            log_file = None
-            best: tuple[float, Path] | None = None
-            for log_dir in log_dirs:
-                for pattern in ["local_*.out", "slurm_*.out", "orchestrator.log", "*.log"]:
-                    for p in log_dir.glob(pattern):
-                        try:
-                            mtime = p.stat().st_mtime
-                            if best is None or mtime > best[0]:
-                                best = (mtime, p)
-                        except Exception:
-                            pass
-            if best:
-                log_file = best[1]
+            with get_session(settings.db_path) as _s:
+                evs = list_events(_s, project_id, after_id=last_event_id, limit=2000)
+            if evs:
+                saw_events = True
+                # On the first iteration skip the catch-up the client already
+                # fetched via /log; afterwards emit everything new.
+                if not first_iteration:
+                    for e in evs:
+                        yield f"data: {json.dumps({'line': e['line']})}\n\n"
+                last_event_id = evs[-1]["id"]
 
-            if log_file and log_file.exists():
-                try:
-                    all_lines = log_file.read_text(errors="replace").splitlines()
-                    if log_file != current_file:
-                        # Either the very first iteration (skip past the
-                        # client's initial /log fetch) or the orchestrator
-                        # rotated to a new log file (e.g. env_provision.log
-                        # → local_*.out). On a real rotation we DO want to
-                        # send the whole new file, since the client never
-                        # saw it; on first iteration we DON'T want to resend
-                        # the catch-up.
-                        if first_iteration:
-                            sent_lines = len(all_lines)
-                        else:
-                            sent_lines = 0
-                        current_file = log_file
-                    new_lines = all_lines[sent_lines:]
-                    for line in new_lines:
-                        payload = json.dumps({"line": line})
-                        yield f"data: {payload}\n\n"
-                    sent_lines += len(new_lines)
-                except Exception:
-                    pass
+            if not saw_events:
+                # Find latest log file across all candidate dirs
+                log_file = None
+                best: tuple[float, Path] | None = None
+                for log_dir in log_dirs:
+                    for pattern in ["local_*.out", "slurm_*.out", "orchestrator.log", "*.log"]:
+                        for p in log_dir.glob(pattern):
+                            try:
+                                mtime = p.stat().st_mtime
+                                if best is None or mtime > best[0]:
+                                    best = (mtime, p)
+                            except Exception:
+                                pass
+                if best:
+                    log_file = best[1]
+
+                if log_file and log_file.exists():
+                    try:
+                        all_lines = log_file.read_text(errors="replace").splitlines()
+                        if log_file != current_file:
+                            # Either the very first iteration (skip past the
+                            # client's initial /log fetch) or the orchestrator
+                            # rotated to a new log file (e.g. env_provision.log
+                            # → local_*.out). On a real rotation we DO want to
+                            # send the whole new file, since the client never
+                            # saw it; on first iteration we DON'T want to resend
+                            # the catch-up.
+                            if first_iteration:
+                                sent_lines = len(all_lines)
+                            else:
+                                sent_lines = 0
+                            current_file = log_file
+                        new_lines = all_lines[sent_lines:]
+                        for line in new_lines:
+                            payload = json.dumps({"line": line})
+                            yield f"data: {payload}\n\n"
+                        sent_lines += len(new_lines)
+                    except Exception:
+                        pass
 
             first_iteration = False
 
