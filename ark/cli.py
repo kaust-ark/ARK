@@ -3587,6 +3587,10 @@ def cmd_access(args):
             return _access.cmd_add_domain(args.domains)
         if sub == 'remove-domain':
             return _access.cmd_remove_domain(args.domains)
+        if sub == 'open':
+            return _access.cmd_open()
+        if sub == 'close':
+            return _access.cmd_close()
     except RuntimeError as e:
         print(f"{_c('Error:', Colors.RED)} {e}", file=sys.stderr)
         return 1
@@ -4671,6 +4675,8 @@ def main():
     p_acc_ad.add_argument("domains", nargs="+", help="Domain(s), with or without leading @")
     p_acc_rd = access_sub.add_parser("remove-domain", help="Remove email domain")
     p_acc_rd.add_argument("domains", nargs="+", help="Domain(s)")
+    access_sub.add_parser("open", help="Open dashboard to ANY authenticated user (self-serve, no manual grant)")
+    access_sub.add_parser("close", help="Re-close dashboard to the email/domain allowlist")
     p_access.set_defaults(func=cmd_access)
 
     # ark cite-check
