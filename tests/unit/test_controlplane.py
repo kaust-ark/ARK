@@ -224,6 +224,44 @@ def test_publish_state_docs_reads_dir_and_pushes():
     assert "findings" not in cp.pushed
 
 
+def test_publish_state_docs_skips_non_mapping():
+    import tempfile
+    import yaml
+    from pathlib import Path
+    from ark.orchestrator.state_publish import publish_state_docs
+
+    class _CP:
+        def __init__(self):
+            self.pushed = {}
+
+        def put_state(self, name, data):
+            self.pushed[name] = data
+
+    with tempfile.TemporaryDirectory() as d:
+        sd = Path(d)
+        # findings.yaml as a top-level list must be skipped, not wrapped, so the
+        # export ZIP never reconstructs a different shape than was on disk.
+        (sd / "findings.yaml").write_text(yaml.safe_dump([{"id": "F1"}]))
+        (sd / "memory.yaml").write_text(yaml.safe_dump({"best_score": 8}))
+        cp = _CP()
+        n = publish_state_docs(cp, sd)
+    assert n == 1
+    assert "findings" not in cp.pushed
+    assert cp.pushed["memory"] == {"best_score": 8}
+
+
+def test_db_put_state_doc_tolerates_datetime(db_and_project):
+    # A YAML timestamp parses to datetime; json.dumps(default=str) must not crash.
+    import datetime as _dt
+    db, db_path, pid = db_and_project
+    with db.get_session(db_path) as s:
+        db.put_state_doc(s, pid, "paper_state",
+                         {"updated": _dt.datetime(2026, 7, 2, 12, 0, 0)})
+    with db.get_session(db_path) as s:
+        doc = db.get_state_doc(s, pid, "paper_state")
+    assert doc["updated"].startswith("2026-07-02")
+
+
 def test_db_events_store_list_and_cursor(db_and_project):
     db, db_path, pid = db_and_project
     with db.get_session(db_path) as s:

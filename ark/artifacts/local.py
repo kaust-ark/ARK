@@ -59,3 +59,6 @@ class LocalArtifactStore(ArtifactStore):
 
     def url(self, ref: ArtifactRef, *, expires: int = 3600) -> Optional[str]:
         return None
+
+    def fspath(self, ref: ArtifactRef) -> Optional[str]:
+        return str(self._resolve(ref.key))

@@ -97,3 +97,10 @@ class ArtifactStore(ABC):
     def url(self, ref: ArtifactRef, *, expires: int = 3600) -> Optional[str]:
         """A direct fetch URL for the artifact, or ``None`` if the caller must
         proxy the bytes via ``open``. Local storage always returns ``None``."""
+
+    def fspath(self, ref: ArtifactRef) -> Optional[str]:
+        """Local filesystem path of the artifact, or ``None`` if it isn't a plain
+        local file (object stores return ``None``). Lets the dashboard serve a
+        local artifact with a ``FileResponse`` — preserving HTTP Range support
+        and file-handle cleanup — instead of proxying it."""
+        return None

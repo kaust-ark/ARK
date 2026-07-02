@@ -966,7 +966,8 @@ def _read_current_iteration(project_dir: Path, project=None) -> int:
 
 
 def _read_phase_status(project_dir: Path, project) -> dict:
-    """Read phase status from DB (primary) or YAML state files (fallback).
+    """Read phase status from DB columns (primary) or the projected state docs
+    (fallback — dev_phase_state / paper_state via the DB projection, ADR-0013).
 
     Returns a dict with: phase, dev_iter, max_dev_iter, review_iter, max_review_iter
     """
@@ -1017,6 +1018,7 @@ def _read_phase_status(project_dir: Path, project) -> dict:
         except Exception:
             pass
 
+    state_dir = project_dir / "auto_research" / "state"
     deep_research_file = state_dir / "deep_research.md"
     if deep_research_file.exists() and not result["phase"]:
         result["phase"] = "research"
@@ -1140,7 +1142,6 @@ def _artifact_store_for(pdir: Path):
     """Build the artifact store for a project from its config.yaml (Phase 3,
     ADR-0012). Falls back to a local store rooted at the project dir."""
     try:
-        import yaml
         from ark.artifacts import from_config as _afc
         cfg = {}
         cfg_file = pdir / "config.yaml"
@@ -1153,11 +1154,20 @@ def _artifact_store_for(pdir: Path):
 
 
 def _serve_registered_artifact(pdir: Path, ref: Optional[dict], *,
-                               filename: str, inline: bool):
+                               filename: str, inline: bool, min_size: int = 0):
     """Resolve a registered Artifact reference to a response, or None to fall
     back to reading the project dir. A store ``url()`` (presigned, future) yields
-    a redirect; otherwise the bytes are proxied via ``open()`` (ADR-0012)."""
+    a redirect; a local file is served with ``FileResponse`` (Range + fd cleanup);
+    anything else is streamed with the handle closed on completion (ADR-0012).
+
+    ``min_size`` skips (returns None) an artifact smaller than the threshold, so a
+    tiny/broken PDF falls through to the disk path's "not ready" 404 — parity with
+    ``_find_pdf``'s >10KB check."""
     if not ref:
+        return None
+    # An artifact registered with a known-too-small size isn't a real paper.
+    size = int(ref.get("size") or 0)
+    if min_size and size and size <= min_size:
         return None
     try:
         from ark.artifacts import ArtifactRef
@@ -1168,8 +1178,26 @@ def _serve_registered_artifact(pdir: Path, ref: Optional[dict], *,
             return RedirectResponse(signed)
         media = ref.get("content_type") or "application/octet-stream"
         disposition = "inline" if inline else "attachment"
+        local = store.fspath(aref)
+        if local and os.path.exists(local):
+            return FileResponse(local, media_type=media, filename=filename,
+                                content_disposition_type=disposition)
+
+        # Object store (no local path): stream, closing the handle when done.
+        fh = store.open(aref)
+
+        def _iterfile():
+            try:
+                while True:
+                    chunk = fh.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                fh.close()
+
         return StreamingResponse(
-            store.open(aref), media_type=media,
+            _iterfile(), media_type=media,
             headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
         )
     except Exception:
@@ -3083,7 +3111,8 @@ async def api_get_pdf(project_id: str, request: Request):
     # Prefer a registered artifact (works for object storage / remote runs with
     # no shared FS); fall back to scanning the project dir (local/SLURM, or
     # before the first publish).
-    served = _serve_registered_artifact(pdir, ref, filename="main.pdf", inline=True)
+    served = _serve_registered_artifact(pdir, ref, filename="main.pdf",
+                                        inline=True, min_size=10000)
     if served is not None:
         return served
     pdf = _find_pdf(pdir)

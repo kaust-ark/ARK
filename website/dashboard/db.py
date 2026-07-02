@@ -850,8 +850,8 @@ def list_artifacts(session: Session, project_id: str) -> list[dict]:
 def put_state_doc(session: Session, project_id: str, name: str,
                   data: dict) -> "ProjectStateDoc":
     """Upsert a projected state document (full-rewrite) by (project_id, name)."""
-    import json
-    payload = json.dumps(data or {})
+    # default=str so a YAML timestamp (parsed to datetime) can't crash the encode.
+    payload = json.dumps(data or {}, default=str)
     row = session.exec(
         select(ProjectStateDoc).where(ProjectStateDoc.project_id == project_id,
                                       ProjectStateDoc.name == name)
@@ -869,7 +869,6 @@ def put_state_doc(session: Session, project_id: str, name: str,
 
 def get_state_doc(session: Session, project_id: str, name: str) -> Optional[dict]:
     """Return a projected state document as a dict, or None if not present."""
-    import json
     row = session.exec(
         select(ProjectStateDoc).where(ProjectStateDoc.project_id == project_id,
                                       ProjectStateDoc.name == name)
@@ -884,7 +883,6 @@ def get_state_doc(session: Session, project_id: str, name: str) -> Optional[dict
 
 def list_state_docs(session: Session, project_id: str) -> dict:
     """All projected state documents for a project, as ``{name: data}``."""
-    import json
     rows = session.exec(
         select(ProjectStateDoc).where(ProjectStateDoc.project_id == project_id)
     ).all()

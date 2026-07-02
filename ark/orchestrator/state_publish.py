@@ -34,7 +34,11 @@ def publish_state_docs(cp, state_dir, log=None) -> int:
         try:
             data = yaml.safe_load(f.read_text()) or {}
             if not isinstance(data, dict):
-                data = {"value": data}
+                # These state files are always mappings; skip anything else
+                # rather than wrap it and change the doc's shape in the export ZIP.
+                if log:
+                    log(f"state projection skipped {name}: not a mapping", "WARN")
+                continue
             cp.put_state(name, data)
             n += 1
         except Exception as e:  # noqa: BLE001 — projection is best-effort
