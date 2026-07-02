@@ -1,0 +1,37 @@
+# =============================================================================
+# ARK Job (E2E) — the real research runtime with the LLM mocked out.
+#
+# FROM the production ark-job image, so every real dependency (orchestrator,
+# TeX, git, PyMuPDF, the /v1 HTTP client) is exactly what ships. The ONLY change
+# is a fake `openhands` placed ahead of the real one on PATH, so heavy agent
+# calls return canned, deterministic output with no LLM key and no network to a
+# model provider. This is what makes the end-to-end run reproducible + offline.
+#
+# Build (from repo root):
+#   docker build -f docker/Dockerfile.job.e2e -t ark-job-e2e .
+# Normally built for you by scripts/e2e_boundary.sh via docker-compose.e2e.yml.
+# =============================================================================
+FROM ark-job:latest
+
+# acmart.cls (used by the e2e paper + conftest fixture) ships in
+# texlive-publishers, which the slim base image omits. Loop-mode compiles it for
+# real, so add it here rather than bloating the production image.
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        texlive-publishers \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# The fake openhands. /app/bin is already ahead of /usr/local/bin (the real
+# openhands) on PATH — see Dockerfile.job's ENV PATH — so this shadows it.
+COPY --chown=ark:ark tests/e2e/fake_openhands.py /app/bin/openhands
+RUN chmod +x /app/bin/openhands
+
+# The minimal project the run operates on (config, agent prompts, main.tex).
+# code_dir in config.yaml points at this path.
+COPY --chown=ark:ark tests/e2e/project /app/e2e-project
+
+USER ark
+# The orchestrator git-commits its output; give the ark user an identity so the
+# commit doesn't error out with "Author identity unknown" (non-fatal, but noisy).
+RUN git config --global user.email "e2e@ark.local" \
+    && git config --global user.name "ARK E2E"

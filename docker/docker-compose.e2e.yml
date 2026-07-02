@@ -1,0 +1,72 @@
+# =============================================================================
+# ARK — end-to-end boundary test topology.
+#
+#   webapp (control plane)  ◄── HTTP /v1 + Bearer token ──  job (orchestrator)
+#
+# The point of this compose file is ISOLATION: the job container shares NO
+# volume with the webapp. Its only path to the control plane is the network
+# (/v1), exactly as a remote orchestrator in the user's cloud would talk home.
+# This is what the in-process integration test (test_control_plane_api.py) and
+# the same-process smoke script (smoke_control_plane.py) cannot prove.
+#
+# Driven by scripts/e2e_boundary.sh — don't run these services by hand.
+# =============================================================================
+
+services:
+  # ── Control plane: the real webapp, serving /v1 + owning its own DB ──────────
+  webapp:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.webapp
+    image: ark-webapp:latest
+    container_name: ark-e2e-webapp
+    environment:
+      BASE_URL: "http://localhost:9527"
+      # Same-host /v1 base: makes the dashboard treat runs as HTTP-mode and lets
+      # assert_boundary.py resolve settings.control_plane_url for the auth check.
+      CONTROL_PLANE_URL: "http://127.0.0.1:9527/v1"
+      # Fixed secret so tokens minted by seed_project.py (inside this container)
+      # validate on /v1 in this same process.
+      SECRET_KEY: "e2e-fixed-secret-do-not-use-in-prod"
+      ARK_WEBAPP_DB_PATH: "/data/webapp.db"
+      PROJECTS_ROOT: "/data/projects"
+    volumes:
+      # Webapp-only data. NB: deliberately NOT mounted into the job service.
+      - ark_e2e_data:/data
+      # seed/assert scripts run inside this container (they need DB + SECRET_KEY).
+      - ../tests/e2e:/e2e:ro
+    ports:
+      - "9527:9527"   # optional: eyeball the run at http://localhost:9527/dashboard
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9527/dashboard/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # ── Orchestrator: real runtime, fake LLM, no shared volume ───────────────────
+  job:
+    platform: linux/amd64
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.job.e2e
+    image: ark-job-e2e:latest
+    depends_on:
+      webapp:
+        condition: service_healthy
+    environment:
+      # HTTP transport → HttpControlPlaneClient (no shared DB). The per-run token
+      # is injected by the runner via `docker compose run -e ARK_CONTROL_PLANE_TOKEN=…`.
+      ARK_CONTROL_PLANE_URL: "http://webapp:9527/v1"
+      # A dummy key so any light llm_lite path has a provider key present (it
+      # fail-softs to "" on the real call). The fake openhands ignores it.
+      ANTHROPIC_API_KEY: "sk-ant-e2e-dummy"
+    # No volumes: the job's filesystem is entirely image-local + ephemeral.
+    # Started via `docker compose run job <orchestrator args>` by the runner, so
+    # it must NOT auto-start on `up`.
+    profiles: ["job"]
+
+volumes:
+  ark_e2e_data:
+    name: ark_e2e_data

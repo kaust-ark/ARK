@@ -46,7 +46,9 @@ materials/
 submodules/
 skills/library/
 venue_templates/
-tests/
+tests/*
+# …but the container e2e harness (Dockerfile.job.e2e) COPYs its assets from here.
+!tests/e2e
 
 # ── OS ────────────────────────────────────────────────────────
 .DS_Store

@@ -1,0 +1,20 @@
+# Minimal ARK project config for the container e2e run.
+# code_dir is the in-container path the Dockerfile.job.e2e copies this tree to.
+# The orchestrator reads/writes Latex/ and auto_research/ under here.
+code_dir: /app/e2e-project
+latex_dir: Latex
+figures_dir: Latex/figures
+use_slurm: false
+paper_accept_threshold: 8
+venue_format: acmart-sigplan
+# Never call Gemini Deep Research in the e2e (also enforced via --no-research).
+skip_deep_research: true
+# Auto-resolve any HITL decision fast (via its safe default) so the offline run
+# never blocks for 600s on a human — ask_user_decision honours this override.
+# The decision-open path is still exercised over /v1; it just times out quickly.
+telegram_decision_timeout: 3
+# Keep the loop cheap and offline: local experiment backend, no cloud.
+compute_backend:
+  type: local
+orchestrator_compute_backend:
+  type: local
