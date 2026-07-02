@@ -180,3 +180,8 @@ class HttpControlPlaneClient(ControlPlaneClient):
         if not self.available:
             return
         self._request("POST", "/artifacts", dict(ref))
+
+    def put_state(self, name: str, data: dict) -> None:
+        if not self.available or not name:
+            return
+        self._request("PUT", f"/state/{name}", {"data": data or {}})

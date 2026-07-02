@@ -1065,6 +1065,16 @@ a {{ color: #0d9488; }}
         except Exception as e:
             self.log(f"artifact publish failed: {e}", "WARN")
 
+    def _publish_state_docs(self):
+        """Project state documents (paper_state, action_plan, findings, memory,
+        dev_phase_state) to the control plane (Phase 3, ADR-0013). Best-effort —
+        the local YAML stays authoritative."""
+        try:
+            from ark.orchestrator.state_publish import publish_state_docs
+            publish_state_docs(self.cp, self.state_dir, log=self.log)
+        except Exception as e:
+            self.log(f"state projection failed: {e}", "WARN")
+
     def _render_review_to_pdf(self, md_text: str, out_path: "Path") -> bool:
         """Best-effort markdown → PDF conversion. Returns True on success.
 
@@ -1524,9 +1534,10 @@ a {{ color: #0d9488; }}
         # the daemon thread can be killed mid-upload when the orchestrator
         # exits and the user never receives the final iteration's PDF.
         def _send_artifacts_bg(_score):
-            # Publish the paper artifacts to the control plane first (so the
-            # dashboard can serve them), then push the PDF to Telegram.
+            # Publish the paper artifacts + state projection to the control plane
+            # first (so the dashboard can serve them), then push the PDF to Telegram.
             self._publish_paper_artifacts()
+            self._publish_state_docs()
             try:
                 self._send_pdf_via_telegram()
             except Exception as e:

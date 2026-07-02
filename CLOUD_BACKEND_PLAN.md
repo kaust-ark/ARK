@@ -302,9 +302,11 @@ the control-plane DB by the orchestrator.
 2. `Artifact` model + migration + activate `/v1/artifacts` + orchestrator
    publishes PDF/figures + dashboard resolves the PDF/uploaded-PDF via the store
    with a disk fallback (regression-identical on local). ✅ DONE
-3. `ProjectStateDoc` + migration + `/v1/state` + orchestrator push + drop YAML
-   fallbacks + rebuild the export ZIP from DB state + store blobs (the ZIP mixes
-   blobs and state, so it converges here rather than being touched twice).
+3. `ProjectStateDoc` + migration + `/v1/state` + orchestrator push + dashboard
+   readers/ZIP read state from the DB projection + ZIP PDF from the store (the
+   ZIP mixes blobs and state, so it converges here). ✅ DONE. *Remaining:* the
+   ZIP still reads source/code/results off disk (fine for local/SLURM); a full
+   no-shared-FS bundle for remote needs server-side store config (PR4/PR5).
 4. `ObjectArtifactStore` (S3, then GCS/Azure) behind config — the acceptance-bar PR.
 5. Delete the rsync bridge.
 6. *(later, non-blocking)* presigned `url()` + dashboard redirect.

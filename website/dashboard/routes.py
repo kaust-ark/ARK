@@ -105,6 +105,8 @@ from .db import (
     list_messages,
     list_events,
     latest_artifact,
+    get_state_doc,
+    list_state_docs,
     list_access_requests,
     list_users,
     mark_access_declined,
@@ -901,39 +903,45 @@ def _write_user_instructions(project_dir: Path, message: str, source: str = "web
     instructions_file.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
 
 
+def _projected_state(project, name: str) -> dict:
+    """Load a projected state document (paper_state, dev_phase_state, …) from the
+    control-plane DB — replaces the legacy read of the orchestrator's on-disk
+    YAML (Phase 3, ADR-0013). Returns {} if absent."""
+    if not project:
+        return {}
+    try:
+        with get_session(get_settings().db_path) as s:
+            return get_state_doc(s, project.id, name) or {}
+    except Exception:
+        return {}
+
+
 def _read_project_score(project_dir: Path, project=None) -> float:
-    """Read score from DB (primary) or state files (fallback)."""
+    """Read score from DB columns (primary) or the projected state doc (fallback)."""
     if project and project.score:
         return float(project.score)
-    # Fallback to YAML for legacy/unsynced projects
-    state_dir = project_dir / "auto_research" / "state"
-    ps = state_dir / "paper_state.yaml"
-    if ps.exists():
+    # Fallback to the projected paper_state for legacy/unsynced projects.
+    d = _projected_state(project, "paper_state")
+    score = d.get("current_score")
+    if score is not None:
         try:
-            d = yaml.safe_load(ps.read_text()) or {}
-            score = d.get("current_score")
-            if score is not None:
-                return float(score)
-        except Exception:
+            return float(score)
+        except (TypeError, ValueError):
             pass
     return 0.0
 
 
 def _read_score_history(project_dir: Path, project=None) -> list[dict]:
-    """Read score history from DB (primary) or paper_state.yaml (fallback)."""
+    """Read score history from DB columns (primary) or projected state (fallback)."""
     if project and project.score_history:
         try:
             import json
             return json.loads(project.score_history)
         except Exception:
             pass
-    # Fallback to YAML
-    state_file = project_dir / "auto_research" / "state" / "paper_state.yaml"
-    if not state_file.exists():
-        return []
+    d = _projected_state(project, "paper_state")
+    reviews = d.get("reviews", [])
     try:
-        d = yaml.safe_load(state_file.read_text()) or {}
-        reviews = d.get("reviews", [])
         return [
             {"iteration": r.get("iteration", i + 1), "score": float(r.get("score", 0))}
             for i, r in enumerate(reviews)
@@ -944,21 +952,17 @@ def _read_score_history(project_dir: Path, project=None) -> list[dict]:
 
 
 def _read_current_iteration(project_dir: Path, project=None) -> int:
-    """Read current iteration from DB (primary) or paper_state.yaml (fallback)."""
+    """Read current iteration from DB columns (primary) or projected state (fallback)."""
     if project and project.iteration:
         return project.iteration
-    # Fallback to YAML
-    state_file = project_dir / "auto_research" / "state" / "paper_state.yaml"
-    if not state_file.exists():
-        return 0
+    d = _projected_state(project, "paper_state")
+    reviews = d.get("reviews") or []
     try:
-        d = yaml.safe_load(state_file.read_text()) or {}
-        reviews = d.get("reviews") or []
         if reviews:
             return int(reviews[-1].get("iteration", len(reviews)))
-        return 0
     except Exception:
-        return 0
+        pass
+    return 0
 
 
 def _read_phase_status(project_dir: Path, project) -> dict:
@@ -987,13 +991,10 @@ def _read_phase_status(project_dir: Path, project) -> dict:
         result["review_iter"] = min(project.iteration, project.max_iterations)
         return result
 
-    # Fallback to YAML for legacy/unsynced projects
-    state_dir = project_dir / "auto_research" / "state"
-
-    dev_state_file = state_dir / "dev_phase_state.yaml"
-    if dev_state_file.exists():
+    # Fallback to the projected state docs for legacy/unsynced projects.
+    ds = _projected_state(project, "dev_phase_state")
+    if ds:
         try:
-            ds = yaml.safe_load(dev_state_file.read_text()) or {}
             result["dev_iter"] = int(ds.get("iteration", 0))
             dev_status = ds.get("status", "pending")
             if dev_status == "complete":
@@ -1003,10 +1004,9 @@ def _read_phase_status(project_dir: Path, project) -> dict:
         except Exception:
             pass
 
-    paper_state_file = state_dir / "paper_state.yaml"
-    if paper_state_file.exists():
+    ps = _projected_state(project, "paper_state")
+    if ps:
         try:
-            ps = yaml.safe_load(paper_state_file.read_text()) or {}
             reviews = ps.get("reviews") or []
             if reviews:
                 result["review_iter"] = int(reviews[-1].get("iteration", len(reviews)))
@@ -3121,6 +3121,10 @@ async def api_download_zip(project_id: str, request: Request):
         if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
+        # State from the DB projection + the registered PDF (ADR-0012/0013) so the
+        # bundle doesn't depend on reading the orchestrator's disk.
+        state_docs = list_state_docs(session, project_id)
+        pdf_ref = _latest_artifact_ref(session, project_id, "pdf")
     pdir = _project_dir(settings, owner_id, project_id)
 
     buf = io.BytesIO()
@@ -3176,17 +3180,33 @@ async def api_download_zip(project_id: str, request: Request):
                 if f.suffix in sandbox_exts:
                     zf.write(f, rel)
 
-        # config + key state files
-        for rel in (
-            "config.yaml",
-            "auto_research/state/paper_state.yaml",
-            "auto_research/state/findings.yaml",
-            "auto_research/state/action_plan.yaml",
-            "auto_research/state/memory.yaml",
-        ):
-            f = pdir / rel
-            if f.exists():
-                zf.write(f, rel)
+        # config (on disk) + key state docs (from the DB projection — ADR-0013;
+        # disk fallback for legacy/unsynced projects).
+        cfg_file = pdir / "config.yaml"
+        if cfg_file.exists():
+            zf.write(cfg_file, "config.yaml")
+        for name in ("paper_state", "findings", "action_plan", "memory"):
+            rel = f"auto_research/state/{name}.yaml"
+            doc = state_docs.get(name)
+            if doc:
+                zf.writestr(rel, yaml.safe_dump(doc, default_flow_style=False,
+                                                allow_unicode=True))
+            else:
+                f = pdir / rel
+                if f.exists():
+                    zf.write(f, rel)
+
+        # Include the PDF from the artifact store when it isn't on a shared
+        # filesystem (object storage / remote runs); a no-op locally, where the
+        # paper/ walk above already added it.
+        if pdf_ref and not (paper_dir / "main.pdf").exists():
+            try:
+                from ark.artifacts import ArtifactRef
+                store = _artifact_store_for(pdir)
+                with store.open(ArtifactRef.from_dict(pdf_ref)) as fh:
+                    zf.writestr("paper/main.pdf", fh.read())
+            except Exception:
+                pass
 
     buf.seek(0)
     slug = project_id.replace("/", "_")

@@ -236,3 +236,33 @@ def register_artifact(project_id: str = Depends(require_project),
 def list_artifacts(project_id: str = Depends(require_project)) -> dict:
     with db.get_session(_db_path()) as s:
         return {"artifacts": db.list_artifacts(s, project_id)}
+
+
+# ── State projection (Phase 3, ADR-0013) ─────────────────────────────────────────
+
+@router.put("/projects/{project_id}/state/{name}")
+def put_state(name: str, project_id: str = Depends(require_project),
+              body: dict[str, Any] = Body(default_factory=dict)) -> dict:
+    """Project a state document (paper_state, action_plan, …) to the control
+    plane. Body is ``{"data": {...}}`` (or the document itself)."""
+    data = body.get("data") if isinstance(body, dict) and "data" in body else body
+    if not isinstance(data, dict):
+        data = {}
+    with db.get_session(_db_path()) as s:
+        db.put_state_doc(s, project_id, name, data)
+    return {"ok": True}
+
+
+@router.get("/projects/{project_id}/state/{name}")
+def get_state(name: str, project_id: str = Depends(require_project)) -> dict:
+    with db.get_session(_db_path()) as s:
+        doc = db.get_state_doc(s, project_id, name)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="state doc not found")
+    return {"name": name, "data": doc}
+
+
+@router.get("/projects/{project_id}/state")
+def list_state(project_id: str = Depends(require_project)) -> dict:
+    with db.get_session(_db_path()) as s:
+        return {"state": db.list_state_docs(s, project_id)}

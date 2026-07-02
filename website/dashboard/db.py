@@ -213,6 +213,21 @@ class Artifact(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ProjectStateDoc(SQLModel, table=True):
+    """A projected copy of an orchestrator state document (paper_state,
+    action_plan, findings, memory, dev_phase_state) — pushed over
+    ``/v1/.../state/{name}`` so the dashboard and export ZIP read state from the
+    DB instead of the orchestrator's disk (Phase 3, ADR-0013). The orchestrator's
+    local YAML stays authoritative; this is a projection. One row per
+    (project_id, name), upserted (full-rewrite) on each push. ``data`` is the
+    document JSON-encoded (portable across sqlite + Postgres)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: str = Field(index=True)
+    name: str = ""              # "paper_state" | "action_plan" | "findings" | …
+    data: str = ""              # JSON-encoded document
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Feedback(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str = Field(index=True)
@@ -830,6 +845,56 @@ def list_artifacts(session: Session, project_id: str) -> list[dict]:
     return [{"id": r.id, "kind": r.kind, "store_type": r.store_type, "key": r.key,
              "content_type": r.content_type, "size": r.size, "sha256": r.sha256}
             for r in rows]
+
+
+def put_state_doc(session: Session, project_id: str, name: str,
+                  data: dict) -> "ProjectStateDoc":
+    """Upsert a projected state document (full-rewrite) by (project_id, name)."""
+    import json
+    payload = json.dumps(data or {})
+    row = session.exec(
+        select(ProjectStateDoc).where(ProjectStateDoc.project_id == project_id,
+                                      ProjectStateDoc.name == name)
+    ).first()
+    if row is None:
+        row = ProjectStateDoc(project_id=project_id, name=name, data=payload)
+    else:
+        row.data = payload
+        row.updated_at = datetime.utcnow()
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row
+
+
+def get_state_doc(session: Session, project_id: str, name: str) -> Optional[dict]:
+    """Return a projected state document as a dict, or None if not present."""
+    import json
+    row = session.exec(
+        select(ProjectStateDoc).where(ProjectStateDoc.project_id == project_id,
+                                      ProjectStateDoc.name == name)
+    ).first()
+    if row is None:
+        return None
+    try:
+        return json.loads(row.data) if row.data else {}
+    except Exception:
+        return {}
+
+
+def list_state_docs(session: Session, project_id: str) -> dict:
+    """All projected state documents for a project, as ``{name: data}``."""
+    import json
+    rows = session.exec(
+        select(ProjectStateDoc).where(ProjectStateDoc.project_id == project_id)
+    ).all()
+    out: dict = {}
+    for r in rows:
+        try:
+            out[r.name] = json.loads(r.data) if r.data else {}
+        except Exception:
+            out[r.name] = {}
+    return out
 
 
 def get_projects_for_user(session: Session, user_id: str) -> list[Project]:

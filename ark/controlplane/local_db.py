@@ -269,3 +269,15 @@ class LocalDbControlPlaneClient(ControlPlaneClient):
                 )
         except Exception as e:
             self._note_error(e)
+
+    def put_state(self, name: str, data: dict) -> None:
+        # Project the state doc into the DB so the dashboard/ZIP read it without
+        # touching this process's disk (ADR-0013) — same code path as HTTP.
+        db = self._db()
+        if not (db and self._db_path and self._project_id and name):
+            return
+        try:
+            with db.get_session(self._db_path) as s:
+                db.put_state_doc(s, self._project_id, name, data or {})
+        except Exception as e:
+            self._note_error(e)

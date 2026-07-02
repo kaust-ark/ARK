@@ -172,6 +172,58 @@ def test_db_register_artifact_upserts_by_key(db_and_project):
     assert {a["key"] for a in arts} == {"paper/main.pdf", "paper/figures/f1.png"}
 
 
+# ── State projection (Phase 3, ADR-0013) ──────────────────────────────────────
+
+def test_db_state_doc_upsert_get_list(db_and_project):
+    db, db_path, pid = db_and_project
+    with db.get_session(db_path) as s:
+        db.put_state_doc(s, pid, "paper_state", {"current_score": 5})
+        db.put_state_doc(s, pid, "paper_state", {"current_score": 7, "reviews": [1]})
+        db.put_state_doc(s, pid, "memory", {"best_score": 9})
+    with db.get_session(db_path) as s:
+        ps = db.get_state_doc(s, pid, "paper_state")
+        docs = db.list_state_docs(s, pid)
+        missing = db.get_state_doc(s, pid, "nope")
+    assert ps == {"current_score": 7, "reviews": [1]}    # full-rewrite upsert
+    assert docs["memory"] == {"best_score": 9}
+    assert set(docs) == {"paper_state", "memory"}
+    assert missing is None
+
+
+def test_localdb_put_state_persists(db_and_project):
+    db, db_path, pid = db_and_project
+    cp = LocalDbControlPlaneClient(db_path, pid)
+    cp.put_state("action_plan", {"issues": [{"id": "M1"}]})
+    with db.get_session(db_path) as s:
+        assert db.get_state_doc(s, pid, "action_plan") == {"issues": [{"id": "M1"}]}
+
+
+def test_publish_state_docs_reads_dir_and_pushes():
+    import tempfile
+    import yaml
+    from pathlib import Path
+    from ark.orchestrator.state_publish import publish_state_docs
+
+    class _CP:
+        def __init__(self):
+            self.pushed = {}
+
+        def put_state(self, name, data):
+            self.pushed[name] = data
+
+    with tempfile.TemporaryDirectory() as d:
+        sd = Path(d)
+        (sd / "paper_state.yaml").write_text(yaml.safe_dump({"current_score": 6}))
+        (sd / "memory.yaml").write_text(yaml.safe_dump({"best_score": 8}))
+        # findings/action_plan/dev_phase_state absent → skipped
+        cp = _CP()
+        n = publish_state_docs(cp, sd)
+    assert n == 2
+    assert cp.pushed["paper_state"] == {"current_score": 6}
+    assert cp.pushed["memory"] == {"best_score": 8}
+    assert "findings" not in cp.pushed
+
+
 def test_db_events_store_list_and_cursor(db_and_project):
     db, db_path, pid = db_and_project
     with db.get_session(db_path) as s:

@@ -116,5 +116,12 @@ class ControlPlaneClient(ABC):
 
     @abstractmethod
     def register_artifact(self, **ref) -> None:
-        """Register an artifact reference (PDF/figure/state). Phase 1 stub —
-        real byte upload / object storage lands in Phase 3."""
+        """Register an artifact reference (PDF/figure). The bytes are written to
+        the artifact store; this records the reference (Phase 3, ADR-0012)."""
+
+    @abstractmethod
+    def put_state(self, name: str, data: dict) -> None:
+        """Project a state document (paper_state, action_plan, findings, memory,
+        dev_phase_state) to the control plane for dashboard / export-ZIP
+        consumption. Best-effort; the orchestrator's local YAML stays
+        authoritative (Phase 3, ADR-0013)."""

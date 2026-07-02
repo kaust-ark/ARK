@@ -186,6 +186,51 @@ def test_artifacts_missing_key_is_422(live_server):
         assert e.code == 422
 
 
+def _raw_put(base_url, path, project_id, token, body):
+    import json
+    req = urllib.request.Request(
+        f"{base_url}/projects/{project_id}{path}",
+        data=json.dumps(body).encode(), method="PUT")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return r.status, json.loads(r.read())
+
+
+def test_state_put_get_and_list(live_server):
+    base_url, project_id, secret = live_server
+    token = _token(project_id, secret)
+    status, out = _raw_put(base_url, "/state/paper_state", project_id, token,
+                           {"data": {"current_score": 7, "reviews": [{"score": 7}]}})
+    assert status == 200 and out["ok"]
+
+    status, out = _raw_get_json(base_url, "/state/paper_state", project_id, token)
+    assert status == 200
+    assert out["data"]["current_score"] == 7
+
+    status, out = _raw_get_json(base_url, "/state", project_id, token)
+    assert status == 200
+    assert out["state"]["paper_state"]["current_score"] == 7
+
+
+def test_state_get_missing_is_404(live_server):
+    base_url, project_id, secret = live_server
+    try:
+        _raw_get_json(base_url, "/state/nonexistent", project_id, _token(project_id, secret))
+        assert False, "expected 404"
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
+
+
+def test_http_client_put_state_roundtrip(live_server):
+    base_url, project_id, secret = live_server
+    cp = HttpControlPlaneClient(base_url, _token(project_id, secret), project_id)
+    cp.put_state("findings", {"findings": [{"id": "F1"}]})
+    status, out = _raw_get_json(base_url, "/state/findings", project_id,
+                                _token(project_id, secret))
+    assert out["data"] == {"findings": [{"id": "F1"}]}
+
+
 def test_missing_token_is_401(live_server):
     base_url, project_id, secret = live_server
     assert _raw_get(base_url, project_id, token=None) == 401
