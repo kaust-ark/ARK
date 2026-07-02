@@ -35,6 +35,21 @@ def copy_hashed(src: BinaryIO, dst: BinaryIO) -> tuple[int, str]:
     return size, h.hexdigest()
 
 
+def hash_stream(src: BinaryIO) -> tuple[int, str]:
+    """Size + sha256 of ``src`` without writing it anywhere — used to measure a
+    blob that is already stored (e.g. a local file the orchestrator wrote in
+    place) rather than re-copying it."""
+    h = hashlib.sha256()
+    size = 0
+    while True:
+        chunk = src.read(_CHUNK)
+        if not chunk:
+            break
+        h.update(chunk)
+        size += len(chunk)
+    return size, h.hexdigest()
+
+
 @dataclass(frozen=True)
 class ArtifactRef:
     """A pointer to a stored artifact: everything needed to fetch it back and
@@ -65,6 +80,14 @@ class ArtifactStore(ABC):
     @abstractmethod
     def put(self, key: str, stream: BinaryIO, *, content_type: str = "") -> ArtifactRef:
         """Store ``stream`` under ``key`` and return a reference to it."""
+
+    def put_path(self, src, key: str, *, content_type: str = "") -> ArtifactRef:
+        """Store the file at ``src`` under ``key``. Convenience over ``put``;
+        overridden by local storage to skip the copy when the file is already at
+        the destination path."""
+        from pathlib import Path
+        with open(Path(src), "rb") as fh:
+            return self.put(key, fh, content_type=content_type)
 
     @abstractmethod
     def open(self, ref: ArtifactRef) -> BinaryIO:

@@ -97,6 +97,16 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self.latex_dir = self.workspace.latex_dir
         self.figures_dir = self.workspace.figures_dir
 
+        # Artifact store (Phase 3, ADR-0012): the seam the orchestrator publishes
+        # produced PDFs/figures through so the dashboard never reads this dir.
+        # Defaults to a local store rooted here → unchanged on-disk behavior.
+        try:
+            from ark.artifacts import from_config as _artifact_store_from_config
+            self.artifact_store = _artifact_store_from_config(self.config, self.code_dir)
+        except Exception as e:
+            self.artifact_store = None
+            self.log(f"artifact store init failed ({e}); publishing disabled", "WARN")
+
         # 3. Initialize State Manager
         self.state = StateManager(self.state_dir, logger=self.log)
 
@@ -1034,6 +1044,27 @@ a {{ color: #0d9488; }}
         else:
             self.log(f"PDF upload failed: {pdf}", "WARN")
 
+    def _publish_paper_artifacts(self):
+        """Publish the compiled PDF + figures through the artifact store and
+        register them with the control plane (Phase 3, ADR-0012). Best-effort —
+        never raises into the run; the dashboard falls back to disk if this
+        hasn't happened yet."""
+        store = getattr(self, "artifact_store", None)
+        if store is None:
+            return
+        try:
+            from ark.artifacts import publish_paper_artifacts
+            n = publish_paper_artifacts(
+                store, self.cp, self.code_dir,
+                latex_dir=self.config.get("latex_dir", "paper"),
+                figures_dir=self.config.get("figures_dir", "paper/figures"),
+                log=self.log,
+            )
+            if n:
+                self.log(f"Published {n} artifact(s) to the control plane", "INFO")
+        except Exception as e:
+            self.log(f"artifact publish failed: {e}", "WARN")
+
     def _render_review_to_pdf(self, md_text: str, out_path: "Path") -> bool:
         """Best-effort markdown → PDF conversion. Returns True on success.
 
@@ -1493,6 +1524,9 @@ a {{ color: #0d9488; }}
         # the daemon thread can be killed mid-upload when the orchestrator
         # exits and the user never receives the final iteration's PDF.
         def _send_artifacts_bg(_score):
+            # Publish the paper artifacts to the control plane first (so the
+            # dashboard can serve them), then push the PDF to Telegram.
+            self._publish_paper_artifacts()
             try:
                 self._send_pdf_via_telegram()
             except Exception as e:

@@ -250,5 +250,22 @@ class LocalDbControlPlaneClient(ControlPlaneClient):
         pass
 
     def register_artifact(self, **ref) -> None:
-        # Phase 3 wires real object storage; LocalDb serves from the shared FS.
-        pass
+        # Write the row so the dashboard resolves artifacts through the store on
+        # the shared-FS transport too (ADR-0012) — same code path as HTTP.
+        db = self._db()
+        key = (ref.get("key") or "").strip()
+        if not (db and self._db_path and self._project_id and key):
+            return
+        try:
+            with db.get_session(self._db_path) as s:
+                db.register_artifact(
+                    s, self._project_id,
+                    kind=ref.get("kind", ""),
+                    key=key,
+                    store_type=ref.get("store_type", "local"),
+                    content_type=ref.get("content_type", ""),
+                    size=int(ref.get("size", 0) or 0),
+                    sha256=ref.get("sha256", ""),
+                )
+        except Exception as e:
+            self._note_error(e)

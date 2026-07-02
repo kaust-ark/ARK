@@ -299,10 +299,12 @@ the control-plane DB by the orchestrator.
 **PR breakdown** (each independently mergeable, default-off):
 1. `ArtifactStore` interface + `LocalArtifactStore` + `artifact_store` config +
    `validate_config` (scaffolding, no behavior change).
-2. `Artifact` model + migration + activate `/v1/artifacts` + dashboard resolves
-   PDF/figures/ZIP via `LocalArtifactStore` (regression-identical on local).
+2. `Artifact` model + migration + activate `/v1/artifacts` + orchestrator
+   publishes PDF/figures + dashboard resolves the PDF/uploaded-PDF via the store
+   with a disk fallback (regression-identical on local). ✅ DONE
 3. `ProjectStateDoc` + migration + `/v1/state` + orchestrator push + drop YAML
-   fallbacks.
+   fallbacks + rebuild the export ZIP from DB state + store blobs (the ZIP mixes
+   blobs and state, so it converges here rather than being touched twice).
 4. `ObjectArtifactStore` (S3, then GCS/Azure) behind config — the acceptance-bar PR.
 5. Delete the rsync bridge.
 6. *(later, non-blocking)* presigned `url()` + dashboard redirect.

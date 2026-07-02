@@ -6,7 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import BinaryIO, Optional
 
-from .base import ArtifactRef, ArtifactStore, copy_hashed
+from .base import ArtifactRef, ArtifactStore, copy_hashed, hash_stream
 
 
 class LocalArtifactStore(ArtifactStore):
@@ -39,6 +39,20 @@ class LocalArtifactStore(ArtifactStore):
             size, digest = copy_hashed(stream, f)
         return ArtifactRef(store_type=self.store_type, key=key,
                            content_type=content_type, size=size, sha256=digest)
+
+    def put_path(self, src, key: str, *, content_type: str = "") -> ArtifactRef:
+        # The orchestrator writes many artifacts (the PDF, figures) directly to
+        # their final path under the project dir. When ``src`` already resolves to
+        # ``<root>/key`` we must NOT re-open the destination for writing (that
+        # would truncate the file we're reading) — just measure it in place.
+        src = Path(src)
+        dest = self._resolve(key)
+        if src.resolve() == dest:
+            with open(dest, "rb") as fh:
+                size, digest = hash_stream(fh)
+            return ArtifactRef(store_type=self.store_type, key=key,
+                               content_type=content_type, size=size, sha256=digest)
+        return super().put_path(src, key, content_type=content_type)
 
     def open(self, ref: ArtifactRef) -> BinaryIO:
         return open(self._resolve(ref.key), "rb")

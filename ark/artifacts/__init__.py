@@ -5,8 +5,9 @@
 the project dir, so local dev and SLURM behave exactly as before.
 """
 
-from .base import ArtifactRef, ArtifactStore, copy_hashed
+from .base import ArtifactRef, ArtifactStore, copy_hashed, hash_stream
 from .local import LocalArtifactStore
+from .publish import publish_paper_artifacts
 
 # Object stores (s3/gcs/azure) are accepted by config validation but built in a
 # later Phase 3 PR; only ``local`` is constructable today.
@@ -46,6 +47,8 @@ __all__ = [
     "ArtifactRef",
     "LocalArtifactStore",
     "copy_hashed",
+    "hash_stream",
+    "publish_paper_artifacts",
     "from_config",
     "validate_config",
     "VALID_TYPES",

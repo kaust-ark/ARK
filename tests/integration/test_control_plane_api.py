@@ -110,7 +110,8 @@ def test_http_client_full_roundtrip(live_server):
     # messages + events + artifacts accepted
     cp.append_message("agent", "hello over http")
     cp.append_events([{"type": "bash", "cmd": "ls"}])
-    cp.register_artifact(kind="pdf", path="/tmp/x.pdf")
+    cp.register_artifact(kind="pdf", store_type="local", key="paper/main.pdf",
+                         content_type="application/pdf", size=42)
 
     # decision: open → pending (answering is owned by the CP HITL engine, not
     # exposed to the orchestrator over /v1 — see test_controlplane_hitl.py).
@@ -149,6 +150,40 @@ def test_events_endpoint_stores(live_server):
                             {"lines": [{"ts": "t", "line": "hello"}, {"line": "world"}]})
     assert status == 200
     assert out["stored"] == 2
+
+
+def _raw_get_json(base_url, path, project_id, token):
+    import json
+    req = urllib.request.Request(
+        f"{base_url}/projects/{project_id}{path}", method="GET")
+    req.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return r.status, json.loads(r.read())
+
+
+def test_artifacts_register_and_list(live_server):
+    base_url, project_id, secret = live_server
+    token = _token(project_id, secret)
+    status, out = _raw_post(base_url, "/artifacts", project_id, token,
+                            {"kind": "pdf", "store_type": "local",
+                             "key": "paper/main.pdf",
+                             "content_type": "application/pdf", "size": 100})
+    assert status == 200 and out["ok"] and out["id"]
+
+    status, out = _raw_get_json(base_url, "/artifacts", project_id, token)
+    assert status == 200
+    assert [a["key"] for a in out["artifacts"]] == ["paper/main.pdf"]
+    assert out["artifacts"][0]["kind"] == "pdf"
+
+
+def test_artifacts_missing_key_is_422(live_server):
+    base_url, project_id, secret = live_server
+    try:
+        _raw_post(base_url, "/artifacts", project_id, _token(project_id, secret),
+                  {"kind": "pdf"})
+        assert False, "expected 422"
+    except urllib.error.HTTPError as e:
+        assert e.code == 422
 
 
 def test_missing_token_is_401(live_server):

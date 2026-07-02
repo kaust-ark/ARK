@@ -213,5 +213,26 @@ def append_events(project_id: str = Depends(require_project),
 @router.post("/projects/{project_id}/artifacts")
 def register_artifact(project_id: str = Depends(require_project),
                       body: dict[str, Any] = Body(default_factory=dict)) -> dict:
-    # Phase 3 wires real object storage; accept the reference for now.
-    return {"ok": True}
+    """Register a stored artifact reference (Phase 3, ADR-0012). The orchestrator
+    uploads the bytes to the artifact store, then posts the resulting
+    ``ArtifactRef`` (+ ``kind``) here so the dashboard can resolve it."""
+    key = (body.get("key") or "").strip()
+    if not key:
+        raise HTTPException(status_code=422, detail="artifact 'key' is required")
+    with db.get_session(_db_path()) as s:
+        row = db.register_artifact(
+            s, project_id,
+            kind=body.get("kind", ""),
+            key=key,
+            store_type=body.get("store_type", "local"),
+            content_type=body.get("content_type", ""),
+            size=int(body.get("size", 0) or 0),
+            sha256=body.get("sha256", ""),
+        )
+        return {"ok": True, "id": row.id}
+
+
+@router.get("/projects/{project_id}/artifacts")
+def list_artifacts(project_id: str = Depends(require_project)) -> dict:
+    with db.get_session(_db_path()) as s:
+        return {"artifacts": db.list_artifacts(s, project_id)}

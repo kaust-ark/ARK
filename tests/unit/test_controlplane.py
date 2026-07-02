@@ -127,12 +127,49 @@ def test_client_has_no_answer_or_expire(db_and_project):
     assert not hasattr(cp, "expire_decision")
 
 
-def test_localdb_events_and_artifacts_are_noops(db_and_project):
+def test_localdb_events_are_noop(db_and_project):
     db, db_path, pid = db_and_project
     cp = LocalDbControlPlaneClient(db_path, pid)
-    # Must not raise; single-node reads these from the shared FS.
+    # Events stay a no-op on the shared-FS transport (dashboard reads the JSONL).
     cp.append_events([{"type": "bash", "cmd": "ls"}])
-    cp.register_artifact(kind="pdf", path="/tmp/x.pdf")
+
+
+def test_localdb_register_artifact_persists(db_and_project):
+    # Phase 3 (ADR-0012): LocalDb now writes the row so the dashboard resolves
+    # artifacts through the store on the shared-FS transport too.
+    db, db_path, pid = db_and_project
+    cp = LocalDbControlPlaneClient(db_path, pid)
+    cp.register_artifact(kind="pdf", store_type="local", key="paper/main.pdf",
+                         content_type="application/pdf", size=1234, sha256="deadbeef")
+    with db.get_session(db_path) as s:
+        row = db.latest_artifact(s, pid, "pdf")
+    assert row is not None
+    assert row.key == "paper/main.pdf"
+    assert row.size == 1234
+    assert row.sha256 == "deadbeef"
+
+
+def test_localdb_register_artifact_without_key_is_noop(db_and_project):
+    db, db_path, pid = db_and_project
+    cp = LocalDbControlPlaneClient(db_path, pid)
+    cp.register_artifact(kind="pdf")  # no key → nothing stored, no raise
+    with db.get_session(db_path) as s:
+        assert db.list_artifacts(s, pid) == []
+
+
+def test_db_register_artifact_upserts_by_key(db_and_project):
+    db, db_path, pid = db_and_project
+    with db.get_session(db_path) as s:
+        db.register_artifact(s, pid, kind="pdf", key="paper/main.pdf", size=1)
+        db.register_artifact(s, pid, kind="pdf", key="paper/main.pdf", size=2)
+        db.register_artifact(s, pid, kind="figure", key="paper/figures/f1.png", size=9)
+    with db.get_session(db_path) as s:
+        arts = db.list_artifacts(s, pid)
+        latest_pdf = db.latest_artifact(s, pid, "pdf")
+    # Re-registering the same key updates in place (one pdf row, size=2).
+    assert sum(a["kind"] == "pdf" for a in arts) == 1
+    assert latest_pdf.size == 2
+    assert {a["key"] for a in arts} == {"paper/main.pdf", "paper/figures/f1.png"}
 
 
 def test_db_events_store_list_and_cursor(db_and_project):

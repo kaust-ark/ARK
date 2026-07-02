@@ -61,6 +61,88 @@ class TestLocalArtifactStore:
         assert (tmp_path / "paper" / "main.pdf").read_bytes() == b"v2-longer"
         assert ref.size == len(b"v2-longer")
 
+    def test_put_path_same_location_measures_in_place(self, tmp_path):
+        # The orchestrator writes the PDF directly to <root>/paper/main.pdf.
+        # put_path must NOT re-open the destination for writing (which would
+        # truncate the file it's reading) — it measures the existing file.
+        store = self._store(tmp_path)
+        pdf = tmp_path / "paper" / "main.pdf"
+        pdf.parent.mkdir(parents=True)
+        data = b"%PDF already here" * 100
+        pdf.write_bytes(data)
+        ref = store.put_path(pdf, "paper/main.pdf", content_type="application/pdf")
+        assert pdf.read_bytes() == data          # untouched
+        assert ref.size == len(data)
+        assert ref.sha256 == hashlib.sha256(data).hexdigest()
+
+    def test_put_path_from_other_location_copies(self, tmp_path):
+        store = self._store(tmp_path)
+        src = tmp_path / "external" / "src.pdf"
+        src.parent.mkdir(parents=True)
+        src.write_bytes(b"external-bytes")
+        ref = store.put_path(src, "paper/main.pdf")
+        assert (tmp_path / "paper" / "main.pdf").read_bytes() == b"external-bytes"
+        assert ref.key == "paper/main.pdf"
+
+
+# ---------------------------------------------------------------------------
+# publish_paper_artifacts — walks the produced files, put + register each
+# ---------------------------------------------------------------------------
+
+class _FakeCP:
+    def __init__(self):
+        self.registered = []
+
+    def register_artifact(self, **ref):
+        self.registered.append(ref)
+
+
+class TestPublishPaperArtifacts:
+    def _project(self, tmp_path):
+        (tmp_path / "paper" / "figures").mkdir(parents=True)
+        (tmp_path / "paper" / "main.pdf").write_bytes(b"%PDF-1.7 body enough")
+        (tmp_path / "paper" / "figures" / "f1.png").write_bytes(b"\x89PNGfig")
+        (tmp_path / "paper" / "figures" / "notes.txt").write_bytes(b"ignored")
+        return tmp_path
+
+    def test_publishes_pdf_and_figures_registers_refs(self, tmp_path):
+        from ark.artifacts import LocalArtifactStore, publish_paper_artifacts
+        pdir = self._project(tmp_path)
+        cp = _FakeCP()
+        n = publish_paper_artifacts(LocalArtifactStore(pdir), cp, pdir)
+
+        kinds = sorted(r["kind"] for r in cp.registered)
+        keys = {r["key"] for r in cp.registered}
+        assert n == 2                                   # pdf + one figure (txt skipped)
+        assert kinds == ["figure", "pdf"]
+        assert "paper/main.pdf" in keys
+        assert "paper/figures/f1.png" in keys
+        # every registration carries the store metadata
+        assert all(r["store_type"] == "local" and r["sha256"] for r in cp.registered)
+
+    def test_pdf_untouched_when_store_roots_at_project(self, tmp_path):
+        from ark.artifacts import LocalArtifactStore, publish_paper_artifacts
+        pdir = self._project(tmp_path)
+        original = (pdir / "paper" / "main.pdf").read_bytes()
+        publish_paper_artifacts(LocalArtifactStore(pdir), _FakeCP(), pdir)
+        assert (pdir / "paper" / "main.pdf").read_bytes() == original
+
+    def test_nothing_to_publish_returns_zero(self, tmp_path):
+        from ark.artifacts import LocalArtifactStore, publish_paper_artifacts
+        assert publish_paper_artifacts(LocalArtifactStore(tmp_path), _FakeCP(), tmp_path) == 0
+
+    def test_publish_failure_is_swallowed(self, tmp_path):
+        from ark.artifacts import LocalArtifactStore, publish_paper_artifacts
+        pdir = self._project(tmp_path)
+
+        class _BoomCP:
+            def register_artifact(self, **ref):
+                raise RuntimeError("control plane down")
+
+        # A registration failure must not propagate (best-effort publishing).
+        n = publish_paper_artifacts(LocalArtifactStore(pdir), _BoomCP(), pdir)
+        assert n == 0
+
 
 # ---------------------------------------------------------------------------
 # ArtifactRef — serialization contract used across /v1

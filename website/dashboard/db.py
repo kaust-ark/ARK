@@ -194,6 +194,25 @@ class ProjectEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class Artifact(SQLModel, table=True):
+    """A stored project artifact (PDF, figure, bundle) — a reference the
+    orchestrator registers over ``/v1/.../artifacts`` after writing the bytes to
+    the artifact store (Phase 3, ADR-0012). The dashboard resolves these to a
+    fetch URL or proxies the bytes via the store, so it never reads the
+    orchestrator's disk. One row per (project_id, key); re-registering a key
+    updates it in place."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    project_id: str = Field(index=True)
+    kind: str = ""              # "pdf" | "uploaded_pdf" | "figure" | "bundle"
+    store_type: str = "local"   # "local" | "s3" | "gcs" | "azure"
+    key: str = ""               # store-relative key, e.g. "paper/main.pdf"
+    content_type: str = ""
+    size: int = 0
+    sha256: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Feedback(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str = Field(index=True)
@@ -766,6 +785,51 @@ def list_events(session: Session, project_id: str, after_id: int = 0,
         .order_by(ProjectEvent.id).limit(limit)
     ).all()
     return [{"id": r.id, "ts": r.ts, "line": r.line} for r in rows]
+
+
+def register_artifact(session: Session, project_id: str, *, kind: str, key: str,
+                      store_type: str = "local", content_type: str = "",
+                      size: int = 0, sha256: str = "") -> "Artifact":
+    """Upsert an artifact reference by (project_id, key) — the latest
+    registration for a key wins (a re-run overwrites the same PDF row)."""
+    row = session.exec(
+        select(Artifact).where(Artifact.project_id == project_id,
+                               Artifact.key == key)
+    ).first()
+    if row is None:
+        row = Artifact(project_id=project_id, kind=kind, store_type=store_type,
+                       key=key, content_type=content_type, size=size, sha256=sha256)
+    else:
+        row.kind = kind or row.kind
+        row.store_type = store_type or row.store_type
+        row.content_type = content_type
+        row.size = size
+        row.sha256 = sha256
+        row.updated_at = datetime.utcnow()
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return row
+
+
+def latest_artifact(session: Session, project_id: str, kind: str) -> Optional["Artifact"]:
+    """Most recently registered artifact of ``kind`` for the project, or None."""
+    return session.exec(
+        select(Artifact)
+        .where(Artifact.project_id == project_id, Artifact.kind == kind)
+        .order_by(Artifact.updated_at.desc(), Artifact.id.desc())
+    ).first()
+
+
+def list_artifacts(session: Session, project_id: str) -> list[dict]:
+    """All registered artifacts for a project, oldest→newest."""
+    rows = session.exec(
+        select(Artifact).where(Artifact.project_id == project_id)
+        .order_by(Artifact.id)
+    ).all()
+    return [{"id": r.id, "kind": r.kind, "store_type": r.store_type, "key": r.key,
+             "content_type": r.content_type, "size": r.size, "sha256": r.sha256}
+            for r in rows]
 
 
 def get_projects_for_user(session: Session, user_id: str) -> list[Project]:

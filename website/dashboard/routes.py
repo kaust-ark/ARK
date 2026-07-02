@@ -104,6 +104,7 @@ from .db import (
     add_message,
     list_messages,
     list_events,
+    latest_artifact,
     list_access_requests,
     list_users,
     mark_access_declined,
@@ -1133,6 +1134,55 @@ def _find_pdf(project_dir: Path) -> Optional[Path]:
     if main_pdf.exists() and main_pdf.stat().st_size > 10000:  # >10KB = real paper, not empty
         return main_pdf
     return None
+
+
+def _artifact_store_for(pdir: Path):
+    """Build the artifact store for a project from its config.yaml (Phase 3,
+    ADR-0012). Falls back to a local store rooted at the project dir."""
+    try:
+        import yaml
+        from ark.artifacts import from_config as _afc
+        cfg = {}
+        cfg_file = pdir / "config.yaml"
+        if cfg_file.exists():
+            cfg = yaml.safe_load(cfg_file.read_text()) or {}
+        return _afc(cfg, pdir)
+    except Exception:
+        from ark.artifacts import LocalArtifactStore
+        return LocalArtifactStore(pdir)
+
+
+def _serve_registered_artifact(pdir: Path, ref: Optional[dict], *,
+                               filename: str, inline: bool):
+    """Resolve a registered Artifact reference to a response, or None to fall
+    back to reading the project dir. A store ``url()`` (presigned, future) yields
+    a redirect; otherwise the bytes are proxied via ``open()`` (ADR-0012)."""
+    if not ref:
+        return None
+    try:
+        from ark.artifacts import ArtifactRef
+        store = _artifact_store_for(pdir)
+        aref = ArtifactRef.from_dict(ref)
+        signed = store.url(aref)
+        if signed:
+            return RedirectResponse(signed)
+        media = ref.get("content_type") or "application/octet-stream"
+        disposition = "inline" if inline else "attachment"
+        return StreamingResponse(
+            store.open(aref), media_type=media,
+            headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
+        )
+    except Exception:
+        return None
+
+
+def _latest_artifact_ref(session, project_id: str, kind: str) -> Optional[dict]:
+    """The latest registered artifact of ``kind`` as a plain dict, or None."""
+    row = latest_artifact(session, project_id, kind)
+    if not row:
+        return None
+    return {"store_type": row.store_type, "key": row.key,
+            "content_type": row.content_type, "size": row.size, "sha256": row.sha256}
 
 
 def _check_webapp_enabled():
@@ -3028,7 +3078,14 @@ async def api_get_pdf(project_id: str, request: Request):
         if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
+        ref = _latest_artifact_ref(session, project_id, "pdf")
     pdir = _project_dir(settings, owner_id, project_id)
+    # Prefer a registered artifact (works for object storage / remote runs with
+    # no shared FS); fall back to scanning the project dir (local/SLURM, or
+    # before the first publish).
+    served = _serve_registered_artifact(pdir, ref, filename="main.pdf", inline=True)
+    if served is not None:
+        return served
     pdf = _find_pdf(pdir)
     if not pdf:
         raise HTTPException(404, "PDF not ready")
@@ -3044,7 +3101,11 @@ async def api_get_uploaded_pdf(project_id: str, request: Request):
         if not project or not _can_read_project(request, project):
             raise HTTPException(404)
         owner_id = project.user_id
+        ref = _latest_artifact_ref(session, project_id, "uploaded_pdf")
     pdir = _project_dir(settings, owner_id, project_id)
+    served = _serve_registered_artifact(pdir, ref, filename="uploaded.pdf", inline=True)
+    if served is not None:
+        return served
     uploaded = pdir / "uploaded.pdf"
     if not uploaded.exists():
         raise HTTPException(404, "No uploaded PDF")
