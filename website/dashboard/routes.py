@@ -2577,14 +2577,9 @@ async def api_restart_project(project_id: str, request: Request):
             raise HTTPException(404)
         if project.status not in ("stopped", "failed", "done"):
             raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
-        active = [p for p in get_projects_for_user(session, project.user_id)
-                  if p.status in ("queued", "running", "initializing") and p.id != project_id]
-        if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
-            raise HTTPException(
-                400,
-                f"You already have {len(active)} active projects. "
-                f"Max {MAX_CONCURRENT_PER_USER} concurrent.",
-            )
+        # No concurrent hard-reject: if the user's lane is full the restart is
+        # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
+        # consistent with new-project submission.
         pdir = _project_dir(settings, project.user_id, project_id)
 
         # Update project fields from request body
@@ -2755,14 +2750,9 @@ async def api_continue_project(project_id: str, request: Request):
             raise HTTPException(404)
         if project.status not in ("done", "stopped", "failed"):
             raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
-        active = [p for p in get_projects_for_user(session, project.user_id)
-                  if p.status in ("queued", "running", "initializing") and p.id != project_id]
-        if not _is_admin(user) and len(active) >= MAX_CONCURRENT_PER_USER:
-            raise HTTPException(
-                400,
-                f"You already have {len(active)} active projects. "
-                f"Max {MAX_CONCURRENT_PER_USER} concurrent.",
-            )
+        # No concurrent hard-reject: if the user's lane is full the continue is
+        # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
+        # consistent with new-project submission.
         # Floor at current iteration so historical-overshoot projects
         # (iter > max from pre-c077e15 code) still honor the requested +N.
         new_max = max(project.max_iterations, project.iteration) + additional
