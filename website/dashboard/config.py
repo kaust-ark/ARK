@@ -104,6 +104,12 @@ PROJECTS_ROOT={_root / '.ark' / 'data' / 'projects'}
 SECRET_KEY={secrets.token_hex(32)}
 DB_PATH={_root / '.ark' / 'data' / 'webapp.db'}
 
+# Control-plane database. Leave DB_PATH (above) for single-node sqlite dev.
+# For a deployed control plane serving concurrent remote orchestrators, set a
+# full Postgres DSN here instead (takes priority over DB_PATH):
+#   DATABASE_URL=postgresql+psycopg://ark:password@localhost:5432/ark_cp
+DATABASE_URL=
+
 # Control-plane API for launched orchestrators. Leave blank to keep the legacy
 # in-process shared-DB path. Set to the /v1 base URL to make runs report over
 # HTTP (required for remote/BYOC; the orchestrator must be able to reach it):
@@ -151,9 +157,14 @@ class Settings:
             or str(_root / ".ark" / "data" / "projects")
         )
         self.secret_key: str = merged.get("SECRET_KEY", _DEFAULTS["SECRET_KEY"])
-        # ARK_WEBAPP_DB_PATH env var takes priority (used for dev/prod separation)
+        # DB location — a full SQLAlchemy DSN or a sqlite file path (get_engine
+        # accepts either). A DATABASE_URL (e.g. postgresql+psycopg://...) points
+        # the control plane at Postgres for concurrent remote orchestrators;
+        # ARK_WEBAPP_DB_PATH / DB_PATH keep the single-node sqlite dev default.
         self.db_path: str = (
-            os.environ.get("ARK_WEBAPP_DB_PATH")
+            os.environ.get("ARK_DATABASE_URL")
+            or merged.get("DATABASE_URL")
+            or os.environ.get("ARK_WEBAPP_DB_PATH")
             or merged.get("DB_PATH")
             or str(_root / ".ark" / "data" / "webapp.db")
         )

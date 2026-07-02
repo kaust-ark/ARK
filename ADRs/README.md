@@ -43,3 +43,4 @@ cross-link — the docs carry the full detail; the ADRs carry the *decision*:
 | [0008](0008-two-lane-queue-concurrency.md) | Two-lane FIFO concurrency; queue instead of hard-reject | Implemented |
 | [0009](0009-apptainer-experiment-sandbox.md) | Run agent-generated experiment code in an Apptainer sandbox | Implemented |
 | [0010](0010-skypilot-provisioning.md) | Prefer SkyPilot for cross-cloud/K8s provisioning | Proposed |
+| [0011](0011-postgres-dsn-and-unified-alembic.md) | Postgres via a DSN-or-path seam, with one Alembic history for both backends | Implemented |

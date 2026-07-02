@@ -206,28 +206,41 @@ shared `--db-path`. A SLURM run updates status/decisions purely via the API.
 
 ---
 
-### Phase 2 — Postgres  **[CODE]**
+### Phase 2 — Postgres  **[CODE]**  ✅ DONE
 **Goal:** back the control plane with Postgres so it can serve many concurrent
 remote orchestrators. SQLite is single-node and unsuitable once the orchestrator
 is remote.
 
+> **Decision record:** [`ADRs/0011-postgres-dsn-and-unified-alembic.md`](ADRs/0011-postgres-dsn-and-unified-alembic.md)
+> — DSN-or-path seam + one Alembic history across both backends.
+
 **Tasks**
-1. Parameterize the DB connection (`website/dashboard/db.py`,
-   `resolve_db_path()` → a DSN resolver). SQLModel keeps the models; swap the
-   engine/session.
-2. Add migrations (Alembic). Port the lightweight `ALTER TABLE` logic in `db.py`
-   (columns like `orchestrator_compute_backend`, `experiment_compute_backend`,
-   `cloud_overrides`) into real migrations.
-3. Keep **SQLite as the default for local dev** (DSN-selected); Postgres for
+1. ✅ Parameterize the DB connection. `get_engine()` / `get_session()` /
+   `resolve_db_path()` now accept a **DSN or a sqlite path**: a value containing
+   `://` is a full SQLAlchemy DSN (Postgres, pooled with `pool_pre_ping`),
+   anything else stays a sqlite file. Every existing `get_session(settings.db_path)`
+   caller is unchanged. `DATABASE_URL` / `ARK_DATABASE_URL` select Postgres.
+2. ✅ Add migrations (Alembic). `website/dashboard/migrations/` + `alembic.ini`;
+   a baseline revision covers all 9 tables (incl. the `ALTER TABLE` columns like
+   `orchestrator_compute_backend`, `cloud_overrides`). Alembic is the schema
+   source of truth for **both** backends. A pre-Alembic dev DB is *adopted*
+   (stamped at head), not rebuilt, so existing sqlite DBs boot untouched.
+3. ✅ Keep **SQLite as the default for local dev** (DSN-selected); Postgres for
    deployed control planes.
 
-**SLURM check:** unaffected — the launcher talks to the API, not the DB.
+**SLURM check:** unaffected — the launcher talks to the API, not the DB. The
+remote orchestrator never sees the DSN (it uses HTTP `/v1`); only the
+control-plane process opens DB connections.
 
 **Acceptance**
-- Control plane runs on Postgres and serves N simultaneous orchestrators
-  (load test with N fake clients).
-- `sqlite` dev path still boots and passes the existing test suite.
-- Migration up/down verified.
+- ✅ Control plane runs on Postgres and serves N simultaneous orchestrators —
+  verified live against Postgres 16 with 25 concurrent clients, 0 errors
+  (`tests/unit/test_db_backend.py::test_postgres_concurrent_orchestrators`,
+  gated on `ARK_TEST_DATABASE_URL`).
+- ✅ `sqlite` dev path still boots and passes the existing test suite (control-plane
+  DB suite green; full-suite failure set identical before/after this change).
+- ✅ Migration up/down verified (`alembic upgrade head` → `downgrade base` →
+  re-`upgrade head` on live Postgres; `projectevent.id` is SERIAL).
 
 ---
 

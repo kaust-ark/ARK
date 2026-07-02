@@ -307,12 +307,72 @@ def _migrate(engine):
             conn.commit()
 
 
+def _normalize_url(db_path_or_url: str) -> str:
+    """Accept either a filesystem path (legacy sqlite) OR a full SQLAlchemy DSN.
+
+    A value containing ``://`` is treated as a DSN verbatim (e.g.
+    ``postgresql+psycopg://user:pass@host/db``); anything else is a sqlite file
+    path, kept for backward compatibility with every existing caller that still
+    passes ``settings.db_path``."""
+    if "://" in (db_path_or_url or ""):
+        return db_path_or_url
+    return f"sqlite:///{db_path_or_url}"
+
+
+def _is_sqlite_url(url: str) -> bool:
+    return (url or "").startswith("sqlite")
+
+
+def _create_engine(url: str):
+    if _is_sqlite_url(url):
+        # Preserve historical sqlite behavior exactly (single-node dev / SLURM).
+        return create_engine(url, echo=False)
+    # Client/server DB (Postgres): a real pool so the control plane can serve
+    # many concurrent remote orchestrators. pre_ping drops dead connections.
+    return create_engine(
+        url, echo=False, pool_pre_ping=True,
+        pool_size=10, max_overflow=20, pool_recycle=1800,
+    )
+
+
+def _migrations_dir() -> str:
+    from pathlib import Path
+    return str(Path(__file__).parent / "migrations")
+
+
+def _alembic_config(url: str):
+    from alembic.config import Config
+    cfg = Config()
+    cfg.set_main_option("script_location", _migrations_dir())
+    cfg.set_main_option("sqlalchemy.url", url)
+    return cfg
+
+
+def _ensure_schema(engine, url: str) -> None:
+    """Bring the schema to head via Alembic (unified: sqlite dev + postgres).
+
+    Adopts a pre-Alembic database: an existing dev DB built by the old
+    ``create_all`` / ``_migrate`` path already carries the current schema but has
+    no ``alembic_version`` table, so we *stamp* it at head rather than re-running
+    the baseline (which would collide with the existing tables). Fresh and
+    already-managed databases just run ``upgrade head``."""
+    from alembic import command
+    from sqlalchemy import inspect
+
+    tables = set(inspect(engine).get_table_names())
+    cfg = _alembic_config(url)
+    if "project" in tables and "alembic_version" not in tables:
+        command.stamp(cfg, "head")
+    else:
+        command.upgrade(cfg, "head")
+
+
 def get_engine(db_path: str):
     global _engine
     if _engine is None:
-        _engine = create_engine(f"sqlite:///{db_path}", echo=False)
-        SQLModel.metadata.create_all(_engine)
-        _migrate(_engine)
+        url = _normalize_url(db_path)
+        _engine = _create_engine(url)
+        _ensure_schema(_engine, url)
     return _engine
 
 
@@ -950,27 +1010,59 @@ def get_project_by_name(session: Session, name: str) -> Optional[Project]:
 
 # ── DB path resolution ─────────────────────────────────────────────────────
 
-def resolve_db_path() -> str:
-    """Resolve the webapp DB path from env / config, usable from any context."""
-    import os
-    from pathlib import Path
-    p = os.environ.get("ARK_WEBAPP_DB_PATH")
-    if p:
-        return p
-    # Try loading from webapp.env
+def _read_env_file_value(key: str) -> str:
+    """Read a single ``KEY=value`` line from the webapp.env config file."""
     try:
         from ark.paths import get_config_dir
         env_file = get_config_dir() / "webapp.env"
         if env_file.exists():
             for line in env_file.read_text().splitlines():
                 line = line.strip()
-                if line.startswith("DB_PATH="):
+                if line.startswith(f"{key}="):
                     return line.split("=", 1)[1].strip()
     except Exception:
         pass
-    # Fallback
+    return ""
+
+
+def resolve_db_path() -> str:
+    """Resolve the control-plane DB location — a full DSN or a sqlite path.
+
+    Resolution order (first hit wins):
+      1. ``ARK_DATABASE_URL`` / ``DATABASE_URL`` — a full SQLAlchemy DSN. Set this
+         to point the control plane at Postgres (deployed / BYOC).
+      2. ``ARK_WEBAPP_DB_PATH`` env — sqlite file path.
+      3. ``DATABASE_URL`` / ``DB_PATH`` in webapp.env.
+      4. Fallback sqlite file under ``.ark/data/webapp.db``.
+
+    The return value flows straight into :func:`get_engine`, which treats a value
+    containing ``://`` as a DSN and everything else as a sqlite path — so callers
+    are unchanged whether the backend is sqlite or Postgres."""
+    import os
+    # 1. Full DSN via env (Postgres / BYOC).
+    dsn = os.environ.get("ARK_DATABASE_URL") or os.environ.get("DATABASE_URL")
+    if dsn:
+        return dsn
+    # 2. Explicit sqlite path override.
+    p = os.environ.get("ARK_WEBAPP_DB_PATH")
+    if p:
+        return p
+    # 3. webapp.env — DATABASE_URL takes priority over the legacy DB_PATH.
+    dsn = _read_env_file_value("DATABASE_URL")
+    if dsn:
+        return dsn
+    db_path = _read_env_file_value("DB_PATH")
+    if db_path:
+        return db_path
+    # 4. Fallback sqlite file.
     try:
         from ark.paths import get_ark_root
         return str(get_ark_root() / ".ark" / "data" / "webapp.db")
     except Exception:
         return ""
+
+
+def resolve_db_url() -> str:
+    """Same as :func:`resolve_db_path` but always a SQLAlchemy URL (sqlite paths
+    normalized to ``sqlite:///...``). Used by the Alembic env for CLI runs."""
+    return _normalize_url(resolve_db_path())

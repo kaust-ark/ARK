@@ -641,49 +641,54 @@ async def _poll_template_links(settings):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    # Idempotent migration: add columns BEFORE SQLAlchemy create_all,
-    # so the ORM sees the full schema when it reflects existing tables.
+    # Legacy pre-ORM sqlite fixup: adds a few columns + a one-time user-name
+    # normalization on old single-node dev DBs. This is sqlite-only and runs
+    # against a bare file path — it is SKIPPED for a DSN backend (Postgres),
+    # where Alembic owns the schema and a DSN string must never be handed to
+    # sqlite3.connect(). Alembic (_ensure_schema in get_engine) is the schema
+    # source of truth for both backends.
     import sqlite3 as _sq3
-    try:
-        _c = _sq3.connect(settings.db_path)
-        for col in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''",
-                    "max_dev_iterations INTEGER DEFAULT 3"):
+    if "://" not in settings.db_path:
+        try:
+            _c = _sq3.connect(settings.db_path)
+            for col in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''",
+                        "max_dev_iterations INTEGER DEFAULT 3"):
+                try:
+                    _c.execute(f"ALTER TABLE project ADD COLUMN {col}")
+                except Exception:
+                    pass
             try:
-                _c.execute(f"ALTER TABLE project ADD COLUMN {col}")
+                _c.execute("ALTER TABLE user ADD COLUMN welcome_sent BOOLEAN DEFAULT 0")
             except Exception:
                 pass
-        try:
-            _c.execute("ALTER TABLE user ADD COLUMN welcome_sent BOOLEAN DEFAULT 0")
-        except Exception:
-            pass
-        for ucol in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''"):
-            try:
-                _c.execute(f"ALTER TABLE user ADD COLUMN {ucol}")
-            except Exception:
-                pass
-        # Feedback table
-        _c.execute("""CREATE TABLE IF NOT EXISTS feedback (
-            id TEXT PRIMARY KEY,
-            user_id TEXT NOT NULL,
-            project_id TEXT DEFAULT '',
-            message TEXT DEFAULT '',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )""")
-        _c.commit()
-        # Fix existing user display names (first.last@domain → First)
-        try:
-            rows = _c.execute("SELECT id, email, name FROM user").fetchall()
-            for uid, email, old_name in rows:
-                correct = email.split("@")[0].split(".")[0].capitalize()
-                if old_name != correct:
-                    _c.execute("UPDATE user SET name=? WHERE id=?", (correct, uid))
+            for ucol in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''"):
+                try:
+                    _c.execute(f"ALTER TABLE user ADD COLUMN {ucol}")
+                except Exception:
+                    pass
+            # Feedback table
+            _c.execute("""CREATE TABLE IF NOT EXISTS feedback (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                project_id TEXT DEFAULT '',
+                message TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
             _c.commit()
+            # Fix existing user display names (first.last@domain → First)
+            try:
+                rows = _c.execute("SELECT id, email, name FROM user").fetchall()
+                for uid, email, old_name in rows:
+                    correct = email.split("@")[0].split(".")[0].capitalize()
+                    if old_name != correct:
+                        _c.execute("UPDATE user SET name=? WHERE id=?", (correct, uid))
+                _c.commit()
+            except Exception:
+                pass
+            _c.close()
         except Exception:
             pass
-        _c.close()
-    except Exception:
-        pass
-    # Now create engine + tables (ORM will see the migrated schema)
+    # Create engine + bring schema to head via Alembic (sqlite dev + postgres).
     get_engine(settings.db_path)
 
     # Migrate existing project data: populate new DB columns from YAML state files
