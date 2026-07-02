@@ -1865,6 +1865,21 @@ def cmd_run(args):
         except Exception:
             pass
 
+    # ── Choose the control-plane transport (mirror jobs.py) ──
+    # When CONTROL_PLANE_URL is configured and we have a project_id to scope the
+    # token to, report over the /v1 HTTP API; otherwise fall back to the legacy
+    # in-process --db-path path (keeps single-node dev unchanged until opt-in).
+    cp_url, cp_token = "", ""
+    if project_id:
+        try:
+            from website.dashboard.config import get_settings
+            from website.dashboard.jobs import control_plane_transport
+            cp_url, cp_token = control_plane_transport(project_id, get_settings())
+        except Exception as e:
+            print(f"  {_c('Note:', Colors.DIM)} control-plane transport unavailable: {e}")
+    if cp_url:
+        db_path = ""  # HTTP transport: don't hand the orchestrator a DB file
+
     # Launch orchestrator in background, preferring per-project conda env
     try:
         from website.dashboard.jobs import (
@@ -1895,7 +1910,9 @@ def cmd_run(args):
     ]
     if model_variant:
         cmd.extend(["--model-variant", model_variant])
-    if db_path:
+    if cp_url:
+        cmd.extend(["--control-plane-url", cp_url])
+    elif db_path:
         cmd.extend(["--db-path", db_path])
     if project_id:
         cmd.extend(["--project-id", project_id])
@@ -1904,6 +1921,9 @@ def cmd_run(args):
 
     # Strip CLAUDECODE so orchestrator can call claude CLI freely
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    # Control-plane bearer token via env (never argv), matching the webapp launcher.
+    if cp_token:
+        env["ARK_CONTROL_PLANE_TOKEN"] = cp_token
     # Ensure orchestrator can find the ark + website packages.
     # parents[1] is the ARK repo root (.../ARK/ark/cli.py → .../ARK/ark → .../ARK).
     # Previously this had `.parent` appended which dropped one level too high

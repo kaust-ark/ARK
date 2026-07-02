@@ -246,7 +246,10 @@ Short-lived + refreshable; scope = one project's endpoints only.
    (`ARK_CONTROL_PLANE_TOKEN`, never argv); otherwise legacy `--db-path`. SLURM
    template is transport-conditional. Opt-in: empty `CONTROL_PLANE_URL` preserves
    today's behavior, so SLURM/local stay unchanged until an operator flips it.
-   *(The `ark run` CLI launcher still uses `--db-path` — a small follow-up.)*
+   The `ark run` CLI launcher (`cli.py::cmd_run`) now mirrors this: it reuses
+   `control_plane_transport`, passing `--control-plane-url` + `ARK_CONTROL_PLANE_TOKEN`
+   (env, never argv) when `CONTROL_PLANE_URL` is set and a `project_id` is
+   resolved, else the legacy `--db-path`.
 6. ✅ *Done.* HITL fan-out migrated to the control plane (D1). New
    `website/dashboard/hitl.py` engine (format + notify + `apply_reply` + `sweep`,
    Telegram transport injected → unit-tested). The **daemon is now the sole
