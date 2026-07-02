@@ -5,16 +5,43 @@ from .custom import CustomBackend
 from .cloud.base import CloudBackend
 from .cloud.orchestrator import OrchestratorCloudBackend
 
+# Layer-2 orchestrator launcher types (`orchestrator_compute_backend.type`).
+VALID_ORCHESTRATOR_TYPES = frozenset({"local", "slurm", "cloud"})
+# Layer-1 experiment backend types (`experiment_compute_backend.type`).
+VALID_EXPERIMENT_TYPES = frozenset({"local", "slurm", "cloud", "custom"})
+
+# Invalid (orchestrator, experiment) pairs. The invariant is that the
+# orchestrator must be able to reach whatever runs the experiments: a cloud VM
+# orchestrator can't drive an on-prem SLURM cluster it has no network path to.
+INVALID_COMPUTE_MATRIX = frozenset({
+    ("cloud", "slurm"),
+})
+
+
 def validate_config(config: dict):
-    """Validate compute backend combination."""
+    """Validate the Layer-2 × Layer-1 compute backend combination (Phase 4)."""
     orch_config = config.get("orchestrator_compute_backend", {"type": "local"})
     exp_config = config.get("experiment_compute_backend") or config.get("compute_backend", {})
-    
+
     orch_type = orch_config.get("type", "local")
     exp_type = exp_config.get("type", "local")
-    
-    if orch_type == "cloud" and exp_type == "slurm":
-        raise ValueError("Invalid configuration: Orchestrator cannot run in the cloud while experiments run on Slurm.")
+
+    if orch_type not in VALID_ORCHESTRATOR_TYPES:
+        raise ValueError(
+            f"Unknown orchestrator_compute_backend type: {orch_type!r} "
+            f"(valid: {sorted(VALID_ORCHESTRATOR_TYPES)})"
+        )
+    if exp_type not in VALID_EXPERIMENT_TYPES:
+        raise ValueError(
+            f"Unknown experiment_compute_backend type: {exp_type!r} "
+            f"(valid: {sorted(VALID_EXPERIMENT_TYPES)})"
+        )
+
+    if (orch_type, exp_type) in INVALID_COMPUTE_MATRIX:
+        raise ValueError(
+            f"Invalid configuration: orchestrator '{orch_type}' cannot drive "
+            f"experiments on '{exp_type}' (no network path between them)."
+        )
 
     # Artifact store block (Phase 3, ADR-0012) — orthogonal to the compute matrix.
     from ark.artifacts import validate_config as _validate_artifact_store

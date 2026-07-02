@@ -13,29 +13,16 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .config import get_settings
 from .db import get_engine
-from .jobs import poll_job, slurm_state_to_status, launch_local_job, poll_local_job, cancel_local_job
+from ark.launcher import (
+    LaunchSpec, launcher_from_handle,
+    STOPPED, GONE, UNKNOWN, ACTIVE_STATUSES,
+)
 from .notify import send_completion_email, send_telegram_notify
 from .routes import router
 
 logger = logging.getLogger("website.dashboard")
 
 _log_mtimes: dict[str, float] = {}   # project_id → last log mtime
-
-
-def _read_job_error(log_dir) -> str:
-    """Return the last few meaningful lines from the most recent job log file."""
-    from pathlib import Path
-    log_dir = Path(log_dir)
-    logs = sorted(log_dir.glob("local_*.out"), key=lambda f: f.stat().st_mtime, reverse=True)
-    if not logs:
-        return ""
-    try:
-        lines = logs[0].read_text(errors="replace").splitlines()
-        # Strip blank lines from the tail, then take last 3 non-empty lines
-        tail = [l for l in lines if l.strip()][-3:]
-        return " | ".join(tail)[:300]
-    except Exception:
-        return ""
 
 
 def _pname(p) -> str:
@@ -131,28 +118,59 @@ def _advance_pending_queue(session, settings):
         if not pending:
             return
 
-        from .jobs import submit_job, slurm_available
+        from .routes import orchestrator_launcher_for
         pdir = settings.projects_root / pending.user_id / pending.id
         log_dir = pdir / "logs"
         log_dir.mkdir(exist_ok=True)
         user_obj = get_user(session, pending.user_id)
         api_keys = _get_user_keys(user_obj) if user_obj else {}
         try:
-            if slurm_available():
-                job_id = submit_job(pending.id, pending.mode, pending.max_iterations,
-                                    pdir, log_dir, settings, api_keys=api_keys)
-                update_project(session, pending, status="queued", slurm_job_id=job_id)
-            else:
-                job_id = launch_local_job(pending.id, pending.mode, pending.max_iterations,
-                                          pdir, log_dir, settings, api_keys=api_keys)
-                update_project(session, pending, status="running", slurm_job_id=job_id)
-            logger.info(f"Queue advance: {pending.id} → job {job_id}")
+            spec = LaunchSpec(
+                project_id=pending.id, mode=pending.mode,
+                max_iterations=pending.max_iterations,
+                project_dir=pdir, log_dir=log_dir, settings=settings, api_keys=api_keys,
+            )
+            # Promotion honours the project's configured backend (cloud/slurm/local)
+            # via the same dispatch as initial submission — no longer forced to
+            # slurm/local (which silently ran cloud projects on the control plane).
+            launcher = orchestrator_launcher_for(pending, spec, session, settings)
+            job_id = launcher.launch(spec)
+            update_project(session, pending, status=launcher.initial_status, slurm_job_id=job_id)
+            logger.info(f"Queue advance: {pending.id} → {job_id} ({launcher.initial_status})")
         except Exception as e:
             logger.error(f"Queue advance failed {pending.id}: {e}")
             return
 _stuck_alerted: set[str] = set()     # project_ids already sent stuck alert
 _tg_offsets: dict[str, int] = {}     # project_id → last Telegram update_id seen
 STUCK_MINUTES = 60
+
+
+def _stuck_watchdog(p, launcher, pdir):
+    """Alert once if a running project's orchestrator log has been silent for
+    more than STUCK_MINUTES. The launcher reports the newest log mtime (or None
+    for backends with no local log to watch, e.g. cloud). Behavior-identical to
+    the pre-Phase-4 per-branch watchdogs (local_*.out / slurm_*.out).
+
+    ``update_project`` refreshes ``p`` in place, so after a transition p.status
+    already equals the new status — no separate new_status arg needed."""
+    if p.status != "running":
+        return
+    mtime = launcher.latest_log_mtime(pdir)
+    if mtime is None:
+        return
+    last = _log_mtimes.get(p.id, mtime)
+    _log_mtimes[p.id] = mtime
+    if mtime != last:
+        _stuck_alerted.discard(p.id)  # new output → clear alert
+    elif p.id not in _stuck_alerted:
+        idle_min = (time.time() - mtime) / 60
+        if idle_min > STUCK_MINUTES:
+            send_telegram_notify(
+                f"⚠️ <b>{_pname(p)}</b> may be stuck\n"
+                f"No log output for {int(idle_min)} min",
+                bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+            )
+            _stuck_alerted.add(p.id)
 
 
 async def _poll_jobs(app: FastAPI):
@@ -182,24 +200,100 @@ async def _poll_jobs(app: FastAPI):
                     from .constants import DASHBOARD_PREFIX
                     url = f"{settings.base_url}{DASHBOARD_PREFIX}/#project/{p.id}"
 
-                    # ── Local subprocess job ─────────────────────────────
-                    if p.slurm_job_id.startswith("local:"):
-                        pid_str = p.slurm_job_id[len("local:"):]
-                        if not pid_str.isdigit():
+                    try:
+                        # ── Unified launcher dispatch (Phase 4) ──────────────────
+                        # poll/cancel dispatch purely off the persisted handle
+                        # (local:/cloud:/slurm) via the JobLauncher seam.
+                        launcher = launcher_from_handle(p.slurm_job_id, log_fn=logger.info)
+                        result = launcher.poll(p.slurm_job_id, pdir)
+                        logger.debug(f"Poll {p.id}: {result.state} ({result.raw})")
+
+                        # UNKNOWN → transient probe failure / no state yet. Leave the
+                        # project as-is and retry next cycle (still run the watchdog).
+                        if result.state == UNKNOWN:
+                            _stuck_watchdog(p, launcher, pdir)
                             continue
-                        pid = int(pid_str)
-                        local_state = poll_local_job(pid, pdir / "logs")
-                        new_status = slurm_state_to_status(local_state)
+
+                        # GONE → the remote process vanished with no authoritative
+                        # outcome. The control-plane DB is the source of truth (the
+                        # orchestrator self-reports its terminal status over /v1), so
+                        # this is a crash-safety-net: mark failed only if the DB still
+                        # shows the run active.
+                        if result.state == GONE:
+                            session.refresh(p)
+                            if p.status not in ACTIVE_STATUSES:
+                                continue  # orchestrator already recorded a terminal status
+                            prev_status = p.status
+                            update_project(session, p, status="failed")
+                            logger.info(
+                                f"Orchestrator {p.id}: {prev_status} → failed "
+                                f"(remote process gone with no terminal report)"
+                            )
+                            _gc_project_env(pdir, p.id)
+                            _advance_pending_queue(session, settings)
+                            send_telegram_notify(
+                                f"❌ <b>{_pname(p)}</b> failed\n<a href='{url}'>{url}</a>",
+                                bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                            )
+                            _log_mtimes.pop(p.id, None)
+                            _stuck_alerted.discard(p.id)
+                            continue
+
+                        # Authoritative poll states: running / queued / done / failed / stopped.
+                        new_status = result.state
                         if new_status != p.status:
+                            # Auto-restart a job the cluster cancelled out from under us
+                            # (SLURM only; local/cloud return None). User-initiated Stop
+                            # sets the DB to "stopped" synchronously, so those never reach
+                            # here as "running" → no false trigger.
+                            if new_status == STOPPED:
+                                spec = LaunchSpec(
+                                    project_id=p.id, mode=p.mode,
+                                    max_iterations=p.max_iterations,
+                                    project_dir=pdir, log_dir=pdir / "logs", settings=settings,
+                                )
+                                try:
+                                    restart = launcher.maybe_restart(p.slurm_job_id, spec)
+                                except Exception as e:
+                                    logger.error(f"Auto-restart failed for {p.id}: {e}")
+                                    restart = None
+                                if restart is not None:
+                                    update_project(session, p, status="queued", slurm_job_id=restart.handle)
+                                    logger.info(
+                                        f"Auto-restarted {p.id}: new job {restart.handle} "
+                                        f"(attempt {restart.attempt})"
+                                    )
+                                    send_telegram_notify(
+                                        f"⚡ <b>{_pname(p)}</b> 自动重启（集群 cancel，第 {restart.attempt} 次）\n"
+                                        f"新 Job: #{restart.handle}\n<a href='{url}'>{url}</a>",
+                                        bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                                    )
+                                    _log_mtimes.pop(p.id, None)
+                                    _stuck_alerted.discard(p.id)
+                                    continue  # skip normal stopped handling
+
                             kwargs = {"status": new_status}
                             if new_status == "failed":
-                                kwargs["error_message"] = _read_job_error(pdir / "logs")
+                                # Local jobs surface the crash tail (possibly "") so a
+                                # failure always overwrites any stale error_message;
+                                # SLURM/cloud have no local log → read_error returns
+                                # None and we leave error_message untouched.
+                                err = launcher.read_error(pdir)
+                                if err is not None:
+                                    kwargs["error_message"] = err
                             update_project(session, p, **kwargs)
-                            logger.info(f"Local project {p.id}: {p.status} → {new_status}")
+                            logger.info(f"Project {p.id}: {p.status} → {new_status}")
                             if new_status in ("done", "failed", "stopped"):
                                 _gc_project_env(pdir, p.id)
                                 _advance_pending_queue(session, settings)
-                            if new_status == "done":
+
+                            if new_status == "running":
+                                send_telegram_notify(
+                                    f"🚀 <b>{_pname(p)}</b> started running\n<a href='{url}'>{url}</a>",
+                                    bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                                )
+                            elif new_status == "done":
+                                # Read score from paper_state.yaml (authoritative)
                                 score = 0.0
                                 ps = pdir / "auto_research" / "state" / "paper_state.yaml"
                                 if ps.exists():
@@ -210,6 +304,7 @@ async def _poll_jobs(app: FastAPI):
                                     f"✅ <b>{_pname(p)}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
                                     bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                                 )
+                                # Send completion email
                                 user = get_user(session, p.user_id)
                                 if user:
                                     pdf_files = sorted(
@@ -235,203 +330,15 @@ async def _poll_jobs(app: FastAPI):
                                 )
                                 _log_mtimes.pop(p.id, None)
                                 _stuck_alerted.discard(p.id)
-                        # Stuck watchdog for local jobs
-                        if p.status == "running" or new_status == "running":
-                            log_dir = pdir / "logs"
-                            log_files = sorted(
-                                log_dir.glob("local_*.out"),
-                                key=lambda x: x.stat().st_mtime,
-                                reverse=True,
-                            )
-                            if log_files:
-                                mtime = log_files[0].stat().st_mtime
-                                last = _log_mtimes.get(p.id, mtime)
-                                _log_mtimes[p.id] = mtime
-                                if mtime != last:
-                                    _stuck_alerted.discard(p.id)
-                                elif p.id not in _stuck_alerted:
-                                    idle_min = (time.time() - mtime) / 60
-                                    if idle_min > STUCK_MINUTES:
-                                        send_telegram_notify(
-                                            f"⚠️ <b>{_pname(p)}</b> may be stuck\n"
-                                            f"No log output for {int(idle_min)} min",
-                                            bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                                        )
-                                        _stuck_alerted.add(p.id)
-                        continue
 
-                    # ── Remote Cloud Orchestrator job (Phase 5) ──────────
-                    if p.slurm_job_id.startswith("cloud:"):
-                        try:
-                            import yaml as _yaml
-                            from ark.compute.cloud.orchestrator import OrchestratorCloudBackend
+                        # Stuck watchdog — projects that are (or just became) running.
+                        _stuck_watchdog(p, launcher, pdir)
+                    except Exception as _poll_err:
+                        # Isolate per-project failures so one bad poll/finalize (DB lock,
+                        # notify error) can't abort the whole cycle — restores the guard the
+                        # old cloud branch had, now covering every backend.
+                        logger.error(f"Poll failed for {p.id}: {_poll_err}")
 
-                            config_file = pdir / "config.yaml"
-                            if not config_file.exists():
-                                continue
-                            config_dict = _yaml.safe_load(config_file.read_text())
-                            orch = OrchestratorCloudBackend.from_config(
-                                config_dict, p.id, pdir, log_fn=logger.info
-                            )
-                            
-                            # Write launcher heartbeat for the VM reaper (Phase 6)
-                            heartbeat_file = pdir / "auto_research" / "state" / "launcher_heartbeat"
-                            heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
-                            heartbeat_file.touch()
-
-                            remote_state = orch.poll_orchestrator()
-                            logger.debug(f"Cloud orchestrator {p.id}: {remote_state}")
-
-                            # Phase 3: the rsync-back bridge is gone. The remote
-                            # orchestrator reports state projections + artifacts to the
-                            # control plane over the /v1 API during the run and POSTs its
-                            # terminal status (done/failed/stopped) at the end — so the
-                            # DB, not the VM's disk, is authoritative. This branch only
-                            # has to catch a *crash*: a process that vanished before it
-                            # could record a terminal status.
-                            if remote_state in ("RUNNING", "UNKNOWN"):
-                                # UNKNOWN = transient probe failure or no state file yet;
-                                # leave the project as-is and retry on the next cycle.
-                                continue
-
-                            # remote_state == "STOPPED": the process is gone. In the
-                            # normal path the orchestrator already flipped the DB status,
-                            # so the project left the running set and we never reach here.
-                            # Still 'running' in the DB means it died without reporting.
-                            session.refresh(p)
-                            if p.status not in ("queued", "running", "pending", "initializing"):
-                                continue  # orchestrator already recorded a terminal status
-                            prev_status = p.status
-                            update_project(session, p, status="failed")
-                            logger.info(
-                                f"Cloud orchestrator {p.id}: {prev_status} → failed "
-                                f"(remote process gone with no terminal report)"
-                            )
-                            _gc_project_env(pdir, p.id)
-                            _advance_pending_queue(session, settings)
-                            send_telegram_notify(
-                                f"❌ <b>{_pname(p)}</b> failed\n<a href='{url}'>{url}</a>",
-                                bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                            )
-                            _log_mtimes.pop(p.id, None)
-                            _stuck_alerted.discard(p.id)
-                        except Exception as cloud_poll_err:
-                            logger.error(f"Cloud orchestrator poll failed for {p.id}: {cloud_poll_err}")
-                        continue
-
-                    # ── SLURM job ─────────────────────────────────────────
-                    slurm_state = poll_job(p.slurm_job_id)
-                    new_status = slurm_state_to_status(slurm_state)
-
-                    if new_status != p.status:
-                        # Auto-restart if cluster cancelled the job
-                        # (user-initiated Stop sets DB to "stopped" synchronously, so poll
-                        #  won't see those projects as "running" → no false trigger)
-                        if new_status == "stopped":
-                            log_files = list((pdir / "logs").glob("slurm_*.out"))
-                            if len(log_files) < 5:
-                                try:
-                                    from .jobs import submit_job
-                                    new_job_id = submit_job(
-                                        project_id=p.id,
-                                        mode=p.mode,
-                                        max_iterations=p.max_iterations,
-                                        project_dir=pdir,
-                                        log_dir=pdir / "logs",
-                                        settings=settings,
-                                    )
-                                    update_project(session, p, status="queued", slurm_job_id=new_job_id)
-                                    logger.info(f"Auto-restarted {p.id}: new job {new_job_id} (attempt {len(log_files)})")
-                                    send_telegram_notify(
-                                        f"⚡ <b>{_pname(p)}</b> 自动重启（集群 cancel，第 {len(log_files)} 次）\n"
-                                        f"新 Job: #{new_job_id}\n<a href='{url}'>{url}</a>",
-                                        bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                                    )
-                                    _log_mtimes.pop(p.id, None)
-                                    _stuck_alerted.discard(p.id)
-                                    continue  # skip normal stopped handling
-                                except Exception as e:
-                                    logger.error(f"Auto-restart failed for {p.id}: {e}")
-                                    # fall through → normal "stopped"
-
-                        update_project(session, p, status=new_status)
-                        logger.info(f"Project {p.id}: {p.status} → {new_status}")
-                        if new_status in ("done", "failed", "stopped"):
-                            _gc_project_env(pdir, p.id)
-                            _advance_pending_queue(session, settings)
-
-                        if new_status == "running":
-                            send_telegram_notify(
-                                f"🚀 <b>{_pname(p)}</b> started running\n<a href='{url}'>{url}</a>",
-                                bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                            )
-
-                        elif new_status == "done":
-                            # Read score from paper_state.yaml (authoritative)
-                            score = 0.0
-                            ps = pdir / "auto_research" / "state" / "paper_state.yaml"
-                            if ps.exists():
-                                import yaml as _yaml
-                                d = _yaml.safe_load(ps.read_text()) or {}
-                                score = float(d.get("current_score", 0))
-
-                            send_telegram_notify(
-                                f"✅ <b>{_pname(p)}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
-                                bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                            )
-
-                            # Send completion email
-                            user = get_user(session, p.user_id)
-                            if user:
-                                pdf_files = sorted(
-                                    (pdir / "paper").glob("*.pdf"),
-                                    key=lambda x: x.stat().st_mtime,
-                                    reverse=True
-                                )
-                                pdf_path = str(pdf_files[0]) if pdf_files else None
-                                send_completion_email(
-                                    settings,
-                                    to_email=user.email,
-                                    project_name=_pname(p),
-                                    score=score,
-                                    pdf_path=pdf_path,
-                                    project_url=url,
-                                )
-
-                            _log_mtimes.pop(p.id, None)
-                            _stuck_alerted.discard(p.id)
-
-                        elif new_status in ("failed", "stopped"):
-                            send_telegram_notify(
-                                f"❌ <b>{_pname(p)}</b> {new_status}\n<a href='{url}'>{url}</a>",
-                                bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                            )
-                            _log_mtimes.pop(p.id, None)
-                            _stuck_alerted.discard(p.id)
-
-                    # Stuck watchdog — check projects that are (or just became) running
-                    if p.status == "running" or new_status == "running":
-                        log_dir = pdir / "logs"
-                        log_files = sorted(
-                            log_dir.glob("slurm_*.out"),
-                            key=lambda x: x.stat().st_mtime,
-                            reverse=True,
-                        )
-                        if log_files:
-                            mtime = log_files[0].stat().st_mtime
-                            last = _log_mtimes.get(p.id, mtime)
-                            _log_mtimes[p.id] = mtime
-                            if mtime != last:
-                                _stuck_alerted.discard(p.id)  # new output → clear alert
-                            elif p.id not in _stuck_alerted:
-                                idle_min = (time.time() - mtime) / 60
-                                if idle_min > STUCK_MINUTES:
-                                    send_telegram_notify(
-                                        f"⚠️ <b>{_pname(p)}</b> may be stuck\n"
-                                        f"No log output for {int(idle_min)} min",
-                                        bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                                    )
-                                    _stuck_alerted.add(p.id)
 
                 # Always try to advance queue at end of each poll cycle
                 _advance_pending_queue(session, settings)
@@ -459,7 +366,6 @@ async def _poll_template_links(settings):
     import urllib.request
     import zipfile
     from .db import get_waiting_template_projects, get_session, update_project
-    from .jobs import submit_job, slurm_available
     from .notify import send_telegram_notify
 
     with get_session(settings.db_path) as session:
@@ -535,26 +441,19 @@ async def _poll_template_links(settings):
                 log_dir.mkdir(exist_ok=True)
                 slurm_job_id = ""
                 try:
-                    if slurm_available():
-                        slurm_job_id = submit_job(
-                            project_id=p.id,
-                            mode=proj.mode,
-                            max_iterations=proj.max_iterations,
-                            project_dir=pdir,
-                            log_dir=log_dir,
-                            settings=settings,
-                        )
-                        new_proj_status = "queued"
-                    else:
-                        slurm_job_id = launch_local_job(
-                            p.id, proj.mode, proj.max_iterations,
-                            pdir, log_dir, settings,
-                        )
-                        new_proj_status = "running"
-                    update_project(session, proj, status=new_proj_status,
+                    from .routes import orchestrator_launcher_for
+                    spec = LaunchSpec(
+                        project_id=p.id, mode=proj.mode,
+                        max_iterations=proj.max_iterations,
+                        project_dir=pdir, log_dir=log_dir, settings=settings,
+                    )
+                    launcher = orchestrator_launcher_for(proj, spec, session, settings)
+                    slurm_job_id = launcher.launch(spec)
+                    update_project(session, proj, status=launcher.initial_status,
                                    slurm_job_id=slurm_job_id)
                     send_telegram_notify(
-                        f"✅ Template installed! <b>{_pname(proj)}</b> queued.\nJob: #{slurm_job_id}",
+                        f"✅ Template installed! <b>{_pname(proj)}</b> {launcher.initial_status}.\n"
+                        f"Job: #{slurm_job_id}",
                         bot_token=token, chat_id=chat_id,
                     )
                 except Exception as e:

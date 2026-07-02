@@ -114,17 +114,16 @@ from .db import (
 from .crypto import encrypt_text, decrypt_text
 from . import sideband
 from .jobs import (
-    cancel_job,
-    cancel_local_job,
-    cancel_project_sub_jobs,
-    launch_cloud_job,
-    launch_local_job,
-    poll_local_job,
     project_env_prefix,
     project_env_ready,
     slurm_available,
-    slurm_state_to_status,
-    submit_job,
+)
+from ark.launcher import (
+    CloudVmJobLauncher,
+    LaunchSpec,
+    LocalJobLauncher,
+    launcher_from_handle,
+    select_launcher,
 )
 from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email, send_access_declined_email
 from .auth import make_token, verify_token, verify_share_token
@@ -636,47 +635,6 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     config["skip_deep_research"] = bool(getattr(project, "skip_deep_research", False))
     config_path = project_dir / "config.yaml"
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
-
-
-def _teardown_cloud_orchestrator_bg(pdir: Path, project_id: str):
-    """Reconstruct and teardown the cloud orchestrator VM and experiment VM in background threads."""
-    import threading
-
-    def _run_orchestrator():
-        config_file = pdir / "config.yaml"
-        if not config_file.exists():
-            logger.warning(f"Cannot teardown cloud orchestrator for {project_id}: config.yaml missing")
-            return
-        try:
-            import yaml
-            from ark.compute.cloud.orchestrator import OrchestratorCloudBackend
-            with open(config_file) as f:
-                config_dict = yaml.safe_load(f)
-            backend = OrchestratorCloudBackend.from_config(
-                config_dict, project_id, pdir, log_fn=logger.info
-            )
-            backend.teardown()
-        except Exception as e:
-            logger.error(f"Failed to teardown cloud orchestrator for {project_id}: {e}", exc_info=True)
-
-    def _run_experiment():
-        # Tear down the experiment VM if one was provisioned (state in cloud_instance.yaml)
-        config_file = pdir / "config.yaml"
-        state_file = pdir / "auto_research" / "state" / "cloud_instance.yaml"
-        if not state_file.exists() or not config_file.exists():
-            return
-        try:
-            import yaml
-            from ark.compute.cloud.base import CloudBackend
-            with open(config_file) as f:
-                config_dict = yaml.safe_load(f)
-            backend = CloudBackend.from_config(config_dict, project_id, pdir, log_fn=logger.info)
-            backend.teardown()
-        except Exception as e:
-            logger.error(f"Failed to teardown cloud experiment VM for {project_id}: {e}", exc_info=True)
-
-    threading.Thread(target=_run_orchestrator, daemon=True).start()
-    threading.Thread(target=_run_experiment, daemon=True).start()
 
 
 def _parse_cloud_provider(compute_backend: str) -> str:
@@ -1373,6 +1331,42 @@ async def _restart_project_async(
     )
 
 
+def orchestrator_launcher_for(project, spec, session, settings):
+    """Resolve the JobLauncher for ``project``'s configured orchestrator backend,
+    populating ``spec.config`` for the cloud path.
+
+    The single launch-dispatch point, shared by initial submission
+    (``_try_submit_or_pending``) and queue/template promotion so the paths can't
+    drift (previously the queue path ignored the backend and forced slurm/local).
+    Falls back to local when cloud is selected but unconfigured; raises ValueError
+    on an unrecognized backend type (callers surface it as a failed launch) rather
+    than silently running an unknown backend locally."""
+    backend = project.orchestrator_compute_backend or "local"
+    base = backend.split(":", 1)[0]
+    if base not in ("local", "slurm", "cloud"):
+        raise ValueError(f"Unknown orchestrator backend: {backend!r}")
+
+    if base == "cloud":
+        per_project: dict = {}
+        if project.cloud_overrides:
+            try:
+                per_project = json.loads(project.cloud_overrides)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        user_obj = get_user(session, project.user_id)
+        cloud_cfg = _build_cloud_config(user_obj, settings, per_project_overrides=per_project,
+                                        provider_override=_parse_cloud_provider(backend))
+        if not cloud_cfg:
+            logger.warning(f"Cloud selected for {project.id} but not configured. Falling back to local.")
+            return LocalJobLauncher()
+        import yaml
+        with open(Path(spec.project_dir) / "config.yaml") as f:
+            spec.config = yaml.safe_load(f)
+        return CloudVmJobLauncher(log_fn=logger.info)
+
+    return select_launcher(backend, slurm_ok=slurm_available())
+
+
 def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
                            apply_instruction: str = "", apply_scope: str = "edit",
                            chat_message: str = "") -> str:
@@ -1405,125 +1399,25 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
     log_dir = pdir / "logs"
     log_dir.mkdir(exist_ok=True)
     
-    backend = project.orchestrator_compute_backend or "local"
-
-    if backend.startswith("cloud"):
-        per_project: dict = {}
-        if project.cloud_overrides:
-            try:
-                per_project = json.loads(project.cloud_overrides)
-            except (json.JSONDecodeError, TypeError):
-                pass
-        cloud_cfg = _build_cloud_config(user_obj, settings, per_project_overrides=per_project, provider_override=_parse_cloud_provider(backend))
-        if not cloud_cfg:
-             logger.warning(f"Cloud selected for {project.id} but not configured. Falling back to local.")
-             job_id = launch_local_job(project.id, project.mode, project.max_iterations,
-                                       pdir, log_dir, settings, api_keys=api_keys,
-                                       apply_instruction=apply_instruction, apply_scope=apply_scope,
-                                       chat_message=chat_message)
-             update_project(session, project, status="running", slurm_job_id=job_id)
-             return "running"
-             
-        try:
-            import yaml
-            from ark.compute.cloud.orchestrator import OrchestratorCloudBackend
-            from website.dashboard.jobs import (
-                provision_claude_session, provision_gemini_session, control_plane_transport,
-            )
-            
-            # Write credentials to project dir so they are synced to the remote VM
-            env_file_created = False
-            if api_keys:
-                provision_claude_session(pdir, api_keys)
-                provision_gemini_session(pdir, api_keys)
-                gcp_json = api_keys.get("gcp_service_account_json")
-                if gcp_json:
-                    gcp_creds_path = pdir / ".gcp_credentials.json"
-                    gcp_creds_path.write_text(gcp_json)
-                    gcp_creds_path.chmod(0o600)
-                # Write a .env so the remote orchestrator has API keys available
-                # (synced to /dev/shm/.env and sourced before the process starts)
-                env_lines = []
-                for k, v in api_keys.items():
-                    if k == "claude_oauth_token":
-                        env_lines.append(f"CLAUDE_CODE_OAUTH_TOKEN={v}")
-                    elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai", "openrouter"):
-                        env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
-                        env_lines.append(f"{env_key}={v}")
-                    elif k in ("aws_access_key_id", "aws_secret_access_key", "aws_default_region"):
-                        env_lines.append(f"{k.upper()}={v}")
-                    elif k.startswith("azure_"):
-                        env_lines.append(f"{k.upper()}={v}")
-                env_file_created = False
-                if env_lines:
-                    env_file = pdir / ".env"
-                    if not env_file.exists():
-                        env_file.write_text("\n".join(env_lines) + "\n")
-                        env_file.chmod(0o600)
-                        env_file_created = True
-            
-            config_file = pdir / "config.yaml"
-            with open(config_file) as f:
-                config_dict = yaml.safe_load(f)
-
-            from ark.compute import validate_config
-            validate_config(config_dict)
-
-            orch_backend = OrchestratorCloudBackend.from_config(
-                config_dict, project.id, pdir, log_fn=logger.info
-            )
-            orch_backend.setup()
-            
-            remote_work_dir = f"/home/{orch_backend.ssh_user}/{project.id}"
-            if not orch_backend.sync_to_backend(str(pdir), remote_work_dir):
-                raise RuntimeError("Failed to sync project directory to Orchestrator VM")
-                
-            # Sync the ark codebase to the remote VM so the orchestrator runs the live code
-            ark_code_root = str(Path(__file__).resolve().parents[2])
-            remote_ark_dir = f"/home/{orch_backend.ssh_user}/ark_source"
-            if not orch_backend.sync_to_backend(ark_code_root, remote_ark_dir):
-                raise RuntimeError("Failed to sync ARK source to Orchestrator VM")
-                
-            # Control-plane transport: the remote VM shares no filesystem/DB with
-            # the control plane, so it must report state/artifacts back over the /v1
-            # HTTP API (the rsync bridge was removed in Phase 3). Without a configured
-            # control-plane URL the run is blind — warn so the misconfig is visible.
-            cp_url, cp_token = control_plane_transport(project.id, settings)
-            if not cp_url:
-                logger.warning(
-                    f"Cloud orchestrator {project.id} launched without a control-plane "
-                    f"URL (settings.control_plane_url unset): the remote run cannot report "
-                    f"status/state/artifacts back and the dashboard will not see progress."
-                )
-            pid = orch_backend.run_orchestrator(
-                control_plane_url=cp_url, control_plane_token=cp_token
-            )
-            if env_file_created:
-                (pdir / ".env").unlink(missing_ok=True)
-            if not pid:
-                raise RuntimeError("Failed to start remote orchestrator process")
-                
-            job_id = f"cloud:{pid}"
-            update_project(session, project, status="running", slurm_job_id=job_id)
-            return "running"
-        except Exception as e:
-            logger.error(f"Failed to launch cloud orchestrator: {e}", exc_info=True)
-            update_project(session, project, status="failed")
-            return "failed"
-
-    if backend == "slurm" and slurm_available():
-        job_id = submit_job(project.id, project.mode, project.max_iterations,
-                            pdir, log_dir, settings, api_keys=api_keys)
-        update_project(session, project, status="queued", slurm_job_id=job_id)
-        return "queued"
-    else:
-        # "local" or fallback for slurm
-        job_id = launch_local_job(project.id, project.mode, project.max_iterations,
-                                  pdir, log_dir, settings, api_keys=api_keys,
-                                  apply_instruction=apply_instruction, apply_scope=apply_scope,
-                                  chat_message=chat_message)
-        update_project(session, project, status="running", slurm_job_id=job_id)
-        return "running"
+    # Phase 4: dispatch is unified behind the JobLauncher seam via
+    # orchestrator_launcher_for. The spec mirrors the old per-launcher arg lists;
+    # apply_instruction / chat_message are only honoured by the local launcher.
+    spec = LaunchSpec(
+        project_id=project.id, mode=project.mode,
+        max_iterations=project.max_iterations,
+        project_dir=pdir, log_dir=log_dir, settings=settings, api_keys=api_keys,
+        apply_instruction=apply_instruction, apply_scope=apply_scope,
+        chat_message=chat_message,
+    )
+    try:
+        launcher = orchestrator_launcher_for(project, spec, session, settings)
+        job_id = launcher.launch(spec)
+    except Exception as e:
+        logger.error(f"Failed to launch orchestrator for {project.id}: {e}", exc_info=True)
+        update_project(session, project, status="failed")
+        return "failed"
+    update_project(session, project, status=launcher.initial_status, slurm_job_id=job_id)
+    return launcher.initial_status
 
 
 # ── health probe ─────────────────────────────────────────────────────────────
@@ -2403,26 +2297,11 @@ async def api_stop_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         if project.slurm_job_id:
-            if project.slurm_job_id.startswith("local:"):
-                pid_str = project.slurm_job_id[len("local:"):]
-                if pid_str.isdigit():
-                    cancel_local_job(int(pid_str))
-            elif project.slurm_job_id.startswith("cloud:"):
-                # The PID is on the remote VM — kill the VM instead of a local process
-                pdir = _project_dir(settings, project.user_id, project_id)
-                _teardown_cloud_orchestrator_bg(pdir, project_id)
-            else:
-                cancel_job(project.slurm_job_id)
-                # Cascade: the orchestrator submits experimenter sub-jobs
-                # under the project directory. Cancel any still-queued
-                # sub-jobs so we don't leak compute onto a dead pipeline.
-                pdir = _project_dir(settings, project.user_id, project_id)
-                cascaded = cancel_project_sub_jobs(pdir)
-                if cascaded:
-                    logger.info(
-                        f"Stop cascade: cancelled {len(cascaded)} sub-jobs "
-                        f"for project {project_id}: {','.join(cascaded)}"
-                    )
+            # Dispatch cancel off the persisted handle (local:/cloud:/slurm).
+            pdir = _project_dir(settings, project.user_id, project_id)
+            launcher_from_handle(project.slurm_job_id, log_fn=logger.info).cancel(
+                project.slurm_job_id, pdir
+            )
         update_project(session, project, status="stopped")
         return JSONResponse({"ok": True})
 
@@ -2811,22 +2690,21 @@ async def api_delete_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         pdir = _project_dir(settings, project.user_id, project_id)
+
+        def _cleanup():
+            shutil.rmtree(pdir, ignore_errors=True)
+
         if project.slurm_job_id:
-            if project.slurm_job_id.startswith("local:"):
-                pid_str = project.slurm_job_id[len("local:"):]
-                if pid_str.isdigit():
-                    cancel_local_job(int(pid_str))
-            elif project.slurm_job_id.startswith("cloud:"):
-                # The PID is on the remote VM — tear down the VM
-                _teardown_cloud_orchestrator_bg(pdir, project_id)
-            else:
-                cancel_job(project.slurm_job_id)
-                # Cascade before we rmtree the project — any still-queued
-                # sub-jobs would otherwise write into a directory we're
-                # about to delete.
-                cancel_project_sub_jobs(pdir)
+            # Dispatch cancel off the persisted handle. rmtree runs via on_complete:
+            # synchronously for local/SLURM (also cascades queued sub-jobs first),
+            # and only after the async cloud-VM teardown has read config/state — so
+            # we never delete the dir out from under an in-flight teardown.
+            launcher_from_handle(project.slurm_job_id, log_fn=logger.info).cancel(
+                project.slurm_job_id, pdir, on_complete=_cleanup
+            )
+        else:
+            _cleanup()
         delete_project(session, project_id)
-    shutil.rmtree(pdir, ignore_errors=True)
     return JSONResponse({"ok": True})
 
 
@@ -2986,17 +2864,10 @@ async def api_admin_killall(request: Request):
         ).all()
         for p in active:
             if p.slurm_job_id:
-                if p.slurm_job_id.startswith("local:"):
-                    pid_str = p.slurm_job_id[len("local:"):]
-                    if pid_str.isdigit():
-                        cancel_local_job(int(pid_str))
-                elif p.slurm_job_id.startswith("cloud:"):
-                    pdir = _project_dir(settings, p.user_id, p.id)
-                    _teardown_cloud_orchestrator_bg(pdir, p.id)
-                else:
-                    cancel_job(p.slurm_job_id)
-                    pdir = _project_dir(settings, p.user_id, p.id)
-                    cancel_project_sub_jobs(pdir)
+                pdir = _project_dir(settings, p.user_id, p.id)
+                launcher_from_handle(p.slurm_job_id, log_fn=logger.info).cancel(
+                    p.slurm_job_id, pdir
+                )
             update_project(session, p, status="stopped")
             stopped.append(p.id)
     return JSONResponse({"stopped": stopped, "count": len(stopped)})

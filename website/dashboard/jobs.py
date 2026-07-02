@@ -375,6 +375,32 @@ def provision_gemini_session(target_dir: Path, keys: dict[str, str]):
     )
 
 
+def api_keys_to_env(api_keys: dict[str, str]) -> dict[str, str]:
+    """Map user API-key entries to the standard provider env-var names shared by
+    the local orchestrator subprocess env and the remote VM's ``.env``.
+
+    Only the provider string→string mappings live here (claude oauth, ``*_api_key``,
+    ``aws_*``, ``azure_*``). File-based creds (``gcp_service_account_json`` → a creds
+    file) and orchestrator-only vars (``github_pat``/``github_org``) are local-launch
+    concerns and stay in ``launch_local_job``; the cloud VM gets its GCP identity from
+    the instance service account, not a synced key file. Single source of truth so a
+    newly-supported provider key reaches both launch paths."""
+    env: dict[str, str] = {}
+    for k, v in (api_keys or {}).items():
+        if k == "claude_oauth_token":
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = v
+        elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai", "openrouter"):
+            # openrouter → OPENROUTER_API_KEY so LiteLLM can route first-party
+            # models through the OpenRouter proxy.
+            env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
+            env[env_key] = v
+        elif k in ("aws_access_key_id", "aws_secret_access_key", "aws_default_region"):
+            env[k.upper()] = v
+        elif k.startswith("azure_"):
+            env[k.upper()] = v
+    return env
+
+
 def _auto_partition() -> str:
     """Try to detect an available partition from sinfo."""
     try:
@@ -792,35 +818,27 @@ def launch_local_job(
     if api_keys:
         provision_claude_session(project_dir, api_keys)
         provision_gemini_session(project_dir, api_keys)
-        for k, v in api_keys.items():
-            if k == "claude_oauth_token":
-                env["CLAUDE_CODE_OAUTH_TOKEN"] = v
-            elif k == "github_pat":
-                # Orchestrator-only GitHub PAT for auto-push. Exposed solely as
-                # ARK_GITHUB_PAT (never as GITHUB_TOKEN) and stripped from the
-                # agent subprocess env in ark/engines/cli.py.
-                env["ARK_GITHUB_PAT"] = v
-            elif k == "github_org":
-                # Optional org to create project repos under (not secret).
-                env["ARK_GITHUB_ORG"] = v
-            elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai", "openrouter"):
-                # Standard LLM keys. openrouter → OPENROUTER_API_KEY so LiteLLM
-                # can route first-party models through the OpenRouter proxy.
-                env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
-                env[env_key] = v
-            elif k in ("aws_access_key_id", "aws_secret_access_key", "aws_default_region"):
-                env[k.upper()] = v
-            elif k == "gcp_service_account_json":
-                # For GCP, we write the JSON to a file and set GOOGLE_APPLICATION_CREDENTIALS
-                gcp_creds_path = project_dir / ".gcp_credentials.json"
-                gcp_creds_path.write_text(v)
-                gcp_creds_path.chmod(0o600)
-                env["GOOGLE_APPLICATION_CREDENTIALS"] = str(gcp_creds_path)
-                # Also set standard GCP env vars if available in keys/settings
-                if api_keys.get("gcp_project"):
-                     env["GOOGLE_CLOUD_PROJECT"] = api_keys["gcp_project"]
-            elif k.startswith("azure_"):
-                env[k.upper()] = v
+        # Shared provider keys (claude oauth / *_api_key / aws / azure).
+        env.update(api_keys_to_env(api_keys))
+        # Local-launch-only extras below.
+        if api_keys.get("github_pat"):
+            # Orchestrator-only GitHub PAT for auto-push. Exposed solely as
+            # ARK_GITHUB_PAT (never as GITHUB_TOKEN) and stripped from the
+            # agent subprocess env in ark/engines/cli.py.
+            env["ARK_GITHUB_PAT"] = api_keys["github_pat"]
+        if api_keys.get("github_org"):
+            # Optional org to create project repos under (not secret).
+            env["ARK_GITHUB_ORG"] = api_keys["github_org"]
+        gcp_json = api_keys.get("gcp_service_account_json")
+        if gcp_json:
+            # For GCP, we write the JSON to a file and set GOOGLE_APPLICATION_CREDENTIALS
+            gcp_creds_path = project_dir / ".gcp_credentials.json"
+            gcp_creds_path.write_text(gcp_json)
+            gcp_creds_path.chmod(0o600)
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = str(gcp_creds_path)
+            # Also set standard GCP env vars if available in keys/settings
+            if api_keys.get("gcp_project"):
+                env["GOOGLE_CLOUD_PROJECT"] = api_keys["gcp_project"]
     
     # Ensure the orchestrator can find the ark package even when running
     # inside a project-local conda env that doesn't have ark installed.
@@ -856,23 +874,6 @@ def launch_local_job(
         )
 
     return f"local:{proc.pid}"
-
-
-def launch_cloud_job(
-    project_id: str,
-    mode: str,
-    max_iterations: int,
-    project_dir: Path,
-    log_dir: Path,
-    settings,
-    api_keys: dict[str, str] = None,
-) -> str:
-    """Launch orchestrator locally to manage a cloud VM. Returns 'cloud:{pid}'."""
-    job_id = launch_local_job(
-        project_id, mode, max_iterations, project_dir, log_dir, settings, api_keys
-    )
-    # job_id is 'local:{pid}', change to 'cloud:{pid}'
-    return job_id.replace("local:", "cloud:")
 
 
 def poll_local_job(pid: int, log_dir: Path) -> str:

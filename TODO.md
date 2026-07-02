@@ -93,6 +93,19 @@
 - Need: pre-built conda environment specs or Docker images for reproducibility
 - Consider: offline mode where researcher pre-downloads packages and data
 
+### [x] Pending-queue launch ignores the orchestrator backend _(added 2026-07-02, fixed 2026-07-02)_
+- **Was:** the queue-drain (`_advance_pending_queue`) and template
+  (`_poll_template_links`) paths forced SLURM-if-available-else-local, ignoring a
+  project's configured backend — so a `cloud` project parked as `pending` and later
+  promoted launched on the control-plane host instead of the user's VM.
+- **Fixed:** extracted `orchestrator_launcher_for(project, spec, session, settings)`
+  in `routes.py` as the single launch-dispatch point (cloud config-load + fallback +
+  backend select). `_try_submit_or_pending`, `_advance_pending_queue`, and
+  `_poll_template_links` all route through it, so promotion honours the configured
+  backend and the paths can't drift again. Also: `select_launcher` lost its dead
+  cloud branch, and unknown backend types now raise instead of silently running
+  local. Covered by `tests/unit/test_launch_dispatch.py`.
+
 ## Paper Quality
 
 ### [ ] Figure visual layout — known issues
