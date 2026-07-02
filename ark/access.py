@@ -319,6 +319,47 @@ def cmd_remove(emails: list[str]) -> int:
     return 0
 
 
+def _has_everyone(include: list) -> bool:
+    return any("everyone" in r for r in include)
+
+
+def cmd_open() -> int:
+    """Open the dashboard to ANY authenticated user (self-serve, no manual grant).
+
+    Adds an ``everyone`` include rule to the allow policy. Users still authenticate
+    (Google / email OTP) — this only drops the per-email allowlist. Additive, so it
+    can never lock out already-allowed users. Reverse with ``ark access close``.
+    """
+    cfg = _load_config()
+    pol = _get_policy(cfg)
+    include = pol.get("include", [])
+    if _has_everyone(include):
+        print("already open: anyone authenticated can sign in.")
+        return 0
+    include.append({"everyone": {}})
+    pol["include"] = include
+    _put_policy(cfg, pol)
+    print("  + everyone (any authenticated Google/OTP user)")
+    print("\nDashboard is now OPEN — no manual authorization needed.")
+    print("Reverse with:  ark access close")
+    return 0
+
+
+def cmd_close() -> int:
+    """Re-close the dashboard to the email/domain allowlist (remove ``everyone``)."""
+    cfg = _load_config()
+    pol = _get_policy(cfg)
+    include = pol.get("include", [])
+    new_include = [r for r in include if "everyone" not in r]
+    if len(new_include) == len(include):
+        print("already closed: no 'everyone' rule present.")
+        return 0
+    pol["include"] = new_include
+    _put_policy(cfg, pol)
+    print("removed 'everyone' — dashboard is back to the email/domain allowlist.")
+    return 0
+
+
 def cmd_add_domain(domains: list[str]) -> int:
     cfg = _load_config()
     pol = _get_policy(cfg)

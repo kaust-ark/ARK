@@ -744,6 +744,49 @@ class PipelineMixin:
 
         return True
 
+    def _ensure_project_env(self):
+        """Provision the per-project conda env + seed the Apptainer sandbox helper.
+
+        Idempotent. Called UNCONDITIONALLY at run() start — NOT only inside the
+        research phase. continue/restart skip the research phase, so if the conda
+        env was GC'd after completion (v0.5.3 disk reclaim), this is what rebuilds
+        it. Without this, a continued/restarted run that touches experiments would
+        fail on a missing .conda_env.
+        """
+        try:
+            from website.dashboard.jobs import provision_project_env, project_env_ready
+            if not project_env_ready(self.code_dir):
+                base_env = self.config.get("base_conda_env", "ark-base")
+                self.log_step(f"Provisioning conda environment (cloning {base_env})...", "progress")
+                self.notify_progress(
+                    "Env setup", f"cloning base env <code>{base_env}</code>...",
+                    level="working",
+                )
+                success, msg = provision_project_env(self.code_dir, base_env)
+                if success:
+                    self.log_step(f"Conda env ready: {msg}", "success")
+                    self.notify_progress("Env ready", f"{msg}", level="done")
+                else:
+                    self.log_step(f"Conda env provisioning failed: {msg}", "error")
+                    self.notify_progress("Env setup failed", f"{msg}", level="warn")
+                    raise RuntimeError(f"Conda env provisioning failed: {msg}")
+            else:
+                self.log_step("Conda env already exists", "success")
+        except ImportError as e:
+            self.log(f"Conda env provisioning skipped (webapp.jobs unavailable): {e}", "WARN")
+
+        # Seed the Apptainer experiment-sandbox helper so experiments run isolated
+        # from the host. Best-effort: no-op if apptainer / base image are missing.
+        try:
+            from ark.sandbox import write_sandbox_helper, sandbox_available, sandbox_sif_path
+            if sandbox_available():
+                if write_sandbox_helper(self.code_dir):
+                    self.log_step("Experiment sandbox ready (Apptainer): ./sandbox/run.sh", "success")
+            else:
+                self.log(f"Experiment sandbox unavailable (apptainer/image at {sandbox_sif_path()} missing) — experiments will run on host", "WARN")
+        except Exception as e:
+            self.log(f"Sandbox helper seeding skipped: {e}", "WARN")
+
     def _run_research_phase(self):
         """Run the Research Phase: understand project, gather background, specialize.
 
@@ -784,28 +827,11 @@ class PipelineMixin:
             )
 
         # ── Step 0: Setup (conda env provisioning) ──────────────────────
+        # Idempotent — the real work now runs unconditionally at run() start via
+        # _ensure_project_env() so continue/restart (which skip this phase) still
+        # get the env rebuilt. This call is a no-op when already provisioned.
         self.log_step_header(0, 4, "Setup")
-        try:
-            from website.dashboard.jobs import provision_project_env, project_env_ready
-            if not project_env_ready(self.code_dir):
-                base_env = self.config.get("base_conda_env", "ark-base")
-                self.log_step(f"Provisioning conda environment (cloning {base_env})...", "progress")
-                self.notify_progress(
-                    "Env setup", f"cloning base env <code>{base_env}</code>...",
-                    level="working",
-                )
-                success, msg = provision_project_env(self.code_dir, base_env)
-                if success:
-                    self.log_step(f"Conda env ready: {msg}", "success")
-                    self.notify_progress("Env ready", f"{msg}", level="done")
-                else:
-                    self.log_step(f"Conda env provisioning failed: {msg}", "error")
-                    self.notify_progress("Env setup failed", f"{msg}", level="warn")
-                    raise RuntimeError(f"Conda env provisioning failed: {msg}")
-            else:
-                self.log_step("Conda env already exists", "success")
-        except ImportError as e:
-            self.log(f"Conda env provisioning skipped (webapp.jobs unavailable): {e}", "WARN")
+        self._ensure_project_env()
         self.log_step_header(0, 4, "Setup", "end")
 
         # ── Step 1: Analyze Proposal ────────────────────────────────────
@@ -3693,6 +3719,11 @@ provide the title.
 
         # Send session banner (replaces verbose "Started" notification)
         self._send_session_banner()
+
+        # Ensure the per-project conda env + sandbox helper exist on EVERY run.
+        # continue/restart skip the research phase (where this used to live), so
+        # without this a GC-reclaimed env would not be rebuilt → experiments fail.
+        self._ensure_project_env()
 
         # Research Phase: understand project, gather background, extract requirements
         if self._should_run_research_phase():

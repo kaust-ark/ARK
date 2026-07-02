@@ -1735,6 +1735,25 @@ Strict — hit the exact page limit (spends the most tokens).">
   </div>
 </div>
 
+<!-- ONBOARDING MODAL — first-run nudge to configure an API key -->
+<div class="modal-backdrop" id="modal-onboarding">
+  <div class="modal" style="max-width:520px;text-align:center">
+    <img src="{{ app_base }}/static/logo_ark_transparent.png" alt="Idea2Paper" style="height:56px;margin:4px auto 14px;display:block" />
+    <h3 style="margin:0 0 8px" data-i18n="onboard_title">Welcome to Idea2Paper 👋</h3>
+    <p style="font-size:.92rem;color:var(--text-second);line-height:1.6;margin:0 0 18px" data-i18n-html="onboard_body">
+      One quick step before you launch research: add an API key so projects can run on your own account.
+      We recommend <strong>OpenRouter</strong> — a single key unlocks Claude, GPT, Gemini and more.
+    </p>
+    <div style="background:#f0fdfa;border:1px solid #ccfbf1;border-radius:10px;padding:12px 14px;margin:0 0 20px;font-size:.84rem;color:#134e4a;text-align:left;line-height:1.6">
+      <span data-i18n="onboard_hint">🔑 Your keys are stored encrypted and used only for your own projects. You can add or remove them anytime in Settings.</span>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:center">
+      <button class="btn-secondary" onclick="closeModal('modal-onboarding')" data-i18n="onboard_later">Maybe later</button>
+      <button class="btn-primary" onclick="closeModal('modal-onboarding');openSettingsModal()" data-i18n="onboard_cta">Add API key</button>
+    </div>
+  </div>
+</div>
+
 <!-- SETTINGS MODAL -->
 <div class="modal-backdrop" id="modal-settings">
   <div class="modal" style="max-width:740px">
@@ -2049,6 +2068,11 @@ const TRANSLATIONS = {
     telegram_notifications: 'Telegram Notifications',
     telegram_settings_intro: "Get progress updates and answer the project's questions from Telegram. This is optional — leave it blank, or clear it and save to stop all Telegram notifications.",
     telegram_clear_hint: 'To turn Telegram off, clear both fields and save. New projects will no longer send messages.',
+    onboard_title: 'Welcome to Idea2Paper 👋',
+    onboard_body: 'One quick step before you launch research: add an API key so projects can run on your own account. We recommend <strong>OpenRouter</strong> — a single key unlocks Claude, GPT, Gemini and more.',
+    onboard_hint: '🔑 Your keys are stored encrypted and used only for your own projects. You can add or remove them anytime in Settings.',
+    onboard_later: 'Maybe later',
+    onboard_cta: 'Add API key',
     tg_how: '<b>How to set up:</b> 1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp; 2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID',
     bot_token: 'Bot Token', chat_id: 'Chat ID',
     advanced_options: 'Advanced options',
@@ -2098,7 +2122,7 @@ const TRANSLATIONS = {
     in_queue_pos: 'In Queue (position %s)',
     stopped_iter: 'Stopped (%d / %d iterations)',
     failed: 'Failed',
-    queue_position_msg: '⏳ Position %d in global queue — waiting for current project to finish',
+    queue_position_msg: '⏳ Queued at position %d — your project starts automatically when a slot frees (no need to resubmit).',
     // progress
     phase_research: 'Research', phase_dev: 'Dev', phase_review: 'Review',
     step_plan: 'Plan', step_run_experiments: 'Run Experiments',
@@ -2191,6 +2215,11 @@ const TRANSLATIONS = {
     telegram_notifications: 'إشعارات Telegram',
     telegram_settings_intro: 'احصل على تحديثات التقدّم وأجب عن أسئلة المشروع عبر Telegram. هذا اختياري — اتركه فارغًا، أو امسحه واحفظ لإيقاف كل إشعارات Telegram.',
     telegram_clear_hint: 'لإيقاف Telegram، امسح الحقلين واحفظ. لن ترسل المشاريع الجديدة أي رسائل.',
+    onboard_title: 'مرحبًا بك في Idea2Paper 👋',
+    onboard_body: 'خطوة سريعة قبل إطلاق بحثك: أضف مفتاح API لتعمل المشاريع على حسابك الخاص. نوصي بـ <strong>OpenRouter</strong> — مفتاح واحد يفتح Claude وGPT وGemini والمزيد.',
+    onboard_hint: '🔑 تُخزَّن مفاتيحك مشفّرة وتُستخدم فقط لمشاريعك. يمكنك إضافتها أو إزالتها في أي وقت من الإعدادات.',
+    onboard_later: 'لاحقًا',
+    onboard_cta: 'إضافة مفتاح API',
     tg_how: '<b>طريقة الإعداد:</b> 1. أرسل <code>/newbot</code> إلى <a href="https://t.me/BotFather" target="_blank">@BotFather</a> للحصول على Bot Token &nbsp;·&nbsp; 2. أرسل رسالة إلى <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> للحصول على Chat ID',
     bot_token: 'Bot Token', chat_id: 'Chat ID',
     advanced_options: 'خيارات متقدمة',
@@ -2235,7 +2264,7 @@ const TRANSLATIONS = {
     in_queue_pos: 'في الانتظار (الموضع %s)',
     stopped_iter: 'موقوف (%d / %d تكرارات)',
     failed: 'فشل',
-    queue_position_msg: '⏳ الموضع %d في قائمة الانتظار — في انتظار انتهاء المشروع الحالي',
+    queue_position_msg: '⏳ في قائمة الانتظار بالموضع %d — سيبدأ مشروعك تلقائيًا عند توفر مكان (لا حاجة لإعادة الإرسال).',
     phase_research: 'بحث', phase_dev: 'تطوير', phase_review: 'مراجعة',
     step_plan: 'تخطيط', step_run_experiments: 'تشغيل التجارب',
     step_analyze: 'تحليل', step_evaluate: 'تقييم',
@@ -2320,6 +2349,11 @@ const TRANSLATIONS = {
     telegram_notifications: 'Telegram 通知',
     telegram_settings_intro: '通过 Telegram 接收进度更新并回答项目的提问。此项可选——留空，或清空后保存即可停止所有 Telegram 通知。',
     telegram_clear_hint: '要关闭 Telegram，请清空两个字段并保存。新项目将不再发送消息。',
+    onboard_title: '欢迎使用 Idea2Paper 👋',
+    onboard_body: '启动研究前还有一步：添加一个 API Key，让项目在你自己的账户上运行。推荐使用 <strong>OpenRouter</strong>——一个 Key 即可解锁 Claude、GPT、Gemini 等多种模型。',
+    onboard_hint: '🔑 你的密钥会加密存储，仅用于你自己的项目。可随时在设置中添加或删除。',
+    onboard_later: '稍后再说',
+    onboard_cta: '添加 API Key',
     tg_how: '<b>设置方法：</b>1. 向 <a href="https://t.me/BotFather" target="_blank">@BotFather</a> 发送 <code>/newbot</code> 获取 Bot Token &nbsp;·&nbsp; 2. 向 <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> 发送消息获取 Chat ID',
     bot_token: 'Bot Token', chat_id: 'Chat ID',
     advanced_options: '高级选项',
@@ -2364,7 +2398,7 @@ const TRANSLATIONS = {
     in_queue_pos: '排队中（第 %s 位）',
     stopped_iter: '已停止（%d / %d 次迭代）',
     failed: '失败',
-    queue_position_msg: '⏳ 全局队列第 %d 位 — 等待当前项目完成',
+    queue_position_msg: '⏳ 排队中，第 %d 位 — 轮到时会自动开始，无需重新提交。',
     phase_research: '研究', phase_dev: '开发', phase_review: '审阅',
     step_plan: '计划', step_run_experiments: '运行实验',
     step_analyze: '分析', step_evaluate: '评估',
@@ -2510,6 +2544,10 @@ function _renderAdminFilterPills() {
 // ══════════════════════════════════════════════════════
 //  State
 // ══════════════════════════════════════════════════════
+// Cloud experiment/orchestrator backends are still being stabilised — keep them
+// fully hidden until ready. Flip to true to re-enable the Cloud options + the
+// Cloud Compute settings tab everywhere.
+const CLOUD_ENABLED = false;
 let currentUser = null;
 let venues = [];
 let detailProjectId = null;
@@ -2524,6 +2562,10 @@ const _CLOUD_PROVIDER_LABELS = { gcp: 'GCP', aws: 'AWS', azure: 'Azure' };
 // Show per-provider cloud buttons across all backend radio groups based on
 // window._userCloudProviders (populated after loadGateBanner fetches user settings).
 function _applyCloudProviderButtons() {
+  // Cloud feature is gated off for now — hide the Cloud Compute settings tab.
+  const cloudTabBtn = document.getElementById('btn-tab-cloud');
+  if (cloudTabBtn) cloudTabBtn.style.display = CLOUD_ENABLED ? '' : 'none';
+
   const providers = window._userCloudProviders || [];
   for (const prefix of ['hero', 'continue', 'restart']) {
     for (const p of ['gcp', 'aws', 'azure']) {
@@ -2531,6 +2573,12 @@ function _applyCloudProviderButtons() {
         const lbl = document.getElementById(`${idPrefix}-cloud-${p}-label`);
         if (!lbl) continue;
         const input = lbl.querySelector('input');
+        // Feature-flagged off: hide cloud backends entirely and never submit them.
+        if (!CLOUD_ENABLED) {
+          lbl.style.display = 'none';
+          if (input) { input.disabled = true; input.checked = false; }
+          continue;
+        }
         const available = providers.includes(p);
         // Always SHOW cloud backends; grey out the ones not configured yet so the
         // user knows the option exists (and where to enable it) rather than hiding it.
@@ -2827,11 +2875,23 @@ async function loadAdminPanel() {
   if (adminLink) adminLink.style.display = (currentUser && currentUser.is_admin) ? '' : 'none';
 }
 
+// First-run nudge: if the user has no API keys configured yet, gently guide
+// them to Settings. Shown once per browser session so it isn't naggy, and it
+// reappears next session until at least one key is set.
+function maybeShowOnboarding() {
+  if (window.SHARE_MODE) return;
+  if (!currentUser || currentUser.has_keys) return;
+  if (sessionStorage.getItem('ark_onboard_shown')) return;
+  sessionStorage.setItem('ark_onboard_shown', '1');
+  openModal('modal-onboarding');
+}
+
 // ══════════════════════════════════════════════════════
 //  Dashboard
 // ══════════════════════════════════════════════════════
 async function loadDashboard() {
   loadAdminPanel();
+  maybeShowOnboarding();
   loadVenues();
   const res = await fetch(APP_BASE + '/api/projects');
   const projects = await res.json();
