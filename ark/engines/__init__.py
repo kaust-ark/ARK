@@ -412,7 +412,10 @@ Execute the task and update the corresponding files.
         start_time = time.time()
         timer = ElapsedTimer(agent_type)
 
-        MAX_RETRIES = 2
+        # 1 initial + 3 retries. OpenRouter endpoints drop streams under load
+        # (peer closed / incomplete chunked read) — a single retry proved too
+        # thin on flaky evenings (observed 10 drops in one run).
+        MAX_RETRIES = 4
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 # self.model is the full LiteLLM string (e.g.
@@ -536,10 +539,10 @@ Execute the task and update the corresponding files.
                         # Network/stream disconnects clear immediately — retry
                         # promptly; rate-limit codes honour the server's wait.
                         _net = any(s in _detail_l for s in _TRANSIENT_DETAIL)
-                        wait_s = 5 if _net else min(self._parse_rate_limit_wait(oh_error_detail or ""), 120)
+                        wait_s = 5 * attempt if _net else min(self._parse_rate_limit_wait(oh_error_detail or ""), 120)
                         self.log(
                             f"  Transient ({oh_error_code}) — waiting {wait_s}s, then "
-                            f"one retry (attempt {attempt + 1}/{MAX_RETRIES})",
+                            f"retry (attempt {attempt + 1}/{MAX_RETRIES})",
                             "INFO",
                         )
                         if not self._rate_limit_notified:
