@@ -24,10 +24,21 @@ def test_single_file_delete_in_workarea_allowed():
     assert d.category == Category.DESTRUCTIVE_FS
 
 
-def test_rm_rf_asks_under_standard():
-    d = std().classify_command("rm -rf /home/u/proj/results/old", work_dirs=WORK)
+def test_rm_rf_outside_workarea_asks_under_standard():
+    d = std().classify_command("rm -rf /home/u/other/old", work_dirs=WORK)
     assert d.action == ASK
     assert d.severity == Severity.HIGH
+
+
+def test_rm_rf_inside_workarea_allows_under_standard():
+    # Regression for the "rm loop": clearing own results/ for a clean re-run is
+    # routine — must NOT stall the run on an ask that safe-defaults to Deny.
+    d = std().classify_command("rm -rf /home/u/proj/results/old", work_dirs=WORK)
+    assert d.action == ALLOW
+    assert d.severity == Severity.MEDIUM
+    # …but without a known workspace there is no downgrade
+    d = std().classify_command("rm -rf results/old", work_dirs=[])
+    assert d.action == ASK
 
 
 def test_rm_outside_workarea_asks():

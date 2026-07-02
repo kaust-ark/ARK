@@ -250,6 +250,17 @@ class InterventionPolicy:
                                      "delete files outside the work area",
                                      detail=joined, consequence="Removes files ARK does not own.")
             if recursive and (forced or exe == "rm"):
+                # In-workspace recursive deletes (e.g. clearing results/ for a
+                # clean re-run) are routine and rebuildable — MEDIUM auto-allows
+                # at standard autonomy instead of stalling the run on a 10-min
+                # ask that safe-defaults to Deny (the "rm loop" failure mode).
+                # Protected names (.git/.env/.conda_env) and out-of-workspace
+                # targets were already caught above.
+                if work_dirs and not outside:
+                    return self._resolve(Category.DESTRUCTIVE_FS, Severity.MEDIUM,
+                                         "recursive delete inside the work area",
+                                         detail=joined,
+                                         consequence="Removes a directory tree the agent owns (rebuildable).")
                 return self._resolve(Category.DESTRUCTIVE_FS, Severity.HIGH,
                                      "recursive force delete (rm -rf)",
                                      detail=joined, consequence="Recursively removes a directory tree.")

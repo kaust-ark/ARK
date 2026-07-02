@@ -35,14 +35,14 @@ def gate(channel, tmp_path=None, autonomy="standard"):
 
 def test_nullchannel_fails_open(tmp_path):
     g = gate(NullChannel(), tmp_path)
-    assert g.check_command("rm -rf /home/u/proj/results/x", work_dirs=WORK) is True
+    assert g.check_command("rm -rf /home/u/other/x", work_dirs=WORK) is True
 
 
 # ── approve / deny ─────────────────────────────────────────
 
 def test_human_approve_proceeds(tmp_path):
     ch = FakeChannel([ApprovalReply("approve")])
-    assert gate(ch, tmp_path).check_command("rm -rf /home/u/proj/results/x", work_dirs=WORK) is True
+    assert gate(ch, tmp_path).check_command("rm -rf /home/u/other/x", work_dirs=WORK) is True
     assert len(ch.requests) == 1
 
 
@@ -53,7 +53,7 @@ def test_human_deny_blocks(tmp_path):
 
 def test_timeout_safe_default_deny(tmp_path):
     ch = FakeChannel([])  # no reply → None → timeout
-    assert gate(ch, tmp_path).check_command("rm -rf /home/u/proj/results/x", work_dirs=WORK) is False
+    assert gate(ch, tmp_path).check_command("rm -rf /home/u/other/x", work_dirs=WORK) is False
 
 
 # ── allow / notify pass straight through ───────────────────
@@ -85,7 +85,7 @@ def test_remember_category_skips_second_ask(tmp_path):
     ch = FakeChannel([ApprovalReply("approve", remember="category")])
     g = gate(ch, tmp_path)
     # first ask hits the channel and is remembered for the whole category
-    assert g.check_command("rm -rf /home/u/proj/results/a", work_dirs=WORK) is True
+    assert g.check_command("rm -rf /home/u/other/a", work_dirs=WORK) is True
     # second, different destructive command → answered from memory, no new request
     assert g.check_command("rm /etc/hosts", work_dirs=WORK) is True
     assert len(ch.requests) == 1
@@ -95,9 +95,9 @@ def test_remember_command_only_matches_same_shape(tmp_path):
     ch = FakeChannel([ApprovalReply("approve", remember="command"),
                       ApprovalReply("deny")])
     g = gate(ch, tmp_path)
-    assert g.check_command("rm -rf /home/u/proj/results/run_12", work_dirs=WORK) is True
+    assert g.check_command("rm -rf /home/u/other/run_12", work_dirs=WORK) is True
     # same shape, different number → memory hit, no second request
-    assert g.check_command("rm -rf /home/u/proj/results/run_98", work_dirs=WORK) is True
+    assert g.check_command("rm -rf /home/u/other/run_98", work_dirs=WORK) is True
     assert len(ch.requests) == 1
     # a different category still asks (and we scripted a deny)
     assert g.check_command("scp data.zip user@1.2.3.4:/tmp/", work_dirs=WORK) is False
@@ -106,12 +106,12 @@ def test_remember_command_only_matches_same_shape(tmp_path):
 
 def test_memory_persists_to_disk(tmp_path):
     ch = FakeChannel([ApprovalReply("approve", remember="category")])
-    gate(ch, tmp_path).check_command("rm -rf /home/u/proj/results/a", work_dirs=WORK)
+    gate(ch, tmp_path).check_command("rm -rf /home/u/other/a", work_dirs=WORK)
     assert (tmp_path / "intervention_approvals.yaml").exists()
     # a fresh Gate reuses the persisted memory
     ch2 = FakeChannel([])
     g2 = gate(ch2, tmp_path)
-    assert g2.check_command("rm -rf /home/u/proj/results/b", work_dirs=WORK) is True
+    assert g2.check_command("rm -rf /home/u/other/b", work_dirs=WORK) is True
     assert ch2.requests == []
 
 
