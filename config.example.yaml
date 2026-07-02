@@ -83,3 +83,16 @@ intervention:
   # Spend: notify (non-blocking) at the soft threshold, ask (blocking) at the cap.
   spend_notify_usd: 20
   spend_ask_usd: 100
+
+# ── Artifact storage (Phase 3, ADR-0012) ─────────────────────────────────────
+# Where project artifacts (the compiled PDF, figures, the export bundle) live.
+# Orthogonal to the compute backends. Defaults to the local filesystem rooted at
+# the project dir, so local dev and SLURM on a shared mount behave exactly as
+# before. Object stores (S3/GCS/Azure — prefer the user's own bucket under BYOC)
+# are served through the dashboard as a proxy today; presigned URLs come later.
+artifact_store:
+  type: local                # local | s3 | gcs | azure   (default: local)
+  # For object stores only:
+  # bucket: my-ark-bucket    # required for s3/gcs/azure
+  # prefix: ark/             # optional key prefix within the bucket
+  # Credentials default to the configured cloud compute backend's if unset.

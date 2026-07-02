@@ -16,6 +16,10 @@ def validate_config(config: dict):
     if orch_type == "cloud" and exp_type == "slurm":
         raise ValueError("Invalid configuration: Orchestrator cannot run in the cloud while experiments run on Slurm.")
 
+    # Artifact store block (Phase 3, ADR-0012) — orthogonal to the compute matrix.
+    from ark.artifacts import validate_config as _validate_artifact_store
+    _validate_artifact_store(config)
+
 def from_config(config: dict, project_name: str, code_dir, log_fn=None, is_orchestrator=False) -> ComputeBackend:
     """Factory: build the right backend from config."""
     if is_orchestrator:
