@@ -244,30 +244,79 @@ control-plane process opens DB connections.
 
 ---
 
-### Phase 3 — Artifact storage  **[CODE]**
-**Goal:** remove the last shared-FS assumption. PDFs, figures, and state land in
-object storage; the dashboard serves them via presigned URLs (no shared mount).
+### Phase 3 — Artifact storage + state projection  **[CODE]**
+**Goal:** remove the last shared-FS assumption. The dashboard no longer reads the
+orchestrator's disk. Binary artifacts (PDFs, figures) move to an object store served
+via a proxy (presigned later); the state the dashboard needs is **projected** into
+the control-plane DB by the orchestrator.
+
+> **Decision records:** [`ADRs/0012-artifact-store-seam.md`](ADRs/0012-artifact-store-seam.md)
+> (artifact blobs via an `ArtifactStore` seam, proxy now / presigned later) and
+> [`ADRs/0013-state-db-projection.md`](ADRs/0013-state-db-projection.md)
+> (control-plane state as a DB projection of orchestrator-local files).
+
+**Design decisions (locked 2026-07-02)**
+
+| Question | Decision | Why |
+|---|---|---|
+| State: blob, DB, or FS? | **DB projection** ([ADR-0013](ADRs/0013-state-db-projection.md)) | Structured, polled, queryable state belongs in the DB, not an opaque blob; extends the existing event-store pattern. |
+| Serve blobs how? | **Proxy now, presigned later** ([ADR-0012](ADRs/0012-artifact-store-seam.md)) | Proxy needs nothing of the user's bucket (no CORS) and unifies Local + Object; presigned is a drop-in via `url()` for scale. |
+| State ownership? | **Projection, not source of truth** | Orchestrator keeps local YAML for its own crash recovery ([ADR-0007](ADRs/0007-checkpoint-resume-ownership.md)); it *pushes* a copy for the dashboard. Changes stay additive. |
+| Bucket ownership? | **Dedicated `artifact_store` config, default `local`** | Orthogonal to launcher × experiment-backend; creds default to the cloud backend's if unset. |
+
+**Consumer trace that scoped this phase** (what the dashboard actually reads):
+- `paper_state.yaml` live fields (`score`, `score_history`, `iteration`, `phase`,
+  `status`) **already** flow via the Phase-1 status endpoint into `Project` columns;
+  the disk reads (`routes.py:903–960`) are legacy fallback to delete.
+- `findings.yaml` / `action_plan.yaml` / `memory.yaml` are **export-ZIP-only**
+  (`routes.py:3119–3128`) — no live render → one generic projection table suffices.
+- `agent_steps.jsonl` is **not consumed by the dashboard at all** → excluded from
+  this phase (no table, no endpoint).
 
 **Tasks**
-1. Define an `ArtifactStore` interface (`ark/artifacts/`, new) with:
-   - `LocalArtifactStore` (filesystem — default for local dev / SLURM on a shared
-     mount), and
-   - `ObjectArtifactStore` (S3 / GCS / Azure Blob — **prefer the user's own
-     bucket** under BYOC).
-2. Orchestrator uploads artifacts through the store and registers references via
-   `POST /v1/projects/{id}/artifacts`.
-3. Dashboard resolves artifact references to presigned URLs (or proxies) instead
-   of reading local files.
-4. Delete the rsync-back bridge in `orchestrator.py::poll_orchestrator` /
-   `teardown` once artifacts + state flow through the API + store.
+1. **`ArtifactStore` seam** (`ark/artifacts/`, new): `put(key, stream)` /
+   `open(ref)` / `url(ref)` (`None` ⇒ caller proxies). Implementations:
+   - `LocalArtifactStore` (filesystem, rooted at the project dir; `url()` → `None`) —
+     default for local dev / SLURM on a shared mount.
+   - `ObjectArtifactStore` (S3 / GCS / Azure Blob — **prefer the user's own bucket**);
+     `url()` returns `None` for now so it proxies, presigned-ready.
+   - Local goes through the **same seam** (no disk-read shortcut) so CI exercises it.
+2. **Blob path:** `Artifact` DB model + Alembic revision; activate the stubbed
+   `POST /v1/projects/{id}/artifacts` (`api.py:213`) + `register_artifact`
+   (`ark/controlplane/`); orchestrator **pushes eagerly** (upload + register right
+   after each PDF/figure). Dashboard PDF/figure/ZIP routes resolve via the store:
+   `store.url()` → redirect, else proxy `store.open()`.
+3. **State path:** generic `ProjectStateDoc(project_id, name, data, updated_at)` table
+   + Alembic revision; `PUT /v1/projects/{id}/state/{name}` (upsert) and
+   `GET …/state` (all, for ZIP). Orchestrator pushes `paper_state`/`action_plan`/
+   `findings`/`memory` as projections (local YAML unchanged). Drop the dashboard's
+   YAML fallbacks and the disk reads in the ZIP builder.
+4. **Config:** new `artifact_store` block (`type: local` default), validated in
+   `validate_config()` (`ark/compute/__init__.py`), orthogonal to the compute matrix.
+5. **Delete the rsync-back bridge** in `orchestrator.py::poll_orchestrator` /
+   `teardown` once blobs + state flow through the API + store.
+
+**PR breakdown** (each independently mergeable, default-off):
+1. `ArtifactStore` interface + `LocalArtifactStore` + `artifact_store` config +
+   `validate_config` (scaffolding, no behavior change).
+2. `Artifact` model + migration + activate `/v1/artifacts` + dashboard resolves
+   PDF/figures/ZIP via `LocalArtifactStore` (regression-identical on local).
+3. `ProjectStateDoc` + migration + `/v1/state` + orchestrator push + drop YAML
+   fallbacks.
+4. `ObjectArtifactStore` (S3, then GCS/Azure) behind config — the acceptance-bar PR.
+5. Delete the rsync bridge.
+6. *(later, non-blocking)* presigned `url()` + dashboard redirect.
 
 **SLURM check:** on a shared HPC filesystem, `LocalArtifactStore` points at the
-existing project dir — zero behavior change for SLURM users.
+existing project dir and its `url()` returns `None` (dashboard proxies from disk) —
+zero behavior change for SLURM users.
 
 **Acceptance**
 - A run with `ObjectArtifactStore` produces a dashboard-viewable PDF with **no
   shared filesystem** between orchestrator and control plane.
-- SLURM/local runs still work via `LocalArtifactStore`.
+- Project state + export ZIP render from the DB, with no read of the orchestrator's
+  disk.
+- SLURM/local runs still work via `LocalArtifactStore` (proxy from disk).
 
 ---
 
@@ -461,6 +510,8 @@ and default off.
 |---|---|---|
 | Control-plane API client | `ark/controlplane/client.py` | 1 |
 | Artifact store interface | `ark/artifacts/` | 3 |
+| State projection (`ProjectStateDoc`) + `/v1/state` | `website/dashboard/{db,api}.py` | 3 |
+| Artifact model + `/v1/artifacts` (activate stub) | `website/dashboard/{db,api}.py` | 3 |
 | Job launcher abstraction | `ark/launcher/base.py` + impls | 4 |
 | SkyPilot backend/launcher | `ark/compute/skypilot.py` | 6 |
 | K8s backend/launcher + Helm chart | `ark/compute/k8s.py`, `deploy/` | 7 |
