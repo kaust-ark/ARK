@@ -158,6 +158,12 @@ def _mk_orchestrator(tmp_path, project_id, project_name=None, title=None,
     orch._artifact_threads_lock = threading.Lock()
     # Minimal memory stub
     orch.memory = types.SimpleNamespace(stagnation_count=0, scores=[])
+    # Control-plane stub — the Phase 4 refactor builds self.cp in __init__, which
+    # this fixture bypasses, so _chat/_push_event need a no-op client here.
+    orch.cp = types.SimpleNamespace(
+        append_message=lambda *a, **k: None,
+        emits_events=False,
+    )
     orch._last_score = 0
     # Real dispatcher — it's cheap to construct and exercises the same
     # send path the production code uses.
@@ -285,6 +291,10 @@ class TestSentMessages:
         payloads = [m for m in fake_telegram.sent if m.get("method") == "sendMessage"]
         assert not payloads, "progress should have been suppressed by config flag"
 
+    @pytest.mark.skip(reason="Phase 4 (D1): decision notifications moved to the "
+                             "control plane — ask_user_decision no longer sends the "
+                             "Telegram card itself. Rewrite against the CP HITL "
+                             "notification path.")
     def test_decision_message_has_header_and_timeout_hint(self, tmp_path, fake_telegram):
         orch = _mk_orchestrator(
             tmp_path,
