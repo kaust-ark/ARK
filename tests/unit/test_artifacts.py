@@ -163,6 +163,95 @@ class TestArtifactRef:
 
 
 # ---------------------------------------------------------------------------
+# ObjectArtifactStore — provider-agnostic logic against an in-memory fake client
+# (no boto3/gcs/azure SDK, no network). The real clients are thin SDK wrappers.
+# ---------------------------------------------------------------------------
+
+class _FakeObjectClient:
+    """In-memory stand-in for _S3Client / _GCSClient / _AzureClient."""
+
+    def __init__(self):
+        self.blobs = {}  # full key (prefix applied) -> (bytes, content_type)
+
+    def upload(self, key, fileobj, content_type):
+        self.blobs[key] = (fileobj.read(), content_type)
+
+    def download(self, key):
+        from ark.artifacts.object_store import _BlobStream
+        return _BlobStream(io.BytesIO(self.blobs[key][0]))
+
+
+class TestObjectArtifactStore:
+    def _store(self, prefix="", client=None):
+        from ark.artifacts.object_store import ObjectArtifactStore
+        return ObjectArtifactStore(
+            "s3", "my-bucket", prefix, client=client or _FakeObjectClient())
+
+    def test_put_returns_ref_with_size_and_digest(self):
+        client = _FakeObjectClient()
+        store = self._store(client=client)
+        data = b"%PDF-1.7 " + b"body" * 500
+        ref = store.put("paper/main.pdf", io.BytesIO(data), content_type="application/pdf")
+
+        assert ref.store_type == "s3"
+        assert ref.key == "paper/main.pdf"        # store-relative, prefix-free
+        assert ref.content_type == "application/pdf"
+        assert ref.size == len(data)
+        assert ref.sha256 == hashlib.sha256(data).hexdigest()
+        # Uploaded bytes match, tagged with the content type.
+        assert client.blobs["paper/main.pdf"] == (data, "application/pdf")
+
+    def test_open_round_trips_the_bytes(self):
+        store = self._store()
+        data = b"figure-bytes" * 1000
+        ref = store.put("paper/figures/f1.png", io.BytesIO(data))
+        with store.open(ref) as fh:
+            assert fh.read() == data
+
+    def test_url_is_none_proxy_for_now(self):
+        store = self._store()
+        ref = store.put("x.txt", io.BytesIO(b"z"))
+        assert store.url(ref) is None
+
+    def test_fspath_is_none_for_object_store(self):
+        from ark.artifacts.base import ArtifactRef
+        store = self._store()
+        # Object store has no local path -> dashboard proxies via open().
+        assert store.fspath(ArtifactRef("s3", "k")) is None
+
+    def test_prefix_applied_on_put_and_open(self):
+        client = _FakeObjectClient()
+        store = self._store(prefix="ark/", client=client)
+        data = b"prefixed"
+        ref = store.put("paper/main.pdf", io.BytesIO(data))
+        # Bucket key carries the prefix; the ref stays provider-neutral.
+        assert "ark/paper/main.pdf" in client.blobs
+        assert ref.key == "paper/main.pdf"
+        with store.open(ref) as fh:
+            assert fh.read() == data
+
+    def test_client_is_lazy(self):
+        # Building the store must not build the SDK client (no boto3 import).
+        from ark.artifacts.object_store import ObjectArtifactStore
+        store = ObjectArtifactStore("s3", "b", client_opts={"region": "x"})
+        assert store._client is None
+
+    def test_blobstream_partial_reads_and_close(self):
+        from ark.artifacts.object_store import _BlobStream
+        underlying = io.BytesIO(b"abcdef")
+        s = _BlobStream(underlying)
+        assert s.read(3) == b"abc"
+        assert s.read(-1) == b"def"     # negative size drains the rest
+        s.close()
+        assert underlying.closed         # close propagates to the reader
+
+    def test_unknown_provider_rejected(self):
+        from ark.artifacts.object_store import ObjectArtifactStore
+        with pytest.raises(ValueError, match="unknown object store provider"):
+            ObjectArtifactStore("ftp", "b")
+
+
+# ---------------------------------------------------------------------------
 # Factory + validation
 # ---------------------------------------------------------------------------
 
@@ -180,10 +269,39 @@ class TestArtifactFactory:
         store = from_config({"artifact_store": {"type": "local"}}, tmp_path)
         assert isinstance(store, LocalArtifactStore)
 
-    def test_object_store_not_implemented_yet(self, tmp_path):
+    @pytest.mark.parametrize("provider", ["s3", "gcs", "azure"])
+    def test_object_store_built_from_config(self, tmp_path, provider):
+        from ark.artifacts import from_config, ObjectArtifactStore
+        store = from_config(
+            {"artifact_store": {"type": provider, "bucket": "b", "prefix": "ark/"}},
+            tmp_path,
+        )
+        assert isinstance(store, ObjectArtifactStore)
+        assert store.store_type == provider
+        assert store.bucket == "b"
+        assert store.prefix == "ark"          # stripped of surrounding slashes
+
+    def test_object_store_passes_through_client_opts(self, tmp_path):
+        # Keys beyond type/bucket/prefix flow to the provider client (region,
+        # endpoint_url, …) and are NOT mistaken for factory keys.
         from ark.artifacts import from_config
-        with pytest.raises(NotImplementedError, match="not implemented yet"):
-            from_config({"artifact_store": {"type": "s3", "bucket": "b"}}, tmp_path)
+        store = from_config(
+            {"artifact_store": {"type": "s3", "bucket": "b",
+                                "region": "us-west-2", "endpoint_url": "http://minio:9000"}},
+            tmp_path,
+        )
+        assert store._client_opts == {"region": "us-west-2",
+                                      "endpoint_url": "http://minio:9000"}
+
+    def test_object_store_without_bucket_raises(self, tmp_path):
+        from ark.artifacts import from_config
+        with pytest.raises(ValueError, match="requires a 'bucket'"):
+            from_config({"artifact_store": {"type": "s3"}}, tmp_path)
+
+    def test_unknown_type_raises(self, tmp_path):
+        from ark.artifacts import from_config
+        with pytest.raises(ValueError, match="Unknown artifact_store type"):
+            from_config({"artifact_store": {"type": "quantum"}}, tmp_path)
 
 
 class TestArtifactValidation:

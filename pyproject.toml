@@ -46,6 +46,15 @@ webapp = [
     "markdown>=3.5",
     "weasyprint>=60.0",
 ]
+# Object-storage artifact backends (Phase 3, ADR-0012). Only needed when
+# `artifact_store.type` is s3/gcs/azure; each provider SDK is imported lazily, so
+# install just the one your bucket uses. Default (`local`) needs none of these.
+object = [
+    "boto3>=1.28",                 # s3 (and S3-compatible: MinIO, R2, …)
+    "google-cloud-storage>=2.10",  # gcs
+    "azure-storage-blob>=12.14",   # azure
+    "azure-identity>=1.14",        # azure — DefaultAzureCredential when no conn string
+]
 
 
 [project.scripts]

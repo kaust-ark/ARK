@@ -307,7 +307,14 @@ the control-plane DB by the orchestrator.
    ZIP mixes blobs and state, so it converges here). ✅ DONE. *Remaining:* the
    ZIP still reads source/code/results off disk (fine for local/SLURM); a full
    no-shared-FS bundle for remote needs server-side store config (PR4/PR5).
-4. `ObjectArtifactStore` (S3, then GCS/Azure) behind config — the acceptance-bar PR.
+4. `ObjectArtifactStore` (S3 + GCS + Azure) behind config — the acceptance-bar PR.
+   ✅ DONE. Lazy provider-client seam (SDK imported on first `put`/`open`, so the
+   factory never needs a cloud SDK); `url()` still `None` (proxy). Creds come from
+   each SDK's standard env chain — the same env the cloud backend runs in (ADR-0012)
+   — with optional config overrides (region/endpoint_url/project/account_url/
+   connection_string). SDKs behind the `object` extra. *Remaining for the acceptance
+   bar:* an end-to-end run wiring the store into a remote orchestrator (Phase 5) —
+   the code path is exercised by unit tests against an in-memory client here.
 5. Delete the rsync bridge.
 6. *(later, non-blocking)* presigned `url()` + dashboard redirect.
 
