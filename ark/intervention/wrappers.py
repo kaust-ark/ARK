@@ -109,10 +109,15 @@ def main():
                 return
             # Do NOT echo argv — it may contain secrets (curl -H <token>,
             # inline FOO=secret). The orchestrator log has the (redacted) detail.
-            sys.stderr.write("ark: blocked by intervention policy (see orchestrator log)\\n")
+            sys.stderr.write(
+                "ark: BLOCKED by intervention policy. Do NOT retry this command — "
+                "repeats are auto-denied. Work around it (e.g. write into a new "
+                "directory instead of deleting) or continue without it.\\n")
             sys.exit(13)
         time.sleep(0.2)
-    sys.stderr.write("ark: intervention approval timed out — not running %s\\n" % EXE)
+    sys.stderr.write(
+        "ark: approval timed out — %s was NOT run. Do NOT retry the same command "
+        "(repeats are auto-denied); choose a different approach.\\n" % EXE)
     sys.exit(13)
 
 if __name__ == "__main__":

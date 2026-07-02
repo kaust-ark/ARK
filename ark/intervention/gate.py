@@ -179,6 +179,13 @@ class TelegramApprovalChannel(ApprovalChannel):
 class Gate:
     """Evaluate a policy ``Decision`` against the human + approval memory."""
 
+    # After a deny (timeout or explicit), identical requests are auto-denied
+    # without re-asking for this many seconds. Breaks the ask→timeout-deny→
+    # agent-retries→ask… stall loop (each cycle used to block 10 min), while
+    # still re-asking once per window in case the human simply missed the
+    # first ask.
+    DENY_MUTE_SECONDS = 1800
+
     def __init__(self, policy: InterventionPolicy, channel: ApprovalChannel,
                  state_dir: Optional[Path] = None, log_fn: Optional[Callable] = None):
         self.policy = policy
@@ -186,6 +193,10 @@ class Gate:
         self.state_dir = Path(state_dir) if state_dir else None
         self._log = log_fn or (lambda *a, **k: None)
         self._mem = self._load_memory()
+        # signature → (last_deny_monotonic, muted_repeat_count). Per-run only —
+        # a denial is a point-in-time judgment, not project policy, so it is
+        # deliberately NOT persisted to the approvals file.
+        self._deny_mem: dict = {}
 
     # ---- public API ----
 
@@ -257,11 +268,32 @@ class Gate:
             self._record(req, ApprovalReply("approve" if remembered else "deny", via="memory"))
             return remembered
 
+        # Deny-mute: an identical request was denied moments ago (timeout or
+        # human). Auto-deny instantly instead of re-asking — otherwise a
+        # retrying agent stalls the run in an ask→timeout→retry loop, burning
+        # 10 minutes per cycle. The mute expires so the human still gets one
+        # fresh ask per window.
+        if self._deny_muted(req):
+            last, n = self._deny_mem[req.signature()]
+            self._deny_mem[req.signature()] = (last, n + 1)
+            self._log(f"  [intervention] auto-DENY (repeat of a denied request, muted "
+                      f"{self.DENY_MUTE_SECONDS//60}min): {req.reason}", "WARN")
+            if n == 0:  # first muted repeat → tell the human once
+                self.channel.notify(
+                    f"🔇 The agent is retrying a denied action — auto-denying repeats "
+                    f"for {self.DENY_MUTE_SECONDS//60} min so the run isn't stalled.\n"
+                    f"• {req.reason}: {req.detail}\n"
+                    f"To allow it, approve the next ask (after the mute) or steer the agent."
+                )
+            self._record(req, ApprovalReply("deny", via="memory"))
+            return False
+
         self._log(f"  [intervention] ASK ({req.category}/{Severity.name(req.severity)}): {req.reason} → waiting for human", "WARN")
         reply = self.channel.request(req)
         if reply is None:
-            # timeout → safe default = deny
+            # timeout → safe default = deny, and mute identical repeats
             self._log(f"  [intervention] timeout, safe-default DENY: {req.reason}", "WARN")
+            self._note_denied(req)
             self._record(req, ApprovalReply("deny", via="timeout"))
             return False
 
@@ -272,8 +304,29 @@ class Gate:
         if reply.remember in ("category", "command"):
             self._save_memory()
 
+        if reply.verdict != "approve":
+            # A human "no" also mutes identical repeats — re-asking the same
+            # thing minutes after an explicit deny is noise, not safety.
+            self._note_denied(req)
         self._record(req, reply)
         return reply.verdict == "approve"
+
+    # ---- deny-mute (anti-stall) ----
+
+    def _note_denied(self, req: ApprovalRequest) -> None:
+        import time as _time
+        self._deny_mem[req.signature()] = (_time.monotonic(), 0)
+
+    def _deny_muted(self, req: ApprovalRequest) -> bool:
+        import time as _time
+        entry = self._deny_mem.get(req.signature())
+        if not entry:
+            return False
+        last, _n = entry
+        if _time.monotonic() - last > self.DENY_MUTE_SECONDS:
+            del self._deny_mem[req.signature()]
+            return False
+        return True
 
     def _timeout_for(self, d: Decision) -> int:
         # Credentials often need the human to fetch a value — give more time.
