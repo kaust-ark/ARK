@@ -315,7 +315,23 @@ the control-plane DB by the orchestrator.
    connection_string). SDKs behind the `object` extra. *Remaining for the acceptance
    bar:* an end-to-end run wiring the store into a remote orchestrator (Phase 5) —
    the code path is exercised by unit tests against an in-memory client here.
-5. Delete the rsync bridge.
+5. Delete the rsync bridge. ✅ DONE. The cloud orchestrator is now control-plane-
+   wired like the SLURM/local paths: `run_orchestrator` passes `--control-plane-url`
+   + `--project-id` on argv and carries the bearer token only in the RAM-disk `.env`,
+   so status/state/artifacts flow over the /v1 API during the run. `poll_orchestrator`
+   is now a pure SSH liveness probe (RUNNING/STOPPED/UNKNOWN); the poller reads the
+   terminal outcome from the DB (the orchestrator POSTs done/failed/stopped at run
+   end) and only marks `failed` when a remote process vanishes *without* a terminal
+   report (crash safety-net). Every `sync_from_backend` call for orchestrator state is
+   gone — `orchestrator.py` poll/teardown and the four `app.py` poller syncs. The
+   experiment-`results` sync (`execution.py`/`pipeline.py`) is a different feature and
+   untouched. *Requires* a configured `control_plane_url` for cloud (no shared FS/DB);
+   without it the run is blind and is warned at launch. *Behavior change:* cloud
+   done/accept notifications now follow the orchestrator's self-reported DB status
+   (same as SLURM/local CP-wired), so the poller no longer emits the "done" telegram/
+   email on that path. *Remaining (Phase 5):* the export ZIP's source/code/results
+   still read off disk, so a fully no-shared-FS remote ZIP needs the server-side store
+   wiring.
 6. *(later, non-blocking)* presigned `url()` + dashboard redirect.
 
 **SLURM check:** on a shared HPC filesystem, `LocalArtifactStore` points at the

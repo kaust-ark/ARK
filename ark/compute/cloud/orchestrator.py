@@ -145,8 +145,15 @@ class OrchestratorCloudBackend(GCPCloudBackend):
             raise RuntimeError("GCP Orchestrator instance has no external IP")
         self.log(f"Orchestrator Instance created: {self._instance_id} ({self._instance_ip})")
 
-    def run_orchestrator(self):
-        """Execute the orchestrator in a detached session, start the reaper, and save full state."""
+    def run_orchestrator(self, control_plane_url: str = None, control_plane_token: str = None):
+        """Execute the orchestrator in a detached session, start the reaper, and save full state.
+
+        When ``control_plane_url``/``control_plane_token`` are supplied, the remote
+        orchestrator reports status, state projections, and artifacts back over the
+        /v1 HTTP control-plane API (ADR-0003/0012/0013) instead of the removed
+        rsync-back bridge. The URL rides on argv; the bearer token is carried only
+        in the RAM-disk ``.env`` so it never appears in ``ps``/argv.
+        """
         remote_work_dir = f"/home/{self.ssh_user}/{self.project_name}"
         conda_env = self.conda_env or "ark-base"
         log_rel = "logs/latest.log"  # relative; orchestrator creates the latest.log symlink
@@ -215,6 +222,11 @@ class OrchestratorCloudBackend(GCPCloudBackend):
         for var in _API_KEY_VARS:
             if var not in existing_keys and os.environ.get(var):
                 extra_lines.append(f"{var}={os.environ[var]}")
+        # Control-plane bearer token (minted per-run, not in os.environ). Carried
+        # in the RAM-disk .env so the remote orchestrator can authenticate to the
+        # /v1 API — never placed on argv where it would show up in `ps`.
+        if control_plane_token and "ARK_CONTROL_PLANE_TOKEN" not in existing_keys:
+            extra_lines.append(f"ARK_CONTROL_PLANE_TOKEN={control_plane_token}")
         import tempfile
         merged_env_content = "\n".join(existing_lines + extra_lines)
         try:
@@ -251,11 +263,22 @@ class OrchestratorCloudBackend(GCPCloudBackend):
         max_days = self.config.get("max_days", 3)
 
         # conda run spawns a fresh process that does not inherit shell exports,
-        # so all API key vars must be passed explicitly via `env` after sourcing .env.
+        # so all forwarded vars must be passed explicitly via `env` after sourcing
+        # .env — including the control-plane token (sourced from the RAM-disk .env).
+        _forward_vars = _API_KEY_VARS + ("ARK_CONTROL_PLANE_TOKEN",)
         _env_forward_args = " ".join(
             f'{v}="${{{v}}}"'
-            for v in _API_KEY_VARS
+            for v in _forward_vars
         )
+        # When a control-plane URL is configured, the remote orchestrator reports
+        # over HTTP (project_id must be supplied explicitly; there is no by-name
+        # resolution off-box). Otherwise it runs blind — see the launch-site warning.
+        _cp_args = ""
+        if control_plane_url:
+            _cp_args = (
+                f"--control-plane-url {control_plane_url} "
+                f"--project-id {self.project_name} "
+            )
         start_cmd = (
             f"cd /home/{self.ssh_user}/ark_source && "
             f"set -a; [ -f /dev/shm/.env ] && source /dev/shm/.env; set +a; "
@@ -269,6 +292,7 @@ class OrchestratorCloudBackend(GCPCloudBackend):
             f"{_env_forward_args} "
             f"python -m ark.orchestrator "
             f"--project {self.project_name} "
+            f"{_cp_args}"
             f"--project-dir {remote_work_dir} "
             f"--code-dir {remote_work_dir} "
             f"--iterations {max_iterations} "
@@ -361,8 +385,17 @@ class OrchestratorCloudBackend(GCPCloudBackend):
 
     def poll_orchestrator(self) -> str:
         """
-        Check if the orchestrator process is still running.
-        Returns 'RUNNING', 'COMPLETED', 'FAILED', or 'UNKNOWN'.
+        Probe whether the remote orchestrator process is still alive.
+
+        This is a pure liveness check over SSH (``kill -0``). Terminal *outcome*
+        (done/failed/stopped) is no longer inferred from a synced ``paper_state.yaml``:
+        the remote orchestrator reports it directly into the control-plane DB via the
+        /v1 API (ADR-0013), so the caller reads the outcome from the DB. Returns:
+
+        - ``'RUNNING'``   — the process answered ``kill -0``.
+        - ``'STOPPED'``   — the process is gone (outcome lives in the control-plane DB;
+          if the DB was never updated, the run crashed and the caller marks it failed).
+        - ``'UNKNOWN'``   — no state file yet, or the probe itself errored (retry later).
         """
         import yaml
         if not self._state_file.exists():
@@ -387,38 +420,19 @@ class OrchestratorCloudBackend(GCPCloudBackend):
                     self._ssh_cmd_base() + [f"kill -0 {pid}"],
                     capture_output=True, text=True, timeout=15,
                 )
-                if result.returncode == 0:
-                    return "RUNNING"
-            except Exception:
-                pass
-
-            # Process is not running — sync state and logs, then determine terminal condition
-            remote_work_dir = f"/home/{self.ssh_user}/{self.project_name}"
-            try:
-                self.sync_from_backend(
-                    f"{remote_work_dir}/auto_research/",
-                    str(self.code_dir / "auto_research"),
-                )
-                self.sync_from_backend(
-                    f"{remote_work_dir}/logs/",
-                    str(self.code_dir / "logs"),
-                )
-                ps = self.code_dir / "auto_research" / "state" / "paper_state.yaml"
-                if ps.exists():
-                    d = yaml.safe_load(ps.read_text()) or {}
-                    if d.get("status") in ("accepted", "accepted_pending_cleanup"):
-                        return "COMPLETED"
             except Exception as e:
-                self.log(f"Failed to check completion state: {e}")
+                # Probe failed (transient SSH/network) — don't declare it dead.
+                self.log(f"Liveness probe failed for orchestrator {pid}: {e}")
+                return "UNKNOWN"
 
-            return "FAILED"
+            return "RUNNING" if result.returncode == 0 else "STOPPED"
 
         except Exception as e:
             self.log(f"Error polling orchestrator: {e}", "ERROR")
             return "UNKNOWN"
 
     def teardown(self):
-        """Final sync, tear down the GCP orchestrator VM, and clear state."""
+        """Wipe remote credentials, tear down the GCP orchestrator VM, and clear state."""
         # Re-load instance info from the state file if called from a fresh object
         # (e.g. the webapp stop endpoint reconstructs the backend without calling setup())
         if not self._instance_id and self._state_file.exists():
@@ -433,21 +447,10 @@ class OrchestratorCloudBackend(GCPCloudBackend):
             except Exception as e:
                 self.log(f"Failed to load orchestrator state for teardown: {e}", "WARN")
 
-        remote_work_dir = f"/home/{self.ssh_user}/{self.project_name}"
-
-        # Final pull before destroying (Phase 6)
-        try:
-            self.sync_from_backend(
-                f"{remote_work_dir}/auto_research/",
-                str(self.code_dir / "auto_research"),
-            )
-            self.sync_from_backend(
-                f"{remote_work_dir}/paper/",
-                str(self.code_dir / "paper"),
-            )
-            self.log("Final sync from orchestrator VM completed.")
-        except Exception as e:
-            self.log(f"Final sync failed (non-fatal): {e}", "WARN")
+        # No final rsync-back: state projections and artifacts are reported to the
+        # control plane over the /v1 API + artifact store during the run
+        # (ADR-0012/0013), so the VM's working dir holds nothing the control plane
+        # still needs at teardown.
 
         # Wipe credentials from RAM disk (Phase 4 / Phase 6)
         try:

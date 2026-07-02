@@ -1427,7 +1427,9 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
         try:
             import yaml
             from ark.compute.cloud.orchestrator import OrchestratorCloudBackend
-            from website.dashboard.jobs import provision_claude_session, provision_gemini_session
+            from website.dashboard.jobs import (
+                provision_claude_session, provision_gemini_session, control_plane_transport,
+            )
             
             # Write credentials to project dir so they are synced to the remote VM
             env_file_created = False
@@ -1482,7 +1484,20 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
             if not orch_backend.sync_to_backend(ark_code_root, remote_ark_dir):
                 raise RuntimeError("Failed to sync ARK source to Orchestrator VM")
                 
-            pid = orch_backend.run_orchestrator()
+            # Control-plane transport: the remote VM shares no filesystem/DB with
+            # the control plane, so it must report state/artifacts back over the /v1
+            # HTTP API (the rsync bridge was removed in Phase 3). Without a configured
+            # control-plane URL the run is blind — warn so the misconfig is visible.
+            cp_url, cp_token = control_plane_transport(project.id, settings)
+            if not cp_url:
+                logger.warning(
+                    f"Cloud orchestrator {project.id} launched without a control-plane "
+                    f"URL (settings.control_plane_url unset): the remote run cannot report "
+                    f"status/state/artifacts back and the dashboard will not see progress."
+                )
+            pid = orch_backend.run_orchestrator(
+                control_plane_url=cp_url, control_plane_token=cp_token
+            )
             if env_file_created:
                 (pdir / ".env").unlink(missing_ok=True)
             if not pid:

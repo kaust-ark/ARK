@@ -282,110 +282,37 @@ async def _poll_jobs(app: FastAPI):
                             remote_state = orch.poll_orchestrator()
                             logger.debug(f"Cloud orchestrator {p.id}: {remote_state}")
 
-                            remote_work_dir = f"/home/{orch.ssh_user}/{p.id}"
-
-                            if remote_state == "RUNNING":
-                                # Periodic sync: pull state + logs + experiments to
-                                # refresh UI and preserve partial experiment outputs
-                                # against an experiment/VM crash.
-                                try:
-                                    orch.sync_from_backend(
-                                        f"{remote_work_dir}/auto_research/",
-                                        str(pdir / "auto_research"),
-                                    )
-                                except Exception as sync_err:
-                                    logger.warning(f"State sync failed for {p.id}: {sync_err}")
-                                try:
-                                    orch.sync_from_backend(
-                                        f"{remote_work_dir}/logs/",
-                                        str(pdir / "logs"),
-                                    )
-                                except Exception as sync_err:
-                                    logger.warning(f"Log sync failed for {p.id}: {sync_err}")
-                                try:
-                                    orch.sync_from_backend(
-                                        f"{remote_work_dir}/experiments/",
-                                        str(pdir / "experiments"),
-                                    )
-                                except Exception as sync_err:
-                                    logger.warning(f"Experiments sync failed for {p.id}: {sync_err}")
+                            # Phase 3: the rsync-back bridge is gone. The remote
+                            # orchestrator reports state projections + artifacts to the
+                            # control plane over the /v1 API during the run and POSTs its
+                            # terminal status (done/failed/stopped) at the end — so the
+                            # DB, not the VM's disk, is authoritative. This branch only
+                            # has to catch a *crash*: a process that vanished before it
+                            # could record a terminal status.
+                            if remote_state in ("RUNNING", "UNKNOWN"):
+                                # UNKNOWN = transient probe failure or no state file yet;
+                                # leave the project as-is and retry on the next cycle.
                                 continue
 
-                            # Terminal state detected
-                            if remote_state == "COMPLETED":
-                                new_status = "done"
-                            elif remote_state in ("FAILED", "UNKNOWN"):
-                                new_status = "failed"
-                            else:
-                                continue
-
-                            # Final sync before marking terminal. If this fails we
-                            # must NOT flip status — otherwise the project lands in
-                            # a terminal state with stale local files and no retry
-                            # path. Leave it as-is and let the next poll retry.
-                            final_sync_ok = True
-                            for remote_sub, local_sub in (
-                                ("auto_research/", "auto_research"),
-                                ("paper/", "paper"),
-                                ("logs/", "logs"),
-                                ("experiments/", "experiments"),
-                            ):
-                                try:
-                                    orch.sync_from_backend(
-                                        f"{remote_work_dir}/{remote_sub}",
-                                        str(pdir / local_sub),
-                                    )
-                                except Exception as sync_err:
-                                    final_sync_ok = False
-                                    logger.warning(
-                                        f"Final sync of {remote_sub} failed for {p.id}: {sync_err}"
-                                    )
-
-                            if not final_sync_ok:
-                                logger.warning(
-                                    f"Cloud orchestrator {p.id}: deferring {new_status} "
-                                    f"transition until final sync succeeds"
-                                )
-                                continue
-
-                            kwargs = {"status": new_status}
-                            update_project(session, p, **kwargs)
-                            logger.info(f"Cloud orchestrator {p.id}: {p.status} → {new_status}")
-                            if new_status in ("done", "failed", "stopped"):
-                                _gc_project_env(pdir, p.id)
+                            # remote_state == "STOPPED": the process is gone. In the
+                            # normal path the orchestrator already flipped the DB status,
+                            # so the project left the running set and we never reach here.
+                            # Still 'running' in the DB means it died without reporting.
+                            session.refresh(p)
+                            if p.status not in ("queued", "running", "pending", "initializing"):
+                                continue  # orchestrator already recorded a terminal status
+                            prev_status = p.status
+                            update_project(session, p, status="failed")
+                            logger.info(
+                                f"Cloud orchestrator {p.id}: {prev_status} → failed "
+                                f"(remote process gone with no terminal report)"
+                            )
+                            _gc_project_env(pdir, p.id)
                             _advance_pending_queue(session, settings)
-
-                            if new_status == "done":
-                                score = 0.0
-                                ps = pdir / "auto_research" / "state" / "paper_state.yaml"
-                                if ps.exists():
-                                    d = _yaml.safe_load(ps.read_text()) or {}
-                                    score = float(d.get("current_score", 0))
-                                send_telegram_notify(
-                                    f"✅ <b>{_pname(p)}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
-                                    bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                                )
-                                user = get_user(session, p.user_id)
-                                if user:
-                                    pdf_files = sorted(
-                                        (pdir / "paper").glob("*.pdf"),
-                                        key=lambda x: x.stat().st_mtime,
-                                        reverse=True,
-                                    )
-                                    pdf_path = str(pdf_files[0]) if pdf_files else None
-                                    send_completion_email(
-                                        settings,
-                                        to_email=user.email,
-                                        project_name=_pname(p),
-                                        score=score,
-                                        pdf_path=pdf_path,
-                                        project_url=url,
-                                    )
-                            else:
-                                send_telegram_notify(
-                                    f"❌ <b>{_pname(p)}</b> {new_status}\n<a href='{url}'>{url}</a>",
-                                    bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                                )
+                            send_telegram_notify(
+                                f"❌ <b>{_pname(p)}</b> failed\n<a href='{url}'>{url}</a>",
+                                bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+                            )
                             _log_mtimes.pop(p.id, None)
                             _stuck_alerted.discard(p.id)
                         except Exception as cloud_poll_err:
