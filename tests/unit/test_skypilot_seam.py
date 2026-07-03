@@ -71,3 +71,46 @@ def test_load_sky_raises_install_hint_when_missing(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", _no_sky)
     with pytest.raises(RuntimeError, match="ark\\[skypilot\\]"):
         load_sky()
+
+
+# --------------------------------------------------------------------------- #
+# resolve_autostop — cost-safety policy shaping (PR4)
+# --------------------------------------------------------------------------- #
+
+def test_autostop_default_is_down_after_default_window():
+    from ark.compute._sky import resolve_autostop, DEFAULT_AUTOSTOP_IDLE_MINUTES
+    assert resolve_autostop({}) == {
+        "idle_minutes_to_autostop": DEFAULT_AUTOSTOP_IDLE_MINUTES, "down": True}
+
+
+def test_autostop_optional_disable_returns_no_kwargs():
+    from ark.compute._sky import resolve_autostop
+    for val in ("off", "none", "disabled", 0, -1):
+        assert resolve_autostop({"idle_minutes_to_autostop": val}) == {}
+
+
+def test_autostop_required_ignores_disable_and_forces_down():
+    from ark.compute._sky import resolve_autostop, DEFAULT_AUTOSTOP_IDLE_MINUTES
+    # required=True (experiment clusters): a disable/invalid value falls back to
+    # the default window with down=True — never off, never stop-only.
+    for val in ("off", 0, "garbage"):
+        assert resolve_autostop({"idle_minutes_to_autostop": val}, required=True) == {
+            "idle_minutes_to_autostop": DEFAULT_AUTOSTOP_IDLE_MINUTES, "down": True}
+    # autostop_down:false is also overridden under required.
+    assert resolve_autostop(
+        {"idle_minutes_to_autostop": 10, "autostop_down": False}, required=True) == {
+        "idle_minutes_to_autostop": 10, "down": True}
+
+
+def test_autostop_invalid_value_falls_back_to_default():
+    from ark.compute._sky import resolve_autostop, DEFAULT_AUTOSTOP_IDLE_MINUTES
+    # Non-numeric junk (optional path) fails closed to the default, not off.
+    assert resolve_autostop({"idle_minutes_to_autostop": "garbage"}) == {
+        "idle_minutes_to_autostop": DEFAULT_AUTOSTOP_IDLE_MINUTES, "down": True}
+
+
+def test_autostop_stop_only_when_down_false():
+    from ark.compute._sky import resolve_autostop
+    assert resolve_autostop(
+        {"idle_minutes_to_autostop": 30, "autostop_down": False}) == {
+        "idle_minutes_to_autostop": 30, "down": False}

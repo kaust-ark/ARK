@@ -44,8 +44,8 @@ def make_fake_sky(*, status_records=None, launch_returns="req-launch-1"):
     for name in ("AWS", "GCP", "Azure", "Kubernetes"):
         setattr(sky, name, (lambda n: (lambda: _FakeCloud(n)))(name))
 
-    def _launch(task, cluster_name=None, retry_until_up=None):
-        sky.calls.append(("launch", cluster_name, retry_until_up))
+    def _launch(task, cluster_name=None, retry_until_up=None, **kwargs):
+        sky.calls.append(("launch", cluster_name, retry_until_up, kwargs))
         return launch_returns
     sky.launch = _launch
 
@@ -130,9 +130,34 @@ def test_setup_builds_task_and_launches(project_dir, monkeypatch):
     res = next(c[1] for c in sky.calls if c[0] == "Resources")
     assert res["accelerators"] == "A100:1" and res["use_spot"] is True
     assert res["cloud"].name == "AWS"
+    # Cost-safety: launch carried a default autostop-DOWN window (experiment
+    # clusters have no cross-plane teardown, so this is the only reap path).
+    launch_call = next(c for c in sky.calls if c[0] == "launch")
+    assert launch_call[3] == {"idle_minutes_to_autostop": 60, "down": True}
     # State persisted for crash recovery.
     assert b._state_file.exists()
     b.teardown()  # clear the atexit-registered handler's work (keeps exit quiet)
+
+
+def test_experiment_autostop_window_is_tunable(project_dir, monkeypatch):
+    sky = make_fake_sky()
+    b = _backend(project_dir, monkeypatch, sky, idle_minutes_to_autostop=15)
+    b.setup()
+    launch_call = next(c for c in sky.calls if c[0] == "launch")
+    assert launch_call[3] == {"idle_minutes_to_autostop": 15, "down": True}
+    b.teardown()
+
+
+def test_experiment_autostop_cannot_be_disabled(project_dir, monkeypatch):
+    # Layer-1 forbids the opt-out: an "off"/<=0 value falls back to the default
+    # window with down=True — never no autostop, or the cluster orphans.
+    for disable in ("off", 0, -5):
+        sky = make_fake_sky()
+        b = _backend(project_dir, monkeypatch, sky, idle_minutes_to_autostop=disable)
+        b.setup()
+        launch_call = next(c for c in sky.calls if c[0] == "launch")
+        assert launch_call[3] == {"idle_minutes_to_autostop": 60, "down": True}
+        b.teardown()
 
 
 def test_setup_reuses_up_cluster_without_launch(project_dir, monkeypatch):

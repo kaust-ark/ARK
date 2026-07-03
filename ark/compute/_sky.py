@@ -132,6 +132,74 @@ def build_resources(sky, cc: dict):
     return sky.Resources(**kwargs)
 
 
+# ── autostop / cost-safety ───────────────────────────────────────────────────
+# Default idle window before SkyPilot auto-*downs* a cluster. This is the sole
+# teardown path for a Layer-1 experiment cluster: it is launched from the
+# orchestrator VM, so its SkyPilot state lives on that VM and the control plane
+# has no record with which to reap it (SKYPILOT_PLAN §3). It is also a crash
+# safety-net for the orchestrator cluster. Generous by default so an interactive
+# experiment session between SSH commands is not reaped mid-run; tune via the
+# ``idle_minutes_to_autostop`` config key.
+DEFAULT_AUTOSTOP_IDLE_MINUTES = 60
+
+# Config strings that explicitly turn autostop off (opt-out; ignored when the
+# caller passes ``required=True``, i.e. experiment clusters).
+_AUTOSTOP_OFF = {"off", "none", "disabled", "false", "no"}
+
+
+def _coerce_idle_minutes(raw, default):
+    """Coerce an ``idle_minutes_to_autostop`` config value to minutes.
+
+    Returns an int > 0, or ``None`` to mean "disabled". Non-numeric / malformed
+    values fall back to ``default`` rather than raising — this is a cost-safety
+    net, so failing *closed* (keep the default autostop) beats aborting the
+    launch. ``<= 0`` and the ``_AUTOSTOP_OFF`` strings disable it."""
+    if raw is None:
+        return default
+    if isinstance(raw, str):
+        s = raw.strip().lower()
+        if s in _AUTOSTOP_OFF:
+            return None
+        try:
+            raw = float(s)
+        except ValueError:
+            return default
+    try:
+        val = int(float(raw))
+    except (TypeError, ValueError):
+        return default
+    return None if val <= 0 else val
+
+
+def resolve_autostop(cc: dict, *, default_idle_minutes=DEFAULT_AUTOSTOP_IDLE_MINUTES,
+                     required=False) -> dict:
+    """Resolve the autostop policy for a launch into ``sky.launch`` kwargs.
+
+    Returns a dict to splat into ``sky.launch`` — either
+    ``{"idle_minutes_to_autostop": N, "down": True}`` (auto-teardown after N idle
+    minutes) or ``{}`` when disabled. ``down=True`` rides with the idle window so
+    the cluster is *terminated*, not merely stopped: a stopped cluster still bills
+    for its disk, and a launcher-local experiment cluster stopped this way could
+    never be downed from the control plane.
+
+    Config keys (on the compute-backend block):
+      ``idle_minutes_to_autostop`` — int minutes before auto-down; ``<= 0`` or one
+                                     of ``off``/``none``/``disabled`` disables it.
+      ``autostop_down``            — default True; False → STOP (keep disk) rather
+                                     than DOWN. Ignored when ``required``.
+
+    ``required=True`` (Layer-1 experiment clusters) forbids the opt-out: there is
+    no cross-plane teardown fallback, so autostop-down is always applied — a
+    disable/invalid value falls back to the default window instead of off."""
+    idle = _coerce_idle_minutes(cc.get("idle_minutes_to_autostop"), default_idle_minutes)
+    if idle is None:
+        if not required:
+            return {}
+        idle = default_idle_minutes  # experiment clusters have no opt-out
+    down = True if required else bool(cc.get("autostop_down", True))
+    return {"idle_minutes_to_autostop": idle, "down": down}
+
+
 # ── naming + setup shaping ───────────────────────────────────────────────────
 def cluster_name(prefix: str, name: str) -> str:
     """A stable DNS-ish SkyPilot cluster name: ``<prefix><sanitized name>``.

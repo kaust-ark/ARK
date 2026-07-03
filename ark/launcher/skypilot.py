@@ -91,7 +91,8 @@ class SkyPilotVmJobLauncher(JobLauncher):
     # ── launch ───────────────────────────────────────────────────────────────
     def launch(self, spec: LaunchSpec) -> str:
         from ark.compute import validate_config
-        from ark.compute._sky import load_sky, block_on_request, build_resources
+        from ark.compute._sky import (
+            load_sky, block_on_request, build_resources, resolve_autostop)
         from website.dashboard.jobs import control_plane_transport, api_keys_to_env
 
         config = spec.config
@@ -152,8 +153,16 @@ class SkyPilotVmJobLauncher(JobLauncher):
             # detach_run: block on provisioning + setup, then detach from the
             # long-lived orchestrator run so launch() returns while it keeps going.
             # retry_until_up rides out transient capacity errors like the GCP path.
+            # Autostop-down is a crash safety-net: the orchestrator runs as a
+            # detached job, so SkyPilot's idle timer only starts once that job
+            # exits — a normal run is never reaped mid-flight, but a crashed one
+            # that outlives cancel()'s reach still self-downs. Opt-out allowed
+            # here (the control plane CAN `sky down` this cluster via cancel()),
+            # unlike the experiment backend where autostop is the only reap path.
+            autostop = resolve_autostop(cc)
             result = sky.launch(
-                task, cluster_name=cluster, detach_run=True, retry_until_up=True
+                task, cluster_name=cluster, detach_run=True, retry_until_up=True,
+                **autostop,
             )
             block_on_request(sky, result)
         finally:
@@ -270,13 +279,14 @@ class SkyPilotVmJobLauncher(JobLauncher):
         ordering matches the cloud launcher and a future teardown that does read
         the dir can't be raced.
 
-        NOTE (PR4): this only reaps the *orchestrator* cluster. A Layer-1 SkyPilot
+        NOTE: this only reaps the *orchestrator* cluster. A Layer-1 SkyPilot
         *experiment* cluster the run provisioned is launched from the orchestrator
         VM, so its SkyPilot state lives on that VM — the control plane has no record
-        of it and cannot ``sky down`` it here. Reaping it relies on SkyPilot
-        autostop (``--down``), which the Layer-1 backend sets in PR4 (cost-safety);
-        the cloud launcher's cross-plane ``_teardown_experiment_vm`` has no
-        equivalent for SkyPilot's launcher-local state model."""
+        of it and cannot ``sky down`` it here. Reaping it relies on the required
+        autostop-down window the Layer-1 backend sets at launch (``resolve_autostop
+        (..., required=True)``); the cloud launcher's cross-plane
+        ``_teardown_experiment_vm`` has no equivalent for SkyPilot's launcher-local
+        state model."""
         cluster = self._cluster_of(handle)
 
         def _run():

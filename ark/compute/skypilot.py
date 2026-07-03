@@ -11,7 +11,10 @@ experiment run maps onto SkyPilot as:
                      alias) and runs experiments, touching a completion marker;
 - ``wait_for_completion`` → polls that marker over the SSH alias;
 - ``sync_from_backend``   → rsyncs results back over the SSH alias;
-- ``teardown()``   → ``sky.down`` (or reuse the cluster's autostop, PR4).
+- ``teardown()``   → explicit ``sky.down``; a **required** autostop-down window
+                     (set at launch, PR4) is the crash safety-net when the
+                     orchestrator dies before ``teardown`` runs — the control
+                     plane cannot reap this cluster on its own (SKYPILOT_PLAN §3).
 
 The GCP ``cloud`` path stays default and untouched; ``type: skypilot`` is
 additive and default-off. The ``sky`` SDK is imported lazily (``_sky.load_sky``)
@@ -31,7 +34,7 @@ from pathlib import Path
 from .base import ComputeBackend
 from ._sky import (
     load_sky, block_on_request, resolve_request_value, resolve_cloud,
-    build_resources, cluster_name, setup_script,
+    build_resources, cluster_name, setup_script, resolve_autostop,
 )
 
 # Where SkyPilot lands a Task's ``workdir`` on the remote head node — relative
@@ -135,7 +138,16 @@ class SkyPilotBackend(ComputeBackend):
     def _launch(self, sky, task):
         # Provision + run setup. retry_until_up rides out transient capacity
         # errors (spot pre-emption, quota races) the way the GCP path retries.
-        result = sky.launch(task, cluster_name=self.cluster_name, retry_until_up=True)
+        # Autostop-down is REQUIRED here (not opt-out): an experiment cluster is
+        # launched from the orchestrator VM, so the control plane can never
+        # `sky down` it — self-teardown is the only reap path (SKYPILOT_PLAN §3).
+        autostop = resolve_autostop(self._compute_config, required=True)
+        self.log(
+            f"Cluster '{self.cluster_name}' will auto-down after "
+            f"{autostop['idle_minutes_to_autostop']} idle minutes (cost-safety)."
+        )
+        result = sky.launch(
+            task, cluster_name=self.cluster_name, retry_until_up=True, **autostop)
         # SkyPilot's client/server API (newer releases) returns an async request
         # id; block on it. Older releases run synchronously and return a tuple.
         block_on_request(sky, result)

@@ -735,9 +735,9 @@ experiment_compute_backend:
 > [!NOTE]
 > `type: skypilot` is being rolled out (folded Phases 5+6 — see
 > [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md)). Both the **experiment** (Layer-1)
-> backend and the **orchestrator** (Layer-2) launcher now provision via SkyPilot;
-> orchestrator image/secret hardening + cost-safety autostop land in PR4. The GCP
-> `cloud` path above remains the default and is unchanged.
+> backend and the **orchestrator** (Layer-2) launcher provision via SkyPilot, with
+> cost-safety **autostop-down** applied at launch (see `idle_minutes_to_autostop`
+> below). The GCP `cloud` path above remains the default and is unchanged.
 
 [SkyPilot](https://github.com/skypilot-org/skypilot) provisions VMs across
 AWS/GCP/Azure (and Kubernetes) from one abstraction, with spot, retries, and
@@ -759,7 +759,7 @@ sky check          # verify SkyPilot can reach your configured clouds/clusters
 > backend; the **`orchestrator_compute_backend`** block is read by the Layer-2
 > `SkyPilotVmJobLauncher`. Both share the same resource keys (`cloud` / `region` /
 > `accelerators` / `instance_type` / `use_spot` / `disk_size` / `image_id` /
-> `cluster_name` / `setup_commands`).
+> `cluster_name` / `setup_commands` / `idle_minutes_to_autostop`).
 
 ```yaml
 # Experiments provisioned via SkyPilot. Every key except `type` is optional;
@@ -773,6 +773,10 @@ experiment_compute_backend:
   use_spot: true                 # cheaper, pre-emptible instances
   # disk_size: 256               # GB, optional
   # cluster_name: ark-myproj     # optional; defaults to ark-<project>
+  # idle_minutes_to_autostop: 60 # auto-DOWN after N idle minutes (cost-safety);
+  #                              # experiment clusters ALWAYS autostop-down — this
+  #                              # only tunes the window, it cannot be disabled
+  #                              # (the control plane can't reap them otherwise).
   setup_commands:                # deps installed via the SkyPilot setup: block
     - pip install -r requirements.txt
 
@@ -785,14 +789,19 @@ orchestrator_compute_backend:
   # region: us-central1
   # instance_type: n1-standard-2
   # cluster_name: ark-orch-myproj  # optional; defaults to ark-orch-<project>
+  # idle_minutes_to_autostop: 60   # crash safety-net: auto-DOWN N idle minutes
+  #                                # after the orchestrator job exits. Set `off`
+  #                                # to disable, or `autostop_down: false` to STOP
+  #                                # (keep disk) instead of terminating.
   setup_commands:                  # install ARK's deps on the cluster (workdir →
     - cd ~/sky_workdir && pip install -e '.[research]'   # ~/sky_workdir at launch)
 ```
 
 > The dashboard fills in this `setup:` block automatically; only CLI users editing
 > `config.yaml` by hand need to set it. It installs the synced ARK source with the
-> `research` extra so `python -m ark.orchestrator` resolves on a bare cluster (PR4
-> replaces it with a baked image). Layer-1 experiment resources (`region` /
+> `research` extra so `python -m ark.orchestrator` resolves on a bare cluster (a
+> baked `image_id` can replace it later purely for launch speed — set the key and
+> drop the `pip install`). Layer-1 experiment resources (`region` /
 > `instance_type` / `image_id`) are **not** auto-derived from the GCP `cloud`
 > settings — they live in a different SkyPilot namespace, so set them here explicitly.
 
