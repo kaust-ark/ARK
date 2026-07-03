@@ -85,13 +85,17 @@ def from_config(config: dict, project_name: str, code_dir, log_fn=None, is_orche
     elif backend_type == "custom":
         return CustomBackend(config, project_name, code_dir, log_fn)
     elif backend_type == "skypilot":
-        # Seam is reserved and validated (ADR-0010); the SkyPilotBackend lands in
-        # PR2 (Layer 1) / PR3 (Layer 2). Fail loudly rather than silently running
-        # the wrong backend.
-        raise NotImplementedError(
-            "compute backend 'skypilot' is not implemented yet "
-            "(folded Phases 5+6 — see SKYPILOT_PLAN.md)"
-        )
+        # Layer 1 (experiments) landed in PR2. The Layer-2 orchestrator launcher
+        # is a JobLauncher (ark/launcher/skypilot.py), not a ComputeBackend, and
+        # lands in PR3 — so an orchestrator-path skypilot compute build still
+        # fails loudly rather than silently running the wrong backend.
+        if is_orchestrator:
+            raise NotImplementedError(
+                "skypilot orchestrator launcher is not implemented yet "
+                "(folded Phases 5+6, PR3 — see SKYPILOT_PLAN.md)"
+            )
+        from .skypilot import SkyPilotBackend
+        return SkyPilotBackend(config, project_name, code_dir, log_fn)
     else:
         raise ValueError(f"Unknown compute backend: {backend_type}")
 

@@ -1,10 +1,12 @@
 """PR1 scaffolding for the folded Phases 5+6 SkyPilot work (ADR-0010).
 
-`type: skypilot` is a *reserved and validated* compute type, but the backend
-itself lands in later PRs. This locks the scaffolding contract:
+`type: skypilot` is a *reserved and validated* compute type. As of PR2 the
+Layer-1 experiment backend is implemented; the Layer-2 orchestrator launcher
+lands in PR3. This locks the scaffolding contract:
 
-- the compute factory rejects `skypilot` loudly (NotImplementedError), for both
-  the experiment and orchestrator selection paths — never a silent wrong backend;
+- the compute factory builds a `SkyPilotBackend` for the experiment path, and
+  still rejects the orchestrator path loudly (NotImplementedError) — never a
+  silent wrong backend;
 - the lazy SDK seam imports `sky` only on demand and raises a helpful install hint
   when the optional `skypilot` extra is absent, so `import ark.compute` never
   needs SkyPilot installed.
@@ -23,14 +25,28 @@ def _skypilot_cfg(is_orchestrator):
     return {key: {"type": "skypilot"}}
 
 
-@pytest.mark.parametrize("is_orchestrator", [False, True])
-def test_factory_rejects_skypilot_loudly(is_orchestrator, tmp_path):
+def test_factory_builds_experiment_backend(tmp_path):
+    """PR2: the experiment (Layer-1) path constructs a SkyPilotBackend without
+    importing the `sky` SDK (construction is lazy — only launch needs it)."""
+    from ark.compute.skypilot import SkyPilotBackend
+
+    backend = from_config(
+        _skypilot_cfg(is_orchestrator=False),
+        project_name="demo",
+        code_dir=str(tmp_path),
+        is_orchestrator=False,
+    )
+    assert isinstance(backend, SkyPilotBackend)
+
+
+def test_factory_rejects_skypilot_orchestrator_loudly(tmp_path):
+    """The Layer-2 orchestrator launcher is PR3 — still fail loudly until then."""
     with pytest.raises(NotImplementedError, match="skypilot"):
         from_config(
-            _skypilot_cfg(is_orchestrator),
+            _skypilot_cfg(is_orchestrator=True),
             project_name="demo",
             code_dir=str(tmp_path),
-            is_orchestrator=is_orchestrator,
+            is_orchestrator=True,
         )
 
 

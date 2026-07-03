@@ -13,7 +13,12 @@ class ComputeBackend(ABC):
 
     @property
     def _compute_config(self) -> dict:
-        return self.config.get("compute_backend", {})
+        # Phase 4 moved the Layer-1 (experiment) block to
+        # `experiment_compute_backend`; fall back to the legacy `compute_backend`
+        # key so old configs keep working. Mirrors the factory's key resolution
+        # in ark/compute/__init__.py::from_config. (OrchestratorCloudBackend
+        # overrides this to read its own Layer-2 block.)
+        return self.config.get("experiment_compute_backend") or self.config.get("compute_backend", {})
 
     @abstractmethod
     def setup(self) -> dict:

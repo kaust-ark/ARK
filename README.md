@@ -734,9 +734,9 @@ experiment_compute_backend:
 
 > [!NOTE]
 > `type: skypilot` is being rolled out (folded Phases 5+6 — see
-> [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md)). The seam and config validation are in
-> place; the launch path lands in a subsequent PR. The GCP `cloud` path above
-> remains the default and is unchanged.
+> [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md)). The **experiment** (Layer-1) backend
+> now provisions via SkyPilot; the **orchestrator** (Layer-2) launcher lands in a
+> subsequent PR. The GCP `cloud` path above remains the default and is unchanged.
 
 [SkyPilot](https://github.com/skypilot-org/skypilot) provisions VMs across
 AWS/GCP/Azure (and Kubernetes) from one abstraction, with spot, retries, and
@@ -754,26 +754,30 @@ sky check          # verify SkyPilot can reach your configured clouds/clusters
 
 #### `config.yaml` Reference (advanced / CLI only)
 
-> The exact key names below are provisional — the `type: skypilot` schema is
-> finalized in the PR that lands the backend (see `SKYPILOT_PLAN.md`). This block
-> is illustrative, not yet parsed.
+> The **`experiment_compute_backend`** keys below are the ones the Layer-1 backend
+> parses today. The `orchestrator_compute_backend` block is still illustrative —
+> its launcher lands in a later PR (see `SKYPILOT_PLAN.md`).
 
 ```yaml
-# Orchestrator and/or experiments provisioned via SkyPilot. SkyPilot picks the
-# cheapest reachable cloud/cluster unless you pin one (as the cloud backend does,
-# a plain `region:` with the cloud chosen separately).
-orchestrator_compute_backend:
-  type: skypilot
-  # region: us-central1          # optional: pin a region; else SkyPilot chooses
-  # setup_commands: [...]        # deps installed on the provisioned node
-
+# Experiments provisioned via SkyPilot. Every key except `type` is optional;
+# SkyPilot picks the cheapest reachable cloud/cluster unless you pin one.
 experiment_compute_backend:
   type: skypilot
-  accelerator_type: L4           # SkyPilot accelerator name
-  accelerator_count: 1
+  # cloud: aws                   # aws | gcp | azure | kubernetes; omit → auto
   # region: us-east-1            # optional region pin
-  setup_commands:
+  accelerators: L4:1             # SkyPilot accelerator spec ("<NAME>:<COUNT>")
+  # instance_type: g5.xlarge     # optional explicit instance type
+  use_spot: true                 # cheaper, pre-emptible instances
+  # disk_size: 256               # GB, optional
+  # cluster_name: ark-myproj     # optional; defaults to ark-<project>
+  setup_commands:                # deps installed via the SkyPilot setup: block
     - pip install -r requirements.txt
+
+# Orchestrator launcher (still illustrative — lands in a later PR).
+orchestrator_compute_backend:
+  type: skypilot
+  # region: us-central1
+  # setup_commands: [...]
 ```
 
 > A `skypilot` orchestrator cannot drive `slurm` experiments (no network path to

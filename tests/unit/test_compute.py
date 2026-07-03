@@ -117,6 +117,22 @@ class TestComputeFactory:
         backend = from_config(config, "proj", tmp_path)
         assert isinstance(backend, GCPCloudBackend)
 
+    def test_cloud_backend_honors_experiment_compute_backend_key(self, tmp_path):
+        """Phase 4 config under `experiment_compute_backend` must select the right
+        provider and populate cc attrs — not silently default to AWS/empty."""
+        from ark.compute import from_config
+        from ark.compute.cloud.gcp import GCPCloudBackend
+        config = {
+            "experiment_compute_backend": {
+                "type": "cloud", "provider": "gcp",
+                "gcp_project": "fake", "region": "us-central1-a",
+            }
+        }
+        backend = from_config(config, "proj", tmp_path)
+        assert isinstance(backend, GCPCloudBackend)
+        assert backend.gcp_project == "fake"
+        assert backend.region == "us-central1-a"
+
     def test_creates_custom_backend(self, tmp_path):
         from ark.compute import from_config
         from ark.compute.custom import CustomBackend

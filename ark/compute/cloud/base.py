@@ -44,7 +44,8 @@ class CloudBackend(ComputeBackend):
     @classmethod
     def from_config(cls, config: dict, project_name: str, code_dir: Path, log_fn=None) -> "CloudBackend":
         """Factory: build the right cloud provider backend from config."""
-        provider = config.get("compute_backend", {}).get("provider", "aws")
+        exp = config.get("experiment_compute_backend") or config.get("compute_backend", {})
+        provider = exp.get("provider", "aws")
         if provider == "gcp":
             from .gcp import GCPCloudBackend
             return GCPCloudBackend(config, project_name, code_dir, log_fn)
