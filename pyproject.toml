@@ -55,6 +55,13 @@ object = [
     "azure-storage-blob>=12.14",   # azure
     "azure-identity>=1.14",        # azure — DefaultAzureCredential when no conn string
 ]
+# SkyPilot provisioning (folded Phases 5+6, ADR-0010). Only needed when a compute
+# backend uses `type: skypilot`; the SDK is imported lazily (ark/compute/_sky.py),
+# so nothing here is required unless a skypilot backend is actually launched.
+# Install the cloud extras you use, e.g. `pip install 'skypilot[gcp,aws,kubernetes]'`.
+skypilot = [
+    "skypilot>=0.6",
+]
 
 
 [project.scripts]
@@ -64,6 +71,7 @@ ark = "ark.cli:main"
 markers = [
     "network: tests that hit real APIs (deselect with '-m not network')",
     "gcp: tests that provision real Google Cloud resources (deselect with '-m not gcp')",
+    "skypilot: tests that provision real resources via SkyPilot (deselect with '-m not skypilot')",
     "unit: fast offline/logic tests",
     "integration: slow tests requiring external services or full pipeline mocks",
 ]

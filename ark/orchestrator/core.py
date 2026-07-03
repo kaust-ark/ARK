@@ -187,8 +187,13 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
             with open(prefs_file, "w") as _pf:
                 yaml.dump({"language": config_lang}, _pf, default_flow_style=False)
 
-        # Compute backend
+        # Compute backend. Validate the full Layer-2 × Layer-1 matrix here first:
+        # this is the one chokepoint every real run funnels through (CLI and webapp
+        # launch alike, unlike the cloud-only launcher check), so an invalid combo
+        # — e.g. a cloud/skypilot orchestrator with slurm experiments — fails loudly
+        # at startup instead of part-way in.
         import ark.compute
+        ark.compute.validate_config(self.config)
         self._compute_backend = ark.compute.from_config(
             self.config, self.project_name, self.code_dir, self.log
         )

@@ -730,6 +730,60 @@ experiment_compute_backend:
 ---
 
 <details>
+<summary><strong>☁️ SkyPilot (cross-cloud &amp; Kubernetes)</strong></summary>
+
+> [!NOTE]
+> `type: skypilot` is being rolled out (folded Phases 5+6 — see
+> [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md)). The seam and config validation are in
+> place; the launch path lands in a subsequent PR. The GCP `cloud` path above
+> remains the default and is unchanged.
+
+[SkyPilot](https://github.com/skypilot-org/skypilot) provisions VMs across
+AWS/GCP/Azure (and Kubernetes) from one abstraction, with spot, retries, and
+autostop teardown built in — so a single `type: skypilot` block covers solo-cloud
+and BYO-Kubernetes without a per-cloud backend each.
+
+#### Setup
+
+```bash
+# Install SkyPilot with the clouds you use (see the SkyPilot docs for full setup)
+pip install 'ark[skypilot]'
+pip install 'skypilot[gcp,aws,kubernetes]'
+sky check          # verify SkyPilot can reach your configured clouds/clusters
+```
+
+#### `config.yaml` Reference (advanced / CLI only)
+
+> The exact key names below are provisional — the `type: skypilot` schema is
+> finalized in the PR that lands the backend (see `SKYPILOT_PLAN.md`). This block
+> is illustrative, not yet parsed.
+
+```yaml
+# Orchestrator and/or experiments provisioned via SkyPilot. SkyPilot picks the
+# cheapest reachable cloud/cluster unless you pin one (as the cloud backend does,
+# a plain `region:` with the cloud chosen separately).
+orchestrator_compute_backend:
+  type: skypilot
+  # region: us-central1          # optional: pin a region; else SkyPilot chooses
+  # setup_commands: [...]        # deps installed on the provisioned node
+
+experiment_compute_backend:
+  type: skypilot
+  accelerator_type: L4           # SkyPilot accelerator name
+  accelerator_count: 1
+  # region: us-east-1            # optional region pin
+  setup_commands:
+    - pip install -r requirements.txt
+```
+
+> A `skypilot` orchestrator cannot drive `slurm` experiments (no network path to
+> an on-prem cluster) — the same restriction as `type: cloud`.
+
+</details>
+
+---
+
+<details>
 <summary><strong>Log Streaming &amp; Re-attachment</strong></summary>
 
 - **Log Streaming** — the Orchestrator VM maintains a `logs/latest.log` symlink; the webapp polls it periodically to show live progress.

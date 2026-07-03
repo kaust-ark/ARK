@@ -125,6 +125,7 @@ from ark.launcher import (
     launcher_from_handle,
     select_launcher,
 )
+from ark.compute import VALID_ORCHESTRATOR_TYPES, VALID_EXPERIMENT_TYPES
 from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email, send_access_declined_email
 from .auth import make_token, verify_token, verify_share_token
 from .templates import copy_venue_template, has_venue_template, copy_test_fixtures, read_test_idea
@@ -539,6 +540,16 @@ def _maybe_route_via_openrouter(model_str: str, keys: dict) -> str:
     return model_str
 
 
+def _reject_unknown_backend(value: str, valid: frozenset, label: str) -> None:
+    """400 on an unrecognized compute-backend type at the write path, before it is
+    persisted. The launch path's ``validate_config`` is the frozenset gate; this
+    brings the check forward to the API boundary so an unknown type never sits in
+    the DB. Normalizes the compound ``cloud:gcp`` selector to its base."""
+    base = (value or "local").split(":", 1)[0]
+    if base not in valid:
+        raise HTTPException(400, f"Unknown {label} compute backend: {value!r}")
+
+
 def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, settings, model: str = "claude-sonnet-4-6"):
     """Write config.yaml that ark orchestrator will read."""
     # All agents run through OpenHands; the orchestrator wants a LiteLLM string.
@@ -601,6 +612,13 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
                 "job_prefix": f"{project.name.upper()[:8]}_",
                 "conda_env": settings.slurm_conda_env or "ark-base",
             }
+        elif chosen.split(":", 1)[0] == "skypilot":
+            # Reserved-but-unimplemented (folded Phases 5+6, ADR-0010). Fail loudly
+            # instead of silently degrading to local — mirrors ark.compute.from_config.
+            raise NotImplementedError(
+                "compute backend 'skypilot' is not implemented yet "
+                "(folded Phases 5+6 — see SKYPILOT_PLAN.md)"
+            )
         return {"type": "local"}
 
     orch_chosen = project.orchestrator_compute_backend or "local"
@@ -2145,6 +2163,8 @@ async def api_create_project(
                 telegram_token = _du.telegram_token or ""
                 telegram_chat_id = _du.telegram_chat_id or ""
 
+        _reject_unknown_backend(orchestrator_compute_backend, VALID_ORCHESTRATOR_TYPES, "orchestrator")
+        _reject_unknown_backend(compute_backend, VALID_EXPERIMENT_TYPES, "experiment")
         project = create_project(
             session,
             id=project_id,
@@ -2644,6 +2664,7 @@ async def api_restart_project(project_id: str, request: Request):
         model = body.get("model", "claude-sonnet-4-6")
         new_backend = body.get("compute_backend")
         if new_backend:
+             _reject_unknown_backend(new_backend, VALID_EXPERIMENT_TYPES, "experiment")
              if new_backend.startswith("cloud"):
                   overrides = body.get("cloud_overrides") or {}
                   if not _build_cloud_config(user, settings, per_project_overrides=overrides, provider_override=_parse_cloud_provider(new_backend)):
@@ -2651,6 +2672,7 @@ async def api_restart_project(project_id: str, request: Request):
              update_project(session, project, compute_backend=new_backend)
         new_orch_backend = body.get("orchestrator_compute_backend")
         if new_orch_backend:
+            _reject_unknown_backend(new_orch_backend, VALID_ORCHESTRATOR_TYPES, "orchestrator")
             update_project(session, project, orchestrator_compute_backend=new_orch_backend)
         new_cloud_overrides = body.get("cloud_overrides")
         if new_cloud_overrides is not None:
@@ -2734,6 +2756,7 @@ async def api_continue_project(project_id: str, request: Request):
         model = body.get("model") or _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
         new_backend = body.get("compute_backend")
         if new_backend:
+             _reject_unknown_backend(new_backend, VALID_EXPERIMENT_TYPES, "experiment")
              if new_backend.startswith("cloud"):
                   overrides = body.get("cloud_overrides") or {}
                   if not _build_cloud_config(user, settings, per_project_overrides=overrides, provider_override=_parse_cloud_provider(new_backend)):
@@ -2741,6 +2764,7 @@ async def api_continue_project(project_id: str, request: Request):
              update_project(session, project, compute_backend=new_backend)
         new_orch_backend = body.get("orchestrator_compute_backend")
         if new_orch_backend:
+            _reject_unknown_backend(new_orch_backend, VALID_ORCHESTRATOR_TYPES, "orchestrator")
             update_project(session, project, orchestrator_compute_backend=new_orch_backend)
         new_cloud_overrides = body.get("cloud_overrides")
         if new_cloud_overrides is not None:

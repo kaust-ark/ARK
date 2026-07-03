@@ -29,4 +29,4 @@ jobs:
           pip install pytest
 
       - name: Run tests
-        run: python -m pytest tests/ -x -q -m "not network and not gcp"
+        run: python -m pytest tests/ -x -q -m "not network and not gcp and not skypilot"

@@ -1,9 +1,13 @@
 # ADR-0010 — Prefer SkyPilot for cross-cloud/K8s provisioning
 
-- **Status:** Proposed (Phase 6 direction; adopt behind config, prove parity first)
-- **Date:** 2026-07-01
+- **Status:** Accepted as direction (2026-07-03) — Phases 5 & 6 folded; SkyPilot is
+  the Phase-5 provisioner. Adopt behind config, default-off, prove parity before
+  deprecating the GCP `cloud` path. (Was: Proposed, 2026-07-01.)
+- **Date:** 2026-07-01 (folded 2026-07-03)
 - **Deciders:** ARK core
-- **Related:** [`../CLOUD_BACKEND_PLAN.md`](../CLOUD_BACKEND_PLAN.md) Phase 6, §7 (build vs buy); [ADR-0001](0001-byoc-thin-control-plane.md)
+- **Related:** [`../CLOUD_BACKEND_PLAN.md`](../CLOUD_BACKEND_PLAN.md) Phases 5 & 6, §7
+  (build vs buy); [`../SKYPILOT_PLAN.md`](../SKYPILOT_PLAN.md) (the folded implementation
+  plan); [ADR-0001](0001-byoc-thin-control-plane.md)
 
 ## Context
 
@@ -13,7 +17,13 @@ orchestrator launcher. Today this is hand-rolled per cloud in
 `ark/compute/cloud/{aws,gcp,azure}.py` (SSH + rsync + marker-file polling + teardown),
 which is significant surface area to maintain and doesn't cover K8s.
 
-## Decision (direction, not yet locked)
+## Decision
+
+> **Update (2026-07-03) — Phases 5 & 6 folded.** Rather than hand-roll AWS/Azure VM
+> provisioning for Phase 5 and adopt SkyPilot separately in Phase 6, we make SkyPilot
+> the Phase-5 provisioner directly, for both compute layers. No bespoke AWS/Azure VM
+> code is written. The GCP `cloud` path stays default and untouched until parity is
+> proven. Implementation plan: [`../SKYPILOT_PLAN.md`](../SKYPILOT_PLAN.md).
 
 We will **prefer [SkyPilot](https://github.com/skypilot-org/skypilot)** as the
 cross-cloud/K8s provisioner, adopted incrementally:

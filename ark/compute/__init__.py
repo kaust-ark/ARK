@@ -6,15 +6,18 @@ from .cloud.base import CloudBackend
 from .cloud.orchestrator import OrchestratorCloudBackend
 
 # Layer-2 orchestrator launcher types (`orchestrator_compute_backend.type`).
-VALID_ORCHESTRATOR_TYPES = frozenset({"local", "slurm", "cloud"})
+VALID_ORCHESTRATOR_TYPES = frozenset({"local", "slurm", "cloud", "skypilot"})
 # Layer-1 experiment backend types (`experiment_compute_backend.type`).
-VALID_EXPERIMENT_TYPES = frozenset({"local", "slurm", "cloud", "custom"})
+VALID_EXPERIMENT_TYPES = frozenset({"local", "slurm", "cloud", "custom", "skypilot"})
 
 # Invalid (orchestrator, experiment) pairs. The invariant is that the
 # orchestrator must be able to reach whatever runs the experiments: a cloud VM
 # orchestrator can't drive an on-prem SLURM cluster it has no network path to.
+# `skypilot` provisions in a cloud too, so it shares the cloud↔slurm restriction
+# (folded Phases 5+6, ADR-0010).
 INVALID_COMPUTE_MATRIX = frozenset({
     ("cloud", "slurm"),
+    ("skypilot", "slurm"),
 })
 
 
@@ -81,6 +84,14 @@ def from_config(config: dict, project_name: str, code_dir, log_fn=None, is_orche
             return CloudBackend.from_config(config, project_name, code_dir, log_fn)
     elif backend_type == "custom":
         return CustomBackend(config, project_name, code_dir, log_fn)
+    elif backend_type == "skypilot":
+        # Seam is reserved and validated (ADR-0010); the SkyPilotBackend lands in
+        # PR2 (Layer 1) / PR3 (Layer 2). Fail loudly rather than silently running
+        # the wrong backend.
+        raise NotImplementedError(
+            "compute backend 'skypilot' is not implemented yet "
+            "(folded Phases 5+6 — see SKYPILOT_PLAN.md)"
+        )
     else:
         raise ValueError(f"Unknown compute backend: {backend_type}")
 

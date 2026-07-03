@@ -31,11 +31,20 @@ def select_launcher(backend: Optional[str], *, slurm_ok: bool) -> JobLauncher:
     """Pick the non-cloud launcher for a new run: SLURM when the cluster is
     reachable, else local (the SLURM-unavailable fallback).
 
-    Cloud dispatch is not handled here — it needs config loading + an "is cloud
-    configured?" probe, which the webapp's ``orchestrator_launcher_for`` owns."""
-    if (backend or "local") == "slurm" and slurm_ok:
-        return SlurmJobLauncher()
-    return LocalJobLauncher()
+    Cloud / SkyPilot dispatch is not handled here — it needs config loading + an
+    "is cloud configured?" probe, which the webapp's ``orchestrator_launcher_for``
+    owns. Raise on anything we don't handle rather than silently returning a
+    LocalJobLauncher, so a future caller that skips that guard can't quietly run a
+    cloud/skypilot orchestrator on the control-plane host."""
+    base = (backend or "local").split(":", 1)[0]
+    if base == "slurm":
+        return SlurmJobLauncher() if slurm_ok else LocalJobLauncher()
+    if base == "local":
+        return LocalJobLauncher()
+    raise ValueError(
+        f"select_launcher cannot dispatch orchestrator backend {backend!r}; "
+        "cloud/skypilot launch is owned by the webapp's orchestrator_launcher_for"
+    )
 
 
 __all__ = [

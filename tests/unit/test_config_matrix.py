@@ -36,6 +36,19 @@ def test_cloud_orchestrator_with_slurm_experiments_rejected():
         validate_config(_cfg("cloud", "slurm"))
 
 
+def test_skypilot_orchestrator_with_slurm_experiments_rejected():
+    """SkyPilot provisions in a cloud too — same no-network-path-to-on-prem-SLURM
+    restriction as `cloud` (folded Phases 5+6, ADR-0010)."""
+    with pytest.raises(ValueError, match="cannot drive"):
+        validate_config(_cfg("skypilot", "slurm"))
+
+
+def test_skypilot_is_a_valid_type_on_both_layers():
+    validate_config(_cfg("skypilot", "skypilot"))  # must not raise
+    validate_config(_cfg("skypilot", "cloud"))
+    validate_config(_cfg("cloud", "skypilot"))
+
+
 def test_unknown_orchestrator_type_rejected():
     with pytest.raises(ValueError, match="orchestrator_compute_backend"):
         validate_config(_cfg("nope", "local"))

@@ -55,6 +55,14 @@ def test_select_launcher(backend, slurm_ok, expected):
     assert isinstance(select_launcher(backend, slurm_ok=slurm_ok), expected)
 
 
+@pytest.mark.parametrize("backend", ["cloud", "cloud:gcp", "skypilot", "bogus"])
+def test_select_launcher_rejects_non_local_slurm(backend):
+    # Cloud/SkyPilot/unknown must raise, never silently fall back to a local
+    # launcher (which would run the orchestrator on the control-plane host).
+    with pytest.raises(ValueError, match="cannot dispatch"):
+        select_launcher(backend, slurm_ok=True)
+
+
 def test_initial_status():
     assert LocalJobLauncher.initial_status == RUNNING
     assert SlurmJobLauncher.initial_status == QUEUED
