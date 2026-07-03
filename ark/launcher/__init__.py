@@ -15,15 +15,19 @@ from .base import (
 from .local import LocalJobLauncher
 from .slurm import SlurmJobLauncher
 from .cloud import CloudVmJobLauncher
+from .skypilot import SkyPilotVmJobLauncher
 
 
 def launcher_from_handle(handle: str, log_fn: Optional[Callable] = None) -> JobLauncher:
     """Return the launcher that owns ``handle`` (``local:{pid}`` / ``cloud:{pid}``
-    / bare SLURM job id) — used to poll or cancel an already-launched run."""
+    / ``skypilot:{cluster}`` / bare SLURM job id) — used to poll or cancel an
+    already-launched run."""
     if handle.startswith("local:"):
         return LocalJobLauncher()
     if handle.startswith("cloud:"):
         return CloudVmJobLauncher(log_fn)
+    if handle.startswith("skypilot:"):
+        return SkyPilotVmJobLauncher(log_fn)
     return SlurmJobLauncher()
 
 
@@ -51,6 +55,6 @@ __all__ = [
     "JobLauncher", "LaunchSpec", "PollResult", "RestartResult",
     "RUNNING", "QUEUED", "DONE", "FAILED", "STOPPED", "GONE", "UNKNOWN",
     "ACTIVE_STATUSES",
-    "LocalJobLauncher", "SlurmJobLauncher", "CloudVmJobLauncher",
+    "LocalJobLauncher", "SlurmJobLauncher", "CloudVmJobLauncher", "SkyPilotVmJobLauncher",
     "launcher_from_handle", "select_launcher",
 ]

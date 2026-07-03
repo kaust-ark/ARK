@@ -17,6 +17,8 @@ in PR2/PR3 have a single, tested import point. Callers use::
 
 from __future__ import annotations
 
+import re
+
 _EXTRA_HINT = (
     "SkyPilot is not installed, but a compute backend is configured with "
     "type: skypilot. Install the optional dependency — e.g. "
@@ -36,3 +38,114 @@ def load_sky():
     except ImportError as exc:  # pragma: no cover — exercised via monkeypatched import
         raise RuntimeError(_EXTRA_HINT) from exc
     return sky
+
+
+# ── async-request plumbing ───────────────────────────────────────────────────
+# SkyPilot's client/server API (newer releases) returns an opaque *request id*
+# from launch/down/status; the caller resolves it with ``get`` / ``stream_and_get``.
+# Older releases run synchronously and return a value (tuple / list / None)
+# directly. These two helpers absorb that difference for every ``type: skypilot``
+# caller (Layer-1 backend + Layer-2 launcher), so neither has to re-derive the
+# version handling. They differ deliberately in their error policy:
+#
+#   block_on_request     — for launch/teardown. Streams logs and lets errors
+#                          PROPAGATE: a failed provision/teardown must abort the
+#                          run rather than continue against a half-built cluster.
+#   resolve_request_value — for status probes. Swallows errors to ``None`` so a
+#                          flaky status check degrades to "unknown" instead of
+#                          killing the run.
+
+
+def block_on_request(sky, result):
+    """Block on an async launch/teardown request id, streaming its logs.
+
+    Errors are NOT swallowed — a failed launch or teardown must surface."""
+    if isinstance(result, tuple) or result is None:
+        return  # legacy synchronous API — already completed
+    streamer = getattr(sky, "stream_and_get", None) or getattr(sky, "get", None)
+    if streamer is not None:
+        streamer(result)
+
+
+def resolve_request_value(sky, result):
+    """Resolve an async status-request id to its value, or pass a value through.
+
+    Prefers ``get`` (no log streaming — this backs quick status probes) and
+    deliberately swallows errors to ``None``: a flaky status check must degrade
+    to "assume not up", never abort the run (the opposite policy from
+    ``block_on_request``)."""
+    if isinstance(result, (list, tuple)) or result is None:
+        return result
+    getter = getattr(sky, "get", None) or getattr(sky, "stream_and_get", None)
+    if getter is not None:
+        try:
+            return getter(result)
+        except Exception:
+            return None
+    return result
+
+
+# ── resource shaping ─────────────────────────────────────────────────────────
+_CLOUD_ALIASES = {
+    "aws": "AWS", "gcp": "GCP", "azure": "Azure",
+    "kubernetes": "Kubernetes", "k8s": "Kubernetes",
+}
+
+
+def resolve_cloud(sky, cloud: str):
+    """Map a config cloud string to a SkyPilot Cloud object (public API), or
+    ``None`` for the empty string (let SkyPilot auto-select)."""
+    if not cloud:
+        return None
+    attr = _CLOUD_ALIASES.get(cloud.lower(), cloud)
+    cloud_cls = getattr(sky, attr, None)
+    if cloud_cls is None:
+        raise ValueError(f"Unknown SkyPilot cloud: {cloud!r}")
+    return cloud_cls()
+
+
+def build_resources(sky, cc: dict):
+    """Build a ``sky.Resources`` from a compute-config dict. Every field is
+    optional — SkyPilot infers/optimizes whatever is left unset. Shared by the
+    Layer-1 experiment backend and the Layer-2 orchestrator launcher so the two
+    read resource config identically."""
+    kwargs: dict = {}
+    cloud = resolve_cloud(sky, (cc.get("cloud") or "").strip())
+    if cloud is not None:
+        kwargs["cloud"] = cloud
+    region = (cc.get("region") or "").strip()
+    if region:
+        kwargs["region"] = region
+    accelerators = (cc.get("accelerators") or "").strip()
+    if accelerators:
+        kwargs["accelerators"] = accelerators
+    instance_type = (cc.get("instance_type") or "").strip()
+    if instance_type:
+        kwargs["instance_type"] = instance_type
+    if cc.get("use_spot"):
+        kwargs["use_spot"] = True
+    if cc.get("disk_size"):
+        kwargs["disk_size"] = cc["disk_size"]
+    image_id = (cc.get("image_id") or "").strip()
+    if image_id:
+        kwargs["image_id"] = image_id
+    return sky.Resources(**kwargs)
+
+
+# ── naming + setup shaping ───────────────────────────────────────────────────
+def cluster_name(prefix: str, name: str) -> str:
+    """A stable DNS-ish SkyPilot cluster name: ``<prefix><sanitized name>``.
+
+    Sanitizes, **truncates, then strips** trailing/leading dashes — the strip
+    comes last so a truncation boundary can't leave a trailing ``-`` (an invalid
+    cluster name). Shared by the Layer-1 backend and Layer-2 launcher so both
+    derive the *same* name for a given project (a re-run reconnects to, rather
+    than duplicates, the cluster)."""
+    safe = re.sub(r"[^a-z0-9-]", "-", name.lower())[:30].strip("-") or "project"
+    return f"{prefix}{safe}"
+
+
+def setup_script(commands) -> str:
+    """Join a ``setup_commands`` list into a SkyPilot ``setup:`` block, dropping
+    blank entries. Shared so both layers render the setup block identically."""
+    return "\n".join(str(c) for c in (commands or []) if str(c).strip())

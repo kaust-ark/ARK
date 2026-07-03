@@ -1,12 +1,13 @@
 """PR1 scaffolding for the folded Phases 5+6 SkyPilot work (ADR-0010).
 
-`type: skypilot` is a *reserved and validated* compute type. As of PR2 the
-Layer-1 experiment backend is implemented; the Layer-2 orchestrator launcher
-lands in PR3. This locks the scaffolding contract:
+`type: skypilot` is a *reserved and validated* compute type. The Layer-1
+experiment backend (PR2) is a `ComputeBackend`; the Layer-2 orchestrator (PR3)
+is a `JobLauncher` (`SkyPilotVmJobLauncher`), built by the webapp's
+`orchestrator_launcher_for`, not this factory. This locks the scaffolding contract:
 
 - the compute factory builds a `SkyPilotBackend` for the experiment path, and
-  still rejects the orchestrator path loudly (NotImplementedError) — never a
-  silent wrong backend;
+  still rejects the orchestrator path loudly (NotImplementedError — the
+  orchestrator is a launcher, not a ComputeBackend) — never a silent wrong backend;
 - the lazy SDK seam imports `sky` only on demand and raises a helpful install hint
   when the optional `skypilot` extra is absent, so `import ark.compute` never
   needs SkyPilot installed.
@@ -40,7 +41,8 @@ def test_factory_builds_experiment_backend(tmp_path):
 
 
 def test_factory_rejects_skypilot_orchestrator_loudly(tmp_path):
-    """The Layer-2 orchestrator launcher is PR3 — still fail loudly until then."""
+    """The Layer-2 orchestrator is a JobLauncher (SkyPilotVmJobLauncher), never
+    built through the ComputeBackend factory — this path must fail loudly."""
     with pytest.raises(NotImplementedError, match="skypilot"):
         from_config(
             _skypilot_cfg(is_orchestrator=True),

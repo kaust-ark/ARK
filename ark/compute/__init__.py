@@ -85,14 +85,17 @@ def from_config(config: dict, project_name: str, code_dir, log_fn=None, is_orche
     elif backend_type == "custom":
         return CustomBackend(config, project_name, code_dir, log_fn)
     elif backend_type == "skypilot":
-        # Layer 1 (experiments) landed in PR2. The Layer-2 orchestrator launcher
-        # is a JobLauncher (ark/launcher/skypilot.py), not a ComputeBackend, and
-        # lands in PR3 — so an orchestrator-path skypilot compute build still
-        # fails loudly rather than silently running the wrong backend.
+        # Layer 1 (experiments) is a ComputeBackend, built here. The Layer-2
+        # skypilot orchestrator is a JobLauncher (SkyPilotVmJobLauncher,
+        # ark/launcher/skypilot.py), *not* a ComputeBackend — it is constructed by
+        # the webapp's orchestrator_launcher_for, never through this factory. So an
+        # orchestrator-path skypilot compute build is a wiring error: fail loudly
+        # rather than silently return the wrong backend.
         if is_orchestrator:
             raise NotImplementedError(
-                "skypilot orchestrator launcher is not implemented yet "
-                "(folded Phases 5+6, PR3 — see SKYPILOT_PLAN.md)"
+                "skypilot orchestrator runs via the SkyPilotVmJobLauncher "
+                "(ark/launcher/skypilot.py), not the compute factory — this path "
+                "should never be reached (folded Phases 5+6, ADR-0010)"
             )
         from .skypilot import SkyPilotBackend
         return SkyPilotBackend(config, project_name, code_dir, log_fn)

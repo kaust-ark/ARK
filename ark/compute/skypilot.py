@@ -23,14 +23,16 @@ from __future__ import annotations
 
 import atexit
 import os
-import re
 import subprocess
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from .base import ComputeBackend
-from ._sky import load_sky
+from ._sky import (
+    load_sky, block_on_request, resolve_request_value, resolve_cloud,
+    build_resources, cluster_name, setup_script,
+)
 
 # Where SkyPilot lands a Task's ``workdir`` on the remote head node — relative
 # to $HOME, so it resolves correctly for any cloud's default SSH user.
@@ -66,10 +68,9 @@ class SkyPilotBackend(ComputeBackend):
         self._launched = False
 
     def _default_cluster_name(self) -> str:
-        # SkyPilot cluster names must be DNS-ish; keep it stable per project so a
-        # re-run reconnects to (not duplicates) the cluster.
-        safe = re.sub(r"[^a-z0-9-]", "-", self.project_name.lower()).strip("-")[:30] or "project"
-        return f"ark-{safe}"
+        # Stable DNS-ish name per project (shared sanitizer with the Layer-2
+        # launcher) so a re-run reconnects to (not duplicates) the cluster.
+        return cluster_name("ark-", self.project_name)
 
     # ------------------------------------------------------------------ setup
 
@@ -120,40 +121,16 @@ class SkyPilotBackend(ComputeBackend):
         return task
 
     def _setup_script(self) -> str:
-        return "\n".join(str(c) for c in self.setup_commands if str(c).strip())
+        return setup_script(self.setup_commands)
 
     def _build_resources(self, sky):
-        kwargs: dict = {}
-        cloud = self._resolve_cloud(sky)
-        if cloud is not None:
-            kwargs["cloud"] = cloud
-        if self.region:
-            kwargs["region"] = self.region
-        if self.accelerators:
-            kwargs["accelerators"] = self.accelerators
-        if self.instance_type:
-            kwargs["instance_type"] = self.instance_type
-        if self.use_spot:
-            kwargs["use_spot"] = True
-        if self.disk_size:
-            kwargs["disk_size"] = self.disk_size
-        if self.image_id:
-            kwargs["image_id"] = self.image_id
-        return sky.Resources(**kwargs)
+        # Resource shaping is shared with the Layer-2 launcher (``_sky``); reads
+        # the same keys off this backend's ``experiment_compute_backend`` block.
+        return build_resources(sky, self._compute_config)
 
     def _resolve_cloud(self, sky):
-        """Map a config cloud string to a SkyPilot Cloud object (public API)."""
-        if not self.cloud:
-            return None
-        mapping = {
-            "aws": "AWS", "gcp": "GCP", "azure": "Azure",
-            "kubernetes": "Kubernetes", "k8s": "Kubernetes",
-        }
-        attr = mapping.get(self.cloud.lower(), self.cloud)
-        cloud_cls = getattr(sky, attr, None)
-        if cloud_cls is None:
-            raise ValueError(f"Unknown SkyPilot cloud: {self.cloud!r}")
-        return cloud_cls()
+        """Map this backend's config cloud string to a SkyPilot Cloud object."""
+        return resolve_cloud(sky, self.cloud)
 
     def _launch(self, sky, task):
         # Provision + run setup. retry_until_up rides out transient capacity
@@ -161,21 +138,7 @@ class SkyPilotBackend(ComputeBackend):
         result = sky.launch(task, cluster_name=self.cluster_name, retry_until_up=True)
         # SkyPilot's client/server API (newer releases) returns an async request
         # id; block on it. Older releases run synchronously and return a tuple.
-        self._block_on_request(sky, result)
-
-    @staticmethod
-    def _block_on_request(sky, result):
-        """Block on an async SkyPilot launch/teardown request id.
-
-        Prefers ``stream_and_get`` so provisioning/teardown logs surface live.
-        Unlike the status probe (``_block_on_request_value``), errors here are
-        NOT swallowed: a failed launch or teardown must abort the run rather
-        than silently continue against a half-provisioned/undeleted cluster."""
-        if isinstance(result, tuple) or result is None:
-            return  # legacy synchronous API — already completed
-        streamer = getattr(sky, "stream_and_get", None) or getattr(sky, "get", None)
-        if streamer is not None:
-            streamer(result)
+        block_on_request(sky, result)
 
     # ------------------------------------------------------------ agent-facing
 
@@ -321,7 +284,7 @@ written an SSH alias, so you can reach it directly by cluster name:
         try:
             sky = load_sky()
             result = sky.down(self.cluster_name)
-            self._block_on_request(sky, result)
+            block_on_request(sky, result)
             self.log(f"Cluster '{self.cluster_name}' torn down")
         except Exception as e:
             self.log(f"Failed to tear down cluster '{self.cluster_name}': {e}", "ERROR")
@@ -338,7 +301,7 @@ written an SSH alias, so you can reach it directly by cluster name:
             return False
         try:
             records = status_fn(cluster_names=[self.cluster_name])
-            records = self._block_on_request_value(sky, records)
+            records = resolve_request_value(sky, records)
             for rec in records or []:
                 status = rec.get("status")
                 # SkyPilot exposes status as an enum; compare by name to avoid
@@ -348,24 +311,6 @@ written an SSH alias, so you can reach it directly by cluster name:
         except Exception:
             pass
         return False
-
-    @staticmethod
-    def _block_on_request_value(sky, result):
-        """Resolve an async status-request id to its value, or pass a value through.
-
-        Prefers ``get`` (no log streaming — this backs a quick status probe) and
-        deliberately swallows errors to None: a flaky status check must degrade
-        to "assume not up" and re-provision, never abort the run (the opposite
-        policy from ``_block_on_request``)."""
-        if isinstance(result, (list, tuple)) or result is None:
-            return result
-        getter = getattr(sky, "get", None) or getattr(sky, "stream_and_get", None)
-        if getter is not None:
-            try:
-                return getter(result)
-            except Exception:
-                return None
-        return result
 
     def _save_cluster_state(self):
         import yaml

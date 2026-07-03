@@ -122,6 +122,7 @@ from ark.launcher import (
     CloudVmJobLauncher,
     LaunchSpec,
     LocalJobLauncher,
+    SkyPilotVmJobLauncher,
     launcher_from_handle,
     select_launcher,
 )
@@ -613,12 +614,30 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
                 "conda_env": settings.slurm_conda_env or "ark-base",
             }
         elif chosen.split(":", 1)[0] == "skypilot":
-            # Reserved-but-unimplemented (folded Phases 5+6, ADR-0010). Fail loudly
-            # instead of silently degrading to local — mirrors ark.compute.from_config.
-            raise NotImplementedError(
-                "compute backend 'skypilot' is not implemented yet "
-                "(folded Phases 5+6 — see SKYPILOT_PLAN.md)"
-            )
+            # Shape the `type: skypilot` block for both layers (folded Phases 5+6,
+            # ADR-0010) — the Layer-2 launcher (orchestrator) and Layer-1 backend
+            # (experiments) both read cluster/resources from here. SkyPilot
+            # infers/optimizes anything left unset; the cloud is optional (parsed
+            # from a "skypilot:{cloud}" suffix, else auto-selected).
+            #
+            # We deliberately do NOT forward settings.cloud_{region,instance_type,
+            # image_id}: those are tuned for the raw-gcloud `cloud` backend (a GCP
+            # image family, a GCP zone, a GCP/AWS-specific machine type) and don't
+            # map onto SkyPilot's resource namespace — forwarding them would pin an
+            # invalid image/region and break provisioning. CLI users set skypilot
+            # resources explicitly in config.yaml.
+            cloud = chosen.split(":", 1)[1] if ":" in chosen else ""
+            cfg = {"type": "skypilot", "conda_env": settings.cloud_conda_env or "ark-base"}
+            if cloud:
+                cfg["cloud"] = cloud
+            if is_orchestrator:
+                # The orchestrator cluster comes up bare, so its deps must be
+                # installed via the setup: block (the run command is plain
+                # `python -m ark.orchestrator`). Default to installing the synced
+                # ARK source (workdir → ~/sky_workdir) with the research extra.
+                # PR4 replaces this with a baked orchestrator image.
+                cfg["setup_commands"] = ["cd ~/sky_workdir && pip install -e '.[research]'"]
+            return cfg
         return {"type": "local"}
 
     orch_chosen = project.orchestrator_compute_backend or "local"
@@ -1361,8 +1380,18 @@ def orchestrator_launcher_for(project, spec, session, settings):
     than silently running an unknown backend locally."""
     backend = project.orchestrator_compute_backend or "local"
     base = backend.split(":", 1)[0]
-    if base not in ("local", "slurm", "cloud"):
+    if base not in ("local", "slurm", "cloud", "skypilot"):
         raise ValueError(f"Unknown orchestrator backend: {backend!r}")
+
+    if base == "skypilot":
+        # The skypilot orchestrator config was shaped into config.yaml by
+        # _resolve_compute_config; the launcher reads its cluster/resources from
+        # there. Unlike cloud, there is no separate "is it configured?" probe —
+        # the config block is self-contained (folded Phases 5+6, ADR-0010).
+        import yaml
+        with open(Path(spec.project_dir) / "config.yaml") as f:
+            spec.config = yaml.safe_load(f)
+        return SkyPilotVmJobLauncher(log_fn=logger.info)
 
     if base == "cloud":
         per_project: dict = {}
@@ -2239,8 +2268,12 @@ async def api_get_project(project_id: str, request: Request):
         score = _read_project_score(pdir, project=project)
         pdf = _find_pdf(pdir)
         owner = session.get(User, project.user_id)
-        is_cloud = bool(project.slurm_job_id and project.slurm_job_id.startswith("cloud"))
-        if is_cloud:
+        # Both cloud and skypilot run remotely with the env living on the remote
+        # VM/cluster (no local .conda_env dir), so they share the "env ready" fast
+        # path — otherwise a healthy skypilot run reads as env-not-ready.
+        sid = project.slurm_job_id or ""
+        is_remote = sid.startswith(("cloud", "skypilot"))
+        if is_remote:
             owner_keys = _get_user_keys(owner) if owner else {}
             conda_env_display = owner_keys.get("gcp_conda_env") or settings.cloud_conda_env or "ark-base"
             env_ready = True
@@ -2250,6 +2283,15 @@ async def api_get_project(project_id: str, request: Request):
                 conda_env_display = str(project_env_prefix(pdir))
             else:
                 conda_env_display = settings.slurm_conda_env or ""
+        # Environment label shown in the dashboard, keyed off the handle prefix.
+        if sid.startswith("cloud"):
+            environment = _cloud_env_label(project.compute_backend)
+        elif sid.startswith("skypilot"):
+            environment = "SkyPilot"
+        elif sid and not sid.startswith("local"):
+            environment = "ROCS Testbed"
+        else:
+            environment = "Local"
         return JSONResponse({
             "id": project.id,
             "name": project.name,
@@ -2275,7 +2317,7 @@ async def api_get_project(project_id: str, request: Request):
             "telegram_token": project.telegram_token,
             "telegram_chat_id": project.telegram_chat_id,
             "has_deep_research": (pdir / "auto_research" / "state" / "deep_research.md").exists(),
-            "environment": "ROCS Testbed" if project.slurm_job_id and not project.slurm_job_id.startswith(("local", "cloud")) else (_cloud_env_label(project.compute_backend) if project.slurm_job_id and project.slurm_job_id.startswith("cloud") else "Local"),
+            "environment": environment,
             "conda_env": conda_env_display,
             "conda_env_ready": env_ready,
             "created_at": project.created_at.isoformat(),

@@ -17,7 +17,7 @@ pytest.importorskip("jinja2")  # website.dashboard.jobs imports jinja2 at module
 
 from ark.launcher import (  # noqa: E402
     CloudVmJobLauncher, LaunchSpec, LocalJobLauncher, PollResult, RestartResult,
-    SlurmJobLauncher, launcher_from_handle, select_launcher,
+    SkyPilotVmJobLauncher, SlurmJobLauncher, launcher_from_handle, select_launcher,
     RUNNING, QUEUED, DONE, FAILED, STOPPED, GONE, UNKNOWN,
 )
 import website.dashboard.jobs as jobs  # noqa: E402
@@ -38,6 +38,7 @@ def _spec(tmp_path, **kw):
 def test_launcher_from_handle():
     assert isinstance(launcher_from_handle("local:123"), LocalJobLauncher)
     assert isinstance(launcher_from_handle("cloud:456"), CloudVmJobLauncher)
+    assert isinstance(launcher_from_handle("skypilot:ark-orch-p1"), SkyPilotVmJobLauncher)
     assert isinstance(launcher_from_handle("98765"), SlurmJobLauncher)
 
 
@@ -67,6 +68,8 @@ def test_initial_status():
     assert LocalJobLauncher.initial_status == RUNNING
     assert SlurmJobLauncher.initial_status == QUEUED
     assert CloudVmJobLauncher.initial_status == RUNNING
+    # SkyPilot: launch() blocks until the cluster is UP + run started → RUNNING.
+    assert SkyPilotVmJobLauncher.initial_status == RUNNING
 
 
 # ── launch delegation (thin-adapter guarantee) ───────────────────────────────
@@ -148,6 +151,7 @@ def test_cloud_poll_missing_config(tmp_path):
 def test_local_and_cloud_never_restart(tmp_path):
     assert LocalJobLauncher().maybe_restart("local:1", _spec(tmp_path)) is None
     assert CloudVmJobLauncher().maybe_restart("cloud:1", _spec(tmp_path)) is None
+    assert SkyPilotVmJobLauncher().maybe_restart("skypilot:c", _spec(tmp_path)) is None
 
 
 def test_slurm_restart_under_limit(tmp_path, monkeypatch):
@@ -225,8 +229,9 @@ def test_latest_log_mtime(tmp_path):
     (logs / "slurm_1.out").write_text("y")
     assert LocalJobLauncher().latest_log_mtime(tmp_path) is not None
     assert SlurmJobLauncher().latest_log_mtime(tmp_path) is not None
-    # cloud has no local log to watch
+    # cloud / skypilot have no local log to watch (remote run reports over /v1)
     assert CloudVmJobLauncher().latest_log_mtime(tmp_path) is None
+    assert SkyPilotVmJobLauncher().latest_log_mtime(tmp_path) is None
 
 
 def test_latest_log_mtime_empty(tmp_path):
@@ -254,6 +259,7 @@ def test_slurm_and_cloud_read_error_none(tmp_path):
     # None → poller leaves the existing error_message untouched (pre-Phase-4 parity).
     assert SlurmJobLauncher().read_error(tmp_path) is None
     assert CloudVmJobLauncher().read_error(tmp_path) is None
+    assert SkyPilotVmJobLauncher().read_error(tmp_path) is None
 
 
 # ── shared credential mapping (single source of truth for both launch paths) ────

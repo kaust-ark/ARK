@@ -734,9 +734,10 @@ experiment_compute_backend:
 
 > [!NOTE]
 > `type: skypilot` is being rolled out (folded Phases 5+6 — see
-> [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md)). The **experiment** (Layer-1) backend
-> now provisions via SkyPilot; the **orchestrator** (Layer-2) launcher lands in a
-> subsequent PR. The GCP `cloud` path above remains the default and is unchanged.
+> [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md)). Both the **experiment** (Layer-1)
+> backend and the **orchestrator** (Layer-2) launcher now provision via SkyPilot;
+> orchestrator image/secret hardening + cost-safety autostop land in PR4. The GCP
+> `cloud` path above remains the default and is unchanged.
 
 [SkyPilot](https://github.com/skypilot-org/skypilot) provisions VMs across
 AWS/GCP/Azure (and Kubernetes) from one abstraction, with spot, retries, and
@@ -754,9 +755,11 @@ sky check          # verify SkyPilot can reach your configured clouds/clusters
 
 #### `config.yaml` Reference (advanced / CLI only)
 
-> The **`experiment_compute_backend`** keys below are the ones the Layer-1 backend
-> parses today. The `orchestrator_compute_backend` block is still illustrative —
-> its launcher lands in a later PR (see `SKYPILOT_PLAN.md`).
+> The **`experiment_compute_backend`** keys below are parsed by the Layer-1
+> backend; the **`orchestrator_compute_backend`** block is read by the Layer-2
+> `SkyPilotVmJobLauncher`. Both share the same resource keys (`cloud` / `region` /
+> `accelerators` / `instance_type` / `use_spot` / `disk_size` / `image_id` /
+> `cluster_name` / `setup_commands`).
 
 ```yaml
 # Experiments provisioned via SkyPilot. Every key except `type` is optional;
@@ -773,12 +776,25 @@ experiment_compute_backend:
   setup_commands:                # deps installed via the SkyPilot setup: block
     - pip install -r requirements.txt
 
-# Orchestrator launcher (still illustrative — lands in a later PR).
+# Orchestrator launcher — runs `python -m ark.orchestrator` on a SkyPilot cluster.
+# Reports home over the /v1 control-plane API (set control_plane_url), so the
+# cluster needs no shared FS/DB with the dashboard.
 orchestrator_compute_backend:
   type: skypilot
+  # cloud: gcp                     # omit → SkyPilot auto-selects
   # region: us-central1
-  # setup_commands: [...]
+  # instance_type: n1-standard-2
+  # cluster_name: ark-orch-myproj  # optional; defaults to ark-orch-<project>
+  setup_commands:                  # install ARK's deps on the cluster (workdir →
+    - cd ~/sky_workdir && pip install -e '.[research]'   # ~/sky_workdir at launch)
 ```
+
+> The dashboard fills in this `setup:` block automatically; only CLI users editing
+> `config.yaml` by hand need to set it. It installs the synced ARK source with the
+> `research` extra so `python -m ark.orchestrator` resolves on a bare cluster (PR4
+> replaces it with a baked image). Layer-1 experiment resources (`region` /
+> `instance_type` / `image_id`) are **not** auto-derived from the GCP `cloud`
+> settings — they live in a different SkyPilot namespace, so set them here explicitly.
 
 > A `skypilot` orchestrator cannot drive `slurm` experiments (no network path to
 > an on-prem cluster) — the same restriction as `type: cloud`.
