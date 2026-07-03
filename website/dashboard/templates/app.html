@@ -3521,6 +3521,11 @@ function renderHitl(p) {
   if (mc && p.model) { mc.textContent = '🤖 ' + prettyModelName(p.model); mc.style.display = ''; }
   _hitlOpenDecision = p.pending_decision ? p.pending_decision.id : null;
   if ((active || finished) && _chatThreadFor !== p.id) loadChatThread(p.id);
+  // A chat/apply agent is mid-turn (activity carries the 💬/Applying marker):
+  // make sure the thinking dots are showing — survives page refresh/SSE reconnect.
+  const busyChat = /^💬|^Applying/.test(p.activity || '');
+  if (busyChat && !document.getElementById('hitl-thinking')) showThinking();
+  else if (!busyChat && !_hitlActive) { /* finished + idle: dots are cleared by the reply bubble */ }
   closeStaleDecisions();   // disable buttons on any decision no longer open
 }
 
@@ -3537,24 +3542,46 @@ function prettyModelName(m) {
   return s.replace(/\b\w/g, c => c.toUpperCase());
 }
 
-let _thinkTimer = null;
+// Claude-Code-style thinking indicator: bouncing dots + a cycling verb + elapsed
+// seconds, pinned to the bottom-left of the thread. Persists for the WHOLE agent
+// turn (chat turns run for minutes) — it is only dismissed by a real reply, not
+// by a timer and not by intermediate step notices.
+let _thinkTimer = null, _thinkTick = null, _thinkStart = 0;
+const _THINK_VERBS = ['Thinking', 'Reading', 'Reasoning', 'Working', 'Tinkering', 'Cooking'];
 function showThinking(label) {
   hideThinking();
   const thread = document.getElementById('hitl-thread');
   if (!thread) return;
+  _thinkStart = Date.now();
   const wrap = document.createElement('div');
   wrap.id = 'hitl-thinking';
   wrap.style.cssText = 'align-self:flex-start;max-width:82%';
   wrap.innerHTML = '<div style="padding:9px 14px;border-radius:14px;background:var(--bg-hover);border-bottom-left-radius:4px;display:flex;align-items:center;gap:5px">'
     + '<span class="tdot"></span><span class="tdot"></span><span class="tdot"></span>'
-    + (label ? '<span style="font-size:.72rem;color:var(--text-muted);margin-left:5px">' + label + '</span>' : '') + '</div>';
+    + '<span id="hitl-think-label" style="font-size:.74rem;color:var(--text-muted);margin-left:6px">' + (label || _THINK_VERBS[0] + '…') + '</span>'
+    + '<span id="hitl-think-elapsed" style="font-size:.7rem;color:var(--text-muted);opacity:.7"></span></div>';
   thread.appendChild(wrap);
   thread.scrollTop = thread.scrollHeight;
+  _thinkTick = setInterval(() => {
+    const el = document.getElementById('hitl-think-elapsed');
+    const lb = document.getElementById('hitl-think-label');
+    if (!el) return;
+    const s = Math.floor((Date.now() - _thinkStart) / 1000);
+    el.textContent = s >= 3 ? `· ${s}s` : '';
+    if (lb && !label && s > 0 && s % 7 === 0) lb.textContent = _THINK_VERBS[Math.floor(s / 7) % _THINK_VERBS.length] + '…';
+  }, 1000);
   if (_thinkTimer) clearTimeout(_thinkTimer);
-  _thinkTimer = setTimeout(hideThinking, 40000);  // safety auto-hide
+  _thinkTimer = setTimeout(hideThinking, 15 * 60000);  // safety net only (chat timeout is minutes)
+}
+function keepThinkingLast() {
+  // step notices land under the indicator — keep the dots pinned to the bottom
+  const t = document.getElementById('hitl-thinking');
+  const thread = document.getElementById('hitl-thread');
+  if (t && thread && thread.lastElementChild !== t) thread.appendChild(t);
 }
 function hideThinking() {
   if (_thinkTimer) { clearTimeout(_thinkTimer); _thinkTimer = null; }
+  if (_thinkTick) { clearInterval(_thinkTick); _thinkTick = null; }
   const t = document.getElementById('hitl-thinking');
   if (t) t.remove();
 }
@@ -3572,6 +3599,7 @@ function closeStaleDecisions() {
 async function loadChatThread(pid) {
   _chatThreadFor = pid; _chatSeen = new Set();
   _pendingEcho = null;   // full reload from DB — never dedupe the user's own message away
+  _stepGroup = null;
   const thread = document.getElementById('hitl-thread');
   if (thread) thread.innerHTML = '';
   try {
@@ -3581,14 +3609,50 @@ async function loadChatThread(pid) {
   } catch (e) {}
 }
 
+// Agent tool steps ($ cmd / ✎ edit / ▸ read / 💭 thought) are grouped into ONE
+// collapsed "⚙ steps" block per burst — visible on demand, not cluttering the
+// thread. A non-step bubble closes the current group.
+let _stepGroup = null;
+function _isStepNotice(m) {
+  return m.kind === 'notice' && /^[$✎▸💭•✗]\s/.test(m.text || '');
+}
+function _appendStepLine(thread, text) {
+  if (!_stepGroup || !_stepGroup.isConnected) {
+    const det = document.createElement('details');
+    det.style.cssText = 'align-self:flex-start;max-width:88%;font-size:.72rem;color:var(--text-muted)';
+    const sum = document.createElement('summary');
+    sum.style.cssText = 'cursor:pointer;opacity:.75;user-select:none';
+    det.appendChild(sum);
+    const body = document.createElement('div');
+    body.style.cssText = 'white-space:pre-wrap;word-break:break-word;padding:4px 0 2px 14px;display:flex;flex-direction:column;gap:2px';
+    det.appendChild(body);
+    thread.appendChild(det);
+    _stepGroup = det;
+  }
+  const body = _stepGroup.lastElementChild;
+  const line = document.createElement('div');
+  line.textContent = text;
+  body.appendChild(line);
+  const n = body.childElementCount;
+  _stepGroup.firstElementChild.textContent = `⚙ steps (${n}) — ${text.slice(0, 64)}${text.length > 64 ? '…' : ''}`;
+}
 function appendBubble(m) {
   if (!m || (m.id && _chatSeen.has(m.id))) return;
-  if (m.role && m.role !== 'user') hideThinking();   // a reply arrived → stop the dots
   // skip the echo of our own just-sent message
   if (m.role === 'user' && _pendingEcho && m.text === _pendingEcho) { _pendingEcho = null; if (m.id) _chatSeen.add(m.id); return; }
   if (m.id) _chatSeen.add(m.id);
   const thread = document.getElementById('hitl-thread');
   if (!thread) return;
+  // Tool steps: fold into the collapsed step group and keep the dots pinned last.
+  if (_isStepNotice(m)) {
+    _appendStepLine(thread, htmlToText(m.text));
+    keepThinkingLast();
+    thread.scrollTop = thread.scrollHeight;
+    return;
+  }
+  _stepGroup = null;  // any non-step bubble closes the current step group
+  // A real (non-step) agent reply dismisses the thinking dots.
+  if (m.role && m.role !== 'user') hideThinking();
   const wrap = document.createElement('div');
   const isUser = m.role === 'user';
   const isSys = m.role === 'system' || m.kind === 'notice' || m.kind === 'milestone';
@@ -3724,7 +3788,7 @@ async function hitlSend() {
     el.value = '';
     appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // instant echo (right)
     _pendingEcho = txt;                                                     // now dedupe the SSE re-delivery
-    showThinking('thinking…');                                              // dots (left) until reply
+    showThinking();                                              // dots (left) until reply
     try {
       const r = await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3741,7 +3805,7 @@ async function hitlSend() {
   el.value = '';
   appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // instant echo (right)
   _pendingEcho = txt;   // now dedupe the SSE re-delivery of this same message
-  showThinking('thinking…');
+  showThinking();
   let routed = 'steer', scope = 'edit', launching = false;
   try {
     const r = await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {

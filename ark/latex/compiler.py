@@ -215,6 +215,45 @@ class CompilerMixin:
             self.log(f"LaTeX compilation error: {e}")
             return False
 
+    def ensure_resolved_citations(self, context: str = "pre-delivery") -> bool:
+        """Delivery gate: the final PDF must not contain unresolved citations.
+
+        A late references.bib update or an agent-side bare ``pdflatex`` run (no
+        bibtex pass) can leave the delivered PDF full of "?" markers with no
+        References section even though every key is valid — shipped once in
+        project 50350a67 (page-count check passed, nobody checked citations).
+        Detect "?" citation markers on the RENDERED pdf text; if present,
+        re-run the full pdflatex→bibtex→pdflatex×2 chain (rebuilds the .bbl)
+        and re-check.
+        """
+        pdf = getattr(self, "_latest_pdf", None) or (self.latex_dir / "main.pdf")
+
+        def _unresolved(p) -> int:
+            try:
+                import fitz
+                doc = fitz.open(str(p))
+                text = " ".join(pg.get_text() for pg in doc)
+                doc.close()
+                # "(?)"/"[?]"/" ? " — natbib/plain render unresolved cites this
+                # way; English prose never puts a bare "?" between spaces.
+                return len(re.findall(r"[\s(\[]\?[\s,.;)\]]", text))
+            except Exception:
+                return 0
+
+        n = _unresolved(pdf)
+        if not n:
+            return True
+        self.log(f"[{context}] {n} unresolved citation marker(s) in the final PDF "
+                 f"— re-running the full bibtex chain", "WARN")
+        self.compile_latex()
+        n2 = _unresolved(pdf)
+        if n2:
+            self.log(f"[{context}] STILL {n2} unresolved citation(s) after recompile "
+                     f"— references.bib is missing keys the text cites", "ERROR")
+            return False
+        self.log(f"[{context}] Citations resolved after recompile", "INFO")
+        return True
+
     def _count_pdf_pages(self, pdf_path: Path) -> int:
         """Count total pages in a PDF file using PyMuPDF."""
         try:

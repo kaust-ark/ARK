@@ -40,6 +40,44 @@ def save_conversation_id(workspace: Path, conv_id: str) -> None:
         pass
 
 
+def read_conversation_usage(workspace, conversation_id: Optional[str]) -> Optional[dict]:
+    """CUMULATIVE token/cost totals of the persistent chat conversation.
+
+    OpenHands doesn't stream cost; it persists it to
+    ``<HOME>/.openhands/conversations/<id>/base_state.json`` — and this runner
+    sets ``HOME=workspace``, so the file lives inside the project. Mirrors
+    ``OpenHandsCLI._read_usage``. Cumulative across resumed turns — callers
+    diff against their last recorded total to get a per-turn delta.
+    """
+    if not conversation_id:
+        return None
+    try:
+        bs = (Path(workspace) / ".openhands" / "conversations"
+              / conversation_id / "base_state.json")
+        if not bs.exists():
+            return None
+        data = json.loads(bs.read_text())
+        metrics = (data.get("stats") or {}).get("usage_to_metrics") or {}
+        cost = 0.0
+        in_tok = out_tok = cache_read = cache_write = 0
+        for m in metrics.values():
+            cost += float(m.get("accumulated_cost") or 0.0)
+            tu = m.get("accumulated_token_usage") or {}
+            in_tok += int(tu.get("prompt_tokens") or 0)
+            out_tok += int(tu.get("completion_tokens") or 0)
+            cache_read += int(tu.get("cache_read_tokens") or 0)
+            cache_write += int(tu.get("cache_write_tokens") or 0)
+        return {
+            "cost_usd": cost,
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+            "cache_read_tokens": cache_read,
+            "cache_creation_tokens": cache_write,
+        }
+    except Exception:
+        return None
+
+
 def _build_env(model: str) -> dict:
     """OpenHands env: LLM_MODEL + the provider's key (same convention as the
     OpenHandsCLI engine), with the conversation persisted under workspace HOME."""

@@ -59,6 +59,27 @@ You are responsible for setting up real experimental environments, running genui
 11. Verify results are genuine (check logs, spot-check data, confirm the process actually ran)
 12. Update `auto_research/state/findings.yaml` with findings
 
+## Plotting: decide the PRINTED size before writing matplotlib code
+
+Figure aesthetics start at plot time, not in LaTeX — `\includegraphics` rescaling
+wrecks font sizes, so every figure must be SAVED at the physical size it will be
+printed. Before writing a plotting script:
+
+1. Read `paper/figures/figure_config.json` when present (`columnwidth_in`,
+   `textwidth_in`, `matplotlib_rcparams`) and apply the rcParams.
+2. Pick the print width by information density, then set `figsize` to those
+   physical inches:
+   - **Simple single panel** (one curve, 2–4 bars) → HALF column width:
+     `figsize=(0.55*columnwidth_in, ~0.75*that)`. Never save a sparse plot at
+     full text width — it prints huge and mostly empty.
+   - **Row of 2–3 panels** → full column width, kept SHORT:
+     `figsize=(columnwidth_in, ≤0.45*columnwidth_in)` with `ncols=2..3`.
+   - Prefer wide-and-short over tall figures; use
+     `constrained_layout=True`, and record the intended placement
+     (`half`/`full`) in `figure_manifest.json` if you maintain it.
+3. Fonts come from the config rcParams so labels are legible at final size
+   without any LaTeX-side scaling.
+
 ## Research Integrity (MANDATORY — violation = worthless paper)
 
 **1. Use real systems, not re-implementations.** If the experiment plan lists a required system (e.g., a framework, platform, or benchmark suite), your experiment scripts must import and use that actual package. You must NOT:

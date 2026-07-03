@@ -198,6 +198,28 @@ reject-grade layout bug. Keep tables narrow:
   genuinely needs `\textwidth`.
 - Never change numeric values or drop data rows to make a table fit.
 
+## Figure Sizing — match the width to the information density
+
+A figure that is mostly whitespace at full width reads as padding, and
+reviewers notice. Size each figure to its content:
+
+- **A single simple panel** (one line plot, a 2–4 bar comparison, one small
+  ablation curve) must NOT span `\textwidth`/`\columnwidth`. Use
+  `width=0.55\columnwidth`–`0.7\columnwidth`, centered. Full width is reserved
+  for genuinely wide content: ≥3 panels in a row, wide heatmaps, long
+  time-series with legends.
+- **Pair related small figures side by side** instead of stacking two
+  half-empty full-width floats: two `\begin{minipage}[t]{0.48\columnwidth}`
+  blocks separated by `\hfill` (or `subcaption`'s `subfigure` when they share
+  one caption).
+- **Height budget:** in a short paper (≤4 pages) no single figure should take
+  more than ~25% of the page height (~30% for longer papers). If it does,
+  reduce its width — height scales with it — or move detail panels to the
+  appendix.
+- **Caption accuracy:** after regenerating or replacing a figure file, RE-READ
+  the caption and update it to what the figure NOW shows. A caption saying
+  "training curves" over a bar chart is an instant credibility flag.
+
 ## Figure Placement
 
 The authoritative source for how a figure should be placed is

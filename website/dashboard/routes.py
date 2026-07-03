@@ -3175,26 +3175,42 @@ async def api_get_log(project_id: str, request: Request, lines: int = 200):
     pdir = _project_dir(settings, owner_id, project_id)
     log_dirs = [pdir / "logs", pdir / "auto_research" / "logs"]
 
-    # Find the latest log file across all candidate dirs
+    # Find the latest log file across all candidate dirs. Every chat/apply/
+    # continue run spawns a NEW local_<ts>.out, so showing only the newest file
+    # made the Live Log "forget" the whole prior run the moment a chat agent
+    # started. Instead, concatenate ALL siblings of the newest file's pattern
+    # family (oldest first, with separators) and return the tail — history stays
+    # visible, and the SSE stream keeps appending from the newest file.
     log_lines: list[str] = []
     log_file = ""
-    best: tuple[float, Path] | None = None
+    best: tuple[float, Path, str] | None = None
     for log_dir in log_dirs:
         for pattern in ["local_*.out", "slurm_*.out", "orchestrator.log", "*.log"]:
             for p in log_dir.glob(pattern):
                 try:
                     mtime = p.stat().st_mtime
                     if best is None or mtime > best[0]:
-                        best = (mtime, p)
+                        best = (mtime, p, pattern)
                 except Exception:
                     pass
     if best:
         log_file = str(best[1])
         try:
-            all_lines = best[1].read_text(errors="replace").splitlines()
-            log_lines = all_lines[-lines:]
+            family = sorted(best[1].parent.glob(best[2]), key=lambda p: p.stat().st_mtime)
+            for i, p in enumerate(family):
+                try:
+                    chunk = p.read_text(errors="replace").splitlines()
+                except Exception:
+                    continue
+                if i > 0 and log_lines:
+                    log_lines.append(f"── {p.name} ──")
+                log_lines.extend(chunk)
+            log_lines = log_lines[-lines:]
         except Exception:
-            pass
+            try:
+                log_lines = best[1].read_text(errors="replace").splitlines()[-lines:]
+            except Exception:
+                pass
 
     return JSONResponse({"lines": log_lines, "log_file": log_file})
 

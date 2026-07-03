@@ -540,6 +540,10 @@ class PipelineMixin:
             self._enforce_page_count(context="pre-delivery")
         except QuotaExhaustedError as e:
             return self._handle_quota_exhausted(score, detail=f"Page compression failed: {e.page_count:.1f}/{e.venue_pages} pages")
+        # LAST compile-touching gate: page-fitting above may have recompiled via
+        # agent-side bare pdflatex (no bibtex), which can strand "?" citations in
+        # the delivered PDF (happened in 50350a67). Verify + fix on the final PDF.
+        self.ensure_resolved_citations(context="pre-delivery")
 
         self.send_iteration_summary(score, current_score, review_output)
         if not post_accept_cleanup: self._check_smart_intervention(score, current_score, review_output, True)
@@ -3585,6 +3589,54 @@ provide the title.
             return
         self._set_activity("")
         self._chat("agent", answer or "Done.", kind="message")
+        # Budget sync: fold this turn's LLM cost into cost_report.yaml + the DB.
+        try:
+            from ark.chat_agent import read_conversation_usage
+            self._record_chat_cost(read_conversation_usage(self.code_dir, _conv_id))
+        except Exception as e:
+            self.log(f"chat cost sync skipped: {e}", "WARN")
+
+    def _record_chat_cost(self, usage: dict | None):
+        """Fold a chat turn's cost into the project Budget.
+
+        OpenHands persists the conversation's CUMULATIVE cost; we keep the last
+        recorded totals in the workspace (.ark_chat_cost.json) and record only
+        the delta as a 'chat' agent stat, then regenerate the cost report —
+        which also _sync_db's total_cost_usd, so the webapp Budget card updates
+        right after the turn.
+        """
+        if not usage or float(usage.get("cost_usd") or 0) <= 0:
+            return
+        import json as _json
+        keys = ("cost_usd", "input_tokens", "output_tokens",
+                "cache_read_tokens", "cache_creation_tokens")
+        marker = Path(self.code_dir) / ".ark_chat_cost.json"
+        prev = {}
+        try:
+            prev = _json.loads(marker.read_text())
+        except Exception:
+            pass
+        delta = {k: (usage.get(k) or 0) - (prev.get(k) or 0) for k in keys}
+        if delta["cost_usd"] <= 0:
+            return  # nothing new (e.g. turn failed before any LLM call)
+        self._agent_stats.append({
+            "agent_type": "chat",
+            "timestamp": datetime.now().isoformat(),
+            "elapsed_seconds": 0,
+            "prompt_len": 0,
+            "output_len": 0,
+            "input_tokens": int(delta["input_tokens"]),
+            "output_tokens": int(delta["output_tokens"]),
+            "cache_read_tokens": int(delta["cache_read_tokens"]),
+            "cache_creation_tokens": int(delta["cache_creation_tokens"]),
+            "cost_usd": round(float(delta["cost_usd"]), 6),
+        })
+        try:
+            marker.write_text(_json.dumps({k: usage.get(k) or 0 for k in keys}))
+        except Exception:
+            pass
+        self._write_cost_report()
+        self.log(f"Chat turn cost ${delta['cost_usd']:.4f} — added to project budget", "INFO")
 
     def _apply_context(self) -> str:
         title = self.config.get("title", "") or self.project_name
@@ -3632,6 +3684,12 @@ provide the title.
             return
         self._set_activity("")
         self._chat("agent", "Done — applied your change and recompiled. ✅", kind="milestone")
+        # Budget sync: run_agent recorded the stats; write the report so the
+        # webapp Budget reflects this apply without waiting for a full iteration.
+        try:
+            self._write_cost_report()
+        except Exception as e:
+            self.log(f"apply cost sync skipped: {e}", "WARN")
 
     def _apply_answer(self, question: str):
         """Read-only investigation: a Claude agent reads the real artifacts (PDF,
