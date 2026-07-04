@@ -1,16 +1,24 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>About Us — Idea2Paper</title>
-  <meta name="description" content="Idea2Paper is built by SANDS Lab at KAUST.">
-  <link rel="icon" href="assets/logo_ark_transparent.png" type="image/png">
+  <title>من نحن — Idea2Paper</title>
+  <meta name="description" content="Idea2Paper من تطوير مختبر SANDS في جامعة الملك عبدالله للعلوم والتقنية (كاوست).">
+  <link rel="icon" href="../assets/logo_ark_transparent.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=3">
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css?v=3">
   <style>
+    body { font-family: 'Cairo', 'Inter', sans-serif; }
+    h1, h2, h3, p, li, a, span, .btn, .nav-brand, .gradient-text,
+    .team-info h3, .team-info .team-role, .footer-note { font-family: 'Cairo', 'Inter', sans-serif; }
+    .nav-links { gap: .25rem; }
+    .lang-toggle { font-size: .85rem; }
+    .footer { direction: rtl; }
+    .footer-links { flex-wrap: wrap; }
+
     .about-hero {
       padding: 8rem 1.5rem 3rem;
       text-align: center;
@@ -23,7 +31,7 @@
       max-width: 640px;
       margin: 0 auto;
       font-size: 1.1rem;
-      line-height: 1.7;
+      line-height: 1.9;
       color: var(--text-muted);
     }
 
@@ -39,37 +47,9 @@
       border-bottom: 1px solid var(--border);
     }
     .about-section p {
-      line-height: 1.7;
+      line-height: 1.9;
       color: var(--text-muted);
       margin-bottom: 1rem;
-    }
-
-    /* Lab card */
-    .lab-card {
-      display: flex;
-      align-items: center;
-      gap: 2rem;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 2rem;
-      margin-bottom: 3rem;
-    }
-    .lab-card img {
-      width: 80px;
-      height: 80px;
-      border-radius: var(--radius);
-    }
-    .lab-card-info h3 {
-      font-size: 1.2rem;
-      margin-bottom: .25rem;
-    }
-    .lab-card-info p {
-      margin-bottom: .5rem;
-      font-size: .95rem;
-    }
-    .lab-card-info a {
-      font-size: .9rem;
     }
 
     /* Team */
@@ -115,8 +95,8 @@
     /* Contact */
     .contact-box {
       background: rgba(13, 148, 136, .06);
-      border-left: 3px solid var(--teal);
-      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      border-right: 3px solid var(--teal);
+      border-radius: var(--radius-sm) 0 0 var(--radius-sm);
       padding: 1.25rem 1.5rem;
       margin-top: 1.5rem;
     }
@@ -125,7 +105,6 @@
     }
 
     @media (max-width: 600px) {
-      .lab-card { flex-direction: column; text-align: center; }
       .team-member { flex-direction: column; text-align: center; }
     }
   </style>
@@ -136,23 +115,23 @@
 <nav class="navbar" id="navbar" style="background:rgba(248,250,252,.95);backdrop-filter:blur(12px)">
   <div class="container">
     <a href="index.html" class="nav-brand">
-      <img src="assets/logo_ark_transparent.png" alt="Idea2Paper logo">
+      <img src="../assets/logo_ark_transparent.png" alt="شعار Idea2Paper">
       Idea2Paper
     </a>
     <div class="nav-links" id="navLinks">
-      <a href="index.html">Home</a>
-      <a href="/dashboard">Dashboard</a>
-      <a href="doc.html">Docs</a>
-      <a href="about.html" style="color:var(--teal);font-weight:600">About</a>
-      <a href="zh/about.html" class="lang-toggle" title="切换到中文">🌐 中文</a>
-      <a href="ar/about.html" class="lang-toggle" title="التبديل إلى العربية">العربية</a>
+      <a href="index.html">الرئيسية</a>
+      <a href="/dashboard">لوحة التحكم</a>
+      <a href="doc.html">التوثيق</a>
+      <a href="about.html" style="color:var(--teal);font-weight:600">من نحن</a>
+      <a href="../about.html" class="lang-toggle" title="Switch to English">🌐 English</a>
+      <a href="../zh/about.html" class="lang-toggle" title="切换到中文">中文</a>
       <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener" class="gh-link">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 00-3.8 23.38c.6.11.82-.26.82-.58v-2.16c-3.34.73-4.04-1.61-4.04-1.61a3.18 3.18 0 00-1.33-1.76c-1.09-.74.08-.73.08-.73a2.52 2.52 0 011.84 1.24 2.56 2.56 0 003.5 1 2.56 2.56 0 01.76-1.61c-2.67-.3-5.47-1.33-5.47-5.93a4.64 4.64 0 011.24-3.22 4.3 4.3 0 01.12-3.18s1-.33 3.3 1.23a11.4 11.4 0 016 0c2.3-1.56 3.3-1.23 3.3-1.23a4.3 4.3 0 01.12 3.18 4.64 4.64 0 011.24 3.22c0 4.61-2.81 5.63-5.48 5.93a2.86 2.86 0 01.82 2.22v3.29c0 .32.21.7.82.58A12 12 0 0012 .3"/></svg>
         GitHub
       </a>
-      <a class="nav-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="assets/kaust-logo.svg" alt="KAUST" /></a>
+      <a class="nav-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="../assets/kaust-logo.svg" alt="KAUST" /></a>
     </div>
-    <button class="hamburger" id="hamburger" aria-label="Menu">
+    <button class="hamburger" id="hamburger" aria-label="القائمة">
       <span></span><span></span><span></span>
     </button>
   </div>
@@ -160,53 +139,53 @@
 
 <!-- Hero -->
 <section class="about-hero">
-  <h1 class="gradient-text">About Idea2Paper</h1>
-  <p>Idea2Paper is developed at <a href="https://sands.kaust.edu.sa/" target="_blank" rel="noopener">SANDS Lab</a>, KAUST. We build efficient and effective machine learning systems that accelerate the pace of scientific discovery.</p>
+  <h1 class="gradient-text">حول Idea2Paper</h1>
+  <p>يُطوَّر Idea2Paper في <a href="https://sands.kaust.edu.sa/" target="_blank" rel="noopener">مختبر SANDS</a> بجامعة الملك عبدالله للعلوم والتقنية (كاوست). نبني أنظمة تعلّم آلي فعّالة وكفؤة تُسرِّع وتيرة الاكتشاف العلمي.</p>
 </section>
 
 <!-- Content -->
 <div class="about-section">
 
-  <h2>Team</h2>
+  <h2>الفريق</h2>
   <div class="team-grid">
     <div class="team-member">
-      <img src="assets/jihao.jpg" alt="Jihao Xin" class="team-avatar">
+      <img src="../assets/jihao.jpg" alt="Jihao Xin" class="team-avatar">
       <div class="team-info">
         <h3>Jihao Xin</h3>
-        <div class="team-role">Lead Developer</div>
-        <a href="https://jihaoxin.github.io/" target="_blank" rel="noopener">Website</a>
+        <div class="team-role">المطوّر الرئيسي</div>
+        <a href="https://jihaoxin.github.io/" target="_blank" rel="noopener">الموقع الشخصي</a>
       </div>
     </div>
     <div class="team-member">
-      <img src="assets/yangzhixin.jpg" alt="Yangzhixin Luo" class="team-avatar">
+      <img src="../assets/yangzhixin.jpg" alt="Yangzhixin Luo" class="team-avatar">
       <div class="team-info">
         <h3>Yangzhixin Luo</h3>
-        <div class="team-role">Developer</div>
-        <a href="https://www.linkedin.com/in/yangzhixin-luo-887269361/" target="_blank" rel="noopener">Website</a>
+        <div class="team-role">مطوّر</div>
+        <a href="https://www.linkedin.com/in/yangzhixin-luo-887269361/" target="_blank" rel="noopener">الموقع الشخصي</a>
       </div>
     </div>
     <div class="team-member">
-      <img src="assets/bilal.jpg" alt="M. Bilal" class="team-avatar">
+      <img src="../assets/bilal.jpg" alt="Muhammad Bilal" class="team-avatar">
       <div class="team-info">
         <h3>Muhammad Bilal</h3>
-        <div class="team-role">Developer</div>
-        <a href="https://www.linkedin.com/in/mbilalce/" target="_blank" rel="noopener">Website</a>
+        <div class="team-role">مطوّر</div>
+        <a href="https://www.linkedin.com/in/mbilalce/" target="_blank" rel="noopener">الموقع الشخصي</a>
       </div>
     </div>
     <div class="team-member">
-      <img src="assets/marco.jpg" alt="Marco Canini" class="team-avatar">
+      <img src="../assets/marco.jpg" alt="Marco Canini" class="team-avatar">
       <div class="team-info">
         <h3>Marco Canini</h3>
-        <div class="team-role">Advisor</div>
-        <a href="https://mcanini.github.io/" target="_blank" rel="noopener">Website</a>
+        <div class="team-role">المشرف</div>
+        <a href="https://mcanini.github.io/" target="_blank" rel="noopener">الموقع الشخصي</a>
       </div>
     </div>
   </div>
 
-  <h2>Contact</h2>
+  <h2>تواصل معنا</h2>
   <div class="contact-box">
-    <p>For questions, collaborations, or feedback about Idea2Paper, reach out to <a href="mailto:contact@idea2paper.org">contact@idea2paper.org</a>.</p>
-    <p>For bug reports and feature requests, please open an issue on <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener">GitHub</a>.</p>
+    <p>للأسئلة أو التعاون أو الملاحظات حول Idea2Paper، راسلنا على <a href="mailto:contact@idea2paper.org">contact@idea2paper.org</a>.</p>
+    <p>للإبلاغ عن الأخطاء أو اقتراح ميزات جديدة، افتح مشكلة (issue) على <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener">GitHub</a>.</p>
   </div>
 
 </div>
@@ -215,14 +194,14 @@
 <footer class="footer">
   <div class="container">
     <div class="footer-brand">
-      <img src="assets/logo_ark_transparent.png" alt="Idea2Paper">
+      <img src="../assets/logo_ark_transparent.png" alt="Idea2Paper">
       Idea2Paper
     </div>
     <div class="footer-links">
-      <a href="about.html">About</a>
+      <a href="about.html">من نحن</a>
     </div>
-    <p class="footer-note">Built with <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">Claude Code</a></p>
-    <a class="footer-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="assets/kaust-logo.svg" alt="KAUST" /></a>
+    <p class="footer-note">بُني باستخدام <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">Claude Code</a></p>
+    <a class="footer-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="../assets/kaust-logo.svg" alt="KAUST" /></a>
   </div>
 </footer>
 
