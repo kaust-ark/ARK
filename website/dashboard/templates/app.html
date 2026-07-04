@@ -1770,8 +1770,19 @@ Strict — hit the exact page limit (spends the most tokens).">
     </div>
     
     <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:12px 14px; margin-bottom:20px; font-size:.85rem; color:#166534">
-      💡 <b>Bring Your Own Key:</b> Keys are stored <b>encrypted</b> (per-user key derivation, AES/Fernet) and used only for your own research projects.
+      💡 <b>Bring Your Own Key:</b> Keys are stored <b>encrypted</b> and used only for your own research projects.
       Best practice: create a <b>dedicated key with a spending cap</b> and revoke it when you're done.
+      <button type="button" onclick="const n=document.getElementById('key-crypto-note');n.style.display=n.style.display==='none'?'block':'none'"
+        title="How is my key stored?" aria-label="How is my key stored?"
+        style="display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;border:1.2px solid #166534;background:none;color:#166534;font-size:.72rem;font-weight:700;cursor:pointer;vertical-align:text-bottom;margin-left:2px">?</button>
+      <div id="key-crypto-note" style="display:none;margin-top:8px;padding-top:8px;border-top:1px dashed #bbf7d0;color:#14532d;line-height:1.55">
+        <b>How is my key stored?</b> Encrypted at rest with <b>AES/Fernet</b>; the encryption key is
+        derived <b>per user</b> via PBKDF2-SHA256 (100k iterations), so one account's data cannot
+        decrypt another's. The key is decrypted server-side <b>only while your own project is
+        running</b> — the agents need it to call the model API on your behalf. This is server-side
+        (not end-to-end) encryption, which is exactly why we recommend a <b>capped, dedicated key</b>
+        that you revoke after use.
+      </div>
     </div>
 
     <div class="settings-layout">
