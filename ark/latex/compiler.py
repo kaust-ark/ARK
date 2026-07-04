@@ -1136,6 +1136,19 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
         api_key = get_api_key()
         if not api_key and not os.environ.get("OPENROUTER_API_KEY"):
             self.log("No Gemini or OpenRouter API key found, skipping AI figure generation", "WARN")
+            # Tell the USER, not just the log — an OpenAI-only user silently got
+            # papers without concept figures and had no idea why (d239c708).
+            try:
+                self._chat(
+                    "agent",
+                    "ℹ️ AI concept figures were skipped: no Gemini or OpenRouter "
+                    "API key is configured. Data figures are unaffected. To get "
+                    "AI-generated overview/method figures, add an OpenRouter or "
+                    "Gemini key in Settings → API Keys, then Continue the project.",
+                    kind="notice",
+                )
+            except Exception:
+                pass
             return 0
 
         venue = self.config.get("venue", "")
