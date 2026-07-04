@@ -1737,15 +1737,23 @@ Strict — hit the exact page limit (spends the most tokens).">
 
 <!-- ONBOARDING MODAL — first-run nudge to configure an API key -->
 <div class="modal-backdrop" id="modal-onboarding">
-  <div class="modal" style="max-width:520px;text-align:center">
+  <div class="modal" style="max-width:560px;text-align:center">
     <img src="{{ app_base }}/static/logo_ark_transparent.png" alt="Idea2Paper" style="height:56px;margin:4px auto 14px;display:block" />
     <h3 style="margin:0 0 8px" data-i18n="onboard_title">Welcome to Idea2Paper 👋</h3>
-    <p style="font-size:.92rem;color:var(--text-second);line-height:1.6;margin:0 0 18px" data-i18n-html="onboard_body">
-      One quick step before you launch research: add an API key so projects can run on your own account.
-      We recommend <strong>OpenRouter</strong> — a single key unlocks Claude, GPT, Gemini and more.
+    <p style="font-size:.92rem;color:var(--text-second);line-height:1.6;margin:0 0 14px;text-align:left" data-i18n-html="onboard_body">
+      One quick step before you launch research: add an API key.
+      We <strong>strongly recommend OpenRouter</strong> — one key powers the entire pipeline.
+      With a single-vendor key (only OpenAI or only Anthropic), <strong>AI concept figures and
+      Deep Research are unavailable</strong> — they need Gemini or OpenRouter.
     </p>
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 14px;margin:0 0 10px;font-size:.84rem;color:#1e3a8a;text-align:left;line-height:1.6">
+      <span data-i18n-html="onboard_cost">💰 Recommended model: <strong>DeepSeek V4 Pro</strong> (via OpenRouter) — a full paper
+      typically costs <strong>~$5</strong>, about 10× cheaper than GPT/Claude flagship models, with solid results.</span>
+    </div>
     <div style="background:#f0fdfa;border:1px solid #ccfbf1;border-radius:10px;padding:12px 14px;margin:0 0 20px;font-size:.84rem;color:#134e4a;text-align:left;line-height:1.6">
-      <span data-i18n="onboard_hint">🔑 Your keys are stored encrypted and used only for your own projects. You can add or remove them anytime in Settings.</span>
+      <span data-i18n-html="onboard_hint">🔐 Your keys are stored <strong>encrypted</strong> (per-user key derivation, AES/Fernet) and
+      used only for your own projects. Best practice: create a <strong>dedicated API key with a spending cap</strong>,
+      and revoke it when you're done. Manage keys anytime in Settings.</span>
     </div>
     <div style="display:flex;gap:10px;justify-content:center">
       <button class="btn-secondary" onclick="closeModal('modal-onboarding')" data-i18n="onboard_later">Maybe later</button>
@@ -1762,7 +1770,8 @@ Strict — hit the exact page limit (spends the most tokens).">
     </div>
     
     <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:12px 14px; margin-bottom:20px; font-size:.85rem; color:#166534">
-      💡 <b>Bring Your Own Key:</b> Configure your API keys here. They are stored encrypted and only used for your own research projects.
+      💡 <b>Bring Your Own Key:</b> Keys are stored <b>encrypted</b> (per-user key derivation, AES/Fernet) and used only for your own research projects.
+      Best practice: create a <b>dedicated key with a spending cap</b> and revoke it when you're done.
     </div>
 
     <div class="settings-layout">
@@ -2069,8 +2078,9 @@ const TRANSLATIONS = {
     telegram_settings_intro: "Get progress updates and answer the project's questions from Telegram. This is optional — leave it blank, or clear it and save to stop all Telegram notifications.",
     telegram_clear_hint: 'To turn Telegram off, clear both fields and save. New projects will no longer send messages.',
     onboard_title: 'Welcome to Idea2Paper 👋',
-    onboard_body: 'One quick step before you launch research: add an API key so projects can run on your own account. We recommend <strong>OpenRouter</strong> — a single key unlocks Claude, GPT, Gemini and more.',
-    onboard_hint: '🔑 Your keys are stored encrypted and used only for your own projects. You can add or remove them anytime in Settings.',
+    onboard_body: 'One quick step before you launch research: add an API key. We <strong>strongly recommend OpenRouter</strong> — one key powers the entire pipeline. With a single-vendor key (only OpenAI or only Anthropic), <strong>AI concept figures and Deep Research are unavailable</strong> — they need Gemini or OpenRouter.',
+    onboard_cost: '💰 Recommended model: <strong>DeepSeek V4 Pro</strong> (via OpenRouter) — a full paper typically costs <strong>~$5</strong>, about 10× cheaper than GPT/Claude flagship models, with solid results.',
+    onboard_hint: '🔐 Your keys are stored <strong>encrypted</strong> (per-user key derivation, AES/Fernet) and used only for your own projects. Best practice: create a <strong>dedicated API key with a spending cap</strong>, and revoke it when you\'re done. Manage keys anytime in Settings.',
     onboard_later: 'Maybe later',
     onboard_cta: 'Add API key',
     tg_how: '<b>How to set up:</b> 1. Message <a href="https://t.me/BotFather" target="_blank">@BotFather</a>, send <code>/newbot</code> to get a Bot Token &nbsp;·&nbsp; 2. Message <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> to get your Chat ID',
@@ -2216,8 +2226,9 @@ const TRANSLATIONS = {
     telegram_settings_intro: 'احصل على تحديثات التقدّم وأجب عن أسئلة المشروع عبر Telegram. هذا اختياري — اتركه فارغًا، أو امسحه واحفظ لإيقاف كل إشعارات Telegram.',
     telegram_clear_hint: 'لإيقاف Telegram، امسح الحقلين واحفظ. لن ترسل المشاريع الجديدة أي رسائل.',
     onboard_title: 'مرحبًا بك في Idea2Paper 👋',
-    onboard_body: 'خطوة سريعة قبل إطلاق بحثك: أضف مفتاح API لتعمل المشاريع على حسابك الخاص. نوصي بـ <strong>OpenRouter</strong> — مفتاح واحد يفتح Claude وGPT وGemini والمزيد.',
-    onboard_hint: '🔑 تُخزَّن مفاتيحك مشفّرة وتُستخدم فقط لمشاريعك. يمكنك إضافتها أو إزالتها في أي وقت من الإعدادات.',
+    onboard_body: 'خطوة سريعة قبل إطلاق بحثك: أضف مفتاح API. <strong>نوصي بشدة بـ OpenRouter</strong> — مفتاح واحد يشغّل كامل خط الأنابيب. مع مفتاح مزوّد واحد فقط (OpenAI أو Anthropic وحدهما)، <strong>لن تتوفر الأشكال المفاهيمية بالذكاء الاصطناعي ولا البحث المعمّق</strong> — فهما يحتاجان Gemini أو OpenRouter.',
+    onboard_cost: '💰 النموذج الموصى به: <strong>DeepSeek V4 Pro</strong> (عبر OpenRouter) — تكلفة الورقة الكاملة عادةً <strong>نحو 5$</strong>، أي أرخص بنحو 10 مرات من نماذج GPT/Claude الرائدة، وبنتائج جيدة.',
+    onboard_hint: '🔐 تُخزَّن مفاتيحك <strong>مشفّرة</strong> (اشتقاق مفتاح لكل مستخدم، AES/Fernet) وتُستخدم فقط لمشاريعك. أفضل ممارسة: أنشئ <strong>مفتاح API مستقلاً بسقف إنفاق</strong>، واسحبه عند الانتهاء. يمكنك إدارة المفاتيح في أي وقت من الإعدادات.',
     onboard_later: 'لاحقًا',
     onboard_cta: 'إضافة مفتاح API',
     tg_how: '<b>طريقة الإعداد:</b> 1. أرسل <code>/newbot</code> إلى <a href="https://t.me/BotFather" target="_blank">@BotFather</a> للحصول على Bot Token &nbsp;·&nbsp; 2. أرسل رسالة إلى <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> للحصول على Chat ID',
@@ -2350,8 +2361,9 @@ const TRANSLATIONS = {
     telegram_settings_intro: '通过 Telegram 接收进度更新并回答项目的提问。此项可选——留空，或清空后保存即可停止所有 Telegram 通知。',
     telegram_clear_hint: '要关闭 Telegram，请清空两个字段并保存。新项目将不再发送消息。',
     onboard_title: '欢迎使用 Idea2Paper 👋',
-    onboard_body: '启动研究前还有一步：添加一个 API Key，让项目在你自己的账户上运行。推荐使用 <strong>OpenRouter</strong>——一个 Key 即可解锁 Claude、GPT、Gemini 等多种模型。',
-    onboard_hint: '🔑 你的密钥会加密存储，仅用于你自己的项目。可随时在设置中添加或删除。',
+    onboard_body: '启动研究前还有一步：添加一个 API Key。<strong>强烈推荐使用 OpenRouter</strong>——一个 Key 驱动整条流水线。若只配置单一厂商的 Key（仅 OpenAI 或仅 Anthropic），<strong>AI 概念图和 Deep Research 将不可用</strong>——它们需要 Gemini 或 OpenRouter。',
+    onboard_cost: '💰 推荐模型：<strong>DeepSeek V4 Pro</strong>（经 OpenRouter）——一篇完整论文成本约 <strong>$5</strong>，比 GPT/Claude 旗舰模型便宜约 10 倍，效果不错。',
+    onboard_hint: '🔐 你的密钥<strong>加密存储</strong>（按用户派生密钥，AES/Fernet），仅用于你自己的项目。最佳实践：创建一个<strong>带消费上限的独立 API Key</strong>，用完即回收。可随时在设置中管理。',
     onboard_later: '稍后再说',
     onboard_cta: '添加 API Key',
     tg_how: '<b>设置方法：</b>1. 向 <a href="https://t.me/BotFather" target="_blank">@BotFather</a> 发送 <code>/newbot</code> 获取 Bot Token &nbsp;·&nbsp; 2. 向 <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a> 发送消息获取 Chat ID',
