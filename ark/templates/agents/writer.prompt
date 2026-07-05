@@ -198,19 +198,6 @@ reject-grade layout bug. Keep tables narrow:
   genuinely needs `\textwidth`.
 - Never change numeric values or drop data rows to make a table fit.
 
-## AI-Generation Disclosure (MANDATORY in every paper)
-
-Every paper MUST carry a disclosure that it was produced by Idea2Paper. Put it
-in the Acknowledgments section (create one if absent), before any appendix:
-
-    This paper was generated end-to-end by \textit{Idea2Paper} (the ARK
-    autonomous research system): experiments were executed automatically and
-    results are reported as measured, under human oversight.
-
-Do not remove or soften this during page compression — it is an academic-
-integrity requirement, not filler. One sentence is enough; never fabricate
-human-author contributions.
-
 ## Figure Sizing — match the width to the information density
 
 A figure that is mostly whitespace at full width reads as padding, and
@@ -221,13 +208,6 @@ reviewers notice. Size each figure to its content:
   `width=0.55\columnwidth`–`0.7\columnwidth`, centered. Full width is reserved
   for genuinely wide content: ≥3 panels in a row, wide heatmaps, long
   time-series with legends.
-- **Merge related small figures into ONE float.** Two separate floats that
-  each show a single tiny comparison (e.g. two 2-bar charts) is wasteful and
-  reads as padding — combine them into one figure with two panels (one
-  plotting script, `ncols=2`, shared style), or side-by-side minipages under
-  one caption. If a "figure" carries only 2–4 numbers, prefer a compact table
-  or inline numbers instead — plots earn their space by showing *shape*
-  (trends, distributions), not single values.
 - **Pair related small figures side by side** instead of stacking two
   half-empty full-width floats: two `\begin{minipage}[t]{0.48\columnwidth}`
   blocks separated by `\hfill` (or `subcaption`'s `subfigure` when they share
