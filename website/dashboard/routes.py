@@ -1591,6 +1591,29 @@ async def share_view(token: str, request: Request):
 
 # ── auth ──────────────────────────────────────────────────────────────────────
 
+# Magic-link abuse guard. With CF Access removed from the public dashboard,
+# /auth/send-link is an internet-reachable email sender. Sliding-window limits:
+# per-IP (bots), per-target-email (mailbox bombing from many IPs), and a global
+# hourly backstop. In-process state is fine — the webapp is a single process.
+_SENDLINK_BY_IP: dict[str, list] = {}
+_SENDLINK_BY_EMAIL: dict[str, list] = {}
+_SENDLINK_GLOBAL: list = []
+_SENDLINK_IP_LIMIT = (5, 900)         # 5 links / 15 min per IP
+_SENDLINK_EMAIL_LIMIT = (3, 900)      # 3 links / 15 min per target inbox
+_SENDLINK_GLOBAL_LIMIT = (120, 3600)  # site-wide safety valve
+
+
+def _rate_ok(bucket: list, limit: tuple[int, int]) -> bool:
+    import time as _time
+    n, window = limit
+    now = _time.time()
+    bucket[:] = [t for t in bucket if now - t < window]
+    if len(bucket) >= n:
+        return False
+    bucket.append(now)
+    return True
+
+
 @router.post("/auth/send-link")
 async def auth_send_link(request: Request):
     settings = get_settings()
@@ -1598,6 +1621,16 @@ async def auth_send_link(request: Request):
     email = (body.get("email") or "").strip().lower()
     if not email or "@" not in email:
         raise HTTPException(400, "Invalid email address")
+
+    from .request_access import _client_ip
+    ip = _client_ip(request)
+    if not _rate_ok(_SENDLINK_BY_IP.setdefault(ip, []), _SENDLINK_IP_LIMIT):
+        raise HTTPException(429, "Too many login links requested — try again in a few minutes.")
+    if not _rate_ok(_SENDLINK_BY_EMAIL.setdefault(email, []), _SENDLINK_EMAIL_LIMIT):
+        raise HTTPException(429, "Too many login links for this address — check your inbox or try later.")
+    if not _rate_ok(_SENDLINK_GLOBAL, _SENDLINK_GLOBAL_LIMIT):
+        logger.warning(f"send-link GLOBAL rate limit hit (requested by {ip})")
+        raise HTTPException(429, "Login is briefly rate-limited — please try again in a few minutes.")
 
     # Per-email whitelist (takes priority over domain check)
     if settings.allowed_emails:
