@@ -558,9 +558,8 @@ def _maybe_route_via_openrouter(model_str: str, keys: dict) -> str:
     provider = model_str.split("/", 1)[0]
     if provider == "openrouter":
         return model_str
-    native = _OPENROUTER_NATIVE_KEY.get(provider)
-    if native and keys.get(native):
-        return model_str  # user has the direct key — use it
+    if keys.get(provider):
+        return model_str  # user has the direct key (mainstream or long-tail) — use it
     if keys.get("openrouter"):
         slug = _OPENROUTER_SLUG.get(model_str)
         if slug:
@@ -2589,7 +2588,10 @@ async def api_post_message(project_id: str, request: Request):
             add_message(session, project_id, "user", text, kind="message")
             pdir = _project_dir(settings, project.user_id, project_id)
             model = _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
-            _write_config_yaml(pdir, project, user, settings, model=model)
+            # Config must reflect the OWNER's keys (reroute, cloud, github),
+            # not the requester's — an admin may be acting on a user's project.
+            _owner = get_user(session, project.user_id) or user
+            _write_config_yaml(pdir, project, _owner, settings, model=model)
             tg_token = project.telegram_token
             tg_chat = project.telegram_chat_id
             project.status = "initializing"
@@ -2627,7 +2629,8 @@ async def api_post_message(project_id: str, request: Request):
                 add_message(session, project_id, "user", text, kind="ask")
                 pdir = _project_dir(settings, project.user_id, project_id)
                 model = _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
-                _write_config_yaml(pdir, project, user, settings, model=model)
+                _owner = get_user(session, project.user_id) or user
+                _write_config_yaml(pdir, project, _owner, settings, model=model)
                 tg_token = project.telegram_token
                 tg_chat = project.telegram_chat_id
                 project.status = "initializing"
@@ -2772,8 +2775,10 @@ async def api_restart_project(project_id: str, request: Request):
             venue_pages=project.venue_pages,
         )
 
-        # Rewrite config.yaml with updated settings
-        model = body.get("model", "claude-sonnet-4-6")
+        # Rewrite config.yaml with updated settings. Default to the project's
+        # OWN model, not a hardcoded one — a restart without an explicit model
+        # choice must never silently switch providers.
+        model = body.get("model") or _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
         new_backend = body.get("compute_backend")
         if new_backend:
              _reject_unknown_backend(new_backend, VALID_EXPERIMENT_TYPES, "experiment")
@@ -2791,7 +2796,7 @@ async def api_restart_project(project_id: str, request: Request):
             val = json.dumps(new_cloud_overrides) if isinstance(new_cloud_overrides, dict) else (new_cloud_overrides or "")
             update_project(session, project, cloud_overrides=val)
 
-        _write_config_yaml(pdir, project, user, settings, model=model)
+        _write_config_yaml(pdir, project, _owner or user, settings, model=model)
 
         # Write instructions if provided
         comment = body.get("comment", "").strip()
@@ -2885,7 +2890,7 @@ async def api_continue_project(project_id: str, request: Request):
             val = json.dumps(new_cloud_overrides) if isinstance(new_cloud_overrides, dict) else (new_cloud_overrides or "")
             update_project(session, project, cloud_overrides=val)
 
-        _write_config_yaml(pdir, project, user, settings, model=model)
+        _write_config_yaml(pdir, project, _owner or user, settings, model=model)
         if comment:
             _write_user_update(pdir, comment, source="webapp_continue")
             _write_user_instructions(pdir, comment, source="webapp_continue")
@@ -2937,7 +2942,8 @@ async def api_apply_change(project_id: str, request: Request):
                                      f"Max {MAX_CONCURRENT_PER_USER} concurrent.")
         pdir = _project_dir(settings, project.user_id, project_id)
         model = _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
-        _write_config_yaml(pdir, project, user, settings, model=model)
+        _owner = get_user(session, project.user_id) or user
+        _write_config_yaml(pdir, project, _owner, settings, model=model)
         tg_token = project.telegram_token
         tg_chat = project.telegram_chat_id
         project.status = "initializing"
