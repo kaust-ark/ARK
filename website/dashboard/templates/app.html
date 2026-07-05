@@ -2867,6 +2867,7 @@ async function loadGateBanner() {
       // Drive home-page model gating from saved keys (so it's correct on first
       // load, not only after opening Settings).
       window._userKeyProviders = _computeKeyProviders(uData.anthropic, uData.openai, uData.gemini, uData.openrouter);
+      if (typeof _loadOtherProviders === 'function') _loadOtherProviders(uData);  // long-tail keys drive dropdown gating too
       if (typeof applyModelGating === 'function') applyModelGating();
       window._userGcpDefaults = {
         zone:          uData.gcp_zone          || '',
@@ -5229,6 +5230,30 @@ function applyModelGating() {
     lbl.title = ok ? '' : 'Add a ' + prov + ' API key in Settings → API Keys to use this model';
     const input = lbl.querySelector('input'); if (input) input.disabled = !ok;
   });
+  // The dropdowns were the ungated back door: three real users launched
+  // deepseek/… models from "Others" with no matching key (2026-07-05).
+  // An option is usable iff its provider has a key, OR an OpenRouter key
+  // exists (launch reroutes any model through OpenRouter).
+  const others = window._otherProviders || {};
+  const orKey = !!have.openrouter;
+  const unver = document.getElementById('model-unverified');
+  if (unver) {
+    unver.querySelectorAll('option[value]').forEach(o => {
+      if (!o.value) return;
+      const prov = o.value.split('/')[0];
+      const ok = orKey || !!have[prov] || !!others[prov];
+      o.disabled = !ok;
+      if (!ok && !o.textContent.includes('(no key)')) o.textContent += ' (no key)';
+      if (ok) o.textContent = o.textContent.replace(' (no key)', '');
+    });
+    if (unver.value && unver.selectedOptions[0] && unver.selectedOptions[0].disabled) unver.value = '';
+  }
+  const orMore = document.getElementById('model-openrouter-more');
+  if (orMore) {
+    orMore.disabled = !orKey;
+    orMore.title = orKey ? '' : 'Add an OpenRouter API key in Settings to use these models';
+    if (!orKey) orMore.value = '';
+  }
   applyVendorCollapse();
   selectDefaultModel();
 }

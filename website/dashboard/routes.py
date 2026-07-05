@@ -353,7 +353,10 @@ def _require_model_key(keys: dict, model_variant: str) -> None:
     prov = (model_variant.split("/", 1)[0] if "/" in (model_variant or "") else "anthropic").lower()
     ok = bool(keys.get(prov)) or (
         prov == "anthropic" and keys.get("claude_oauth_token")) or (
-        prov == "gemini" and keys.get("gemini_oauth_json"))
+        prov == "gemini" and keys.get("gemini_oauth_json")) or (
+        # An OpenRouter key covers everything: _maybe_route_via_openrouter
+        # rewrites native/long-tail models to openrouter/<slug> at launch.
+        bool(keys.get("openrouter")))
     if not ok:
         nice = {"openrouter": "OpenRouter", "anthropic": "Anthropic",
                 "openai": "OpenAI", "gemini": "Gemini"}.get(prov, prov.capitalize())
@@ -562,6 +565,11 @@ def _maybe_route_via_openrouter(model_str: str, keys: dict) -> str:
         slug = _OPENROUTER_SLUG.get(model_str)
         if slug:
             return f"openrouter/{slug}"
+        if provider not in _OPENROUTER_NATIVE_KEY:
+            # Long-tail vendors (deepseek, xai, moonshot, …): OpenRouter slugs
+            # keep the provider/model shape, so route generically instead of
+            # dying with "no key found" (a real user hit this on 2026-07-05).
+            return f"openrouter/{model_str}"
     return model_str
 
 
