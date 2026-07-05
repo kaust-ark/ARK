@@ -399,6 +399,16 @@ def _ensure_schema(engine, url: str) -> None:
         command.stamp(cfg, "head")
     else:
         command.upgrade(cfg, "head")
+    # Safety net after adoption-by-stamp: stamping ASSUMES a pre-Alembic DB
+    # already carries the full current schema, which is false for DBs older
+    # than newer models — the shared prod DB lacked artifact / projectevent /
+    # projectstatedoc and every Live-Log poll 500'd (528 ASGI errors in 2h).
+    # create_all is additive + idempotent (creates only missing tables, never
+    # alters existing ones), and the legacy column-level _migrate covers
+    # missing COLUMNS on old sqlite tables the same way.
+    SQLModel.metadata.create_all(engine)
+    if url.startswith("sqlite"):
+        _migrate(engine)
 
 
 def get_engine(db_path: str):
