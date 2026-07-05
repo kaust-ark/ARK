@@ -81,6 +81,7 @@ class TestSlurmInjection:
         }
         safe_keys = {k: shlex.quote(v) for k, v in malicious_keys.items()}
 
+        from website.dashboard.jobs import api_keys_to_env
         rendered = template.render(
             project_id="test",
             project_dir="/tmp/test",
@@ -93,6 +94,7 @@ class TestSlurmInjection:
             cpus_per_task=1,
             conda_env="ark",
             api_keys=safe_keys,
+            api_env=api_keys_to_env(safe_keys),
         )
 
         # shlex.quote wraps values in single quotes — verify safe versions appear

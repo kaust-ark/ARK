@@ -145,6 +145,73 @@ _tg_offsets: dict[str, int] = {}     # project_id → last Telegram update_id se
 STUCK_MINUTES = 60
 
 
+def _notify_terminal_sweep(session, settings):
+    """Reliable terminal notifications: DONE → email the OWNER; FAILED → email
+    the primary ADMIN (plus the owner's Telegram in both cases).
+
+    Sweep-based for the same reason as _gc_terminal_envs: the orchestrator
+    usually writes its terminal status straight to the DB, so poll-loop
+    transition hooks never fire for it — completion emails were silently
+    skipped for every self-reported `done`. A marker file in the project dir
+    (.ark_terminal_notified) makes each project notify exactly once; only
+    projects that turned terminal recently (<6 h) are considered, so historical
+    rows never get retro-notified.
+    """
+    from datetime import datetime, timedelta
+    from .db import Project, get_user
+    from .notify import send_failure_email
+    from .constants import DASHBOARD_PREFIX
+    from sqlmodel import select
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=6)
+        recent = session.exec(
+            select(Project).where(Project.status.in_(["done", "failed"]),
+                                  Project.updated_at > cutoff)
+        ).all()
+        for p in recent:
+            pdir = settings.projects_root / p.user_id / p.id
+            marker = pdir / ".ark_terminal_notified"
+            if marker.exists() or not pdir.is_dir():
+                continue
+            url = f"{settings.base_url}{DASHBOARD_PREFIX}/#project/{p.id}"
+            owner = get_user(session, p.user_id)
+            try:
+                if p.status == "done":
+                    score = float(p.score or 0.0)
+                    ps = pdir / "auto_research" / "state" / "paper_state.yaml"
+                    if ps.exists():
+                        import yaml as _yaml
+                        score = float((_yaml.safe_load(ps.read_text()) or {}).get("current_score", score))
+                    send_telegram_notify(
+                        f"✅ <b>{_pname(p)}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
+                        bot_token=p.telegram_token, chat_id=p.telegram_chat_id)
+                    if owner:
+                        pdfs = sorted((pdir / "paper").glob("*.pdf"),
+                                      key=lambda x: x.stat().st_mtime, reverse=True)
+                        send_completion_email(
+                            settings, to_email=owner.email, project_name=_pname(p),
+                            score=score, pdf_path=str(pdfs[0]) if pdfs else None,
+                            project_url=url)
+                else:  # failed → alert the primary admin, not the whole team
+                    send_telegram_notify(
+                        f"❌ <b>{_pname(p)}</b> failed\n<a href='{url}'>{url}</a>",
+                        bot_token=p.telegram_token, chat_id=p.telegram_chat_id)
+                    admins = getattr(settings, "admin_emails", []) or []
+                    if admins:
+                        send_failure_email(
+                            settings, to_email=admins[0], project_name=_pname(p),
+                            owner_email=(owner.email if owner else p.user_id),
+                            error=p.error_message or "", project_url=url)
+                logger.info(f"terminal notify: {p.id} ({p.status})")
+            finally:
+                try:
+                    marker.write_text(p.status)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning(f"terminal notify sweep failed: {e}")
+
+
 def _stuck_watchdog(p, launcher, pdir):
     """Alert once if a running project's orchestrator log has been silent for
     more than STUCK_MINUTES. The launcher reports the newest log mtime (or None
@@ -292,42 +359,10 @@ async def _poll_jobs(app: FastAPI):
                                     f"🚀 <b>{_pname(p)}</b> started running\n<a href='{url}'>{url}</a>",
                                     bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                                 )
-                            elif new_status == "done":
-                                # Read score from paper_state.yaml (authoritative)
-                                score = 0.0
-                                ps = pdir / "auto_research" / "state" / "paper_state.yaml"
-                                if ps.exists():
-                                    import yaml as _yaml
-                                    d = _yaml.safe_load(ps.read_text()) or {}
-                                    score = float(d.get("current_score", 0))
-                                send_telegram_notify(
-                                    f"✅ <b>{_pname(p)}</b> done — {score:.1f}/10\n<a href='{url}'>{url}</a>",
-                                    bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                                )
-                                # Send completion email
-                                user = get_user(session, p.user_id)
-                                if user:
-                                    pdf_files = sorted(
-                                        (pdir / "paper").glob("*.pdf"),
-                                        key=lambda x: x.stat().st_mtime,
-                                        reverse=True,
-                                    )
-                                    pdf_path = str(pdf_files[0]) if pdf_files else None
-                                    send_completion_email(
-                                        settings,
-                                        to_email=user.email,
-                                        project_name=_pname(p),
-                                        score=score,
-                                        pdf_path=pdf_path,
-                                        project_url=url,
-                                    )
-                                _log_mtimes.pop(p.id, None)
-                                _stuck_alerted.discard(p.id)
-                            elif new_status in ("failed", "stopped"):
-                                send_telegram_notify(
-                                    f"❌ <b>{_pname(p)}</b> {new_status}\n<a href='{url}'>{url}</a>",
-                                    bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-                                )
+                            elif new_status in ("done", "failed", "stopped"):
+                                # done/failed emails + telegram are owned by
+                                # _notify_terminal_sweep (reliable for self-
+                                # reported terminals too); just clean trackers.
                                 _log_mtimes.pop(p.id, None)
                                 _stuck_alerted.discard(p.id)
 
@@ -345,6 +380,9 @@ async def _poll_jobs(app: FastAPI):
                 # Reclaim disk from finished projects' conda envs (reliable sweep;
                 # the transition-based GC above misses orchestrator-self-reported done)
                 _gc_terminal_envs(session, settings)
+                # DONE → owner email; FAILED → admin email (reliable sweep, same
+                # rationale as the GC sweep)
+                _notify_terminal_sweep(session, settings)
 
         except asyncio.CancelledError:
             break

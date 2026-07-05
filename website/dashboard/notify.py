@@ -905,3 +905,42 @@ we'll be happy to take another look.
             logger.warning(f"SMTP failed ({e}), trying sendmail fallback…")
 
     return _sendmail_fallback(from_addr, to_email, msg_str)
+
+def send_failure_email(settings, to_email: str, project_name: str,
+                       owner_email: str, error: str, project_url: str) -> bool:
+    """Alert an ADMIN that a user's project failed (plain text, ops-oriented)."""
+    from email.mime.text import MIMEText as _MT
+    from email.utils import formatdate, make_msgid
+    body = (
+        f"Project FAILED on Idea2Paper\n\n"
+        f"Project: {project_name}\n"
+        f"Owner:   {owner_email}\n"
+        f"Error:   {(error or '(no error message)')[:600]}\n\n"
+        f"Open: {project_url}\n"
+    )
+    msg = _MT(body)
+    from_addr = getattr(settings, "smtp_from", "") or "contact@idea2paper.org"
+    msg["From"] = f"Idea2Paper Ops <{from_addr}>"
+    msg["To"] = to_email
+    msg["Subject"] = f"[Idea2Paper] FAILED: {project_name[:60]} ({owner_email})"
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain="idea2paper.org")
+    msg_str = msg.as_string()
+    relay = getattr(settings, "smtp_relay", "")
+    if relay:
+        try:
+            with smtplib.SMTP(relay, 25, timeout=10) as server:
+                server.sendmail(from_addr, to_email, msg_str)
+            return True
+        except Exception as e:
+            logger.warning(f"Relay failed ({e}), trying SMTP auth…")
+    if settings.smtp_user and settings.smtp_password:
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
+                server.starttls()
+                server.login(settings.smtp_user, settings.smtp_password)
+                server.sendmail(from_addr, to_email, msg_str)
+            return True
+        except Exception as e:
+            logger.warning(f"SMTP failed ({e}), trying sendmail fallback…")
+    return _sendmail_fallback(from_addr, to_email, msg_str)

@@ -398,6 +398,17 @@ def api_keys_to_env(api_keys: dict[str, str]) -> dict[str, str]:
             env[k.upper()] = v
         elif k.startswith("azure_"):
             env[k.upper()] = v
+        elif k.startswith(("gcp_", "github_")) or k == "gemini_oauth_json":
+            continue  # file-based / orchestrator-local concerns, not env keys
+        elif isinstance(v, str) and v and k.isidentifier():
+            # Long-tail provider key stored under its BARE provider name
+            # ('deepseek', 'xai', 'mistral', …) by the Settings "Other
+            # providers" sweep. Matches llm_lite.provider_key_env's
+            # <PROVIDER>_API_KEY convention, which the OpenHands engine reads.
+            # Without this branch such keys were stored + verified but NEVER
+            # injected into runs — a user with a valid direct DeepSeek key had
+            # two launches die with "no key found" (2026-07-05).
+            env[f"{k.upper()}_API_KEY"] = v
     return env
 
 
@@ -458,6 +469,7 @@ def submit_job(
         cpus_per_task=settings.slurm_cpus_per_task,
         conda_env=settings.slurm_conda_env,
         api_keys=safe_api_keys,
+        api_env=api_keys_to_env(safe_api_keys),
         db_path=db_path,
         control_plane_url=shlex.quote(cp_url) if cp_url else "",
         control_plane_token=shlex.quote(cp_token) if cp_token else "",
