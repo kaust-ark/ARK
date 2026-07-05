@@ -387,6 +387,8 @@ def api_keys_to_env(api_keys: dict[str, str]) -> dict[str, str]:
     newly-supported provider key reaches both launch paths."""
     env: dict[str, str] = {}
     for k, v in (api_keys or {}).items():
+        if not v:
+            continue  # never export empty-valued keys — absence IS the signal
         if k == "claude_oauth_token":
             env["CLAUDE_CODE_OAUTH_TOKEN"] = v
         elif k.endswith("_api_key") or k in ("gemini", "anthropic", "openai", "openrouter"):
@@ -823,6 +825,19 @@ def launch_local_job(
 
     # Prepare environment with user keys and home isolation
     env = os.environ.copy()
+    # The webapp's own environ may carry server-side credentials: ``ark.cli
+    # main()`` loads the operator's global ~/.ark config keys into os.environ
+    # at startup (GOOGLE_API_KEY alias included), and /proc-invisible runtime
+    # mutations can add more. A user's run must see ONLY the owner's keys —
+    # scrub every credential-shaped var before applying api_keys. (Found
+    # 2026-07-05: the operator's Gemini key reached user orchestrators as
+    # GOOGLE_API_KEY, which deep_research falls back to.)
+    _secret_suffixes = ("_API_KEY", "_ACCESS_KEY_ID", "_SECRET_ACCESS_KEY",
+                        "_SESSION_TOKEN", "_OAUTH_TOKEN", "_CLIENT_SECRET")
+    for _k in list(env):
+        if _k.endswith(_secret_suffixes) or _k in (
+                "GOOGLE_APPLICATION_CREDENTIALS", "ARK_GITHUB_PAT"):
+            del env[_k]
     # Control-plane bearer token via env (never argv) — carried in the 0600
     # EnvironmentFile for the detached systemd unit, then unlinked.
     if cp_token:
