@@ -112,10 +112,7 @@ Check that the paper complies with double-blind review:
 1. **Title** must NOT contain author names or personal identifiers
 2. **Author block** must be "Anonymous" or blank — no real names or affiliations
 3. **Body text** must NOT contain self-identifying references (e.g., "In our previous work [Smith 2024]" where Smith is an author)
-4. **Acknowledgments** must not reveal author identity (no names, grants,
-   institutions). EXCEPTION: the standard ARK-usage disclosure ("The author(s)
-   used ARK (idea2paper.org) …") is REQUIRED endmatter, contains no identity,
-   and must NOT be flagged or removed
+4. **Acknowledgments** must be removed or anonymized
 
 If anonymity is violated, flag as a Major Issue.
 

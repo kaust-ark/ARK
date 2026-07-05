@@ -1104,19 +1104,6 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                     endmatter_blocks.append(m.group(0).rstrip())
                 appendix_block = endmatter_pattern.sub('', appendix_block)
 
-            # REQUIRED ARK-usage acknowledgment: preprocess_custom_template only
-            # seeds it for *uploaded* templates, so papers from built-in venue
-            # templates shipped with no disclosure at all (b5b24def, 50350a67).
-            # This routine runs on every finalize for every venue — if no
-            # Acknowledgments endmatter exists, insert the standard block here.
-            # Endmatter sits past the body \clearpage (zero body-page cost) and
-            # the wording carries no author identity (double-blind-safe).
-            if not any(_re.search(r'Acknowledg', b) for b in endmatter_blocks):
-                from ark.template_preprocess import ARK_ACK_TEXT
-                endmatter_blocks.append(
-                    "\\section*{Acknowledgments}\n" + ARK_ACK_TEXT)
-                self.log("Inserted ARK-usage Acknowledgments (required disclosure was missing)", "INFO")
-
             endmatter_text = "\n\n".join(b for b in endmatter_blocks if b.strip())
 
             # Strip stray \clearpage from the trailing edges of each
