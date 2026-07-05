@@ -77,7 +77,11 @@ printed. Before writing a plotting script:
    - Prefer wide-and-short over tall figures; use
      `constrained_layout=True`, and record the intended placement
      (`half`/`full`) in `figure_manifest.json` if you maintain it.
-3. Fonts come from the config rcParams so labels are legible at final size
+3. **Merge before you plot**: related small comparisons (each ≤4 bars/points)
+   belong in ONE multi-panel figure (`fig, axes = plt.subplots(1, N)`), not in
+   N separate files — a panel with two bars must never occupy a full column by
+   itself. If the takeaway is 2–4 numbers, report a table instead of a plot.
+4. Fonts come from the config rcParams so labels are legible at final size
    without any LaTeX-side scaling.
 
 ## Research Integrity (MANDATORY — violation = worthless paper)
