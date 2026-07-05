@@ -340,6 +340,30 @@ def _require_admin(request: Request) -> User:
     return user
 
 
+def _require_model_key(keys: dict, model_variant: str) -> None:
+    """Reject launches whose model's PROVIDER has no key configured.
+
+    The basic gate only checks "has ANY key" — users kept picking a direct-
+    vendor model (deepseek/…, anthropic/…) while holding a different provider's
+    key, and the run died minutes later inside the orchestrator as a cryptic
+    failed project ("no key found"; 4/6 real-user launches on 2026-07-05).
+    Used by create AND restart/continue (a restart re-runs the stored model, so
+    it dies the same way unless the owner added the matching key).
+    """
+    prov = (model_variant.split("/", 1)[0] if "/" in (model_variant or "") else "anthropic").lower()
+    ok = bool(keys.get(prov)) or (
+        prov == "anthropic" and keys.get("claude_oauth_token")) or (
+        prov == "gemini" and keys.get("gemini_oauth_json"))
+    if not ok:
+        nice = {"openrouter": "OpenRouter", "anthropic": "Anthropic",
+                "openai": "OpenAI", "gemini": "Gemini"}.get(prov, prov.capitalize())
+        raise HTTPException(
+            400,
+            f"This model runs on {nice}, but no {nice} API key is configured. "
+            f"Add one in Settings → API Keys, or pick a model from a provider you already "
+            f"have a key for (the OpenRouter row covers most models with a single key).")
+
+
 def _admin_user_ids(session) -> set:
     """User IDs whose email is in the admin allowlist (for lane partitioning).
 
@@ -2208,23 +2232,8 @@ async def api_create_project(
         model_variant = _to_litellm_model(model)
         model_backend = model_variant.split("/", 1)[0] or "anthropic"
 
-    # Model↔key match guard. The gate above only checks "has ANY key" — users
-    # kept picking a direct-vendor model (deepseek/…, anthropic/…) while holding
-    # a different provider's key, and the launch died minutes later inside the
-    # orchestrator as a cryptic failed project ("no key found"; 4/6 real-user
-    # launches on 2026-07-05). Fail fast HERE with an actionable message.
-    _prov = (model_variant.split("/", 1)[0] if "/" in model_variant else "anthropic").lower()
-    _have_provider_key = bool(keys.get(_prov)) or (
-        _prov == "anthropic" and keys.get("claude_oauth_token")) or (
-        _prov == "gemini" and keys.get("gemini_oauth_json"))
-    if not _have_provider_key:
-        _nice = {"openrouter": "OpenRouter", "anthropic": "Anthropic",
-                 "openai": "OpenAI", "gemini": "Gemini"}.get(_prov, _prov.capitalize())
-        raise HTTPException(
-            400,
-            f"The selected model runs on {_nice}, but no {_nice} API key is configured. "
-            f"Add one in Settings → API Keys, or pick a model from a provider you already "
-            f"have a key for (the OpenRouter row covers most models with a single key).")
+    # Model↔key match guard (fail fast; see _require_model_key).
+    _require_model_key(keys, model_variant)
 
     # Page fitting strictness: relaxed (no adjustment) | balanced (within ~1 page,
     # default) | strict (exact). Back-compat: old 'off' == new 'relaxed'.
@@ -2663,6 +2672,8 @@ async def api_restart_project(project_id: str, request: Request):
             raise HTTPException(404)
         if project.status not in ("stopped", "failed", "done"):
             raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
+        _owner = get_user(session, project.user_id)
+        _require_model_key(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
         # No concurrent hard-reject: if the user's lane is full the restart is
         # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
         # consistent with new-project submission.
@@ -2837,6 +2848,8 @@ async def api_continue_project(project_id: str, request: Request):
             raise HTTPException(404)
         if project.status not in ("done", "stopped", "failed"):
             raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
+        _owner = get_user(session, project.user_id)
+        _require_model_key(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
         # No concurrent hard-reject: if the user's lane is full the continue is
         # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
         # consistent with new-project submission.
