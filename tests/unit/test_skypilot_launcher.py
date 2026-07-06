@@ -54,8 +54,13 @@ def make_fake_sky(*, status_records=None, launch_returns="req-launch-1"):
     for name in ("AWS", "GCP", "Azure", "Kubernetes"):
         setattr(sky, name, (lambda n: (lambda: SimpleNamespace(name=n)))(name))
 
-    def _launch(task, cluster_name=None, detach_run=None, retry_until_up=None, **kwargs):
-        sky.calls.append(("launch", cluster_name, detach_run, retry_until_up, kwargs))
+    def _launch(task, cluster_name=None, retry_until_up=None, **kwargs):
+        # Mirror the real SkyPilot 0.7+ signature: detach_run was removed, so
+        # passing it must blow up here the way the real SDK does (a TypeError) —
+        # otherwise a stale kwarg slips through mocked tests and only fails on a
+        # real launch. Guard explicitly since **kwargs would otherwise swallow it.
+        assert "detach_run" not in kwargs, "sky.launch (0.7+) does not accept detach_run"
+        sky.calls.append(("launch", cluster_name, retry_until_up, kwargs))
         return launch_returns
     sky.launch = _launch
 
@@ -113,12 +118,13 @@ def test_launch_builds_orchestrator_task_and_returns_handle(spec, monkeypatch):
     assert handle == "skypilot:ark-orch-proj-42"
     kinds = [c[0] for c in sky.calls]
     assert "Task" in kinds and "launch" in kinds
-    # launch detaches from the long-lived run and rides out capacity errors,
-    # with a default autostop-DOWN crash safety-net (fires only after the
-    # detached orchestrator job exits, so a live run is never reaped).
+    # launch rides out capacity errors (retry_until_up) and detaches from the
+    # long-lived run via the async request model (no detach_run kwarg in 0.7+),
+    # with a default autostop-DOWN crash safety-net (fires only after the queued
+    # orchestrator job exits, so a live run is never reaped).
     launch_call = next(c for c in sky.calls if c[0] == "launch")
     assert launch_call == (
-        "launch", "ark-orch-proj-42", True, True,
+        "launch", "ark-orch-proj-42", True,
         {"idle_minutes_to_autostop": 60, "down": True},
     )
     # Async request id is blocked on.
@@ -146,7 +152,7 @@ def test_launch_autostop_can_be_disabled(spec, monkeypatch):
     spec.config["orchestrator_compute_backend"]["idle_minutes_to_autostop"] = "off"
     SkyPilotVmJobLauncher().launch(spec)
     launch_call = next(c for c in sky.calls if c[0] == "launch")
-    assert launch_call[4] == {}  # no autostop kwargs passed to sky.launch
+    assert launch_call[3] == {}  # no autostop kwargs passed to sky.launch
 
 
 def test_launch_autostop_down_false_stops_instead(spec, monkeypatch):
@@ -157,7 +163,7 @@ def test_launch_autostop_down_false_stops_instead(spec, monkeypatch):
     cc["autostop_down"] = False
     SkyPilotVmJobLauncher().launch(spec)
     launch_call = next(c for c in sky.calls if c[0] == "launch")
-    assert launch_call[4] == {"idle_minutes_to_autostop": 20, "down": False}
+    assert launch_call[3] == {"idle_minutes_to_autostop": 20, "down": False}
 
 
 def test_launch_mounts_project_dir_and_token_secret(spec, monkeypatch):

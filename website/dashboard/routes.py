@@ -645,11 +645,24 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
                 "conda_env": settings.slurm_conda_env or "ark-base",
             }
         elif chosen.split(":", 1)[0] == "skypilot":
-            # Shape the `type: skypilot` block for both layers (folded Phases 5+6,
-            # ADR-0010) — the Layer-2 launcher (orchestrator) and Layer-1 backend
-            # (experiments) both read cluster/resources from here. SkyPilot
-            # infers/optimizes anything left unset; the cloud is optional (parsed
-            # from a "skypilot:{cloud}" suffix, else auto-selected).
+            if not is_orchestrator:
+                # ── Layer-1 experiments (phased rollout) ──────────────────────
+                # For now, a "SkyPilot" project runs its experiments LOCALLY on the
+                # orchestrator's own SkyPilot VM — NOT a nested experiment cluster.
+                # Rationale (SKYPILOT_PLAN §Multi-tenancy, Phase 1): keeping
+                # experiments on the VM means the VM needs no `sky` SDK and no cloud
+                # credentials of its own (nested clusters would require both, plus
+                # their own autostop reaping), which is the tractable first step and
+                # the cleanest BYOC story. Nested skypilot experiment clusters (for
+                # GPUs / large parallel sweeps) are a later phase. `local` on the VM
+                # runs in the per-project conda env cloned from ark-base (which the
+                # orchestrator setup provisions).
+                return {"type": "local", "conda_env": settings.cloud_conda_env or "ark-base"}
+
+            # ── Layer-2 orchestrator ──────────────────────────────────────────
+            # Shape the `type: skypilot` block. SkyPilot infers/optimizes anything
+            # left unset; the cloud is optional (parsed from a "skypilot:{cloud}"
+            # suffix, else auto-selected).
             #
             # We deliberately do NOT forward settings.cloud_{region,instance_type,
             # image_id}: those are tuned for the raw-gcloud `cloud` backend (a GCP
@@ -661,13 +674,41 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
             cfg = {"type": "skypilot", "conda_env": settings.cloud_conda_env or "ark-base"}
             if cloud:
                 cfg["cloud"] = cloud
-            if is_orchestrator:
-                # The orchestrator cluster comes up bare, so its deps must be
-                # installed via the setup: block (the run command is plain
-                # `python -m ark.orchestrator`). Default to installing the synced
-                # ARK source (workdir → ~/sky_workdir) with the research extra.
-                # PR4 replaces this with a baked orchestrator image.
-                cfg["setup_commands"] = ["cd ~/sky_workdir && pip install -e '.[research]'"]
+            # The orchestrator cluster comes up bare, so its deps must be installed
+            # via the setup: block (the run command is plain `python -m
+            # ark.orchestrator`). Install the synced ARK source (workdir →
+            # ~/sky_workdir) with the research extra, then the agent runtime:
+            # `openhands` is a separate uv-managed CLI, NOT a pip dep of ark, so
+            # without it the orchestrator exits the moment it tries to run an agent
+            # (ark/pipeline.py fails fast on a missing `openhands` binary). uv
+            # installs both itself and the tool into ~/.local/bin, which the run
+            # command puts on PATH. PR4 replaces this with a baked orchestrator image.
+            cfg["setup_commands"] = [
+                "cd ~/sky_workdir && pip install -e '.[research]'",
+                # Guarded + idempotent: a re-launch reconnects to the same cluster
+                # and re-runs setup, so skip the (slow) toolchain download when
+                # `openhands` is already installed.
+                "export PATH=\"$HOME/.local/bin:$PATH\"; "
+                "command -v openhands >/dev/null 2>&1 || "
+                "{ curl -LsSf https://astral.sh/uv/install.sh | sh && "
+                "uv tool install --python 3.12 openhands; }",
+                # Paper mode compiles the PDF with pdflatex + bibtex, which the base
+                # VM image lacks. Match ARK's own recommendation
+                # (latex_utils.detect_latex_install_command → texlive-full on apt);
+                # heavy (~GBs) but avoids missing-package compile failures mid-run.
+                # Guarded so a re-launch skips the reinstall.
+                "command -v pdflatex >/dev/null 2>&1 || "
+                "{ sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive "
+                "apt-get install -y texlive-full; }",
+                # Experiments run locally on this VM (see the Layer-1 branch above)
+                # in a per-project conda env cloned from `ark-base`
+                # (pipeline._ensure_project_env → conda create --clone ark-base). A
+                # fresh VM has no such env, so create it from the repo's
+                # environment.yml (synced to ~/sky_workdir via workdir; `name:
+                # ark-base`). Guarded/idempotent so a re-launch skips the slow solve.
+                "conda env list | grep -qw ark-base || "
+                "conda env create -f ~/sky_workdir/environment.yml",
+            ]
             return cfg
         return {"type": "local"}
 

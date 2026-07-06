@@ -974,6 +974,10 @@ Strict — hit the exact page limit (spends the most tokens).">
                 <input type="radio" name="compute_backend" value="slurm" checked />
                 <span class="model-chip">🔧 Slurm</span>
               </label>
+              <label class="model-option" id="hero-backend-skypilot-label">
+                <input type="radio" name="compute_backend" value="skypilot" />
+                <span class="model-chip">🚀 SkyPilot</span>
+              </label>
               <label class="model-option" id="hero-backend-cloud-gcp-label" style="display:none">
                 <input type="radio" name="compute_backend" value="cloud:gcp" />
                 <span class="model-chip">☁️ GCP</span>
@@ -999,6 +1003,10 @@ Strict — hit the exact page limit (spends the most tokens).">
               <label class="model-option">
                 <input type="radio" name="orchestrator_compute_backend" value="local" checked />
                 <span class="model-chip">🖥️ Local</span>
+              </label>
+              <label class="model-option" id="hero-orch-backend-skypilot-label">
+                <input type="radio" name="orchestrator_compute_backend" value="skypilot" />
+                <span class="model-chip">🚀 SkyPilot</span>
               </label>
               <label class="model-option" id="hero-orch-backend-slurm-label">
                 <input type="radio" name="orchestrator_compute_backend" value="slurm" />
@@ -1392,6 +1400,7 @@ Strict — hit the exact page limit (spends the most tokens).">
       <label>Experiments Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="continue-backend" value="slurm" checked /><span class="model-chip">🔧 Slurm</span></label>
+        <label class="model-option" id="continue-backend-skypilot-label"><input type="radio" name="continue-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
         <label class="model-option" id="continue-backend-cloud-gcp-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
         <label class="model-option" id="continue-backend-cloud-aws-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
         <label class="model-option" id="continue-backend-cloud-azure-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
@@ -1401,6 +1410,7 @@ Strict — hit the exact page limit (spends the most tokens).">
       <label>Orchestrator Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="continue-orch-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
+        <label class="model-option" id="continue-orch-backend-skypilot-label"><input type="radio" name="continue-orch-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
         <label class="model-option"><input type="radio" name="continue-orch-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
         <label class="model-option" id="continue-orch-backend-cloud-gcp-label" style="display:none"><input type="radio" name="continue-orch-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
         <label class="model-option" id="continue-orch-backend-cloud-aws-label" style="display:none"><input type="radio" name="continue-orch-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
@@ -1509,6 +1519,7 @@ Strict — hit the exact page limit (spends the most tokens).">
       <label>Experiments Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="restart-backend" value="slurm" checked /><span class="model-chip">🔧 Slurm</span></label>
+        <label class="model-option" id="restart-backend-skypilot-label"><input type="radio" name="restart-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
         <label class="model-option" id="restart-backend-cloud-gcp-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
         <label class="model-option" id="restart-backend-cloud-aws-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
         <label class="model-option" id="restart-backend-cloud-azure-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
@@ -1518,6 +1529,7 @@ Strict — hit the exact page limit (spends the most tokens).">
       <label>Orchestrator Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="restart-orch-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
+        <label class="model-option" id="restart-orch-backend-skypilot-label"><input type="radio" name="restart-orch-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
         <label class="model-option"><input type="radio" name="restart-orch-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
         <label class="model-option" id="restart-orch-backend-cloud-gcp-label" style="display:none"><input type="radio" name="restart-orch-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
         <label class="model-option" id="restart-orch-backend-cloud-aws-label" style="display:none"><input type="radio" name="restart-orch-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
@@ -2627,6 +2639,21 @@ function _updateGcpOptionsVisibility(prefix) {
   if (panel) panel.style.display = selected === 'cloud:gcp' ? '' : 'none';
 }
 
+// Keep the (hidden) orchestrator backend in lock-step with the experiments backend
+// when SkyPilot is picked: SkyPilot is one cloud destination that drives both layers.
+// This guarantees the valid (skypilot, skypilot) pair — the orchestrator picker is
+// hidden, and (skypilot orchestrator, slurm experiments) is rejected at launch by
+// validate_config (INVALID_COMPUTE_MATRIX). Choosing any non-SkyPilot experiments
+// backend reverts the orchestrator to its default 'local'.
+function _syncSkypilotOrch(prefix) {
+  const expName  = prefix === 'hero' ? 'compute_backend' : `${prefix}-backend`;
+  const orchName = prefix === 'hero' ? 'orchestrator_compute_backend' : `${prefix}-orch-backend`;
+  const exp = ([...document.querySelectorAll(`input[name="${expName}"]`)].find(r => r.checked) || {}).value || '';
+  const target = exp === 'skypilot' ? 'skypilot' : 'local';
+  const orchRadio = document.querySelector(`input[name="${orchName}"][value="${target}"]`);
+  if (orchRadio) orchRadio.checked = true;
+}
+
 // Populate GCP option fields with per-project overrides, falling back to user/system defaults.
 function _loadGcpOptions(prefix, overrides) {
   const d = window._userGcpDefaults;
@@ -2848,11 +2875,15 @@ async function loadGateBanner() {
   const orchSlurmLbl = document.getElementById('hero-orch-backend-slurm-label');
   if (orchSlurmLbl) orchSlurmLbl.style.display = window._sysSlurm ? '' : 'none';
   if (!window._sysSlurm) {
-    // No slurm on this host. "Local" was removed (Slurm vs Cloud), so the user
-    // must pick a cloud backend; the cloud-default logic below selects one if any
-    // is configured. Just uncheck the (hidden) slurm radio.
+    // No slurm on this host. Default the experiments backend to SkyPilot — it's
+    // always available (self-contained credential chain, independent of the
+    // legacy-cloud flag) — so the form always submits a valid backend rather than
+    // falling back to the hidden slurm radio. Sync the hidden orchestrator to match.
     const slurmRadio = document.querySelector('input[name="compute_backend"][value="slurm"]');
     if (slurmRadio) slurmRadio.checked = false;
+    const skyRadio = document.querySelector('input[name="compute_backend"][value="skypilot"]');
+    if (skyRadio) skyRadio.checked = true;
+    _syncSkypilotOrch('hero');
   }
 
   // Also check user-level cloud credentials (user may supply their own keys
@@ -5500,12 +5531,16 @@ function showToast(msg, type='') {
 // ══════════════════════════════════════════════════════
 applyI18n();
 
-// Wire GCP options visibility to backend radio buttons in all three contexts.
+// Wire GCP options visibility + SkyPilot orchestrator-sync to the experiments backend
+// radios in all three contexts.
 (function() {
   for (const prefix of ['hero', 'continue', 'restart']) {
     const nameAttr = prefix === 'hero' ? 'compute_backend' : `${prefix}-backend`;
     document.querySelectorAll(`input[name="${nameAttr}"]`).forEach(r => {
-      r.addEventListener('change', () => _updateGcpOptionsVisibility(prefix));
+      r.addEventListener('change', () => {
+        _updateGcpOptionsVisibility(prefix);
+        _syncSkypilotOrch(prefix);
+      });
     });
   }
 })();

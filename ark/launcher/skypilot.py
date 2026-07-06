@@ -8,9 +8,10 @@ orchestrator process runs on a SkyPilot-provisioned cluster:
                   ``python -m ark.orchestrator`` (code via ``workdir``, the
                   project dir + control-plane token via ``file_mounts``, API keys
                   via task ``envs``, cloud/accelerators/spot via ``Resources``),
-                  and ``sky.launch`` it onto a named cluster with ``detach_run``
-                  so provisioning blocks but the long-lived run is left going;
-                  handle ``skypilot:{cluster}``.
+                  and ``sky.launch`` it onto a named cluster; the async request is
+                  blocked on through provisioning + setup + job submission, so
+                  provisioning blocks but the long-lived run is left going in the
+                  cluster's job queue; handle ``skypilot:{cluster}``.
 - ``poll()``    → ``sky status`` on the cluster, normalized onto the module
                   constants. Like the cloud path, this is a liveness/crash probe:
                   the remote orchestrator self-reports its terminal outcome into
@@ -150,19 +151,21 @@ class SkyPilotVmJobLauncher(JobLauncher):
                 f"Launching SkyPilot orchestrator cluster '{cluster}' "
                 f"(cloud={cc.get('cloud') or 'auto'}, project={spec.project_id})..."
             )
-            # detach_run: block on provisioning + setup, then detach from the
-            # long-lived orchestrator run so launch() returns while it keeps going.
-            # retry_until_up rides out transient capacity errors like the GCP path.
-            # Autostop-down is a crash safety-net: the orchestrator runs as a
-            # detached job, so SkyPilot's idle timer only starts once that job
-            # exits — a normal run is never reaped mid-flight, but a crashed one
-            # that outlives cancel()'s reach still self-downs. Opt-out allowed
-            # here (the control plane CAN `sky down` this cluster via cancel()),
-            # unlike the experiment backend where autostop is the only reap path.
+            # sky.launch (0.7+ client/server API) submits the task to the cluster's
+            # job queue and returns an async request id; block_on_request blocks on
+            # provisioning + setup + job submission and returns while the long-lived
+            # orchestrator run keeps going in the queue — i.e. the "detach" behaviour
+            # the removed detach_run kwarg used to provide (mirrors the Layer-1
+            # SkyPilotBackend._launch). retry_until_up rides out transient capacity
+            # errors like the GCP path. Autostop-down is a crash safety-net: the
+            # orchestrator runs as a queued job, so SkyPilot's idle timer only starts
+            # once that job exits — a normal run is never reaped mid-flight, but a
+            # crashed one that outlives cancel()'s reach still self-downs. Opt-out
+            # allowed here (the control plane CAN `sky down` this cluster via
+            # cancel()), unlike the experiment backend where autostop is the only reap.
             autostop = resolve_autostop(cc)
             result = sky.launch(
-                task, cluster_name=cluster, detach_run=True, retry_until_up=True,
-                **autostop,
+                task, cluster_name=cluster, retry_until_up=True, **autostop,
             )
             block_on_request(sky, result)
         finally:
@@ -222,6 +225,11 @@ class SkyPilotVmJobLauncher(JobLauncher):
         return (
             f"cd {_REMOTE_WORKDIR} && "
             f"export PYTHONPATH={_REMOTE_WORKDIR} && "
+            # The agent runtime (`openhands`) is installed as a uv tool into
+            # ~/.local/bin by the setup block; the run shell is separate from setup
+            # so put it on PATH here, else the orchestrator can't find the binary
+            # and exits on first agent call (ark/pipeline.py fails fast).
+            f"export PATH=\"$HOME/.local/bin:$PATH\" && "
             # Source the mounted token (absent ⇒ blind run; see the launch warning).
             f"export ARK_CONTROL_PLANE_TOKEN=\"$(cat {_REMOTE_CP_TOKEN} 2>/dev/null || true)\" && "
             f"python -m ark.orchestrator "
