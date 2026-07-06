@@ -172,7 +172,17 @@ class Settings:
         # report over HTTP (network-only boundary) instead of the shared SQLite
         # DB; empty keeps the legacy in-process --db-path path. Should include the
         # /v1 suffix, e.g. "http://127.0.0.1:9527/v1" or "https://host/v1".
-        self.control_plane_url: str = merged.get("CONTROL_PLANE_URL", "").rstrip("/")
+        #
+        # CONTROL_PLANE_URL commonly references ${BASE_URL} (a webapp.env idiom so
+        # the host/tunnel is configured in ONE place, e.g. "${BASE_URL}/v1"). Expand
+        # it against the resolved base_url + environment here — otherwise the literal
+        # "${BASE_URL}/v1" is handed to remote orchestrators, which crash on their
+        # first status report with an opaque urllib "unknown url type" error.
+        _cp_raw = merged.get("CONTROL_PLANE_URL", "")
+        _cp_expanded = os.path.expandvars(
+            _cp_raw.replace("${BASE_URL}", self.base_url).replace("$BASE_URL", self.base_url)
+        )
+        self.control_plane_url: str = _cp_expanded.rstrip("/")
         self.slurm_partition: str = merged.get("SLURM_PARTITION", "")
         self.slurm_account: str = merged.get("SLURM_ACCOUNT", "")
         self.slurm_conda_env: str = merged.get("SLURM_CONDA_ENV", "ark-base")

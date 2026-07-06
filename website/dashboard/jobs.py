@@ -32,6 +32,18 @@ def control_plane_transport(project_id: str, settings) -> tuple[str, str]:
     url = (getattr(settings, "control_plane_url", "") or "").strip()
     if not url:
         return "", ""
+    # Fail fast on a malformed / unexpanded URL (e.g. a literal "${BASE_URL}/v1"
+    # that was never substituted, or a bare host). Otherwise it is handed verbatim
+    # to the remote orchestrator, which crashes on its first status report deep in
+    # urllib ("unknown url type") — a silent-remote-death that looks like a hung
+    # run, since poll() only sees the cluster still UP.
+    from urllib.parse import urlparse
+    _p = urlparse(url)
+    if _p.scheme not in ("http", "https") or not _p.netloc:
+        raise ValueError(
+            f"CONTROL_PLANE_URL is not a valid absolute http(s) URL: {url!r}. "
+            f"If it references ${{BASE_URL}}, ensure BASE_URL is set so it expands."
+        )
     from .auth import make_job_token
     token = make_job_token(project_id, settings.secret_key,
                            ttl_seconds=CONTROL_PLANE_TOKEN_TTL_SECONDS)
