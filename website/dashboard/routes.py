@@ -22,7 +22,7 @@ logger = logging.getLogger("website.dashboard.routes")
 
 MAX_PROJECTS_PER_USER = 5       # regular host cap (bounds disk: one workspace/conda env each)
 MAX_PROJECTS_PER_ADMIN = 25
-MAX_ITER_PER_START = 5
+MAX_ITER_PER_START = 2  # queue fairness: bound per-start work (dev + review rounds)
 # Two concurrency LANES so regular users and admins never block each other, and
 # each lane drains as a simple FIFO queue:
 #   • regular lane: at most 1 active per user, at most 3 active across all regulars
@@ -1305,6 +1305,88 @@ def _queue_position(project_id: str, session) -> int:
     return len(same_lane) + 1
 
 
+_MEDIAN_RUN_CACHE: dict = {"ts": 0.0, "hours": 0.0}
+
+
+def _run_start_ts(pdir: Path) -> Optional[int]:
+    """Unix time the project's latest run started: the newest logs/local_<ts>.out
+    file name IS the launch timestamp (see submit_job's log naming)."""
+    try:
+        logs = sorted((pdir / "logs").glob("local_*.out"))
+        if logs:
+            return int(logs[-1].stem.split("_", 1)[1])
+    except (ValueError, OSError):
+        pass
+    return None
+
+
+def _median_run_hours(session, settings) -> float:
+    """Median wall-clock hours of recent finished runs (launch-log name ts →
+    log mtime). DB created_at→updated_at is unusable here: title syncs and
+    later restarts inflate it by weeks. Cached 10 min; fallback 18h (typical
+    full run observed in production)."""
+    import time as _time
+    if _MEDIAN_RUN_CACHE["hours"] and _time.time() - _MEDIAN_RUN_CACHE["ts"] < 600:
+        return _MEDIAN_RUN_CACHE["hours"]
+    from sqlmodel import select as _sel
+    done = session.exec(
+        _sel(Project).where(Project.status == "done")
+        .order_by(Project.updated_at.desc()).limit(20)
+    ).all()
+    durations = []
+    for p in done:
+        pdir = _project_dir(settings, p.user_id, p.id)
+        start = _run_start_ts(pdir)
+        if start is None:
+            continue
+        try:
+            logs = sorted((pdir / "logs").glob("local_*.out"))
+            hours = (logs[-1].stat().st_mtime - start) / 3600.0
+        except OSError:
+            continue
+        if 0.5 <= hours <= 48:  # drop cheap-test blips and stale-mtime junk
+            durations.append(hours)
+    hours = sorted(durations)[len(durations) // 2] if durations else 18.0
+    _MEDIAN_RUN_CACHE.update(ts=_time.time(), hours=hours)
+    return hours
+
+
+def _queue_eta_end(session, settings, project) -> Optional[str]:
+    """Rough ISO-UTC estimate of when a PENDING project will FINISH: wait for a
+    lane slot (remaining time of active same-lane runs, FIFO by queue position)
+    plus one median run. Per-user-cap nuances are ignored — this is a banner
+    estimate, not a promise."""
+    if project.status != "pending":
+        return None
+    import time as _time
+    from datetime import datetime as _dt, timedelta as _td
+    from sqlmodel import select as _sel
+    med_h = _median_run_hours(session, settings)
+    pos = _queue_position(project.id, session)
+    admin_ids = _admin_user_ids(session)
+    owner_is_admin = project.user_id in admin_ids
+    active = session.exec(
+        _sel(Project).where(Project.status.in_(["running", "initializing", "queued"]))
+    ).all()
+    lane = [p for p in active if (p.user_id in admin_ids) == owner_is_admin]
+    now = _time.time()
+    remaining = []
+    for p in lane:
+        start = _run_start_ts(_project_dir(settings, p.user_id, p.id))
+        elapsed_h = (now - start) / 3600.0 if start else 0.0
+        # Runs already past the median are unpredictable — floor their
+        # remaining time at a quarter median rather than "almost done".
+        remaining.append(max(med_h - elapsed_h, med_h * 0.25))
+    remaining.sort()
+    if remaining:
+        k = pos - 1
+        wait_h = remaining[k % len(remaining)] + (k // len(remaining)) * med_h
+    else:
+        wait_h = 0.0
+    eta = _dt.utcnow() + _td(hours=wait_h + med_h)
+    return eta.isoformat() + "Z"
+
+
 def _write_user_update(project_dir: Path, message: str, source: str = "webapp"):
     f = project_dir / "auto_research" / "state" / "user_updates.yaml"
     f.parent.mkdir(parents=True, exist_ok=True)
@@ -2094,6 +2176,9 @@ async def api_list_projects(request: Request, scope: str = "mine"):
                 "user_email": user_email_cache.get(p.user_id, ""),
                 "error_message": p.error_message or "",
             }
+            if p.status == "pending":
+                d["queue_position"] = _queue_position(p.id, session)
+                d["queue_eta_end"] = _queue_eta_end(session, settings, p)
             result.append(d)
         return JSONResponse(result)
 
@@ -2126,7 +2211,8 @@ async def api_create_project(
     user = _require_user(request)
     _check_webapp_enabled()
 
-    max_iterations = min(max_iterations, MAX_ITER_PER_START)
+    max_iterations = max(1, min(max_iterations, MAX_ITER_PER_START))
+    max_dev_iterations = max(1, min(max_dev_iterations, MAX_ITER_PER_START))
     settings = get_settings()
     with get_session(settings.db_path) as _s:
         user_projects = get_projects_for_user(_s, user.id)
@@ -2420,6 +2506,7 @@ async def api_get_project(project_id: str, request: Request):
             "has_pdf_upload": bool(project.has_pdf_upload),
             "slurm_job_id": project.slurm_job_id,
             "queue_position": _queue_position(project_id, session),
+            "queue_eta_end": _queue_eta_end(session, settings, project),
             "user_email": owner.email if owner else "",
             "model": _read_project_model(pdir, project=project),
             "telegram_token": project.telegram_token,

@@ -959,11 +959,11 @@ Strict — hit the exact page limit (spends the most tokens).">
           <div style="display:flex;gap:16px;margin-top:12px">
             <div class="hero-adv-field" style="flex:1">
               <label>Max Dev Iterations</label>
-              <input type="number" name="max_dev_iterations" value="1" min="1" max="5" />
+              <input type="number" name="max_dev_iterations" value="1" min="1" max="2" />
             </div>
             <div class="hero-adv-field" style="flex:1">
               <label>Max Review Iterations</label>
-              <input type="number" name="max_iterations" value="1" min="1" max="5" />
+              <input type="number" name="max_iterations" value="1" min="1" max="2" />
             </div>
           </div>
           
@@ -1609,7 +1609,7 @@ Strict — hit the exact page limit (spends the most tokens).">
       </div>
       <div class="form-group" style="flex:1">
         <label>Max iterations</label>
-        <input type="number" id="restart-max-iter" value="1" min="1" max="5" style="width:80px" />
+        <input type="number" id="restart-max-iter" value="1" min="1" max="2" style="width:80px" />
       </div>
     </div>
     <input type="hidden" id="restart-venue-format" />
@@ -2382,6 +2382,8 @@ const TRANSLATIONS = {
     stopped_iter: 'Stopped (%d / %d iterations)',
     failed: 'Failed',
     queue_position_msg: '⏳ Queued at position %d — your project starts automatically when a slot frees (no need to resubmit).',
+    queue_eta_msg: 'Estimated finish: ~%s (based on recent runs) — we\'ll email you when it\'s done, no need to wait around.',
+    queue_eta_short: 'est. done ~%s',
     // progress
     phase_research: 'Research', phase_dev: 'Dev', phase_review: 'Review',
     step_plan: 'Plan', step_run_experiments: 'Run Experiments',
@@ -2525,6 +2527,8 @@ const TRANSLATIONS = {
     stopped_iter: 'موقوف (%d / %d تكرارات)',
     failed: 'فشل',
     queue_position_msg: '⏳ في قائمة الانتظار بالموضع %d — سيبدأ مشروعك تلقائيًا عند توفر مكان (لا حاجة لإعادة الإرسال).',
+    queue_eta_msg: 'الانتهاء المتوقع: ~%s (استنادًا إلى التشغيلات الأخيرة) — سنرسل لك بريدًا إلكترونيًا عند الانتهاء، لا داعي للانتظار.',
+    queue_eta_short: 'الانتهاء المتوقع ~%s',
     phase_research: 'بحث', phase_dev: 'تطوير', phase_review: 'مراجعة',
     step_plan: 'تخطيط', step_run_experiments: 'تشغيل التجارب',
     step_analyze: 'تحليل', step_evaluate: 'تقييم',
@@ -2660,6 +2664,8 @@ const TRANSLATIONS = {
     stopped_iter: '已停止（%d / %d 次迭代）',
     failed: '失败',
     queue_position_msg: '⏳ 排队中，第 %d 位 — 轮到时会自动开始，无需重新提交。',
+    queue_eta_msg: '预计完成时间：约 %s（按近期运行时长估算）— 完成后会邮件通知你，不必守着等。',
+    queue_eta_short: '预计 ~%s 完成',
     phase_research: '研究', phase_dev: '开发', phase_review: '审阅',
     step_plan: '计划', step_run_experiments: '运行实验',
     step_analyze: '分析', step_evaluate: '评估',
@@ -3191,12 +3197,25 @@ async function loadDashboard() {
   if (countEl) { countEl.textContent = projects.length; countEl.style.display = 'inline'; }
 }
 
+function fmtEta(iso) {
+  // ISO-UTC → viewer-local "Jul 7, 14:30" style, in the page language.
+  try {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleString(currentLang === 'zh' ? 'zh-CN' : currentLang === 'ar' ? 'ar' : 'en',
+      { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch (e) { return ''; }
+}
+
 function renderProjectCard(p) {
   const score = (p.score || 0).toFixed(1);
   const pct = Math.round((p.score || 0) / 10 * 100);
   const statusLabel = t('status_' + p.status) || p.status;
   const idea = p.idea ? esc(p.idea.substring(0,90)) + (p.idea.length>90?'…':'')
     : (p.has_pdf_upload ? '📄 Uploaded PDF' : '');
+  const etaLine = (p.status === 'pending' && p.queue_eta_end)
+    ? `<div class="project-venue" style="color:var(--teal)">⏳ ${esc(t('queue_eta_short', fmtEta(p.queue_eta_end)))}</div>`
+    : '';
   return `
     <div class="project-card" onclick="navigate('detail', {id:'${p.id}'})">
       <div class="project-card-header">
@@ -3212,6 +3231,7 @@ function renderProjectCard(p) {
         ${esc(p.venue || 'General')}
         ${p.environment ? ` · <span style="color:var(--teal);font-weight:600">${esc(p.environment)}</span>` : ''}
       </div>
+      ${etaLine}
       <div class="score-bar"><div class="score-fill" style="width:${pct}%"></div></div>
       <div class="score-label">${t('score_label', score)}</div>
     </div>`;
@@ -3347,7 +3367,8 @@ async function loadDetail(id) {
   if (qp) {
     if ((p.queue_position || 0) > 0) {
       qp.style.display = 'block';
-      qp.textContent = t('queue_position_msg', p.queue_position);
+      qp.textContent = t('queue_position_msg', p.queue_position)
+        + (p.queue_eta_end ? ' ' + t('queue_eta_msg', fmtEta(p.queue_eta_end)) : '');
     } else {
       qp.style.display = 'none';
     }
@@ -4699,7 +4720,7 @@ async function openRestartModal(id) {
 
   document.getElementById('restart-idea').value = p.idea || '';
   document.getElementById('restart-comment').value = '';
-  document.getElementById('restart-max-iter').value = p.max_iterations || 3;
+  document.getElementById('restart-max-iter').value = Math.min(p.max_iterations || 1, 2);
   document.getElementById('restart-tg-token').value = p.telegram_token || '';
   document.getElementById('restart-tg-chatid').value = p.telegram_chat_id || '';
 
@@ -4823,7 +4844,7 @@ async function submitRestart() {
       venue: document.getElementById('restart-venue').value,
       venue_format: document.getElementById('restart-venue-format').value,
       venue_pages: parseInt(document.getElementById('restart-venue-pages-input').value) || 9,
-      max_iterations: Math.max(1, Math.min(5, parseInt(document.getElementById('restart-max-iter').value) || 1)),
+      max_iterations: Math.max(1, Math.min(2, parseInt(document.getElementById('restart-max-iter').value) || 1)),
       model: restartModel,
       telegram_token: document.getElementById('restart-tg-token').value.trim(),
       telegram_chat_id: document.getElementById('restart-tg-chatid').value.trim(),
