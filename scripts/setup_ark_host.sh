@@ -11,15 +11,13 @@ set -e
 set -x
 
 # 1. System dependencies
+# texlive-full (not a curated subset) matches the SkyPilot setup: block and
+# ARK's own recommendation (latex_utils.detect_latex_install_command → texlive-full),
+# so a baked image can't hit a missing-package compile failure the live setup wouldn't.
+# Heavy (~GBs) but paid once at bake time. latexmk/biber are already in texlive-full;
+# kept explicit for clarity.
 sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-    texlive-latex-base \
-    texlive-latex-extra \
-    texlive-latex-recommended \
-    texlive-science \
-    texlive-fonts-recommended \
-    texlive-fonts-extra \
-    texlive-bibtex-extra \
-    texlive-lang-cjk \
+    texlive-full \
     latexmk \
     biber \
     pandoc \
@@ -75,14 +73,29 @@ fi
 # by build_ark_gcp_image.sh (see step 2 in that script). If the source directory
 # is present, install it; otherwise skip — run_orchestrator will inject PYTHONPATH.
 if [ -d "ark" ] && [ -f "pyproject.toml" -o -f "setup.py" ]; then
-    echo "Installing ark package into ark-base env..."
-    sudo /opt/conda/envs/ark-base/bin/pip install . --no-build-isolation -q
+    echo "Installing ark package (with research extra) into ark-base env..."
+    # The [research] extra matches the SkyPilot setup: block
+    # (`pip install -e '.[research]'`): google-genai / anthropic / openai /
+    # aiofiles etc. must resolve in the same interpreter that runs the
+    # orchestrator, or PaperBanana's inline imports silently fall back.
+    sudo /opt/conda/envs/ark-base/bin/pip install '.[research]' --no-build-isolation -q
 fi
 
 # 5. Node.js & Claude CLI
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo bash -
 sudo apt-get install -y nodejs
 sudo npm install -g @anthropic-ai/claude-code @google/gemini-cli
+
+# 5b. openhands agent runtime (SkyPilot setup: block parity)
+# The orchestrator shells out to the `openhands` binary; ark/pipeline.py fails
+# fast without it. It is a separate uv-managed CLI, NOT a pip dep of ark, so it
+# is absent from environment.yml — the single biggest gap between this image and
+# the live SkyPilot setup block. Install uv and the tool into GLOBAL locations
+# (/usr/local/bin, already on the default PATH) so `openhands` resolves for any
+# SSH user and any non-interactive shell, independent of conda activation.
+curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
+sudo env UV_TOOL_DIR=/opt/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
+    /usr/local/bin/uv tool install --python 3.12 openhands
 
 # 6. Directories and conda path for ubuntu user
 sudo mkdir -p /data/projects /data/.ark
@@ -95,7 +108,25 @@ fi
 
 sudo chown -R ubuntu:ubuntu /data /opt/conda
 
+# The raw-gcloud `cloud` backend SSHes in as `ubuntu` and expects ark-base active.
 echo 'export PATH="/opt/conda/bin:$PATH"' | sudo tee -a /home/ubuntu/.bashrc
 echo 'conda activate ark-base' | sudo tee -a /home/ubuntu/.bashrc
+
+# --- SkyPilot path note (verified against a live GCP probe, 2026-07) -----------
+# When this image is used as a SkyPilot `image_id`, SkyPilot does NOT reuse the
+# `ubuntu`/`/opt/conda` environment set up above:
+#   * it SSHes in as `gcpuser` (not `ubuntu`), so the ubuntu ~/.bashrc lines above
+#     don't apply;
+#   * it installs its OWN miniconda at ~/miniconda3 and runs the orchestrator's
+#     `python -m ark.orchestrator` from THAT base env — so ark must be pip-installed
+#     into SkyPilot's runtime conda by the launcher `setup:` block; a baked
+#     /opt/conda ark install is invisible to it;
+#   * `setup:`/`run:` blocks execute in an INTERACTIVE NON-LOGIN shell, which
+#     sources /etc/bash.bashrc and ~/.bashrc but NOT /etc/profile.d.
+# What the image therefore contributes to the SkyPilot path is the *system-level*
+# deps that live on the default PATH for any user — texlive-full, pandoc, the
+# LaTeX/cairo/pango libs (above), the node CLIs, and `openhands` in /usr/local/bin
+# (verified on gcpuser's PATH). Those remove the slowest apt/toolchain steps from
+# the setup block; the ark pip-install + ark-base conda env still run at setup time.
 
 echo "ARK host setup complete."

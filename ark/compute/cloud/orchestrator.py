@@ -84,7 +84,7 @@ class OrchestratorCloudBackend(GCPCloudBackend):
 
         image_family = self.image_id or "ark-debian-base"
         image_project = self._compute_config.get("image_project", self.gcp_project)
-        machine_type = self.instance_type or "n1-standard-2"
+        machine_type = self.instance_type or "n4-standard-2"
 
         cmd = [
             "gcloud", "compute", "instances", "create", instance_name,

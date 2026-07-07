@@ -674,6 +674,28 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
             cfg = {"type": "skypilot", "conda_env": settings.cloud_conda_env or "ark-base"}
             if cloud:
                 cfg["cloud"] = cloud
+            # Pin a default GCP machine type so the orchestrator VM is predictable
+            # and matches the raw `cloud` backend default, rather than left to
+            # SkyPilot's optimizer (which picked an arbitrary n*-standard-2 in
+            # testing). Only for cloud == "gcp": n4-standard-2 is a GCP-specific
+            # type and would be an invalid instance on AWS/Azure, and an empty
+            # cloud means "let SkyPilot choose", so we must not pin there. A CLI
+            # user's explicit config.yaml bypasses this shaping entirely.
+            if cloud == "gcp":
+                cfg["instance_type"] = "n4-standard-2"
+                # Boot from the baked ARK image so the VM comes up with
+                # texlive-full / openhands / node CLIs preinstalled; the setup:
+                # block below then only re-runs the fast conda-specific steps
+                # (its texlive/openhands guards short-circuit). SkyPilot needs a
+                # FULL image path and does NOT resolve image families — it does
+                # images().get(image=<last path segment>), so a `.../family/<f>`
+                # URL 404s — hence we pin a specific image NAME. Bump the version
+                # whenever scripts/build_ark_gcp_image.sh produces a newer image.
+                _gcp_keys = _get_user_keys(user_obj) if user_obj else {}
+                gcp_project = _gcp_keys.get("gcp_project") or settings.cloud_gcp_project
+                if gcp_project:
+                    cfg["image_id"] = (
+                        f"projects/{gcp_project}/global/images/ark-debian-base-v6")
             # The orchestrator cluster comes up bare, so its deps must be installed
             # via the setup: block (the run command is plain `python -m
             # ark.orchestrator`). Install the synced ARK source (workdir →
