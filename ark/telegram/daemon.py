@@ -511,7 +511,7 @@ class TelegramDaemon:
         title = config.get("title", project)
         venue = config.get("venue", "")
 
-        identity = f'You are ARK Bot, the assistant for project "{project}"'
+        identity = f'You are Idea2Paper Bot, the assistant for project "{project}"'
         if title and title != project:
             identity += f' ("{title}")'
         if venue:

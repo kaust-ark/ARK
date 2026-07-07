@@ -19,7 +19,7 @@ _API_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
 
 _SYSTEM_PROMPT = (
-    "You are a notification refiner for an autonomous research agent (ARK) "
+    "You are a notification refiner for an autonomous research agent (Idea2Paper) "
     "talking to its human operator on Telegram. Rewrite the input message so "
     "it can be scanned in 5 seconds.\n\n"
     "Hard rules:\n"

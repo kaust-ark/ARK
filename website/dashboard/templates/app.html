@@ -2127,8 +2127,8 @@ Strict — hit the exact page limit (spends the most tokens).">
             <input type="text" id="settings-github_org" class="apikey-input" style="margin-top:8px" placeholder="Org (optional) — e.g. ark-repos; blank = your personal account" />
             <div class="apikey-current" style="line-height:1.65">
               <strong>How to set up:</strong><br>
-              1. Create a <a href="https://github.com/settings/tokens/new?scopes=repo&amp;description=ARK%20auto-push" target="_blank" rel="noopener">classic PAT with the <code>repo</code> scope</a>, then paste it in the PAT box above. <em>(Fine-grained PATs can't create repos — use a classic one.)</em><br>
-              2. <strong>Organization (optional):</strong> to keep all project repos under one org, <a href="https://github.com/account/organizations/new" target="_blank" rel="noopener">create the org on GitHub first</a> — ARK can't create orgs for you — then put its name in the Org box. <strong>Leave blank to use your personal account.</strong><br>
+              1. Create a <a href="https://github.com/settings/tokens/new?scopes=repo&amp;description=Idea2Paper%20auto-push" target="_blank" rel="noopener">classic PAT with the <code>repo</code> scope</a>, then paste it in the PAT box above. <em>(Fine-grained PATs can't create repos — use a classic one.)</em><br>
+              2. <strong>Organization (optional):</strong> to keep all project repos under one org, <a href="https://github.com/account/organizations/new" target="_blank" rel="noopener">create the org on GitHub first</a> — Idea2Paper can't create orgs for you — then put its name in the Org box. <strong>Leave blank to use your personal account.</strong><br>
               Each project then auto-creates a private repo <code>ark-&lt;project&gt;</code> (in the org if set, else <code>&lt;you&gt;/ark-…</code>) and pushes its commits there. The PAT is stored encrypted and used only by the orchestrator — never exposed to the research agents.
             </div>
           </div>
