@@ -63,5 +63,9 @@ class NullControlPlaneClient(ControlPlaneClient):
     def register_artifact(self, **ref) -> None:
         pass
 
+    def upload_artifact(self, key: str, data: bytes, *, kind: str = "",
+                        content_type: str = "") -> None:
+        pass
+
     def put_state(self, name: str, data: dict) -> None:
         pass

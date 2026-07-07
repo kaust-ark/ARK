@@ -270,6 +270,29 @@ class LocalDbControlPlaneClient(ControlPlaneClient):
         except Exception as e:
             self._note_error(e)
 
+    def upload_artifact(self, key: str, data: bytes, *, kind: str = "",
+                        content_type: str = "") -> None:
+        # Shared-FS transport: the bytes already live under the project dir
+        # (the run wrote them there), so there is nothing to transfer — just
+        # register the reference with the real size/sha, exactly as HTTP's
+        # endpoint does after persisting the upload.
+        import hashlib
+        db = self._db()
+        key = (key or "").strip()
+        if not (db and self._db_path and self._project_id and key):
+            return
+        try:
+            with db.get_session(self._db_path) as s:
+                db.register_artifact(
+                    s, self._project_id,
+                    kind=kind or "", key=key, store_type="local",
+                    content_type=content_type or "",
+                    size=len(data or b""),
+                    sha256=hashlib.sha256(data or b"").hexdigest(),
+                )
+        except Exception as e:
+            self._note_error(e)
+
     def put_state(self, name: str, data: dict) -> None:
         # Project the state doc into the DB so the dashboard/ZIP read it without
         # touching this process's disk (ADR-0013) — same code path as HTTP.

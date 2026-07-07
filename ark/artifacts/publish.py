@@ -27,7 +27,16 @@ def _publish_one(store, cp, *, path: Path, key: str, kind: str,
                  content_type: str, log=None) -> bool:
     try:
         ref = store.put_path(path, key, content_type=content_type)
-        cp.register_artifact(kind=kind, **ref.to_dict())
+        # A `local` store keeps the bytes only where the run executes (the VM for
+        # a remote run), so a bare reference is unresolvable by the control plane
+        # — push the bytes to it instead. Object stores (s3/gcs/azure) are shared,
+        # so registering the reference is enough (and avoids re-uploading blobs
+        # already in the bucket). See ControlPlaneClient.upload_artifact.
+        if ref.store_type == "local":
+            cp.upload_artifact(key=key, data=path.read_bytes(),
+                               kind=kind, content_type=content_type)
+        else:
+            cp.register_artifact(kind=kind, **ref.to_dict())
         return True
     except Exception as e:  # noqa: BLE001 — publishing is best-effort
         if log:

@@ -15,7 +15,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Path as PathParam
+from fastapi import (APIRouter, Body, Depends, Header, HTTPException,
+                     Path as PathParam, Request)
 
 from . import db
 from .auth import verify_job_token
@@ -230,6 +231,73 @@ def register_artifact(project_id: str = Depends(require_project),
             sha256=body.get("sha256", ""),
         )
         return {"ok": True, "id": row.id}
+
+
+# Reject an absurd upload before buffering it (a paper PDF is well under this).
+_MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
+
+
+@router.post("/projects/{project_id}/artifacts/upload")
+async def upload_artifact(request: Request,
+                          project_id: str = Depends(require_project),
+                          key: str = "", kind: str = "",
+                          content_type: str = "") -> dict:
+    """Receive artifact BYTES from a remote orchestrator and persist them into
+    the control plane's OWN artifact store, then register the reference.
+
+    This is the ``local``-store transport for runs with no shared FS or object
+    store (the common case): the orchestrator's produced file lives only on its
+    VM, so it POSTs the raw bytes here. We write them where the dashboard serves
+    from (``projects_root/<owner>/<project>/<key>``, mirroring
+    ``routes._artifact_store_for``) so ``GET /pdf`` resolves the registered
+    reference. Object-store runs never hit this path — their bytes are already in
+    the shared bucket, so they use ``register_artifact`` instead."""
+    key = (key or "").strip()
+    if not key:
+        raise HTTPException(status_code=422, detail="artifact 'key' is required")
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=422, detail="empty artifact body")
+    if len(data) > _MAX_ARTIFACT_BYTES:
+        raise HTTPException(status_code=413, detail="artifact too large")
+
+    settings = get_settings()
+    with db.get_session(settings.db_path) as s:
+        p = db.get_project(s, project_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="project not found")
+        owner_id = p.user_id
+
+    # Build the same store the dashboard reads through (config.yaml-selected,
+    # defaulting to a local store rooted at the project dir).
+    import io
+    from pathlib import Path
+    import yaml
+    pdir = Path(settings.projects_root) / owner_id / project_id
+    pdir.mkdir(parents=True, exist_ok=True)
+    try:
+        from ark.artifacts import from_config as _afc
+        cfg = {}
+        cfg_file = pdir / "config.yaml"
+        if cfg_file.exists():
+            cfg = yaml.safe_load(cfg_file.read_text()) or {}
+        store = _afc(cfg, pdir)
+    except Exception:
+        from ark.artifacts import LocalArtifactStore
+        store = LocalArtifactStore(pdir)
+
+    ref = store.put(key, io.BytesIO(data), content_type=content_type or "")
+    with db.get_session(settings.db_path) as s:
+        row = db.register_artifact(
+            s, project_id, kind=kind or "", key=key,
+            store_type=ref.store_type, content_type=content_type or "",
+            size=ref.size, sha256=ref.sha256,
+        )
+        if kind == "pdf":
+            p = db.get_project(s, project_id)
+            if p:
+                db.update_project(s, p, pdf_path=key)
+    return {"ok": True, "id": row.id, "size": ref.size, "sha256": ref.sha256}
 
 
 @router.get("/projects/{project_id}/artifacts")

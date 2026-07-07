@@ -120,6 +120,15 @@ class ControlPlaneClient(ABC):
         the artifact store; this records the reference (Phase 3, ADR-0012)."""
 
     @abstractmethod
+    def upload_artifact(self, key: str, data: bytes, *, kind: str = "",
+                        content_type: str = "") -> None:
+        """Push artifact BYTES to the control plane so it can serve them with no
+        shared storage. Used for the ``local`` artifact store on a remote (HTTP)
+        transport, where the produced file lives only on the orchestrator's VM —
+        ``register_artifact`` alone would record a reference the control plane
+        cannot resolve. Best-effort; a failure must never break a run."""
+
+    @abstractmethod
     def put_state(self, name: str, data: dict) -> None:
         """Project a state document (paper_state, action_plan, findings, memory,
         dev_phase_state) to the control plane for dashboard / export-ZIP

@@ -181,6 +181,28 @@ class HttpControlPlaneClient(ControlPlaneClient):
             return
         self._request("POST", "/artifacts", dict(ref))
 
+    def upload_artifact(self, key: str, data: bytes, *, kind: str = "",
+                        content_type: str = "") -> None:
+        # Raw-bytes POST (not JSON) — the produced file lives only on this VM, so
+        # the control plane can't resolve a bare reference; ship the bytes over
+        # /v1 and let it persist them into its own store. Fail-soft like _request.
+        if not self.available or not key or not data:
+            return
+        from urllib.parse import urlencode
+        qs = urlencode({"key": key, "kind": kind or "",
+                        "content_type": content_type or ""})
+        req = urllib.request.Request(
+            self._url(f"/artifacts/upload?{qs}"), data=data, method="POST")
+        req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("Content-Type", content_type or "application/octet-stream")
+        try:
+            # Bytes transfer — allow more time than a small JSON control call.
+            with urllib.request.urlopen(req, timeout=max(self._timeout, 120)):
+                pass
+            self._errors = 0
+        except Exception as e:
+            self._note_error(e)
+
     def put_state(self, name: str, data: dict) -> None:
         if not self.available or not name:
             return

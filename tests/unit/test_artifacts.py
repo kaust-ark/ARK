@@ -92,9 +92,14 @@ class TestLocalArtifactStore:
 class _FakeCP:
     def __init__(self):
         self.registered = []
+        self.uploaded = []
 
     def register_artifact(self, **ref):
         self.registered.append(ref)
+
+    def upload_artifact(self, key, data, *, kind="", content_type=""):
+        self.uploaded.append({"key": key, "kind": kind,
+                              "content_type": content_type, "size": len(data)})
 
 
 class TestPublishPaperArtifacts:
@@ -105,20 +110,41 @@ class TestPublishPaperArtifacts:
         (tmp_path / "paper" / "figures" / "notes.txt").write_bytes(b"ignored")
         return tmp_path
 
-    def test_publishes_pdf_and_figures_registers_refs(self, tmp_path):
+    def test_local_store_pushes_bytes_via_upload(self, tmp_path):
+        # A local store keeps bytes only where the run executes, so publishing
+        # must ship the BYTES to the control plane (upload_artifact), not a bare
+        # reference it can't resolve.
         from ark.artifacts import LocalArtifactStore, publish_paper_artifacts
         pdir = self._project(tmp_path)
         cp = _FakeCP()
         n = publish_paper_artifacts(LocalArtifactStore(pdir), cp, pdir)
 
-        kinds = sorted(r["kind"] for r in cp.registered)
-        keys = {r["key"] for r in cp.registered}
+        kinds = sorted(r["kind"] for r in cp.uploaded)
+        keys = {r["key"] for r in cp.uploaded}
         assert n == 2                                   # pdf + one figure (txt skipped)
         assert kinds == ["figure", "pdf"]
         assert "paper/main.pdf" in keys
         assert "paper/figures/f1.png" in keys
-        # every registration carries the store metadata
-        assert all(r["store_type"] == "local" and r["sha256"] for r in cp.registered)
+        assert all(r["size"] > 0 for r in cp.uploaded)  # real bytes shipped
+        assert cp.registered == []                      # local never registers a bare ref
+
+    def test_object_store_registers_ref_without_uploading_bytes(self, tmp_path):
+        # A shared object store already holds the bytes (put_path uploaded them),
+        # so publishing only registers the reference — no byte re-push.
+        from ark.artifacts import publish_paper_artifacts
+        from ark.artifacts.base import ArtifactRef
+        pdir = self._project(tmp_path)
+
+        class _ObjStore:
+            def put_path(self, src, key, *, content_type=""):
+                return ArtifactRef("s3", key, content_type, 10, "deadbeef")
+
+        cp = _FakeCP()
+        n = publish_paper_artifacts(_ObjStore(), cp, pdir)
+        assert n == 2
+        assert cp.uploaded == []
+        assert {r["key"] for r in cp.registered} == {"paper/main.pdf",
+                                                     "paper/figures/f1.png"}
 
     def test_pdf_untouched_when_store_roots_at_project(self, tmp_path):
         from ark.artifacts import LocalArtifactStore, publish_paper_artifacts
@@ -136,10 +162,10 @@ class TestPublishPaperArtifacts:
         pdir = self._project(tmp_path)
 
         class _BoomCP:
-            def register_artifact(self, **ref):
+            def upload_artifact(self, *a, **k):
                 raise RuntimeError("control plane down")
 
-        # A registration failure must not propagate (best-effort publishing).
+        # An upload failure must not propagate (best-effort publishing).
         n = publish_paper_artifacts(LocalArtifactStore(pdir), _BoomCP(), pdir)
         assert n == 0
 

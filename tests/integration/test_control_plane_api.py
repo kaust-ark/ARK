@@ -120,6 +120,35 @@ def test_http_client_full_roundtrip(live_server):
     assert cp.get_decision(did).status == "pending"
 
 
+def test_upload_artifact_persists_bytes_and_registers(live_server):
+    """The bytes-upload path (local-store transport): the client ships raw bytes
+    over /v1, the server writes them into its OWN project dir and registers the
+    reference — so a remote run's PDF survives even with no shared FS."""
+    import json
+    import os
+    from pathlib import Path
+    base_url, project_id, secret = live_server
+    cp = HttpControlPlaneClient(base_url, _token(project_id, secret), project_id)
+
+    pdf = b"%PDF-1.7 minimal but real enough body for a test"
+    cp.upload_artifact("paper/main.pdf", pdf, kind="pdf",
+                       content_type="application/pdf")
+
+    # Bytes landed on the control plane's own disk (not left on the "VM").
+    root = Path(os.environ["PROJECTS_ROOT"])
+    hits = [p for p in root.rglob("main.pdf") if p.read_bytes() == pdf]
+    assert hits, "uploaded PDF bytes not persisted under the project dir"
+
+    # And the reference is registered so the dashboard can resolve it.
+    req = urllib.request.Request(
+        f"{base_url}/projects/{project_id}/artifacts", method="GET")
+    req.add_header("Authorization", f"Bearer {_token(project_id, secret)}")
+    with urllib.request.urlopen(req, timeout=5) as r:
+        arts = json.loads(r.read())["artifacts"]
+    assert any(a.get("key") == "paper/main.pdf" and a.get("kind") == "pdf"
+               for a in arts)
+
+
 # ── Auth enforcement ────────────────────────────────────────────────────────────
 
 def _raw_get(base_url, project_id, token=None):
