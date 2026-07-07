@@ -3760,6 +3760,11 @@ provide the title.
         """Main loop."""
         self.check_dependencies()
 
+        # Rehydrate any state + result files the prior VM projected but that this
+        # (possibly freshly provisioned) VM's disk is missing, then resume.
+        self._rehydrate_state_docs()
+        self._rehydrate_result_artifacts()
+
         # Try to resume
         self.resume_from_checkpoint()
 

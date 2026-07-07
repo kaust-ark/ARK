@@ -1058,11 +1058,19 @@ a {{ color: #0d9488; }}
         if store is None:
             return
         try:
-            from ark.artifacts import publish_paper_artifacts
+            from ark.artifacts import (
+                publish_paper_artifacts, publish_result_artifacts)
             n = publish_paper_artifacts(
                 store, self.cp, self.code_dir,
                 latex_dir=self.config.get("latex_dir", "paper"),
                 figures_dir=self.config.get("figures_dir", "paper/figures"),
+                log=self.log,
+            )
+            # Ship experiment results too, so they survive the run's VM instead
+            # of living only on its disk until an end-of-run rsync pull.
+            n += publish_result_artifacts(
+                store, self.cp, self.code_dir,
+                results_dir=self.config.get("results_dir", "results"),
                 log=self.log,
             )
             if n:
@@ -1071,14 +1079,38 @@ a {{ color: #0d9488; }}
             self.log(f"artifact publish failed: {e}", "WARN")
 
     def _publish_state_docs(self):
-        """Project state documents (paper_state, action_plan, findings, memory,
-        dev_phase_state) to the control plane (Phase 3, ADR-0013). Best-effort —
-        the local YAML stays authoritative."""
+        """Project state documents (checkpoint, research_state, paper_state,
+        action_plan, findings, memory, dev_phase_state) to the control plane
+        (Phase 3, ADR-0013). Best-effort — the local YAML stays authoritative."""
         try:
             from ark.orchestrator.state_publish import publish_state_docs
             publish_state_docs(self.cp, self.state_dir, log=self.log)
         except Exception as e:
             self.log(f"state projection failed: {e}", "WARN")
+
+    def _rehydrate_state_docs(self):
+        """Pull any state docs this VM is missing from the control plane before
+        resume, so a replacement VM continues a run whose prior VM died instead
+        of restarting from scratch (Phase 3, ADR-0013). Best-effort."""
+        try:
+            from ark.orchestrator.state_publish import rehydrate_state_docs
+            n = rehydrate_state_docs(self.cp, self.state_dir, log=self.log)
+            if n:
+                self.log(f"Rehydrated {n} state doc(s) from control plane", "INFO")
+        except Exception as e:
+            self.log(f"state rehydrate failed: {e}", "WARN")
+
+    def _rehydrate_result_artifacts(self):
+        """Pull experiment result files this VM is missing back from the control
+        plane, so a replacement VM sees the outputs its dead predecessor produced
+        instead of re-running experiments (ADR-0012). Best-effort."""
+        try:
+            from ark.artifacts import rehydrate_result_artifacts
+            n = rehydrate_result_artifacts(self.cp, self.code_dir, log=self.log)
+            if n:
+                self.log(f"Rehydrated {n} result file(s) from control plane", "INFO")
+        except Exception as e:
+            self.log(f"result rehydrate failed: {e}", "WARN")
 
     def _render_review_to_pdf(self, md_text: str, out_path: "Path") -> bool:
         """Best-effort markdown → PDF conversion. Returns True on success.
@@ -1665,6 +1697,11 @@ a {{ color: #0d9488; }}
             total_input_tokens=self.total_input_tokens,
             total_output_tokens=self.total_output_tokens,
         )
+        # Project the resume pointer (and the rest of the state docs) to the
+        # control plane synchronously, on the iteration boundary — the artifact
+        # background thread also projects, but a VM that dies right after the
+        # checkpoint must not lose the pointer that lets a replacement resume.
+        self._publish_state_docs()
 
     def save_step_checkpoint(self, step_num: int, step_name: str):
         """Save checkpoint after a step completes within a phase iteration."""
@@ -1710,9 +1747,54 @@ a {{ color: #0d9488; }}
     def load_checkpoint(self) -> dict:
         return self.state.load_checkpoint()
 
+    @staticmethod
+    def _checkpoint_ts(cp: dict) -> float:
+        """Parse a checkpoint's ISO ``timestamp`` to a sortable float; -inf if
+        absent/unparseable so a stamped checkpoint always beats an unstamped one."""
+        try:
+            return datetime.fromisoformat(cp.get("timestamp", "")).timestamp()
+        except Exception:
+            return float("-inf")
+
+    def _resume_checkpoint(self) -> dict:
+        """Return the checkpoint to resume from, treating the control-plane
+        projection as the source of truth and the local YAML as a cache.
+
+        A replacement VM can hold a *stale* local checkpoint (booted from an old
+        image/snapshot, or an rsync that shipped an outdated copy). The control
+        plane always holds what the most recent run last reported, so whichever
+        checkpoint carries the newer ``timestamp`` wins — this both lets a fresh
+        VM resume and prevents a stale local file from rewinding the run. run_id
+        is a per-process stamp (not a logical-run id), so it is not used to
+        reconcile. When the remote is newer, the local cache is refreshed to it.
+        """
+        local = self.load_checkpoint() or {}
+        try:
+            remote = self.cp.get_state("checkpoint") or {}
+        except Exception:
+            remote = {}
+        if not isinstance(remote, dict) or not remote:
+            return local
+        if not local:
+            self.log("Resume pointer taken from control plane (no local checkpoint)", "INFO")
+        elif self._checkpoint_ts(remote) <= self._checkpoint_ts(local):
+            return local
+        else:
+            self.log(
+                f"Resume pointer from control plane (iteration "
+                f"{remote.get('iteration')} > local {local.get('iteration')})",
+                "INFO",
+            )
+        # Remote wins → refresh the local cache so downstream reads agree.
+        try:
+            _atomic_write_yaml(self.checkpoint_file, remote, default_flow_style=False)
+        except Exception as e:
+            self.log(f"failed to refresh local checkpoint cache: {e}", "WARN")
+        return remote
+
     def resume_from_checkpoint(self):
         """Resume from checkpoint."""
-        checkpoint = self.load_checkpoint()
+        checkpoint = self._resume_checkpoint()
         if checkpoint:
             self.iteration = checkpoint.get("iteration", 0)
             self.total_input_tokens = checkpoint.get("total_input_tokens", 0)

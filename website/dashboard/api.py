@@ -17,6 +17,7 @@ from typing import Any, Optional
 
 from fastapi import (APIRouter, Body, Depends, Header, HTTPException,
                      Path as PathParam, Request)
+from fastapi.responses import Response
 
 from . import db
 from .auth import verify_job_token
@@ -237,6 +238,27 @@ def register_artifact(project_id: str = Depends(require_project),
 _MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
 
 
+def _project_store(settings, owner_id: str, project_id: str, *, create: bool = False):
+    """Build the artifact store the dashboard reads through for a project
+    (config.yaml-selected, defaulting to a local store rooted at the project
+    dir), mirroring ``routes._artifact_store_for``. Returns ``(store, pdir)``."""
+    from pathlib import Path
+    import yaml
+    pdir = Path(settings.projects_root) / owner_id / project_id
+    if create:
+        pdir.mkdir(parents=True, exist_ok=True)
+    try:
+        from ark.artifacts import from_config as _afc
+        cfg = {}
+        cfg_file = pdir / "config.yaml"
+        if cfg_file.exists():
+            cfg = yaml.safe_load(cfg_file.read_text()) or {}
+        return _afc(cfg, pdir), pdir
+    except Exception:
+        from ark.artifacts import LocalArtifactStore
+        return LocalArtifactStore(pdir), pdir
+
+
 @router.post("/projects/{project_id}/artifacts/upload")
 async def upload_artifact(request: Request,
                           project_id: str = Depends(require_project),
@@ -268,24 +290,8 @@ async def upload_artifact(request: Request,
             raise HTTPException(status_code=404, detail="project not found")
         owner_id = p.user_id
 
-    # Build the same store the dashboard reads through (config.yaml-selected,
-    # defaulting to a local store rooted at the project dir).
     import io
-    from pathlib import Path
-    import yaml
-    pdir = Path(settings.projects_root) / owner_id / project_id
-    pdir.mkdir(parents=True, exist_ok=True)
-    try:
-        from ark.artifacts import from_config as _afc
-        cfg = {}
-        cfg_file = pdir / "config.yaml"
-        if cfg_file.exists():
-            cfg = yaml.safe_load(cfg_file.read_text()) or {}
-        store = _afc(cfg, pdir)
-    except Exception:
-        from ark.artifacts import LocalArtifactStore
-        store = LocalArtifactStore(pdir)
-
+    store, _pdir = _project_store(settings, owner_id, project_id, create=True)
     ref = store.put(key, io.BytesIO(data), content_type=content_type or "")
     with db.get_session(settings.db_path) as s:
         row = db.register_artifact(
@@ -304,6 +310,41 @@ async def upload_artifact(request: Request,
 def list_artifacts(project_id: str = Depends(require_project)) -> dict:
     with db.get_session(_db_path()) as s:
         return {"artifacts": db.list_artifacts(s, project_id)}
+
+
+@router.get("/projects/{project_id}/artifacts/download")
+def download_artifact(project_id: str = Depends(require_project),
+                      key: str = "") -> Response:
+    """Return stored artifact BYTES by key, so a replacement VM can rehydrate
+    result files its (now-dead) predecessor produced (ADR-0012). The mirror of
+    the upload path: resolve the registered reference and stream it back from
+    the same store the dashboard serves through."""
+    key = (key or "").strip()
+    if not key:
+        raise HTTPException(status_code=422, detail="artifact 'key' is required")
+    settings = get_settings()
+    with db.get_session(settings.db_path) as s:
+        row = db.get_artifact(s, project_id, key)
+        if not row:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        p = db.get_project(s, project_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="project not found")
+        owner_id = p.user_id
+        content_type = row.content_type or "application/octet-stream"
+        store_type = row.store_type or "local"
+
+    from ark.artifacts import ArtifactRef
+    store, _pdir = _project_store(settings, owner_id, project_id)
+    ref = ArtifactRef(store_type=store_type, key=key, content_type=content_type)
+    try:
+        with store.open(ref) as fh:
+            data = fh.read()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="artifact bytes missing")
+    except Exception:
+        raise HTTPException(status_code=500, detail="artifact read failed")
+    return Response(content=data, media_type=content_type)
 
 
 # ── State projection (Phase 3, ADR-0013) ─────────────────────────────────────────

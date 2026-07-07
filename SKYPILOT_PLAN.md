@@ -167,6 +167,23 @@ required-autostop reaping the Layer-1 backend already sets. Alternatively/additi
 offer **operator-managed compute** (one cloud account, per-user quotas + cost
 attribution) as a paid tier.
 
+**Result durability once experiments get their own VM (gated on Phase 3).**
+Today experiments run on the orchestrator VM (Phase 1), so their `results/` land
+directly on its disk and are already made durable + resumable by the per-iteration
+result publish (`publish_result_artifacts` → `/v1/artifacts`) and the fresh-VM
+rehydrate (`rehydrate_result_artifacts`) — see ADR-0013 and the item-(a) work. A
+**separate** experiment VM breaks that assumption: results live only on the
+experiment cluster until `SkyPilotBackend.sync_from_backend` rsyncs them back to
+the orchestrator (`ark/compute/skypilot.py`), so a spot pre-emption or crash
+**before** that pull loses the run's outputs. When nested experiment clusters
+land, the experiment VM must **push result files to the control plane as they are
+produced** — reuse the existing `/v1/artifacts` upload path with `kind="result"`
+so the orchestrator rehydrates/reads them exactly as it does now — instead of
+relying on the end-of-run rsync pull. This requires the experiment VM to carry
+the per-project control-plane token + URL, which it has in neither Phase 1 nor
+Phase 2 (both keep the sole credential boundary at the dashboard→orchestrator
+hop), so it is explicitly gated on the Phase 3 credential propagation above.
+
 **Notes.**
 - The public-HTTPS **control-plane boundary is a production feature, not a chore**: a
   deployed dashboard is already reachable over HTTPS, so orchestrator VMs report over

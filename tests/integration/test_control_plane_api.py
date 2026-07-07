@@ -9,10 +9,12 @@ thread, then disposes the engine so the server lazily builds its own (avoids
 SQLite's cross-thread connection guard). Assertions round-trip via the client.
 """
 
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -113,6 +115,12 @@ def test_http_client_full_roundtrip(live_server):
     cp.register_artifact(kind="pdf", store_type="local", key="paper/main.pdf",
                          content_type="application/pdf", size=42)
 
+    # state projection: absent → None, then put → get round-trips (rehydration
+    # source of truth for a replacement VM — ADR-0013).
+    assert cp.get_state("checkpoint") is None
+    cp.put_state("checkpoint", {"iteration": 4, "run_id": "r1"})
+    assert cp.get_state("checkpoint") == {"iteration": 4, "run_id": "r1"}
+
     # decision: open → pending (answering is owned by the CP HITL engine, not
     # exposed to the orchestrator over /v1 — see test_controlplane_hitl.py).
     did = cp.open_decision("Proceed?", ["Yes", "No"], default_index=1)
@@ -147,6 +155,31 @@ def test_upload_artifact_persists_bytes_and_registers(live_server):
         arts = json.loads(r.read())["artifacts"]
     assert any(a.get("key") == "paper/main.pdf" and a.get("kind") == "pdf"
                for a in arts)
+
+
+def test_upload_list_download_round_trips_result(live_server):
+    """A remote run publishes a result file, then a *replacement* client lists
+    and downloads it back (ADR-0012 rehydration) — the full off-VM durability
+    path for experiment outputs."""
+    from ark.artifacts import rehydrate_result_artifacts
+    base_url, project_id, secret = live_server
+    cp = HttpControlPlaneClient(base_url, _token(project_id, secret), project_id)
+
+    payload = b'{"accuracy": 0.91, "loss": 0.12}'
+    cp.upload_artifact("results/metrics.json", payload, kind="result",
+                       content_type="application/json")
+
+    # Catalog lists it, and the bytes round-trip verbatim over the download path.
+    keys = {a.get("key"): a.get("kind") for a in cp.list_artifacts()}
+    assert keys.get("results/metrics.json") == "result"
+    assert cp.download_artifact("results/metrics.json") == payload
+    assert cp.download_artifact("results/nope.json") is None  # 404 → None
+
+    # End-to-end: rehydrate onto a fresh empty "VM" disk.
+    fresh = tempfile.mkdtemp()
+    n = rehydrate_result_artifacts(cp, fresh)
+    assert n == 1
+    assert (Path(fresh) / "results" / "metrics.json").read_bytes() == payload
 
 
 # ── Auth enforcement ────────────────────────────────────────────────────────────

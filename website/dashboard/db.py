@@ -837,6 +837,15 @@ def register_artifact(session: Session, project_id: str, *, kind: str, key: str,
     return row
 
 
+def get_artifact(session: Session, project_id: str, key: str) -> Optional["Artifact"]:
+    """The registered artifact for ``(project_id, key)``, or None — used by the
+    /v1 download endpoint to resolve stored bytes back for rehydration."""
+    return session.exec(
+        select(Artifact).where(Artifact.project_id == project_id,
+                               Artifact.key == key)
+    ).first()
+
+
 def latest_artifact(session: Session, project_id: str, kind: str) -> Optional["Artifact"]:
     """Most recently registered artifact of ``kind`` for the project, or None."""
     return session.exec(

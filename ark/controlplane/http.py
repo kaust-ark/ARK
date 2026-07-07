@@ -207,3 +207,39 @@ class HttpControlPlaneClient(ControlPlaneClient):
         if not self.available or not name:
             return
         self._request("PUT", f"/state/{name}", {"data": data or {}})
+
+    def get_state(self, name: str) -> Optional[dict]:
+        if not self.available or not name:
+            return None
+        # Server returns {"name", "data"}; a missing doc is a 404 → fail-soft None.
+        data = self._request("GET", f"/state/{name}")
+        if not isinstance(data, dict):
+            return None
+        doc = data.get("data")
+        return doc if isinstance(doc, dict) else None
+
+    def list_artifacts(self) -> list[dict]:
+        if not self.available:
+            return []
+        data = self._request("GET", "/artifacts")
+        rows = (data or {}).get("artifacts") or []
+        return rows if isinstance(rows, list) else []
+
+    def download_artifact(self, key: str) -> Optional[bytes]:
+        # Raw-bytes GET (not JSON) — mirror of upload_artifact. Fail-soft.
+        if not self.available or not key:
+            return None
+        from urllib.parse import urlencode
+        req = urllib.request.Request(
+            self._url(f"/artifacts/download?{urlencode({'key': key})}"),
+            method="GET")
+        req.add_header("Authorization", f"Bearer {self._token}")
+        try:
+            # Bytes transfer — allow more time than a small JSON control call.
+            with urllib.request.urlopen(req, timeout=max(self._timeout, 120)) as resp:
+                data = resp.read()
+            self._errors = 0
+            return data or None
+        except Exception as e:
+            self._note_error(e)
+            return None

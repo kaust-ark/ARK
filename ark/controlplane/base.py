@@ -130,7 +130,33 @@ class ControlPlaneClient(ABC):
 
     @abstractmethod
     def put_state(self, name: str, data: dict) -> None:
-        """Project a state document (paper_state, action_plan, findings, memory,
-        dev_phase_state) to the control plane for dashboard / export-ZIP
-        consumption. Best-effort; the orchestrator's local YAML stays
-        authoritative (Phase 3, ADR-0013)."""
+        """Project a state document (checkpoint, research_state, paper_state,
+        action_plan, findings, memory, dev_phase_state) to the control plane for
+        dashboard / export-ZIP consumption and for rehydration. Best-effort; the
+        orchestrator's local YAML stays authoritative (Phase 3, ADR-0013)."""
+
+    def get_state(self, name: str) -> Optional[dict]:
+        """Read a previously projected state document back, or None if absent.
+
+        Used to rehydrate ``auto_research/state/`` on a freshly provisioned VM
+        when the run's prior VM died (ADR-0013) — the projection is the resume
+        source of truth. Fail-soft: returns None when the control plane is
+        unavailable or has no such doc. The default is a no-op (None); transports
+        that persist projections (HTTP, LocalDb) override it."""
+        return None
+
+    def list_artifacts(self) -> list[dict]:
+        """Registered artifact references for the project (each a dict with
+        ``kind``/``key``/``content_type``/``size``/``sha256``). Used to discover
+        what a replacement VM can rehydrate. Default: empty."""
+        return []
+
+    def download_artifact(self, key: str) -> Optional[bytes]:
+        """Fetch stored artifact BYTES by key, or None if unavailable/absent.
+
+        The read side of :meth:`upload_artifact`: lets a fresh VM pull back
+        result files its dead predecessor produced (ADR-0012). Fail-soft. The
+        default is a no-op (None); the HTTP transport overrides it. On a shared
+        filesystem (LocalDb) the bytes are already on disk, so rehydration skips
+        the download and the default None is correct."""
+        return None

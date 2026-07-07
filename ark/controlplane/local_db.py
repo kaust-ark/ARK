@@ -304,3 +304,29 @@ class LocalDbControlPlaneClient(ControlPlaneClient):
                 db.put_state_doc(s, self._project_id, name, data or {})
         except Exception as e:
             self._note_error(e)
+
+    def get_state(self, name: str) -> Optional[dict]:
+        # Read a projected state doc back (rehydration on a fresh VM, ADR-0013).
+        db = self._db()
+        if not (db and self._db_path and self._project_id and name):
+            return None
+        try:
+            with db.get_session(self._db_path) as s:
+                return db.get_state_doc(s, self._project_id, name)
+        except Exception as e:
+            self._note_error(e)
+            return None
+
+    def list_artifacts(self) -> list[dict]:
+        # Registered references for the project (shared-FS transport). The bytes
+        # already sit on the on-disk store, so download_artifact keeps the base
+        # no-op default — rehydration finds the files present and skips them.
+        db = self._db()
+        if not (db and self._db_path and self._project_id):
+            return []
+        try:
+            with db.get_session(self._db_path) as s:
+                return db.list_artifacts(s, self._project_id)
+        except Exception as e:
+            self._note_error(e)
+            return []

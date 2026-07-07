@@ -8,7 +8,11 @@ the project dir, so local dev and SLURM behave exactly as before.
 from .base import ArtifactRef, ArtifactStore, copy_hashed, hash_stream
 from .local import LocalArtifactStore
 from .object_store import ObjectArtifactStore
-from .publish import publish_paper_artifacts
+from .publish import (
+    publish_paper_artifacts,
+    publish_result_artifacts,
+    rehydrate_result_artifacts,
+)
 
 VALID_TYPES = ("local", "s3", "gcs", "azure")
 
@@ -67,6 +71,8 @@ __all__ = [
     "copy_hashed",
     "hash_stream",
     "publish_paper_artifacts",
+    "publish_result_artifacts",
+    "rehydrate_result_artifacts",
     "from_config",
     "validate_config",
     "VALID_TYPES",
