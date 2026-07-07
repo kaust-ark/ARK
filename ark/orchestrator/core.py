@@ -1088,6 +1088,27 @@ a {{ color: #0d9488; }}
         except Exception as e:
             self.log(f"state projection failed: {e}", "WARN")
 
+    def finalize_durability(self) -> None:
+        """Synchronously flush the paper PDF, result artifacts, and resume/state
+        docs to the control plane on the MAIN thread at run completion.
+
+        The per-iteration artifact upload runs on a best-effort daemon thread
+        (``_send_artifacts_bg``). ``stop_telegram_listener`` joins it, but the
+        publish itself has no retry: a killed thread or a single failed upload
+        (e.g. a control-plane blip) loses the finished paper with no second
+        attempt — exactly how a completed 3.9/10 run left the dashboard showing
+        'running' with no PDF. This runs on the main thread before the terminal
+        status is recorded, so it is the durability guarantee rather than a
+        best-effort side task. Idempotent: uploads upsert by key, so re-publishing
+        what the daemon already sent is a safe no-op."""
+        if not self.cp.available:
+            return
+        try:
+            self._publish_paper_artifacts()
+            self._publish_state_docs()
+        except Exception as e:
+            self.log(f"final durability flush failed: {e}", "WARN")
+
     def _rehydrate_state_docs(self):
         """Pull any state docs this VM is missing from the control plane before
         resume, so a replacement VM continues a run whose prior VM died instead
@@ -1679,13 +1700,23 @@ a {{ color: #0d9488; }}
     # ========== Checkpoint ==========
 
     def save_checkpoint(self):
-        """Save run state checkpoint (clears phase progress — iteration complete)."""
+        """Save the run's resume checkpoint (clears step progress — iteration
+        complete) locally, to the DB, AND to the control plane.
+
+        This is the single canonical definition. There must be exactly one
+        ``save_checkpoint`` on this class: an earlier duplicate lower in the file
+        shadowed this one and did only a local write, so ``_sync_db`` and
+        ``_publish_state_docs`` never ran — the resume pointer never reached the
+        control plane and durability across VM loss was silently inert. Do not
+        re-introduce a second definition.
+        """
         checkpoint = {
             "run_id": self.run_id,
             "iteration": self.iteration,
             "mode": self.mode,
             "total_input_tokens": self.total_input_tokens,
             "total_output_tokens": self.total_output_tokens,
+            "last_score": self._last_score,
             "timestamp": datetime.now().isoformat(),
             "completed_phase": 0,  # Reset — full iteration done
         }
@@ -1733,16 +1764,6 @@ a {{ color: #0d9488; }}
 
     # Backward compat alias
     get_resume_phase = get_resume_step
-
-    def save_checkpoint(self):
-        """Save current iteration and score to a checkpoint file."""
-        checkpoint = {
-            "iteration": self.iteration,
-            "last_score": self._last_score,
-            "timestamp": datetime.now().isoformat(),
-            "run_id": self.run_id,
-        }
-        self.state.save_checkpoint(checkpoint)
 
     def load_checkpoint(self) -> dict:
         return self.state.load_checkpoint()
@@ -3143,21 +3164,37 @@ def main():
                 orchestrator._sync_db(status="done", pid=0)
         return
 
+    final_status = None
     try:
         orchestrator.run()
-        # Mark completion via the active control-plane transport
-        if orchestrator.cp.available:
-            paper_state = orchestrator.load_paper_state()
+        # Derive the terminal status from the run's own outcome signals. run()
+        # returns normally even when it aborted early: a non-retryable agent error
+        # stops the loop via `return False`/`break`, not an exception.
+        #   - _terminal_error set  → aborted mid-run (bad model/key, context
+        #     overflow, spend gate). Phases did NOT all finish → "failed".
+        #   - _stop_requested      → user asked it to stop → "stopped".
+        #   - otherwise            → ran its full iteration budget (accepted or
+        #     not; the score conveys quality) → "done".
+        if getattr(orchestrator, "_terminal_error", None):
+            final_status = "failed"
+        elif getattr(orchestrator, "_stop_requested", False):
+            final_status = "stopped"
+        else:
             final_status = "done"
-            if paper_state.get("status") in ("accepted", "accepted_pending_cleanup"):
-                final_status = "done"
-            orchestrator._sync_db(status=final_status, pid=0)
     except KeyboardInterrupt:
-        orchestrator._sync_db(status="stopped", pid=0)
+        final_status = "stopped"
     except Exception:
-        orchestrator._sync_db(status="failed", pid=0)
+        final_status = "failed"
         raise
     finally:
+        # Durability: synchronously flush the paper PDF + result/state docs to the
+        # control plane on the MAIN thread BEFORE recording the terminal status, so
+        # a persisted status never implies a paper the control plane is missing.
+        # The per-iteration upload runs on a daemon thread that can be killed on
+        # exit or fail with no retry; this synchronous flush is the guarantee.
+        orchestrator.finalize_durability()
+        if final_status is not None and orchestrator.cp.available:
+            orchestrator._sync_db(status=final_status, pid=0)
         orchestrator._flush_events()
 
 

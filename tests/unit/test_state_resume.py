@@ -313,3 +313,103 @@ def test_localdb_get_state_round_trip(tmp_path, monkeypatch):
     cp.put_state("checkpoint", {"iteration": 4, "run_id": "r1"})
     got = cp.get_state("checkpoint")
     assert got == {"iteration": 4, "run_id": "r1"}
+
+
+# ── save_checkpoint persists locally AND to DB AND to the control plane ───────────
+#
+# Regression guard for the duplicate-method bug: a second, local-only
+# ``save_checkpoint`` used to shadow the real one, so ``_sync_db`` and
+# ``_publish_state_docs`` never ran and the resume pointer never left the VM.
+# This pins all three side-effects — a reintroduced local-only override fails here.
+
+def test_save_checkpoint_writes_locally_syncs_db_and_publishes(tmp_path):
+    from ark.orchestrator.core import Orchestrator
+
+    calls = {"sync_db": None, "published": 0}
+
+    class Stub:
+        checkpoint_file = tmp_path / "checkpoint.yaml"
+        run_id = "r1"
+        iteration = 3
+        mode = "paper"
+        total_input_tokens = 1234
+        total_output_tokens = 56
+        _last_score = 3.9
+
+        def log(self, *a, **k):
+            pass
+
+        def _sync_db(self, **kw):
+            calls["sync_db"] = kw
+
+        def _publish_state_docs(self):
+            calls["published"] += 1
+
+    Orchestrator.save_checkpoint(Stub())
+
+    # (1) local resume pointer written, carrying the fields resume reads back —
+    #     the token totals were exactly what the old local-only version dropped.
+    written = yaml.safe_load((tmp_path / "checkpoint.yaml").read_text())
+    assert written["iteration"] == 3
+    assert written["total_input_tokens"] == 1234
+    assert written["total_output_tokens"] == 56
+    assert written["completed_phase"] == 0  # step progress reset — iteration done
+
+    # (2) DB sync fired with the iteration + token totals.
+    assert calls["sync_db"]["iteration"] == 3
+    assert calls["sync_db"]["total_input_tokens"] == 1234
+    assert calls["sync_db"]["total_output_tokens"] == 56
+
+    # (3) the resume pointer was projected to the control plane (durability).
+    assert calls["published"] == 1
+
+
+# ── finalize_durability: synchronous main-thread artifact/state flush ─────────────
+#
+# The per-iteration paper upload runs on a daemon thread with no retry, so a
+# killed thread or one failed upload loses the finished paper. finalize_durability
+# is the completion-time guarantee, run on the main thread before the terminal
+# status is recorded.
+
+def _durability_stub(available, on_paper=None):
+    from ark.orchestrator.core import Orchestrator
+
+    class CP:
+        pass
+    cp = CP()
+    cp.available = available
+
+    class Stub:
+        pass
+    stub = Stub()
+    stub.cp = cp
+    stub.logged = []
+    stub.calls = []
+    stub.log = lambda msg, level="INFO": stub.logged.append((msg, level))
+    stub._publish_paper_artifacts = (
+        on_paper if on_paper else (lambda: stub.calls.append("paper"))
+    )
+    stub._publish_state_docs = lambda: stub.calls.append("state")
+    return Orchestrator, stub
+
+
+def test_finalize_durability_publishes_paper_then_state_when_available():
+    Orchestrator, stub = _durability_stub(available=True)
+    Orchestrator.finalize_durability(stub)
+    # Paper PDF/results first, then the resume/state docs.
+    assert stub.calls == ["paper", "state"]
+
+
+def test_finalize_durability_noop_when_cp_unavailable():
+    Orchestrator, stub = _durability_stub(available=False)
+    Orchestrator.finalize_durability(stub)
+    assert stub.calls == []  # local run: nothing attempted
+
+
+def test_finalize_durability_swallows_publish_errors():
+    def boom():
+        raise RuntimeError("upload exploded")
+
+    Orchestrator, stub = _durability_stub(available=True, on_paper=boom)
+    Orchestrator.finalize_durability(stub)  # must never raise into the run
+    assert any("durability flush failed" in m for m, _ in stub.logged)

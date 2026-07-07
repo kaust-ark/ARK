@@ -525,6 +525,13 @@ Execute the task and update the corresponding files.
                         "connection broken", "server disconnected",
                         "eof occurred", "remoteprotocolerror",
                         "bad gateway", "gateway timeout",
+                        # Empty/truncated provider body: litellm fails to parse a
+                        # JSON response because OpenRouter (or its upstream) returned
+                        # blank/non-JSON bytes mid-request. Same transient class as
+                        # "incomplete chunked read" — a bounded retry clears it. This
+                        # is the failure that aborted a whole run after an hour of
+                        # planning+experiments on a deepseek/OpenRouter paper.
+                        "unable to get json response", "expecting value",
                         # Rich style-parser crash on markup-like tool output (see
                         # MissingStyle note above) — match by message text too, in
                         # case the surfaced error_code is generic.
