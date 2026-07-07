@@ -11,7 +11,7 @@ from ark import template_preprocess, cli
 def test_writer_scaffold_contains_acknowledgments():
     scaffold = template_preprocess._WRITER_SCAFFOLD
     assert r"\section*{Acknowledgments}" in scaffold
-    assert "ARK (idea2paper.org)" in scaffold
+    assert "Idea2Paper (idea2paper.org)" in scaffold
     assert "full responsibility" in scaffold
 
 
