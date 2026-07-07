@@ -1615,7 +1615,8 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
         job_id = launcher.launch(spec)
     except Exception as e:
         logger.error(f"Failed to launch orchestrator for {project.id}: {e}", exc_info=True)
-        update_project(session, project, status="failed")
+        update_project(session, project, status="failed",
+                       error_message=f"Launch failed: {str(e)[:400]}")
         return "failed"
     update_project(session, project, status=launcher.initial_status, slurm_job_id=job_id)
     return launcher.initial_status

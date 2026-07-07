@@ -566,22 +566,34 @@ async def lifespan(app: FastAPI):
     logger.info(f"ARK Webapp starting. DB: {settings.db_path}")
     logger.info(f"Projects root: {settings.projects_root}")
 
-    # Start the Telegram daemon — the control-plane HITL engine (D1). It is the
-    # sole Telegram poller: it notifies opened decisions, captures replies into the
-    # decision/command queues, and sweeps timeouts. No-op if Telegram unconfigured.
-    try:
-        from ark.telegram.daemon import ensure_daemon
-        ensure_daemon()
-    except Exception as e:
-        logger.warning(f"Telegram daemon start failed (non-fatal): {e}")
-
-    poll_task = asyncio.create_task(_poll_jobs(app))
+    # Control loop = queue promotion + job polling + terminal-notify sweep +
+    # Telegram daemon. Exactly ONE webapp process may run it per shared DB:
+    # on 2026-07-07 the dev and prod webapps (sharing one DB) both promoted
+    # the same pending projects within the same second and double-launched
+    # them — unit-name collision, child-process fallback, live runs falsely
+    # marked failed. Secondary instances (dev) set ARK_CONTROL_LOOP=0 and
+    # serve UI/API only.
+    control_loop = os.environ.get("ARK_CONTROL_LOOP", "1") != "0"
+    poll_task = None
+    if control_loop:
+        # Start the Telegram daemon — the control-plane HITL engine (D1). It is the
+        # sole Telegram poller: it notifies opened decisions, captures replies into the
+        # decision/command queues, and sweeps timeouts. No-op if Telegram unconfigured.
+        try:
+            from ark.telegram.daemon import ensure_daemon
+            ensure_daemon()
+        except Exception as e:
+            logger.warning(f"Telegram daemon start failed (non-fatal): {e}")
+        poll_task = asyncio.create_task(_poll_jobs(app))
+    else:
+        logger.info("ARK_CONTROL_LOOP=0 — control loop disabled; serving UI/API only.")
     yield
-    poll_task.cancel()
-    try:
-        await poll_task
-    except asyncio.CancelledError:
-        pass
+    if poll_task:
+        poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
     logger.info("ARK Webapp stopped.")
 
 

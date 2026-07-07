@@ -689,7 +689,11 @@ def _launch_detached_orchestrator(wrapper, env, log_file, project_dir, project_i
     if not _systemd_user_available():
         return None
 
-    unit = f"ark-orch-{str(project_id)[:8]}-{int(time.time())}"
+    # Launcher pid in the unit name: two webapp processes launching the same
+    # project in the same second must NOT collide on the unit name — a
+    # collision used to trigger the child-process fallback and double-launch
+    # the run (2026-07-07 incident).
+    unit = f"ark-orch-{str(project_id)[:8]}-{int(time.time())}-{os.getpid()}"
     env_file = Path(project_dir) / ".orch_env"
     try:
         lines = []
@@ -716,10 +720,15 @@ def _launch_detached_orchestrator(wrapper, env, log_file, project_dir, project_i
         ]
         r = subprocess.run(sd_cmd, capture_output=True, text=True)
         if r.returncode != 0:
-            print(f"[launch] systemd-run failed ({r.returncode}): "
-                  f"{(r.stderr or '').strip()[:300]} — falling back to child process",
-                  file=sys.stderr)
-            return None
+            # Do NOT fall back to an in-webapp child here: systemd IS available,
+            # so a failure is either a duplicate launch (unit collision — the
+            # other launcher owns the run) or a real provisioning error. The
+            # child fallback silently forfeits release-survival and, in the
+            # collision case, double-launches the run (2026-07-07 incident).
+            raise RuntimeError(
+                f"systemd-run failed for {unit} (rc={r.returncode}): "
+                f"{(r.stderr or '').strip()[:300]}"
+            )
 
         # systemd-run --unit blocks until the unit has started, so MainPID is set.
         q = subprocess.run(
@@ -728,16 +737,10 @@ def _launch_detached_orchestrator(wrapper, env, log_file, project_dir, project_i
         )
         pid = int((q.stdout or "0").strip() or 0)
         if pid <= 0:
-            print(f"[launch] {unit}: no MainPID after start — falling back to child process",
-                  file=sys.stderr)
             subprocess.run(["systemctl", "--user", "stop", f"{unit}.service"],
                            capture_output=True)
-            return None
+            raise RuntimeError(f"{unit}: no MainPID after systemd-run start")
         return pid
-    except Exception as e:
-        print(f"[launch] detached launch error: {e} — falling back to child process",
-              file=sys.stderr)
-        return None
     finally:
         # systemd has already consumed the EnvironmentFile at exec; drop the
         # on-disk secrets immediately, regardless of outcome.
