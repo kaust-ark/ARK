@@ -38,6 +38,7 @@ _DEFAULTS = {
     # SkyPilot cloud compute (the central launcher SA provisions per-user)
     "CLOUD_GCP_PROJECT": "",         # central GCP project holding the baked ARK image
     "CLOUD_LAUNCHER_SA": "",         # central ark-launcher service-account email
+    "CLOUD_LAUNCHER_ORG_CUSTOMER_ID": "",  # directory customer id of the launcher SA's org (for Domain Restricted Sharing allowlists)
     "CLOUD_LAUNCHER_SA_KEY": "~/.config/ark/ark-launcher-sa-key.json",
     "CLOUD_CONDA_ENV": "ark-base",   # base conda env cloned per project on the remote
 }
@@ -116,6 +117,12 @@ SLURM_CONDA_ENV=ark-base
 # scripts/setup_ark_launcher_sa.sh). Blank ⇒ SkyPilot cloud runs are disabled.
 CLOUD_GCP_PROJECT=
 CLOUD_LAUNCHER_SA=
+# Directory customer id (e.g. C0abc1234) of the org that owns the launcher SA.
+# If a user's project org enforces Domain Restricted Sharing
+# (constraints/iam.allowedPolicyMemberDomains), the generated grant script uses
+# this to allowlist the launcher's org before binding roles. Blank ⇒ the script
+# emits a discovery helper instead.
+CLOUD_LAUNCHER_ORG_CUSTOMER_ID=
 CLOUD_LAUNCHER_SA_KEY=~/.config/ark/ark-launcher-sa-key.json
 CLOUD_CONDA_ENV=ark-base
 """
@@ -196,6 +203,11 @@ class Settings:
         # grant THIS identity access to their project; shown in the onboarding
         # grant instructions. Empty ⇒ derived from GOOGLE_APPLICATION_CREDENTIALS.
         self.cloud_launcher_sa: str = merged.get("CLOUD_LAUNCHER_SA", "")
+        # Directory customer id of the launcher SA's org. When a user's project
+        # org enforces Domain Restricted Sharing, cross-org members (our launcher
+        # SA) are rejected; the grant script allowlists this customer id first.
+        self.cloud_launcher_org_customer_id: str = merged.get(
+            "CLOUD_LAUNCHER_ORG_CUSTOMER_ID", "")
         # Key file for that SA. If GOOGLE_APPLICATION_CREDENTIALS is unset, the
         # webapp falls back to this so SkyPilot's SDK (ADC) launches AS the SA
         # rather than whatever user account happens to own the host's ADC. Default

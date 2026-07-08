@@ -34,20 +34,51 @@ REQUIRED_ROLES = [
 ]
 
 
+# Fixed local part of the launcher SA, matching scripts/setup_ark_launcher_sa.sh
+# (``SA_ID="ark-launcher"``). Used to derive the email from the central project
+# when no explicit setting / key file is present.
+LAUNCHER_SA_ID = "ark-launcher"
+
+
 def launcher_sa_email(settings=None) -> str:
-    """Email of the central launcher SA, for the grant instructions. Prefers the
-    explicit ``CLOUD_LAUNCHER_SA`` setting, else reads ``client_email`` out of the
-    key file at ``GOOGLE_APPLICATION_CREDENTIALS``. Empty string if neither is
-    available (the UI then shows a configuration hint instead of a bad address)."""
+    """Email of the central launcher SA, for the grant instructions.
+
+    Resolution order (first hit wins):
+      1. the explicit ``CLOUD_LAUNCHER_SA`` setting;
+      2. ``client_email`` from the key file at ``GOOGLE_APPLICATION_CREDENTIALS``;
+      3. derived as ``ark-launcher@<central-project>.iam.gserviceaccount.com``
+         from ``CLOUD_GCP_PROJECT`` (the setup script builds the address exactly
+         this way), so onboarding instructions still resolve on hosts that have
+         the central project configured but no SA key mounted.
+
+    Empty string only if none of those are available — the UI then shows a
+    configuration hint instead of a bad address."""
     if settings is not None and getattr(settings, "cloud_launcher_sa", ""):
         return settings.cloud_launcher_sa
     cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
     if cred_path and os.path.exists(os.path.expanduser(cred_path)):
         try:
             with open(os.path.expanduser(cred_path)) as fh:
-                return json.load(fh).get("client_email", "") or ""
+                email = json.load(fh).get("client_email", "") or ""
+                if email:
+                    return email
         except (OSError, ValueError):
             pass
+    central = getattr(settings, "cloud_gcp_project", "") if settings is not None else ""
+    if central:
+        return f"{LAUNCHER_SA_ID}@{central}.iam.gserviceaccount.com"
+    return ""
+
+
+def launcher_org_customer_id(settings=None) -> str:
+    """Directory customer id (e.g. ``C0abc1234``) of the org that owns the launcher
+    SA, for Domain Restricted Sharing allowlists in the grant instructions.
+
+    Empty string if not configured — the grant script then emits a discovery
+    helper (``gcloud organizations list``) instead of a concrete value, since a
+    user in the same directory as the launcher can look it up themselves."""
+    if settings is not None:
+        return getattr(settings, "cloud_launcher_org_customer_id", "") or ""
     return ""
 
 

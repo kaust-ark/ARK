@@ -15,6 +15,11 @@
     // with user_id seated, identical to a normal login.
     window.SHARE_MODE = {{ 'true' if share_mode else 'false' }};
     window.SHARE_PROJECT_ID = "{{ share_project_id }}";
+    // SkyPilot launcher grant target, rendered server-side so the settings
+    // instructions show the principal + roles immediately (no fetch needed).
+    window.GCP_LAUNCHER_SA = {{ launcher_sa | tojson }};
+    window.GCP_LAUNCHER_CUSTOMER_ID = {{ launcher_customer_id | default('') | tojson }};
+    window.GCP_REQUIRED_ROLES = {{ required_roles | tojson }};
   </script>
   <link rel="icon" type="image/png" href="{{ app_base }}/static/logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -1976,46 +1981,253 @@ Strict — hit the exact page limit (spends the most tokens).">
             </div>
 
             <!-- SkyPilot workspaces onboarding: the user grants the central
-                 launcher SA access to their project (no key upload). Verify the
-                 grant here so a missing binding fails loudly, not at launch. -->
+                 launcher SA access to their project (no key upload). We spell out
+                 exactly what they run on their end, then verify here so a missing
+                 binding fails loudly, not at launch. -->
             <div class="form-group" style="background:var(--surface-2,rgba(0,0,0,.03));border-radius:8px;padding:12px">
               <label style="font-size:.75rem;font-weight:600">Grant compute access (SkyPilot)</label>
-              <p style="font-size:.72rem;color:var(--text-second);margin:6px 0">
+              <p style="font-size:.72rem;color:var(--text-second);margin:6px 0 10px">
                 Runs launch into <em>your</em> GCP project via a shared launcher
-                identity — no service-account key needed. Grant this principal the
-                required roles on the project above, then verify:
+                identity — no service-account key to upload. You do a one-time setup
+                on your Google Cloud project, then click Verify. Full walkthrough:
               </p>
-              <code id="settings-gcp-launcher-sa" style="display:block;font-size:.72rem;word-break:break-all;margin-bottom:6px">(loading launcher identity…)</code>
+
+              <!-- Step 1: a billed project -->
+              <div style="font-size:.72rem;color:var(--text-second);margin-bottom:4px">
+                <strong>1. Have a GCP project with billing enabled.</strong>
+              </div>
+              <ul style="font-size:.7rem;color:var(--text-second);margin:0 0 10px 16px;padding:0">
+                <li><a href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">Create a project</a> (or pick an existing one) and
+                    <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener">link a billing account</a> to it.</li>
+                <li>Copy its <strong>Project ID</strong> (not the display name) into the <em>GCP Project ID</em> field above.</li>
+              </ul>
+
+              <!-- Step 2: the principal to grant -->
+              <div style="font-size:.72rem;color:var(--text-second);margin-bottom:4px">
+                <strong>2. This is the principal (service account) you grant access to:</strong>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
+                <code id="settings-gcp-launcher-sa" style="flex:1;font-size:.72rem;word-break:break-all">(loading launcher identity…)</code>
+                <button type="button" id="settings-gcp-copy-sa" class="btn btn-secondary" style="font-size:.7rem;white-space:nowrap">Copy</button>
+              </div>
+
+              <!-- Step 3: account type — personal vs organization. Org projects
+                   may enforce Domain Restricted Sharing, which blocks the
+                   cross-org launcher SA until its org is allowlisted; personal
+                   projects have no org policy, so the script drops that step. -->
+              <div style="font-size:.72rem;color:var(--text-second);margin-bottom:4px">
+                <strong>3. Is this project under a Google Cloud organization?</strong>
+              </div>
+              <div style="display:flex;gap:16px;margin-bottom:4px">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:.72rem;font-weight:400;color:var(--text-second)">
+                  <input type="radio" name="gcp-account-type" value="personal" checked /> Personal account (no organization)
+                </label>
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:.72rem;font-weight:400;color:var(--text-second)">
+                  <input type="radio" name="gcp-account-type" value="org" /> Part of an organization
+                </label>
+              </div>
+              <p id="settings-gcp-account-hint" style="font-size:.68rem;color:var(--text-muted);margin:0 0 10px"></p>
+
+              <!-- Step 4: run the full setup script -->
+              <div style="font-size:.72rem;color:var(--text-second);margin-bottom:4px">
+                <strong>4. Run this setup</strong> in
+                <a href="https://console.cloud.google.com/cloudshell" target="_blank" rel="noopener">Cloud Shell</a>
+                (no install — opens in your browser) or a local
+                <a href="https://cloud.google.com/sdk/docs/install" target="_blank" rel="noopener"><code style="font-size:.68rem">gcloud</code></a>.
+                It enables the required APIs and grants the launcher its roles:
+              </div>
+              <pre id="settings-gcp-gcloud" style="font-size:.68rem;line-height:1.45;background:var(--bg,#fff);border:1px solid var(--card-border,rgba(0,0,0,.1));border-radius:6px;padding:8px 10px;overflow-x:auto;margin:0 0 4px;white-space:pre">Enter your GCP Project ID above to generate the setup script.</pre>
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+                <button type="button" id="settings-gcp-copy-gcloud" class="btn btn-secondary" style="font-size:.7rem">Copy setup script</button>
+                <a id="settings-gcp-console-link" href="https://console.cloud.google.com/iam-admin/iam" target="_blank" rel="noopener" style="font-size:.7rem;color:var(--text-muted)">…or grant via the Cloud Console →</a>
+              </div>
+
+              <!-- Step 5: verify -->
+              <div style="font-size:.72rem;color:var(--text-second);margin-bottom:4px">
+                <strong>5. Come back here and confirm</strong> we can reach your project:
+              </div>
               <div style="display:flex;gap:8px;align-items:center">
                 <button type="button" id="settings-gcp-verify-btn" class="btn btn-secondary" style="font-size:.75rem">Verify access</button>
                 <span id="settings-gcp-verify-status" style="font-size:.75rem;color:var(--text-muted)"></span>
               </div>
-              <details style="margin-top:8px">
-                <summary style="font-size:.72rem;color:var(--text-muted);cursor:pointer;user-select:none">Required roles</summary>
+
+              <details style="margin-top:10px">
+                <summary style="font-size:.72rem;color:var(--text-muted);cursor:pointer;user-select:none">Prefer the Cloud Console? / What each role is for</summary>
+                <ol style="font-size:.7rem;color:var(--text-second);margin:6px 0 0 16px;padding:0">
+                  <li>APIs: open <a href="https://console.cloud.google.com/apis/library" target="_blank" rel="noopener">APIs &amp; Services → Library</a> and enable
+                      <em>Compute Engine</em>, <em>Cloud Resource Manager</em>, <em>IAM</em>, <em>Service Usage</em>, and <em>Cloud Storage</em>.</li>
+                  <li>Roles: open <a href="https://console.cloud.google.com/iam-admin/iam" target="_blank" rel="noopener">IAM &amp; Admin → IAM → Grant access</a>,
+                      paste the principal from step 2 as the new member, and add each role below.</li>
+                </ol>
                 <ul id="settings-gcp-required-roles" style="font-size:.7rem;color:var(--text-second);margin:6px 0 0 16px"></ul>
               </details>
             </div>
             <script>
-            // Verify the launcher SA can provision into the entered project (the
-            // IAM grant). One endpoint returns the verdict AND the SA email +
-            // roles, so we populate the instructions from its response too.
+            // Onboarding for the SkyPilot launcher grant. We render copy-paste
+            // instructions (principal + gcloud commands) from the launcher SA and
+            // required roles, then let the user verify the resulting IAM binding.
             (function () {
               const btn = document.getElementById('settings-gcp-verify-btn');
               const statusEl = document.getElementById('settings-gcp-verify-status');
               const saEl = document.getElementById('settings-gcp-launcher-sa');
               const rolesEl = document.getElementById('settings-gcp-required-roles');
+              const gcloudEl = document.getElementById('settings-gcp-gcloud');
+              const projEl = document.getElementById('settings-gcp-project');
+              const consoleLink = document.getElementById('settings-gcp-console-link');
+              const copySaBtn = document.getElementById('settings-gcp-copy-sa');
+              const copyCmdBtn = document.getElementById('settings-gcp-copy-gcloud');
+              const accountHintEl = document.getElementById('settings-gcp-account-hint');
+              const accountRadios = document.querySelectorAll('input[name="gcp-account-type"]');
               if (!btn) return;
+
+              // Which account-type radio is selected. Org projects get the extra
+              // Domain Restricted Sharing step; personal projects don't.
+              function accountType() {
+                for (const r of accountRadios) if (r.checked) return r.value;
+                return 'personal';
+              }
+
+              // Latest launcher identity + roles. Seeded from the server-rendered
+              // globals so the principal shows immediately; the /info fetch and
+              // verify only refresh them.
+              let _sa = window.GCP_LAUNCHER_SA || '';
+              let _customerId = window.GCP_LAUNCHER_CUSTOMER_ID || '';
+              let _roles = Array.isArray(window.GCP_REQUIRED_ROLES) ? window.GCP_REQUIRED_ROLES.slice() : [];
+
+              // Short, human explanation of why each role is needed (SkyPilot's
+              // "medium permissions" set). Keys unknown to this map fall back to
+              // just the role id.
+              const ROLE_HELP = {
+                'roles/browser': 'read project metadata so the launcher can find your project',
+                'roles/compute.admin': 'create and manage the VMs your runs execute on',
+                'roles/iam.serviceAccountAdmin': 'set up the instance service account SkyPilot uses',
+                'roles/iam.serviceAccountUser': 'attach that service account to the VMs',
+                'roles/serviceusage.serviceUsageAdmin': 'enable the Compute/Storage APIs if not already on',
+                'roles/storage.admin': 'store run artifacts and SkyPilot bucket data',
+                'roles/iam.securityAdmin': 'manage the IAM bindings SkyPilot needs on the VMs',
+              };
+
+              // APIs SkyPilot (and our verify probe) need before anything works.
+              const REQUIRED_APIS = [
+                'compute.googleapis.com',
+                'cloudresourcemanager.googleapis.com',
+                'iam.googleapis.com',
+                'serviceusage.googleapis.com',
+                'storage.googleapis.com',
+              ];
+
+              function buildGcloud() {
+                const proj = (projEl?.value || '').trim();
+                if (consoleLink) {
+                  consoleLink.href = proj
+                    ? 'https://console.cloud.google.com/iam-admin/iam?project=' + encodeURIComponent(proj)
+                    : 'https://console.cloud.google.com/iam-admin/iam';
+                }
+                if (!proj) {
+                  gcloudEl.textContent = 'Enter your GCP Project ID above to generate the setup script.';
+                  return;
+                }
+                if (!_sa || !_roles.length) {
+                  gcloudEl.textContent = '(launcher identity not configured on the server — contact the admin)';
+                  return;
+                }
+                const apis = REQUIRED_APIS.map(a => '    ' + a).join(' \\\n');
+                const roles = _roles.map(r => '    "' + r + '"').join(' \\\n');
+                // The launcher SA lives in a different org. A project *under an
+                // organization* may enforce Domain Restricted Sharing
+                // (constraints/iam.allowedPolicyMemberDomains), which makes IAM
+                // reject the SA ("not in permitted organization") until its org's
+                // customer id is allowlisted. Personal-account projects have no org
+                // policy, so this step is only emitted for the "organization" case.
+                const cidVal = _customerId
+                  ? '"' + _customerId + '"'
+                  : '"REPLACE_WITH_LAUNCHER_ORG_CUSTOMER_ID"  # find it: gcloud organizations list';
+                const drsBlock = accountType() === 'org'
+                  ? '# Domain Restricted Sharing: allow the launcher SA\'s org before\n' +
+                    '# binding it. Additive — existing allowed customer ids are kept.\n' +
+                    'CUSTOMER_ID=' + cidVal + '\n' +
+                    'gcloud resource-manager org-policies allow \\\n' +
+                    '    constraints/iam.allowedPolicyMemberDomains "$CUSTOMER_ID" \\\n' +
+                    '    --project "$PROJECT"\n' +
+                    '\n'
+                  : '';
+                gcloudEl.textContent =
+                  'PROJECT="' + proj + '"\n' +
+                  'SA="' + _sa + '"\n' +
+                  '\n' +
+                  '# Point gcloud at your project\n' +
+                  'gcloud config set project "$PROJECT"\n' +
+                  '\n' +
+                  '# Enable the APIs SkyPilot needs\n' +
+                  'gcloud services enable \\\n' + apis + ' \\\n' +
+                  '  --project "$PROJECT"\n' +
+                  '\n' +
+                  drsBlock +
+                  '# Grant the ARK launcher the roles it needs on your project\n' +
+                  'for ROLE in \\\n' + roles + ' ; do\n' +
+                  '  gcloud projects add-iam-policy-binding "$PROJECT" \\\n' +
+                  '    --member="serviceAccount:$SA" --role="$ROLE"\n' +
+                  'done';
+              }
+
               function renderMeta(data) {
-                if (data.launcher_sa) saEl.textContent = data.launcher_sa;
-                else saEl.textContent = '(launcher identity not configured on server)';
-                if (Array.isArray(data.required_roles) && !rolesEl.childElementCount) {
-                  for (const r of data.required_roles) {
-                    const li = document.createElement('li'); li.textContent = r; rolesEl.appendChild(li);
+                if (data && data.launcher_sa) { _sa = data.launcher_sa; saEl.textContent = _sa; }
+                else if (!_sa) { saEl.textContent = '(launcher identity not configured on server)'; }
+                if (data && typeof data.launcher_customer_id === 'string') { _customerId = data.launcher_customer_id; }
+                if (data && Array.isArray(data.required_roles) && data.required_roles.length) {
+                  _roles = data.required_roles;
+                  if (!rolesEl.childElementCount) {
+                    for (const r of _roles) {
+                      const li = document.createElement('li');
+                      const code = document.createElement('code');
+                      code.textContent = r; code.style.fontSize = '.68rem';
+                      li.appendChild(code);
+                      if (ROLE_HELP[r]) li.appendChild(document.createTextNode(' — ' + ROLE_HELP[r]));
+                      li.style.marginBottom = '3px';
+                      rolesEl.appendChild(li);
+                    }
                   }
                 }
+                buildGcloud();
               }
+
+              async function copy(text, el) {
+                if (!text) return;
+                try { await navigator.clipboard.writeText(text); }
+                catch (e) { /* clipboard blocked — user can select manually */ return; }
+                const prev = el.textContent; el.textContent = 'Copied ✓';
+                setTimeout(() => { el.textContent = prev; }, 1200);
+              }
+              copySaBtn && copySaBtn.addEventListener('click', () => copy(_sa, copySaBtn));
+              copyCmdBtn && copyCmdBtn.addEventListener('click', () => copy(gcloudEl.textContent, copyCmdBtn));
+              projEl && projEl.addEventListener('input', buildGcloud);
+
+              // Account-type radios: refresh the explanatory hint and rebuild the
+              // script (org adds the Domain Restricted Sharing step, personal drops it).
+              function updateAccountHint() {
+                if (!accountHintEl) return;
+                accountHintEl.textContent = accountType() === 'org'
+                  ? 'Organization projects can enforce Domain Restricted Sharing, which blocks the cross-org launcher until its organization is allowlisted. The script below adds that step before granting roles.'
+                  : 'Personal-account projects have no organization policies — the base script (enable APIs, grant roles) is all you need.';
+              }
+              accountRadios.forEach(r => r.addEventListener('change', () => { updateAccountHint(); buildGcloud(); }));
+              updateAccountHint();
+
+              // Prefetch the grant target so the instructions are complete before
+              // the user verifies. Exposed so openSettingsModal can re-trigger it.
+              async function loadGrantInfo() {
+                try {
+                  const res = await fetch(window.APP_BASE + '/api/user/gcp/info');
+                  if (res.ok) renderMeta(await res.json());
+                } catch (e) { /* leave placeholders; verify still fills them in */ }
+              }
+              window._loadGcpGrantInfo = loadGrantInfo;
+              // Render the server-seeded identity right away, then refresh.
+              renderMeta({ launcher_sa: _sa, required_roles: _roles });
+              loadGrantInfo();
+
               btn.addEventListener('click', async () => {
-                const proj = (document.getElementById('settings-gcp-project')?.value || '').trim();
+                const proj = (projEl?.value || '').trim();
                 statusEl.style.color = 'var(--text-muted)';
                 statusEl.textContent = 'Checking…';
                 btn.disabled = true;
@@ -5100,6 +5312,9 @@ async function openSettingsModal() {
     _loadOtherProviders(data);
 
     document.getElementById('settings-gcp-project').value = data.gcp_project || '';
+    // Rebuild the grant instructions against the just-loaded project id
+    // (setting .value programmatically doesn't fire the 'input' listener).
+    if (window._loadGcpGrantInfo) window._loadGcpGrantInfo();
 
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';

@@ -642,20 +642,30 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
             # ── Layer-2 orchestrator ──────────────────────────────────────────
             # Shape the `type: skypilot` block. SkyPilot infers/optimizes anything
             # left unset; the cloud is optional (parsed from a "skypilot:{cloud}"
-            # suffix, else auto-selected). We only shape the minimal, known-good
-            # defaults below (a pinned GCP machine type + baked image); everything
-            # else is left to SkyPilot's optimizer. CLI users set skypilot resources
-            # explicitly in config.yaml.
-            cloud = chosen.split(":", 1)[1] if ":" in chosen else ""
+            # suffix). We only shape the minimal, known-good defaults below (a
+            # pinned GCP machine type + baked image); everything else is left to
+            # SkyPilot's optimizer. CLI users set skypilot resources explicitly in
+            # config.yaml.
+            #
+            # The dashboard's SkyPilot path is GCP-only — per-user isolation runs
+            # through the central launcher SA, per-user SkyPilot workspaces, and the
+            # baked GCP image, none of which exist for other clouds. The UI has no
+            # cloud selector; its radio submits a bare "skypilot". So a bare backend
+            # defaults to gcp here (else the GCP shaping below — n4-standard-2, baked
+            # image, workspace routing — would be dead code and the optimizer would
+            # pick an arbitrary machine type). An explicit "skypilot:{cloud}" suffix
+            # still wins for any caller that sets one.
+            cloud = chosen.split(":", 1)[1] if ":" in chosen else "gcp"
             cfg = {"type": "skypilot", "conda_env": settings.cloud_conda_env or "ark-base"}
             if cloud:
                 cfg["cloud"] = cloud
             # Pin a default GCP machine type so the orchestrator VM is predictable,
             # rather than left to SkyPilot's optimizer (which picked an arbitrary
-            # n*-standard-2 in testing). Only for cloud == "gcp": n4-standard-2 is a GCP-specific
-            # type and would be an invalid instance on AWS/Azure, and an empty
-            # cloud means "let SkyPilot choose", so we must not pin there. A CLI
-            # user's explicit config.yaml bypasses this shaping entirely.
+            # n*-standard-2 in testing). Only for cloud == "gcp": n4-standard-2 is a
+            # GCP-specific type and would be an invalid instance on AWS/Azure, so we
+            # only pin it when GCP is the selected cloud (an explicit
+            # "skypilot:{other}" suffix skips this). A CLI user's explicit
+            # config.yaml bypasses this shaping entirely.
             if cloud == "gcp":
                 cfg["instance_type"] = "n4-standard-2"
                 # Boot from the baked ARK image so the VM comes up with
@@ -684,7 +694,7 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
                 central_project = settings.cloud_gcp_project
                 if central_project:
                     cfg["image_id"] = (
-                        f"projects/{central_project}/global/images/ark-debian-base-v6")
+                        f"projects/{central_project}/global/images/ark-debian-base-v7")
                 # When the user has their OWN project configured, launch into it
                 # via their SkyPilot workspace (the central launcher SA has
                 # cross-project access). The launcher selects this workspace per
@@ -706,11 +716,19 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
                 "cd ~/sky_workdir && pip install -e '.[research]'",
                 # Guarded + idempotent: a re-launch reconnects to the same cluster
                 # and re-runs setup, so skip the (slow) toolchain download when
-                # `openhands` is already installed.
+                # `openhands` is already runnable. Test *runnability* (`openhands
+                # --version`), NOT mere presence (`command -v`): the baked image
+                # installs openhands as root under /opt/uv + /usr/local/bin, which
+                # SkyPilot's `gcpuser` can't exec (EACCES). A presence-only guard
+                # sees that broken system copy on PATH and skips the reinstall, so
+                # every agent call then dies with "[Errno 13] Permission denied:
+                # 'openhands'". Running it fails on the un-execable copy, so we
+                # reinstall a user-owned one into ~/.local/bin (prepended to PATH,
+                # shadowing the system copy); --force overwrites any partial install.
                 "export PATH=\"$HOME/.local/bin:$PATH\"; "
-                "command -v openhands >/dev/null 2>&1 || "
+                "openhands --version >/dev/null 2>&1 || "
                 "{ curl -LsSf https://astral.sh/uv/install.sh | sh && "
-                "uv tool install --python 3.12 openhands; }",
+                "uv tool install --force --python 3.12 openhands; }",
                 # Paper mode compiles the PDF with pdflatex + bibtex, which the base
                 # VM image lacks. Match ARK's own recommendation
                 # (latex_utils.detect_latex_install_command → texlive-full on apt);
@@ -1532,6 +1550,8 @@ async def health():
 async def index(request: Request):
     # app_base = scope["root_path"], set to "/dashboard" by Starlette's
     # native Mount. Used by the Jinja template for APP_BASE injection.
+    from website.dashboard.gcp_access import (
+        launcher_sa_email, launcher_org_customer_id, REQUIRED_ROLES)
     return _templates.TemplateResponse(
         request,
         "app.html",
@@ -1539,6 +1559,9 @@ async def index(request: Request):
             "app_base": request.scope.get("root_path", ""),
             "share_mode": False,
             "share_project_id": "",
+            "launcher_sa": launcher_sa_email(get_settings()),
+            "launcher_customer_id": launcher_org_customer_id(get_settings()),
+            "required_roles": REQUIRED_ROLES,
         },
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
@@ -1628,6 +1651,8 @@ async def share_view(token: str, request: Request):
     request.session["share_id"] = ident
     request.session.pop("user_id", None)
     request.session.pop("share_project_id", None)
+    from website.dashboard.gcp_access import (
+        launcher_sa_email, launcher_org_customer_id, REQUIRED_ROLES)
     return _templates.TemplateResponse(
         request,
         "app.html",
@@ -1635,6 +1660,9 @@ async def share_view(token: str, request: Request):
             "app_base": request.scope.get("root_path", ""),
             "share_mode": True,
             "share_project_id": ident,
+            "launcher_sa": launcher_sa_email(get_settings()),
+            "launcher_customer_id": launcher_org_customer_id(get_settings()),
+            "required_roles": REQUIRED_ROLES,
         },
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
@@ -1985,6 +2013,23 @@ async def api_save_user_settings(request: Request):
     })
 
 
+@router.get("/api/user/gcp/info")
+async def api_gcp_grant_info(request: Request):
+    """Return the grant target (launcher SA email + required roles) without
+    probing the user's project. The settings UI calls this on open so it can
+    render the step-by-step grant instructions before the user has verified —
+    the verify probe (a real GCP call) stays reserved for the Verify button."""
+    _require_user(request)
+    settings = get_settings()
+    from website.dashboard.gcp_access import (
+        launcher_sa_email, launcher_org_customer_id, REQUIRED_ROLES)
+    return JSONResponse({
+        "launcher_sa": launcher_sa_email(settings),
+        "launcher_customer_id": launcher_org_customer_id(settings),
+        "required_roles": REQUIRED_ROLES,
+    })
+
+
 @router.post("/api/user/gcp/verify")
 async def api_verify_gcp_access(request: Request):
     """Verify the launcher SA can provision into the user's GCP project — i.e.
@@ -1995,7 +2040,8 @@ async def api_verify_gcp_access(request: Request):
     user = _require_user(request)
     settings = get_settings()
     from website.dashboard.gcp_access import (
-        verify_project_access, launcher_sa_email, REQUIRED_ROLES)
+        verify_project_access, launcher_sa_email, launcher_org_customer_id,
+        REQUIRED_ROLES)
 
     body = await request.json()
     project_id = (body.get("gcp_project") or "").strip()
@@ -2006,6 +2052,7 @@ async def api_verify_gcp_access(request: Request):
     return JSONResponse({
         **result,
         "launcher_sa": launcher_sa_email(settings),
+        "launcher_customer_id": launcher_org_customer_id(settings),
         "required_roles": REQUIRED_ROLES,
     })
 
