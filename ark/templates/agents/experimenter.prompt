@@ -75,8 +75,9 @@ printed. Before writing a plotting script:
    - **Row of 2–3 panels** → full column width, kept SHORT:
      `figsize=(columnwidth_in, ≤0.45*columnwidth_in)` with `ncols=2..3`.
    - Prefer wide-and-short over tall figures; use
-     `constrained_layout=True`, and record the intended placement
-     (`half`/`full`) in `figure_manifest.json` if you maintain it.
+     `constrained_layout=True`. Do NOT create or edit
+     `figure_manifest.json` — it is pipeline-internal; note intended
+     placement in your plotting script comments instead.
 3. Fonts come from the config rcParams so labels are legible at final size
    without any LaTeX-side scaling.
 

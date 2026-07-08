@@ -3063,17 +3063,24 @@ def main():
 
     try:
         orchestrator.run()
-        # Mark completion via the active control-plane transport
+        # Mark completion via the active control-plane transport. A run that
+        # ended via _handle_terminal_error "returned normally" but delivered
+        # nothing — report FAILED with the abort reason, not done (a
+        # credits-exhausted run was marked done and completion-emailed a stub).
         if orchestrator.cp.available:
-            paper_state = orchestrator.load_paper_state()
-            final_status = "done"
-            if paper_state.get("status") in ("accepted", "accepted_pending_cleanup"):
-                final_status = "done"
-            orchestrator._sync_db(status=final_status, pid=0)
+            _aborted = getattr(orchestrator, "_terminal_error", None)
+            if _aborted:
+                orchestrator._sync_db(status="failed", pid=0,
+                                      error_message=str(_aborted)[:400])
+            else:
+                orchestrator._sync_db(status="done", pid=0)
     except KeyboardInterrupt:
         orchestrator._sync_db(status="stopped", pid=0)
-    except Exception:
-        orchestrator._sync_db(status="failed", pid=0)
+    except Exception as e:
+        # Crash text into error_message — dashboard + failure email otherwise
+        # show "(no error message)".
+        orchestrator._sync_db(status="failed", pid=0,
+                              error_message=f"{type(e).__name__}: {e}"[:400])
         raise
     finally:
         orchestrator._flush_events()
