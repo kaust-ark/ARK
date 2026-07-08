@@ -379,41 +379,52 @@ docker compose -f docker/docker-compose.yml run --rm job \
 
 ## 云端计算 (Cloud Compute)
 
-idea2paper 支持在远程云端虚拟机 (AWS, GCP, Azure) 上运行实验，同时保持编排器和 Web 门户在**本地**运行。这是在不管理 HPC 集群的情况下获得弹性计算能力的推荐设置。
+idea2paper 的 **v2 云端架构**将*控制平面 (Control Plane)* 与*执行平面 (Execution Plane)* 解耦，使完整的编排器能够运行在 **SkyPilot 预配置的集群**上，而您只需通过一个轻量级的本地 Web 应用进行交互。[SkyPilot](https://docs.skypilot.co) 现在是唯一的云端计算路径 &mdash; 它通过单一抽象层跨 AWS/GCP/Azure/Kubernetes 进行预配置，内置抢占式实例 (spot)、重试以及 autostop 自动销毁机制。
 
 **工作原理：**
-1. Web 应用程序在本地或小型服务器上运行，处理项目管理和 UI。
-2. 提交项目时，idea2paper 预配置云端虚拟机，通过 SSH 传输项目代码，并远程管理整个实验生命周期。
-3. 结果会自动同步回来。虚拟机在运行完成后终止。
-
-### 通过仪表板启用云端计算
-
-1. 打开**设置**面板 (顶部导航栏中的 ⚙️ 图标)。
-2. 滚动到**云端计算**部分。
-3. 输入您首选提供商 (AWS, GCP 或 Azure) 的凭据。
-4. 点击**保存**。所有后续的项目提交将自动分派到云端。
+1. 本地 Web 应用（或 CLI）充当轻量级启动器 &mdash; 它运行 `sky launch` 来预配置远程**编排器集群 (Orchestrator cluster)**，通过 SkyPilot 的 `workdir`/`file_mounts` 同步您的项目代码与 API 密钥，并触发编排器进程。
+2. **编排器集群**在一个分离的会话 (detached session) 中远程运行所有高层逻辑（研究员、规划器、写作者、LaTeX、图表）。
+3. 实验既可以运行在同一个编排器集群上，也可以运行在一个独立的、由 SkyPilot 预配置的 GPU 集群上（可独立配置）。
+4. 编排器通过 `/v1` 控制平面 API 向本地回报状态；Web 应用则流式传输日志并刷新仪表板。运行完成后（或在空闲一段时间后），集群通过 **autostop** 自动终止。
 
 > [!TIP]
 > 云端凭据使用您的 `SECRET_KEY` 在静态时加密。您的密钥绝不会被记录或传输给第三方。
 
-### 配置层级
+<details>
+<summary><strong>配置层级</strong></summary>
 
 idea2paper 为云端计算使用三层配置模型：
-1. **系统默认值**: 在 `webapp.env` 中设置 (例如 `CLOUD_REGION`、`CLOUD_NETWORK`)。
+1. **系统默认值**: 在 `webapp.env` 中设置（持有已烘焙 ARK 镜像的中央 `CLOUD_GCP_PROJECT`，以及 `CLOUD_LAUNCHER_SA`、`CLOUD_LAUNCHER_SA_KEY` 和 `CLOUD_CONDA_ENV`）。
 2. **全局用户默认值**: 在**设置**面板 (⚙️) 中设置。这些适用于您的所有项目。
 3. **项目覆盖**: 在项目创建或重启期间设置。这些具有最高优先级。
 
-这种层级结构允许您只需定义一次标准机器类型和 VPC 设置，同时可以轻松地为特定的高强度实验切换到强大的 GPU 实例。
+这种层级结构允许您只需定义一次标准默认值，同时可以轻松地为特定的实验切换到强大的 GPU 实例（加速器、抢占式）。
+
+</details>
 
 ---
 
-### 创建项目
+### 通过仪表板启用云端计算
 
-配置云端计算后，建议通过仪表板启动项目：
+1. 打开**设置**面板 (顶部导航栏中的 ⚙️ 图标)。
+2. 打开 **Compute** 标签页。
+3. 输入您的 **GCP Project ID**，为显示的 `ark-launcher` 服务账号授予您项目上所需的角色，然后点击 **Verify access**。（不会上传任何服务账号密钥 &mdash; 您通过 IAM 将访问权限委托给您自己的项目。参见下方的 GCP 设置部分。）
+4. 点击**保存**。
 
-1. 从仪表板主页点击**新建项目**。
+创建新项目时，您现在可以独立选择：
+- **编排器后端 (Orchestrator Backend)** &mdash; `skypilot` 表示在 SkyPilot 预配置的集群上运行控制平面，`local` 表示在与 Web 应用相同的机器上运行。
+- **实验后端 (Experiment Backend)** &mdash; `skypilot` 用于 GPU 实验，`local` 表示在编排器集群本身上运行实验。
+
+---
+
+<details>
+<summary><strong>创建项目</strong></summary>
+
+配置好云端计算后，通过仪表板启动项目：
+
+1. 从仪表板主页点击 **New Project**。
 2. 填写研究目标、目标会议和任何附加说明。
-3. 点击**提交** &mdash; Web 应用程序会自动为项目生成 `config.yaml` 并预配置云端虚拟机。
+3. 点击 **Submit** &mdash; Web 应用会生成 `config.yaml`，通过 SkyPilot 预配置编排器集群，同步您的项目，并启动运行。
 
 生成的 `config.yaml` 存储在：
 
@@ -421,220 +432,192 @@ idea2paper 为云端计算使用三层配置模型：
 ~/.ark/data/projects/<user_id>/<project_id>/config.yaml
 ```
 
-您可以随时检查或手动编辑此文件 (例如，调整实例类型或添加 `setup_commands`)。更改在下次运行或重启时生效。
+您可以随时检查或手动编辑此文件（例如，调整实例类型或添加 `setup_commands`）。更改在下次运行或重启时生效。
+
+> [!NOTE]
+> 如果在您的 `.ark/webapp.env` 中设置了 `PROJECTS_ROOT`，上述路径将被替换为 `$PROJECTS_ROOT/<user_id>/<project_id>/config.yaml`。
+
+</details>
 
 ---
 
 ### 云端提供商设置
 
 <details>
-<summary><strong>☁️ Google Cloud Platform (GCP)</strong></summary>
+<summary><strong>☁️ Google Cloud Platform (GCP) &mdash; 通过 SkyPilot</strong></summary>
 
-#### 1. 创建服务账号
+GCP 的接入是免密钥的：您无需上传服务账号密钥，而是通过 IAM 将 idea2paper 中央的 **`ark-launcher`** 服务账号授予对*您自己*的 GCP 项目的访问权限。随后 SkyPilot 会从一个预先烘焙的 ARK 镜像在您的项目中启动集群。
+
+#### 1. 启用所需的 API
 
 ```bash
 export PROJECT_ID=your-gcp-project-id
-
-# 为 idea2paper 创建服务账号
-gcloud iam service-accounts create ark-runner \
-  --display-name="ARK Research Runner"
-
-# 授予所需角色 (Compute Admin + Service Account User)
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:ark-runner@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="roles/compute.admin"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:ark-runner@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountUser"
-
-# 下载 JSON 密钥
-gcloud iam service-accounts keys create ~/ark-gcp-key.json \
-  --iam-account=ark-runner@${PROJECT_ID}.iam.gserviceaccount.com
-```
-
-#### 2. 启用所需的 API
-
-```bash
 gcloud services enable compute.googleapis.com --project=$PROJECT_ID
 ```
 
-#### 3. 在仪表板中配置
+#### 2. 构建机器镜像
 
-将 `~/ark-gcp-key.json` 的内容粘贴到 **GCP Service Account JSON** 字段中，并在设置面板中设置您的 **GCP Project ID**。
-
-#### 4. 查找 GCP 参数 (可选)
-
-如果您需要查找可用区域、机器类型或网络详情，请使用这些 `gcloud` 命令：
+idea2paper 从一个预先烘焙的 GCP 镜像启动，该镜像包含所有系统依赖（Conda、LaTeX、Node.js）以实现快速启动。SkyPilot 会从此镜像启动。只需构建一次：
 
 ```bash
-# 列出可用区域
-gcloud compute zones list
-
-# 列出特定区域中的可用机器类型
-gcloud compute machine-types list --zones=us-central1-a
-
-# 列出网络和子网
-gcloud compute networks list
-gcloud compute networks subnets list --regions=us-central1
-
-# 列出深度学习镜像（系列）
-gcloud compute images list --project=(your-project-id) --no-standard-images
+./scripts/build_ark_gcp_image.sh [GCP_PROJECT_ID] [ZONE]
 ```
 
-或者，您可以在 **Google Cloud 控制台**中找到这些信息：
-- **区域/机器类型**: Compute Engine &rarr; VM 实例 &rarr; 创建实例（以查看选项）
-- **网络**: VPC 网络 &rarr; VPC 网络
-- **镜像**: Compute Engine &rarr; 镜像
+此脚本会启动一个临时 VM，安装 TeX Live、Miniforge、Node.js 和 `ark-base` 环境，然后保存一个名为 `ark-job-v1-[timestamp]`、带有 `ark-job` 系列标签的机器镜像。
 
-#### 5. `config.yaml` 参考（高级 / 仅限命令行）
+> 在托管部署中，运营方在中央 `CLOUD_GCP_PROJECT` 中只构建一次此镜像（服务器设置：`scripts/setup_ark_launcher_sa.sh` 创建中央启动器 SA；`scripts/build_ark_gcp_image.sh` 烘焙镜像）。自托管用户则在自己的项目中运行这两个脚本。
 
-Web 应用会根据您的设置自动生成此文件。对于手动或通过命令行驱动的项目，请在项目的 `config.yaml` 中添加以下内容：
+#### 3. 授予启动器服务账号并验证
+
+在仪表板中打开 **Settings → Compute**：
+1. 输入您的 **GCP Project ID**。
+2. 为显示的 `ark-launcher` 服务账号授予**您**项目上所需的 IAM 角色（面板会列出需要运行的确切 `gcloud ... add-iam-policy-binding` 角色）。
+3. 点击 **Verify access**。
+
+没有任何密钥离开 Google &mdash; 您只是将对您项目的受限范围访问权委托出去。多租户设计详见 [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md)。
+
+#### 4. `config.yaml` 参考（高级 / 仅限 CLI）
+
+Web 应用会根据您的设置自动生成此文件。对于手动或 CLI 驱动的项目，完整模板参见 [`config.example.yaml`](config.example.yaml)。模型 + 密钥（所有智能体均通过 OpenHands → LiteLLM 运行）：
 
 ```yaml
-compute_backend:
-  type: cloud
-  provider: gcp
-  region: us-central1-a             # GCP 区域
-  instance_type: n1-standard-8
-  image_id: ark-debian-base              # 自定义 idea2paper 基础镜像
-  image_project: (your-project-id)
-  ssh_key_path: ~/.ssh/id_rsa
-  ssh_user: ubuntu
-
-  # 可选：网络
-  network: my-vpc                   # 默认: "default"
-  subnet: my-subnet                 # 默认: "default"
-  # 可选：GPU 加速器
-  accelerator_type: nvidia-tesla-t4
-  accelerator_count: 1
-  # 可选：启动后在实例上运行这些命令
-  setup_commands:
-    - conda activate base && pip install -r requirements.txt
+model: anthropic/claude-sonnet-4-6     # 智能体运行此模型 —— 任意 LiteLLM 模型
+                                       # (gemini/… , openai/… , deepseek/… , …)
+bot_model: anthropic/claude-haiku-4-5  # 用于轻量辅助任务（标题、摘要）的廉价模型
+anthropic_api_key: "sk-ant-..."        # 填写您所使用的提供商 —— 模型前缀
+openai_api_key:    "sk-..."            #   决定使用哪个密钥
+gemini_api_key:    "..."               # gemini 密钥也为 Deep Research 提供支持（可选）
 ```
 
-</details>
-
----
-
-<details>
-<summary><strong>☁️ Amazon Web Services (AWS)</strong></summary>
-
-#### 1. 创建 IAM 用户
-
-```bash
-# 为 idea2paper 创建 IAM 用户
-aws iam create-user --user-name ark-runner
-
-# 附加策略 (EC2 full access 即可)
-aws iam attach-user-policy \
-  --user-name ark-runner \
-  --policy-arn arn:aws:iam::aws:policy/AmazonEC2FullAccess
-
-# 创建访问密钥
-aws iam create-access-key --user-name ark-runner
-# 注意输出中的 AccessKeyId 和 SecretAccessKey
-```
-
-#### 2. 创建 SSH 密钥对
-
-```bash
-# 创建密钥对并保存在本地
-aws ec2 create-key-pair \
-  --key-name ark-key \
-  --query 'KeyMaterial' \
-  --output text > ~/.ssh/ark-key.pem
-chmod 600 ~/.ssh/ark-key.pem
-```
-
-#### 3. 在仪表板中配置
-
-在设置面板中输入您的 **AWS Access Key ID**、**AWS Secret Access Key** 和 **AWS Region** (例如 `us-east-1`)。
-
-#### 4. `config.yaml` 参考 (高级 / 仅限 CLI)
-
-Web 应用程序会根据您的设置自动生成。对于手动或 CLI 驱动的项目，将以下内容添加到项目的 `config.yaml` 中：
+计算使用两个固定到 GCP 的 SkyPilot 后端（编排器集群 + 实验集群）：
 
 ```yaml
-compute_backend:
-  type: cloud
-  provider: aws
-  region: us-east-1
-  instance_type: g4dn.xlarge        # 1x T4 GPU, 4 vCPUs, 16 GB RAM
-  image_id: ami-0c7c51e8edb7b66d3   # 深度学习 AMI (Ubuntu 22.04)
-  ssh_key_name: ark-key              # AWS 控制台中的密钥对名称
-  ssh_key_path: ~/.ssh/ark-key.pem
-  ssh_user: ubuntu
-  security_group: sg-xxxxxxxx        # 必须允许入站 SSH (端口 22)
-  # 可选：启动后设置
-  setup_commands:
-    - conda activate pytorch && pip install -r requirements.txt
-```
+# 编排器集群：运行研究员、规划器、写作者、LaTeX（无需 GPU）
+orchestrator_compute_backend:
+  type: skypilot
+  cloud: gcp
+  # region: us-central1
+  # instance_type: n4-standard-2
+  # idle_minutes_to_autostop: 60     # 崩溃安全网：空闲时自动 DOWN
 
-> [!IMPORTANT]
-> 确保您的安全组允许来自运行 Web 应用程序的机器 IP 的 **入站 SSH (端口 22)**。否则，idea2paper 无法连接到预配置的实例。
-
-</details>
-
----
-
-<details>
-<summary><strong>☁️ Microsoft Azure</strong></summary>
-
-#### 1. 创建服务主体
-
-```bash
-# 登录
-az login
-
-# 创建具有 Contributor 角色的服务主体
-az ad sp create-for-rbac \
-  --name "ark-runner" \
-  --role Contributor \
-  --scopes /subscriptions/YOUR_SUBSCRIPTION_ID
-# 注意: appId (Client ID), password (Client Secret), and tenant (Tenant ID)
-```
-
-#### 2. 注册 SSH 公钥
-
-```bash
-# 如果您没有 SSH 密钥，请生成一个
-ssh-keygen -t rsa -b 4096 -f ~/.ssh/ark-azure-key
-
-# 将自动使用公钥 (~/.ssh/ark-azure-key.pub)
-```
-
-#### 3. 在仪表板中配置
-
-在设置面板中输入您的 **Azure Client ID**、**Azure Client Secret**、**Azure Tenant ID** 和 **Azure Subscription ID**。
-
-#### 4. `config.yaml` 参考 (高级 / 仅限 CLI)
-
-Web 应用程序会根据您的设置自动生成。对于手动或 CLI 驱动的项目，将以下内容添加到项目的 `config.yaml` 中：
-
-```yaml
-compute_backend:
-  type: cloud
-  provider: azure
-  region: eastus                     # Azure 位置
-  instance_type: Standard_NC6s_v3    # 1x V100 GPU, 6 vCPUs, 112 GB RAM
-  image_id: UbuntuLTS                # 操作系统镜像别名
-  ssh_key_path: ~/.ssh/ark-azure-key
-  ssh_user: azureuser
-  resource_group: ark-resources      # 如果不存在则创建
-  # 可选：启动后设置
+# 实验集群：运行 GPU 密集型工作负载
+experiment_compute_backend:
+  type: skypilot
+  cloud: gcp
+  accelerators: L4:1                  # SkyPilot 加速器规格 ("<NAME>:<COUNT>")
+  use_spot: true                      # 更便宜、可被抢占的实例
   setup_commands:
     - pip install -r requirements.txt
 ```
 
+> 若要在编排器集群上运行实验而非使用独立集群，请设置 `experiment_compute_backend.type: local`。完整的键参考见下方的 SkyPilot 部分。
+
 </details>
 
 ---
 
-### 成本控制
+> 在 **AWS、Azure 或 Kubernetes** 上运行（或希望 SkyPilot 自动选择最便宜的云）？请使用下方的 SkyPilot 部分，并按照 SkyPilot 的文档 [https://docs.skypilot.co](https://docs.skypilot.co) 配置该云的凭据。
+
+<details>
+<summary><strong>☁️ SkyPilot（跨云 &amp; Kubernetes）</strong></summary>
+
+[SkyPilot](https://github.com/skypilot-org/skypilot) 通过单一抽象层跨
+AWS/GCP/Azure（以及 Kubernetes）预配置 VM，内置抢占式实例、重试和
+autostop 自动销毁 &mdash; 因此单个 `type: skypilot` 块即可覆盖单云
+和自带 Kubernetes 的场景，而无需为每个云配置单独的后端。它是 idea2paper 唯一的
+云端计算路径：**实验**（Layer-1）后端和**编排器**
+（Layer-2）启动器都通过 SkyPilot 预配置，并在启动时应用了成本安全的
+**autostop-down**（见下方 `idle_minutes_to_autostop`）。
+
+#### 设置
+
+```bash
+# 安装 SkyPilot 及您所使用的云（完整设置见 SkyPilot 文档）
+pip install 'ark[skypilot]'
+pip install 'skypilot[gcp,aws,kubernetes]'
+sky check          # 验证 SkyPilot 能否连接到您配置的云/集群
+```
+
+#### `config.yaml` 参考（高级 / 仅限 CLI）
+
+> 下方的 **`experiment_compute_backend`** 键由 Layer-1
+> 后端解析；**`orchestrator_compute_backend`** 块由 Layer-2 的
+> `SkyPilotVmJobLauncher` 读取。两者共享相同的资源键（`cloud` / `region` /
+> `accelerators` / `instance_type` / `use_spot` / `disk_size` / `image_id` /
+> `cluster_name` / `setup_commands` / `idle_minutes_to_autostop`）。
+
+```yaml
+# 通过 SkyPilot 预配置实验。除 `type` 外的每个键都是可选的；
+# 除非您固定某个云/集群，否则 SkyPilot 会选择可达的最便宜的云/集群。
+experiment_compute_backend:
+  type: skypilot
+  # cloud: aws                   # aws | gcp | azure | kubernetes；省略 → 自动
+  # region: us-east-1            # 可选的区域固定
+  accelerators: L4:1             # SkyPilot 加速器规格 ("<NAME>:<COUNT>")
+  # instance_type: g5.xlarge     # 可选的显式实例类型
+  use_spot: true                 # 更便宜、可被抢占的实例
+  # disk_size: 256               # GB，可选
+  # cluster_name: ark-myproj     # 可选；默认为 ark-<project>
+  # idle_minutes_to_autostop: 60 # 空闲 N 分钟后自动 DOWN（成本安全）；
+  #                              # 实验集群始终 autostop-down —— 此项
+  #                              # 只能调整时间窗，无法禁用
+  #                              #（否则控制平面无法回收它们）。
+  setup_commands:                # 依赖通过 SkyPilot 的 setup: 块安装
+    - pip install -r requirements.txt
+
+# 编排器启动器 —— 在 SkyPilot 集群上运行 `python -m ark.orchestrator`。
+# 通过 /v1 控制平面 API 向本地回报（设置 control_plane_url），因此
+# 集群无需与仪表板共享文件系统/数据库。
+orchestrator_compute_backend:
+  type: skypilot
+  # cloud: gcp                     # 省略 → SkyPilot 自动选择
+  # region: us-central1
+  # instance_type: n1-standard-2
+  # cluster_name: ark-orch-myproj  # 可选；默认为 ark-orch-<project>
+  # idle_minutes_to_autostop: 60   # 崩溃安全网：编排器作业退出后空闲 N
+  #                                # 分钟自动 DOWN。设为 `off` 可禁用，
+  #                                # 或设 `autostop_down: false` 改为 STOP
+  #                                #（保留磁盘）而非终止。
+  setup_commands:                  # 在集群上安装 ARK 的依赖（workdir →
+    - cd ~/sky_workdir && pip install -e '.[research]'   # 启动时为 ~/sky_workdir）
+```
+
+> 仪表板会自动填入此 `setup:` 块；只有手动编辑
+> `config.yaml` 的 CLI 用户才需要设置它。它会安装同步过来的 ARK 源码及
+> `research` 附加项，以便 `python -m ark.orchestrator` 能在一个裸集群上解析（之后可用一个
+> 烘焙好的 `image_id` 替代它，纯粹是为了提升启动速度 —— 设置该键并
+> 移除 `pip install`）。Layer-1 实验资源（`region` /
+> `instance_type` / `image_id`）**不会**从编排器块自动推导 ——
+> 它们位于不同的 SkyPilot 命名空间中，因此需在此处显式设置。
+
+> `skypilot` 编排器无法驱动 `slurm` 实验 —— 云端编排器
+> 没有到本地 SLURM 集群的网络路径。
+
+</details>
+
+---
+
+<details>
+<summary><strong>日志流式传输与重新连接</strong></summary>
+
+- **日志流式传输** &mdash; 编排器集群通过 `/v1` 控制平面 API 向本地回传日志；Web 应用定期轮询以显示实时进度。
+- **状态同步** &mdash; 编排器定期将其 `auto_research/` 状态检查点保存到控制平面，因此仪表板 UI 保持最新，且运行可在 VM 丢失后存续。
+- **重新连接** &mdash; 如果您重启本地 Web 应用，idea2paper 会检测到持久化的 SkyPilot 集群并重新连接到正在运行的进程，无需重新预配置。
+
+</details>
+
+<details>
+<summary><strong>成本控制</strong></summary>
 
 > [!WARNING]
-> 云端虚拟机按小时计费。idea2paper 在每次运行完成后自动终止实例。但是，如果 Web 应用程序进程被意外杀死，**孤儿救援 (Orphan Rescue)** 机制将在下次启动时检测到陈旧实例并将其标记为失败 &mdash; 但**不会自动终止云端虚拟机**。在意外关闭后，请务必在云端控制台中确认没有流浪实例在运行。
+> 云端集群按小时计费。idea2paper 依赖 SkyPilot 内置的销毁机制来防止成本失控：
+>
+> - **Autostop-down** &mdash; 每个集群在启动时都带有一个 autostop-down 时间窗；若空闲超过该时间窗，它会**自我终止**。实验集群*始终* autostop-down（只能调整，不能禁用）；编排器集群默认设有一个时间窗作为崩溃安全网（可通过 `idle_minutes_to_autostop` 调整）。
+> - **手动停止** &mdash; 在仪表板中点击 **Stop** 会刷新结果并销毁集群 (`sky down`)。
+>
+> 如果 Web 应用进程被意外杀死，autostop-down 时间窗仍会自行终止集群。在意外关闭后，请务必确认没有残留集群 (`sky status`)。
+
+</details>
 
 ---
 

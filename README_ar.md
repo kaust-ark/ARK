@@ -351,107 +351,244 @@ docker compose -f docker/docker-compose.yml logs -f webapp
 
 ## الحوسبة السحابية (Cloud Compute)
 
-يدعم idea2paper تشغيل التجارب على أجهزة افتراضية بعيدة (AWS, GCP, Azure) مع بقاء المنسق وبوابة الويب تعمل **محلياً**. هذا هو الإعداد الموصى به إذا كنت تريد سعة حوسبة مرنة دون إدارة عنقود HPC.
+تفصل **بنية السحابة v2** في idea2paper بين *مستوى التحكم (Control Plane)* و*مستوى التنفيذ (Execution Plane)*، مما يتيح تشغيل المنسق الكامل على **عنقود مُجهَّز عبر SkyPilot** بينما تتفاعل أنت مع تطبيق ويب محلي خفيف. أصبح [SkyPilot](https://docs.skypilot.co) الآن المسار الوحيد للحوسبة السحابية — فهو يُجهِّز الموارد عبر AWS/GCP/Azure/Kubernetes من تجريد واحد، مع مثيلات spot، وإعادة المحاولات، والإنهاء التلقائي (autostop) المدمج.
 
 **كيف يعمل:**
-1. يعمل تطبيق الويب محلياً، لإدارة المشاريع والواجهة.
-2. عند إرسال مشروع، يقوم idea2paper بتجهيز VM سحابي، ونقل الكود عبر SSH، وإدارة دورة حياة التجربة عن بُعد.
-3. يتم مزامنة النتائج تلقائياً، ويتم إنهاء الـ VM عند الانتهاء.
+1. يعمل تطبيق الويب المحلي (أو CLI) كمُطلِق خفيف — فهو يشغّل `sky launch` لتجهيز **عنقود المنسق (Orchestrator)** البعيد، ويزامن كود مشروعك (عبر `workdir`/`file_mounts` الخاصة بـ SkyPilot) ومفاتيح API، ثم يشغّل عملية المنسق.
+2. يشغّل **عنقود المنسق** كل المنطق عالي المستوى (الباحث، المخطِّط، الكاتب، LaTeX، الأشكال) عن بُعد في جلسة منفصلة.
+3. يمكن تشغيل التجارب على عنقود المنسق نفسه أو على عنقود GPU منفصل مُجهَّز عبر SkyPilot (قابل للضبط بشكل مستقل).
+4. يبلّغ المنسق عن حالته إلى الديار عبر واجهة `/v1` لمستوى التحكم؛ ويبثّ تطبيق الويب السجلات ويحدّث لوحة التحكم. يُنهي العنقود نفسه ذاتياً عبر **autostop** عند اكتمال التشغيل (أو بعد فترة خمول).
+
+> [!TIP]
+> يتم تشفير بيانات اعتماد السحابة في حالة السكون باستخدام `SECRET_KEY` الخاص بك. لا يتم تسجيل مفاتيحك أو إرسالها إلى أطراف ثالثة.
+
+<details>
+<summary><strong>تسلسل الإعدادات الهرمي (Configuration Hierarchy)</strong></summary>
+
+يستخدم idea2paper نموذج إعدادات من ثلاث طبقات للحوسبة السحابية:
+1. **الإعدادات الافتراضية للنظام**: تُضبط في `webapp.env` (المتغير المركزي `CLOUD_GCP_PROJECT` الذي يحوي صورة ARK المخبوزة، إضافة إلى `CLOUD_LAUNCHER_SA` و`CLOUD_LAUNCHER_SA_KEY` و`CLOUD_CONDA_ENV`).
+2. **الإعدادات الافتراضية العامة للمستخدم**: تُضبط في لوحة **Settings** (⚙️). وتنطبق على كل مشاريعك.
+3. **تجاوزات المشروع**: تُضبط أثناء إنشاء المشروع أو إعادة تشغيله. ولها الأولوية القصوى.
+
+يتيح لك هذا التسلسل تعريف إعدادات افتراضية قياسية مرة واحدة، مع سهولة التبديل إلى مثيل GPU قوي (accelerators، spot) لتجربة محددة.
+
+</details>
+
+---
 
 ### تفعيل الحوسبة السحابية عبر لوحة التحكم
 
-1. افتح لوحة **Settings** (أيقونة ⚙️).
-2. انتقل إلى قسم **Cloud Compute**.
-3. أدخل بيانات الاعتماد للمزود المفضل (AWS, GCP, أو Azure).
-4. انقر **Save**. سيتم إرسال جميع المشاريع اللاحقة إلى السحابة تلقائياً.
+1. افتح لوحة **Settings** (أيقونة ⚙️ في شريط التنقل العلوي).
+2. افتح تبويب **Compute**.
+3. أدخل **GCP Project ID** الخاص بك، وامنح حساب الخدمة المعروض `ark-launcher` الأدوار المطلوبة على مشروعك، ثم انقر **Verify access**. (لا يتم رفع أي مفتاح لحساب خدمة — بل تفوّض الوصول إلى مشروعك عبر IAM. راجع كتلة إعداد GCP أدناه.)
+4. انقر **Save**.
 
-> [!TIP]
-> يتم تشفير بيانات الاعتماد باستخدام `SECRET_KEY` الخاص بك. لا يتم تسجيل مفاتيحك أو إرسالها لأطراف ثالثة.
+عند إنشاء مشروع جديد يمكنك الآن الاختيار بشكل مستقل:
+- **Orchestrator Backend** — `skypilot` لتشغيل مستوى التحكم على عنقود مُجهَّز عبر SkyPilot، أو `local` لتشغيله على نفس جهاز تطبيق الويب.
+- **Experiment Backend** — `skypilot` لتجارب GPU، أو `local` لتشغيلها على عنقود المنسق نفسه.
+
+---
+
+<details>
+<summary><strong>إنشاء مشروع</strong></summary>
+
+بمجرد ضبط الحوسبة السحابية، أطلق مشروعاً عبر لوحة التحكم:
+
+1. انقر **New Project** من الصفحة الرئيسية للوحة التحكم.
+2. املأ هدف البحث، والمؤتمر المستهدف، وأي تعليمات إضافية.
+3. انقر **Submit** — يولّد تطبيق الويب ملف `config.yaml`، ويجهّز عنقود المنسق عبر SkyPilot، ويزامن مشروعك، ويبدأ التشغيل.
+
+يُخزَّن ملف `config.yaml` المُولَّد في:
+
+```
+~/.ark/data/projects/<user_id>/<project_id>/config.yaml
+```
+
+يمكنك فحص هذا الملف أو تحريره يدوياً في أي وقت (مثلاً لضبط نوع المثيل أو إضافة `setup_commands`). تسري التغييرات في التشغيل أو إعادة التشغيل التالي.
+
+> [!NOTE]
+> إذا كان `PROJECTS_ROOT` مضبوطاً في `.ark/webapp.env`، فسيُستبدل المسار أعلاه بـ `$PROJECTS_ROOT/<user_id>/<project_id>/config.yaml`.
+
+</details>
 
 ---
 
 ### إعداد مزودي السحاب
 
 <details>
-<summary><strong>☁️ Google Cloud Platform (GCP)</strong></summary>
+<summary><strong>☁️ Google Cloud Platform (GCP) — عبر SkyPilot</strong></summary>
 
-#### 1. إنشاء حساب خدمة
+إعداد GCP بلا مفاتيح: بدلاً من رفع مفتاح حساب خدمة، تمنح حساب الخدمة المركزي **`ark-launcher`** الخاص بـ idea2paper وصولاً إلى مشروع GCP *الخاص بك* عبر IAM. عندها يشغّل SkyPilot العناقيد في مشروعك من صورة ARK المخبوزة مسبقاً.
+
+#### 1. تفعيل الواجهات البرمجية المطلوبة
 
 ```bash
 export PROJECT_ID=your-gcp-project-id
-
-# إنشاء حساب خدمة لـ idea2paper
-gcloud iam service-accounts create ark-runner \
-  --display-name="ARK Research Runner"
-
-# منح الأدوار المطلوبة
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:ark-runner@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="roles/compute.admin"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:ark-runner@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountUser"
-
-# تحميل مفتاح JSON
-gcloud iam service-accounts keys create ~/ark-gcp-key.json \
-  --iam-account=ark-runner@${PROJECT_ID}.iam.gserviceaccount.com
-```
-
-#### 2. تفعيل الواجهات البرمجية المطلوبة
-
-```bash
 gcloud services enable compute.googleapis.com --project=$PROJECT_ID
 ```
 
-#### 3. الضبط في لوحة التحكم
+#### 2. بناء صورة الجهاز
 
-الصق محتويات `~/ark-gcp-key.json` في حقل **GCP Service Account JSON** واضبط **GCP Project ID** في لوحة الإعدادات.
+يبدأ idea2paper من صورة GCP مخبوزة مسبقاً تحوي كل تبعيات النظام (Conda، LaTeX، Node.js) لبدء تشغيل سريع. يطلق SkyPilot من هذه الصورة. ابنِها مرة واحدة:
+
+```bash
+./scripts/build_ark_gcp_image.sh [GCP_PROJECT_ID] [ZONE]
+```
+
+يشغّل هذا السكربت جهازاً افتراضياً مؤقتاً، ويثبّت TeX Live وMiniforge وNode.js وبيئة `ark-base`، ثم يحفظ Machine Image باسم `ark-job-v1-[timestamp]` موسومة بعائلة `ark-job`.
+
+> في نشر مُستضاف، يبني المشغّل هذه الصورة مرة واحدة في المشروع المركزي `CLOUD_GCP_PROJECT` (إعداد الخادم: ينشئ `scripts/setup_ark_launcher_sa.sh` حساب خدمة المُطلِق المركزي؛ ويخبز `scripts/build_ark_gcp_image.sh` الصورة). أما المستضيفون الذاتيون فيشغّلون كلا السكربتين في مشروعهم الخاص.
+
+#### 3. منح حساب خدمة المُطلِق والتحقق
+
+في لوحة التحكم، افتح **Settings → Compute**:
+1. أدخل **GCP Project ID** الخاص بك.
+2. امنح حساب الخدمة المعروض `ark-launcher` أدوار IAM المطلوبة على مشروعك **أنت** (تسرد اللوحة أوامر `gcloud ... add-iam-policy-binding` الدقيقة للتشغيل).
+3. انقر **Verify access**.
+
+لا يغادر أي مفتاح Google أبداً — بل تفوّض وصولاً محدود النطاق إلى مشروعك. راجع [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md) لتصميم تعدد المستأجرين.
+
+#### 4. مرجع `config.yaml` (متقدم / CLI فقط)
+
+يولّد تطبيق الويب هذا تلقائياً من إعداداتك. للمشاريع اليدوية أو المُدارة عبر CLI، راجع [`config.example.yaml`](config.example.yaml) للقالب الكامل. النموذج + المفاتيح (كل الوكلاء يعملون عبر OpenHands → LiteLLM):
+
+```yaml
+model: anthropic/claude-sonnet-4-6     # الوكلاء يشغّلون هذا — أي نموذج LiteLLM
+                                       # (gemini/… , openai/… , deepseek/… , …)
+bot_model: anthropic/claude-haiku-4-5  # نموذج رخيص للمساعدات الخفيفة (العناوين، الملخصات)
+anthropic_api_key: "sk-ant-..."        # املأ المزود(ين) الذي تستخدمه — بادئة النموذج
+openai_api_key:    "sk-..."            #   هي ما يحدد أي مفتاح يُستخدم
+gemini_api_key:    "..."               # مفتاح gemini يشغّل أيضاً Deep Research (اختياري)
+```
+
+تستخدم الحوسبة خلفيتَي SkyPilot (عنقود المنسق + عنقود التجارب) مثبّتتين على GCP:
+
+```yaml
+# عنقود المنسق: يشغّل الباحث، المخطِّط، الكاتب، LaTeX (لا حاجة لـ GPU)
+orchestrator_compute_backend:
+  type: skypilot
+  cloud: gcp
+  # region: us-central1
+  # instance_type: n4-standard-2
+  # idle_minutes_to_autostop: 60     # شبكة أمان عند الأعطال: DOWN تلقائي عند الخمول
+
+# عنقود التجارب: يشغّل الأحمال كثيفة الاستخدام لـ GPU
+experiment_compute_backend:
+  type: skypilot
+  cloud: gcp
+  accelerators: L4:1                  # مواصفة مسرّع SkyPilot ("<NAME>:<COUNT>")
+  use_spot: true                      # مثيلات أرخص قابلة للاستباق (pre-emptible)
+  setup_commands:
+    - pip install -r requirements.txt
+```
+
+> لتشغيل التجارب على عنقود المنسق بدلاً من عنقود منفصل، اضبط `experiment_compute_backend.type: local`. راجع كتلة SkyPilot أدناه لمرجع المفاتيح الكامل.
+
+</details>
+
+---
+
+> تشغيل على **AWS أو Azure أو Kubernetes** (أو تريد أن يختار SkyPilot أرخص سحابة تلقائياً)؟ استخدم كتلة SkyPilot أدناه واضبط بيانات اعتماد تلك السحابة وفق توثيق SkyPilot على [https://docs.skypilot.co](https://docs.skypilot.co).
+
+<details>
+<summary><strong>☁️ SkyPilot (عبر السحابات و Kubernetes)</strong></summary>
+
+يُجهِّز [SkyPilot](https://github.com/skypilot-org/skypilot) الأجهزة الافتراضية عبر
+AWS/GCP/Azure (و Kubernetes) من تجريد واحد، مع spot وإعادة المحاولات والإنهاء
+التلقائي (autostop) المدمج — بحيث تغطي كتلة `type: skypilot` واحدة الحالة أحادية
+السحابة و Kubernetes الخاص بك دون خلفية منفصلة لكل سحابة. إنه المسار السحابي الوحيد
+لـ idea2paper: كل من خلفية **التجارب** (الطبقة 1) ومُطلِق **المنسق** (الطبقة 2)
+يُجهِّزان عبر SkyPilot، مع تطبيق **autostop-down** لأمان التكلفة عند الإطلاق
+(راجع `idle_minutes_to_autostop` أدناه).
+
+#### الإعداد
+
+```bash
+# ثبّت SkyPilot مع السحابات التي تستخدمها (راجع توثيق SkyPilot للإعداد الكامل)
+pip install 'ark[skypilot]'
+pip install 'skypilot[gcp,aws,kubernetes]'
+sky check          # تحقق من قدرة SkyPilot على الوصول إلى سحاباتك/عناقيدك المضبوطة
+```
+
+#### مرجع `config.yaml` (متقدم / CLI فقط)
+
+> مفاتيح **`experiment_compute_backend`** أدناه تُحلَّل بواسطة خلفية الطبقة 1؛
+> أما كتلة **`orchestrator_compute_backend`** فتُقرأ بواسطة `SkyPilotVmJobLauncher`
+> في الطبقة 2. وكلاهما يتشاركان نفس مفاتيح الموارد (`cloud` / `region` /
+> `accelerators` / `instance_type` / `use_spot` / `disk_size` / `image_id` /
+> `cluster_name` / `setup_commands` / `idle_minutes_to_autostop`).
+
+```yaml
+# تجارب مُجهَّزة عبر SkyPilot. كل مفتاح عدا `type` اختياري؛
+# يختار SkyPilot أرخص سحابة/عنقود يمكن الوصول إليه ما لم تثبّت واحداً.
+experiment_compute_backend:
+  type: skypilot
+  # cloud: aws                   # aws | gcp | azure | kubernetes؛ احذفه → تلقائي
+  # region: us-east-1            # تثبيت منطقة اختياري
+  accelerators: L4:1             # مواصفة مسرّع SkyPilot ("<NAME>:<COUNT>")
+  # instance_type: g5.xlarge     # نوع مثيل صريح اختياري
+  use_spot: true                 # مثيلات أرخص قابلة للاستباق (pre-emptible)
+  # disk_size: 256               # جيجابايت، اختياري
+  # cluster_name: ark-myproj     # اختياري؛ الافتراضي ark-<project>
+  # idle_minutes_to_autostop: 60 # DOWN تلقائي بعد N دقيقة خمول (أمان التكلفة)؛
+  #                              # عناقيد التجارب تُنهى دائماً تلقائياً — هذا
+  #                              # يضبط النافذة فقط، ولا يمكن تعطيله
+  #                              # (وإلا لن يستطيع مستوى التحكم حصادها).
+  setup_commands:                # تُثبَّت التبعيات عبر كتلة setup: في SkyPilot
+    - pip install -r requirements.txt
+
+# مُطلِق المنسق — يشغّل `python -m ark.orchestrator` على عنقود SkyPilot.
+# يبلّغ إلى الديار عبر واجهة /v1 لمستوى التحكم (اضبط control_plane_url)، لذا
+# لا يحتاج العنقود إلى نظام ملفات/قاعدة بيانات مشتركة مع لوحة التحكم.
+orchestrator_compute_backend:
+  type: skypilot
+  # cloud: gcp                     # احذفه → يختار SkyPilot تلقائياً
+  # region: us-central1
+  # instance_type: n1-standard-2
+  # cluster_name: ark-orch-myproj  # اختياري؛ الافتراضي ark-orch-<project>
+  # idle_minutes_to_autostop: 60   # شبكة أمان عند الأعطال: DOWN تلقائي بعد N دقيقة خمول
+  #                                # بعد خروج مهمة المنسق. اضبط `off`
+  #                                # للتعطيل، أو `autostop_down: false` للإيقاف STOP
+  #                                # (مع إبقاء القرص) بدلاً من الإنهاء.
+  setup_commands:                  # ثبّت تبعيات ARK على العنقود (workdir →
+    - cd ~/sky_workdir && pip install -e '.[research]'   # ~/sky_workdir عند الإطلاق)
+```
+
+> تملأ لوحة التحكم كتلة `setup:` هذه تلقائياً؛ فقط مستخدمو CLI الذين يحررون
+> `config.yaml` يدوياً بحاجة لضبطها. تثبّت مصدر ARK المُزامَن مع إضافة `research`
+> كي يُحلَّل `python -m ark.orchestrator` على عنقود عارٍ (يمكن لصورة `image_id`
+> مخبوزة أن تحل محلها لاحقاً لسرعة الإطلاق فقط — اضبط المفتاح وأسقط `pip install`).
+> موارد تجارب الطبقة 1 (`region` / `instance_type` / `image_id`) **لا** تُشتق
+> تلقائياً من كتلة المنسق — فهي تعيش في فضاء أسماء SkyPilot مختلف، لذا اضبطها هنا صراحةً.
+
+> لا يمكن لمنسق `skypilot` تشغيل تجارب `slurm` — فالمنسق السحابي ليس له مسار شبكي
+> إلى عنقود SLURM محلي.
 
 </details>
 
 ---
 
 <details>
-<summary><strong>☁️ Amazon Web Services (AWS)</strong></summary>
+<summary><strong>بثّ السجلات وإعادة الارتباط</strong></summary>
 
-#### 1. إنشاء مستخدم IAM
-
-```bash
-# إنشاء مستخدم لـ idea2paper
-aws iam create-user --user-name ark-runner
-
-# إرفاق السياسة (EC2 full access كافية)
-aws iam attach-user-policy \
-  --user-name ark-runner \
-  --policy-arn arn:aws:iam::aws:policy/AmazonEC2FullAccess
-
-# إنشاء مفاتيح الوصول
-aws iam create-access-key --user-name ark-runner
-```
-
-#### 2. إنشاء زوج مفاتيح SSH
-
-```bash
-aws ec2 create-key-pair \
-  --key-name ark-key \
-  --query 'KeyMaterial' \
-  --output text > ~/.ssh/ark-key.pem
-chmod 600 ~/.ssh/ark-key.pem
-```
-
-#### 3. الضبط في لوحة التحكم
-
-أدخل **AWS Access Key ID** و **AWS Secret Access Key** و **AWS Region** في لوحة الإعدادات.
+- **بثّ السجلات** — يبثّ عنقود المنسق السجلات إلى الديار عبر واجهة `/v1` لمستوى التحكم؛ ويستقصيها تطبيق الويب دورياً لعرض التقدم الحي.
+- **مزامنة الحالة** — يحفظ المنسق نقاط تفتيش لحالة `auto_research/` إلى مستوى التحكم دورياً، فتبقى واجهة لوحة التحكم محدَّثة ويبقى التشغيل صامداً عند فقدان الـ VM.
+- **إعادة الارتباط** — إذا أعدت تشغيل تطبيق الويب المحلي، يكتشف idea2paper عنقود SkyPilot المُخزَّن ويعيد الارتباط بالعملية الجارية دون إعادة تجهيز.
 
 </details>
 
----
-
-### التحكم في التكاليف
+<details>
+<summary><strong>التحكم في التكاليف</strong></summary>
 
 > [!WARNING]
-> يتم محاسبة الـ VMs السحابية بالساعة. يقوم idea2paper تلقائياً بإنهاء المثيلات بعد انتهاء كل تشغيل. ومع ذلك، إذا تعطل تطبيق الويب فجأة، فإن آلية **Orphan Rescue** ستكتشف المثيلات العالقة عند إعادة التشغيل وتعتبرها فاشلة &mdash; ولكنها **لن تنهي الـ VM السحابي تلقائياً**. تحقق دائماً من عدم وجود مثيلات عالقة في لوحة تحكم السحابة بعد الإغلاق غير المتوقع.
+> تُحاسَب العناقيد السحابية بالساعة. يعتمد idea2paper على الإنهاء المدمج في SkyPilot لمنع التكاليف الجامحة:
+>
+> - **Autostop-down** — يُطلَق كل عنقود بنافذة autostop-down؛ فإذا بقي خاملاً بعد تلك النافذة **أنهى نفسه**. عناقيد التجارب *تُنهى دائماً* تلقائياً (يمكن ضبطها فقط، لا تعطيلها)؛ أما عناقيد المنسق فتفترض نافذة كشبكة أمان عند الأعطال (قابلة للضبط عبر `idle_minutes_to_autostop`).
+> - **الإيقاف اليدوي** — النقر على **Stop** في لوحة التحكم يُفرِّغ النتائج ويُنهي العنقود (`sky down`).
+>
+> إذا قُتلت عملية تطبيق الويب فجأة، فإن نافذة autostop-down تُنهي العنقود بنفسها. تحقق دائماً من عدم بقاء عناقيد شاردة (`sky status`) بعد الإغلاق غير المتوقع.
+
+</details>
 
 ---
 

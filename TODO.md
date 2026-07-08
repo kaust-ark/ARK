@@ -50,7 +50,7 @@
 ### [ ] Codex backend — full feature parity
 - Basic invocation works (`codex exec`), but not tested end-to-end on real projects
 - Missing: deep research context injection (Codex has no equivalent of Gemini Deep Research)
-- Missing: compute backend integration verification (Slurm, cloud)
+- Missing: compute backend integration verification (Slurm, SkyPilot)
 - Need to test permission model (`--dangerously-bypass-approvals-and-sandbox` implications)
 
 ### [ ] Gemini backend — full feature parity
@@ -74,16 +74,11 @@
 
 ## Cloud & Compute
 
-### [ ] AWS cloud compute — end-to-end verification
-- Compute backend code exists (EC2 provisioning, rsync, SSH execution) but never validated on real AWS
-- Need to test: instance provisioning, security group setup, GPU instance types, spot vs on-demand
-- Need to test: cost tracking accuracy for cloud compute hours
-- Need to test: cleanup/termination after experiment completes
-
-### [ ] GCP / Azure cloud compute — verification
-- Same as AWS — code exists, untested in production
-- GCP: verify gcloud CLI integration, GPU quota handling
-- Azure: verify az CLI integration, VM provisioning
+### [ ] SkyPilot cloud compute — end-to-end verification
+- SkyPilot is now the only cloud path (native AWS/GCP/Azure backend removed); the per-user workspace isolation + central launcher SA design is new and needs real-project validation at scale (see `SKYPILOT_PLAN.md`, `docs/SKYPILOT_TEST.md`)
+- Need to test: orchestrator + experiment cluster provisioning, GPU instance types, spot vs on-demand
+- Need to test: multi-tenant IAM grant flow and cross-project launches into each user's GCP project
+- Need to test: cost tracking accuracy and `autostop` teardown after a run completes
 
 ### [ ] Edge device & customized environment support
 - Current assumption: agents run on a machine with full internet, pip/conda, and GPU access

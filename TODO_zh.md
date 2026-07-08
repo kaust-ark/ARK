@@ -50,7 +50,7 @@
 ### [ ] Codex 后端 — 完整功能对等
 - 基本调用有效（`codex exec`），但未在真实项目上端到端测试
 - 缺失：深度研究上下文注入（Codex 无 Gemini Deep Research 等效功能）
-- 缺失：计算后端集成验证（Slurm、云）
+- 缺失：计算后端集成验证（Slurm、SkyPilot）
 - 需要测试权限模型（`--dangerously-bypass-approvals-and-sandbox` 的影响）
 
 ### [ ] Gemini 后端 — 完整功能对等
@@ -61,16 +61,11 @@
 
 ## 云与计算
 
-### [ ] AWS 云计算 — 端到端验证
-- 计算后端代码存在（EC2 配置、rsync、SSH 执行）但从未在真实 AWS 上验证
-- 需要测试：实例配置、安全组设置、GPU 实例类型、竞价实例 vs 按需
-- 需要测试：云计算小时的成本追踪准确性
-- 需要测试：实验完成后的清理/终止
-
-### [ ] GCP / Azure 云计算 — 验证
-- 与 AWS 相同 — 代码存在，未在生产中测试
-- GCP：验证 gcloud CLI 集成、GPU 配额处理
-- Azure：验证 az CLI 集成、VM 配置
+### [ ] SkyPilot 云计算 — 端到端验证
+- SkyPilot 现在是唯一的云路径（原生 AWS/GCP/Azure 后端已移除）；每用户工作区隔离 + 中央 launcher 服务账号的设计是新的，需要在真实项目上大规模验证（见 `SKYPILOT_PLAN.md`、`docs/SKYPILOT_TEST.md`）
+- 需要测试：编排器 + 实验集群配置、GPU 实例类型、竞价实例 vs 按需
+- 需要测试：多租户 IAM 授权流程以及跨项目启动到各用户的 GCP 项目
+- 需要测试：成本追踪准确性以及运行完成后的 `autostop` 自动销毁
 
 ### [ ] 边缘设备与自定义环境支持
 - 当前假设：智能体在拥有完整互联网、pip/conda 和 GPU 访问的机器上运行

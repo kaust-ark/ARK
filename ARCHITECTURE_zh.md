@@ -139,10 +139,10 @@ idea2paper 支持多种计算后端运行实验：
 
 - **Local**: 直接在宿主机上运行实验。
 - **Slurm**: 使用 `sbatch` 将作业提交到 HPC 集群。
-- **Cloud**: 在 **AWS**、**GCP** 或 **Azure** 上配置实例。
+- **SkyPilot**: 通过统一抽象在 **AWS**、**GCP**、**Azure** 或 **Kubernetes** 上配置集群，内置竞价实例、重试和 autostop 自动销毁。
 - **Custom**: 用于特殊环境的可扩展后端。
 
-云后端处理全生命周期：配置、代码传输 (rsync)、设置、执行、结果收集和销毁。
+SkyPilot 处理全生命周期：配置、代码同步 (SkyPilot 的 `workdir`/`file_mounts`)、设置、执行、结果收集和 **autostop** 自动销毁。
 
 ### 7. AI 图表生成 (`ark/nano_banana.py`)
 
@@ -161,7 +161,7 @@ idea2paper 支持多种计算后端运行实验：
 | reviewer | 评审和评分论文；检查实验与提案的一致性 |
 | planner | 分析问题，生成行动计划（论文和开发模式）；验证实验一致性 |
 | writer | 编写/修订论文章节，引用经 DBLP 验证 |
-| experimenter | 设计、运行和分析实验；支持 Slurm 和云后端 |
+| experimenter | 设计、运行和分析实验；支持 Slurm 和 SkyPilot 后端 |
 | coder | 实现代码更改（开发模式） |
 
 ## 文件结构
@@ -174,7 +174,7 @@ ARK/
 │   ├── memory.py            # 分数追踪、问题去重、停滞检测
 │   ├── execution.py         # 智能体执行和 skill 注入
 │   ├── cli.py               # CLI 命令 (ark new/run/status/access/...)
-│   ├── compute/             # 计算后端 (Local, Slurm, AWS, GCP, Azure)
+│   ├── compute/             # 计算后端 (Local, Slurm, SkyPilot, Custom)
 │   ├── engines/             # 智能体编排和后端运行时 (Claude, Gemini)
 │   ├── orchestrator/        # 状态和工作区管理
 │   ├── telegram/            # Telegram 通知 + 双向机器人
