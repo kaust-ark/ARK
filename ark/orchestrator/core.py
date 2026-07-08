@@ -3165,6 +3165,7 @@ def main():
         return
 
     final_status = None
+    final_error = ""
     try:
         orchestrator.run()
         # Derive the terminal status from the run's own outcome signals. run()
@@ -3177,14 +3178,18 @@ def main():
         #     not; the score conveys quality) → "done".
         if getattr(orchestrator, "_terminal_error", None):
             final_status = "failed"
+            final_error = str(orchestrator._terminal_error)[:400]
         elif getattr(orchestrator, "_stop_requested", False):
             final_status = "stopped"
         else:
             final_status = "done"
     except KeyboardInterrupt:
         final_status = "stopped"
-    except Exception:
+    except Exception as e:
         final_status = "failed"
+        # Crash text into error_message — dashboard + failure email otherwise
+        # show "(no error message)" (3aaae35b, 2026-07-08).
+        final_error = f"{type(e).__name__}: {e}"[:400]
         raise
     finally:
         # Durability: synchronously flush the paper PDF + result/state docs to the
@@ -3194,7 +3199,10 @@ def main():
         # exit or fail with no retry; this synchronous flush is the guarantee.
         orchestrator.finalize_durability()
         if final_status is not None and orchestrator.cp.available:
-            orchestrator._sync_db(status=final_status, pid=0)
+            _kw = {"status": final_status, "pid": 0}
+            if final_error:
+                _kw["error_message"] = final_error
+            orchestrator._sync_db(**_kw)
         orchestrator._flush_events()
 
 

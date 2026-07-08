@@ -117,14 +117,34 @@ def _infer_scalable(source: str) -> bool:
 
 
 def load_manifest(figures_dir: Path) -> dict:
-    """Load manifest from figures_dir, or auto-generate from existing files."""
+    """Load manifest from figures_dir, or auto-generate from existing files.
+
+    Defensive on shape: agents have been observed writing their own
+    figure_manifest.json with ``figures`` as a LIST of {file, ...} entries
+    (crashed a run on 2026-07-08 — consumers call ``figures.get(name)``).
+    Coerce that form into the canonical filename-keyed dict and never
+    return a non-dict ``figures``.
+    """
     manifest_path = figures_dir / MANIFEST_FILE
     if manifest_path.exists():
         try:
-            return json.loads(manifest_path.read_text())
+            data = json.loads(manifest_path.read_text())
         except (json.JSONDecodeError, OSError):
-            pass
-    # Auto-migrate: build manifest from existing files
+            data = None
+        if isinstance(data, dict):
+            figs = data.get("figures", {})
+            if isinstance(figs, list):
+                coerced = {}
+                for entry in figs:
+                    if isinstance(entry, dict) and entry.get("file"):
+                        coerced[entry["file"]] = {
+                            k: v for k, v in entry.items() if k != "file"}
+                data["figures"] = coerced
+            elif not isinstance(figs, dict):
+                data["figures"] = {}
+            return data
+    # Auto-migrate: build manifest from existing files (also the fallback
+    # for unparseable or non-dict top-level content)
     return _build_manifest_from_existing(figures_dir)
 
 
