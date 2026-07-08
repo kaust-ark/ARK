@@ -17,7 +17,11 @@ in PR2/PR3 have a single, tested import point. Callers use::
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import re
+
+_log = logging.getLogger("website.dashboard")
 
 _EXTRA_HINT = (
     "SkyPilot is not installed, but a compute backend is configured with "
@@ -83,6 +87,52 @@ def resolve_request_value(sky, result):
         except Exception:
             return None
     return result
+
+
+# ── workspace selection ──────────────────────────────────────────────────────
+# SkyPilot "workspaces" (0.10+) isolate infra/credentials per team or project:
+# each workspace pins a ``gcp.project_id`` (etc.), defined in the API server's
+# ``~/.sky/config.yaml``. ARK maps one workspace per user (``ws-<user_id>``) so a
+# launch lands in *that user's* GCP project via one central cross-project service
+# account — no per-user key material. The active workspace is picked up per-call
+# from ``skypilot_config.local_active_workspace_ctx``, which stores it in
+# thread-local state (concurrency-safe across parallel in-process launches),
+# unlike the process-global ``override_skypilot_config``.
+_WORKSPACE_UNSUPPORTED_WARNED = False
+
+
+@contextlib.contextmanager
+def active_workspace(sky, workspace):
+    """Select ``workspace`` as the active SkyPilot workspace for the wrapped call.
+
+    A context manager so a launch reads ``with active_workspace(sky, ws):
+    sky.launch(...)``. No-ops (yields) when ``workspace`` is falsy — the caller
+    then uses the ``default`` workspace / ambient credentials. If the installed
+    SkyPilot predates workspaces (< 0.10, no ``local_active_workspace_ctx``), it
+    warns once and no-ops rather than failing the launch, so an older SDK still
+    runs (against the host's own project) instead of hard-crashing."""
+    global _WORKSPACE_UNSUPPORTED_WARNED
+    if not workspace:
+        yield
+        return
+    try:
+        from sky import skypilot_config  # noqa: WPS433 (lazy, mirrors load_sky)
+        ctx = getattr(skypilot_config, "local_active_workspace_ctx", None)
+    except ImportError:
+        ctx = None
+    if ctx is None:
+        if not _WORKSPACE_UNSUPPORTED_WARNED:
+            _log.warning(
+                "SkyPilot workspace %r requested but the installed SkyPilot has no "
+                "workspace support (needs >= 0.10); launching against the host's "
+                "ambient credentials instead. Upgrade skypilot to isolate per-user "
+                "projects.", workspace,
+            )
+            _WORKSPACE_UNSUPPORTED_WARNED = True
+        yield
+        return
+    with ctx(workspace):
+        yield
 
 
 # ── resource shaping ─────────────────────────────────────────────────────────

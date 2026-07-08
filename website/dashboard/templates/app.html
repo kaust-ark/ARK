@@ -2153,7 +2153,71 @@ Strict — hit the exact page limit (spends the most tokens).">
               <label style="font-size:.75rem">GCP Project ID</label>
               <input type="text" id="settings-gcp-project" placeholder="my-research-project" />
             </div>
-            
+
+            <!-- SkyPilot workspaces onboarding: the user grants the central
+                 launcher SA access to their project (no key upload). Verify the
+                 grant here so a missing binding fails loudly, not at launch. -->
+            <div class="form-group" style="background:var(--surface-2,rgba(0,0,0,.03));border-radius:8px;padding:12px">
+              <label style="font-size:.75rem;font-weight:600">Grant compute access (SkyPilot)</label>
+              <p style="font-size:.72rem;color:var(--text-second);margin:6px 0">
+                Runs launch into <em>your</em> GCP project via a shared launcher
+                identity — no service-account key needed. Grant this principal the
+                required roles on the project above, then verify:
+              </p>
+              <code id="settings-gcp-launcher-sa" style="display:block;font-size:.72rem;word-break:break-all;margin-bottom:6px">(loading launcher identity…)</code>
+              <div style="display:flex;gap:8px;align-items:center">
+                <button type="button" id="settings-gcp-verify-btn" class="btn btn-secondary" style="font-size:.75rem">Verify access</button>
+                <span id="settings-gcp-verify-status" style="font-size:.75rem;color:var(--text-muted)"></span>
+              </div>
+              <details style="margin-top:8px">
+                <summary style="font-size:.72rem;color:var(--text-muted);cursor:pointer;user-select:none">Required roles</summary>
+                <ul id="settings-gcp-required-roles" style="font-size:.7rem;color:var(--text-second);margin:6px 0 0 16px"></ul>
+              </details>
+            </div>
+            <script>
+            // Verify the launcher SA can provision into the entered project (the
+            // IAM grant). One endpoint returns the verdict AND the SA email +
+            // roles, so we populate the instructions from its response too.
+            (function () {
+              const btn = document.getElementById('settings-gcp-verify-btn');
+              const statusEl = document.getElementById('settings-gcp-verify-status');
+              const saEl = document.getElementById('settings-gcp-launcher-sa');
+              const rolesEl = document.getElementById('settings-gcp-required-roles');
+              if (!btn) return;
+              function renderMeta(data) {
+                if (data.launcher_sa) saEl.textContent = data.launcher_sa;
+                else saEl.textContent = '(launcher identity not configured on server)';
+                if (Array.isArray(data.required_roles) && !rolesEl.childElementCount) {
+                  for (const r of data.required_roles) {
+                    const li = document.createElement('li'); li.textContent = r; rolesEl.appendChild(li);
+                  }
+                }
+              }
+              btn.addEventListener('click', async () => {
+                const proj = (document.getElementById('settings-gcp-project')?.value || '').trim();
+                statusEl.style.color = 'var(--text-muted)';
+                statusEl.textContent = 'Checking…';
+                btn.disabled = true;
+                try {
+                  const res = await fetch(window.APP_BASE + '/api/user/gcp/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ gcp_project: proj }),
+                  });
+                  const data = await res.json();
+                  renderMeta(data);
+                  statusEl.style.color = data.ok ? 'var(--success,#2e7d32)' : 'var(--danger,#c62828)';
+                  statusEl.textContent = (data.ok ? '✓ ' : '✗ ') + (data.detail || '');
+                } catch (e) {
+                  statusEl.style.color = 'var(--danger,#c62828)';
+                  statusEl.textContent = '✗ Verification request failed.';
+                } finally {
+                  btn.disabled = false;
+                }
+              });
+            })();
+            </script>
+
             <div style="display:flex;gap:12px">
               <div class="form-group" style="flex:1">
                 <label style="font-size:.75rem">Default Zone</label>

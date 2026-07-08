@@ -576,6 +576,25 @@ async def lifespan(app: FastAPI):
     control_loop = os.environ.get("ARK_CONTROL_LOOP", "1") != "0"
     poll_task = None
     if control_loop:
+        # Ensure the webapp launches AS the central launcher SA: SkyPilot's SDK
+        # uses ADC (not the gcloud active account), so point ADC at the SA key if
+        # unset. Warns loudly if it would otherwise launch as a user account.
+        try:
+            from website.dashboard.gcp_access import ensure_launcher_credentials
+            ensure_launcher_credentials(settings)
+        except Exception as e:
+            logger.warning(f"Launcher credential check failed (non-fatal): {e}")
+        # Reconcile the SkyPilot per-user workspaces from the DB into the host's
+        # ~/.sky/config.yaml, so launches target each user's GCP project after a
+        # restart (settings-save keeps it current thereafter). Gated on the
+        # control-loop owner: only the process that launches jobs writes the host
+        # sky config, so a UI-only secondary can't race it. Best-effort.
+        try:
+            from website.dashboard.skyworkspaces import render_sky_workspaces
+            n = render_sky_workspaces(settings.db_path)
+            logger.info(f"Reconciled {n} SkyPilot workspace(s) at startup.")
+        except Exception as e:
+            logger.warning(f"SkyPilot workspace reconcile failed (non-fatal): {e}")
         # Start the Telegram daemon — the control-plane HITL engine (D1). It is the
         # sole Telegram poller: it notifies opened decisions, captures replies into the
         # decision/command queues, and sweeps timeouts. No-op if Telegram unconfigured.

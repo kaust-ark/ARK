@@ -112,6 +112,7 @@ from .db import (
     mark_access_declined,
 )
 from .crypto import encrypt_text, decrypt_text
+from .skyworkspaces import render_sky_workspaces
 from . import sideband
 from .jobs import (
     project_env_prefix,
@@ -691,11 +692,33 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
                 # images().get(image=<last path segment>), so a `.../family/<f>`
                 # URL 404s — hence we pin a specific image NAME. Bump the version
                 # whenever scripts/build_ark_gcp_image.sh produces a newer image.
+                #
+                # The image lives ONCE in the CENTRAL project
+                # (settings.cloud_gcp_project) — NOT replicated into each tenant's
+                # project. SkyPilot resolves image_id against the project named in
+                # the PATH (gcp.py::_get_image_size takes project = path segment[1],
+                # not the launch project) using the launcher SA's ADC creds, and GCP
+                # lets that SA boot a VM in the tenant's project from the cross-
+                # project image because the SA is the caller on both ends
+                # (roles/compute.admin on the central project ⇒ compute.images.
+                # useReadOnly on the image; the user-granted roles ⇒ instance-create
+                # in their project). So one golden image serves every tenant with no
+                # per-project image copy. When no central project is configured we
+                # OMIT image_id (boot stock public Debian); the setup_commands block
+                # below then does the full — slower — install from scratch.
                 _gcp_keys = _get_user_keys(user_obj) if user_obj else {}
-                gcp_project = _gcp_keys.get("gcp_project") or settings.cloud_gcp_project
-                if gcp_project:
+                central_project = settings.cloud_gcp_project
+                if central_project:
                     cfg["image_id"] = (
-                        f"projects/{gcp_project}/global/images/ark-debian-base-v6")
+                        f"projects/{central_project}/global/images/ark-debian-base-v6")
+                # When the user has their OWN project configured, launch into it
+                # via their SkyPilot workspace (the central launcher SA has
+                # cross-project access). The launcher selects this workspace per
+                # launch (ark/compute/_sky.py::active_workspace). Without a
+                # per-user project we omit it and fall back to the host's default.
+                if user_obj and _gcp_keys.get("gcp_project"):
+                    from website.dashboard.skyworkspaces import workspace_name_for
+                    cfg["workspace"] = workspace_name_for(user_obj.id)
             # The orchestrator cluster comes up bare, so its deps must be installed
             # via the setup: block (the run command is plain `python -m
             # ark.orchestrator`). Install the synced ARK source (workdir →
@@ -2141,12 +2164,40 @@ async def api_save_user_settings(request: Request):
             session.add(db_user)
             session.commit()
 
+    # The user may have just added/changed their GCP project id; re-render the
+    # SkyPilot workspaces so their next launch targets the right project. Runs off
+    # the request thread and is best-effort (never fails the save).
+    await asyncio.to_thread(render_sky_workspaces, settings.db_path)
 
     return JSONResponse({
         "ok": True,
         "verification": verification_results
     })
 
+
+@router.post("/api/user/gcp/verify")
+async def api_verify_gcp_access(request: Request):
+    """Verify the launcher SA can provision into the user's GCP project — i.e.
+    that they've completed the IAM grant. Probes ``project_id`` from the body,
+    falling back to the saved key. Returns ``{ok, detail, launcher_sa,
+    required_roles}`` so the settings UI can both show the verdict and render the
+    grant instructions (SA email + roles) from one call."""
+    user = _require_user(request)
+    settings = get_settings()
+    from website.dashboard.gcp_access import (
+        verify_project_access, launcher_sa_email, REQUIRED_ROLES)
+
+    body = await request.json()
+    project_id = (body.get("gcp_project") or "").strip()
+    if not project_id:
+        project_id = (_get_user_keys(user).get("gcp_project") or "").strip()
+
+    result = await asyncio.to_thread(verify_project_access, project_id)
+    return JSONResponse({
+        **result,
+        "launcher_sa": launcher_sa_email(settings),
+        "required_roles": REQUIRED_ROLES,
+    })
 
 
 # Removing old interactive Claude auth logic as we switched to manual Headless Setup

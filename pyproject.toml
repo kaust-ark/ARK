@@ -60,7 +60,10 @@ object = [
 # so nothing here is required unless a skypilot backend is actually launched.
 # Install the cloud extras you use, e.g. `pip install 'skypilot[gcp,aws,kubernetes]'`.
 skypilot = [
-    "skypilot>=0.6",
+    # >= 0.10 for SkyPilot "workspaces" (per-user GCP project isolation via one
+    # central cross-project service account); the launcher selects the active
+    # workspace per launch (ark/compute/_sky.py::active_workspace).
+    "skypilot>=0.10",
 ]
 
 

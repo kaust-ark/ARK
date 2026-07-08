@@ -210,6 +210,17 @@ class Settings:
         self.cloud_security_group: str = merged.get("CLOUD_SECURITY_GROUP", "")
         self.cloud_gcp_project: str = merged.get("CLOUD_GCP_PROJECT", "")
         self.cloud_gcp_zone: str = merged.get("CLOUD_GCP_ZONE", "")
+        # Central "ark-launcher" service account that provisions SkyPilot compute
+        # into every user's GCP project (scripts/setup_ark_launcher_sa.sh). Users
+        # grant THIS identity access to their project; shown in the onboarding
+        # grant instructions. Empty ⇒ derived from GOOGLE_APPLICATION_CREDENTIALS.
+        self.cloud_launcher_sa: str = merged.get("CLOUD_LAUNCHER_SA", "")
+        # Key file for that SA. If GOOGLE_APPLICATION_CREDENTIALS is unset, the
+        # webapp falls back to this so SkyPilot's SDK (ADC) launches AS the SA
+        # rather than whatever user account happens to own the host's ADC. Default
+        # matches scripts/setup_ark_launcher_sa.sh's output path.
+        self.cloud_launcher_sa_key: str = merged.get(
+            "CLOUD_LAUNCHER_SA_KEY", "~/.config/ark/ark-launcher-sa-key.json")
         self.cloud_azure_resource_group: str = merged.get("CLOUD_AZURE_RESOURCE_GROUP", "")
         self.cloud_azure_location: str = merged.get("CLOUD_AZURE_LOCATION", "")
         self.cloud_conda_env: str = merged.get("CLOUD_CONDA_ENV", "ark-base")

@@ -93,7 +93,8 @@ class SkyPilotVmJobLauncher(JobLauncher):
     def launch(self, spec: LaunchSpec) -> str:
         from ark.compute import validate_config
         from ark.compute._sky import (
-            load_sky, block_on_request, build_resources, resolve_autostop)
+            load_sky, block_on_request, build_resources, resolve_autostop,
+            active_workspace)
         from website.dashboard.jobs import control_plane_transport, api_keys_to_env
 
         config = spec.config
@@ -104,6 +105,11 @@ class SkyPilotVmJobLauncher(JobLauncher):
         cc = config.get("orchestrator_compute_backend", {}) or {}
         cluster = self._cluster_name(spec)
         pdir = Path(spec.project_dir)
+        # The user's SkyPilot workspace (``ws-<user_id>``) pins which GCP project
+        # this launch provisions into; the central launcher SA has cross-project
+        # access, so selecting the workspace is all that routes the run to the
+        # user's project. Empty ⇒ the 'default' workspace / host credentials.
+        workspace = (cc.get("workspace") or "").strip()
 
         # Control-plane transport: the cluster shares no FS/DB, so it must report
         # over the /v1 API. Without a configured URL the run is blind — warn loudly
@@ -149,7 +155,8 @@ class SkyPilotVmJobLauncher(JobLauncher):
 
             self.log(
                 f"Launching SkyPilot orchestrator cluster '{cluster}' "
-                f"(cloud={cc.get('cloud') or 'auto'}, project={spec.project_id})..."
+                f"(cloud={cc.get('cloud') or 'auto'}, "
+                f"workspace={workspace or 'default'}, project={spec.project_id})..."
             )
             # sky.launch (0.7+ client/server API) submits the task to the cluster's
             # job queue and returns an async request id; block_on_request blocks on
@@ -164,10 +171,13 @@ class SkyPilotVmJobLauncher(JobLauncher):
             # allowed here (the control plane CAN `sky down` this cluster via
             # cancel()), unlike the experiment backend where autostop is the only reap.
             autostop = resolve_autostop(cc)
-            result = sky.launch(
-                task, cluster_name=cluster, retry_until_up=True, **autostop,
-            )
-            block_on_request(sky, result)
+            # Select the user's workspace for this launch only (thread-local, so
+            # concurrent launches into different projects don't race).
+            with active_workspace(sky, workspace):
+                result = sky.launch(
+                    task, cluster_name=cluster, retry_until_up=True, **autostop,
+                )
+                block_on_request(sky, result)
         finally:
             if token_file:
                 try:
