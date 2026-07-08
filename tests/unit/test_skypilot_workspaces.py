@@ -5,9 +5,12 @@ launcher SA (with cross-project IAM grants) provisions into it. Two pieces are
 locked here:
 
 - ``ark.compute._sky.active_workspace`` — the per-launch selector. On a SkyPilot
-  that supports workspaces it flips the thread-local active workspace inside the
-  ``with`` block and restores it after; a falsy workspace is a no-op. It must NOT
-  raise when the installed SkyPilot predates workspaces (graceful degrade).
+  that supports workspaces it sets the ``active_workspace`` config key via
+  ``override_skypilot_config`` inside the ``with`` block (so the selection is
+  UPLOADED to the API server with the request — a thread-local alone does not
+  cross the client/server boundary) and restores it after; a falsy workspace is a
+  no-op. It must NOT raise when the installed SkyPilot predates workspaces
+  (graceful degrade).
 - ``website.dashboard.skyworkspaces`` — renders the ARK-managed ``ws-*`` slice of
   the host's ``~/.sky/config.yaml`` from all users' projects, preserving every
   key it does not own.
@@ -42,15 +45,62 @@ class _FakeCtx:
 
 
 def test_active_workspace_selects_and_restores(monkeypatch):
-    """With a supported SkyPilot, the helper enters local_active_workspace_ctx
-    for the given workspace and exits it on block exit. Patches the attribute on
-    the REAL skypilot_config module (the helper imports it internally)."""
+    """With a supported SkyPilot, the helper sets the ``active_workspace`` config
+    key via ``override_skypilot_config`` for the given workspace and unwinds it on
+    block exit. It is the override (uploaded with the request), NOT the client-only
+    thread-local ``local_active_workspace_ctx``, that routes the launch to the
+    user's project across the client/server boundary. Patches the REAL
+    skypilot_config module (the helper imports it internally)."""
     skypilot_config = pytest.importorskip("sky.skypilot_config")
     log = []
-    monkeypatch.setattr(skypilot_config, "local_active_workspace_ctx", _FakeCtx(log))
+    monkeypatch.setattr(skypilot_config, "override_skypilot_config", _FakeCtx(log))
+    # local_active_workspace_ctx must exist for the workspace-capability gate; the
+    # real module has it, so no need to patch — just guard the assumption.
+    assert getattr(skypilot_config, "local_active_workspace_ctx", None) is not None
     with active_workspace(object(), "ws-alice"):
         pass
-    assert log == [("enter", "ws-alice"), ("exit", "ws-alice")]
+    assert log == [("enter", {"active_workspace": "ws-alice"}),
+                   ("exit", {"active_workspace": "ws-alice"})]
+
+
+def test_active_workspace_propagates_key_into_uploaded_config(monkeypatch, tmp_path):
+    """Regression for the silent wrong-project launch: inside ``active_workspace``
+    the ``active_workspace`` key must be visible in ``skypilot_config.to_dict()`` —
+    that dict is what the client uploads to the API server as
+    ``override_skypilot_config``, and the server reads the key to pick the GCP
+    project. The old thread-local mechanism left ``to_dict()`` unchanged, so the
+    server fell back to the 'default' workspace (the central project)."""
+    import os
+    import yaml
+    skypilot_config = pytest.importorskip("sky.skypilot_config")
+    # A real config that DEFINES the workspace (else override_skypilot_config
+    # rejects an unknown workspace — itself a desirable hard-fail, tested below).
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump(
+        {"workspaces": {"ws-alice": {"gcp": {"project_id": "proj-a"}}}}))
+    monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(cfg))
+    skypilot_config.reload_config()
+
+    assert skypilot_config.to_dict().get("active_workspace") is None
+    with active_workspace(object(), "ws-alice"):
+        assert skypilot_config.to_dict().get("active_workspace") == "ws-alice"
+    assert skypilot_config.to_dict().get("active_workspace") is None
+
+
+def test_active_workspace_unknown_workspace_raises(monkeypatch, tmp_path):
+    """A workspace not defined in the loaded config is a hard error, not a silent
+    fall-through to the central project — the launch must surface the
+    misconfiguration rather than provision in the wrong GCP project."""
+    import yaml
+    skypilot_config = pytest.importorskip("sky.skypilot_config")
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(yaml.safe_dump({"workspaces": {"ws-alice": {}}}))
+    monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(cfg))
+    skypilot_config.reload_config()
+
+    with pytest.raises(ValueError, match="ws-bob"):
+        with active_workspace(object(), "ws-bob"):
+            pass
 
 
 def test_active_workspace_empty_is_noop():
