@@ -21,6 +21,15 @@ from .base import ControlPlaneClient
 from .types import Command, DecisionView, ProjectView
 
 
+# Explicit User-Agent for every control-plane call. urllib defaults to
+# "Python-urllib/X.Y", which Cloudflare's Browser Integrity Check / managed WAF
+# rules ban by signature (HTTP 403, body "error code: 1010") BEFORE the request
+# reaches the app — so a control plane fronted by Cloudflare silently rejects
+# every report and the dashboard sees no logs/status/artifacts. Any non-urllib
+# UA passes; use a descriptive one.
+_USER_AGENT = "ark-control-plane/1.0"
+
+
 def _default_log(msg: str, level: str = "INFO") -> None:
     print(f"[{level}] {msg}")
 
@@ -45,6 +54,7 @@ class HttpControlPlaneClient(ControlPlaneClient):
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(self._url(path), data=data, method=method)
         req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("User-Agent", _USER_AGENT)
         if data is not None:
             req.add_header("Content-Type", "application/json")
         try:
@@ -194,6 +204,7 @@ class HttpControlPlaneClient(ControlPlaneClient):
         req = urllib.request.Request(
             self._url(f"/artifacts/upload?{qs}"), data=data, method="POST")
         req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("User-Agent", _USER_AGENT)
         req.add_header("Content-Type", content_type or "application/octet-stream")
         try:
             # Bytes transfer — allow more time than a small JSON control call.
@@ -234,6 +245,7 @@ class HttpControlPlaneClient(ControlPlaneClient):
             self._url(f"/artifacts/download?{urlencode({'key': key})}"),
             method="GET")
         req.add_header("Authorization", f"Bearer {self._token}")
+        req.add_header("User-Agent", _USER_AGENT)
         try:
             # Bytes transfer — allow more time than a small JSON control call.
             with urllib.request.urlopen(req, timeout=max(self._timeout, 120)) as resp:
