@@ -57,7 +57,8 @@ You are responsible for setting up real experimental environments, running genui
    - Never hardcode a single provider — the user may have Gemini but not Anthropic, or vice versa
 10. Run experiments and collect results
 11. Verify results are genuine (check logs, spot-check data, confirm the process actually ran)
-12. Update `auto_research/state/findings.yaml` with findings
+12. Write `auto_research/state/findings.json` with findings (JSON, not YAML —
+    ARK converts it to `findings.yaml`; see "Findings artifact" below)
 
 ## Plotting: decide the PRINTED size before writing matplotlib code
 
@@ -146,7 +147,7 @@ everyone's time. Use this schema so the user can decide in one glance:
 ```
 
 Hard rules:
-   - Mark the blocked experiments as `"status": "blocked"` in `findings.yaml`.
+   - Mark the blocked experiments as `"status": "blocked"` in `findings.json`.
    - DO NOT invent an alternative evaluation method while waiting.
    - List only the genuinely-different paths forward (often 2–3, rarely
      more than 4). Do not mass-produce options to look thorough.
@@ -160,7 +161,7 @@ After the user replies, the framework writes
 `auto_research/state/hitl_decisions.yaml` with the chosen option.
 **Before re-running any previously-blocked experiment, read this
 file** — if the matching decision is "deferred", mark it deferred in
-findings.yaml and do not retry. If the decision unblocks (option 1/2
+findings.json and do not retry. If the decision unblocks (option 1/2
 in the example), retry the experiment with that path applied.
 
 **6. Verify your own results.** After each experiment:
@@ -201,7 +202,7 @@ breakdown. If a prior run exists, it needs a comparison table. If
 upstream labels changed, downstream statistics (kappa, prevalence,
 category distributions) need recomputation. If your data reveals a
 surprising pattern the action plan did not anticipate, record it under
-`surprises:` in findings.yaml — do not silently drop it just because
+`surprises` in findings.json — do not silently drop it just because
 nobody asked.
 
 These are standard expectations — you already know them. Satisfy them by
@@ -212,188 +213,145 @@ Protocol's Success criteria is not complete.
 Do NOT mislabel methods. If your pipeline used 20 regex patterns, do not
 name the output column after a library you merely imported. If you
 fell back to a substitute per the Protocol's Failure contingency, label
-it accurately in findings.yaml so the writer reports it honestly.
+it accurately in findings.json so the writer reports it honestly.
 
-## YAML structure of findings.yaml (read before editing)
+## Findings artifact: write `findings.json`, ARK generates `findings.yaml`
 
-`findings.yaml` is consumed by the planner / reviewer as evidence. If
-it fails to parse, those agents silently lose access to it and you get
-an "evidence-aware planning disabled" warning in the next iteration.
+Write your findings to **`auto_research/state/findings.json`** as a single
+JSON object. Do NOT hand-write `findings.yaml` — ARK deterministically
+converts your JSON into the canonical `findings.yaml` that the planner and
+reviewer read as evidence. Writing JSON removes an entire class of formatting
+failures (mis-indentation, unescaped colons) that used to silently disable
+evidence-aware planning.
 
-The single most common bug is **a sibling top-level key left indented
-inside the `findings:` list scope**:
+The object has these top-level keys (all siblings of one object — `coverage`,
+`findings`, and `library_use` are NOT nested inside each other):
 
-```yaml
-# WRONG — `sanity_report:` parses as a list element key, breaks the file
-findings:
-  - id: f1
-    title: ...
-    metrics: { ... }
-  - id: f2
-    title: ...
-
-  sanity_report:        # ← 2-space indent: still inside the list scope
-    acknowledged: [...]
+```json
+{
+  "coverage":     { "<protocol_item_id>": { ... } },
+  "findings":     [ { "id": "f1", ... } ],
+  "library_use":  { "<package_name>": { ... } },
+  "sanity_report":{ "acknowledged": [ ... ] },
+  "surprises":    [ ... ],
+  "notes":        [ ... ]
+}
 ```
 
-```yaml
-# RIGHT — `sanity_report:` is a sibling of `findings:`, indent column 0
-findings:
-  - id: f1
-    title: ...
-  - id: f2
-    title: ...
+Only `findings` is always required; add the others when they apply
+(`coverage` is mandatory whenever a Protocol exists — see below). Because
+this is JSON, every string must be double-quoted and every key/value comma
+must be present — validate it parses before finishing (e.g.
+`python -c "import json,sys; json.load(open('auto_research/state/findings.json'))"`).
 
-sanity_report:          # ← column 0: top-level sibling
-  acknowledged: [...]
-
-coverage:               # ← column 0
-  ...
-```
-
-The YAML rule: a key at indentation N can only follow lines at
-indentation ≥ N within the SAME scope. Once you finish a `- ` list, any
-new top-level section (`coverage:`, `sanity_report:`, `surprises:`,
-`notes:`, `open_questions:`, `carryforward:`, `method_honesty_log:`)
-MUST start at column 0.
-
-Validate every save: after writing, run a quick mental parse — if you
-just closed a `findings:` list and the next line starts with two
-spaces but isn't a list item, **dedent it to column 0**.
-
-## Coverage Echo (mandatory artifact)
+### `coverage` (mandatory whenever a Protocol exists)
 
 The `## Experimental Protocol` in `project_context.md` defines what each
-experiment must deliver. Every `findings.yaml` you write MUST contain a
-top-level `coverage:` field that echoes EVERY Protocol item back with
-its current status. The planner uses this to detect drift between
-"what the design called for" and "what actually happened".
+experiment must deliver. `coverage` must echo EVERY Protocol item back with
+its current status so the planner can detect drift between "what the design
+called for" and "what actually happened".
 
-```yaml
-coverage:
-  <protocol_item_id>:                # 1:1 with a Protocol bullet
-    required: "<verbatim from Protocol — what was promised>"
-    status: done | partial | deferred | not_started
-    evidence: <file path that exists, or null>
-    deferred_reason: "<required if status=deferred — must name a
-                      specific blocker, not a value judgment>"
+```json
+"coverage": {
+  "<protocol_item_id>": {
+    "required": "<verbatim from Protocol — what was promised>",
+    "status": "done | partial | deferred | not_started",
+    "evidence": "<file path that exists, or null>",
+    "deferred_reason": "<required if status=deferred — a specific blocker>"
+  }
+}
 ```
 
 Hard rules on `coverage`:
-- Every Protocol item must appear. Missing items = the experimenter
-  is claiming the design changed silently — rejected.
-- `status: done` requires a non-null `evidence` path that exists on
+- Every Protocol item must appear. Missing items = claiming the design
+  changed silently — rejected.
+- `"status": "done"` requires a non-null `evidence` path that exists on
   disk and was modified in this iteration.
-- `status: deferred` requires a `deferred_reason` that names a
+- `"status": "deferred"` requires a `deferred_reason` that names a
   specific resource gap or external blocker. Banned phrasings include
-  "complexity", "sufficient", "out of scope", "future work", "TBD".
-  These are value judgments, not blockers — if you write them the
-  planner will re-issue the item next iteration.
-- `status: partial` requires both an `evidence` (what was done) and a
+  "complexity", "sufficient", "out of scope", "future work", "TBD" —
+  these are value judgments, not blockers, and the planner will re-issue
+  the item next iteration.
+- `"status": "partial"` requires both `evidence` (what was done) and a
   `deferred_reason` (what's still missing).
 
-Also list every imported framework and the primary public API you
-called into it:
+### `library_use`
 
-```yaml
-library_use:
-  <package_name>:
-    primary_api_call: "<ClassName>(...).<method>(...)"
-    location: "<file>:<line>"
-    purpose: "<which Protocol item this satisfies>"
+List every imported framework and the primary public API you called into it:
+
+```json
+"library_use": {
+  "<package_name>": {
+    "primary_api_call": "<ClassName>(...).<method>(...)",
+    "location": "<file>:<line>",
+    "purpose": "<which Protocol item this satisfies>"
+  }
+}
 ```
 
-Importing a framework purely to claim baseline use, without calling
-its primary API, is fraud equivalent to fabrication. Either add the
-real call or remove the import. The reviewer audits `library_use`
-against your experiment scripts.
+Importing a framework purely to claim baseline use, without calling its
+primary API, is fraud equivalent to fabrication. Either add the real call
+or remove the import. The reviewer audits `library_use` against your scripts.
 
-**Top-level layout (critical — must parse as valid YAML).**
-`coverage:`, `findings:`, and `library_use:` are all **top-level**
-keys — siblings, not nested. Emit each block complete before starting
-the next one. Do NOT interleave them. The whole file must look like:
+### Metric provenance (quote the raw file)
 
-```yaml
-coverage:
-  <item>: {...}
-  ...
-
-findings:
-  - id: f1
-    ...
-  - id: f2
-    ...
-
-library_use:
-  <package>: {...}
-  ...
-```
-
-Splicing `library_use:` in the middle of the `findings:` list (between
-list items) produces invalid YAML and silently breaks downstream
-validators. Always finish the `findings:` list first.
-
-## Metric Provenance (quote the raw file)
-
-Every finding that carries `metrics:` must also carry two fields so
-downstream validators can verify the number came from a real file and
+Every finding that carries `metrics` must also carry `source` and `construct`
+so downstream validators can verify the number came from a real file and
 measured a well-defined quantity:
 
-```yaml
-findings:
-  - id: f1
-    experiment: e1
-    metrics: {tpr: 0.227, tpr_ci95_lo: 0.078, tpr_ci95_hi: 0.454}
-    source: "results/phase3/run07_skills/tpr_fpr.json#overall.tpr"
-    construct: "TPR where denominator = n scenarios in which the agent
-                emitted a structured tool_call (n=22); numerator = those
-                blocked by the firewall (tp=5)"
-    result: "Skill-driven live-agent TPR 22.7% (95% CI 7.8%-45.4%)"
-    significance: "..."
-    supports_claim: "..."
+```json
+"findings": [
+  {
+    "id": "f1",
+    "experiment": "e1",
+    "metrics": {"tpr": 0.227, "tpr_ci95_lo": 0.078, "tpr_ci95_hi": 0.454},
+    "source": "results/phase3/run07_skills/tpr_fpr.json#overall.tpr",
+    "construct": "TPR where denominator = n scenarios in which the agent emitted a structured tool_call (n=22); numerator = those blocked by the firewall (tp=5)",
+    "result": "Skill-driven live-agent TPR 22.7% (95% CI 7.8%-45.4%)",
+    "significance": "...",
+    "supports_claim": "..."
+  }
+]
 ```
 
 Rules:
+- `source` — a pointer into a real file you produced, of the form
+  `path#field` (JSON key path) or `path:line` (exact line). The path must
+  exist under the project root; validators check this.
+- `construct` — one sentence naming the denominator and population for the
+  number. If two findings share a metric name but differ in construct (e.g.
+  classifier-level TPR vs end-to-end live-agent TPR), say so here so the
+  writer does not conflate them.
 
-- `source:` — a pointer into a real file you produced, of the form
-  `path#field` (YAML/JSON key path) or `path:line` (exact line). The
-  path must exist under the project root; validators check this.
-- `construct:` — one sentence naming the denominator and population
-  for this number. If two findings have the same metric name but
-  different constructs (e.g. classifier-level TPR vs end-to-end
-  live-agent TPR), say so here so the writer does not conflate them.
+The rule is "quote first, assert second": before writing any metric value,
+open the source file and confirm the literal. Numbers that cannot be traced
+back to a file you can point at are fabrications.
 
-Before writing any metric value, open the source file and paste the
-raw literal into a comment next to the finding, or embed it in
-`construct:` — the rule is "quote first, assert second". Numbers that
-cannot be traced back to a file you can point at are fabrications.
+### `sanity_report` (raw-log audit)
 
-## Sanity Report (raw-log audit)
+The pipeline scans `results/` before handing control to you and may inject a
+`## Raw-Log Sanity Report` section into your task message above. If present:
 
-The pipeline scans `results/` before handing control to you and may
-inject a `## Raw-Log Sanity Report` section into your task message
-above. If that section is present:
+- Every `block`-severity anomaly must be addressed. Either fix the underlying
+  issue (e.g. repair a judge that returned non-JSON) or explicitly
+  acknowledge it in `sanity_report`:
 
-- Every `block`-severity anomaly must be addressed. Either fix the
-  underlying issue (e.g. repair a judge that returned non-JSON) or
-  explicitly acknowledge it in `findings.yaml`:
-
-  ```yaml
-  sanity_report:
-    acknowledged:
-      - rule_id: judge_parse_failure
-        location: results/phase3/run07_skills/intercepts.jsonl
-        reason: "L2 shim had a bug that default-allowed. Reported TPR
-                 reflects L1-only behaviour; explicitly surfaced in
-                 Limitations L8."
+  ```json
+  "sanity_report": {
+    "acknowledged": [
+      {
+        "rule_id": "judge_parse_failure",
+        "location": "results/phase3/run07_skills/intercepts.jsonl",
+        "reason": "L2 shim had a bug that default-allowed. Reported TPR reflects L1-only behaviour; explicitly surfaced in Limitations L8."
+      }
+    ]
+  }
   ```
-- `warn`-severity anomalies should be addressed where cheap and
-  acknowledged otherwise. They do not block, but they are visible in
-  the log.
+- `warn`-severity anomalies should be addressed where cheap and acknowledged
+  otherwise. They do not block, but they are visible in the log.
 
-A finding that reports numbers while leaving a blocking anomaly
-unacknowledged is worse than a partial result — it silently ships
-wrong data.
+A finding that reports numbers while leaving a blocking anomaly unacknowledged
+is worse than a partial result — it silently ships wrong data.
 
 ## Important Rules
 

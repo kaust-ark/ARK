@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import List
 
 from ark.quality import raw_log_sanity, format_for_prompt
-from ark.findings_schema import validate_findings, format_violations_for_log
+from ark.findings_schema import (
+    validate_findings,
+    format_violations_for_log,
+    sync_findings_from_json,
+)
 from ark.config import defaults
 
 
@@ -590,7 +594,8 @@ After running the experiment:
 1. Check whether the experiment completed successfully (no OOM, no errors)
 2. Check whether result files were generated
 3. Evaluate whether the data supports the paper's arguments
-4. Update auto_research/state/findings.yaml with new findings
+4. Write auto_research/state/findings.json with your findings (JSON, not YAML —
+   ARK converts it to findings.yaml; do NOT hand-write YAML)
 """, timeout=defaults.TIMEOUT_EXPERIMENTER)
 
             # 3. Wait for jobs
@@ -618,6 +623,11 @@ After running the experiment:
                 self.log(f"  [{a.severity}] {a.rule_id} @ {a.location}: {a.message}", "WARN")
         findings_path = getattr(self, "findings_file", None)
         if findings_path:
+            # Prevention-at-source: the experimenter authors findings.json;
+            # regenerate the canonical findings.yaml from it before validating.
+            converted, sync_msgs = sync_findings_from_json(Path(findings_path).parent)
+            for m in sync_msgs:
+                self.log(f"findings sync: {m}", "INFO" if converted else "WARN")
             violations = validate_findings(Path(findings_path), project_root=self.code_dir)
             if violations:
                 self.log_step(

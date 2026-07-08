@@ -15,7 +15,10 @@ Goals:
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -248,6 +251,100 @@ def attempt_repair(text: str) -> tuple[Optional[str], list[str]]:
             f"{e.__class__.__name__}"
         )
     return None, all_changes
+
+
+# ────────────────────────────────────────────────────────────────────────
+#  Prevention-at-source: agent authors findings.json → ARK owns findings.yaml
+# ────────────────────────────────────────────────────────────────────────
+#
+# The dominant "findings.yaml is malformed" warnings all stem from an LLM
+# hand-writing indentation-sensitive YAML with a generic text editor (sibling
+# key left indented inside the `findings:` list; a scalar with an inner `: `
+# misread as a nested mapping). Both are structurally impossible in JSON.
+#
+# So the experimenter/planner now write ``findings.json`` and ARK deterministically
+# regenerates the canonical ``findings.yaml`` from it via ``yaml.safe_dump`` — the
+# YAML on disk is well-formed by construction. ``findings.yaml`` remains the
+# canonical read artifact for every downstream consumer (planner, reviewer,
+# summary, state publishing), so nothing on the read side changes.
+
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+_LINE_COMMENT_RE = re.compile(r'^\s*//.*$', re.MULTILINE)
+
+
+def _atomic_write_yaml(path: Path, data: Any) -> None:
+    """Write ``data`` as canonical YAML atomically (tmp + fsync + os.replace)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _parse_findings_json(text: str) -> Optional[Any]:
+    """Parse JSON, tolerating the two slips LLMs make even in JSON mode:
+    a trailing comma before ``}``/``]`` and ``//`` line comments. Returns the
+    parsed object, or ``None`` if it still doesn't parse. Never raises."""
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    cleaned = _LINE_COMMENT_RE.sub("", text)
+    cleaned = _TRAILING_COMMA_RE.sub(r"\1", cleaned)
+    try:
+        return json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def sync_findings_from_json(state_dir: Path) -> tuple[bool, List[str]]:
+    """Regenerate ``findings.yaml`` from an agent-authored ``findings.json``.
+
+    Returns ``(converted, log_messages)``:
+    - ``findings.json`` absent → ``(False, [])`` (legacy path; the on-disk
+      ``findings.yaml``, if any, is left untouched and the YAML repair path
+      in the readers stays as the backstop).
+    - ``findings.json`` present and parseable → rewrite ``findings.yaml``
+      canonically and return ``(True, [...])``.
+    - ``findings.json`` present but unparseable → **do not clobber** any
+      existing ``findings.yaml``; return ``(False, [diagnostic])``.
+
+    Never raises — a broken findings artifact must not crash the pipeline.
+    """
+    state_dir = Path(state_dir)
+    json_path = state_dir / "findings.json"
+    yaml_path = state_dir / "findings.yaml"
+    if not json_path.exists():
+        return False, []
+    try:
+        text = json_path.read_text(encoding="utf-8")
+    except OSError as e:
+        return False, [f"findings.json unreadable: {e}"]
+    if not text.strip():
+        return False, []
+
+    data = _parse_findings_json(text)
+    if data is None:
+        return False, [
+            "findings.json is not valid JSON; kept existing findings.yaml "
+            "(if any) untouched rather than clobbering it"
+        ]
+    try:
+        _atomic_write_yaml(yaml_path, data)
+    except Exception as e:  # noqa: BLE001 — never let serialization crash the run
+        return False, [f"failed to write findings.yaml from findings.json: {e}"]
+    return True, ["regenerated findings.yaml from agent-authored findings.json"]
 
 
 def validate_findings(

@@ -2433,19 +2433,36 @@ summary — verify each experiment's outputs against the plan.
 2. Verify experiments completed successfully (no errors, valid outputs)
 3. Summarize key findings
 4. Compare against baselines
-5. Update auto_research/state/findings.yaml with ALL findings
+5. Write auto_research/state/findings.json with ALL findings
 
-Format for findings.yaml:
-```yaml
-findings:
-  - id: "finding1"
-    experiment: "exp1"
-    result: "Key result description"
-    metrics: {{metric1: value1, metric2: value2}}
-    significance: "Why this matters"
-    supports_claim: "Which paper claim this supports"
+Write **auto_research/state/findings.json** (JSON, not YAML). ARK converts
+it to findings.yaml for you — do NOT hand-write YAML. Include every finding
+(carry prior ones forward). Shape:
+```json
+{{
+  "findings": [
+    {{
+      "id": "finding1",
+      "experiment": "exp1",
+      "result": "Key result description",
+      "metrics": {{"metric1": 0.1, "metric2": 0.2}},
+      "significance": "Why this matters",
+      "supports_claim": "Which paper claim this supports"
+    }}
+  ]
+}}
 ```
 """, timeout=defaults.TIMEOUT_LIT_REVIEW)
+        # Prevention-at-source: planner authors findings.json; regenerate the
+        # canonical findings.yaml deterministically so downstream readers get
+        # well-formed YAML by construction.
+        try:
+            from ark.findings_schema import sync_findings_from_json
+            converted, sync_msgs = sync_findings_from_json(self.state_dir)
+            for m in sync_msgs:
+                self.log_step(f"findings sync: {m}", "info" if converted else "warning")
+        except Exception as e:  # noqa: BLE001
+            self.log_step(f"findings sync skipped: {e}", "warning")
         self.log_step_header(3, 4, "Analyze Results", "end")
         return output
 

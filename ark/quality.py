@@ -87,9 +87,9 @@ def format_for_prompt(anomalies: List[Anomaly], max_items: int = 20) -> str:
         "## Raw-Log Sanity Report (auto-generated)",
         "",
         "A machine-audit of `results/` flagged the following anomalies "
-        "before you wrote `findings.yaml`. For every metric you report, "
+        "before you wrote `findings.json`. For every metric you report, "
         "address these or explicitly mark them resolved in your "
-        "`findings.yaml` under `sanity_report:`. Ignoring a blocking "
+        "`findings.json` under `sanity_report`. Ignoring a blocking "
         "anomaly invalidates your numbers.",
         "",
     ]
