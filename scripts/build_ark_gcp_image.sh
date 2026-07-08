@@ -4,6 +4,11 @@
 #
 # Provisions a temporary VM, runs setup_ark_host.sh, and saves a Machine Image.
 # Usage: ./scripts/build_ark_gcp_image.sh [GCP_PROJECT] [ZONE] [VERSION]
+#
+# Env vars (for projects without a `default` VPC — e.g. the central provider
+# project, which uses a custom-mode VPC): NETWORK=<vpc-name> SUBNET=<subnet-name>.
+# A custom-mode VPC has no auto subnet, so --subnet is required alongside
+# --network; pick a subnet in the same region as ZONE.
 # =============================================================================
 
 set -e
@@ -26,7 +31,7 @@ gcloud compute instances create "$INSTANCE_NAME" \
     --image-project="debian-cloud" \
     --boot-disk-size="50GB" \
     --metadata="serial-port-enable=1" \
-    --network="${NETWORK:-default}"
+    --network="${NETWORK:-default}"${SUBNET:+ --subnet="$SUBNET"}
 
 # Wait for SSH to be ready
 echo "Waiting for SSH..."

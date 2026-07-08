@@ -96,6 +96,13 @@ sudo npm install -g @anthropic-ai/claude-code @google/gemini-cli
 curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
 sudo env UV_TOOL_DIR=/opt/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
     /usr/local/bin/uv tool install --python 3.12 openhands
+# Installed as root with root's umask, so the tool venv under /opt/uv is not
+# traversable/executable by other users. SkyPilot runs the orchestrator as
+# `gcpuser` (NOT the `ubuntu` account below), which then hits "[Errno 13]
+# Permission denied: 'openhands'" on every agent call — the launcher `openhands`
+# is on PATH but its interpreter under /opt/uv is unreadable. Open up read+traverse
+# for all users so the baked binary is actually usable on the SkyPilot path.
+sudo chmod -R a+rX /opt/uv /usr/local/bin
 
 # 6. Directories and conda path for ubuntu user
 sudo mkdir -p /data/projects /data/.ark
