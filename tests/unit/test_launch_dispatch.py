@@ -1,9 +1,8 @@
 """Phase 4 review fix — single launch dispatch (orchestrator_launcher_for).
 
 Verifies the shared dispatch honours the configured backend (so the pending-queue
-and template paths no longer silently run cloud projects locally), falls back to
-local when cloud is unconfigured, and rejects unknown backend types instead of
-running them locally."""
+and template paths no longer silently run skypilot projects locally) and rejects
+unknown backend types instead of running them locally."""
 
 from types import SimpleNamespace
 
@@ -13,13 +12,13 @@ pytest.importorskip("fastapi")
 
 import website.dashboard.routes as routes  # noqa: E402
 from ark.launcher import (  # noqa: E402
-    CloudVmJobLauncher, LaunchSpec, LocalJobLauncher, SlurmJobLauncher,
+    LaunchSpec, LocalJobLauncher, SkyPilotVmJobLauncher, SlurmJobLauncher,
 )
 
 
 def _proj(backend):
     return SimpleNamespace(id="p1", orchestrator_compute_backend=backend,
-                           cloud_overrides=None, user_id="u1",
+                           user_id="u1",
                            mode="research", max_iterations=3)
 
 
@@ -48,19 +47,11 @@ def test_slurm_and_local_dispatch(tmp_path, monkeypatch):
         LocalJobLauncher)
 
 
-def test_cloud_unconfigured_falls_back_to_local(tmp_path, monkeypatch):
-    monkeypatch.setattr(routes, "get_user", lambda s, uid: None)
-    monkeypatch.setattr(routes, "_build_cloud_config", lambda *a, **k: None)
-    assert isinstance(
-        routes.orchestrator_launcher_for(_proj("cloud"), _spec(tmp_path), None, SimpleNamespace()),
-        LocalJobLauncher)
-
-
-def test_cloud_configured_selects_cloud_and_loads_config(tmp_path, monkeypatch):
-    monkeypatch.setattr(routes, "get_user", lambda s, uid: object())
-    monkeypatch.setattr(routes, "_build_cloud_config", lambda *a, **k: {"provider": "gcp"})
-    (tmp_path / "config.yaml").write_text("orchestrator_compute_backend:\n  type: cloud\n")
+def test_skypilot_selects_launcher_and_loads_config(tmp_path):
+    """SkyPilot dispatch loads the project's config.yaml into the spec (the
+    launcher reads its cluster/resources from there) — no separate probe."""
+    (tmp_path / "config.yaml").write_text("orchestrator_compute_backend:\n  type: skypilot\n")
     spec = _spec(tmp_path)
-    launcher = routes.orchestrator_launcher_for(_proj("cloud:gcp"), spec, None, SimpleNamespace())
-    assert isinstance(launcher, CloudVmJobLauncher)
+    launcher = routes.orchestrator_launcher_for(_proj("skypilot:gcp"), spec, None, SimpleNamespace())
+    assert isinstance(launcher, SkyPilotVmJobLauncher)
     assert spec.config is not None  # config.yaml loaded into the spec for the launcher

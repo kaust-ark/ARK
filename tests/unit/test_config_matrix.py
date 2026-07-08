@@ -1,8 +1,8 @@
 """Phase 4 — Layer-2 (orchestrator) × Layer-1 (experiment) config matrix.
 
 `validate_config` must accept every reachable combination and reject the ones
-where the orchestrator can't reach its experiments (cloud VM ↔ on-prem SLURM),
-plus reject unknown backend types."""
+where the orchestrator can't reach its experiments (SkyPilot cloud ↔ on-prem
+SLURM), plus reject unknown backend types."""
 
 import pytest
 
@@ -30,23 +30,17 @@ def test_full_matrix(orch, exp):
         validate_config(cfg)  # must not raise
 
 
-def test_cloud_orchestrator_with_slurm_experiments_rejected():
-    """The invariant that predates Phase 4 — kept and now matrix-driven."""
-    with pytest.raises(ValueError, match="cannot drive"):
-        validate_config(_cfg("cloud", "slurm"))
-
-
 def test_skypilot_orchestrator_with_slurm_experiments_rejected():
-    """SkyPilot provisions in a cloud too — same no-network-path-to-on-prem-SLURM
-    restriction as `cloud` (folded Phases 5+6, ADR-0010)."""
+    """SkyPilot provisions in a cloud — no network path to an on-prem SLURM
+    cluster, so it can't drive SLURM experiments (folded Phases 5+6, ADR-0010)."""
     with pytest.raises(ValueError, match="cannot drive"):
         validate_config(_cfg("skypilot", "slurm"))
 
 
 def test_skypilot_is_a_valid_type_on_both_layers():
     validate_config(_cfg("skypilot", "skypilot"))  # must not raise
-    validate_config(_cfg("skypilot", "cloud"))
-    validate_config(_cfg("cloud", "skypilot"))
+    validate_config(_cfg("skypilot", "local"))
+    validate_config(_cfg("local", "skypilot"))
 
 
 def test_unknown_orchestrator_type_rejected():
@@ -66,11 +60,11 @@ def test_defaults_to_local_local():
 def test_legacy_compute_backend_key_honored():
     # experiment backend can come from the legacy `compute_backend` key
     validate_config({
-        "orchestrator_compute_backend": {"type": "cloud"},
-        "compute_backend": {"type": "cloud"},
+        "orchestrator_compute_backend": {"type": "skypilot"},
+        "compute_backend": {"type": "skypilot"},
     })
     with pytest.raises(ValueError):
         validate_config({
-            "orchestrator_compute_backend": {"type": "cloud"},
+            "orchestrator_compute_backend": {"type": "skypilot"},
             "compute_backend": {"type": "slurm"},
         })

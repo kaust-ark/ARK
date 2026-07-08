@@ -449,13 +449,13 @@ The `--build` flag automatically builds the images for `linux/amd64` even when r
 
 ## Cloud Compute
 
-idea2paper's **v2 cloud architecture** decouples the *Control Plane* from the *Execution Plane*, enabling the full orchestrator to run on a remote cloud VM while you interact with a lightweight local webapp.
+idea2paper's **v2 cloud architecture** decouples the *Control Plane* from the *Execution Plane*, enabling the full orchestrator to run on a **SkyPilot-provisioned cluster** while you interact with a lightweight local webapp. [SkyPilot](https://docs.skypilot.co) is now the only cloud compute path — it provisions across AWS/GCP/Azure/Kubernetes from one abstraction, with spot instances, retries, and autostop teardown built in.
 
 **How it works:**
-1. The local webapp (or CLI) acts as a lightweight launcher — it provisions a remote **Orchestrator VM**, syncs your project code and API keys over SSH, and triggers the orchestrator process.
-2. The **Orchestrator VM** runs all high-level logic (Researcher, Planner, Writer, LaTeX, figures) remotely in a detached session.
-3. Experiments can run on the same orchestrator VM or on a separate GPU VM (configurable independently).
-4. The webapp streams logs and syncs state back periodically. The orchestrator VM self-terminates when the run completes.
+1. The local webapp (or CLI) acts as a lightweight launcher — it runs `sky launch` to provision a remote **Orchestrator cluster**, syncs your project code (via SkyPilot `workdir`/`file_mounts`) and API keys, and triggers the orchestrator process.
+2. The **Orchestrator cluster** runs all high-level logic (Researcher, Planner, Writer, LaTeX, figures) remotely in a detached session.
+3. Experiments can run on the same orchestrator cluster or on a separate SkyPilot-provisioned GPU cluster (configurable independently).
+4. The orchestrator reports state home over the `/v1` control-plane API; the webapp streams logs and refreshes the Dashboard. The cluster self-terminates via **autostop** when the run completes (or after an idle window).
 
 > [!TIP]
 > Cloud credentials are encrypted at rest using your `SECRET_KEY`. Your keys are never logged or transmitted to third parties.
@@ -464,11 +464,11 @@ idea2paper's **v2 cloud architecture** decouples the *Control Plane* from the *E
 <summary><strong>Configuration Hierarchy</strong></summary>
 
 idea2paper uses a three-tier configuration model for cloud compute:
-1. **System Defaults**: Set in `webapp.env` (e.g., `CLOUD_REGION`, `CLOUD_NETWORK`).
+1. **System Defaults**: Set in `webapp.env` (the central `CLOUD_GCP_PROJECT` holding the baked ARK image, plus `CLOUD_LAUNCHER_SA`, `CLOUD_LAUNCHER_SA_KEY`, and `CLOUD_CONDA_ENV`).
 2. **Global User Defaults**: Set in the **Settings** panel (⚙️). These apply to all your projects.
 3. **Project Overrides**: Set during project creation or restart. These have the highest priority.
 
-This hierarchy lets you define standard machine types and VPC settings once, while easily swapping to a powerful GPU instance for a specific experiment.
+This hierarchy lets you define standard defaults once, while easily swapping to a powerful GPU instance (accelerators, spot) for a specific experiment.
 
 </details>
 
@@ -477,13 +477,13 @@ This hierarchy lets you define standard machine types and VPC settings once, whi
 ### Enabling Cloud Compute via the Dashboard
 
 1. Open the **Settings** panel (⚙️ icon in the top navigation bar).
-2. Scroll down to the **Cloud Compute** section.
-3. Enter your credentials for your preferred provider (GCP, AWS, or Azure).
+2. Open the **Compute** tab.
+3. Enter your **GCP Project ID**, grant the shown `ark-launcher` service account the required roles on your project, then click **Verify access**. (No service-account key is uploaded — you delegate access to your own project via IAM. See the GCP setup block below.)
 4. Click **Save**.
 
 When creating a new project you can now independently select:
-- **Orchestrator Backend** — `cloud` (GCP) to run the control plane remotely, or `local` to run it on the same machine as the webapp.
-- **Experiment Backend** — `cloud` (GCP/AWS/Azure) for GPU experiments, or `local` to run them on the Orchestrator VM itself.
+- **Orchestrator Backend** — `skypilot` to run the control plane on a SkyPilot-provisioned cluster, or `local` to run it on the same machine as the webapp.
+- **Experiment Backend** — `skypilot` for GPU experiments, or `local` to run them on the Orchestrator cluster itself.
 
 ---
 
@@ -494,7 +494,7 @@ Once cloud compute is configured, launch a project through the dashboard:
 
 1. Click **New Project** from the dashboard home.
 2. Fill in the research goal, target venue, and any additional instructions.
-3. Click **Submit** — the webapp generates a `config.yaml`, provisions the Orchestrator VM, syncs your project, and starts the run.
+3. Click **Submit** — the webapp generates a `config.yaml`, provisions the Orchestrator cluster via SkyPilot, syncs your project, and starts the run.
 
 The generated `config.yaml` is stored at:
 
@@ -514,40 +514,20 @@ You can inspect or hand-edit this file at any time (e.g., to tune instance type 
 ### Cloud Provider Setup
 
 <details>
-<summary><strong>☁️ Google Cloud Platform (GCP)</strong></summary>
+<summary><strong>☁️ Google Cloud Platform (GCP) — via SkyPilot</strong></summary>
 
-#### 1. Create a Service Account
+GCP onboarding is key-less: instead of uploading a service-account key, you grant idea2paper's central **`ark-launcher`** service account access to *your own* GCP project via IAM. SkyPilot then boots clusters in your project from a pre-baked ARK image.
+
+#### 1. Enable Required APIs
 
 ```bash
 export PROJECT_ID=your-gcp-project-id
-
-# Create a service account for idea2paper
-gcloud iam service-accounts create ark-runner \
-  --display-name="ARK Research Runner"
-
-# Grant required roles (Compute Admin + Service Account User)
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:ark-runner@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="roles/compute.admin"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \
-  --member="serviceAccount:ark-runner@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role="roles/iam.serviceAccountUser"
-
-# Download the JSON key
-gcloud iam service-accounts keys create ~/ark-gcp-key.json \
-  --iam-account=ark-runner@${PROJECT_ID}.iam.gserviceaccount.com
-```
-
-#### 2. Enable Required APIs
-
-```bash
 gcloud services enable compute.googleapis.com --project=$PROJECT_ID
 ```
 
-#### 3. Build the Machine Image
+#### 2. Build the Machine Image
 
-idea2paper uses a pre-baked Machine Image containing all system dependencies (Conda, LaTeX, Node.js) for fast boot times. Build it once:
+idea2paper boots from a pre-baked GCP image containing all system dependencies (Conda, LaTeX, Node.js) for fast start-up. SkyPilot launches from this image. Build it once:
 
 ```bash
 ./scripts/build_ark_gcp_image.sh [GCP_PROJECT_ID] [ZONE]
@@ -555,30 +535,18 @@ idea2paper uses a pre-baked Machine Image containing all system dependencies (Co
 
 This script spins up a temporary VM, installs TeX Live, Miniforge, Node.js, and the `ark-base` environment, then saves a Machine Image named `ark-job-v1-[timestamp]` tagged with the `ark-job` family.
 
-#### 4. Configure in Dashboard
+> On a hosted deployment, the operator builds this image once in the central `CLOUD_GCP_PROJECT` (server setup: `scripts/setup_ark_launcher_sa.sh` creates the central launcher SA; `scripts/build_ark_gcp_image.sh` bakes the image). Self-hosters run both scripts in their own project.
 
-Paste the contents of `~/ark-gcp-key.json` into the **GCP Service Account JSON** field and set your **GCP Project ID** in the Settings panel.
+#### 3. Grant the Launcher Service Account & Verify
 
-#### 5. Finding GCP Parameters (Optional)
+In the dashboard, open **Settings → Compute**:
+1. Enter your **GCP Project ID**.
+2. Grant the shown `ark-launcher` service account the required IAM roles on **your** project (the panel lists the exact `gcloud ... add-iam-policy-binding` roles to run).
+3. Click **Verify access**.
 
-```bash
-# List available zones
-gcloud compute zones list
+No key ever leaves Google — you delegate scoped access to your project. See [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md) for the multi-tenancy design.
 
-# List available machine types in a specific zone
-gcloud compute machine-types list --zones=us-central1-a
-
-# List networks and subnets
-gcloud compute networks list
-gcloud compute networks subnets list --regions=us-central1
-```
-
-Alternatively, use the **Google Cloud Console**:
-- **Zones/Machine Types**: Compute Engine &rarr; VM Instances &rarr; Create Instance
-- **Networks**: VPC Network &rarr; VPC Networks
-- **Images**: Compute Engine &rarr; Images
-
-#### 6. `config.yaml` Reference (advanced / CLI only)
+#### 4. `config.yaml` Reference (advanced / CLI only)
 
 The webapp generates this automatically from your Settings. For manual or CLI-driven projects, see [`config.example.yaml`](config.example.yaml) for the full template. The model + keys (all agents run through OpenHands → LiteLLM):
 
@@ -591,158 +559,45 @@ openai_api_key:    "sk-..."            #   prefix picks which key is used
 gemini_api_key:    "..."               # gemini key also powers Deep Research (optional)
 ```
 
-Compute uses two backends (orchestrator VM + experiment VM):
+Compute uses two SkyPilot backends (orchestrator cluster + experiment cluster) pinned to GCP:
 
 ```yaml
-# Orchestrator VM: runs Researcher, Planner, Writer, LaTeX (no GPU needed)
+# Orchestrator cluster: runs Researcher, Planner, Writer, LaTeX (no GPU needed)
 orchestrator_compute_backend:
-  type: cloud
-  provider: gcp
-  region: us-central1-a
-  instance_type: n1-standard-2
-  image_family: ark-job              # Pre-baked idea2paper image
+  type: skypilot
+  cloud: gcp
+  # region: us-central1
+  # instance_type: n4-standard-2
+  # idle_minutes_to_autostop: 60     # crash safety-net: auto-DOWN when idle
 
-# Experiment VM: runs GPU-intensive workloads
+# Experiment cluster: runs GPU-intensive workloads
 experiment_compute_backend:
-  type: cloud
-  provider: gcp
-  region: us-central1-a
-  instance_type: g2-standard-4
-  accelerator_type: nvidia-l4
-  accelerator_count: 1
-  # Optional: post-boot setup
-  setup_commands:
-    - conda activate base && pip install -r requirements.txt
-```
-
-> To run experiments on the Orchestrator VM instead of a separate instance, set `experiment_compute_backend.type: local`.
-
-</details>
-
----
-
-<details>
-<summary><strong>☁️ Amazon Web Services (AWS)</strong></summary>
-
-#### 1. Create an IAM User
-
-```bash
-# Create an IAM user for idea2paper
-aws iam create-user --user-name ark-runner
-
-# Attach policy (EC2 full access is sufficient)
-aws iam attach-user-policy \
-  --user-name ark-runner \
-  --policy-arn arn:aws:iam::aws:policy/AmazonEC2FullAccess
-
-# Create access keys
-aws iam create-access-key --user-name ark-runner
-# Note the AccessKeyId and SecretAccessKey from the output
-```
-
-#### 2. Create an SSH Key Pair
-
-```bash
-# Create a key pair and save locally
-aws ec2 create-key-pair \
-  --key-name ark-key \
-  --query 'KeyMaterial' \
-  --output text > ~/.ssh/ark-key.pem
-chmod 600 ~/.ssh/ark-key.pem
-```
-
-#### 3. Configure in Dashboard
-
-Enter your **AWS Access Key ID**, **AWS Secret Access Key**, and **AWS Region** (e.g., `us-east-1`) in the Settings panel.
-
-#### 4. `config.yaml` Reference (advanced / CLI only)
-
-```yaml
-experiment_compute_backend:
-  type: cloud
-  provider: aws
-  region: us-east-1
-  instance_type: g4dn.xlarge        # 1x T4 GPU, 4 vCPUs, 16 GB RAM
-  image_id: ami-0c7c51e8edb7b66d3   # Deep Learning AMI (Ubuntu 22.04)
-  ssh_key_name: ark-key              # Key pair name in AWS Console
-  ssh_key_path: ~/.ssh/ark-key.pem
-  ssh_user: ubuntu
-  security_group: sg-xxxxxxxx        # Must allow inbound SSH (port 22)
-  setup_commands:
-    - conda activate pytorch && pip install -r requirements.txt
-```
-
-> [!IMPORTANT]
-> Ensure your security group allows **inbound SSH (port 22)** from the IP of the machine running the webapp. Without this, idea2paper cannot connect to the provisioned instance.
-
-</details>
-
----
-
-<details>
-<summary><strong>☁️ Microsoft Azure</strong></summary>
-
-#### 1. Create a Service Principal
-
-```bash
-# Login
-az login
-
-# Create a service principal with Contributor role
-az ad sp create-for-rbac \
-  --name "ark-runner" \
-  --role Contributor \
-  --scopes /subscriptions/YOUR_SUBSCRIPTION_ID
-# Note: appId (Client ID), password (Client Secret), and tenant (Tenant ID)
-```
-
-#### 2. Register the SSH Public Key
-
-```bash
-# Generate an SSH key if you don't have one
-ssh-keygen -t rsa -b 4096 -f ~/.ssh/ark-azure-key
-
-# The public key (~/.ssh/ark-azure-key.pub) will be used automatically
-```
-
-#### 3. Configure in Dashboard
-
-Enter your **Azure Client ID**, **Azure Client Secret**, **Azure Tenant ID**, and **Azure Subscription ID** in the Settings panel.
-
-#### 4. `config.yaml` Reference (advanced / CLI only)
-
-```yaml
-experiment_compute_backend:
-  type: cloud
-  provider: azure
-  region: eastus                     # Azure location
-  instance_type: Standard_NC6s_v3    # 1x V100 GPU, 6 vCPUs, 112 GB RAM
-  image_id: UbuntuLTS                # OS image alias
-  ssh_key_path: ~/.ssh/ark-azure-key
-  ssh_user: azureuser
-  resource_group: ark-resources      # Will be created if it doesn't exist
+  type: skypilot
+  cloud: gcp
+  accelerators: L4:1                  # SkyPilot accelerator spec ("<NAME>:<COUNT>")
+  use_spot: true                      # cheaper, pre-emptible instances
   setup_commands:
     - pip install -r requirements.txt
 ```
 
+> To run experiments on the Orchestrator cluster instead of a separate one, set `experiment_compute_backend.type: local`. See the SkyPilot block below for the full key reference.
+
 </details>
 
 ---
 
+> Running on **AWS, Azure, or Kubernetes** (or want SkyPilot to auto-select the cheapest cloud)? Use the SkyPilot block below and configure that cloud's credentials per SkyPilot's docs at [https://docs.skypilot.co](https://docs.skypilot.co).
+
 <details>
 <summary><strong>☁️ SkyPilot (cross-cloud &amp; Kubernetes)</strong></summary>
-
-> [!NOTE]
-> `type: skypilot` is being rolled out (folded Phases 5+6 — see
-> [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md)). Both the **experiment** (Layer-1)
-> backend and the **orchestrator** (Layer-2) launcher provision via SkyPilot, with
-> cost-safety **autostop-down** applied at launch (see `idle_minutes_to_autostop`
-> below). The GCP `cloud` path above remains the default and is unchanged.
 
 [SkyPilot](https://github.com/skypilot-org/skypilot) provisions VMs across
 AWS/GCP/Azure (and Kubernetes) from one abstraction, with spot, retries, and
 autostop teardown built in — so a single `type: skypilot` block covers solo-cloud
-and BYO-Kubernetes without a per-cloud backend each.
+and BYO-Kubernetes without a per-cloud backend each. It is idea2paper's only cloud
+compute path: both the **experiment** (Layer-1) backend and the **orchestrator**
+(Layer-2) launcher provision via SkyPilot, with cost-safety **autostop-down**
+applied at launch (see `idle_minutes_to_autostop` below).
 
 #### Setup
 
@@ -802,11 +657,11 @@ orchestrator_compute_backend:
 > `research` extra so `python -m ark.orchestrator` resolves on a bare cluster (a
 > baked `image_id` can replace it later purely for launch speed — set the key and
 > drop the `pip install`). Layer-1 experiment resources (`region` /
-> `instance_type` / `image_id`) are **not** auto-derived from the GCP `cloud`
-> settings — they live in a different SkyPilot namespace, so set them here explicitly.
+> `instance_type` / `image_id`) are **not** auto-derived from the orchestrator
+> block — they live in a different SkyPilot namespace, so set them here explicitly.
 
-> A `skypilot` orchestrator cannot drive `slurm` experiments (no network path to
-> an on-prem cluster) — the same restriction as `type: cloud`.
+> A `skypilot` orchestrator cannot drive `slurm` experiments — a cloud orchestrator
+> has no network path to an on-prem SLURM cluster.
 
 </details>
 
@@ -815,9 +670,9 @@ orchestrator_compute_backend:
 <details>
 <summary><strong>Log Streaming &amp; Re-attachment</strong></summary>
 
-- **Log Streaming** — the Orchestrator VM maintains a `logs/latest.log` symlink; the webapp polls it periodically to show live progress.
-- **State Sync** — every 60 seconds, the launcher pulls the `auto_research/` state directory back from the VM to update the Dashboard UI.
-- **Re-attachment** — if you restart your local webapp, idea2paper detects the existing `orchestrator_instance.yaml`, probes the remote VM via SSH, and re-attaches to the running process without re-provisioning.
+- **Log Streaming** — the Orchestrator cluster streams logs home over the `/v1` control-plane API; the webapp polls it periodically to show live progress.
+- **State Sync** — the orchestrator checkpoints its `auto_research/` state to the control plane periodically, so the Dashboard UI stays current and the run survives VM loss.
+- **Re-attachment** — if you restart your local webapp, idea2paper detects the persisted SkyPilot cluster and re-attaches to the running process without re-provisioning.
 
 </details>
 
@@ -825,13 +680,12 @@ orchestrator_compute_backend:
 <summary><strong>Cost Control</strong></summary>
 
 > [!WARNING]
-> Cloud VMs are billed by the hour. idea2paper includes several safeguards to prevent runaway costs:
+> Cloud clusters are billed by the hour. idea2paper leans on SkyPilot's built-in teardown to prevent runaway costs:
 >
-> - **Launcher Heartbeat** — every time the webapp polls the VM for state, it touches a `launcher_heartbeat` file on the remote VM.
-> - **VM Reaper** — a background daemon (`ark_vm_reaper.sh`) runs on the Orchestrator VM. If the orchestrator process finishes and the launcher heartbeat is stale for >30 minutes, the VM **automatically shuts itself down**.
-> - **Manual Stop** — clicking **Stop** in the dashboard performs a final sync of all results and then terminates the GCP instance.
+> - **Autostop-down** — every cluster is launched with an autostop-down window; if it sits idle past that window it **terminates itself**. Experiment clusters *always* autostop-down (it can only be tuned, not disabled); orchestrator clusters default to a window as a crash safety-net (tunable via `idle_minutes_to_autostop`).
+> - **Manual Stop** — clicking **Stop** in the dashboard flushes results and tears the cluster down (`sky down`).
 >
-> If the webapp process is killed unexpectedly, the VM Reaper will self-terminate after the heartbeat timeout. Always verify no stray instances are running in your cloud console after unexpected shutdowns. Check `reaper.log` in the remote project directory if a VM shuts down unexpectedly.
+> If the webapp process is killed unexpectedly, the autostop-down window still terminates the cluster on its own. Always verify no stray clusters remain (`sky status`) after unexpected shutdowns.
 
 </details>
 

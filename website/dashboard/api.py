@@ -78,7 +78,6 @@ def get_project_view(project_id: str = Depends(require_project)) -> dict:
             "figure_generation": p.figure_generation,
             "orchestrator_compute_backend": p.orchestrator_compute_backend,
             "experiment_compute_backend": p.experiment_compute_backend,
-            "cloud_overrides": p.cloud_overrides,
             "iteration": p.iteration,
             "checkpoint_data": p.checkpoint_data,
         }

@@ -35,23 +35,11 @@ _DEFAULTS = {
     "PROJECT_BASE_CONDA_ENV": "ark-base",
     "GOOGLE_CLIENT_ID": "",
     "GOOGLE_CLIENT_SECRET": "",
-    # Default cloud backend (blank = disabled; "aws", "gcp", or "azure" to enable)
-    "CLOUD_PROVIDER": "",
-    "CLOUD_REGION": "",
-    "CLOUD_INSTANCE_TYPE": "",
-    "CLOUD_IMAGE_ID": "",            # AWS AMI ID, GCP image family, or Azure URN
-    "CLOUD_SSH_KEY_NAME": "",        # AWS key pair name or GCP SSH key name
-    "CLOUD_SSH_KEY_PATH": "~/.ssh/id_rsa",
-    "CLOUD_SSH_USER": "ubuntu",
-    "CLOUD_SECURITY_GROUP": "",      # AWS security group ID (optional)
-    "CLOUD_GCP_PROJECT": "",         # GCP project ID (required for GCP)
-    "CLOUD_GCP_ZONE": "",            # GCP zone (e.g. us-central1-a)
-    "CLOUD_AZURE_RESOURCE_GROUP": "", # Azure resource group name
-    "CLOUD_AZURE_LOCATION": "",       # Azure location (e.g. eastus)
-    "CLOUD_CONDA_ENV": "ark-base",   # conda env to activate on the remote instance
-    "CLOUD_NETWORK": "",             # GCP/AWS network name (optional)
-    "CLOUD_SUBNET": "",              # GCP/AWS subnet name (optional)
-    "CLOUD_ALLOWED_INSTANCE_TYPES": "",  # comma-separated allowlist; empty = no restriction
+    # SkyPilot cloud compute (the central launcher SA provisions per-user)
+    "CLOUD_GCP_PROJECT": "",         # central GCP project holding the baked ARK image
+    "CLOUD_LAUNCHER_SA": "",         # central ark-launcher service-account email
+    "CLOUD_LAUNCHER_SA_KEY": "~/.config/ark/ark-launcher-sa-key.json",
+    "CLOUD_CONDA_ENV": "ark-base",   # base conda env cloned per project on the remote
 }
 
 
@@ -122,15 +110,14 @@ SLURM_PARTITION=
 SLURM_ACCOUNT=
 SLURM_CONDA_ENV=ark-base
 
-# Cloud Provider (aws, gcp, azure, or blank to disable)
-CLOUD_PROVIDER=
-CLOUD_REGION=
-CLOUD_INSTANCE_TYPE=
-CLOUD_IMAGE_ID=
-CLOUD_SSH_KEY_NAME=
+# SkyPilot cloud compute (the central ark-launcher SA provisions per user).
+# CLOUD_GCP_PROJECT is the central project holding the baked ARK image; the
+# launcher SA + key let the webapp launch AS that identity (see
+# scripts/setup_ark_launcher_sa.sh). Blank ⇒ SkyPilot cloud runs are disabled.
 CLOUD_GCP_PROJECT=
-CLOUD_NETWORK=
-CLOUD_SUBNET=
+CLOUD_LAUNCHER_SA=
+CLOUD_LAUNCHER_SA_KEY=~/.config/ark/ark-launcher-sa-key.json
+CLOUD_CONDA_ENV=ark-base
 """
     _env_file().write_text(content)
     print(f"Created config: {_env_file()}")
@@ -199,17 +186,11 @@ class Settings:
         self.google_client_id: str = merged.get("GOOGLE_CLIENT_ID", "")
         self.google_client_secret: str = merged.get("GOOGLE_CLIENT_SECRET", "")
 
-        # Cloud settings
-        self.cloud_provider: str = merged.get("CLOUD_PROVIDER", "").lower()
-        self.cloud_region: str = merged.get("CLOUD_REGION", "")
-        self.cloud_instance_type: str = merged.get("CLOUD_INSTANCE_TYPE", "")
-        self.cloud_image_id: str = merged.get("CLOUD_IMAGE_ID", "")
-        self.cloud_ssh_key_name: str = merged.get("CLOUD_SSH_KEY_NAME", "")
-        self.cloud_ssh_key_path: str = merged.get("CLOUD_SSH_KEY_PATH", "~/.ssh/id_rsa")
-        self.cloud_ssh_user: str = merged.get("CLOUD_SSH_USER", "ubuntu")
-        self.cloud_security_group: str = merged.get("CLOUD_SECURITY_GROUP", "")
+        # SkyPilot cloud settings. The central "ark-launcher" service account
+        # provisions compute into each user's GCP project via an IAM grant — no
+        # per-user key. `cloud_gcp_project` is the CENTRAL project that holds the
+        # baked ARK image; `cloud_conda_env` is the base env cloned per project.
         self.cloud_gcp_project: str = merged.get("CLOUD_GCP_PROJECT", "")
-        self.cloud_gcp_zone: str = merged.get("CLOUD_GCP_ZONE", "")
         # Central "ark-launcher" service account that provisions SkyPilot compute
         # into every user's GCP project (scripts/setup_ark_launcher_sa.sh). Users
         # grant THIS identity access to their project; shown in the onboarding
@@ -221,15 +202,7 @@ class Settings:
         # matches scripts/setup_ark_launcher_sa.sh's output path.
         self.cloud_launcher_sa_key: str = merged.get(
             "CLOUD_LAUNCHER_SA_KEY", "~/.config/ark/ark-launcher-sa-key.json")
-        self.cloud_azure_resource_group: str = merged.get("CLOUD_AZURE_RESOURCE_GROUP", "")
-        self.cloud_azure_location: str = merged.get("CLOUD_AZURE_LOCATION", "")
         self.cloud_conda_env: str = merged.get("CLOUD_CONDA_ENV", "ark-base")
-        self.cloud_network: str = merged.get("CLOUD_NETWORK", "")
-        self.cloud_subnet: str = merged.get("CLOUD_SUBNET", "")
-        raw_allowed_types = merged.get("CLOUD_ALLOWED_INSTANCE_TYPES", "")
-        self.cloud_allowed_instance_types: list[str] = [
-            t.strip() for t in raw_allowed_types.split(",") if t.strip()
-        ]
 
         self.projects_root.mkdir(parents=True, exist_ok=True)
 

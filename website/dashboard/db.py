@@ -106,8 +106,9 @@ class Project(SQLModel, table=True):
     # ── Failure info ──
     error_message: str = ""
 
-    # ── Per-project cloud overrides ──
-    cloud_overrides: str = ""   # JSON: {region, instance_type, image_id, ...}
+    # ── Retired: per-project overrides for the removed native-cloud backend.
+    # Column kept (always "") to avoid a migration; no longer read or written.
+    cloud_overrides: str = ""
 
     # ── HITL control plane ──
     # How much the orchestrator checks in with the human:

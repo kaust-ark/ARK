@@ -1,7 +1,7 @@
 """Layer-1 SkyPilot experiment backend (folded Phases 5+6, ADR-0010, PR2).
 
 This is a *fresh implementation* of the ``ComputeBackend`` seam on SkyPilot's
-task model — **not** an adapter over ``CloudBackend`` (SSH + rsync + gcloud). An
+task model — **not** a raw SSH + rsync + gcloud VM adapter. An
 experiment run maps onto SkyPilot as:
 
 - ``setup()``      → build a ``sky.Task`` (code as ``workdir``, deps as the
@@ -46,8 +46,8 @@ class SkyPilotBackend(ComputeBackend):
     """Run experiments on a SkyPilot-provisioned cluster (any cloud or K8s)."""
 
     # Completion signal the experimenter touches when all experiments finish;
-    # mirrors the CloudBackend marker contract so the agent-facing protocol is
-    # identical across backends.
+    # a stable marker contract so the agent-facing protocol is identical across
+    # backends.
     _MARKER_FILE = "/tmp/ark_experiment_done"
 
     def __init__(self, *args, **kwargs):
@@ -66,7 +66,7 @@ class SkyPilotBackend(ComputeBackend):
         self.cluster_name = cc.get("cluster_name") or self._default_cluster_name()
 
         # Persist the cluster name so a crashed/re-run orchestrator can reuse or
-        # tear down the same cluster (mirrors CloudBackend's state file).
+        # tear down the same cluster (a small state file on disk).
         self._state_file = self.code_dir / "auto_research" / "state" / "skypilot_cluster.yaml"
         self._launched = False
 

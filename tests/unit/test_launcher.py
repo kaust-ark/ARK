@@ -16,7 +16,7 @@ import pytest
 pytest.importorskip("jinja2")  # website.dashboard.jobs imports jinja2 at module load
 
 from ark.launcher import (  # noqa: E402
-    CloudVmJobLauncher, LaunchSpec, LocalJobLauncher, PollResult, RestartResult,
+    LaunchSpec, LocalJobLauncher, PollResult, RestartResult,
     SkyPilotVmJobLauncher, SlurmJobLauncher, launcher_from_handle, select_launcher,
     RUNNING, QUEUED, DONE, FAILED, STOPPED, GONE, UNKNOWN,
 )
@@ -37,7 +37,6 @@ def _spec(tmp_path, **kw):
 
 def test_launcher_from_handle():
     assert isinstance(launcher_from_handle("local:123"), LocalJobLauncher)
-    assert isinstance(launcher_from_handle("cloud:456"), CloudVmJobLauncher)
     assert isinstance(launcher_from_handle("skypilot:ark-orch-p1"), SkyPilotVmJobLauncher)
     assert isinstance(launcher_from_handle("98765"), SlurmJobLauncher)
 
@@ -52,14 +51,14 @@ def test_launcher_from_handle():
     (None, True, LocalJobLauncher),
 ])
 def test_select_launcher(backend, slurm_ok, expected):
-    # Cloud is dispatched by orchestrator_launcher_for, not select_launcher.
+    # SkyPilot is dispatched by orchestrator_launcher_for, not select_launcher.
     assert isinstance(select_launcher(backend, slurm_ok=slurm_ok), expected)
 
 
-@pytest.mark.parametrize("backend", ["cloud", "cloud:gcp", "skypilot", "bogus"])
+@pytest.mark.parametrize("backend", ["skypilot", "skypilot:gcp", "bogus"])
 def test_select_launcher_rejects_non_local_slurm(backend):
-    # Cloud/SkyPilot/unknown must raise, never silently fall back to a local
-    # launcher (which would run the orchestrator on the control-plane host).
+    # SkyPilot/unknown must raise, never silently fall back to a local launcher
+    # (which would run the orchestrator on the control-plane host).
     with pytest.raises(ValueError, match="cannot dispatch"):
         select_launcher(backend, slurm_ok=True)
 
@@ -67,7 +66,6 @@ def test_select_launcher_rejects_non_local_slurm(backend):
 def test_initial_status():
     assert LocalJobLauncher.initial_status == RUNNING
     assert SlurmJobLauncher.initial_status == QUEUED
-    assert CloudVmJobLauncher.initial_status == RUNNING
     # SkyPilot: launch() blocks until the cluster is UP + run started → RUNNING.
     assert SkyPilotVmJobLauncher.initial_status == RUNNING
 
@@ -127,30 +125,10 @@ def test_slurm_poll_normalizes(tmp_path, monkeypatch, raw, expected):
     assert SlurmJobLauncher().poll("777", tmp_path).state == expected
 
 
-@pytest.mark.parametrize("raw,expected", [
-    ("RUNNING", RUNNING), ("STOPPED", GONE), ("UNKNOWN", UNKNOWN),
-])
-def test_cloud_poll_normalizes(tmp_path, monkeypatch, raw, expected):
-    import yaml
-    (tmp_path / "config.yaml").write_text(yaml.safe_dump(
-        {"orchestrator_compute_backend": {"type": "cloud", "provider": "gcp"}}))
-    fake_backend = SimpleNamespace(poll_orchestrator=lambda: raw)
-    import ark.compute.cloud.orchestrator as orch_mod
-    monkeypatch.setattr(orch_mod.OrchestratorCloudBackend, "from_config",
-                        classmethod(lambda cls, *a, **k: fake_backend))
-    res = CloudVmJobLauncher().poll("cloud:5", tmp_path)
-    assert res.state == expected
-
-
-def test_cloud_poll_missing_config(tmp_path):
-    assert CloudVmJobLauncher().poll("cloud:5", tmp_path).state == UNKNOWN
-
-
 # ── auto-restart hook (SLURM only) ───────────────────────────────────────────
 
-def test_local_and_cloud_never_restart(tmp_path):
+def test_local_and_skypilot_never_restart(tmp_path):
     assert LocalJobLauncher().maybe_restart("local:1", _spec(tmp_path)) is None
-    assert CloudVmJobLauncher().maybe_restart("cloud:1", _spec(tmp_path)) is None
     assert SkyPilotVmJobLauncher().maybe_restart("skypilot:c", _spec(tmp_path)) is None
 
 
@@ -189,24 +167,6 @@ def test_local_cancel_runs_on_complete_synchronously(monkeypatch, tmp_path):
     assert ran == [1]  # sync: rmtree-style cleanup happens before cancel() returns
 
 
-def test_cloud_cancel_defers_on_complete_until_after_teardown(monkeypatch, tmp_path):
-    """The delete-race fix: on_complete (rmtree) must run only AFTER teardown has
-    read config/state, so config.yaml still exists when teardown runs."""
-    import ark.launcher.cloud as cloud_mod
-    order = []
-    monkeypatch.setattr(CloudVmJobLauncher, "_teardown_orchestrator_vm",
-                        lambda self, pdir, pid: order.append("orch"))
-    monkeypatch.setattr(CloudVmJobLauncher, "_teardown_experiment_vm",
-                        lambda self, pdir, pid: order.append("exp"))
-    threads = []
-    real_thread = cloud_mod.threading.Thread
-    monkeypatch.setattr(cloud_mod.threading, "Thread",
-                        lambda *a, **k: threads.append(real_thread(*a, **k)) or threads[-1])
-    CloudVmJobLauncher().cancel("cloud:5", tmp_path, on_complete=lambda: order.append("cleanup"))
-    threads[0].join(timeout=5)
-    assert order == ["orch", "exp", "cleanup"]  # cleanup strictly last
-
-
 def test_slurm_cancel_cascades(monkeypatch, tmp_path):
     calls = {}
     def fake_cancel_job(h):
@@ -229,8 +189,7 @@ def test_latest_log_mtime(tmp_path):
     (logs / "slurm_1.out").write_text("y")
     assert LocalJobLauncher().latest_log_mtime(tmp_path) is not None
     assert SlurmJobLauncher().latest_log_mtime(tmp_path) is not None
-    # cloud / skypilot have no local log to watch (remote run reports over /v1)
-    assert CloudVmJobLauncher().latest_log_mtime(tmp_path) is None
+    # skypilot has no local log to watch (remote run reports over /v1)
     assert SkyPilotVmJobLauncher().latest_log_mtime(tmp_path) is None
 
 
@@ -255,10 +214,9 @@ def test_local_read_error_empty_string_when_no_log(tmp_path):
     assert LocalJobLauncher().read_error(tmp_path) == ""
 
 
-def test_slurm_and_cloud_read_error_none(tmp_path):
+def test_slurm_and_skypilot_read_error_none(tmp_path):
     # None → poller leaves the existing error_message untouched (pre-Phase-4 parity).
     assert SlurmJobLauncher().read_error(tmp_path) is None
-    assert CloudVmJobLauncher().read_error(tmp_path) is None
     assert SkyPilotVmJobLauncher().read_error(tmp_path) is None
 
 

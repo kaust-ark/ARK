@@ -95,4 +95,5 @@ artifact_store:
   # For object stores only:
   # bucket: my-ark-bucket    # required for s3/gcs/azure
   # prefix: ark/             # optional key prefix within the bucket
-  # Credentials default to the configured cloud compute backend's if unset.
+  # Credentials resolve from the ambient cloud SDK env (e.g. the SkyPilot
+  # launcher's application-default credentials) if unset.

@@ -1,7 +1,7 @@
 """SkyPilot orchestrator launcher (folded Phases 5+6, ADR-0010, PR3).
 
 A *fresh implementation* of the `JobLauncher` seam on SkyPilot's task model —
-**not** an adapter over ``CloudVmJobLauncher`` (SSH + rsync + gcloud). The
+**not** a raw SSH + rsync + gcloud VM adapter. The
 orchestrator process runs on a SkyPilot-provisioned cluster:
 
 - ``launch()``  → build a ``sky.Task`` whose ``run:`` command is
@@ -13,16 +13,16 @@ orchestrator process runs on a SkyPilot-provisioned cluster:
                   provisioning blocks but the long-lived run is left going in the
                   cluster's job queue; handle ``skypilot:{cluster}``.
 - ``poll()``    → ``sky status`` on the cluster, normalized onto the module
-                  constants. Like the cloud path, this is a liveness/crash probe:
-                  the remote orchestrator self-reports its terminal outcome into
-                  the control-plane DB over /v1 (ADR-0013), which is authoritative.
-- ``cancel()``  → ``sky down`` the cluster, then ``on_complete`` — same threaded
-                  ordering as the cloud launcher so a delete-endpoint ``rmtree``
-                  can't run before teardown has read the project dir.
+                  constants. This is a liveness/crash probe: the remote
+                  orchestrator self-reports its terminal outcome into the
+                  control-plane DB over /v1 (ADR-0013), which is authoritative.
+- ``cancel()``  → ``sky down`` the cluster, then ``on_complete`` — threaded
+                  ordering so a delete-endpoint ``rmtree`` can't run before
+                  teardown has read the project dir.
 
-Mirrors ``CloudVmJobLauncher``: no local log to watch (``log_glob`` unset ⇒ the
-remote run reports home over /v1), ``initial_status`` = RUNNING (``sky.launch``
-with ``retry_until_up`` blocks until the cluster is UP and the run has started).
+No local log to watch (``log_glob`` unset ⇒ the remote run reports home over
+/v1), ``initial_status`` = RUNNING (``sky.launch`` with ``retry_until_up``
+blocks until the cluster is UP and the run has started).
 
 The GCP ``cloud`` path stays default and untouched; ``type: skypilot`` is
 additive and default-off. The ``sky`` SDK is imported lazily (``_sky.load_sky``)
@@ -207,7 +207,8 @@ class SkyPilotVmJobLauncher(JobLauncher):
                 f"SkyPilot orchestrator {spec.project_id}: project uses Gemini OAuth "
                 f"(gemini_oauth_json) but no Gemini/Google API key — the OAuth session "
                 f"is not provisioned onto the SkyPilot cluster yet (PR4), so Gemini agent "
-                f"calls will fail auth. Set a GEMINI/GOOGLE API key or use type: cloud."
+                f"calls will fail auth. Set a GEMINI/GOOGLE API key, or run this "
+                f"project locally where the OAuth session is available."
             )
 
     def _run_command(self, spec: LaunchSpec, cc: dict, cluster: str, cp_url: str) -> str:

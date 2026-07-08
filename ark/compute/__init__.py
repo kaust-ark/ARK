@@ -2,21 +2,17 @@ from .base import ComputeBackend
 from .local import LocalBackend
 from .slurm import SlurmBackend
 from .custom import CustomBackend
-from .cloud.base import CloudBackend
-from .cloud.orchestrator import OrchestratorCloudBackend
 
 # Layer-2 orchestrator launcher types (`orchestrator_compute_backend.type`).
-VALID_ORCHESTRATOR_TYPES = frozenset({"local", "slurm", "cloud", "skypilot"})
+VALID_ORCHESTRATOR_TYPES = frozenset({"local", "slurm", "skypilot"})
 # Layer-1 experiment backend types (`experiment_compute_backend.type`).
-VALID_EXPERIMENT_TYPES = frozenset({"local", "slurm", "cloud", "custom", "skypilot"})
+VALID_EXPERIMENT_TYPES = frozenset({"local", "slurm", "custom", "skypilot"})
 
 # Invalid (orchestrator, experiment) pairs. The invariant is that the
-# orchestrator must be able to reach whatever runs the experiments: a cloud VM
-# orchestrator can't drive an on-prem SLURM cluster it has no network path to.
-# `skypilot` provisions in a cloud too, so it shares the cloud↔slurm restriction
-# (folded Phases 5+6, ADR-0010).
+# orchestrator must be able to reach whatever runs the experiments: a SkyPilot
+# orchestrator provisions in a cloud and has no network path to an on-prem SLURM
+# cluster, so it can't drive SLURM experiments (folded Phases 5+6, ADR-0010).
 INVALID_COMPUTE_MATRIX = frozenset({
-    ("cloud", "slurm"),
     ("skypilot", "slurm"),
 })
 
@@ -77,11 +73,6 @@ def from_config(config: dict, project_name: str, code_dir, log_fn=None, is_orche
         return SlurmBackend(config, project_name, code_dir, log_fn)
     elif backend_type == "local":
         return LocalBackend(config, project_name, code_dir, log_fn)
-    elif backend_type == "cloud":
-        if is_orchestrator:
-            return OrchestratorCloudBackend.from_config(config, project_name, code_dir, log_fn)
-        else:
-            return CloudBackend.from_config(config, project_name, code_dir, log_fn)
     elif backend_type == "custom":
         return CustomBackend(config, project_name, code_dir, log_fn)
     elif backend_type == "skypilot":
@@ -105,4 +96,4 @@ def from_config(config: dict, project_name: str, code_dir, log_fn=None, is_orche
 # Add factory to ComputeBackend for convenience (breaking change if moved, but we are allowed to break)
 ComputeBackend.from_config = staticmethod(from_config)
 
-__all__ = ["ComputeBackend", "LocalBackend", "SlurmBackend", "CustomBackend", "CloudBackend", "from_config"]
+__all__ = ["ComputeBackend", "LocalBackend", "SlurmBackend", "CustomBackend", "from_config"]

@@ -530,7 +530,7 @@ Please read auto_research/state/latest_review.md and regenerate.
         compute_ctx = self._compute_backend.setup()
         
         # Determine remote working directory
-        # CloudBackend provides 'work_dir' in compute_ctx. Slurm/Local fallback to code_dir.
+        # Remote backends (e.g. SkyPilot) provide 'work_dir' in compute_ctx. Slurm/Local fallback to code_dir.
         remote_work_dir = compute_ctx.get("work_dir", str(self.code_dir))
         
         # Sync project code to backend

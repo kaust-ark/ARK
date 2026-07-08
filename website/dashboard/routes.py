@@ -120,7 +120,6 @@ from .jobs import (
     slurm_available,
 )
 from ark.launcher import (
-    CloudVmJobLauncher,
     LaunchSpec,
     LocalJobLauncher,
     SkyPilotVmJobLauncher,
@@ -577,7 +576,7 @@ def _reject_unknown_backend(value: str, valid: frozenset, label: str) -> None:
     """400 on an unrecognized compute-backend type at the write path, before it is
     persisted. The launch path's ``validate_config`` is the frozenset gate; this
     brings the check forward to the API boundary so an unknown type never sits in
-    the DB. Normalizes the compound ``cloud:gcp`` selector to its base."""
+    the DB. Normalizes the compound ``skypilot:gcp`` selector to its base."""
     base = (value or "local").split(":", 1)[0]
     if base not in valid:
         raise HTTPException(400, f"Unknown {label} compute backend: {value!r}")
@@ -619,27 +618,7 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     }
 
     def _resolve_compute_config(chosen: str, is_orchestrator: bool = False):
-        if chosen.startswith("cloud"):
-            per_project: dict = {}
-            if getattr(project, "cloud_overrides", None):
-                try:
-                    per_project = json.loads(project.cloud_overrides)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            compute_cfg = _build_cloud_config(
-                user_obj, settings,
-                per_project_overrides=per_project,
-                provider_override=_parse_cloud_provider(chosen),
-            )
-            if compute_cfg:
-                if compute_cfg.get("ssh_private_key"):
-                    prefix = "orch_" if is_orchestrator else ""
-                    key_file = project_dir / f".{prefix}gcp_ssh_key"
-                    key_file.write_text(compute_cfg.pop("ssh_private_key"))
-                    key_file.chmod(0o600)
-                    compute_cfg["ssh_key_path"] = str(key_file)
-                return compute_cfg
-        elif chosen == "slurm":
+        if chosen == "slurm":
             return {
                 "type": "slurm",
                 "job_prefix": f"{project.name.upper()[:8]}_",
@@ -663,22 +642,17 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
             # ── Layer-2 orchestrator ──────────────────────────────────────────
             # Shape the `type: skypilot` block. SkyPilot infers/optimizes anything
             # left unset; the cloud is optional (parsed from a "skypilot:{cloud}"
-            # suffix, else auto-selected).
-            #
-            # We deliberately do NOT forward settings.cloud_{region,instance_type,
-            # image_id}: those are tuned for the raw-gcloud `cloud` backend (a GCP
-            # image family, a GCP zone, a GCP/AWS-specific machine type) and don't
-            # map onto SkyPilot's resource namespace — forwarding them would pin an
-            # invalid image/region and break provisioning. CLI users set skypilot
-            # resources explicitly in config.yaml.
+            # suffix, else auto-selected). We only shape the minimal, known-good
+            # defaults below (a pinned GCP machine type + baked image); everything
+            # else is left to SkyPilot's optimizer. CLI users set skypilot resources
+            # explicitly in config.yaml.
             cloud = chosen.split(":", 1)[1] if ":" in chosen else ""
             cfg = {"type": "skypilot", "conda_env": settings.cloud_conda_env or "ark-base"}
             if cloud:
                 cfg["cloud"] = cloud
-            # Pin a default GCP machine type so the orchestrator VM is predictable
-            # and matches the raw `cloud` backend default, rather than left to
-            # SkyPilot's optimizer (which picked an arbitrary n*-standard-2 in
-            # testing). Only for cloud == "gcp": n4-standard-2 is a GCP-specific
+            # Pin a default GCP machine type so the orchestrator VM is predictable,
+            # rather than left to SkyPilot's optimizer (which picked an arbitrary
+            # n*-standard-2 in testing). Only for cloud == "gcp": n4-standard-2 is a GCP-specific
             # type and would be an invalid instance on AWS/Azure, and an empty
             # cloud means "let SkyPilot choose", so we must not pin there. A CLI
             # user's explicit config.yaml bypasses this shaping entirely.
@@ -762,7 +736,7 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     
     exp_chosen = project.experiment_compute_backend
     # If experiment_compute_backend is the legacy default "slurm" but compute_backend
-    # is explicitly set to cloud/something else, prefer compute_backend.
+    # is explicitly set to skypilot/something else, prefer compute_backend.
     if exp_chosen == "slurm" and project.compute_backend and project.compute_backend != "slurm":
         exp_chosen = project.compute_backend
     exp_chosen = exp_chosen or project.compute_backend or "slurm"
@@ -789,109 +763,6 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     config["skip_deep_research"] = bool(getattr(project, "skip_deep_research", False))
     config_path = project_dir / "config.yaml"
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
-
-
-def _parse_cloud_provider(compute_backend: str) -> str:
-    """Extract provider from 'cloud:gcp' style values; returns '' for plain 'cloud'."""
-    if compute_backend and compute_backend.startswith("cloud:"):
-        return compute_backend[6:]
-    return ""
-
-
-_CLOUD_PROVIDER_LABELS = {"gcp": "GCP", "aws": "AWS", "azure": "Azure"}
-
-def _cloud_env_label(compute_backend: str) -> str:
-    provider = _parse_cloud_provider(compute_backend or "")
-    suffix = _CLOUD_PROVIDER_LABELS.get(provider, "")
-    return f"Cloud ({suffix})" if suffix else "Cloud"
-
-
-def _build_cloud_config(user_obj, settings, per_project_overrides=None, provider_override: str = "") -> dict | None:
-    """Return compute_backend dict if cloud is configured, else None."""
-    keys = _get_user_keys(user_obj)
-    provider = provider_override or settings.cloud_provider  # "" means disabled globally
-    if not provider:
-        # Try to infer provider from user keys
-        if keys.get("gcp_service_account_json"):
-            provider = "gcp"
-        elif keys.get("aws_access_key_id"):
-            provider = "aws"
-        elif keys.get("azure_subscription_id"):
-            provider = "azure"
-
-    if not provider:
-        return None
-
-    # Validate that required credentials exist for this provider
-    if provider == "aws" and not keys.get("aws_access_key_id"):
-        return None
-    if provider == "gcp" and not keys.get("gcp_service_account_json"):
-        return None
-    if provider == "azure" and not keys.get("azure_subscription_id"):
-        return None
-
-    owner_email = getattr(user_obj, "email", "") or ""
-    cfg = {
-        "type": "cloud",
-        "provider": provider,
-        "region": settings.cloud_region,
-        "instance_type": settings.cloud_instance_type,
-        "image_id": settings.cloud_image_id,
-        "ssh_key_name": settings.cloud_ssh_key_name,
-        "ssh_key_path": settings.cloud_ssh_key_path,
-        "ssh_user": settings.cloud_ssh_user,
-        "conda_env": settings.cloud_conda_env,
-        "owner": owner_email,
-    }
-
-    # GCP-specific zone handling: GCP uses 'zone' while AWS uses 'region'.
-    # If the user is using GCP, and no specific zone is set, use us-central1-a.
-    if provider == "gcp":
-        if settings.cloud_gcp_zone:
-            cfg["region"] = settings.cloud_gcp_zone
-        elif not cfg["region"] or cfg["region"] == "us-east-1":
-            cfg["region"] = "us-central1-a"
-        # Only set a default machine type if none is provided via global settings/keys,
-        # AND only if we aren't about to overide it with a per-project accelerator.
-        accel_ovr = (per_project_overrides or {}).get("accelerator_type")
-        if not cfg["instance_type"] and not accel_ovr:
-            cfg["instance_type"] = "n4-standard-2"
-        
-        cfg["gcp_project"] = keys.get("gcp_project") or settings.cloud_gcp_project
-        if keys.get("gcp_service_account_json"):
-            cfg["gcp_service_account_json"] = keys["gcp_service_account_json"]
-
-    if provider == "aws" and settings.cloud_security_group:
-        cfg["security_group"] = settings.cloud_security_group
-
-    if provider == "azure":
-        cfg["resource_group"] = settings.cloud_azure_resource_group
-        cfg["location"] = settings.cloud_azure_location
-
-    # User-level GCP overrides (stored in encrypted_keys, higher priority than system defaults)
-    if provider == "gcp":
-        if keys.get("gcp_zone"):
-            cfg["region"] = keys["gcp_zone"]
-        if keys.get("gcp_instance_type"):
-            cfg["instance_type"] = keys["gcp_instance_type"]
-        if keys.get("gcp_image_family"):
-            cfg["image_id"] = keys["gcp_image_family"]
-        if keys.get("gcp_image_project"):
-            cfg["image_project"] = keys["gcp_image_project"]
-        if keys.get("gcp_ssh_user"):
-            cfg["ssh_user"] = keys["gcp_ssh_user"]
-        if keys.get("gcp_conda_env"):
-            cfg["conda_env"] = keys["gcp_conda_env"]
-        if keys.get("gcp_ssh_private_key"):
-            cfg["ssh_private_key"] = keys["gcp_ssh_private_key"]
-        if keys.get("gcp_network"):
-            cfg["network"] = keys["gcp_network"]
-        if keys.get("gcp_subnet"):
-            cfg["subnet"] = keys["gcp_subnet"]
-
-    if per_project_overrides:
-        cfg.update(per_project_overrides)
-    return cfg
 
 
 def _substitute_agent_templates(project_dir: Path, project_id: str, title: str,
@@ -1569,46 +1440,26 @@ async def _restart_project_async(
 
 def orchestrator_launcher_for(project, spec, session, settings):
     """Resolve the JobLauncher for ``project``'s configured orchestrator backend,
-    populating ``spec.config`` for the cloud path.
+    populating ``spec.config`` for the skypilot path.
 
     The single launch-dispatch point, shared by initial submission
     (``_try_submit_or_pending``) and queue/template promotion so the paths can't
     drift (previously the queue path ignored the backend and forced slurm/local).
-    Falls back to local when cloud is selected but unconfigured; raises ValueError
-    on an unrecognized backend type (callers surface it as a failed launch) rather
-    than silently running an unknown backend locally."""
+    Raises ValueError on an unrecognized backend type (callers surface it as a
+    failed launch) rather than silently running an unknown backend locally."""
     backend = project.orchestrator_compute_backend or "local"
     base = backend.split(":", 1)[0]
-    if base not in ("local", "slurm", "cloud", "skypilot"):
+    if base not in ("local", "slurm", "skypilot"):
         raise ValueError(f"Unknown orchestrator backend: {backend!r}")
 
     if base == "skypilot":
         # The skypilot orchestrator config was shaped into config.yaml by
         # _resolve_compute_config; the launcher reads its cluster/resources from
-        # there. Unlike cloud, there is no separate "is it configured?" probe —
-        # the config block is self-contained (folded Phases 5+6, ADR-0010).
+        # there — the config block is self-contained (folded Phases 5+6, ADR-0010).
         import yaml
         with open(Path(spec.project_dir) / "config.yaml") as f:
             spec.config = yaml.safe_load(f)
         return SkyPilotVmJobLauncher(log_fn=logger.info)
-
-    if base == "cloud":
-        per_project: dict = {}
-        if project.cloud_overrides:
-            try:
-                per_project = json.loads(project.cloud_overrides)
-            except (json.JSONDecodeError, TypeError):
-                pass
-        user_obj = get_user(session, project.user_id)
-        cloud_cfg = _build_cloud_config(user_obj, settings, per_project_overrides=per_project,
-                                        provider_override=_parse_cloud_provider(backend))
-        if not cloud_cfg:
-            logger.warning(f"Cloud selected for {project.id} but not configured. Falling back to local.")
-            return LocalJobLauncher()
-        import yaml
-        with open(Path(spec.project_dir) / "config.yaml") as f:
-            spec.config = yaml.safe_load(f)
-        return CloudVmJobLauncher(log_fn=logger.info)
 
     return select_launcher(backend, slurm_ok=slurm_available())
 
@@ -2008,35 +1859,23 @@ def _mask_key(key: str) -> str:
     return f"{key[:4]}...{key[-4:]}"
 
 
-def _mask_json(val: str) -> str:
-    if not val:
-        return ""
-    return "[JSON Config]"
-
-
 @router.get("/api/user/settings")
 async def api_get_user_settings(request: Request):
     user = _require_user(request)
     keys = _get_user_keys(user)
     settings = get_settings()
-    # Build list of cloud providers available to this user (credentials present + validated)
-    available_providers = []
-    for p in ("gcp", "aws", "azure"):
-        cfg = _build_cloud_config(user, settings, provider_override=p)
-        if cfg:
-            available_providers.append(p)
-    # If no explicit provider credentials but system cloud_provider is set, try that too
-    if not available_providers and settings.cloud_provider:
-        cfg = _build_cloud_config(user, settings)
-        if cfg:
-            available_providers.append(settings.cloud_provider)
+    # Keys with dedicated fields below (or retired legacy cloud creds we keep
+    # suppressed) — anything NOT here surfaces via the generic passthrough loop.
     _STD_KEY_FIELDS = {
         "gemini", "anthropic", "openai", "openrouter",
         "claude_oauth_token", "gemini_oauth_json",
         "github_pat", "github_org",
+        "gcp_project", "gcp_conda_env",
+        # Retired native-cloud creds — no longer surfaced, but suppressed so any
+        # value left in an old vault doesn't show up as a stray settings row.
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
-        "gcp_service_account_json", "gcp_project", "gcp_zone", "gcp_instance_type",
-        "gcp_image_family", "gcp_image_project", "gcp_ssh_user", "gcp_conda_env",
+        "gcp_service_account_json", "gcp_zone", "gcp_instance_type",
+        "gcp_image_family", "gcp_image_project", "gcp_ssh_user",
         "gcp_network", "gcp_subnet", "gcp_ssh_private_key", "azure_subscription_id",
         "azure_tenant_id", "azure_client_id", "azure_client_secret",
     }
@@ -2047,28 +1886,10 @@ async def api_get_user_settings(request: Request):
         "openrouter": _mask_key(keys.get("openrouter")),
         "github_pat": _mask_key(keys.get("github_pat")),
         "github_org": keys.get("github_org") or "",
-        "aws_access_key_id": _mask_key(keys.get("aws_access_key_id")),
-        "aws_secret_access_key": _mask_key(keys.get("aws_secret_access_key")),
-        "aws_default_region": keys.get("aws_default_region") or "",
-        "gcp_service_account_json": _mask_json(keys.get("gcp_service_account_json")),
+        # GCP project the SkyPilot launcher provisions into (per-user isolation).
         "gcp_project": keys.get("gcp_project") or "",
-        # Per-user GCP compute settings (override system defaults)
-        "gcp_zone": keys.get("gcp_zone") or settings.cloud_gcp_zone or "",
-        "gcp_instance_type": keys.get("gcp_instance_type") or settings.cloud_instance_type or "",
-        "gcp_image_family": keys.get("gcp_image_family") or settings.cloud_image_id or "",
-        "gcp_image_project": keys.get("gcp_image_project") or "",
-        "gcp_ssh_user": keys.get("gcp_ssh_user") or settings.cloud_ssh_user or "ubuntu",
         "gcp_conda_env": keys.get("gcp_conda_env") or settings.cloud_conda_env or "ark-base",
-        "gcp_network": keys.get("gcp_network") or settings.cloud_network or "",
-        "gcp_subnet": keys.get("gcp_subnet") or settings.cloud_subnet or "",
-        "gcp_ssh_private_key": "[PRIVATE KEY]" if keys.get("gcp_ssh_private_key") else "",
-        "azure_subscription_id": _mask_key(keys.get("azure_subscription_id")),
-        "azure_tenant_id": _mask_key(keys.get("azure_tenant_id")),
-        "azure_client_id": _mask_key(keys.get("azure_client_id")),
-        "azure_client_secret": _mask_key(keys.get("azure_client_secret")),
         "has_keys": any(keys.values()),
-        "cloud_available": bool(available_providers),
-        "cloud_providers": available_providers,
         # Telegram is a user-level account setting (managed in Settings).
         "telegram_token": user.telegram_token or "",
         "telegram_chat_id": user.telegram_chat_id or "",
@@ -2089,15 +1910,12 @@ async def api_save_user_settings(request: Request):
     old_keys = _get_user_keys(user)
     current_keys = old_keys.copy()
     
-    # Update keys based on body
+    # Update keys based on body. `gcp_project` / `gcp_conda_env` drive the
+    # SkyPilot per-user launch (the launcher provisions into the user's project
+    # via an IAM grant — no service-account key is stored).
     fields = [
         "gemini", "anthropic", "openai", "github_pat", "github_org",
-        "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
-        "gcp_service_account_json", "gcp_project",
-        "gcp_zone", "gcp_instance_type", "gcp_image_family", "gcp_image_project",
-        "gcp_ssh_user", "gcp_conda_env", "gcp_ssh_private_key",
-        "gcp_network", "gcp_subnet",
-        "azure_subscription_id", "azure_tenant_id", "azure_client_id", "azure_client_secret"
+        "gcp_project", "gcp_conda_env",
     ]
     for field in fields:
         if field not in body:
@@ -2109,17 +1927,9 @@ async def api_save_user_settings(request: Request):
             current_keys[field] = ""
             continue
 
-        # JSON/key blob fields: skip placeholder sentinels
-        if field == "gcp_service_account_json":
-            if val != "[JSON Config]":
-                current_keys[field] = val
-        elif field == "gcp_ssh_private_key":
-            if val != "[PRIVATE KEY]":
-                current_keys[field] = val
-        else:
-            # Plain text / API key fields: skip masked placeholders
-            if "..." not in val:
-                current_keys[field] = val
+        # Plain text / API key fields: skip masked placeholders
+        if "..." not in val:
+            current_keys[field] = val
 
     # Other (unverified / long-tail) providers — any extra <provider> key in the
     # body that isn't a standard field. Stored verbatim into encrypted_keys so
@@ -2277,7 +2087,6 @@ async def api_create_project(
     comment: str = Form(""),
     compute_backend: str = Form("local"),
     orchestrator_compute_backend: str = Form("local"),
-    cloud_overrides: str = Form(""),
     preset: str = Form(""),
     skip_deep_research: str = Form(""),
     skip_ai_figures: str = Form(""),
@@ -2303,11 +2112,6 @@ async def api_create_project(
         keys = _get_user_keys(db_user) if db_user else {}
         if not any(keys.values()):
             raise HTTPException(400, "Please add at least one API key in Settings first (e.g. OpenRouter — one key unlocks every model).")
-
-        if compute_backend.startswith("cloud"):
-            cloud_cfg = _build_cloud_config(db_user or user, settings, provider_override=_parse_cloud_provider(compute_backend))
-            if not cloud_cfg:
-                raise HTTPException(status_code=400, detail="Cloud compute is not configured. Please use local compute or add cloud credentials in Settings.")
 
     # Cheap test-project preset (admin-only): a 2-page EuroMLSys paper with a
     # trivial, self-contained sklearn experiment, NO live Deep Research (a canned
@@ -2481,7 +2285,6 @@ async def api_create_project(
             compute_backend=compute_backend,
             experiment_compute_backend=compute_backend,
             orchestrator_compute_backend=orchestrator_compute_backend,
-            cloud_overrides=cloud_overrides or "",
             status=initial_status,
             has_pdf_upload=has_pdf_upload,
             telegram_token=telegram_token,
@@ -2536,11 +2339,11 @@ async def api_get_project(project_id: str, request: Request):
         score = _read_project_score(pdir, project=project)
         pdf = _find_pdf(pdir)
         owner = session.get(User, project.user_id)
-        # Both cloud and skypilot run remotely with the env living on the remote
-        # VM/cluster (no local .conda_env dir), so they share the "env ready" fast
-        # path — otherwise a healthy skypilot run reads as env-not-ready.
+        # SkyPilot runs remotely with the env living on the remote cluster (no
+        # local .conda_env dir), so it takes the "env ready" fast path — otherwise
+        # a healthy skypilot run reads as env-not-ready.
         sid = project.slurm_job_id or ""
-        is_remote = sid.startswith(("cloud", "skypilot"))
+        is_remote = sid.startswith("skypilot")
         if is_remote:
             owner_keys = _get_user_keys(owner) if owner else {}
             conda_env_display = owner_keys.get("gcp_conda_env") or settings.cloud_conda_env or "ark-base"
@@ -2552,9 +2355,7 @@ async def api_get_project(project_id: str, request: Request):
             else:
                 conda_env_display = settings.slurm_conda_env or ""
         # Environment label shown in the dashboard, keyed off the handle prefix.
-        if sid.startswith("cloud"):
-            environment = _cloud_env_label(project.compute_backend)
-        elif sid.startswith("skypilot"):
+        if sid.startswith("skypilot"):
             environment = "SkyPilot"
         elif sid and not sid.startswith("local"):
             environment = "ROCS Testbed"
@@ -2595,7 +2396,6 @@ async def api_get_project(project_id: str, request: Request):
             "compute_backend": project.compute_backend,
             "orchestrator_compute_backend": project.orchestrator_compute_backend or "local",
             "experiment_compute_backend": project.experiment_compute_backend or project.compute_backend or "slurm",
-            "cloud_overrides": project.cloud_overrides or "",
             "error_message": project.error_message or "",
             # HITL
             "autonomy_level": project.autonomy_level or "collaborative",
@@ -2628,7 +2428,7 @@ async def api_stop_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         if project.slurm_job_id:
-            # Dispatch cancel off the persisted handle (local:/cloud:/slurm).
+            # Dispatch cancel off the persisted handle (local:/skypilot:/slurm).
             pdir = _project_dir(settings, project.user_id, project_id)
             launcher_from_handle(project.slurm_job_id, log_fn=logger.info).cancel(
                 project.slurm_job_id, pdir
@@ -2984,19 +2784,11 @@ async def api_restart_project(project_id: str, request: Request):
         new_backend = body.get("compute_backend")
         if new_backend:
              _reject_unknown_backend(new_backend, VALID_EXPERIMENT_TYPES, "experiment")
-             if new_backend.startswith("cloud"):
-                  overrides = body.get("cloud_overrides") or {}
-                  if not _build_cloud_config(user, settings, per_project_overrides=overrides, provider_override=_parse_cloud_provider(new_backend)):
-                       raise HTTPException(400, "Cloud compute not configured.")
              update_project(session, project, compute_backend=new_backend)
         new_orch_backend = body.get("orchestrator_compute_backend")
         if new_orch_backend:
             _reject_unknown_backend(new_orch_backend, VALID_ORCHESTRATOR_TYPES, "orchestrator")
             update_project(session, project, orchestrator_compute_backend=new_orch_backend)
-        new_cloud_overrides = body.get("cloud_overrides")
-        if new_cloud_overrides is not None:
-            val = json.dumps(new_cloud_overrides) if isinstance(new_cloud_overrides, dict) else (new_cloud_overrides or "")
-            update_project(session, project, cloud_overrides=val)
 
         _write_config_yaml(pdir, project, _owner or user, settings, model=model)
 
@@ -3038,7 +2830,7 @@ async def api_delete_project(project_id: str, request: Request):
         if project.slurm_job_id:
             # Dispatch cancel off the persisted handle. rmtree runs via on_complete:
             # synchronously for local/SLURM (also cascades queued sub-jobs first),
-            # and only after the async cloud-VM teardown has read config/state — so
+            # and only after the async SkyPilot teardown has read config/state — so
             # we never delete the dir out from under an in-flight teardown.
             launcher_from_handle(project.slurm_job_id, log_fn=logger.info).cancel(
                 project.slurm_job_id, pdir, on_complete=_cleanup
@@ -3078,19 +2870,11 @@ async def api_continue_project(project_id: str, request: Request):
         new_backend = body.get("compute_backend")
         if new_backend:
              _reject_unknown_backend(new_backend, VALID_EXPERIMENT_TYPES, "experiment")
-             if new_backend.startswith("cloud"):
-                  overrides = body.get("cloud_overrides") or {}
-                  if not _build_cloud_config(user, settings, per_project_overrides=overrides, provider_override=_parse_cloud_provider(new_backend)):
-                       raise HTTPException(400, "Cloud compute not configured.")
              update_project(session, project, compute_backend=new_backend)
         new_orch_backend = body.get("orchestrator_compute_backend")
         if new_orch_backend:
             _reject_unknown_backend(new_orch_backend, VALID_ORCHESTRATOR_TYPES, "orchestrator")
             update_project(session, project, orchestrator_compute_backend=new_orch_backend)
-        new_cloud_overrides = body.get("cloud_overrides")
-        if new_cloud_overrides is not None:
-            val = json.dumps(new_cloud_overrides) if isinstance(new_cloud_overrides, dict) else (new_cloud_overrides or "")
-            update_project(session, project, cloud_overrides=val)
 
         _write_config_yaml(pdir, project, _owner or user, settings, model=model)
         if comment:
@@ -3162,15 +2946,9 @@ async def api_apply_change(project_id: str, request: Request):
 
 @router.get("/api/system/status")
 async def api_system_status():
-    """Public endpoint — returns webapp gate state and cloud info (no auth required)."""
-    settings = get_settings()
+    """Public endpoint — returns webapp gate state (no auth required)."""
     return JSONResponse({
         "disabled": _disabled_flag().exists(),
-        "cloud": {
-            "enabled": bool(settings.cloud_provider),
-            "provider": settings.cloud_provider,
-            "region": settings.cloud_region,
-        },
         "slurm": {
             "available": slurm_available()
         }

@@ -140,10 +140,10 @@ idea2paper supports multiple compute backends for running experiments:
 
 - **Local**: Runs experiments directly on the host machine.
 - **Slurm**: Submits jobs to HPC clusters using `sbatch`.
-- **Cloud**: Provisions instances on **AWS**, **GCP**, or **Azure**.
+- **SkyPilot**: Provisions clusters across **AWS**, **GCP**, **Azure**, or **Kubernetes** from one abstraction, with spot instances, retries, and autostop teardown built in.
 - **Custom**: Extensible backend for specialized environments.
 
-Cloud backends handle the full lifecycle: provisioning, code transfer (rsync), setup, execution, result collection, and teardown.
+SkyPilot handles the full lifecycle: provisioning, code sync (SkyPilot `workdir`/`file_mounts`), setup, execution, result collection, and **autostop** teardown.
 
 ### 7. AI Figure Generation (`ark/nano_banana.py`)
 
@@ -189,7 +189,7 @@ command shape / whole category), an **audit trail**
 projects and CI never block.
 
 The orchestrator's own autonomous actions are gated too — **cloud provisioning**
-(`compute/cloud/base.py`), **git push** (`core.git_commit`), and a
+(`compute/skypilot.py`), **git push** (`core.git_commit`), and a
 **cumulative-spend** threshold (after each agent's cost is tallied) — but
 human-triggered operations (`ark clear`, delete, stop) are not.
 
@@ -206,7 +206,7 @@ and the per-line event handler. Configure via the `intervention:` block (see
 | reviewer | Reviews and scores the paper; checks experiment alignment against proposal |
 | planner | Analyzes issues, generates action plan (paper & dev modes); verifies experiment alignment |
 | writer | Writes/revises paper sections with DBLP-verified citations |
-| experimenter | Designs, runs, and analyzes experiments; supports Slurm and Cloud backends |
+| experimenter | Designs, runs, and analyzes experiments; supports Slurm and SkyPilot backends |
 | coder | Implements code changes (dev mode) |
 
 ## File Structure
@@ -219,7 +219,7 @@ ARK/
 │   ├── memory.py            # Score tracking, issue dedup, stagnation detection
 │   ├── execution.py         # Agent execution and skill injection
 │   ├── cli.py               # CLI commands (ark new/run/status/access/...)
-│   ├── compute/             # Compute backends (Local, Slurm, AWS, GCP, Azure)
+│   ├── compute/             # Compute backends (Local, Slurm, SkyPilot, Custom)
 │   ├── engines/             # Agent orchestration; runs every agent through OpenHands (any LiteLLM model)
 │   ├── intervention/        # Pre-action guardrails: policy, approval gate, capability wrappers, watcher
 │   ├── observability/       # Stream OpenHands events → redacted live step log

@@ -310,10 +310,6 @@
       .settings-sidebar { flex-direction: row; overflow-x: auto; padding-right: 0; border-right: none; border-bottom: 1px solid var(--card-border); padding-bottom: 12px; }
       .settings-tab-btn { white-space: nowrap; }
     }
-    .cloud-provider-select { display: flex; gap: 8px; margin-bottom: 16px; border-bottom: 1px solid var(--card-border); padding-bottom: 16px; }
-    .cloud-provider-btn { flex: 1; background: var(--bg); border: 1px solid var(--card-border); padding: 8px; font-size: .85rem; font-weight: 600; color: var(--text-second); border-radius: 8px; cursor: pointer; transition: all .15s; }
-    .cloud-provider-btn:hover { background: #e2e8f0; }
-    .cloud-provider-btn.active { background: #fff; border-color: var(--teal); color: var(--teal); box-shadow: 0 1px 3px rgba(0,0,0,.05); }
     .cloud-provider-pane { display: none; }
     .cloud-provider-pane.active { display: block; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -978,18 +974,6 @@ Strict — hit the exact page limit (spends the most tokens).">
                 <input type="radio" name="compute_backend" value="skypilot" />
                 <span class="model-chip">🚀 SkyPilot</span>
               </label>
-              <label class="model-option" id="hero-backend-cloud-gcp-label" style="display:none">
-                <input type="radio" name="compute_backend" value="cloud:gcp" />
-                <span class="model-chip">☁️ GCP</span>
-              </label>
-              <label class="model-option" id="hero-backend-cloud-aws-label" style="display:none">
-                <input type="radio" name="compute_backend" value="cloud:aws" />
-                <span class="model-chip">☁️ AWS</span>
-              </label>
-              <label class="model-option" id="hero-backend-cloud-azure-label" style="display:none">
-                <input type="radio" name="compute_backend" value="cloud:azure" />
-                <span class="model-chip">☁️ Azure</span>
-              </label>
             </div>
           </div>
           <!-- Orchestrator Backend picker hidden: the orchestrator is a lightweight
@@ -1012,65 +996,8 @@ Strict — hit the exact page limit (spends the most tokens).">
                 <input type="radio" name="orchestrator_compute_backend" value="slurm" />
                 <span class="model-chip">🔧 Slurm</span>
               </label>
-              <label class="model-option" id="hero-orch-backend-cloud-gcp-label" style="display:none">
-                <input type="radio" name="orchestrator_compute_backend" value="cloud:gcp" />
-                <span class="model-chip">☁️ GCP</span>
-              </label>
-              <label class="model-option" id="hero-orch-backend-cloud-aws-label" style="display:none">
-                <input type="radio" name="orchestrator_compute_backend" value="cloud:aws" />
-                <span class="model-chip">☁️ AWS</span>
-              </label>
-              <label class="model-option" id="hero-orch-backend-cloud-azure-label" style="display:none">
-                <input type="radio" name="orchestrator_compute_backend" value="cloud:azure" />
-                <span class="model-chip">☁️ Azure</span>
-              </label>
             </div>
           </div>
-          <!-- GCP per-project options (shown when cloud:gcp selected) -->
-          <div id="hero-gcp-options" style="display:none;margin-top:10px;padding:10px 12px;background:var(--surface-raised,#f8fafc);border:1px solid var(--card-border);border-radius:8px">
-            <div style="display:flex;gap:12px;flex-wrap:wrap">
-              <div class="hero-adv-field" style="flex:1;min-width:140px">
-                <label>Zone</label>
-                <input type="text" id="hero-gcp-zone" placeholder="us-central1-a" />
-              </div>
-              <div class="hero-adv-field" style="flex:1;min-width:140px">
-                <label>Machine Type</label>
-                <input type="text" id="hero-gcp-instance-type" placeholder="n4-standard-2" />
-              </div>
-            </div>
-            <details style="margin-top:8px">
-              <summary style="font-size:.8rem;color:var(--text-muted);cursor:pointer;user-select:none">Advanced GCP options</summary>
-              <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
-                <div class="hero-adv-field" style="flex:1;min-width:140px">
-                  <label>Image Family</label>
-                  <input type="text" id="hero-gcp-image-family" placeholder="ark-debian-base" />
-                </div>
-                <div class="hero-adv-field" style="flex:1;min-width:140px">
-                  <label>Image Project</label>
-                  <input type="text" id="hero-gcp-image-project" placeholder="(your project id)" />
-                </div>
-              </div>
-              <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
-                <div class="hero-adv-field" style="flex:1;min-width:140px">
-                  <label>Accelerator Type</label>
-                  <input type="text" id="hero-gcp-accel-type" placeholder="None (CPU-only)" />
-                </div>
-                <div class="hero-adv-field" style="flex:1;min-width:80px">
-                  <label>Count</label>
-                  <input type="number" id="hero-gcp-accel-count" placeholder="1" min="1" max="8" />
-                </div>
-                <div class="hero-adv-field" style="flex:1;min-width:140px">
-                  <label>Network</label>
-                  <input type="text" id="hero-gcp-network" placeholder="" />
-                </div>
-                <div class="hero-adv-field" style="flex:1;min-width:140px">
-                  <label>Subnet</label>
-                  <input type="text" id="hero-gcp-subnet" placeholder="" />
-                </div>
-              </div>
-            </details>
-          </div>
-          <input type="hidden" name="cloud_overrides" id="hero-cloud-overrides" value="" />
 
           <!-- Pipeline shortcuts — available for every template (Smoke Test
                defaults both on to reuse its canned fixtures). -->
@@ -1514,9 +1441,6 @@ Strict — hit the exact page limit (spends the most tokens).">
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="continue-backend" value="slurm" checked /><span class="model-chip">🔧 Slurm</span></label>
         <label class="model-option" id="continue-backend-skypilot-label"><input type="radio" name="continue-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
-        <label class="model-option" id="continue-backend-cloud-gcp-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
-        <label class="model-option" id="continue-backend-cloud-aws-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
-        <label class="model-option" id="continue-backend-cloud-azure-label" style="display:none"><input type="radio" name="continue-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
       </div>
     </div>
     <div class="form-group" style="display:none"><!-- orchestrator runs detached-local; picker hidden -->
@@ -1525,52 +1449,7 @@ Strict — hit the exact page limit (spends the most tokens).">
         <label class="model-option"><input type="radio" name="continue-orch-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
         <label class="model-option" id="continue-orch-backend-skypilot-label"><input type="radio" name="continue-orch-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
         <label class="model-option"><input type="radio" name="continue-orch-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
-        <label class="model-option" id="continue-orch-backend-cloud-gcp-label" style="display:none"><input type="radio" name="continue-orch-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
-        <label class="model-option" id="continue-orch-backend-cloud-aws-label" style="display:none"><input type="radio" name="continue-orch-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
-        <label class="model-option" id="continue-orch-backend-cloud-azure-label" style="display:none"><input type="radio" name="continue-orch-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
       </div>
-    </div>
-    <!-- GCP per-project options (shown when cloud:gcp selected) -->
-    <div id="continue-gcp-options" style="display:none;margin-bottom:12px;padding:10px 12px;background:var(--surface-raised,#f8fafc);border:1px solid var(--card-border);border-radius:8px">
-      <div style="display:flex;gap:12px;flex-wrap:wrap">
-        <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
-          <label style="font-size:.8rem">Zone</label>
-          <input type="text" id="continue-gcp-zone" placeholder="us-central1-a" />
-        </div>
-        <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
-          <label style="font-size:.8rem">Machine Type</label>
-          <input type="text" id="continue-gcp-instance-type" placeholder="n4-standard-2" />
-        </div>
-      </div>
-      <details style="margin-top:8px">
-        <summary style="font-size:.8rem;color:var(--text-muted);cursor:pointer;user-select:none">Advanced GCP options</summary>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
-          <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
-            <label style="font-size:.8rem">Image Family</label>
-            <input type="text" id="continue-gcp-image-family" placeholder="ark-debian-base" />
-          </div>
-          <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
-            <label style="font-size:.8rem">Image Project</label>
-            <input type="text" id="continue-gcp-image-project" placeholder="(your project id)" />
-          </div>
-          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
-            <label style="font-size:.8rem">Accelerator</label>
-            <input type="text" id="continue-gcp-accel-type" placeholder="None (CPU-only)" />
-          </div>
-          <div class="form-group" style="flex:1;min-width:60px;margin-bottom:0">
-            <label style="font-size:.8rem">Count</label>
-            <input type="number" id="continue-gcp-accel-count" placeholder="1" min="1" max="8" />
-          </div>
-          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
-            <label style="font-size:.8rem">Network</label>
-            <input type="text" id="continue-gcp-network" />
-          </div>
-          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
-            <label style="font-size:.8rem">Subnet</label>
-            <input type="text" id="continue-gcp-subnet" />
-          </div>
-        </div>
-      </details>
     </div>
     <div class="form-group">
       <label data-i18n-html="instructions_comments_label">Instructions / Comments <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
@@ -1746,9 +1625,6 @@ Strict — hit the exact page limit (spends the most tokens).">
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="restart-backend" value="slurm" checked /><span class="model-chip">🔧 Slurm</span></label>
         <label class="model-option" id="restart-backend-skypilot-label"><input type="radio" name="restart-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
-        <label class="model-option" id="restart-backend-cloud-gcp-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
-        <label class="model-option" id="restart-backend-cloud-aws-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
-        <label class="model-option" id="restart-backend-cloud-azure-label" style="display:none"><input type="radio" name="restart-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
       </div>
     </div>
     <div class="form-group" style="display:none"><!-- orchestrator runs detached-local; picker hidden -->
@@ -1757,52 +1633,7 @@ Strict — hit the exact page limit (spends the most tokens).">
         <label class="model-option"><input type="radio" name="restart-orch-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
         <label class="model-option" id="restart-orch-backend-skypilot-label"><input type="radio" name="restart-orch-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
         <label class="model-option"><input type="radio" name="restart-orch-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
-        <label class="model-option" id="restart-orch-backend-cloud-gcp-label" style="display:none"><input type="radio" name="restart-orch-backend" value="cloud:gcp" /><span class="model-chip">☁️ GCP</span></label>
-        <label class="model-option" id="restart-orch-backend-cloud-aws-label" style="display:none"><input type="radio" name="restart-orch-backend" value="cloud:aws" /><span class="model-chip">☁️ AWS</span></label>
-        <label class="model-option" id="restart-orch-backend-cloud-azure-label" style="display:none"><input type="radio" name="restart-orch-backend" value="cloud:azure" /><span class="model-chip">☁️ Azure</span></label>
       </div>
-    </div>
-    <!-- GCP per-project options (shown when cloud:gcp selected) -->
-    <div id="restart-gcp-options" style="display:none;margin-bottom:12px;padding:10px 12px;background:var(--surface-raised,#f8fafc);border:1px solid var(--card-border);border-radius:8px">
-      <div style="display:flex;gap:12px;flex-wrap:wrap">
-        <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
-          <label style="font-size:.8rem">Zone</label>
-          <input type="text" id="restart-gcp-zone" placeholder="us-central1-a" />
-        </div>
-        <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
-          <label style="font-size:.8rem">Machine Type</label>
-          <input type="text" id="restart-gcp-instance-type" placeholder="n4-standard-2" />
-        </div>
-      </div>
-      <details style="margin-top:8px">
-        <summary style="font-size:.8rem;color:var(--text-muted);cursor:pointer;user-select:none">Advanced GCP options</summary>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
-          <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
-            <label style="font-size:.8rem">Image Family</label>
-            <input type="text" id="restart-gcp-image-family" placeholder="ark-debian-base" />
-          </div>
-          <div class="form-group" style="flex:1;min-width:140px;margin-bottom:0">
-            <label style="font-size:.8rem">Image Project</label>
-            <input type="text" id="restart-gcp-image-project" placeholder="(your project id)" />
-          </div>
-          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
-            <label style="font-size:.8rem">Accelerator</label>
-            <input type="text" id="restart-gcp-accel-type" placeholder="None (CPU-only)" />
-          </div>
-          <div class="form-group" style="flex:1;min-width:60px;margin-bottom:0">
-            <label style="font-size:.8rem">Count</label>
-            <input type="number" id="restart-gcp-accel-count" placeholder="1" min="1" max="8" />
-          </div>
-          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
-            <label style="font-size:.8rem">Network</label>
-            <input type="text" id="restart-gcp-network" />
-          </div>
-          <div class="form-group" style="flex:1;min-width:120px;margin-bottom:0">
-            <label style="font-size:.8rem">Subnet</label>
-            <input type="text" id="restart-gcp-subnet" />
-          </div>
-        </div>
-      </details>
     </div>
     <div class="tg-section" style="margin-top:12px">
       <div class="tg-section-title">
@@ -2028,7 +1859,7 @@ Strict — hit the exact page limit (spends the most tokens).">
       <div class="settings-sidebar">
         <button class="settings-tab-btn active" onclick="switchSettingsTab('tab-llms')" id="btn-tab-llms">API Keys</button>
         <button class="settings-tab-btn" onclick="switchSettingsTab('tab-github')" id="btn-tab-github">GitHub</button>
-        <button class="settings-tab-btn" onclick="switchSettingsTab('tab-cloud')" id="btn-tab-cloud">Cloud Compute</button>
+        <button class="settings-tab-btn" onclick="switchSettingsTab('tab-cloud')" id="btn-tab-cloud">Compute (SkyPilot)</button>
         <button class="settings-tab-btn" onclick="switchSettingsTab('tab-telegram')" id="btn-tab-telegram" data-i18n="telegram">Telegram</button>
       </div>
 
@@ -2134,21 +1965,11 @@ Strict — hit the exact page limit (spends the most tokens).">
           </div>
         </div>
 
-        <!-- Tab: Cloud Compute -->
+        <!-- Tab: Compute (SkyPilot) -->
         <div class="settings-tab-pane" id="tab-cloud">
-          <div class="cloud-provider-select">
-            <button class="cloud-provider-btn active" onclick="switchCloudProviderTab('cp-gcp')" id="btn-cp-gcp">Google Cloud</button>
-            <button class="cloud-provider-btn" onclick="switchCloudProviderTab('cp-aws')" id="btn-cp-aws">AWS</button>
-            <button class="cloud-provider-btn" onclick="switchCloudProviderTab('cp-azure')" id="btn-cp-azure">Azure</button>
-          </div>
-
           <!-- GCP Pane -->
           <div class="cloud-provider-pane active" id="cp-gcp">
-            <p style="font-size:.8rem;color:var(--text-second);margin-bottom:12px;">Configure Google Cloud parameters for remote orchestration runs.</p>
-            <div class="form-group">
-              <label style="font-size:.75rem">GCP Service Account JSON</label>
-              <textarea id="settings-gcp-service-account-json" placeholder='{"type": "service_account", ...}' style="font-family:monospace; font-size:.8rem; min-height:80px;"></textarea>
-            </div>
+            <p style="font-size:.8rem;color:var(--text-second);margin-bottom:12px;">Configure your Google Cloud project for SkyPilot remote runs.</p>
             <div class="form-group">
               <label style="font-size:.75rem">GCP Project ID</label>
               <input type="text" id="settings-gcp-project" placeholder="my-research-project" />
@@ -2217,91 +2038,6 @@ Strict — hit the exact page limit (spends the most tokens).">
               });
             })();
             </script>
-
-            <div style="display:flex;gap:12px">
-              <div class="form-group" style="flex:1">
-                <label style="font-size:.75rem">Default Zone</label>
-                <input type="text" id="settings-gcp-zone" placeholder="us-central1-a" />
-              </div>
-              <div class="form-group" style="flex:1">
-                <label style="font-size:.75rem">Default Machine Type</label>
-                <input type="text" id="settings-gcp-instance-type" placeholder="n4-standard-2" />
-              </div>
-            </div>
-
-            <div style="display:flex;gap:12px">
-              <div class="form-group" style="flex:1">
-                <label style="font-size:.75rem">Default Image Family</label>
-                <input type="text" id="settings-gcp-image-family" placeholder="ark-debian-base" />
-              </div>
-              <div class="form-group" style="flex:1">
-                <label style="font-size:.75rem">Default Image Project</label>
-                <input type="text" id="settings-gcp-image-project" placeholder="(your project id)" />
-              </div>
-            </div>
-
-            <div style="display:flex;gap:12px">
-              <div class="form-group" style="flex:1">
-                <label style="font-size:.75rem">Default Network <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
-                <input type="text" id="settings-gcp-network" placeholder="default" />
-              </div>
-              <div class="form-group" style="flex:1">
-                <label style="font-size:.75rem">Default Subnet <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
-                <input type="text" id="settings-gcp-subnet" placeholder="default" />
-              </div>
-            </div>
-            <div class="form-group">
-              <label style="font-size:.75rem">GCP SSH Private Key <span style="color:var(--text-muted);font-weight:400">(optional — paste contents of ~/.ssh/id_rsa)</span></label>
-              <textarea id="settings-gcp-ssh-private-key" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..." style="font-family:monospace; font-size:.75rem; min-height:80px;"></textarea>
-            </div>
-            <div style="display:flex;gap:12px">
-              <div class="form-group" style="flex:1">
-                <label style="font-size:.75rem">SSH Username <span style="color:var(--text-muted);font-weight:400">(default: ubuntu)</span></label>
-                <input type="text" id="settings-gcp-ssh-user" placeholder="ubuntu" />
-              </div>
-              <div class="form-group" style="flex:1">
-                <label style="font-size:.75rem">Conda Env <span style="color:var(--text-muted);font-weight:400">(default: ark)</span></label>
-                <input type="text" id="settings-gcp-conda-env" placeholder="ark" />
-              </div>
-            </div>
-          </div>
-
-          <!-- AWS Pane -->
-          <div class="cloud-provider-pane" id="cp-aws">
-            <p style="font-size:.8rem;color:var(--text-second);margin-bottom:12px;">Configure AWS parameters for remote orchestration runs.</p>
-            <div class="form-group">
-              <label style="font-size:.75rem">AWS Access Key ID</label>
-              <input type="password" id="settings-aws-access-key-id" placeholder="AKIA..." />
-            </div>
-            <div class="form-group">
-              <label style="font-size:.75rem">AWS Secret Access Key</label>
-              <input type="password" id="settings-aws-secret-access-key" placeholder="wJalr..." />
-            </div>
-            <div class="form-group">
-              <label style="font-size:.75rem">AWS Region</label>
-              <input type="text" id="settings-aws-default-region" placeholder="us-east-1" />
-            </div>
-          </div>
-
-          <!-- Azure Pane -->
-          <div class="cloud-provider-pane" id="cp-azure">
-            <p style="font-size:.8rem;color:var(--text-second);margin-bottom:12px;">Configure Azure parameters for remote orchestration runs.</p>
-            <div class="form-group">
-              <label style="font-size:.75rem">Azure Client ID</label>
-              <input type="password" id="settings-azure-client-id" />
-            </div>
-            <div class="form-group">
-              <label style="font-size:.75rem">Azure Client Secret</label>
-              <input type="password" id="settings-azure-client-secret" />
-            </div>
-            <div class="form-group">
-              <label style="font-size:.75rem">Azure Tenant ID</label>
-              <input type="password" id="settings-azure-tenant-id" />
-            </div>
-            <div class="form-group">
-              <label style="font-size:.75rem">Azure Subscription ID</label>
-              <input type="password" id="settings-azure-subscription-id" />
-            </div>
           </div>
         </div>
 
@@ -2875,10 +2611,6 @@ function _renderAdminFilterPills() {
 // ══════════════════════════════════════════════════════
 //  State
 // ══════════════════════════════════════════════════════
-// Cloud experiment/orchestrator backends are still being stabilised — keep them
-// fully hidden until ready. Flip to true to re-enable the Cloud options + the
-// Cloud Compute settings tab everywhere.
-const CLOUD_ENABLED = false;
 let currentUser = null;
 let venues = [];
 let detailProjectId = null;
@@ -2886,55 +2618,8 @@ let detailEventSource = null;
 let logPinned = true;   // true = auto-scroll to bottom; false = user scrolled up
 
 // ══════════════════════════════════════════════════════
-//  Cloud provider helpers
+//  Compute backend helpers
 // ══════════════════════════════════════════════════════
-const _CLOUD_PROVIDER_LABELS = { gcp: 'GCP', aws: 'AWS', azure: 'Azure' };
-
-// Show per-provider cloud buttons across all backend radio groups based on
-// window._userCloudProviders (populated after loadGateBanner fetches user settings).
-function _applyCloudProviderButtons() {
-  // Cloud feature is gated off for now — hide the Cloud Compute settings tab.
-  const cloudTabBtn = document.getElementById('btn-tab-cloud');
-  if (cloudTabBtn) cloudTabBtn.style.display = CLOUD_ENABLED ? '' : 'none';
-
-  const providers = window._userCloudProviders || [];
-  for (const prefix of ['hero', 'continue', 'restart']) {
-    for (const p of ['gcp', 'aws', 'azure']) {
-      for (const idPrefix of [`${prefix}-backend`, `${prefix}-orch-backend`]) {
-        const lbl = document.getElementById(`${idPrefix}-cloud-${p}-label`);
-        if (!lbl) continue;
-        const input = lbl.querySelector('input');
-        // Feature-flagged off: hide cloud backends entirely and never submit them.
-        if (!CLOUD_ENABLED) {
-          lbl.style.display = 'none';
-          if (input) { input.disabled = true; input.checked = false; }
-          continue;
-        }
-        const available = providers.includes(p);
-        // Always SHOW cloud backends; grey out the ones not configured yet so the
-        // user knows the option exists (and where to enable it) rather than hiding it.
-        lbl.style.display = '';
-        lbl.style.opacity = available ? '' : '.4';
-        lbl.style.pointerEvents = available ? '' : 'none';
-        lbl.style.cursor = available ? '' : 'not-allowed';
-        lbl.title = available ? '' : `Add ${p.toUpperCase()} credentials in Settings → Cloud to use this backend`;
-        if (input) input.disabled = !available;
-      }
-    }
-  }
-}
-
-// Per-user GCP defaults loaded from /api/user/settings (populated in loadGateBanner)
-window._userGcpDefaults = {};
-
-// Show/hide the GCP options panel for a given modal prefix based on selected backend.
-function _updateGcpOptionsVisibility(prefix) {
-  const nameAttr = prefix === 'hero' ? 'compute_backend' : `${prefix}-backend`;
-  const selected = ([...document.querySelectorAll(`input[name="${nameAttr}"]`)].find(r => r.checked) || {}).value || '';
-  const panel = document.getElementById(`${prefix}-gcp-options`);
-  if (panel) panel.style.display = selected === 'cloud:gcp' ? '' : 'none';
-}
-
 // Keep the (hidden) orchestrator backend in lock-step with the experiments backend
 // when SkyPilot is picked: SkyPilot is one cloud destination that drives both layers.
 // This guarantees the valid (skypilot, skypilot) pair — the orchestrator picker is
@@ -2948,54 +2633,6 @@ function _syncSkypilotOrch(prefix) {
   const target = exp === 'skypilot' ? 'skypilot' : 'local';
   const orchRadio = document.querySelector(`input[name="${orchName}"][value="${target}"]`);
   if (orchRadio) orchRadio.checked = true;
-}
-
-// Populate GCP option fields with per-project overrides, falling back to user/system defaults.
-function _loadGcpOptions(prefix, overrides) {
-  const d = window._userGcpDefaults;
-  const o = overrides || {};
-  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
-  set(`${prefix}-gcp-zone`,          o.region        || d.zone         || '');
-  set(`${prefix}-gcp-instance-type`, o.instance_type || d.instance_type || '');
-  set(`${prefix}-gcp-image-family`,  o.image_id      || d.image_family  || '');
-  set(`${prefix}-gcp-image-project`, o.image_project || d.image_project || '');
-  set(`${prefix}-gcp-accel-type`,    o.accelerator_type  || '');
-  set(`${prefix}-gcp-accel-count`,   o.accelerator_count != null ? String(o.accelerator_count) : '');
-  set(`${prefix}-gcp-network`,       o.network  || '');
-  set(`${prefix}-gcp-subnet`,        o.subnet   || '');
-}
-
-// Collect non-empty GCP option values into an overrides object (using cfg key names).
-function _collectGcpOptions(prefix) {
-  const get = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
-  const out = {};
-  const zone         = get(`${prefix}-gcp-zone`);
-  const instanceType = get(`${prefix}-gcp-instance-type`);
-  const imageFamily  = get(`${prefix}-gcp-image-family`);
-  const imageProject = get(`${prefix}-gcp-image-project`);
-  const accelType    = get(`${prefix}-gcp-accel-type`);
-  const accelCount   = get(`${prefix}-gcp-accel-count`);
-  const network      = get(`${prefix}-gcp-network`);
-  const subnet       = get(`${prefix}-gcp-subnet`);
-  if (zone)         out.region         = zone;
-  if (instanceType) out.instance_type  = instanceType;
-  if (imageFamily)  out.image_id       = imageFamily;
-  if (imageProject) out.image_project  = imageProject;
-  if (accelType)    out.accelerator_type  = accelType;
-  if (accelCount)   out.accelerator_count = parseInt(accelCount, 10) || 1;
-  if (network)      out.network  = network;
-  if (subnet)       out.subnet   = subnet;
-  return Object.keys(out).length ? out : null;
-}
-
-// Convert a legacy 'cloud' backend value to an explicit 'cloud:<provider>' value
-// by picking the first available provider.  Falls back to 'local' if none.
-function _normalizeCloudBackend(val) {
-  if (val === 'cloud') {
-    const providers = window._userCloudProviders || [];
-    return providers.length > 0 ? `cloud:${providers[0]}` : 'local';
-  }
-  return val || 'local';
 }
 
 // ══════════════════════════════════════════════════════
@@ -3161,7 +2798,6 @@ async function loadGateBanner() {
   const data = await res.json();
   _adminDisabled = data.disabled;
   // Global backend availability flags — start from server-side config
-  window._sysCloud = !!(data.cloud && data.cloud.enabled);
   window._sysSlurm = !!(data.slurm && data.slurm.available);
 
   // Hero form defaults to slurm (see HTML). If slurm isn't available on
@@ -3182,35 +2818,18 @@ async function loadGateBanner() {
     _syncSkypilotOrch('hero');
   }
 
-  // Also check user-level cloud credentials (user may supply their own keys
-  // without a server-side CLOUD_PROVIDER setting)
-  window._userCloudProviders = [];
+  // Also load user-level settings to drive home-page model gating.
   try {
     const uRes = await fetch(APP_BASE + '/api/user/settings');
     if (uRes.ok) {
       const uData = await uRes.json();
-      if (uData.cloud_available) window._sysCloud = true;
-      window._userCloudProviders = uData.cloud_providers || [];
       // Drive home-page model gating from saved keys (so it's correct on first
       // load, not only after opening Settings).
       window._userKeyProviders = _computeKeyProviders(uData.anthropic, uData.openai, uData.gemini, uData.openrouter);
       if (typeof _loadOtherProviders === 'function') _loadOtherProviders(uData);  // long-tail keys drive dropdown gating too
       if (typeof applyModelGating === 'function') applyModelGating();
-      window._userGcpDefaults = {
-        zone:          uData.gcp_zone          || '',
-        instance_type: uData.gcp_instance_type || '',
-        image_family:  uData.gcp_image_family  || '',
-        image_project: uData.gcp_image_project || '',
-        ssh_user:      uData.gcp_ssh_user      || '',
-        conda_env:     uData.gcp_conda_env     || '',
-      };
     }
   } catch(e) {}
-  _applyCloudProviderButtons();
-  _loadGcpOptions('hero', {});
-  _updateGcpOptionsVisibility('hero');
-  _updateGcpOptionsVisibility('continue');
-  _updateGcpOptionsVisibility('restart');
 
   document.getElementById('gate-banner').style.display = data.disabled ? 'flex' : 'none';
   const heroCard = document.getElementById('hero-card');
@@ -4566,13 +4185,6 @@ async function performLaunch(form) {
   const _uns = document.getElementById('model-unverified');
   if (_uns && _uns.value) fd.set('model', _uns.value);
 
-  // Inject GCP per-project overrides if GCP backend is selected
-  const heroBackend = fd.get('compute_backend') || 'local';
-  if (heroBackend === 'cloud:gcp') {
-    const gcpOvr = _collectGcpOptions('hero');
-    fd.set('cloud_overrides', gcpOvr ? JSON.stringify(gcpOvr) : '');
-  }
-
   // Send the first PDF as pdf_file (backend expects this field name)
   const pdfIdx = selectedFiles.findIndex(f => f.name.toLowerCase().endsWith('.pdf'));
   if (pdfIdx !== -1) {
@@ -4706,8 +4318,7 @@ async function openContinueModal(id) {
       else if (cUnver) cUnver.value = storedModel;  // in-list Others OR the injected option
     }
 
-    _applyCloudProviderButtons();
-    const backendVal = _normalizeCloudBackend(p.compute_backend || 'local');
+    const backendVal = (p.compute_backend || 'local');
     document.querySelectorAll('input[name="continue-backend"]').forEach(r => {
       r.checked = (r.value === backendVal);
       if (r.value === 'slurm') {
@@ -4716,15 +4327,10 @@ async function openContinueModal(id) {
           else { lbl.style.opacity = ''; lbl.style.pointerEvents = ''; r.disabled = false; }
       }
     });
-    const orchBackendVal = _normalizeCloudBackend(p.orchestrator_compute_backend || 'local');
+    const orchBackendVal = (p.orchestrator_compute_backend || 'local');
     document.querySelectorAll('input[name="continue-orch-backend"]').forEach(r => {
       r.checked = (r.value === orchBackendVal);
     });
-    // Load per-project GCP options from existing overrides (or user defaults)
-    let existingOverrides = {};
-    try { existingOverrides = p.cloud_overrides ? JSON.parse(p.cloud_overrides) : {}; } catch(e) {}
-    _loadGcpOptions('continue', existingOverrides);
-    _updateGcpOptionsVisibility('continue');
   }
 
   document.getElementById('modal-continue').classList.add('open');
@@ -4742,12 +4348,10 @@ async function submitContinue() {
   if (_cUnver && _cUnver.value) model = _cUnver.value;
   const backend = ([...document.querySelectorAll('input[name="continue-backend"]')].find(r => r.checked) || {}).value || 'slurm';
   const orchBackend = ([...document.querySelectorAll('input[name="continue-orch-backend"]')].find(r => r.checked) || {}).value || 'local';
-  const gcpOverrides = backend === 'cloud:gcp' ? _collectGcpOptions('continue') : null;
   const btn = document.getElementById('continue-btn');
   btn.disabled = true;
   try {
     const payload = { additional_iterations: iter, comment, model, compute_backend: backend, orchestrator_compute_backend: orchBackend };
-    if (gcpOverrides) payload.cloud_overrides = gcpOverrides;
     const res = await fetch(`${APP_BASE}/api/projects/${continueProjectId}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4843,8 +4447,7 @@ async function openRestartModal(id) {
   }
 
   // Set compute backend radio
-  _applyCloudProviderButtons();
-  const backendVal = _normalizeCloudBackend(p.compute_backend || 'local');
+  const backendVal = (p.compute_backend || 'local');
   document.querySelectorAll('input[name="restart-backend"]').forEach(r => {
     r.checked = (r.value === backendVal);
     if (r.value === 'slurm') {
@@ -4853,15 +4456,10 @@ async function openRestartModal(id) {
         else { lbl.style.opacity = ''; lbl.style.pointerEvents = ''; r.disabled = false; }
     }
   });
-  const restartOrchBackendVal = _normalizeCloudBackend(p.orchestrator_compute_backend || 'local');
+  const restartOrchBackendVal = (p.orchestrator_compute_backend || 'local');
   document.querySelectorAll('input[name="restart-orch-backend"]').forEach(r => {
     r.checked = (r.value === restartOrchBackendVal);
   });
-  // Load per-project GCP options from existing overrides (or user defaults)
-  let restartOverrides = {};
-  try { restartOverrides = p.cloud_overrides ? JSON.parse(p.cloud_overrides) : {}; } catch(e) {}
-  _loadGcpOptions('restart', restartOverrides);
-  _updateGcpOptionsVisibility('restart');
 
   // Update hero form slurm visibility
   const hs = document.getElementById('hero-backend-slurm-label');
@@ -4918,9 +4516,6 @@ async function submitRestart() {
       redo_deep_research: !document.getElementById('restart-keep-dr').checked,
       keep_figures: document.getElementById('restart-keep-figures').checked,
     };
-    const restartBackend = body.compute_backend;
-    const restartGcpOverrides = restartBackend === 'cloud:gcp' ? _collectGcpOptions('restart') : null;
-    if (restartGcpOverrides) body.cloud_overrides = restartGcpOverrides;
     const res = await fetch(`${APP_BASE}/api/projects/${restartProjectId}/restart`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -5491,7 +5086,6 @@ async function submitFeedback(e) {
 async function openSettingsModal() {
   openModal('modal-settings');
   switchSettingsTab('tab-llms');
-  switchCloudProviderTab('cp-gcp');
   try {
     const res = await fetch(APP_BASE + '/api/user/settings');
     const data = await res.json();
@@ -5505,24 +5099,7 @@ async function openSettingsModal() {
     document.getElementById('settings-telegram-chat-id').value = data.telegram_chat_id || '';
     _loadOtherProviders(data);
 
-    document.getElementById('settings-aws-access-key-id').value = data.aws_access_key_id || '';
-    document.getElementById('settings-aws-secret-access-key').value = data.aws_secret_access_key || '';
-    document.getElementById('settings-aws-default-region').value = data.aws_default_region || '';
-    document.getElementById('settings-gcp-service-account-json').value = data.gcp_service_account_json || '';
     document.getElementById('settings-gcp-project').value = data.gcp_project || '';
-    document.getElementById('settings-gcp-zone').value = data.gcp_zone || '';
-    document.getElementById('settings-gcp-instance-type').value = data.gcp_instance_type || '';
-    document.getElementById('settings-gcp-image-family').value = data.gcp_image_family || '';
-    document.getElementById('settings-gcp-image-project').value = data.gcp_image_project || '';
-    document.getElementById('settings-gcp-ssh-private-key').value = data.gcp_ssh_private_key || '';
-    document.getElementById('settings-gcp-ssh-user').value = data.gcp_ssh_user || '';
-    document.getElementById('settings-gcp-conda-env').value = data.gcp_conda_env || '';
-    document.getElementById('settings-gcp-network').value = data.gcp_network || '';
-    document.getElementById('settings-gcp-subnet').value = data.gcp_subnet || '';
-    document.getElementById('settings-azure-client-id').value = data.azure_client_id || '';
-    document.getElementById('settings-azure-client-secret').value = data.azure_client_secret || '';
-    document.getElementById('settings-azure-tenant-id').value = data.azure_tenant_id || '';
-    document.getElementById('settings-azure-subscription-id').value = data.azure_subscription_id || '';
 
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
@@ -5537,18 +5114,13 @@ async function openSettingsModal() {
 // ── Other providers (any OpenHands/LiteLLM provider) + model gating ──
 let _otherProviders = {};
 const _STD_KEYS = new Set(['anthropic','openai','gemini','openrouter','github_pat','github_org',
-  'aws_access_key_id','aws_secret_access_key','aws_default_region',
-  'gcp_service_account_json','gcp_project','gcp_zone','gcp_instance_type',
-  'gcp_image_family','gcp_image_project','gcp_ssh_private_key','gcp_ssh_user',
-  'gcp_conda_env','gcp_network','gcp_subnet','azure_client_id',
-  'azure_client_secret','azure_tenant_id','azure_subscription_id',
-  'claude_oauth_token','gemini_oauth_json','gcp_accelerator_type',
-  'gcp_accelerator_count','verification','telegram_token','telegram_chat_id',
-  'has_keys','cloud_available','cloud_providers']);
+  'gcp_project','gcp_conda_env',
+  'claude_oauth_token','gemini_oauth_json',
+  'verification','telegram_token','telegram_chat_id','has_keys']);
 function _loadOtherProviders(data) {
   _otherProviders = {};
   // Only string-valued, non-standard fields are other-provider keys — this skips
-  // metadata like has_keys (bool) / cloud_providers (array).
+  // metadata like has_keys (bool).
   for (const k in data) { if (!_STD_KEYS.has(k) && typeof data[k] === 'string' && data[k]) _otherProviders[k] = data[k]; }
   renderOtherProviders();
 }
@@ -5725,13 +5297,6 @@ function switchSettingsTab(tabId) {
   document.getElementById(tabId).classList.add('active');
 }
 
-function switchCloudProviderTab(cpId) {
-  document.querySelectorAll('.cloud-provider-btn').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.cloud-provider-pane').forEach(p => p.classList.remove('active'));
-  document.getElementById('btn-' + cpId).classList.add('active');
-  document.getElementById(cpId).classList.add('active');
-}
-
 async function saveUserSettings() {
   const btn = document.getElementById('settings-save-btn');
   const providers = ['anthropic', 'openai', 'gemini', 'openrouter'];
@@ -5762,24 +5327,7 @@ async function saveUserSettings() {
       telegram_token: document.getElementById('settings-telegram-token').value.trim(),
       telegram_chat_id: document.getElementById('settings-telegram-chat-id').value.trim(),
       ..._otherProvidersBody(),
-      aws_access_key_id: document.getElementById('settings-aws-access-key-id').value.trim(),
-      aws_secret_access_key: document.getElementById('settings-aws-secret-access-key').value.trim(),
-      aws_default_region: document.getElementById('settings-aws-default-region').value.trim(),
-      gcp_service_account_json: document.getElementById('settings-gcp-service-account-json').value.trim(),
       gcp_project: document.getElementById('settings-gcp-project').value.trim(),
-      gcp_zone: document.getElementById('settings-gcp-zone').value.trim(),
-      gcp_instance_type: document.getElementById('settings-gcp-instance-type').value.trim(),
-      gcp_image_family: document.getElementById('settings-gcp-image-family').value.trim(),
-      gcp_image_project: document.getElementById('settings-gcp-image-project').value.trim(),
-      gcp_ssh_private_key: document.getElementById('settings-gcp-ssh-private-key').value.trim(),
-      gcp_ssh_user: document.getElementById('settings-gcp-ssh-user').value.trim(),
-      gcp_conda_env: document.getElementById('settings-gcp-conda-env').value.trim(),
-      gcp_network: document.getElementById('settings-gcp-network').value.trim(),
-      gcp_subnet: document.getElementById('settings-gcp-subnet').value.trim(),
-      azure_client_id: document.getElementById('settings-azure-client-id').value.trim(),
-      azure_client_secret: document.getElementById('settings-azure-client-secret').value.trim(),
-      azure_tenant_id: document.getElementById('settings-azure-tenant-id').value.trim(),
-      azure_subscription_id: document.getElementById('settings-azure-subscription-id').value.trim(),
     };
 
 
@@ -5903,14 +5451,13 @@ function showToast(msg, type='') {
 // ══════════════════════════════════════════════════════
 applyI18n();
 
-// Wire GCP options visibility + SkyPilot orchestrator-sync to the experiments backend
-// radios in all three contexts.
+// Wire SkyPilot orchestrator-sync to the experiments backend radios in all
+// three contexts.
 (function() {
   for (const prefix of ['hero', 'continue', 'restart']) {
     const nameAttr = prefix === 'hero' ? 'compute_backend' : `${prefix}-backend`;
     document.querySelectorAll(`input[name="${nameAttr}"]`).forEach(r => {
       r.addEventListener('change', () => {
-        _updateGcpOptionsVisibility(prefix);
         _syncSkypilotOrch(prefix);
       });
     });

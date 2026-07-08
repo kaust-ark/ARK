@@ -1,8 +1,14 @@
 # ARK Cloud Backend Plan — Control Plane + Bring-Your-Own-Cloud
 
-> **Status:** Planning / in progress.
-> **Audience:** Engineers and coding agents implementing the phases below.
-> **Companion docs:** [`ARCHITECTURE.md`](ARCHITECTURE.md), [`TODO.md`](TODO.md).
+> **Status:** Historical / partially superseded. The thin control plane and BYOC
+> model described here shipped, but the original **native cloud backend** (raw
+> `type: cloud` VM provisioning via SSH + rsync + gcloud/aws/az) has been
+> **removed** in favour of **SkyPilot** (`type: skypilot`) — see
+> [ADR-0010](ADRs/0010-skypilot-provisioning.md) and
+> [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md). Read the cloud-provisioning specifics
+> below as background; SkyPilot is the current implementation.
+> **Audience:** Engineers and coding agents.
+> **Companion docs:** [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md), [`ARCHITECTURE.md`](ARCHITECTURE.md), [`TODO.md`](TODO.md).
 
 ## 1. Goal
 
