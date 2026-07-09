@@ -44,6 +44,40 @@ def _resolve_venue_format(venue_format: str) -> str:
         return venue_format
     return _VENUE_FORMAT_ALIASES.get(venue_format, venue_format)
 
+
+def _is_safe_venue_format(venue_format: str) -> bool:
+    """A venue_format is only ever a bundled template *directory name*.
+
+    Reject anything that could escape ``_TEMPLATES_ROOT`` via a path separator,
+    parent reference, or absolute path. Without this, ``_TEMPLATES_ROOT / value``
+    resolves outside the templates tree (``/ "/etc"`` collapses to ``/etc``;
+    ``"../.."`` walks upward), letting a caller copy arbitrary server files into
+    a project and exfiltrate them (path traversal).
+    """
+    if not isinstance(venue_format, str) or not venue_format:
+        return False
+    if "/" in venue_format or "\\" in venue_format or ".." in venue_format:
+        return False
+    return True
+
+
+def _resolved_template_dir(venue_format: str) -> "Path | None":
+    """Resolve venue_format to its bundled template dir, or None if unsafe/absent.
+
+    Enforces that the resolved directory is a direct child of ``_TEMPLATES_ROOT``
+    so a crafted venue_format cannot traverse outside the templates tree.
+    """
+    if not _is_safe_venue_format(venue_format):
+        return None
+    name = _resolve_venue_format(venue_format)
+    if not _is_safe_venue_format(name):  # alias table is static, but re-check
+        return None
+    root = _TEMPLATES_ROOT.resolve()
+    candidate = (root / name).resolve()
+    if candidate.parent != root or not candidate.is_dir():
+        return None
+    return candidate
+
 # test_fixtures/ (cheap "test project" preset) also lives at the repo root.
 _TEST_FIXTURES_ROOT = Path(__file__).parent.parent.parent / "test_fixtures" / "cheap_run"
 
@@ -98,7 +132,7 @@ def get_available_venues() -> list[str]:
 
 def has_venue_template(venue_format: str) -> bool:
     """Return True if a bundled template exists for this venue format."""
-    return (_TEMPLATES_ROOT / _resolve_venue_format(venue_format)).exists()
+    return _resolved_template_dir(venue_format) is not None
 
 
 def copy_venue_template(venue_format: str, dest_paper_dir: Path) -> bool:
@@ -108,9 +142,10 @@ def copy_venue_template(venue_format: str, dest_paper_dir: Path) -> bool:
     """
     dest_paper_dir.mkdir(parents=True, exist_ok=True)
 
-    src = _TEMPLATES_ROOT / _resolve_venue_format(venue_format)
-    if not src.exists():
-        # No bundled template — caller should handle waiting_template flow
+    src = _resolved_template_dir(venue_format)
+    if src is None:
+        # No bundled template (or an unsafe/escaping venue_format) — caller
+        # should handle the waiting_template flow.
         return False
 
     for item in src.iterdir():

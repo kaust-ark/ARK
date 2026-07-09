@@ -5348,7 +5348,9 @@ async function submitRestart() {
 //  Utils
 // ══════════════════════════════════════════════════════
 function esc(str) {
-  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(str || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 function fmtDate(iso) {
   if (!iso) return '—';
@@ -5556,8 +5558,8 @@ function _reqRowHtml(r, withActions) {
   let right;
   if (withActions) {
     right = `<div class="admin-req-actions">
-      <button class="btn-approve" onclick="adminApprove(this,'${esc(r.email)}')" data-i18n="approve">Approve</button>
-      <button class="btn-decline" onclick="adminDeclineOpen('${esc(r.email)}','${esc(name)}')" data-i18n="decline">Decline</button>
+      <button class="btn-approve" data-email="${esc(r.email)}" onclick="adminApprove(this, this.dataset.email)" data-i18n="approve">Approve</button>
+      <button class="btn-decline" data-email="${esc(r.email)}" data-name="${esc(name)}" onclick="adminDeclineOpen(this.dataset.email, this.dataset.name)" data-i18n="decline">Decline</button>
     </div>`;
   } else {
     const badge = r.status === 'authorized'

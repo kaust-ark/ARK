@@ -482,7 +482,10 @@ def submit_job(
         project_id=project_id,
         project_dir=str(project_dir),
         log_dir=str(log_dir),
-        mode=mode,
+        # Quote every value that lands in the shell script. `mode` is validated
+        # to an allowlist at the API boundary, but quote here too so the submit
+        # script can never be injected regardless of caller.
+        mode=shlex.quote(mode),
         max_iterations=max_iterations,
         partition=partition,
         account=account,

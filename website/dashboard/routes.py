@@ -2483,6 +2483,12 @@ async def api_create_project(
     if layout_mode not in ("relaxed", "balanced", "strict"):
         layout_mode = "balanced"
 
+    # Orchestration mode: only the paper pipeline exists. `mode` is rendered
+    # into the SLURM submit script (slurm_template.sh: `--mode {{ mode }}`), so
+    # an unvalidated value is a shell-injection vector. Pin to the allowlist.
+    if mode not in ("paper",):
+        mode = "paper"
+
     with get_session(settings.db_path) as session:
         # Telegram is now a user-level account setting (managed in Settings). New
         # projects inherit the user's current Telegram credentials; if the user
