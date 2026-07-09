@@ -326,25 +326,14 @@ Configured via `.ark/webapp.env` (auto-created on first `ark webapp` run). Set `
 
 </details>
 
-### Team Deployment (shared prod)
+### Hosting ARK for others?
 
-A team can serve one production instance from a shared, group-writable
-directory while every member develops in their own clone and releases with a
-single command. Set in each member's shell rc:
+Standing up a **hosted, multi-tenant** ARK instance — host + web app setup,
+shared-prod team releases, and the GCP/AWS launcher setup that lets clients run
+cloud compute in their own accounts — is covered end-to-end in the operator
+runbook:
 
-```bash
-export ARK_RELEASE_ROOT=/shared/path/ARK    # shared checkout: prod worktree, DB, projects
-export ARK_CONDA_ROOT=/shared/path/conda    # shared conda (ark-prod / ark-base envs)
-export ARK_TOOLS_BIN=/shared/path/tools/bin # shared OpenHands CLI
-umask 002                                   # keep new files group-writable
-```
-
-With these set, `ark webapp release` from **any member's clone** tags the
-release, pushes the tag, updates the shared prod worktree, and installs into
-the shared env; the running webapp notices the new `.deployed-tag` marker and
-recycles itself within ~30s — no service ownership needed. `ark webapp
-install` bakes the shared paths (and the shared DB under
-`$ARK_RELEASE_ROOT/.ark/data`) into the generated unit.
+**→ [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
 
 <details>
 <summary><strong>Direct orchestrator invocation</strong></summary>
@@ -478,7 +467,7 @@ This hierarchy lets you define standard defaults once, while easily swapping to 
 
 1. Open the **Settings** panel (⚙️ icon in the top navigation bar).
 2. Open the **Compute** tab.
-3. Enter your **GCP Project ID**, grant the shown `ark-launcher` service account the required roles on your project, then click **Verify access**. (No service-account key is uploaded — you delegate access to your own project via IAM. See the GCP setup block below.)
+3. Enter your **GCP Project ID**, grant the shown `ark-launcher` service account the required roles on your project, then click **Verify access**. (No service-account key is uploaded — you delegate access to your own project via IAM. Operators: see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §4.)
 4. Click **Save**.
 
 When creating a new project you can now independently select:
@@ -513,241 +502,18 @@ You can inspect or hand-edit this file at any time (e.g., to tune instance type 
 
 ### Cloud Provider Setup
 
-<details>
-<summary><strong>☁️ Google Cloud Platform (GCP) — via SkyPilot</strong></summary>
+Configuring the GCP / AWS / SkyPilot launcher — building the baked image,
+creating the central `ark-launcher` identity, and wiring `webapp.env` — is an
+**operator** task done once per hosted instance. It's documented step-by-step,
+per cloud, in the deployment guide:
 
-GCP onboarding is key-less: instead of uploading a service-account key, you grant idea2paper's central **`ark-launcher`** service account access to *your own* GCP project via IAM. SkyPilot then boots clusters in your project from a pre-baked ARK image.
+**→ [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** — §4 GCP · §5 AWS · §6 client onboarding · §8.4 `config.yaml` reference.
 
-#### 1. Enable Required APIs
-
-```bash
-export PROJECT_ID=your-gcp-project-id
-gcloud services enable compute.googleapis.com --project=$PROJECT_ID
-```
-
-#### 2. Build the Machine Image
-
-idea2paper boots from a pre-baked GCP image containing all system dependencies (Conda, LaTeX, Node.js) for fast start-up. SkyPilot launches from this image. Build it once:
-
-```bash
-./scripts/build_ark_gcp_image.sh [GCP_PROJECT_ID] [ZONE]
-```
-
-This script spins up a temporary VM, installs TeX Live, Miniforge, Node.js, and the `ark-base` environment, then saves a Machine Image named `ark-job-v1-[timestamp]` tagged with the `ark-job` family.
-
-> On a hosted deployment, the operator builds this image once in the central `CLOUD_GCP_PROJECT` (server setup: `scripts/setup_ark_launcher_sa.sh` creates the central launcher SA; `scripts/build_ark_gcp_image.sh` bakes the image). Self-hosters run both scripts in their own project.
-
-#### 3. Grant the Launcher Service Account & Verify
-
-In the dashboard, open **Settings → Compute**:
-1. Enter your **GCP Project ID**.
-2. Grant the shown `ark-launcher` service account the required IAM roles on **your** project (the panel lists the exact `gcloud ... add-iam-policy-binding` roles to run).
-3. Click **Verify access**.
-
-No key ever leaves Google — you delegate scoped access to your project. See [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md) for the multi-tenancy design.
-
-#### 4. `config.yaml` Reference (advanced / CLI only)
-
-The webapp generates this automatically from your Settings. For manual or CLI-driven projects, see [`config.example.yaml`](config.example.yaml) for the full template. The model + keys (all agents run through OpenHands → LiteLLM):
-
-```yaml
-model: anthropic/claude-sonnet-4-6     # agents run this — any LiteLLM model
-                                       # (gemini/… , openai/… , deepseek/… , …)
-bot_model: anthropic/claude-haiku-4-5  # cheap model for light helpers (titles, summaries)
-anthropic_api_key: "sk-ant-..."        # fill the provider(s) you use — the model
-openai_api_key:    "sk-..."            #   prefix picks which key is used
-gemini_api_key:    "..."               # gemini key also powers Deep Research (optional)
-```
-
-Compute uses two SkyPilot backends (orchestrator cluster + experiment cluster) pinned to GCP:
-
-```yaml
-# Orchestrator cluster: runs Researcher, Planner, Writer, LaTeX (no GPU needed)
-orchestrator_compute_backend:
-  type: skypilot
-  cloud: gcp
-  # region: us-central1
-  # instance_type: n4-standard-2
-  # idle_minutes_to_autostop: 60     # crash safety-net: auto-DOWN when idle
-
-# Experiment cluster: runs GPU-intensive workloads
-experiment_compute_backend:
-  type: skypilot
-  cloud: gcp
-  accelerators: L4:1                  # SkyPilot accelerator spec ("<NAME>:<COUNT>")
-  use_spot: true                      # cheaper, pre-emptible instances
-  setup_commands:
-    - pip install -r requirements.txt
-```
-
-> To run experiments on the Orchestrator cluster instead of a separate one, set `experiment_compute_backend.type: local`. See the SkyPilot block below for the full key reference.
-
-</details>
-
-<details>
-<summary><strong>☁️ Amazon Web Services (AWS) — via SkyPilot</strong></summary>
-
-AWS onboarding is key-less too, but where GCP grants a cross-*project* IAM role, AWS grants a cross-*account* role: you create an **`ark-launcher` IAM role in your own account** whose trust policy names idea2paper's central launcher identity, which then assumes it (STS AssumeRole) to boot clusters in your account. No access key ever leaves your account.
-
-Steps 0–2 below are the operator/self-hoster server setup (run once on the webapp host); the end user only does the dashboard grant/verify (step 3).
-
-#### 0. (Operator/self-hoster) Install the AWS SDK + CLI
-
-Into the **same environment the webapp runs in** (e.g. `ark-dev`), so both the launch path and the onboarding **Verify** probe can reach AWS:
-
-```bash
-pip install 'skypilot[aws]'        # SkyPilot's AWS provider (brings boto3 + botocore)
-pip install 'botocore[crt]'        # AWS CRT signing — required by SkyPilot's AWS auth
-```
-
-Install the **AWS CLI** too (the setup script in step 2 uses it) — see [AWS CLI install](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
-
-#### 1. (Operator/self-hoster) Configure AWS CLI credentials
-
-The launcher needs a base set of credentials in `~/.aws` to act as. Pick one:
-
-```bash
-# Option A — IAM Identity Center / SSO (recommended: short-lived creds)
-aws configure sso --profile ark-launcher   # set the SSO start URL, region, role
-aws sso login --profile ark-launcher        # refresh the session whenever it expires
-
-# Option B — static access keys
-aws configure --profile ark-launcher        # paste an access key id + secret
-```
-
-Confirm it resolves: `aws sts get-caller-identity --profile ark-launcher`.
-
-> The profile name here must match `CLOUD_LAUNCHER_AWS_PROFILE` (step 2). On an EC2 host you can skip this and set `CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE=Ec2InstanceMetadata` instead, using the host's instance role.
-
-#### 2. (Operator/self-hoster) Create the central launcher identity
-
-```bash
-./scripts/setup_ark_launcher_aws.sh          # uses the credentials from step 1
-```
-
-This creates the `ark-launcher` IAM identity, grants it `sts:AssumeRole` on every tenant `ark-launcher` role, writes/reuses the base `~/.aws` profile, and prints the ARN to add to `~/.ark/webapp.env`. Then add these lines and restart `ark webapp`:
-
-```bash
-CLOUD_LAUNCHER_ROLE_ARN=arn:aws:iam::<account>:user/ark-launcher
-CLOUD_LAUNCHER_AWS_PROFILE=ark-launcher
-# CLOUD_AWS_REGION=us-east-1                       # default region for launches
-# CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE=Ec2InstanceMetadata  # on an EC2 host, use its role instead of keys
-# CLOUD_LAUNCHER_AWS_EXTERNAL_ID=...               # optional confused-deputy protection
-```
-
-> **Existing installs:** the AWS block is only auto-written into *freshly created* `webapp.env` files — if yours predates AWS support, add the lines above by hand. Until `CLOUD_LAUNCHER_ROLE_ARN` resolves (either set explicitly or derivable from the profile), the dashboard shows *"(launcher identity not configured on server)"*.
-
-There is **no baked AMI step** — AWS clusters boot a stock image and run the launcher's `setup_commands` (slower first boot; a baked AMI can be added later).
-
-#### 3. Grant the Launcher Role & Verify
-
-In the dashboard, open **Settings → Compute → AWS**:
-1. Enter your 12-digit **AWS Account ID** and a **Region**.
-2. Run the shown `aws iam create-role` + `attach-role-policy` script on **your** account (it creates the `ark-launcher` role with a trust policy naming the launcher identity and attaches SkyPilot's `AmazonEC2FullAccess` / `IAMFullAccess` / `AmazonS3FullAccess`).
-3. Click **Verify access** — this does a real `sts:AssumeRole` and fails loudly if the trust is missing.
-
-#### 4. `config.yaml` Reference (advanced / CLI only)
-
-The webapp generates this from your Settings (submitting `cloud: aws`). For a manual/CLI project:
-
-```yaml
-orchestrator_compute_backend:
-  type: skypilot
-  cloud: aws
-  # region: us-east-1
-  # idle_minutes_to_autostop: 60     # crash safety-net: auto-DOWN when idle
-
-experiment_compute_backend:
-  type: skypilot
-  cloud: aws
-  accelerators: A10G:1               # SkyPilot accelerator spec ("<NAME>:<COUNT>")
-  use_spot: true
-```
-
-See [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md) §6.1 for the multi-cloud design.
-
-</details>
-
----
-
-> Running on **Azure or Kubernetes** (or want SkyPilot to auto-select the cheapest cloud)? Use the SkyPilot block below and configure that cloud's credentials per SkyPilot's docs at [https://docs.skypilot.co](https://docs.skypilot.co).
-
-<details>
-<summary><strong>☁️ SkyPilot (cross-cloud &amp; Kubernetes)</strong></summary>
-
-[SkyPilot](https://github.com/skypilot-org/skypilot) provisions VMs across
-AWS/GCP/Azure (and Kubernetes) from one abstraction, with spot, retries, and
-autostop teardown built in — so a single `type: skypilot` block covers solo-cloud
-and BYO-Kubernetes without a per-cloud backend each. It is idea2paper's only cloud
-compute path: both the **experiment** (Layer-1) backend and the **orchestrator**
-(Layer-2) launcher provision via SkyPilot, with cost-safety **autostop-down**
-applied at launch (see `idle_minutes_to_autostop` below).
-
-#### Setup
-
-```bash
-# Install SkyPilot with the clouds you use (see the SkyPilot docs for full setup)
-pip install 'ark[skypilot]'
-pip install 'skypilot[gcp,aws,kubernetes]'
-sky check          # verify SkyPilot can reach your configured clouds/clusters
-```
-
-#### `config.yaml` Reference (advanced / CLI only)
-
-> The **`experiment_compute_backend`** keys below are parsed by the Layer-1
-> backend; the **`orchestrator_compute_backend`** block is read by the Layer-2
-> `SkyPilotVmJobLauncher`. Both share the same resource keys (`cloud` / `region` /
-> `accelerators` / `instance_type` / `use_spot` / `disk_size` / `image_id` /
-> `cluster_name` / `setup_commands` / `idle_minutes_to_autostop`).
-
-```yaml
-# Experiments provisioned via SkyPilot. Every key except `type` is optional;
-# SkyPilot picks the cheapest reachable cloud/cluster unless you pin one.
-experiment_compute_backend:
-  type: skypilot
-  # cloud: aws                   # aws | gcp | azure | kubernetes; omit → auto
-  # region: us-east-1            # optional region pin
-  accelerators: L4:1             # SkyPilot accelerator spec ("<NAME>:<COUNT>")
-  # instance_type: g5.xlarge     # optional explicit instance type
-  use_spot: true                 # cheaper, pre-emptible instances
-  # disk_size: 256               # GB, optional
-  # cluster_name: ark-myproj     # optional; defaults to ark-<project>
-  # idle_minutes_to_autostop: 60 # auto-DOWN after N idle minutes (cost-safety);
-  #                              # experiment clusters ALWAYS autostop-down — this
-  #                              # only tunes the window, it cannot be disabled
-  #                              # (the control plane can't reap them otherwise).
-  setup_commands:                # deps installed via the SkyPilot setup: block
-    - pip install -r requirements.txt
-
-# Orchestrator launcher — runs `python -m ark.orchestrator` on a SkyPilot cluster.
-# Reports home over the /v1 control-plane API (set control_plane_url), so the
-# cluster needs no shared FS/DB with the dashboard.
-orchestrator_compute_backend:
-  type: skypilot
-  # cloud: gcp                     # omit → SkyPilot auto-selects
-  # region: us-central1
-  # instance_type: n1-standard-2
-  # cluster_name: ark-orch-myproj  # optional; defaults to ark-orch-<project>
-  # idle_minutes_to_autostop: 60   # crash safety-net: auto-DOWN N idle minutes
-  #                                # after the orchestrator job exits. Set `off`
-  #                                # to disable, or `autostop_down: false` to STOP
-  #                                # (keep disk) instead of terminating.
-  setup_commands:                  # install ARK's deps on the cluster (workdir →
-    - cd ~/sky_workdir && pip install -e '.[research]'   # ~/sky_workdir at launch)
-```
-
-> The dashboard fills in this `setup:` block automatically; only CLI users editing
-> `config.yaml` by hand need to set it. It installs the synced ARK source with the
-> `research` extra so `python -m ark.orchestrator` resolves on a bare cluster (a
-> baked `image_id` can replace it later purely for launch speed — set the key and
-> drop the `pip install`). Layer-1 experiment resources (`region` /
-> `instance_type` / `image_id`) are **not** auto-derived from the orchestrator
-> block — they live in a different SkyPilot namespace, so set them here explicitly.
-
-> A `skypilot` orchestrator cannot drive `slurm` experiments — a cloud orchestrator
-> has no network path to an on-prem SLURM cluster.
-
-</details>
+If you're *using* a hosted instance, you don't run any of that — just open
+**Settings → Compute**, enter your GCP project / AWS account, and click
+**Verify access** (above). Running on **Azure or Kubernetes**? SkyPilot handles
+those too; configure that cloud's credentials per the
+[SkyPilot docs](https://docs.skypilot.co).
 
 ---
 

@@ -284,18 +284,11 @@ ark run myproject
 
 </details>
 
-### النشر الجماعي (prod مشترك)
+### استضافة ARK للآخرين؟
 
-يمكن للفريق تشغيل نسخة إنتاج واحدة من مجلد مشترك قابل للكتابة من قبل المجموعة، بينما يطوّر كل عضو في نسخته الخاصة وينشر بأمر واحد. في ملف shell rc لكل عضو:
+إعداد نسخة ARK **مستضافة ومتعددة المستأجرين** — إعداد الخادم وتطبيق الويب، والنشر الجماعي عبر prod المشترك، وإعداد مشغّل GCP/AWS الذي يتيح للعملاء تشغيل الحوسبة السحابية في حساباتهم الخاصة — موثّق بالكامل في دليل المشغّل (بالإنجليزية):
 
-```bash
-export ARK_RELEASE_ROOT=/shared/path/ARK    # النسخة المشتركة: prod worktree وقاعدة البيانات والمشاريع
-export ARK_CONDA_ROOT=/shared/path/conda    # conda المشترك (بيئتا ark-prod / ark-base)
-export ARK_TOOLS_BIN=/shared/path/tools/bin # OpenHands CLI المشترك
-umask 002                                   # إبقاء الملفات الجديدة قابلة للكتابة من المجموعة
-```
-
-بعد الإعداد، يكفي أن يشغّل **أي عضو** الأمر `ark webapp release` من نسخته: يوسم الإصدار ويدفعه ويحدّث prod worktree المشترك ويثبّت في البيئة المشتركة؛ ثم يلاحظ تطبيق الويب تغيّر علامة `.deployed-tag` ويعيد تشغيل نفسه خلال ~30 ثانية — دون الحاجة لامتلاك الخدمة.
+**→ [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**
 
 <details>
 <summary><strong>الاستدعاء المباشر للمنسق</strong></summary>
@@ -380,7 +373,7 @@ docker compose -f docker/docker-compose.yml logs -f webapp
 
 1. افتح لوحة **Settings** (أيقونة ⚙️ في شريط التنقل العلوي).
 2. افتح تبويب **Compute**.
-3. أدخل **GCP Project ID** الخاص بك، وامنح حساب الخدمة المعروض `ark-launcher` الأدوار المطلوبة على مشروعك، ثم انقر **Verify access**. (لا يتم رفع أي مفتاح لحساب خدمة — بل تفوّض الوصول إلى مشروعك عبر IAM. راجع كتلة إعداد GCP أدناه.)
+3. أدخل **GCP Project ID** الخاص بك، وامنح حساب الخدمة المعروض `ark-launcher` الأدوار المطلوبة على مشروعك، ثم انقر **Verify access**. (لا يتم رفع أي مفتاح لحساب خدمة — بل تفوّض الوصول إلى مشروعك عبر IAM. للمشغّلين: راجع [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) §4.)
 4. انقر **Save**.
 
 عند إنشاء مشروع جديد يمكنك الآن الاختيار بشكل مستقل:
@@ -415,156 +408,16 @@ docker compose -f docker/docker-compose.yml logs -f webapp
 
 ### إعداد مزودي السحاب
 
-<details>
-<summary><strong>☁️ Google Cloud Platform (GCP) — عبر SkyPilot</strong></summary>
+إعداد مشغّل GCP / AWS / SkyPilot — بناء الصورة المخبوزة، وإنشاء هوية `ark-launcher`
+المركزية، وضبط `webapp.env` — هو مهمة **مشغّل** تُنفَّذ مرة واحدة لكل نسخة مستضافة.
+وهي موثّقة خطوة بخطوة لكل سحابة في دليل النشر (بالإنجليزية):
 
-إعداد GCP بلا مفاتيح: بدلاً من رفع مفتاح حساب خدمة، تمنح حساب الخدمة المركزي **`ark-launcher`** الخاص بـ idea2paper وصولاً إلى مشروع GCP *الخاص بك* عبر IAM. عندها يشغّل SkyPilot العناقيد في مشروعك من صورة ARK المخبوزة مسبقاً.
+**→ [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** — §4 GCP · §5 AWS · §6 إعداد العملاء · §8.4 مرجع `config.yaml`.
 
-#### 1. تفعيل الواجهات البرمجية المطلوبة
-
-```bash
-export PROJECT_ID=your-gcp-project-id
-gcloud services enable compute.googleapis.com --project=$PROJECT_ID
-```
-
-#### 2. بناء صورة الجهاز
-
-يبدأ idea2paper من صورة GCP مخبوزة مسبقاً تحوي كل تبعيات النظام (Conda، LaTeX، Node.js) لبدء تشغيل سريع. يطلق SkyPilot من هذه الصورة. ابنِها مرة واحدة:
-
-```bash
-./scripts/build_ark_gcp_image.sh [GCP_PROJECT_ID] [ZONE]
-```
-
-يشغّل هذا السكربت جهازاً افتراضياً مؤقتاً، ويثبّت TeX Live وMiniforge وNode.js وبيئة `ark-base`، ثم يحفظ Machine Image باسم `ark-job-v1-[timestamp]` موسومة بعائلة `ark-job`.
-
-> في نشر مُستضاف، يبني المشغّل هذه الصورة مرة واحدة في المشروع المركزي `CLOUD_GCP_PROJECT` (إعداد الخادم: ينشئ `scripts/setup_ark_launcher_sa.sh` حساب خدمة المُطلِق المركزي؛ ويخبز `scripts/build_ark_gcp_image.sh` الصورة). أما المستضيفون الذاتيون فيشغّلون كلا السكربتين في مشروعهم الخاص.
-
-#### 3. منح حساب خدمة المُطلِق والتحقق
-
-في لوحة التحكم، افتح **Settings → Compute**:
-1. أدخل **GCP Project ID** الخاص بك.
-2. امنح حساب الخدمة المعروض `ark-launcher` أدوار IAM المطلوبة على مشروعك **أنت** (تسرد اللوحة أوامر `gcloud ... add-iam-policy-binding` الدقيقة للتشغيل).
-3. انقر **Verify access**.
-
-لا يغادر أي مفتاح Google أبداً — بل تفوّض وصولاً محدود النطاق إلى مشروعك. راجع [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md) لتصميم تعدد المستأجرين.
-
-#### 4. مرجع `config.yaml` (متقدم / CLI فقط)
-
-يولّد تطبيق الويب هذا تلقائياً من إعداداتك. للمشاريع اليدوية أو المُدارة عبر CLI، راجع [`config.example.yaml`](config.example.yaml) للقالب الكامل. النموذج + المفاتيح (كل الوكلاء يعملون عبر OpenHands → LiteLLM):
-
-```yaml
-model: anthropic/claude-sonnet-4-6     # الوكلاء يشغّلون هذا — أي نموذج LiteLLM
-                                       # (gemini/… , openai/… , deepseek/… , …)
-bot_model: anthropic/claude-haiku-4-5  # نموذج رخيص للمساعدات الخفيفة (العناوين، الملخصات)
-anthropic_api_key: "sk-ant-..."        # املأ المزود(ين) الذي تستخدمه — بادئة النموذج
-openai_api_key:    "sk-..."            #   هي ما يحدد أي مفتاح يُستخدم
-gemini_api_key:    "..."               # مفتاح gemini يشغّل أيضاً Deep Research (اختياري)
-```
-
-تستخدم الحوسبة خلفيتَي SkyPilot (عنقود المنسق + عنقود التجارب) مثبّتتين على GCP:
-
-```yaml
-# عنقود المنسق: يشغّل الباحث، المخطِّط، الكاتب، LaTeX (لا حاجة لـ GPU)
-orchestrator_compute_backend:
-  type: skypilot
-  cloud: gcp
-  # region: us-central1
-  # instance_type: n4-standard-2
-  # idle_minutes_to_autostop: 60     # شبكة أمان عند الأعطال: DOWN تلقائي عند الخمول
-
-# عنقود التجارب: يشغّل الأحمال كثيفة الاستخدام لـ GPU
-experiment_compute_backend:
-  type: skypilot
-  cloud: gcp
-  accelerators: L4:1                  # مواصفة مسرّع SkyPilot ("<NAME>:<COUNT>")
-  use_spot: true                      # مثيلات أرخص قابلة للاستباق (pre-emptible)
-  setup_commands:
-    - pip install -r requirements.txt
-```
-
-> لتشغيل التجارب على عنقود المنسق بدلاً من عنقود منفصل، اضبط `experiment_compute_backend.type: local`. راجع كتلة SkyPilot أدناه لمرجع المفاتيح الكامل.
-
-</details>
-
----
-
-> تشغيل على **AWS أو Azure أو Kubernetes** (أو تريد أن يختار SkyPilot أرخص سحابة تلقائياً)؟ استخدم كتلة SkyPilot أدناه واضبط بيانات اعتماد تلك السحابة وفق توثيق SkyPilot على [https://docs.skypilot.co](https://docs.skypilot.co).
-
-<details>
-<summary><strong>☁️ SkyPilot (عبر السحابات و Kubernetes)</strong></summary>
-
-يُجهِّز [SkyPilot](https://github.com/skypilot-org/skypilot) الأجهزة الافتراضية عبر
-AWS/GCP/Azure (و Kubernetes) من تجريد واحد، مع spot وإعادة المحاولات والإنهاء
-التلقائي (autostop) المدمج — بحيث تغطي كتلة `type: skypilot` واحدة الحالة أحادية
-السحابة و Kubernetes الخاص بك دون خلفية منفصلة لكل سحابة. إنه المسار السحابي الوحيد
-لـ idea2paper: كل من خلفية **التجارب** (الطبقة 1) ومُطلِق **المنسق** (الطبقة 2)
-يُجهِّزان عبر SkyPilot، مع تطبيق **autostop-down** لأمان التكلفة عند الإطلاق
-(راجع `idle_minutes_to_autostop` أدناه).
-
-#### الإعداد
-
-```bash
-# ثبّت SkyPilot مع السحابات التي تستخدمها (راجع توثيق SkyPilot للإعداد الكامل)
-pip install 'ark[skypilot]'
-pip install 'skypilot[gcp,aws,kubernetes]'
-sky check          # تحقق من قدرة SkyPilot على الوصول إلى سحاباتك/عناقيدك المضبوطة
-```
-
-#### مرجع `config.yaml` (متقدم / CLI فقط)
-
-> مفاتيح **`experiment_compute_backend`** أدناه تُحلَّل بواسطة خلفية الطبقة 1؛
-> أما كتلة **`orchestrator_compute_backend`** فتُقرأ بواسطة `SkyPilotVmJobLauncher`
-> في الطبقة 2. وكلاهما يتشاركان نفس مفاتيح الموارد (`cloud` / `region` /
-> `accelerators` / `instance_type` / `use_spot` / `disk_size` / `image_id` /
-> `cluster_name` / `setup_commands` / `idle_minutes_to_autostop`).
-
-```yaml
-# تجارب مُجهَّزة عبر SkyPilot. كل مفتاح عدا `type` اختياري؛
-# يختار SkyPilot أرخص سحابة/عنقود يمكن الوصول إليه ما لم تثبّت واحداً.
-experiment_compute_backend:
-  type: skypilot
-  # cloud: aws                   # aws | gcp | azure | kubernetes؛ احذفه → تلقائي
-  # region: us-east-1            # تثبيت منطقة اختياري
-  accelerators: L4:1             # مواصفة مسرّع SkyPilot ("<NAME>:<COUNT>")
-  # instance_type: g5.xlarge     # نوع مثيل صريح اختياري
-  use_spot: true                 # مثيلات أرخص قابلة للاستباق (pre-emptible)
-  # disk_size: 256               # جيجابايت، اختياري
-  # cluster_name: ark-myproj     # اختياري؛ الافتراضي ark-<project>
-  # idle_minutes_to_autostop: 60 # DOWN تلقائي بعد N دقيقة خمول (أمان التكلفة)؛
-  #                              # عناقيد التجارب تُنهى دائماً تلقائياً — هذا
-  #                              # يضبط النافذة فقط، ولا يمكن تعطيله
-  #                              # (وإلا لن يستطيع مستوى التحكم حصادها).
-  setup_commands:                # تُثبَّت التبعيات عبر كتلة setup: في SkyPilot
-    - pip install -r requirements.txt
-
-# مُطلِق المنسق — يشغّل `python -m ark.orchestrator` على عنقود SkyPilot.
-# يبلّغ إلى الديار عبر واجهة /v1 لمستوى التحكم (اضبط control_plane_url)، لذا
-# لا يحتاج العنقود إلى نظام ملفات/قاعدة بيانات مشتركة مع لوحة التحكم.
-orchestrator_compute_backend:
-  type: skypilot
-  # cloud: gcp                     # احذفه → يختار SkyPilot تلقائياً
-  # region: us-central1
-  # instance_type: n1-standard-2
-  # cluster_name: ark-orch-myproj  # اختياري؛ الافتراضي ark-orch-<project>
-  # idle_minutes_to_autostop: 60   # شبكة أمان عند الأعطال: DOWN تلقائي بعد N دقيقة خمول
-  #                                # بعد خروج مهمة المنسق. اضبط `off`
-  #                                # للتعطيل، أو `autostop_down: false` للإيقاف STOP
-  #                                # (مع إبقاء القرص) بدلاً من الإنهاء.
-  setup_commands:                  # ثبّت تبعيات ARK على العنقود (workdir →
-    - cd ~/sky_workdir && pip install -e '.[research]'   # ~/sky_workdir عند الإطلاق)
-```
-
-> تملأ لوحة التحكم كتلة `setup:` هذه تلقائياً؛ فقط مستخدمو CLI الذين يحررون
-> `config.yaml` يدوياً بحاجة لضبطها. تثبّت مصدر ARK المُزامَن مع إضافة `research`
-> كي يُحلَّل `python -m ark.orchestrator` على عنقود عارٍ (يمكن لصورة `image_id`
-> مخبوزة أن تحل محلها لاحقاً لسرعة الإطلاق فقط — اضبط المفتاح وأسقط `pip install`).
-> موارد تجارب الطبقة 1 (`region` / `instance_type` / `image_id`) **لا** تُشتق
-> تلقائياً من كتلة المنسق — فهي تعيش في فضاء أسماء SkyPilot مختلف، لذا اضبطها هنا صراحةً.
-
-> لا يمكن لمنسق `skypilot` تشغيل تجارب `slurm` — فالمنسق السحابي ليس له مسار شبكي
-> إلى عنقود SLURM محلي.
-
-</details>
+إن كنت *تستخدم* نسخة مستضافة، فلا حاجة لتشغيل أيٍّ من ذلك — افتح فقط
+**Settings → Compute**، أدخل مشروع GCP / حساب AWS الخاص بك، وانقر **Verify access**
+(أعلاه). التشغيل على **Azure أو Kubernetes**؟ يدعم SkyPilot ذلك أيضاً؛ اضبط بيانات
+اعتماد تلك السحابة وفق [توثيق SkyPilot](https://docs.skypilot.co).
 
 ---
 
