@@ -77,6 +77,7 @@ def get_project_view(project_id: str = Depends(require_project)) -> dict:
             "max_days": p.max_days,
             "figure_generation": p.figure_generation,
             "orchestrator_compute_backend": p.orchestrator_compute_backend,
+            "orchestrator_instance_type": getattr(p, "orchestrator_instance_type", "") or "",
             "experiment_compute_backend": p.experiment_compute_backend,
             "iteration": p.iteration,
             "checkpoint_data": p.checkpoint_data,

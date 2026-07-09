@@ -1012,6 +1012,20 @@ Strict — hit the exact page limit (spends the most tokens).">
               <span id="hero-skypilot-cloud-chips" style="display:contents"></span>
             </div>
           </div>
+          <!-- Instance type: only shown when a cloud chip is selected. A curated
+               dropdown + a "Custom…" free-text entry (validated live against the
+               cloud's SkyPilot catalog). Empty selection = the cloud's default. -->
+          <div class="hero-adv-field instance-type-field" id="hero-instance-type-field" style="margin-top:12px;display:none">
+            <label>Instance Type <span style="color:var(--text-muted);font-weight:400">— the cloud VM this runs on</span></label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <select id="hero-instance-type-select" onchange="_onInstanceTypeSelectChange('hero')"
+                      style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"></select>
+              <input id="hero-instance-type-custom" type="text" placeholder="e.g. n2-standard-8" autocomplete="off"
+                     oninput="_scheduleInstanceTypeValidate('hero')"
+                     style="display:none;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);min-width:180px" />
+            </div>
+            <div id="hero-instance-type-status" style="font-size:12px;margin-top:4px;min-height:16px;color:var(--text-muted)"></div>
+          </div>
           <!-- Orchestrator Backend picker hidden: the orchestrator is a lightweight
                I/O-bound driver that now runs detached-local (its own systemd scope,
                survives webapp restarts), so Slurm/cloud for it is wasteful. The hidden
@@ -1496,6 +1510,17 @@ Strict — hit the exact page limit (spends the most tokens).">
         <span id="continue-skypilot-cloud-chips" style="display:contents"></span>
       </div>
     </div>
+    <div class="form-group instance-type-field" id="continue-instance-type-field" style="display:none">
+      <label>Instance Type <span style="color:var(--text-muted);font-weight:400">— the cloud VM this runs on</span></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="continue-instance-type-select" onchange="_onInstanceTypeSelectChange('continue')"
+                style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"></select>
+        <input id="continue-instance-type-custom" type="text" placeholder="e.g. n2-standard-8" autocomplete="off"
+               oninput="_scheduleInstanceTypeValidate('continue')"
+               style="display:none;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);min-width:180px" />
+      </div>
+      <div id="continue-instance-type-status" style="font-size:12px;margin-top:4px;min-height:16px;color:var(--text-muted)"></div>
+    </div>
     <div class="form-group" style="display:none"><!-- orchestrator runs detached-local; picker hidden -->
       <label>Orchestrator Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -1679,6 +1704,17 @@ Strict — hit the exact page limit (spends the most tokens).">
         <label class="model-option"><input type="radio" name="restart-backend" value="slurm" checked /><span class="model-chip">🔧 Slurm</span></label>
         <span id="restart-skypilot-cloud-chips" style="display:contents"></span>
       </div>
+    </div>
+    <div class="form-group instance-type-field" id="restart-instance-type-field" style="display:none">
+      <label>Instance Type <span style="color:var(--text-muted);font-weight:400">— the cloud VM this runs on</span></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="restart-instance-type-select" onchange="_onInstanceTypeSelectChange('restart')"
+                style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)"></select>
+        <input id="restart-instance-type-custom" type="text" placeholder="e.g. n2-standard-8" autocomplete="off"
+               oninput="_scheduleInstanceTypeValidate('restart')"
+               style="display:none;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);min-width:180px" />
+      </div>
+      <div id="restart-instance-type-status" style="font-size:12px;margin-top:4px;min-height:16px;color:var(--text-muted)"></div>
     </div>
     <div class="form-group" style="display:none"><!-- orchestrator runs detached-local; picker hidden -->
       <label>Orchestrator Backend</label>
@@ -3138,6 +3174,166 @@ function _syncSkypilotOrch(prefix) {
   const isCloud = exp.split(':')[0] === 'skypilot';
   const orchRadio = document.querySelector(`input[name="${_orchBackendName(prefix)}"][value="${isCloud ? 'skypilot' : 'local'}"]`);
   if (orchRadio) orchRadio.checked = true;
+  _updateInstanceTypeUI(prefix);
+}
+
+// ── Instance-type picker (GCP / AWS) ──────────────────────────────────────────
+// Shown only when a cloud chip is selected. A curated dropdown + a "Custom…"
+// free-text entry, validated live against the cloud's SkyPilot catalog via
+// /api/compute so a bad type fails in the UI (and again server-side) before we
+// ever try to provision. Empty selection ("Cloud default") sends "" — the server
+// then applies the cloud's default shaping (GCP pins a type; AWS lets the
+// optimizer choose). Available on new starts, restarts and continuations.
+const _pendingInstanceType = { hero: '', continue: '', restart: '' };
+const _instanceTypeCache = {};   // cloud -> {default, options}
+const _instanceTypeTimers = {};
+
+// The cloud carried by the selected experiment chip, or '' when not a cloud.
+function _instanceTypeCloudFor(prefix) {
+  const exp = _selectedExpBackend(prefix);
+  return exp.indexOf('skypilot:') === 0 ? exp.split(':')[1] : '';
+}
+
+// Show/hide the field for the current backend; (re)populate when a cloud is on.
+function _updateInstanceTypeUI(prefix) {
+  const field = document.getElementById(prefix + '-instance-type-field');
+  if (!field) return;
+  const cloud = _instanceTypeCloudFor(prefix);
+  if (!cloud) { field.style.display = 'none'; return; }
+  field.style.display = '';
+  _loadInstanceTypeOptions(prefix, cloud);
+}
+
+// Set the instance type to preselect on the NEXT UI build (used by the
+// continue/restart dialogs to restore a project's saved pick).
+function _prefillInstanceType(prefix, value) {
+  _pendingInstanceType[prefix] = value || '';
+  // Force the next build to rebuild (even for the same cloud) so a stale
+  // selection from a previously-opened project can't persist across modal opens.
+  const sel = document.getElementById(prefix + '-instance-type-select');
+  if (sel) sel.dataset.cloud = '';
+}
+
+async function _loadInstanceTypeOptions(prefix, cloud) {
+  const select = document.getElementById(prefix + '-instance-type-select');
+  const custom = document.getElementById(prefix + '-instance-type-custom');
+  if (!select) return;
+  const pending = _pendingInstanceType[prefix];
+  _pendingInstanceType[prefix] = '';   // consume once
+  // Already built for this cloud and no explicit prefill → keep user's choice.
+  if (select.dataset.cloud === cloud && !pending) return;
+
+  let data = _instanceTypeCache[cloud];
+  if (!data) {
+    try {
+      const res = await fetch(`${APP_BASE}/api/compute/instance-types?cloud=${encodeURIComponent(cloud)}`);
+      data = await res.json();
+      _instanceTypeCache[cloud] = data;
+    } catch (e) { data = { options: [], default: '' }; }
+    // Bail if the cloud changed while we were awaiting.
+    if (_instanceTypeCloudFor(prefix) !== cloud) return;
+  }
+  select.dataset.cloud = cloud;
+  select.innerHTML = '';
+  const optDefault = document.createElement('option');
+  optDefault.value = '';
+  optDefault.textContent = data.default ? `Default (${data.default})` : 'Cloud default';
+  select.appendChild(optDefault);
+  (data.options || []).forEach(o => {
+    const opt = document.createElement('option');
+    opt.value = o.value; opt.textContent = o.label;
+    select.appendChild(opt);
+  });
+  const optCustom = document.createElement('option');
+  optCustom.value = '__custom__'; optCustom.textContent = 'Custom…';
+  select.appendChild(optCustom);
+
+  const known = pending && [...select.options].some(o => o.value === pending && o.value !== '__custom__');
+  if (known) {
+    select.value = pending; custom.style.display = 'none'; custom.value = '';
+  } else if (pending) {   // a saved custom (non-curated) type
+    select.value = '__custom__'; custom.style.display = ''; custom.value = pending;
+  } else {
+    select.value = ''; custom.style.display = 'none'; custom.value = '';
+  }
+  _validateInstanceType(prefix);
+}
+
+function _onInstanceTypeSelectChange(prefix) {
+  const select = document.getElementById(prefix + '-instance-type-select');
+  const custom = document.getElementById(prefix + '-instance-type-custom');
+  if (select.value === '__custom__') { custom.style.display = ''; custom.focus(); }
+  else { custom.style.display = 'none'; }
+  _validateInstanceType(prefix);
+}
+
+function _scheduleInstanceTypeValidate(prefix) {
+  clearTimeout(_instanceTypeTimers[prefix]);
+  _instanceTypeTimers[prefix] = setTimeout(() => _validateInstanceType(prefix), 400);
+}
+
+// The instance type to submit: '' when not a cloud / hidden / "Cloud default".
+function _selectedInstanceType(prefix) {
+  if (!_instanceTypeCloudFor(prefix)) return '';
+  const field = document.getElementById(prefix + '-instance-type-field');
+  if (!field || field.style.display === 'none') return '';
+  const select = document.getElementById(prefix + '-instance-type-select');
+  if (!select) return '';
+  if (select.value === '__custom__') {
+    return ((document.getElementById(prefix + '-instance-type-custom') || {}).value || '').trim();
+  }
+  return select.value || '';
+}
+
+// True when a CUSTOM type has been validated as invalid — used to block submit.
+function _instanceTypeInvalid(prefix) {
+  const select = document.getElementById(prefix + '-instance-type-select');
+  return !!(select && select.dataset.invalid === '1' && _instanceTypeCloudFor(prefix));
+}
+
+async function _validateInstanceType(prefix) {
+  const status = document.getElementById(prefix + '-instance-type-status');
+  const select = document.getElementById(prefix + '-instance-type-select');
+  if (!status || !select) return;
+  select.dataset.invalid = '';
+  const cloud = _instanceTypeCloudFor(prefix);
+  const it = _selectedInstanceType(prefix);
+  if (!cloud) { status.textContent = ''; return; }
+  if (!it) {
+    status.style.color = 'var(--text-muted)';
+    status.textContent = 'Uses the cloud default machine type.';
+    return;
+  }
+  // Curated entries are known-valid — no round-trip; just echo their spec.
+  if (select.value !== '__custom__') {
+    const opt = [...select.options].find(o => o.value === it);
+    status.style.color = 'var(--text-muted)';
+    status.textContent = opt ? opt.textContent : it;
+    return;
+  }
+  status.style.color = 'var(--text-muted)';
+  status.textContent = 'Checking…';
+  try {
+    const res = await fetch(`${APP_BASE}/api/compute/instance-types/validate?cloud=${encodeURIComponent(cloud)}&instance_type=${encodeURIComponent(it)}`);
+    const r = await res.json();
+    // Ignore stale responses (cloud/type changed while awaiting).
+    if (_instanceTypeCloudFor(prefix) !== cloud || _selectedInstanceType(prefix) !== it) return;
+    if (r.valid === true) {
+      status.style.color = 'var(--success)';
+      const spec = (r.vcpus && r.mem_gb) ? ` · ${Math.round(r.vcpus)} vCPU / ${Math.round(r.mem_gb)} GB` : '';
+      status.textContent = `✓ Valid ${cloud.toUpperCase()} instance${spec}`;
+    } else if (r.valid === false) {
+      status.style.color = 'var(--danger)';
+      status.textContent = '✕ ' + (r.error || 'Invalid instance type.');
+      select.dataset.invalid = '1';
+    } else {
+      status.style.color = 'var(--text-muted)';
+      status.textContent = 'Could not verify — it will be checked at launch.';
+    }
+  } catch (e) {
+    status.style.color = 'var(--text-muted)';
+    status.textContent = 'Could not verify — it will be checked at launch.';
+  }
 }
 
 // ── Per-cloud experiment-backend chips (GCP / AWS) ────────────────────────────
@@ -4770,6 +4966,12 @@ async function launchConfirmProceed() {
 }
 
 async function performLaunch(form) {
+  // Block a known-invalid custom instance type before we disable the button
+  // (the server re-validates too — this is just faster feedback).
+  if (_instanceTypeInvalid('hero')) {
+    alert('Please fix the instance type before starting.');
+    return;
+  }
   const btn = document.getElementById('hero-submit-btn');
   const label = document.getElementById('hero-submit-label');
   btn.disabled = true;
@@ -4789,6 +4991,9 @@ async function performLaunch(form) {
   if (_heroOrch && _heroOrch.indexOf('skypilot') === 0) {
     fd.set('orchestrator_compute_backend', _withCloud('hero', _heroOrch));
   }
+  // Chosen cloud instance type ('' = cloud default). Only meaningful for a cloud
+  // orchestrator; _selectedInstanceType returns '' otherwise.
+  fd.set('orchestrator_instance_type', _selectedInstanceType('hero'));
 
   // Send the first PDF as pdf_file (backend expects this field name)
   const pdfIdx = selectedFiles.findIndex(f => f.name.toLowerCase().endsWith('.pdf'));
@@ -4926,6 +5131,7 @@ async function openContinueModal(id) {
     const backendVal = (p.compute_backend || 'local');
     const orchBackendVal = (p.orchestrator_compute_backend || 'local');
     _initSkypilotClouds();  // ensure the cloud chips exist and reflect availability
+    _prefillInstanceType('continue', p.orchestrator_instance_type || '');  // restore saved pick (consumed by the UI build)
     _selectExpBackend('continue', backendVal, orchBackendVal);  // also syncs the hidden orchestrator
     document.querySelectorAll('input[name="continue-backend"]').forEach(r => {
       if (r.value === 'slurm') {
@@ -4951,10 +5157,11 @@ async function submitContinue() {
   if (_cUnver && _cUnver.value) model = _cUnver.value;
   const backend = ([...document.querySelectorAll('input[name="continue-backend"]')].find(r => r.checked) || {}).value || 'slurm';
   const orchBackend = ([...document.querySelectorAll('input[name="continue-orch-backend"]')].find(r => r.checked) || {}).value || 'local';
+  if (_instanceTypeInvalid('continue')) { alert('Please fix the instance type before continuing.'); return; }
   const btn = document.getElementById('continue-btn');
   btn.disabled = true;
   try {
-    const payload = { additional_iterations: iter, comment, model, compute_backend: backend, orchestrator_compute_backend: _withCloud('continue', orchBackend) };
+    const payload = { additional_iterations: iter, comment, model, compute_backend: backend, orchestrator_compute_backend: _withCloud('continue', orchBackend), orchestrator_instance_type: _selectedInstanceType('continue') };
     const res = await fetch(`${APP_BASE}/api/projects/${continueProjectId}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -5053,6 +5260,7 @@ async function openRestartModal(id) {
   const backendVal = (p.compute_backend || 'local');
   const restartOrchBackendVal = (p.orchestrator_compute_backend || 'local');
   _initSkypilotClouds();  // ensure the cloud chips exist and reflect availability
+  _prefillInstanceType('restart', p.orchestrator_instance_type || '');  // restore saved pick (consumed by the UI build)
   _selectExpBackend('restart', backendVal, restartOrchBackendVal);  // also syncs the hidden orchestrator
   document.querySelectorAll('input[name="restart-backend"]').forEach(r => {
     if (r.value === 'slurm') {
@@ -5093,6 +5301,7 @@ function restartVenueChanged(sel) {
 
 async function submitRestart() {
   const btn = document.getElementById('restart-btn');
+  if (_instanceTypeInvalid('restart')) { alert('Please fix the instance type before restarting.'); return; }
   btn.disabled = true;
   try {
     // Mirror Create's read precedence: radio, then "more" dropdown, then Others
@@ -5114,6 +5323,7 @@ async function submitRestart() {
       comment: document.getElementById('restart-comment').value.trim(),
       compute_backend: ([...document.querySelectorAll('input[name="restart-backend"]')].find(r => r.checked) || {}).value || 'slurm',
       orchestrator_compute_backend: _withCloud('restart', ([...document.querySelectorAll('input[name="restart-orch-backend"]')].find(r => r.checked) || {}).value || 'local'),
+      orchestrator_instance_type: _selectedInstanceType('restart'),
       redo_deep_research: !document.getElementById('restart-keep-dr').checked,
       keep_figures: document.getElementById('restart-keep-figures').checked,
     };

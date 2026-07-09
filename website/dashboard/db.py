@@ -82,6 +82,12 @@ class Project(SQLModel, table=True):
     orchestrator_compute_backend: str = "local"
     experiment_compute_backend: str = "slurm"
     compute_backend: str = "slurm"   # Legacy, keep for backward compatibility
+    # Explicit instance/machine type for a cloud (skypilot) orchestrator VM, e.g.
+    # "n4-standard-2" (GCP) or "m6i.large" (AWS). Empty = use the cloud's default
+    # (GCP pins a known-good type; AWS lets SkyPilot's optimizer choose). Validated
+    # against SkyPilot's catalog before launch. Applies to the orchestrator VM,
+    # which — in the current phase — is also where experiments run locally.
+    orchestrator_instance_type: str = ""
     source: str = "webapp"           # "webapp" or "cli"
 
     # ── Runtime status (previously in yaml state files) ──
@@ -305,6 +311,7 @@ def _migrate(engine):
             "orchestrator_compute_backend": "TEXT DEFAULT 'local'",
             "experiment_compute_backend": "TEXT DEFAULT 'slurm'",
             "compute_backend": "TEXT DEFAULT 'slurm'",
+            "orchestrator_instance_type": "TEXT DEFAULT ''",
             "source": "TEXT DEFAULT 'webapp'",
             "layout_mode": "TEXT DEFAULT 'balanced'",
             "figure_generation": "TEXT DEFAULT 'nano_banana'",

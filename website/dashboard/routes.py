@@ -178,6 +178,8 @@ from ark.launcher import (
     select_launcher,
 )
 from ark.compute import VALID_ORCHESTRATOR_TYPES, VALID_EXPERIMENT_TYPES
+from starlette.concurrency import run_in_threadpool
+from . import compute_catalog
 from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email, send_access_declined_email
 from .auth import make_token, verify_token, verify_share_token
 from .templates import copy_venue_template, has_venue_template, copy_test_fixtures, read_test_idea
@@ -633,6 +635,26 @@ def _reject_unknown_backend(value: str, valid: frozenset, label: str) -> None:
         raise HTTPException(400, f"Unknown {label} compute backend: {value!r}")
 
 
+async def _validate_instance_type_or_400(backend: str, instance_type: str) -> str:
+    """Validate a user-chosen orchestrator instance type against the selected
+    cloud's SkyPilot catalog, BEFORE it is persisted / launched. Returns the
+    cleaned instance type ("" when none was given, or when the backend isn't a
+    cloud where the pick applies). Raises 400 when the type is definitively
+    invalid. An "unable to verify" result (sky not installed / catalog error)
+    is allowed through — the launch would surface any real problem."""
+    instance_type = (instance_type or "").strip()
+    if not instance_type:
+        return ""
+    base, _, cloud = (backend or "").partition(":")
+    # Instance type only applies to a cloud (skypilot:<cloud>) orchestrator.
+    if base != "skypilot" or cloud not in compute_catalog.SUPPORTED_CLOUDS:
+        return ""
+    result = await run_in_threadpool(compute_catalog.validate, cloud, instance_type)
+    if result["valid"] is False:
+        raise HTTPException(400, result["error"] or f"Invalid instance type: {instance_type!r}")
+    return instance_type
+
+
 def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, settings, model: str = "claude-sonnet-4-6"):
     """Write config.yaml that ark orchestrator will read."""
     # All agents run through OpenHands; the orchestrator wants a LiteLLM string.
@@ -710,6 +732,11 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
             cfg = {"type": "skypilot", "conda_env": settings.cloud_conda_env or "ark-base"}
             if cloud:
                 cfg["cloud"] = cloud
+            # User-chosen orchestrator instance/machine type (validated at the API
+            # boundary before we ever get here). Empty = fall through to the cloud's
+            # default shaping below. This is the machine the orchestrator VM (and,
+            # in this phase, its local experiments) runs on.
+            chosen_it = (getattr(project, "orchestrator_instance_type", "") or "").strip()
             # Pin a default GCP machine type so the orchestrator VM is predictable,
             # rather than left to SkyPilot's optimizer (which picked an arbitrary
             # n*-standard-2 in testing). Only for cloud == "gcp": n4-standard-2 is a
@@ -718,7 +745,8 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
             # "skypilot:{other}" suffix skips this). A CLI user's explicit
             # config.yaml bypasses this shaping entirely.
             if cloud == "gcp":
-                cfg["instance_type"] = "n4-standard-2"
+                # User pick wins; otherwise the historical known-good default.
+                cfg["instance_type"] = chosen_it or "n4-standard-2"
                 # Boot from the baked ARK image so the VM comes up with
                 # texlive-full / openhands / node CLIs preinstalled; the setup:
                 # block below then only re-runs the fast conda-specific steps
@@ -755,6 +783,10 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
                 region = (_aws_keys.get("aws_region") or "").strip() or settings.cloud_aws_region
                 if region:
                     cfg["region"] = region
+                # No AWS default machine type — SkyPilot's optimizer picks one
+                # unless the user explicitly chose an instance type.
+                if chosen_it:
+                    cfg["instance_type"] = chosen_it
             # When the user has their OWN project/account configured for the chosen
             # cloud, launch into it via their per-user SkyPilot workspace (the
             # central launcher has cross-project/cross-account access). The launcher
@@ -2180,6 +2212,35 @@ async def api_verify_aws_access(request: Request):
 # Removing old interactive Claude auth logic as we switched to manual Headless Setup
 
 
+# ── compute (instance type) API ───────────────────────────────────────────────
+
+@router.get("/api/compute/instance-types")
+async def api_compute_instance_types(request: Request, cloud: str = ""):
+    """Curated instance-type shortlist for a cloud, for the launch dropdown.
+    Returns ``{cloud, default, options:[{value,label,vcpus,mem_gb,gpu}]}``. The
+    UI also lets users type any type — validated via the endpoint below."""
+    _require_user(request)
+    cloud = (cloud or "").strip().lower()
+    return JSONResponse({
+        "cloud": cloud,
+        "default": compute_catalog.default_instance_type(cloud) or "",
+        "options": compute_catalog.curated_options(cloud),
+    })
+
+
+@router.get("/api/compute/instance-types/validate")
+async def api_compute_validate_instance_type(request: Request, cloud: str = "", instance_type: str = ""):
+    """Validate a single instance type against a cloud's SkyPilot catalog, for
+    live feedback as the user types a custom type. Returns
+    ``{valid, vcpus, mem_gb, error}``; ``valid`` is null when we can't check
+    (SkyPilot not installed / catalog error) so the UI can show "unverified"
+    rather than a hard error. The catalog call is blocking, so run it off-loop."""
+    _require_user(request)
+    result = await run_in_threadpool(
+        compute_catalog.validate, (cloud or "").strip().lower(), (instance_type or "").strip())
+    return JSONResponse(result)
+
+
 # ── projects API ──────────────────────────────────────────────────────────────
 
 @router.get("/api/projects")
@@ -2254,6 +2315,7 @@ async def api_create_project(
     comment: str = Form(""),
     compute_backend: str = Form("local"),
     orchestrator_compute_backend: str = Form("local"),
+    orchestrator_instance_type: str = Form(""),
     preset: str = Form(""),
     skip_deep_research: str = Form(""),
     skip_ai_figures: str = Form(""),
@@ -2433,6 +2495,8 @@ async def api_create_project(
 
         _reject_unknown_backend(orchestrator_compute_backend, VALID_ORCHESTRATOR_TYPES, "orchestrator")
         _reject_unknown_backend(compute_backend, VALID_EXPERIMENT_TYPES, "experiment")
+        orchestrator_instance_type = await _validate_instance_type_or_400(
+            orchestrator_compute_backend, orchestrator_instance_type)
         project = create_project(
             session,
             id=project_id,
@@ -2452,6 +2516,7 @@ async def api_create_project(
             compute_backend=compute_backend,
             experiment_compute_backend=compute_backend,
             orchestrator_compute_backend=orchestrator_compute_backend,
+            orchestrator_instance_type=orchestrator_instance_type,
             status=initial_status,
             has_pdf_upload=has_pdf_upload,
             telegram_token=telegram_token,
@@ -2562,6 +2627,7 @@ async def api_get_project(project_id: str, request: Request):
             "cost_report": _read_cost_report(pdir, project=project),
             "compute_backend": project.compute_backend,
             "orchestrator_compute_backend": project.orchestrator_compute_backend or "local",
+            "orchestrator_instance_type": getattr(project, "orchestrator_instance_type", "") or "",
             "experiment_compute_backend": project.experiment_compute_backend or project.compute_backend or "slurm",
             "error_message": project.error_message or "",
             # HITL
@@ -2956,6 +3022,15 @@ async def api_restart_project(project_id: str, request: Request):
         if new_orch_backend:
             _reject_unknown_backend(new_orch_backend, VALID_ORCHESTRATOR_TYPES, "orchestrator")
             update_project(session, project, orchestrator_compute_backend=new_orch_backend)
+        # Re-derive the orchestrator instance type whenever the restart dialog
+        # touches cloud selection (either key present). Validate against the
+        # EFFECTIVE backend (the new one if switched, else the project's current),
+        # and persist the cleaned value — "" when the backend has no instance type
+        # (local/slurm) so a stale cloud pick can't leak across a backend switch.
+        if "orchestrator_instance_type" in body or "orchestrator_compute_backend" in body:
+            eff_backend = new_orch_backend or project.orchestrator_compute_backend or "local"
+            it = await _validate_instance_type_or_400(eff_backend, body.get("orchestrator_instance_type") or "")
+            update_project(session, project, orchestrator_instance_type=it)
 
         _write_config_yaml(pdir, project, _owner or user, settings, model=model)
 
@@ -3042,6 +3117,12 @@ async def api_continue_project(project_id: str, request: Request):
         if new_orch_backend:
             _reject_unknown_backend(new_orch_backend, VALID_ORCHESTRATOR_TYPES, "orchestrator")
             update_project(session, project, orchestrator_compute_backend=new_orch_backend)
+        # Same instance-type re-derivation as restart (see there): validate the
+        # pick against the effective backend and persist the cleaned value.
+        if "orchestrator_instance_type" in body or "orchestrator_compute_backend" in body:
+            eff_backend = new_orch_backend or project.orchestrator_compute_backend or "local"
+            it = await _validate_instance_type_or_400(eff_backend, body.get("orchestrator_instance_type") or "")
+            update_project(session, project, orchestrator_instance_type=it)
 
         _write_config_yaml(pdir, project, _owner or user, settings, model=model)
         if comment:
