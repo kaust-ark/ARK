@@ -144,6 +144,14 @@ _stuck_alerted: set[str] = set()     # project_ids already sent stuck alert
 _tg_offsets: dict[str, int] = {}     # project_id → last Telegram update_id seen
 STUCK_MINUTES = 60
 
+# Grace period after a cloud orchestrator turns terminal before its VM is torn
+# down (see _reap_terminal_clusters). Long enough for post-run inspection and for
+# the orchestrator's own shutdown — including Layer-1 experiment-cluster teardown
+# — to finish before we pull the VM out from under it. Autostop
+# (ark/compute/_sky.py) stays the crash-safety backstop if the webapp is down
+# through this window.
+CLUSTER_REAP_GRACE_MINUTES = 5
+
 
 def _notify_terminal_sweep(session, settings):
     """Reliable terminal notifications: DONE → email the OWNER; FAILED → email
@@ -210,6 +218,73 @@ def _notify_terminal_sweep(session, settings):
                     pass
     except Exception as e:
         logger.warning(f"terminal notify sweep failed: {e}")
+
+
+def _reap_terminal_clusters(session, settings):
+    """Reliable sweep: tear down a finished cloud orchestrator's VM after a grace
+    period.
+
+    Same rationale as _gc_terminal_envs / _notify_terminal_sweep: a SkyPilot
+    orchestrator self-reports `done`/`failed` straight to the DB, so the poll-loop
+    transition hook never observes running→terminal for it and nothing reaps its
+    VM — today it lingers until the ~60-min autostop backstop bills out. This
+    sweep `sky down`s the cluster CLUSTER_REAP_GRACE_MINUTES after the terminal
+    transition (updated_at), do-once via a `.ark_cluster_reaped` marker.
+
+    Only `skypilot:` handles own a real VM to reap — `local:` (pid) and SLURM
+    (bare job id) handles have nothing to down, so they're skipped. `stopped` is
+    excluded: a user Stop already tears the cluster down synchronously (routes.py),
+    so its VM is already going. Autostop remains the crash-safety backstop if the
+    webapp is down through the grace window.
+    """
+    from datetime import datetime, timedelta
+    from .db import Project
+    from sqlmodel import select
+    try:
+        now = datetime.utcnow()
+        grace_cutoff = now - timedelta(minutes=CLUSTER_REAP_GRACE_MINUTES)
+        # Lower bound so a fresh boot doesn't re-`sky down` ancient rows (their VMs
+        # are long gone via autostop); comfortably covers the autostop backstop's
+        # reach. The marker makes this idempotent regardless, but the bound keeps
+        # the sweep from scanning/among historical terminals every cycle.
+        window_start = now - timedelta(hours=6)
+        rows = session.exec(
+            select(Project).where(
+                Project.status.in_(["done", "failed"]),
+                Project.updated_at > window_start,
+                Project.updated_at <= grace_cutoff,
+            )
+        ).all()
+        for p in rows:
+            handle = p.slurm_job_id or ""
+            if not handle.startswith("skypilot:"):
+                continue
+            pdir = settings.projects_root / p.user_id / p.id
+            if not pdir.is_dir():
+                continue
+            marker = pdir / ".ark_cluster_reaped"
+            if marker.exists():
+                continue
+            try:
+                # cancel() dispatches `sky down` on a daemon thread and returns
+                # immediately; a cluster already gone (autostop reaped it first) is
+                # a harmless no-op there. Marker after a successful dispatch =
+                # do-once; if dispatch itself raised we skip the marker and retry
+                # next cycle (autostop still backstops meanwhile).
+                launcher_from_handle(handle, log_fn=logger.info).cancel(handle, pdir)
+            except Exception as e:
+                logger.error(f"cluster reap failed for {p.id}: {e}")
+                continue
+            try:
+                marker.write_text(handle)
+            except Exception:
+                pass
+            logger.info(
+                f"cluster reap: {p.id} ({p.status}) → sky down {handle} "
+                f"(grace {CLUSTER_REAP_GRACE_MINUTES}m elapsed)"
+            )
+    except Exception as e:
+        logger.warning(f"cluster reap sweep failed: {e}")
 
 
 def _stuck_watchdog(p, launcher, pdir):
@@ -383,6 +458,11 @@ async def _poll_jobs(app: FastAPI):
                 # DONE → owner email; FAILED → admin email (reliable sweep, same
                 # rationale as the GC sweep)
                 _notify_terminal_sweep(session, settings)
+                # Reap finished cloud orchestrator VMs after a grace period. Same
+                # reliable-sweep rationale: self-reported terminals bypass the
+                # transition hook, so a cloud VM would otherwise linger until
+                # autostop. Autostop stays the crash-safety backstop.
+                _reap_terminal_clusters(session, settings)
 
         except asyncio.CancelledError:
             break
