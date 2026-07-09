@@ -209,7 +209,7 @@ def test_orchestrator_image_id_uses_central_not_tenant_project(tmp_path, monkeyp
     occ = _write_and_read(tmp_path, monkeypatch,
                           central_project="kaust-pf2023-marco", user_gcp_project="tenant-proj")
     assert occ["image_id"] == (
-        "projects/kaust-pf2023-marco/global/images/ark-debian-base-v6")
+        "projects/kaust-pf2023-marco/global/images/ark-debian-base-v7")
     # Boot image is central, but the launch still lands in the tenant's project.
     from website.dashboard.skyworkspaces import workspace_name_for
     assert occ["workspace"] == workspace_name_for("alice")
