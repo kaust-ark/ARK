@@ -41,6 +41,15 @@ _DEFAULTS = {
     "CLOUD_LAUNCHER_ORG_CUSTOMER_ID": "",  # directory customer id of the launcher SA's org (for Domain Restricted Sharing allowlists)
     "CLOUD_LAUNCHER_SA_KEY": "~/.config/ark/ark-launcher-sa-key.json",
     "CLOUD_CONDA_ENV": "ark-base",   # base conda env cloned per project on the remote
+    # AWS launcher (parallels the GCP launcher SA). The central launcher identity
+    # in the operator's account assumes a per-tenant role in each user's account
+    # (STS AssumeRole); the user grants access by creating that role with a trust
+    # policy naming our identity. No per-user key material touches this DB.
+    "CLOUD_LAUNCHER_ROLE_ARN": "",   # ARN of OUR launcher identity (named in each tenant trust policy)
+    "CLOUD_AWS_REGION": "",          # default region for tenant launches when a user sets none
+    "CLOUD_LAUNCHER_AWS_PROFILE": "ark-launcher",  # base ~/.aws profile holding the launcher's source creds
+    "CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE": "",    # set (e.g. Ec2InstanceMetadata) to use the host role instead of a base profile
+    "CLOUD_LAUNCHER_AWS_EXTERNAL_ID": "",          # optional STS ExternalId (confused-deputy protection)
 }
 
 
@@ -125,6 +134,27 @@ CLOUD_LAUNCHER_SA=
 CLOUD_LAUNCHER_ORG_CUSTOMER_ID=
 CLOUD_LAUNCHER_SA_KEY=~/.config/ark/ark-launcher-sa-key.json
 CLOUD_CONDA_ENV=ark-base
+
+# AWS SkyPilot compute (parallels the GCP launcher above). The central launcher
+# identity in the operator's account assumes a per-tenant role in each user's
+# account (STS AssumeRole); the user grants access by creating that role with a
+# trust policy naming CLOUD_LAUNCHER_ROLE_ARN. No per-user key material is stored.
+# Run scripts/setup_ark_launcher_aws.sh to create the launcher identity + base
+# profile. Blank CLOUD_LAUNCHER_ROLE_ARN ⇒ AWS SkyPilot runs are disabled.
+CLOUD_LAUNCHER_ROLE_ARN=
+# Default region for tenant launches when a user sets none (e.g. us-east-1).
+CLOUD_AWS_REGION=
+# Base ~/.aws profile that holds the launcher's source credentials (the identity
+# whose ARN is CLOUD_LAUNCHER_ROLE_ARN). Each per-user profile assumes the
+# tenant role via this one. Leave as the setup script's default unless you renamed it.
+CLOUD_LAUNCHER_AWS_PROFILE=ark-launcher
+# Instead of a base profile, source the launcher creds from the webapp host's own
+# role: set to Ec2InstanceMetadata (host runs on EC2) or Environment (AWS_* env
+# vars). Blank ⇒ use CLOUD_LAUNCHER_AWS_PROFILE.
+CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE=
+# Optional STS ExternalId embedded in the generated trust policy + used on assume
+# (confused-deputy protection). Blank ⇒ omitted.
+CLOUD_LAUNCHER_AWS_EXTERNAL_ID=
 """
     _env_file().write_text(content)
     print(f"Created config: {_env_file()}")
@@ -215,6 +245,30 @@ class Settings:
         self.cloud_launcher_sa_key: str = merged.get(
             "CLOUD_LAUNCHER_SA_KEY", "~/.config/ark/ark-launcher-sa-key.json")
         self.cloud_conda_env: str = merged.get("CLOUD_CONDA_ENV", "ark-base")
+
+        # AWS launcher settings (parallel to the GCP launcher SA above). The
+        # central launcher identity assumes a per-tenant role in each user's AWS
+        # account; users grant access by creating that role with a trust policy
+        # naming `cloud_launcher_role_arn`. No per-user key is stored.
+        # `cloud_launcher_role_arn` is shown in the onboarding grant instructions;
+        # empty ⇒ AWS SkyPilot runs are disabled (mirrors an empty cloud_gcp_project).
+        self.cloud_launcher_role_arn: str = merged.get("CLOUD_LAUNCHER_ROLE_ARN", "")
+        # Default region for tenant launches when a user configures none.
+        self.cloud_aws_region: str = merged.get("CLOUD_AWS_REGION", "")
+        # Base ~/.aws profile holding the launcher's source creds. Each rendered
+        # per-user profile (skyworkspaces.render_aws_profiles) assumes the tenant
+        # role via this one (source_profile). Matches setup_ark_launcher_aws.sh.
+        self.cloud_launcher_aws_profile: str = merged.get(
+            "CLOUD_LAUNCHER_AWS_PROFILE", "ark-launcher")
+        # Alternative to the base profile: source the launcher creds from the
+        # host's own role (Ec2InstanceMetadata) or env (Environment). When set,
+        # rendered per-user profiles use credential_source instead of source_profile.
+        self.cloud_launcher_aws_credential_source: str = merged.get(
+            "CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE", "")
+        # Optional STS ExternalId (confused-deputy protection): embedded in the
+        # generated trust policy and passed on assume. Empty ⇒ omitted.
+        self.cloud_launcher_aws_external_id: str = merged.get(
+            "CLOUD_LAUNCHER_AWS_EXTERNAL_ID", "")
 
         self.projects_root.mkdir(parents=True, exist_ok=True)
 

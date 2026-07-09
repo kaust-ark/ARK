@@ -464,7 +464,7 @@ idea2paper's **v2 cloud architecture** decouples the *Control Plane* from the *E
 <summary><strong>Configuration Hierarchy</strong></summary>
 
 idea2paper uses a three-tier configuration model for cloud compute:
-1. **System Defaults**: Set in `webapp.env` (the central `CLOUD_GCP_PROJECT` holding the baked ARK image, plus `CLOUD_LAUNCHER_SA`, `CLOUD_LAUNCHER_SA_KEY`, and `CLOUD_CONDA_ENV`).
+1. **System Defaults**: Set in `webapp.env` — for GCP the central `CLOUD_GCP_PROJECT` holding the baked ARK image, plus `CLOUD_LAUNCHER_SA`, `CLOUD_LAUNCHER_SA_KEY`; for AWS `CLOUD_LAUNCHER_ROLE_ARN` + `CLOUD_LAUNCHER_AWS_PROFILE`; plus the shared `CLOUD_CONDA_ENV`.
 2. **Global User Defaults**: Set in the **Settings** panel (⚙️). These apply to all your projects.
 3. **Project Overrides**: Set during project creation or restart. These have the highest priority.
 
@@ -584,9 +584,93 @@ experiment_compute_backend:
 
 </details>
 
+<details>
+<summary><strong>☁️ Amazon Web Services (AWS) — via SkyPilot</strong></summary>
+
+AWS onboarding is key-less too, but where GCP grants a cross-*project* IAM role, AWS grants a cross-*account* role: you create an **`ark-launcher` IAM role in your own account** whose trust policy names idea2paper's central launcher identity, which then assumes it (STS AssumeRole) to boot clusters in your account. No access key ever leaves your account.
+
+Steps 0–2 below are the operator/self-hoster server setup (run once on the webapp host); the end user only does the dashboard grant/verify (step 3).
+
+#### 0. (Operator/self-hoster) Install the AWS SDK + CLI
+
+Into the **same environment the webapp runs in** (e.g. `ark-dev`), so both the launch path and the onboarding **Verify** probe can reach AWS:
+
+```bash
+pip install 'skypilot[aws]'        # SkyPilot's AWS provider (brings boto3 + botocore)
+pip install 'botocore[crt]'        # AWS CRT signing — required by SkyPilot's AWS auth
+```
+
+Install the **AWS CLI** too (the setup script in step 2 uses it) — see [AWS CLI install](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html).
+
+#### 1. (Operator/self-hoster) Configure AWS CLI credentials
+
+The launcher needs a base set of credentials in `~/.aws` to act as. Pick one:
+
+```bash
+# Option A — IAM Identity Center / SSO (recommended: short-lived creds)
+aws configure sso --profile ark-launcher   # set the SSO start URL, region, role
+aws sso login --profile ark-launcher        # refresh the session whenever it expires
+
+# Option B — static access keys
+aws configure --profile ark-launcher        # paste an access key id + secret
+```
+
+Confirm it resolves: `aws sts get-caller-identity --profile ark-launcher`.
+
+> The profile name here must match `CLOUD_LAUNCHER_AWS_PROFILE` (step 2). On an EC2 host you can skip this and set `CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE=Ec2InstanceMetadata` instead, using the host's instance role.
+
+#### 2. (Operator/self-hoster) Create the central launcher identity
+
+```bash
+./scripts/setup_ark_launcher_aws.sh          # uses the credentials from step 1
+```
+
+This creates the `ark-launcher` IAM identity, grants it `sts:AssumeRole` on every tenant `ark-launcher` role, writes/reuses the base `~/.aws` profile, and prints the ARN to add to `~/.ark/webapp.env`. Then add these lines and restart `ark webapp`:
+
+```bash
+CLOUD_LAUNCHER_ROLE_ARN=arn:aws:iam::<account>:user/ark-launcher
+CLOUD_LAUNCHER_AWS_PROFILE=ark-launcher
+# CLOUD_AWS_REGION=us-east-1                       # default region for launches
+# CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE=Ec2InstanceMetadata  # on an EC2 host, use its role instead of keys
+# CLOUD_LAUNCHER_AWS_EXTERNAL_ID=...               # optional confused-deputy protection
+```
+
+> **Existing installs:** the AWS block is only auto-written into *freshly created* `webapp.env` files — if yours predates AWS support, add the lines above by hand. Until `CLOUD_LAUNCHER_ROLE_ARN` resolves (either set explicitly or derivable from the profile), the dashboard shows *"(launcher identity not configured on server)"*.
+
+There is **no baked AMI step** — AWS clusters boot a stock image and run the launcher's `setup_commands` (slower first boot; a baked AMI can be added later).
+
+#### 3. Grant the Launcher Role & Verify
+
+In the dashboard, open **Settings → Compute → AWS**:
+1. Enter your 12-digit **AWS Account ID** and a **Region**.
+2. Run the shown `aws iam create-role` + `attach-role-policy` script on **your** account (it creates the `ark-launcher` role with a trust policy naming the launcher identity and attaches SkyPilot's `AmazonEC2FullAccess` / `IAMFullAccess` / `AmazonS3FullAccess`).
+3. Click **Verify access** — this does a real `sts:AssumeRole` and fails loudly if the trust is missing.
+
+#### 4. `config.yaml` Reference (advanced / CLI only)
+
+The webapp generates this from your Settings (submitting `cloud: aws`). For a manual/CLI project:
+
+```yaml
+orchestrator_compute_backend:
+  type: skypilot
+  cloud: aws
+  # region: us-east-1
+  # idle_minutes_to_autostop: 60     # crash safety-net: auto-DOWN when idle
+
+experiment_compute_backend:
+  type: skypilot
+  cloud: aws
+  accelerators: A10G:1               # SkyPilot accelerator spec ("<NAME>:<COUNT>")
+  use_spot: true
+```
+
+See [`SKYPILOT_PLAN.md`](SKYPILOT_PLAN.md) §6.1 for the multi-cloud design.
+
+</details>
+
 ---
 
-> Running on **AWS, Azure, or Kubernetes** (or want SkyPilot to auto-select the cheapest cloud)? Use the SkyPilot block below and configure that cloud's credentials per SkyPilot's docs at [https://docs.skypilot.co](https://docs.skypilot.co).
+> Running on **Azure or Kubernetes** (or want SkyPilot to auto-select the cheapest cloud)? Use the SkyPilot block below and configure that cloud's credentials per SkyPilot's docs at [https://docs.skypilot.co](https://docs.skypilot.co).
 
 <details>
 <summary><strong>☁️ SkyPilot (cross-cloud &amp; Kubernetes)</strong></summary>

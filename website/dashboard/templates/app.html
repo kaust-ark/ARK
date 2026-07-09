@@ -91,6 +91,26 @@
     }
     .gate-banner .gate-dot { font-size: 1rem; }
 
+    /* ── maintenance banner (admin-authored notice, all users) ── */
+    .maint-banner {
+      border-radius: 10px; padding: 10px 16px; margin-bottom: 14px;
+      display: flex; align-items: center; gap: 10px;
+      font-size: .9rem; font-weight: 500;
+    }
+    .maint-banner .maint-dot { font-size: 1rem; }
+    .maint-banner.level-info { background: #eff6ff; border: 1px solid #93c5fd; color: #1e40af; }
+    .maint-banner.level-warning { background: #fffbeb; border: 1px solid #fbbf24; color: #92400e; }
+    .maint-banner.level-critical { background: #fee2e2; border: 1px solid #f87171; color: #991b1b; }
+
+    /* ── admin: maintenance controls ── */
+    .admin-maint { background: #fff; border: 1px solid var(--card-border); border-radius: 12px; box-shadow: var(--shadow); padding: 16px 18px; margin-bottom: 18px; }
+    .admin-maint h3 { font-size: 1rem; font-weight: 700; margin: 0 0 4px; }
+    .admin-maint .admin-maint-hint { font-size: .82rem; color: var(--text-muted); margin: 0 0 12px; }
+    .admin-maint textarea { width: 100%; min-height: 54px; resize: vertical; padding: 8px 10px; font: inherit; font-size: .9rem; border: 1px solid var(--card-border); border-radius: 8px; box-sizing: border-box; }
+    .admin-maint-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+    .admin-maint-row select { padding: 6px 10px; font: inherit; font-size: .88rem; border: 1px solid var(--card-border); border-radius: 8px; }
+    .admin-maint-row .admin-maint-spacer { flex: 1; }
+
     /* ── admin ── */
     #nav-admin-link {
       display: inline-flex; align-items: center; justify-content: center;
@@ -317,6 +337,9 @@
     }
     .cloud-provider-pane { display: none; }
     .cloud-provider-pane.active { display: block; }
+    .cloud-pane-btn { background: none; border: 1px solid var(--card-border,rgba(0,0,0,.12)); padding: 6px 14px; font-size: .82rem; font-weight: 500; color: var(--text-second); border-radius: 8px; cursor: pointer; transition: all .15s; }
+    .cloud-pane-btn:hover { background: var(--bg); color: var(--text-primary); }
+    .cloud-pane-btn.active { background: #f0fdfa; color: var(--teal-dark); font-weight: 600; border-color: var(--teal-dark,#0d9488); }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
     /* ── project detail ── */
@@ -716,6 +739,12 @@
 
 <!-- DASHBOARD PAGE -->
 <div id="page-dashboard" class="page">
+  <!-- Maintenance banner — admin-authored notice shown to ALL users -->
+  <div id="maintenance-banner" class="maint-banner level-warning" style="display:none">
+    <span class="maint-dot">🛠️</span>
+    <span id="maintenance-banner-text"></span>
+  </div>
+
   <!-- Gate banner — shown to ALL users when submissions are disabled -->
   <div id="gate-banner" class="gate-banner" style="display:none">
     <span class="gate-dot">🔴</span>
@@ -975,10 +1004,12 @@ Strict — hit the exact page limit (spends the most tokens).">
                 <input type="radio" name="compute_backend" value="slurm" checked />
                 <span class="model-chip">🔧 Slurm</span>
               </label>
-              <label class="model-option" id="hero-backend-skypilot-label">
-                <input type="radio" name="compute_backend" value="skypilot" />
-                <span class="model-chip">🚀 SkyPilot</span>
-              </label>
+              <!-- One selectable chip per supported cloud (radio values
+                   "skypilot:<cloud>"), injected by _initSkypilotClouds. Clouds the
+                   operator hasn't configured render disabled with a hover hint.
+                   "SkyPilot" is our provisioning mechanism and is deliberately not
+                   surfaced — users pick a compute destination, not a method. -->
+              <span id="hero-skypilot-cloud-chips" style="display:contents"></span>
             </div>
           </div>
           <!-- Orchestrator Backend picker hidden: the orchestrator is a lightweight
@@ -995,7 +1026,7 @@ Strict — hit the exact page limit (spends the most tokens).">
               </label>
               <label class="model-option" id="hero-orch-backend-skypilot-label">
                 <input type="radio" name="orchestrator_compute_backend" value="skypilot" />
-                <span class="model-chip">🚀 SkyPilot</span>
+                <span class="model-chip">☁️ Cloud</span>
               </label>
               <label class="model-option" id="hero-orch-backend-slurm-label">
                 <input type="radio" name="orchestrator_compute_backend" value="slurm" />
@@ -1183,6 +1214,23 @@ Strict — hit the exact page limit (spends the most tokens).">
       <span class="admin-gate-badge" id="admin-page-gate-badge">—</span>
       <button class="btn-admin btn-admin-toggle" id="btn-admin-page-toggle" onclick="adminPageToggle()">…</button>
       <button class="btn-admin btn-admin-kill" onclick="adminPageKillAll()" data-i18n="stop_all">Stop All</button>
+    </div>
+  </div>
+
+  <!-- Maintenance banner control -->
+  <div class="admin-maint">
+    <h3 data-i18n="maintenance_banner">Maintenance banner</h3>
+    <p class="admin-maint-hint" data-i18n="maintenance_banner_hint">Shown to all users at the top of the dashboard. Leave empty and Publish to clear.</p>
+    <textarea id="admin-maint-message" data-i18n-placeholder="maintenance_placeholder" placeholder="e.g. Scheduled maintenance Sat 22:00–23:00 UTC — runs may be paused."></textarea>
+    <div class="admin-maint-row">
+      <select id="admin-maint-level">
+        <option value="info" data-i18n="maint_level_info">Info (blue)</option>
+        <option value="warning" selected data-i18n="maint_level_warning">Warning (amber)</option>
+        <option value="critical" data-i18n="maint_level_critical">Critical (red)</option>
+      </select>
+      <span class="admin-maint-spacer"></span>
+      <button class="btn-admin btn-admin-kill" onclick="adminClearMaintenance()" data-i18n="clear">Clear</button>
+      <button class="btn-admin btn-admin-toggle" onclick="adminSaveMaintenance()" data-i18n="publish">Publish</button>
     </div>
   </div>
 
@@ -1445,14 +1493,14 @@ Strict — hit the exact page limit (spends the most tokens).">
       <label>Experiments Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="continue-backend" value="slurm" checked /><span class="model-chip">🔧 Slurm</span></label>
-        <label class="model-option" id="continue-backend-skypilot-label"><input type="radio" name="continue-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
+        <span id="continue-skypilot-cloud-chips" style="display:contents"></span>
       </div>
     </div>
     <div class="form-group" style="display:none"><!-- orchestrator runs detached-local; picker hidden -->
       <label>Orchestrator Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="continue-orch-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
-        <label class="model-option" id="continue-orch-backend-skypilot-label"><input type="radio" name="continue-orch-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
+        <label class="model-option" id="continue-orch-backend-skypilot-label"><input type="radio" name="continue-orch-backend" value="skypilot" /><span class="model-chip">☁️ Cloud</span></label>
         <label class="model-option"><input type="radio" name="continue-orch-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
       </div>
     </div>
@@ -1629,14 +1677,14 @@ Strict — hit the exact page limit (spends the most tokens).">
       <label>Experiments Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="restart-backend" value="slurm" checked /><span class="model-chip">🔧 Slurm</span></label>
-        <label class="model-option" id="restart-backend-skypilot-label"><input type="radio" name="restart-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
+        <span id="restart-skypilot-cloud-chips" style="display:contents"></span>
       </div>
     </div>
     <div class="form-group" style="display:none"><!-- orchestrator runs detached-local; picker hidden -->
       <label>Orchestrator Backend</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <label class="model-option"><input type="radio" name="restart-orch-backend" value="local" checked /><span class="model-chip">🖥️ Local</span></label>
-        <label class="model-option" id="restart-orch-backend-skypilot-label"><input type="radio" name="restart-orch-backend" value="skypilot" /><span class="model-chip">🚀 SkyPilot</span></label>
+        <label class="model-option" id="restart-orch-backend-skypilot-label"><input type="radio" name="restart-orch-backend" value="skypilot" /><span class="model-chip">☁️ Cloud</span></label>
         <label class="model-option"><input type="radio" name="restart-orch-backend" value="slurm" /><span class="model-chip">🔧 Slurm</span></label>
       </div>
     </div>
@@ -1864,7 +1912,7 @@ Strict — hit the exact page limit (spends the most tokens).">
       <div class="settings-sidebar">
         <button class="settings-tab-btn active" onclick="switchSettingsTab('tab-llms')" id="btn-tab-llms">API Keys</button>
         <button class="settings-tab-btn" onclick="switchSettingsTab('tab-github')" id="btn-tab-github">GitHub</button>
-        <button class="settings-tab-btn" onclick="switchSettingsTab('tab-cloud')" id="btn-tab-cloud">Compute (SkyPilot)</button>
+        <button class="settings-tab-btn" onclick="switchSettingsTab('tab-cloud')" id="btn-tab-cloud">Compute</button>
         <button class="settings-tab-btn" onclick="switchSettingsTab('tab-telegram')" id="btn-tab-telegram" data-i18n="telegram">Telegram</button>
       </div>
 
@@ -1972,9 +2020,18 @@ Strict — hit the exact page limit (spends the most tokens).">
 
         <!-- Tab: Compute (SkyPilot) -->
         <div class="settings-tab-pane" id="tab-cloud">
+          <!-- Cloud provider switcher: GCP / AWS. Both isolate per user via the
+               shared launcher identity (a cross-project SA grant on GCP, a cross-
+               account role trust on AWS); pick whichever cloud you have an account on. -->
+          <div style="display:flex;gap:6px;margin-bottom:14px">
+            <button type="button" class="cloud-pane-btn active" id="cp-btn-gcp"
+                    onclick="switchCloudPane('gcp')">Google Cloud</button>
+            <button type="button" class="cloud-pane-btn" id="cp-btn-aws"
+                    onclick="switchCloudPane('aws')">AWS</button>
+          </div>
           <!-- GCP Pane -->
           <div class="cloud-provider-pane active" id="cp-gcp">
-            <p style="font-size:.8rem;color:var(--text-second);margin-bottom:12px;">Configure your Google Cloud project for SkyPilot remote runs.</p>
+            <p style="font-size:.8rem;color:var(--text-second);margin-bottom:12px;">Configure your Google Cloud project for remote cloud runs.</p>
             <div class="form-group">
               <label style="font-size:.75rem">GCP Project ID</label>
               <input type="text" id="settings-gcp-project" placeholder="my-research-project" />
@@ -1985,7 +2042,7 @@ Strict — hit the exact page limit (spends the most tokens).">
                  exactly what they run on their end, then verify here so a missing
                  binding fails loudly, not at launch. -->
             <div class="form-group" style="background:var(--surface-2,rgba(0,0,0,.03));border-radius:8px;padding:12px">
-              <label style="font-size:.75rem;font-weight:600">Grant compute access (SkyPilot)</label>
+              <label style="font-size:.75rem;font-weight:600">Grant compute access</label>
               <p style="font-size:.72rem;color:var(--text-second);margin:6px 0 10px">
                 Runs launch into <em>your</em> GCP project via a shared launcher
                 identity — no service-account key to upload. You do a one-time setup
@@ -2100,11 +2157,11 @@ Strict — hit the exact page limit (spends the most tokens).">
               const ROLE_HELP = {
                 'roles/browser': 'read project metadata so the launcher can find your project',
                 'roles/compute.admin': 'create and manage the VMs your runs execute on',
-                'roles/iam.serviceAccountAdmin': 'set up the instance service account SkyPilot uses',
+                'roles/iam.serviceAccountAdmin': 'set up the instance service account ARK uses',
                 'roles/iam.serviceAccountUser': 'attach that service account to the VMs',
                 'roles/serviceusage.serviceUsageAdmin': 'enable the Compute/Storage APIs if not already on',
-                'roles/storage.admin': 'store run artifacts and SkyPilot bucket data',
-                'roles/iam.securityAdmin': 'manage the IAM bindings SkyPilot needs on the VMs',
+                'roles/storage.admin': 'store run artifacts and bucket data',
+                'roles/iam.securityAdmin': 'manage the IAM bindings ARK needs on the VMs',
               };
 
               // APIs SkyPilot (and our verify probe) need before anything works.
@@ -2158,7 +2215,7 @@ Strict — hit the exact page limit (spends the most tokens).">
                   '# Point gcloud at your project\n' +
                   'gcloud config set project "$PROJECT"\n' +
                   '\n' +
-                  '# Enable the APIs SkyPilot needs\n' +
+                  '# Enable the APIs ARK needs\n' +
                   'gcloud services enable \\\n' + apis + ' \\\n' +
                   '  --project "$PROJECT"\n' +
                   '\n' +
@@ -2251,6 +2308,225 @@ Strict — hit the exact page limit (spends the most tokens).">
             })();
             </script>
           </div>
+
+          <!-- AWS Pane -->
+          <div class="cloud-provider-pane" id="cp-aws">
+            <p style="font-size:.8rem;color:var(--text-second);margin-bottom:12px;">Configure your AWS account for remote cloud runs.</p>
+            <div class="form-row">
+              <div class="form-group">
+                <label style="font-size:.75rem">AWS Account ID</label>
+                <input type="text" id="settings-aws-account" placeholder="123456789012" inputmode="numeric" />
+              </div>
+              <div class="form-group">
+                <label style="font-size:.75rem">Region</label>
+                <input type="text" id="settings-aws-region" placeholder="us-east-1" />
+              </div>
+            </div>
+
+            <!-- SkyPilot workspaces onboarding (AWS): the user creates an
+                 ark-launcher role in THEIR account that trusts our launcher
+                 identity (no key upload). We spell out exactly what they run,
+                 then verify here so a missing/incorrect trust fails loudly. -->
+            <div class="form-group" style="background:var(--surface-2,rgba(0,0,0,.03));border-radius:8px;padding:12px">
+              <label style="font-size:.75rem;font-weight:600">Grant compute access</label>
+              <p style="font-size:.72rem;color:var(--text-second);margin:6px 0 10px">
+                Runs launch into <em>your</em> AWS account via a shared launcher
+                identity that assumes a role you create — no access key to upload.
+                You do a one-time setup on your AWS account, then click Verify. Full walkthrough:
+              </p>
+
+              <!-- Step 1: an account -->
+              <div style="font-size:.72rem;color:var(--text-second);margin-bottom:4px">
+                <strong>1. Have an AWS account.</strong>
+              </div>
+              <ul style="font-size:.7rem;color:var(--text-second);margin:0 0 10px 16px;padding:0">
+                <li>Find your 12-digit <strong>Account ID</strong> (top-right account menu in the <a href="https://console.aws.amazon.com/" target="_blank" rel="noopener">AWS Console</a>) and paste it, plus your preferred <strong>Region</strong>, above.</li>
+              </ul>
+
+              <!-- Step 2: the principal that will assume the role -->
+              <div style="font-size:.72rem;color:var(--text-second);margin-bottom:4px">
+                <strong>2. This is the identity you grant access to (it will assume the role you create):</strong>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
+                <code id="settings-aws-launcher-arn" style="flex:1;font-size:.72rem;word-break:break-all">(loading launcher identity…)</code>
+                <button type="button" id="settings-aws-copy-arn" class="btn btn-secondary" style="font-size:.7rem;white-space:nowrap">Copy</button>
+              </div>
+
+              <!-- Step 3: run the setup -->
+              <div style="font-size:.72rem;color:var(--text-second);margin-bottom:4px">
+                <strong>3. Run this setup</strong> in
+                <a href="https://console.aws.amazon.com/cloudshell/home" target="_blank" rel="noopener">CloudShell</a>
+                (no install — opens in your browser) or a local
+                <a href="https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" target="_blank" rel="noopener"><code style="font-size:.68rem">aws</code></a> CLI.
+                It creates the <code style="font-size:.68rem">ark-launcher</code> role that trusts the launcher and attaches the compute policies ARK needs:
+              </div>
+              <pre id="settings-aws-cli" style="font-size:.68rem;line-height:1.45;background:var(--bg,#fff);border:1px solid var(--card-border,rgba(0,0,0,.1));border-radius:6px;padding:8px 10px;overflow-x:auto;margin:0 0 4px;white-space:pre">Enter your AWS Account ID above to generate the setup script.</pre>
+              <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+                <button type="button" id="settings-aws-copy-cli" class="btn btn-secondary" style="font-size:.7rem">Copy setup script</button>
+                <a id="settings-aws-console-link" href="https://console.aws.amazon.com/iam/home#/roles" target="_blank" rel="noopener" style="font-size:.7rem;color:var(--text-muted)">…or create the role via the IAM Console →</a>
+              </div>
+
+              <!-- Step 4: verify -->
+              <div style="font-size:.72rem;color:var(--text-second);margin-bottom:4px">
+                <strong>4. Come back here and confirm</strong> we can reach your account:
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <button type="button" id="settings-aws-verify-btn" class="btn btn-secondary" style="font-size:.75rem">Verify access</button>
+                <span id="settings-aws-verify-status" style="font-size:.75rem;color:var(--text-muted)"></span>
+              </div>
+
+              <details style="margin-top:10px">
+                <summary style="font-size:.72rem;color:var(--text-muted);cursor:pointer;user-select:none">Prefer the IAM Console? / What each policy is for</summary>
+                <ol style="font-size:.7rem;color:var(--text-second);margin:6px 0 0 16px;padding:0">
+                  <li>Open <a href="https://console.aws.amazon.com/iam/home#/roles" target="_blank" rel="noopener">IAM → Roles → Create role</a>, choose <em>Custom trust policy</em>, and paste the trust JSON from the script (it names the launcher identity from step 2).</li>
+                  <li>Attach the policies below, and name the role exactly <code style="font-size:.68rem">ark-launcher</code>.</li>
+                </ol>
+                <ul id="settings-aws-required-policies" style="font-size:.7rem;color:var(--text-second);margin:6px 0 0 16px"></ul>
+              </details>
+            </div>
+            <script>
+            // Onboarding for the SkyPilot launcher grant (AWS). We render copy-paste
+            // instructions (create-role with a trust policy naming the launcher +
+            // attach SkyPilot's policies) from the launcher ARN and required
+            // policies, then let the user verify the resulting cross-account trust.
+            (function () {
+              const btn = document.getElementById('settings-aws-verify-btn');
+              const statusEl = document.getElementById('settings-aws-verify-status');
+              const arnEl = document.getElementById('settings-aws-launcher-arn');
+              const policiesEl = document.getElementById('settings-aws-required-policies');
+              const cliEl = document.getElementById('settings-aws-cli');
+              const acctEl = document.getElementById('settings-aws-account');
+              const copyArnBtn = document.getElementById('settings-aws-copy-arn');
+              const copyCmdBtn = document.getElementById('settings-aws-copy-cli');
+              if (!btn) return;
+
+              // Latest launcher identity + policies + tenant role name, refreshed by
+              // the /info fetch and verify.
+              let _arn = '';
+              let _externalId = '';
+              let _policies = [];
+              let _roleName = 'ark-launcher';
+
+              // Short, human explanation of why each policy is needed (SkyPilot's
+              // documented AWS set). Keys unknown to this map fall back to the name.
+              const POLICY_HELP = {
+                'AmazonEC2FullAccess': 'create and manage the VMs your runs execute on',
+                'IAMFullAccess': 'set up the instance profile/role ARK attaches to the VMs',
+                'AmazonS3FullAccess': 'store run artifacts and bucket data',
+              };
+
+              function buildCli() {
+                const acct = (acctEl?.value || '').trim();
+                if (!acct) {
+                  cliEl.textContent = 'Enter your AWS Account ID above to generate the setup script.';
+                  return;
+                }
+                if (!_arn || !_policies.length) {
+                  cliEl.textContent = '(launcher identity not configured on the server — contact the admin)';
+                  return;
+                }
+                // Trust policy: allow our launcher identity to assume this role. The
+                // optional ExternalId condition (confused-deputy protection) is only
+                // emitted when the server has one configured.
+                const cond = _externalId
+                  ? ',\n        "Condition": {"StringEquals": {"sts:ExternalId": "' + _externalId + '"}}'
+                  : '';
+                const attach = _policies
+                  .map(p => '  aws iam attach-role-policy --role-name "$ROLE" \\\n' +
+                            '    --policy-arn arn:aws:iam::aws:policy/' + p)
+                  .join('\n');
+                cliEl.textContent =
+                  'ROLE="' + _roleName + '"\n' +
+                  '\n' +
+                  '# 1. Trust policy — lets the ARK launcher assume this role\n' +
+                  "cat > /tmp/ark-trust.json <<'EOF'\n" +
+                  '{\n' +
+                  '  "Version": "2012-10-17",\n' +
+                  '  "Statement": [{\n' +
+                  '    "Effect": "Allow",\n' +
+                  '    "Principal": {"AWS": "' + _arn + '"},\n' +
+                  '    "Action": "sts:AssumeRole"' + cond + '\n' +
+                  '  }]\n' +
+                  '}\n' +
+                  'EOF\n' +
+                  '\n' +
+                  '# 2. Create the role (skip if it already exists)\n' +
+                  'aws iam create-role --role-name "$ROLE" \\\n' +
+                  '  --assume-role-policy-document file:///tmp/ark-trust.json\n' +
+                  '\n' +
+                  '# 3. Attach the compute policies ARK needs\n' +
+                  attach;
+              }
+
+              function renderMeta(data) {
+                if (data && data.launcher_role_arn) { _arn = data.launcher_role_arn; arnEl.textContent = _arn; }
+                else if (!_arn) { arnEl.textContent = '(launcher identity not configured on server)'; }
+                if (data && typeof data.launcher_external_id === 'string') { _externalId = data.launcher_external_id; }
+                if (data && typeof data.tenant_role_name === 'string' && data.tenant_role_name) { _roleName = data.tenant_role_name; }
+                if (data && Array.isArray(data.required_policies) && data.required_policies.length) {
+                  _policies = data.required_policies;
+                  if (!policiesEl.childElementCount) {
+                    for (const p of _policies) {
+                      const li = document.createElement('li');
+                      const code = document.createElement('code');
+                      code.textContent = p; code.style.fontSize = '.68rem';
+                      li.appendChild(code);
+                      if (POLICY_HELP[p]) li.appendChild(document.createTextNode(' — ' + POLICY_HELP[p]));
+                      li.style.marginBottom = '3px';
+                      policiesEl.appendChild(li);
+                    }
+                  }
+                }
+                buildCli();
+              }
+
+              async function copy(text, el) {
+                if (!text) return;
+                try { await navigator.clipboard.writeText(text); }
+                catch (e) { return; }
+                const prev = el.textContent; el.textContent = 'Copied ✓';
+                setTimeout(() => { el.textContent = prev; }, 1200);
+              }
+              copyArnBtn && copyArnBtn.addEventListener('click', () => copy(_arn, copyArnBtn));
+              copyCmdBtn && copyCmdBtn.addEventListener('click', () => copy(cliEl.textContent, copyCmdBtn));
+              acctEl && acctEl.addEventListener('input', buildCli);
+
+              // Prefetch the grant target so the instructions are complete before
+              // the user verifies. Exposed so openSettingsModal can re-trigger it.
+              async function loadGrantInfo() {
+                try {
+                  const res = await fetch(window.APP_BASE + '/api/user/aws/info');
+                  if (res.ok) renderMeta(await res.json());
+                } catch (e) { /* leave placeholders; verify still fills them in */ }
+              }
+              window._loadAwsGrantInfo = loadGrantInfo;
+              loadGrantInfo();
+
+              btn.addEventListener('click', async () => {
+                const acct = (acctEl?.value || '').trim();
+                statusEl.style.color = 'var(--text-muted)';
+                statusEl.textContent = 'Checking…';
+                btn.disabled = true;
+                try {
+                  const res = await fetch(window.APP_BASE + '/api/user/aws/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ aws_account_id: acct }),
+                  });
+                  const data = await res.json();
+                  renderMeta(data);
+                  statusEl.style.color = data.ok ? 'var(--success,#2e7d32)' : 'var(--danger,#c62828)';
+                  statusEl.textContent = (data.ok ? '✓ ' : '✗ ') + (data.detail || '');
+                } catch (e) {
+                  statusEl.style.color = 'var(--danger,#c62828)';
+                  statusEl.textContent = '✗ Verification request failed.';
+                } finally {
+                  btn.disabled = false;
+                }
+              });
+            })();
+            </script>
+          </div>
         </div>
 
         <!-- Tab: Telegram -->
@@ -2324,6 +2600,18 @@ const TRANSLATIONS = {
     enable_submissions: 'Enable Submissions',
     disable_submissions: 'Disable Submissions',
     stop_all: 'Stop All',
+    // maintenance banner (admin)
+    maintenance_banner: 'Maintenance banner',
+    maintenance_banner_hint: 'Shown to all users at the top of the dashboard. Leave empty and Publish to clear.',
+    maintenance_placeholder: 'e.g. Scheduled maintenance Sat 22:00–23:00 UTC — runs may be paused.',
+    maint_level_info: 'Info (blue)',
+    maint_level_warning: 'Warning (amber)',
+    maint_level_critical: 'Critical (red)',
+    publish: 'Publish',
+    clear: 'Clear',
+    maintenance_published: 'Maintenance banner published.',
+    maintenance_cleared: 'Maintenance banner cleared.',
+    confirm_clear_maintenance: 'Clear the maintenance banner for all users?',
     // hero
     hero_title: 'Build your next paper with Idea2Paper',
     attach: 'Attach', venue: 'Venue', max_iterations: 'Max iterations',
@@ -2832,19 +3120,98 @@ let logPinned = true;   // true = auto-scroll to bottom; false = user scrolled u
 // ══════════════════════════════════════════════════════
 //  Compute backend helpers
 // ══════════════════════════════════════════════════════
+// Radio-group name for the experiments-backend picker in each context.
+const _EXP_BACKEND_NAME = { hero: 'compute_backend', continue: 'continue-backend', restart: 'restart-backend' };
+function _orchBackendName(prefix) {
+  return prefix === 'hero' ? 'orchestrator_compute_backend' : `${prefix}-orch-backend`;
+}
+
 // Keep the (hidden) orchestrator backend in lock-step with the experiments backend
-// when SkyPilot is picked: SkyPilot is one cloud destination that drives both layers.
-// This guarantees the valid (skypilot, skypilot) pair — the orchestrator picker is
-// hidden, and (skypilot orchestrator, slurm experiments) is rejected at launch by
-// validate_config (INVALID_COMPUTE_MATRIX). Choosing any non-SkyPilot experiments
-// backend reverts the orchestrator to its default 'local'.
+// when a cloud is picked: a cloud destination drives both layers. This guarantees
+// the valid (skypilot, skypilot) pair — the orchestrator picker is hidden, and
+// (skypilot orchestrator, slurm experiments) is rejected at launch by validate_config
+// (INVALID_COMPUTE_MATRIX). Choosing Slurm reverts the orchestrator to its default
+// 'local'. The specific cloud is carried by the experiment chip's "skypilot:<cloud>"
+// value and re-appended to the orchestrator value at submit via _withCloud().
 function _syncSkypilotOrch(prefix) {
-  const expName  = prefix === 'hero' ? 'compute_backend' : `${prefix}-backend`;
-  const orchName = prefix === 'hero' ? 'orchestrator_compute_backend' : `${prefix}-orch-backend`;
-  const exp = ([...document.querySelectorAll(`input[name="${expName}"]`)].find(r => r.checked) || {}).value || '';
-  const target = exp === 'skypilot' ? 'skypilot' : 'local';
-  const orchRadio = document.querySelector(`input[name="${orchName}"][value="${target}"]`);
+  const exp = _selectedExpBackend(prefix);
+  const isCloud = exp.split(':')[0] === 'skypilot';
+  const orchRadio = document.querySelector(`input[name="${_orchBackendName(prefix)}"][value="${isCloud ? 'skypilot' : 'local'}"]`);
   if (orchRadio) orchRadio.checked = true;
+}
+
+// ── Per-cloud experiment-backend chips (GCP / AWS) ────────────────────────────
+// Instead of exposing "SkyPilot" (our provisioning mechanism) as a backend, we
+// surface one chip per supported cloud alongside Slurm. Each chip is a radio in the
+// experiments-backend group with value "skypilot:<cloud>"; the routes shaping reads
+// the cloud from that suffix. A cloud the operator hasn't configured a launcher for
+// (window._sysCloud*) renders disabled with a tooltip prompting configuration.
+const _SKYPILOT_CLOUDS = [
+  { value: 'gcp', label: '☁️ Google Cloud', ready: () => !!window._sysCloudGcp },
+  { value: 'aws', label: '☁️ AWS',          ready: () => !!window._sysCloudAws },
+];
+const _CLOUD_DISABLED_HINT = 'Configure this cloud provider in settings to enable it.';
+function _selectedExpBackend(prefix) {
+  const name = _EXP_BACKEND_NAME[prefix];
+  return ([...document.querySelectorAll(`input[name="${name}"]`)].find(r => r.checked) || {}).value || '';
+}
+function _initSkypilotClouds() {
+  ['hero', 'continue', 'restart'].forEach(prefix => {
+    const box = document.getElementById(prefix + '-skypilot-cloud-chips');
+    if (!box) return;
+    const name = _EXP_BACKEND_NAME[prefix];
+    // Preserve the current selection across a rebuild so re-init doesn't drop it.
+    const prevChecked = _selectedExpBackend(prefix);
+    box.innerHTML = '';
+    _SKYPILOT_CLOUDS.forEach(({ value, label, ready }) => {
+      const ok = ready();
+      const lbl = document.createElement('label');
+      lbl.className = 'model-option';
+      lbl.id = `${prefix}-backend-skypilot-${value}-label`;
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = name;
+      input.value = 'skypilot:' + value;
+      input.disabled = !ok;
+      if (ok && prevChecked === input.value) input.checked = true;
+      input.addEventListener('change', () => _syncSkypilotOrch(prefix));
+      const chip = document.createElement('span');
+      chip.className = 'model-chip';
+      chip.textContent = ok ? label : `${label} (not configured)`;
+      if (!ok) { lbl.style.opacity = '0.45'; lbl.style.pointerEvents = 'none'; lbl.title = _CLOUD_DISABLED_HINT; }
+      lbl.appendChild(input);
+      lbl.appendChild(chip);
+      box.appendChild(lbl);
+    });
+  });
+}
+// The cloud carried by the currently-selected experiment chip (default gcp).
+function _skypilotCloud(prefix) {
+  const exp = _selectedExpBackend(prefix);
+  return exp.indexOf('skypilot:') === 0 ? exp.split(':')[1] : 'gcp';
+}
+// Append the chosen cloud to a "skypilot" orchestrator value; pass others through.
+function _withCloud(prefix, orchVal) {
+  return (orchVal && orchVal.indexOf('skypilot') === 0)
+    ? ('skypilot:' + _skypilotCloud(prefix))
+    : orchVal;
+}
+// Select the experiment-backend radio for a saved project value, tolerant of a
+// legacy bare "skypilot" (no cloud suffix) or a cloud that's no longer configured:
+// fall back to the cloud carried on the orchestrator value, then the first enabled
+// cloud chip. Then sync the hidden orchestrator radio to match.
+function _selectExpBackend(prefix, backendVal, orchVal) {
+  const radios = [...document.querySelectorAll(`input[name="${_EXP_BACKEND_NAME[prefix]}"]`)];
+  let target = backendVal;
+  const isSky = (backendVal || '').split(':')[0] === 'skypilot';
+  if (isSky && !radios.some(r => r.value === backendVal && !r.disabled)) {
+    const orchCloud = (orchVal && orchVal.indexOf('skypilot:') === 0) ? orchVal.split(':')[1] : '';
+    const byOrch = orchCloud && radios.find(r => r.value === 'skypilot:' + orchCloud && !r.disabled);
+    const firstEnabled = radios.find(r => r.value.indexOf('skypilot:') === 0 && !r.disabled);
+    target = byOrch ? byOrch.value : (firstEnabled ? firstEnabled.value : backendVal);
+  }
+  radios.forEach(r => { r.checked = (r.value === target); });
+  _syncSkypilotOrch(prefix);
 }
 
 // ══════════════════════════════════════════════════════
@@ -3011,6 +3378,11 @@ async function loadGateBanner() {
   _adminDisabled = data.disabled;
   // Global backend availability flags — start from server-side config
   window._sysSlurm = !!(data.slurm && data.slurm.available);
+  // Which SkyPilot clouds the operator configured a launcher for. Absent (older
+  // server) ⇒ preserve the legacy behaviour: GCP only.
+  window._sysCloudGcp = data.cloud ? !!data.cloud.gcp : true;
+  window._sysCloudAws = data.cloud ? !!data.cloud.aws : false;
+  _initSkypilotClouds();
 
   // Hero form defaults to slurm (see HTML). If slurm isn't available on
   // this host, hide the slurm radio and fall the default back to local.
@@ -3019,14 +3391,13 @@ async function loadGateBanner() {
   const orchSlurmLbl = document.getElementById('hero-orch-backend-slurm-label');
   if (orchSlurmLbl) orchSlurmLbl.style.display = window._sysSlurm ? '' : 'none';
   if (!window._sysSlurm) {
-    // No slurm on this host. Default the experiments backend to SkyPilot — it's
-    // always available (self-contained credential chain, independent of the
-    // legacy-cloud flag) — so the form always submits a valid backend rather than
-    // falling back to the hidden slurm radio. Sync the hidden orchestrator to match.
+    // No slurm on this host. Default the experiments backend to the first configured
+    // cloud so the form always submits a valid backend rather than falling back to
+    // the hidden slurm radio. Sync the hidden orchestrator to match.
     const slurmRadio = document.querySelector('input[name="compute_backend"][value="slurm"]');
     if (slurmRadio) slurmRadio.checked = false;
-    const skyRadio = document.querySelector('input[name="compute_backend"][value="skypilot"]');
-    if (skyRadio) skyRadio.checked = true;
+    const firstCloud = document.querySelector('input[name="compute_backend"][value^="skypilot:"]:not([disabled])');
+    if (firstCloud) firstCloud.checked = true;
     _syncSkypilotOrch('hero');
   }
 
@@ -3046,6 +3417,21 @@ async function loadGateBanner() {
   document.getElementById('gate-banner').style.display = data.disabled ? 'flex' : 'none';
   const heroCard = document.getElementById('hero-card');
   if (heroCard) heroCard.classList.toggle('gate-disabled', data.disabled);
+
+  renderMaintenanceBanner(data.maintenance);
+}
+
+// Show/hide the admin-authored maintenance notice. Uses textContent (not
+// innerHTML) so an admin-authored message can't inject markup into every
+// user's page. {} / falsy ⇒ hidden.
+function renderMaintenanceBanner(m) {
+  const banner = document.getElementById('maintenance-banner');
+  if (!banner) return;
+  if (!m || !m.message) { banner.style.display = 'none'; return; }
+  const level = ['info', 'warning', 'critical'].includes(m.level) ? m.level : 'warning';
+  banner.className = 'maint-banner level-' + level;
+  document.getElementById('maintenance-banner-text').textContent = m.message;
+  banner.style.display = 'flex';
 }
 
 async function loadAdminPanel() {
@@ -4397,6 +4783,13 @@ async function performLaunch(form) {
   const _uns = document.getElementById('model-unverified');
   if (_uns && _uns.value) fd.set('model', _uns.value);
 
+  // SkyPilot cloud → append it as a "skypilot:<cloud>" suffix on the orchestrator
+  // backend so the routes shaping targets the chosen cloud (default gcp).
+  const _heroOrch = fd.get('orchestrator_compute_backend');
+  if (_heroOrch && _heroOrch.indexOf('skypilot') === 0) {
+    fd.set('orchestrator_compute_backend', _withCloud('hero', _heroOrch));
+  }
+
   // Send the first PDF as pdf_file (backend expects this field name)
   const pdfIdx = selectedFiles.findIndex(f => f.name.toLowerCase().endsWith('.pdf'));
   if (pdfIdx !== -1) {
@@ -4531,17 +4924,15 @@ async function openContinueModal(id) {
     }
 
     const backendVal = (p.compute_backend || 'local');
+    const orchBackendVal = (p.orchestrator_compute_backend || 'local');
+    _initSkypilotClouds();  // ensure the cloud chips exist and reflect availability
+    _selectExpBackend('continue', backendVal, orchBackendVal);  // also syncs the hidden orchestrator
     document.querySelectorAll('input[name="continue-backend"]').forEach(r => {
-      r.checked = (r.value === backendVal);
       if (r.value === 'slurm') {
           const lbl = r.closest('.model-option');
           if (!window._sysSlurm) { lbl.style.opacity = '0.45'; lbl.style.pointerEvents = 'none'; r.disabled = true; }
           else { lbl.style.opacity = ''; lbl.style.pointerEvents = ''; r.disabled = false; }
       }
-    });
-    const orchBackendVal = (p.orchestrator_compute_backend || 'local');
-    document.querySelectorAll('input[name="continue-orch-backend"]').forEach(r => {
-      r.checked = (r.value === orchBackendVal);
     });
   }
 
@@ -4563,7 +4954,7 @@ async function submitContinue() {
   const btn = document.getElementById('continue-btn');
   btn.disabled = true;
   try {
-    const payload = { additional_iterations: iter, comment, model, compute_backend: backend, orchestrator_compute_backend: orchBackend };
+    const payload = { additional_iterations: iter, comment, model, compute_backend: backend, orchestrator_compute_backend: _withCloud('continue', orchBackend) };
     const res = await fetch(`${APP_BASE}/api/projects/${continueProjectId}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4660,17 +5051,15 @@ async function openRestartModal(id) {
 
   // Set compute backend radio
   const backendVal = (p.compute_backend || 'local');
+  const restartOrchBackendVal = (p.orchestrator_compute_backend || 'local');
+  _initSkypilotClouds();  // ensure the cloud chips exist and reflect availability
+  _selectExpBackend('restart', backendVal, restartOrchBackendVal);  // also syncs the hidden orchestrator
   document.querySelectorAll('input[name="restart-backend"]').forEach(r => {
-    r.checked = (r.value === backendVal);
     if (r.value === 'slurm') {
         const lbl = r.closest('.model-option');
         if (!window._sysSlurm) { lbl.style.opacity = '0.45'; lbl.style.pointerEvents = 'none'; r.disabled = true; }
         else { lbl.style.opacity = ''; lbl.style.pointerEvents = ''; r.disabled = false; }
     }
-  });
-  const restartOrchBackendVal = (p.orchestrator_compute_backend || 'local');
-  document.querySelectorAll('input[name="restart-orch-backend"]').forEach(r => {
-    r.checked = (r.value === restartOrchBackendVal);
   });
 
   // Update hero form slurm visibility
@@ -4724,7 +5113,7 @@ async function submitRestart() {
       telegram_chat_id: document.getElementById('restart-tg-chatid').value.trim(),
       comment: document.getElementById('restart-comment').value.trim(),
       compute_backend: ([...document.querySelectorAll('input[name="restart-backend"]')].find(r => r.checked) || {}).value || 'slurm',
-      orchestrator_compute_backend: ([...document.querySelectorAll('input[name="restart-orch-backend"]')].find(r => r.checked) || {}).value || 'local',
+      orchestrator_compute_backend: _withCloud('restart', ([...document.querySelectorAll('input[name="restart-orch-backend"]')].find(r => r.checked) || {}).value || 'local'),
       redo_deep_research: !document.getElementById('restart-keep-dr').checked,
       keep_figures: document.getElementById('restart-keep-figures').checked,
     };
@@ -4777,13 +5166,23 @@ let _editingProjectId = null;
 let _adminPageDisabled = false;
 
 async function loadAdminPage() {
-  const [projectsRes, statusRes] = await Promise.all([
+  const [projectsRes, statusRes, maintRes] = await Promise.all([
     fetch(APP_BASE + '/api/projects?scope=all'),
     fetch(APP_BASE + '/api/admin/status'),
+    fetch(APP_BASE + '/api/admin/maintenance'),
   ]);
   _adminAllProjects = await projectsRes.json();
   const status = await statusRes.json();
   _adminPageDisabled = status.disabled;
+
+  // Populate the maintenance-banner editor from the current state.
+  try {
+    const m = (await maintRes.json()).maintenance || {};
+    const msgEl = document.getElementById('admin-maint-message');
+    const lvlEl = document.getElementById('admin-maint-level');
+    if (msgEl) msgEl.value = m.message || '';
+    if (lvlEl) lvlEl.value = ['info', 'warning', 'critical'].includes(m.level) ? m.level : 'warning';
+  } catch (e) {}
 
   const badge = document.getElementById('admin-page-gate-badge');
   const toggleBtn = document.getElementById('btn-admin-page-toggle');
@@ -5179,6 +5578,34 @@ async function adminPageToggle() {
   }
 }
 
+async function _postMaintenance(message, level) {
+  const res = await fetch(APP_BASE + '/api/admin/maintenance', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, level }),
+  });
+  if (!res.ok) { alert('Failed: ' + (await res.text())); return null; }
+  return (await res.json()).maintenance || {};
+}
+
+async function adminSaveMaintenance() {
+  const message = document.getElementById('admin-maint-message').value.trim();
+  const level = document.getElementById('admin-maint-level').value;
+  const m = await _postMaintenance(message, level);
+  if (m === null) return;
+  renderMaintenanceBanner(m);
+  alert(message ? t('maintenance_published') : t('maintenance_cleared'));
+}
+
+async function adminClearMaintenance() {
+  if (!confirm(t('confirm_clear_maintenance'))) return;
+  const m = await _postMaintenance('', 'warning');
+  if (m === null) return;
+  document.getElementById('admin-maint-message').value = '';
+  renderMaintenanceBanner(m);
+  alert(t('maintenance_cleared'));
+}
+
 async function adminPageKillAll() {
   if (!confirm(t('confirm_kill_all'))) return;
   const res = await fetch(APP_BASE + '/api/admin/killall', { method: 'POST' });
@@ -5316,6 +5743,10 @@ async function openSettingsModal() {
     // (setting .value programmatically doesn't fire the 'input' listener).
     if (window._loadGcpGrantInfo) window._loadGcpGrantInfo();
 
+    document.getElementById('settings-aws-account').value = data.aws_account_id || '';
+    document.getElementById('settings-aws-region').value = data.aws_region || '';
+    if (window._loadAwsGrantInfo) window._loadAwsGrantInfo();
+
     document.getElementById('status-anthropic').textContent = data.anthropic ? 'Current: ' + data.anthropic : '';
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
     document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
@@ -5329,7 +5760,7 @@ async function openSettingsModal() {
 // ── Other providers (any OpenHands/LiteLLM provider) + model gating ──
 let _otherProviders = {};
 const _STD_KEYS = new Set(['anthropic','openai','gemini','openrouter','github_pat','github_org',
-  'gcp_project','gcp_conda_env',
+  'gcp_project','gcp_conda_env','aws_account_id','aws_region',
   'claude_oauth_token','gemini_oauth_json',
   'verification','telegram_token','telegram_chat_id','has_keys']);
 function _loadOtherProviders(data) {
@@ -5512,6 +5943,16 @@ function switchSettingsTab(tabId) {
   document.getElementById(tabId).classList.add('active');
 }
 
+// Switch the cloud provider sub-pane (GCP / AWS) inside the Compute tab.
+function switchCloudPane(cloud) {
+  document.querySelectorAll('.cloud-pane-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.cloud-provider-pane').forEach(p => p.classList.remove('active'));
+  const btn = document.getElementById('cp-btn-' + cloud);
+  const pane = document.getElementById('cp-' + cloud);
+  if (btn) btn.classList.add('active');
+  if (pane) pane.classList.add('active');
+}
+
 async function saveUserSettings() {
   const btn = document.getElementById('settings-save-btn');
   const providers = ['anthropic', 'openai', 'gemini', 'openrouter'];
@@ -5543,6 +5984,8 @@ async function saveUserSettings() {
       telegram_chat_id: document.getElementById('settings-telegram-chat-id').value.trim(),
       ..._otherProvidersBody(),
       gcp_project: document.getElementById('settings-gcp-project').value.trim(),
+      aws_account_id: document.getElementById('settings-aws-account').value.trim(),
+      aws_region: document.getElementById('settings-aws-region').value.trim(),
     };
 
 

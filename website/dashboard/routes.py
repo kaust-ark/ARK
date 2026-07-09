@@ -42,6 +42,57 @@ def _disabled_flag() -> _Path:
         _DISABLED_FLAG = _get_ark_root() / "ark_webapp" / "disabled"
     return _DISABLED_FLAG
 
+
+# Maintenance banner: an admin-authored notice shown to all users (e.g. planned
+# downtime). File-backed like the submission gate so it survives restarts, needs
+# no DB migration, and can be cleared by hand in an emergency. Absent file (or
+# empty message) ⇒ no banner. Independent of the submission gate — the banner
+# is purely informational; disabling submissions is a separate control.
+_MAINTENANCE_FILE = None  # lazy
+
+
+def _maintenance_file() -> _Path:
+    global _MAINTENANCE_FILE
+    if _MAINTENANCE_FILE is None:
+        _MAINTENANCE_FILE = _get_ark_root() / "ark_webapp" / "maintenance.json"
+    return _MAINTENANCE_FILE
+
+
+# Levels drive the banner color in the UI. "warning" is the default.
+_MAINTENANCE_LEVELS = ("info", "warning", "critical")
+
+
+def _read_maintenance() -> dict:
+    """Return {message, level} for the active banner, or {} if none is set."""
+    f = _maintenance_file()
+    if not f.exists():
+        return {}
+    try:
+        data = json.loads(f.read_text() or "{}")
+    except Exception:
+        return {}
+    message = str(data.get("message", "")).strip()
+    if not message:
+        return {}
+    level = data.get("level", "warning")
+    if level not in _MAINTENANCE_LEVELS:
+        level = "warning"
+    return {"message": message, "level": level}
+
+
+def _write_maintenance(message: str, level: str = "warning") -> dict:
+    """Persist the banner. Empty/blank message clears it. Returns the new state."""
+    f = _maintenance_file()
+    message = (message or "").strip()
+    if not message:
+        f.unlink(missing_ok=True)
+        return {}
+    if level not in _MAINTENANCE_LEVELS:
+        level = "warning"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"message": message, "level": level}))
+    return {"message": message, "level": level}
+
 import yaml
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -112,7 +163,7 @@ from .db import (
     mark_access_declined,
 )
 from .crypto import encrypt_text, decrypt_text
-from .skyworkspaces import render_sky_workspaces
+from .skyworkspaces import render_sky_workspaces, render_aws_profiles
 from . import sideband
 from .jobs import (
     project_env_prefix,
@@ -647,14 +698,14 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
             # SkyPilot's optimizer. CLI users set skypilot resources explicitly in
             # config.yaml.
             #
-            # The dashboard's SkyPilot path is GCP-only — per-user isolation runs
-            # through the central launcher SA, per-user SkyPilot workspaces, and the
-            # baked GCP image, none of which exist for other clouds. The UI has no
-            # cloud selector; its radio submits a bare "skypilot". So a bare backend
-            # defaults to gcp here (else the GCP shaping below — n4-standard-2, baked
-            # image, workspace routing — would be dead code and the optimizer would
-            # pick an arbitrary machine type). An explicit "skypilot:{cloud}" suffix
-            # still wins for any caller that sets one.
+            # The dashboard supports GCP and AWS, each with its own per-user
+            # isolation: a central launcher provisions into the user's project
+            # (GCP: cross-project SA grant + baked image) or account (AWS: cross-
+            # account role trust, stock image). The UI's cloud selector submits a
+            # "skypilot:{cloud}" suffix; a bare "skypilot" (single-cloud deployment
+            # or a legacy caller) defaults to gcp here — else the GCP shaping below
+            # (n4-standard-2, baked image) would be dead code and the optimizer would
+            # pick an arbitrary machine type.
             cloud = chosen.split(":", 1)[1] if ":" in chosen else "gcp"
             cfg = {"type": "skypilot", "conda_env": settings.cloud_conda_env or "ark-base"}
             if cloud:
@@ -690,17 +741,30 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
                 # per-project image copy. When no central project is configured we
                 # OMIT image_id (boot stock public Debian); the setup_commands block
                 # below then does the full — slower — install from scratch.
-                _gcp_keys = _get_user_keys(user_obj) if user_obj else {}
                 central_project = settings.cloud_gcp_project
                 if central_project:
                     cfg["image_id"] = (
                         f"projects/{central_project}/global/images/ark-debian-base-v7")
-                # When the user has their OWN project configured, launch into it
-                # via their SkyPilot workspace (the central launcher SA has
-                # cross-project access). The launcher selects this workspace per
-                # launch (ark/compute/_sky.py::active_workspace). Without a
-                # per-user project we omit it and fall back to the host's default.
-                if user_obj and _gcp_keys.get("gcp_project"):
+            elif cloud == "aws":
+                # No baked AMI yet: boot a stock image and let the setup_commands
+                # block below do the full install (its texlive/openhands guards keep
+                # it idempotent). We do pin the region so the launch is predictable
+                # — the user's configured region, else the operator default; SkyPilot
+                # optimizes the instance type. Bake an AMI later for fast boots.
+                _aws_keys = _get_user_keys(user_obj) if user_obj else {}
+                region = (_aws_keys.get("aws_region") or "").strip() or settings.cloud_aws_region
+                if region:
+                    cfg["region"] = region
+            # When the user has their OWN project/account configured for the chosen
+            # cloud, launch into it via their per-user SkyPilot workspace (the
+            # central launcher has cross-project/cross-account access). The launcher
+            # selects this workspace per launch (ark/compute/_sky.py::active_workspace).
+            # Without per-user config we omit it and fall back to the host's default.
+            if user_obj:
+                _keys = _get_user_keys(user_obj)
+                _has_cloud = (cloud == "gcp" and _keys.get("gcp_project")) or \
+                             (cloud == "aws" and _keys.get("aws_account_id"))
+                if _has_cloud:
                     from website.dashboard.skyworkspaces import workspace_name_for
                     cfg["workspace"] = workspace_name_for(user_obj.id)
             # The orchestrator cluster comes up bare, so its deps must be installed
@@ -1899,6 +1963,8 @@ async def api_get_user_settings(request: Request):
         "claude_oauth_token", "gemini_oauth_json",
         "github_pat", "github_org",
         "gcp_project", "gcp_conda_env",
+        # SkyPilot AWS: account the launcher assumes into + its region.
+        "aws_account_id", "aws_region",
         # Retired native-cloud creds — no longer surfaced, but suppressed so any
         # value left in an old vault doesn't show up as a stray settings row.
         "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
@@ -1917,6 +1983,9 @@ async def api_get_user_settings(request: Request):
         # GCP project the SkyPilot launcher provisions into (per-user isolation).
         "gcp_project": keys.get("gcp_project") or "",
         "gcp_conda_env": keys.get("gcp_conda_env") or settings.cloud_conda_env or "ark-base",
+        # AWS account the SkyPilot launcher assumes into (per-user isolation) + region.
+        "aws_account_id": keys.get("aws_account_id") or "",
+        "aws_region": keys.get("aws_region") or settings.cloud_aws_region or "",
         "has_keys": any(keys.values()),
         # Telegram is a user-level account setting (managed in Settings).
         "telegram_token": user.telegram_token or "",
@@ -1944,6 +2013,7 @@ async def api_save_user_settings(request: Request):
     fields = [
         "gemini", "anthropic", "openai", "github_pat", "github_org",
         "gcp_project", "gcp_conda_env",
+        "aws_account_id", "aws_region",
     ]
     for field in fields:
         if field not in body:
@@ -2002,10 +2072,12 @@ async def api_save_user_settings(request: Request):
             session.add(db_user)
             session.commit()
 
-    # The user may have just added/changed their GCP project id; re-render the
-    # SkyPilot workspaces so their next launch targets the right project. Runs off
-    # the request thread and is best-effort (never fails the save).
+    # The user may have just added/changed their GCP project id or AWS account;
+    # re-render the SkyPilot workspaces (and the AWS ~/.aws profiles) so their next
+    # launch targets the right project/account. Runs off the request thread and is
+    # best-effort (never fails the save).
     await asyncio.to_thread(render_sky_workspaces, settings.db_path)
+    await asyncio.to_thread(render_aws_profiles, settings.db_path)
 
     return JSONResponse({
         "ok": True,
@@ -2054,6 +2126,54 @@ async def api_verify_gcp_access(request: Request):
         "launcher_sa": launcher_sa_email(settings),
         "launcher_customer_id": launcher_org_customer_id(settings),
         "required_roles": REQUIRED_ROLES,
+    })
+
+
+@router.get("/api/user/aws/info")
+async def api_aws_grant_info(request: Request):
+    """Return the AWS grant target (launcher identity ARN + required policies +
+    tenant role name + optional external id) without probing the user's account.
+    The AWS analog of /api/user/gcp/info: the settings UI calls this on open so it
+    can render the role-create + trust-policy instructions before the user has
+    verified — the verify probe (a real STS AssumeRole) stays behind Verify."""
+    _require_user(request)
+    settings = get_settings()
+    from website.dashboard.aws_access import (
+        launcher_role_arn, launcher_external_id, REQUIRED_POLICIES, TENANT_ROLE_NAME)
+    return JSONResponse({
+        "launcher_role_arn": await asyncio.to_thread(launcher_role_arn, settings),
+        "launcher_external_id": launcher_external_id(settings),
+        "required_policies": REQUIRED_POLICIES,
+        "tenant_role_name": TENANT_ROLE_NAME,
+    })
+
+
+@router.post("/api/user/aws/verify")
+async def api_verify_aws_access(request: Request):
+    """Verify the launcher can assume the user's ark-launcher role — i.e. that
+    they've created it with a trust policy naming our identity. Probes
+    ``aws_account_id`` from the body, falling back to the saved value. Returns
+    ``{ok, detail, launcher_role_arn, required_policies, tenant_role_name,
+    launcher_external_id}`` so the settings UI can both show the verdict and
+    render the grant instructions from one call."""
+    user = _require_user(request)
+    settings = get_settings()
+    from website.dashboard.aws_access import (
+        verify_account_access, launcher_role_arn, launcher_external_id,
+        REQUIRED_POLICIES, TENANT_ROLE_NAME)
+
+    body = await request.json()
+    account_id = (body.get("aws_account_id") or "").strip()
+    if not account_id:
+        account_id = (_get_user_keys(user).get("aws_account_id") or "").strip()
+
+    result = await asyncio.to_thread(verify_account_access, account_id, settings)
+    return JSONResponse({
+        **result,
+        "launcher_role_arn": await asyncio.to_thread(launcher_role_arn, settings),
+        "launcher_external_id": launcher_external_id(settings),
+        "required_policies": REQUIRED_POLICIES,
+        "tenant_role_name": TENANT_ROLE_NAME,
     })
 
 
@@ -2994,11 +3114,23 @@ async def api_apply_change(project_id: str, request: Request):
 @router.get("/api/system/status")
 async def api_system_status():
     """Public endpoint — returns webapp gate state (no auth required)."""
+    settings = get_settings()
     return JSONResponse({
         "disabled": _disabled_flag().exists(),
+        # Maintenance banner (admin-authored notice, shown to all users). {} ⇒ none.
+        "maintenance": _read_maintenance(),
         "slurm": {
             "available": slurm_available()
-        }
+        },
+        # Which SkyPilot clouds the operator has configured a launcher for, so the
+        # UI can show only the usable cloud options in the compute selector. GCP
+        # needs a central project; AWS needs a launcher identity (role ARN or a
+        # host credential source).
+        "cloud": {
+            "gcp": bool(settings.cloud_gcp_project),
+            "aws": bool(settings.cloud_launcher_role_arn
+                        or settings.cloud_launcher_aws_credential_source),
+        },
     })
 
 
@@ -3020,6 +3152,28 @@ async def api_admin_enable(request: Request):
     _require_admin(request)
     _disabled_flag().unlink(missing_ok=True)
     return JSONResponse({"disabled": False})
+
+
+@router.get("/api/admin/maintenance")
+async def api_admin_maintenance_get(request: Request):
+    """Current maintenance banner state (for the admin console)."""
+    _require_admin(request)
+    return JSONResponse({"maintenance": _read_maintenance()})
+
+
+@router.post("/api/admin/maintenance")
+async def api_admin_maintenance_set(request: Request):
+    """Publish or clear the maintenance banner. Empty message ⇒ cleared."""
+    _require_admin(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    state = _write_maintenance(
+        message=body.get("message", ""),
+        level=body.get("level", "warning"),
+    )
+    return JSONResponse({"maintenance": state})
 
 
 @router.post("/api/admin/killall")

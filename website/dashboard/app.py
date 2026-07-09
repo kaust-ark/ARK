@@ -584,15 +584,29 @@ async def lifespan(app: FastAPI):
             ensure_launcher_credentials(settings)
         except Exception as e:
             logger.warning(f"Launcher credential check failed (non-fatal): {e}")
+        # AWS analog: report which identity the launcher will assume tenant roles
+        # as. Only meaningful when an AWS launcher is configured; skipped silently
+        # otherwise so a GCP-only deployment logs nothing new.
+        if settings.cloud_launcher_role_arn or settings.cloud_launcher_aws_credential_source:
+            try:
+                from website.dashboard.aws_access import ensure_launcher_credentials as _aws_ensure
+                _aws_ensure(settings)
+            except Exception as e:
+                logger.warning(f"AWS launcher credential check failed (non-fatal): {e}")
         # Reconcile the SkyPilot per-user workspaces from the DB into the host's
         # ~/.sky/config.yaml, so launches target each user's GCP project after a
         # restart (settings-save keeps it current thereafter). Gated on the
         # control-loop owner: only the process that launches jobs writes the host
         # sky config, so a UI-only secondary can't race it. Best-effort.
         try:
-            from website.dashboard.skyworkspaces import render_sky_workspaces
+            from website.dashboard.skyworkspaces import (
+                render_sky_workspaces, render_aws_profiles)
             n = render_sky_workspaces(settings.db_path)
             logger.info(f"Reconciled {n} SkyPilot workspace(s) at startup.")
+            # AWS analog: reconcile the per-user ~/.aws profiles the AWS workspaces
+            # reference, so AWS launches resolve their tenant role after a restart.
+            m = render_aws_profiles(settings.db_path)
+            logger.info(f"Reconciled {m} AWS profile(s) at startup.")
         except Exception as e:
             logger.warning(f"SkyPilot workspace reconcile failed (non-fatal): {e}")
         # Start the Telegram daemon — the control-plane HITL engine (D1). It is the

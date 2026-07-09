@@ -408,6 +408,13 @@ def api_keys_to_env(api_keys: dict[str, str]) -> dict[str, str]:
             # models through the OpenRouter proxy.
             env_key = f"{k.upper()}_API_KEY" if "_api_key" not in k.lower() else k.upper()
             env[env_key] = v
+        elif k in ("aws_account_id", "aws_region"):
+            # SkyPilot launcher-routing metadata (which account/region to assume
+            # into) — NOT run credentials. The cloud identity comes from the
+            # launcher's assumed role, not a synced key, so skip these like
+            # gcp_project below (else the long-tail branch would mis-inject them as
+            # bogus AWS_ACCOUNT_ID_API_KEY / AWS_REGION_API_KEY env vars).
+            continue
         elif k in ("aws_access_key_id", "aws_secret_access_key", "aws_default_region"):
             env[k.upper()] = v
         elif k.startswith("azure_"):

@@ -198,6 +198,37 @@ hop), so it is explicitly gated on the Phase 3 credential propagation above.
   removed `detach_run` kwarg must **not** be passed — `block_on_request` provides the
   detach behavior (`ark/launcher/skypilot.py`).
 
+## 6.1 Operator-managed multi-cloud (implemented: GCP + AWS)
+
+The dashboard ships the **operator-managed compute** model from Phase 3: **one
+central launcher identity** per cloud provisions into **each user's own
+project/account**, with **no per-user key material in the DB**. Isolation is a
+per-user SkyPilot **workspace** (`ws-<user_id>`) selected per launch
+(`ark/compute/_sky.py::active_workspace`). The two clouds differ only in how the
+launcher reaches the user's resources:
+
+| | **GCP** | **AWS** |
+|---|---|---|
+| Central identity | `ark-launcher` **service account** (`scripts/setup_ark_launcher_sa.sh`) | `ark-launcher` **IAM identity** (`scripts/setup_ark_launcher_aws.sh`) |
+| How the user grants access | IAM **roles** on their **project** (cross-project) | an `ark-launcher` **role** in their **account** whose trust policy names the launcher (cross-account STS AssumeRole) |
+| Workspace pins | `gcp.project_id` | `aws.profile` → a managed `~/.aws` profile that assumes the tenant role |
+| User provides | project id (`gcp_project`) | 12-digit account id + region (`aws_account_id`, `aws_region`) |
+| Managed-config writer | `~/.sky/config.yaml` `ws-*` (`skyworkspaces.render_sky_workspaces`) | `~/.sky/config.yaml` `ws-*` **and** `~/.aws/config` `[profile ws-*]` (`skyworkspaces.render_aws_profiles`) |
+| Onboarding verify | probe project as the SA (`gcp_access.verify_project_access`) | assume the tenant role (`aws_access.verify_account_access`) |
+| Orchestrator image | baked image in the central project | **stock AMI + `setup_commands`** (no baked AMI yet) |
+
+Operator setup (`~/.ark/webapp.env`): GCP needs `CLOUD_GCP_PROJECT` +
+`CLOUD_LAUNCHER_SA[_KEY]`; AWS needs `CLOUD_LAUNCHER_ROLE_ARN` +
+`CLOUD_LAUNCHER_AWS_PROFILE` (or `CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE=
+Ec2InstanceMetadata` on an EC2 host), optional `CLOUD_AWS_REGION` /
+`CLOUD_LAUNCHER_AWS_EXTERNAL_ID`. The AWS path also needs the SDK in the webapp
+env (`pip install 'skypilot[aws]' 'botocore[crt]'` — the CRT extra is required by
+SkyPilot's AWS auth) and a base `~/.aws` profile the launcher acts as (`aws
+configure sso` / `aws configure`, or the host instance role). Full runbook: README
+§"Cloud Provider Setup → AWS". `/api/system/status` reports which clouds are
+configured so the dashboard's compute selector only offers usable ones. The UI
+submits the cloud as a `skypilot:{gcp,aws}` suffix on the orchestrator backend.
+
 ## 7. Key files
 
 | Area | Path |
@@ -207,6 +238,9 @@ hop), so it is explicitly gated on the Phase 3 credential propagation above.
 | Layer-1 SkyPilot backend | `ark/compute/skypilot.py` (new, PR2) |
 | Layer-2 SkyPilot launcher | `ark/launcher/skypilot.py` (new, PR3) |
 | Launcher dispatch | `ark/launcher/__init__.py`, `website/dashboard/routes.py::orchestrator_launcher_for` |
+| Per-user workspaces + AWS profiles | `website/dashboard/skyworkspaces.py` (`render_sky_workspaces`, `render_aws_profiles`) |
+| Onboarding access checks | `website/dashboard/gcp_access.py`, `website/dashboard/aws_access.py` |
+| Central launcher setup | `scripts/setup_ark_launcher_sa.sh` (GCP), `scripts/setup_ark_launcher_aws.sh` (AWS) |
 | Backend shaping + Phase-1 local-experiments decision | `website/dashboard/routes.py::_resolve_compute_config` (orchestrator `setup_commands`; skypilot experiments → `type: local`) |
 | Optional dep + marker | `pyproject.toml` (`skypilot` extra, `skypilot` marker) |
 | Config docs | `README.md` (compute-backend reference) |

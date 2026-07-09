@@ -229,6 +229,9 @@ def test_api_keys_to_env_shared_subset():
         # local-only extras must NOT appear in the shared mapping:
         "github_pat": "ghp", "github_org": "org",
         "gcp_service_account_json": "{}", "gcp_project": "proj",
+        # SkyPilot launcher-routing metadata — NOT run creds, must be skipped
+        # (else the long-tail branch mis-injects AWS_ACCOUNT_ID_API_KEY etc.).
+        "aws_account_id": "123456789012", "aws_region": "us-east-1",
     })
     assert env == {
         "CLAUDE_CODE_OAUTH_TOKEN": "tok", "ANTHROPIC_API_KEY": "ak",

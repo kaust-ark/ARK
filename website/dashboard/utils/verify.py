@@ -408,6 +408,7 @@ def run_verification_suite(user_id: str, projects_root: Path, keys: Dict[str, st
     # *models* are 'unverified' (not agent-tested by ARK), but the key is checked.
     _STD = {"gemini", "anthropic", "openai", "openrouter", "claude_oauth_token", "gemini_oauth_json",
             "github_pat", "github_org",
+            "aws_account_id", "aws_region",
             "aws_access_key_id", "aws_secret_access_key", "aws_default_region",
             "gcp_service_account_json", "gcp_project", "gcp_zone", "gcp_instance_type",
             "gcp_image_family", "gcp_image_project", "gcp_ssh_user", "gcp_conda_env",
