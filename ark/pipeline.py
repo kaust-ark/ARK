@@ -534,6 +534,9 @@ class PipelineMixin:
         self._ensure_clearpage_before_bibliography()
         self._ensure_float_barrier()
         self.compile_latex()
+        # Before page fitting: integrating forgotten figures changes the page
+        # count, so this must precede _enforce_page_count.
+        self._ensure_figures_referenced()
         self._fix_overfull(context="pre-delivery")
         self._run_citation_verification()
         try:
@@ -558,6 +561,40 @@ class PipelineMixin:
             return False
 
         return self._handle_stagnation(score, current_score, review_output)
+
+    def _ensure_figures_referenced(self):
+        """Delivery gate: generated figures must actually appear in the paper.
+
+        A writer occasionally ships main.tex with ZERO ``\\includegraphics``
+        while paper/figures/ holds real, usable figures (44459bb4 delivered 4
+        figure files, none referenced). One focused writer pass integrates
+        them. Fail-soft: a gate error never blocks delivery.
+        """
+        try:
+            figs = [f for f in sorted(self.figures_dir.glob("*"))
+                    if f.suffix in (".png", ".pdf") and f.stat().st_size > 5000]
+            if not figs:
+                return
+            main_tex = self.latex_dir / "main.tex"
+            if not main_tex.exists():
+                return
+            if re.search(r"\\includegraphics", main_tex.read_text(errors="replace")):
+                return
+            names = ", ".join(f.name for f in figs[:8])
+            self.log(f"{len(figs)} figure(s) generated but the paper references "
+                     f"NONE — one writer pass to integrate them", "WARN")
+            self.run_agent("writer", (
+                f"The paper currently contains ZERO \\includegraphics, but these "
+                f"real generated figures exist in paper/figures/: {names}.\n"
+                f"Integrate the ones that genuinely support the text into main.tex "
+                f"using proper figure environments with accurate captions, and "
+                f"reference each from the prose (\\label/\\ref). Do NOT invent "
+                f"results or alter figure data; skip any figure that does not fit "
+                f"the narrative. Ensure the paper still compiles."),
+                timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
+            self.compile_latex()
+        except Exception as e:
+            self.log(f"figures-referenced gate failed (non-fatal): {e}", "WARN")
 
     def _handle_terminal_error(self, score: float) -> bool:
         """Abort the run fast on a non-retryable agent error (bad key / model /
