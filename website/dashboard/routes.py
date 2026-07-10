@@ -2306,7 +2306,7 @@ async def api_create_project(
     layout_mode: str = Form("balanced"),
     mode: str = Form("paper"),
     max_iterations: int = Form(2),
-    max_dev_iterations: int = Form(3),
+    max_dev_iterations: int = Form(1),
     pdf_file: Optional[UploadFile] = File(None),
     template_zip: Optional[UploadFile] = File(None),
     model: str = Form("claude-sonnet-4-6"),
