@@ -1106,8 +1106,16 @@ def migrate_project_data(db_path: str, projects_root: str = ""):
                 except Exception:
                     pass
 
-            if updates:
-                for k, v in updates.items():
+            # Idempotent: only write fields that actually DIFFER. Fields like
+            # dev_iteration/dev_status are rebuilt unconditionally above, so
+            # without this every webapp boot (including ad-hoc test instances
+            # on the shared DB) re-touched every score-0 project and bumped
+            # updated_at — 8 historical rows got mass-touched on 2026-07-10,
+            # dragging them into "recent" dashboards and sweep windows.
+            changed = {k: v for k, v in updates.items()
+                       if getattr(p, k, None) != v}
+            if changed:
+                for k, v in changed.items():
                     setattr(p, k, v)
                 p.updated_at = datetime.utcnow()
                 session.add(p)
