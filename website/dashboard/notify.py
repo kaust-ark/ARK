@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import smtplib
 import subprocess
@@ -923,6 +924,71 @@ def send_failure_email(settings, to_email: str, project_name: str,
     msg["From"] = f"Idea2Paper Ops <{from_addr}>"
     msg["To"] = to_email
     msg["Subject"] = f"[Idea2Paper] FAILED: {project_name[:60]} ({owner_email})"
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain="idea2paper.org")
+    msg_str = msg.as_string()
+    relay = getattr(settings, "smtp_relay", "")
+    if relay:
+        try:
+            with smtplib.SMTP(relay, 25, timeout=10) as server:
+                server.sendmail(from_addr, to_email, msg_str)
+            return True
+        except Exception as e:
+            logger.warning(f"Relay failed ({e}), trying SMTP auth…")
+    if settings.smtp_user and settings.smtp_password:
+        try:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
+                server.starttls()
+                server.login(settings.smtp_user, settings.smtp_password)
+                server.sendmail(from_addr, to_email, msg_str)
+            return True
+        except Exception as e:
+            logger.warning(f"SMTP failed ({e}), trying sendmail fallback…")
+    return _sendmail_fallback(from_addr, to_email, msg_str)
+
+
+# Failures ONLY the user can fix (their provider account, not our platform).
+# Conservative on purpose: an unmatched error stays admin-only rather than
+# confusing the user with an internal traceback.
+_USER_ACTIONABLE_ERROR_RE = re.compile(
+    r"insufficient credits|requires more credits|purchased credits|credit balance"
+    r"|billing|quota exceeded|exceeded your current quota"
+    r"|authentication|invalid.{0,12}api.key|incorrect api key|unauthorized"
+    r"|no key found|needs a provider api key|api key.{0,20}(invalid|rejected|expired)",
+    re.IGNORECASE,
+)
+
+
+def user_actionable_failure(error: str) -> bool:
+    """True when the failure is the owner's provider account (credits / API
+    key), i.e. only they can fix it — those failures notify the OWNER too."""
+    return bool(error) and bool(_USER_ACTIONABLE_ERROR_RE.search(error))
+
+
+def send_user_failure_email(settings, to_email: str, project_name: str,
+                            error: str, project_url: str) -> bool:
+    """Tell the OWNER their run stopped on an account issue they can fix
+    (credits / API key). Plain text, actionable, no internals."""
+    from email.mime.text import MIMEText as _MT
+    from email.utils import formatdate, make_msgid
+    body = (
+        f"Hi,\n\n"
+        f"Your Idea2Paper project stopped and needs a quick fix on your side:\n\n"
+        f"  Project: {project_name}\n"
+        f"  Reason:  {(error or '')[:400]}\n\n"
+        f"This usually means your API provider account needs attention — for\n"
+        f"example an OpenRouter balance top-up (https://openrouter.ai/credits)\n"
+        f"or an updated API key (Settings → API Keys).\n\n"
+        f"Once fixed, open your project and hit Restart — your progress (e.g.\n"
+        f"deep research) is preserved:\n"
+        f"  {project_url}\n\n"
+        f"— Idea2Paper\n"
+    )
+    msg = _MT(body)
+    from_addr = getattr(settings, "smtp_from", "") or "contact@idea2paper.org"
+    msg["From"] = f"Idea2Paper <{from_addr}>"
+    msg["To"] = to_email
+    msg["Subject"] = f"[Idea2Paper] Action needed: your project “{project_name[:50]}” stopped"
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = make_msgid(domain="idea2paper.org")
     msg_str = msg.as_string()

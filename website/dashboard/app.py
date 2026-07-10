@@ -167,7 +167,7 @@ def _notify_terminal_sweep(session, settings):
     """
     from datetime import datetime, timedelta
     from .db import Project, get_user
-    from .notify import send_failure_email
+    from .notify import send_failure_email, send_user_failure_email, user_actionable_failure
     from .constants import DASHBOARD_PREFIX
     from sqlmodel import select
     try:
@@ -209,6 +209,13 @@ def _notify_terminal_sweep(session, settings):
                         send_failure_email(
                             settings, to_email=admins[0], project_name=_pname(p),
                             owner_email=(owner.email if owner else p.user_id),
+                            error=p.error_message or "", project_url=url)
+                    # USER-actionable failure (their credits / API key — only
+                    # they can fix it): tell the owner too, with guidance.
+                    # Platform-side failures stay admin-only.
+                    if owner and user_actionable_failure(p.error_message or ""):
+                        send_user_failure_email(
+                            settings, to_email=owner.email, project_name=_pname(p),
                             error=p.error_message or "", project_url=url)
                 logger.info(f"terminal notify: {p.id} ({p.status})")
             finally:
