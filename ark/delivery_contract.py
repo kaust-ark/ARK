@@ -188,6 +188,42 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
         rep.findings.append(Finding("page_budget", "pass", "soft",
                                     f"{npages} pages / budget {venue_pages or 'n/a'}"))
 
+    # ── vector figures not upscaled at insertion ──────────────────────────
+    # matplotlib PDFs are saved at print size; inserting a small one at
+    # width=\columnwidth in a single-column template blows it and its fonts
+    # up 2x (e4503b8d shipped 6 such figures in TMLR). Compare each inserted
+    # PDF's natural width against the template's column width.
+    upscaled = []
+    try:
+        import json as _json
+        cfg_p = figs_dir / "figure_config.json"
+        col_in = float(((_json.loads(cfg_p.read_text()) or {}).get("geometry") or {})
+                       .get("columnwidth_in") or 0) if cfg_p.exists() else 0
+        if col_in:
+            import fitz
+            for m2 in re.finditer(
+                    r"\\includegraphics\[[^\]]*width\s*=\s*\\(columnwidth|textwidth|linewidth)[^\]]*\]\{([^}]+)\}",
+                    tex):
+                fname = Path(m2.group(2)).name
+                fp = figs_dir / fname
+                if fp.suffix == ".pdf" and fp.exists():
+                    try:
+                        d2 = fitz.open(str(fp))
+                        nat_w = d2[0].rect.width / 72.0
+                        d2.close()
+                        if nat_w < 0.75 * col_in:
+                            upscaled.append(f"{fname} ({nat_w:.1f}in → {col_in:.1f}in)")
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    if upscaled:
+        rep.findings.append(Finding(
+            "figures_not_upscaled", "violated", "soft",
+            f"vector figures enlarged at insertion: {', '.join(upscaled[:4])}"))
+    else:
+        rep.findings.append(Finding("figures_not_upscaled", "pass", "soft"))
+
     # ── no internal-stack credits in the acknowledgments ─────────────────
     ack = _ack_block(tex)
     m = _STACK_LEAK_RE.search(ack) if ack else None

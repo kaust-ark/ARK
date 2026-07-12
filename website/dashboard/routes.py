@@ -420,6 +420,51 @@ def _require_model_key(keys: dict, model_variant: str) -> None:
             f"have a key for (the OpenRouter row covers most models with a single key).")
 
 
+# Below this remaining balance a full paper run cannot complete on ANY model --
+# the run limps through early phases and dies mid-writing having burned the
+# user's remaining credits for nothing (4 such runs in 2026-07 week 2, one
+# shipped as a 3.0/10 stub with an empty bibliography). Deliberately far below
+# any realistic run cost so uncertainty never blocks a legitimate launch.
+_PREFLIGHT_MIN_USD = 2.0
+
+
+def _provider_preflight(keys: dict) -> None:
+    """Fail-fast on CONFIRMED insufficient provider balance at launch.
+
+    Seam: one function per provider with a queryable balance; only OpenRouter
+    implemented (where every incident happened -- its /credits endpoint is
+    free and instant). Fail-OPEN on every uncertainty: no key, no endpoint,
+    timeout, schema drift -> allow the launch. Only a positive signal
+    'remaining < $2' blocks, with the exact numbers in the message.
+    """
+    key = keys.get("openrouter")
+    if not key:
+        return
+    try:
+        import urllib.request
+        import json as _json
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/credits",
+            headers={"Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = (_json.load(r) or {}).get("data") or {}
+        total = data.get("total_credits")
+        usage = data.get("total_usage")
+        if total is None or usage is None:
+            return  # schema drift -> fail open
+        remaining = float(total) - float(usage)
+    except HTTPException:
+        raise
+    except Exception:
+        return  # network/auth/timeout -> fail open
+    if remaining < _PREFLIGHT_MIN_USD:
+        raise HTTPException(
+            400,
+            f"Your OpenRouter balance is ${remaining:.2f} -- too low to complete a paper "
+            f"(a full run needs at least ~${_PREFLIGHT_MIN_USD:.0f}, typically $5-10 with a "
+            f"budget model). Top up at https://openrouter.ai/credits and launch again.")
+
+
 def _admin_user_ids(session) -> set:
     """User IDs whose email is in the admin allowlist (for lane partitioning).
 
@@ -2475,6 +2520,7 @@ async def api_create_project(
 
     # Model↔key match guard (fail fast; see _require_model_key).
     _require_model_key(keys, model_variant)
+    _provider_preflight(keys)
 
     # Page fitting strictness: relaxed (no adjustment) | balanced (within ~1 page,
     # default) | strict (exact). Back-compat: old 'off' == new 'relaxed'.
@@ -2926,6 +2972,7 @@ async def api_restart_project(project_id: str, request: Request):
             raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
         _owner = get_user(session, project.user_id)
         _require_model_key(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
+        _provider_preflight(_get_user_keys(_owner) if _owner else {})
         # No concurrent hard-reject: if the user's lane is full the restart is
         # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
         # consistent with new-project submission.
@@ -3105,6 +3152,7 @@ async def api_continue_project(project_id: str, request: Request):
             raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
         _owner = get_user(session, project.user_id)
         _require_model_key(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
+        _provider_preflight(_get_user_keys(_owner) if _owner else {})
         # No concurrent hard-reject: if the user's lane is full the continue is
         # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
         # consistent with new-project submission.

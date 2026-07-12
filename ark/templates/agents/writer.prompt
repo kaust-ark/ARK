@@ -234,11 +234,20 @@ The authoritative source for how a figure should be placed is
 writer must honor:
 
 - `placement`:
-  - `single_column` → `\begin{figure}[!htbp]` + `\includegraphics[width=\columnwidth]`
-  - `full_width`    → `\begin{figure*}[tb]` + `\includegraphics[width=\textwidth]`
+  - `single_column` → `\begin{figure}[!htbp]`
+  - `full_width`    → `\begin{figure*}[tb]`
+- **Insertion width — the no-upscale invariant.** matplotlib figures are SAVED
+  at their intended print size (figure_config.json geometry), so insert them at
+  NATURAL size: `\includegraphics{fig.pdf}` with NO width option. A `width=`
+  may only ever SHRINK a figure that overflows its column — NEVER enlarge:
+  `width=\columnwidth` on a small figure blows it (and its fonts) up 2x in
+  single-column templates where `\columnwidth` is the full 6.5in page
+  (shipped oversized figures in a real TMLR paper). If a figure looks too
+  small at natural size, fix `figsize` in the plotting script and re-run it —
+  do not stretch it in LaTeX.
 - `scalable`:
-  - `true`  → the figure is a bitmap (PaperBanana / Nano-Banana output); `\includegraphics[width=0.9\textwidth]` etc. is safe when compressing
-  - `false` → the figure is a matplotlib vector PDF with baked-in fonts; **never** resize it via `\includegraphics` because the text glyphs shrink to illegible sizes. If a smaller rendering is needed, open the plotting script in `scripts/create_paper_figures.py`, reduce `figsize`, and re-run the script.
+  - `true`  → the figure is a bitmap (PaperBanana / Nano-Banana output); shrinking via `\includegraphics[width=0.9\textwidth]` etc. is safe
+  - `false` → the figure is a matplotlib vector PDF with baked-in fonts; **never** resize it via `\includegraphics` in either direction. If a different rendering size is needed, change `figsize` in `scripts/create_paper_figures.py` and re-run the script.
 
 **Before writing any `\includegraphics`, read the manifest entry for
 that file and use the matching environment.** The `_list_available_figures`
