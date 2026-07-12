@@ -67,7 +67,7 @@ See [`SKYPILOT_PLAN.md` §6–6.1](../SKYPILOT_PLAN.md) for the full design.
 **Host machine**
 - A Linux VM/server you control (Debian/Ubuntu recommended). 4+ vCPU, 8+ GB RAM,
   30+ GB disk for a modest instance; more if you run *local* orchestrators on it.
-- A domain + TLS if you're exposing it to remote clients (see [§3.5](#35-tls--reverse-proxy)).
+- A domain + TLS if you're exposing it to remote clients (see [§3.6](#36-tls--reverse-proxy)).
 - Outbound network to the LLM providers, GCP/AWS APIs, and SkyPilot.
 
 **Accounts & CLIs**
@@ -117,7 +117,27 @@ ark doctor
 > clean per-project template that new projects clone), `ark-prod` (the deployed
 > web app), and `ark-dev` (a dev instance). Keep `ark-base` free of ARK code.
 
-### 3.2 Configure `.ark/webapp.env`
+### 3.2 Install the cloud provider CLIs
+
+Install whichever provider(s) you'll offer tenants — both the setup scripts in
+[§4](#4-gcp-provider-setup-operator-side)/[§5](#5-aws-provider-setup-operator-side)
+and the onboarding **Verify** probe shell out to these CLIs.
+
+```bash
+# Google Cloud CLI (Debian/Ubuntu)
+sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates gnupg curl
+curl https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+  | sudo gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+  | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list
+sudo apt-get update && sudo apt-get install -y google-cloud-cli
+
+# AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+unzip awscliv2.zip && sudo ./aws/install && aws --version
+```
+
+### 3.3 Configure `.ark/webapp.env`
 
 The first `ark webapp` run writes `.ark/webapp.env` with placeholders. Edit it,
 then restart. The variables that matter for a hosted deployment:
@@ -151,7 +171,7 @@ See the [full variable table](#81-webappenv-variables) in §8. Set cloud
 variables in [§4](#4-gcp-provider-setup-operator-side) /
 [§5](#5-aws-provider-setup-operator-side).
 
-### 3.3 Database: SQLite vs Postgres
+### 3.4 Database: SQLite vs Postgres
 
 - **Single-node / dev** → leave `DB_PATH` as a SQLite file. Fine for one web app
   process.
@@ -164,7 +184,7 @@ variables in [§4](#4-gcp-provider-setup-operator-side) /
 
   Alembic owns the schema for both backends (`_ensure_schema` runs on startup).
 
-### 3.4 Control-plane URL (remote/cloud runs)
+### 3.5 Control-plane URL (remote/cloud runs)
 
 For **cloud/BYOC** runs, launched orchestrators must reach your `/v1` API over
 HTTP. Set `CONTROL_PLANE_URL` to the `/v1` base — the `${BASE_URL}` idiom keeps
@@ -177,14 +197,14 @@ CONTROL_PLANE_URL=${BASE_URL}/v1
 Leave it blank only for the legacy single-host, shared-DB path. See
 [`CONTROL_PLANE_BOUNDARY.md`](../CONTROL_PLANE_BOUNDARY.md).
 
-### 3.5 TLS / reverse proxy
+### 3.6 TLS / reverse proxy
 
 Terminate TLS at a reverse proxy (nginx/Caddy) in front of the web app on
 `9527`, and forward to it. If you front it with Cloudflare, see the
 [urllib User-Agent gotcha](#9-troubleshooting) — remote orchestrators' status
 reports can be blocked at the edge (a 403, not an auth failure).
 
-### 3.6 Run as a service
+### 3.7 Run as a service
 
 ```bash
 ark webapp install          # installs + starts a systemd --user unit (prod, port 9527)
@@ -308,24 +328,35 @@ pip install 'botocore[crt]'      # AWS CRT signing — required by SkyPilot's AW
 
 Also install the AWS CLI (the setup script uses it).
 
-### 5.2 Configure base credentials
+### 5.2 Base credentials the launcher acts as
 
-The launcher needs a base set of `~/.aws` credentials to act as:
+On an **unattended** host the launcher identity must use credentials that don't
+require an interactive refresh. Two good options:
+
+- **Static IAM-user keys (recommended).** You don't create these by hand — the
+  `setup_ark_launcher_aws.sh` script in
+  [§5.3](#53-create-the-central-launcher-identity) mints them into the
+  `ark-launcher` profile (matching `CLOUD_LAUNCHER_AWS_PROFILE` below). They
+  don't expire; rotate them on your own schedule.
+- **EC2 instance role.** If the host runs on EC2, skip a profile entirely and set
+  `CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE=Ec2InstanceMetadata` — the instance
+  metadata service refreshes credentials automatically. Attach the
+  assume-tenant-roles permission (created in §5.3) to that instance role.
+
+> **Do not use IAM Identity Center / SSO for the launcher on an unattended host.**
+> `aws sso login` issues a short-lived session token, and boto3 will **not**
+> re-run the browser login when it expires — cloud launches then fail every few
+> hours until a human re-authenticates. SSO is fine only for an interactive dev
+> box; the static keys / instance role above have no such expiry.
+
+To *run* the setup script in §5.3 you need your **own** AWS admin credentials
+configured (able to create IAM users) — `aws configure`, or an admin SSO profile.
+Those are used only to create the launcher identity; the running web app never
+uses them.
 
 ```bash
-# Option A — IAM Identity Center / SSO (recommended: short-lived creds)
-aws configure sso --profile ark-launcher
-aws sso login --profile ark-launcher          # refresh when it expires
-
-# Option B — static access keys
-aws configure --profile ark-launcher
-
-aws sts get-caller-identity --profile ark-launcher   # confirm it resolves
+aws sts get-caller-identity     # confirm your admin creds resolve before §5.3
 ```
-
-The profile name must match `CLOUD_LAUNCHER_AWS_PROFILE` (below). On an EC2 host
-you can skip this and set `CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE=Ec2InstanceMetadata`
-to use the host's instance role instead.
 
 ### 5.3 Create the central launcher identity
 
@@ -437,6 +468,29 @@ Back up the DB (`DB_PATH` file or your Postgres) and `PROJECTS_ROOT`. The SA key
 (`~/.config/ark/ark-launcher-sa-key.json`) and `~/.aws` profiles are host-local
 credentials — protect them, and they can be regenerated by re-running the setup
 scripts.
+
+### 7.6 Bootstrapping a new host
+
+The launcher identities themselves live in the cloud and are created once
+([§4](#4-gcp-provider-setup-operator-side)/[§5](#5-aws-provider-setup-operator-side));
+they are independent of any particular host. A new host only needs the local
+credential artifacts that let it *act* as those identities:
+
+- **GCP** — the SA key at `~/.config/ark/ark-launcher-sa-key.json`.
+- **AWS** — the `ark-launcher` profile in `~/.aws/credentials` (or, on EC2, an
+  instance role via `CLOUD_LAUNCHER_AWS_CREDENTIAL_SOURCE`).
+
+Provision a new host either by placing those artifacts on it (preserve `0600`
+permissions) or by re-running `setup_ark_launcher_sa.sh` /
+`setup_ark_launcher_aws.sh` there. The scripts are idempotent — they skip
+creating identities that already exist — but they mint a **fresh credential**
+when none is present locally, so mind the provider key caps:
+
+- A GCP service account allows up to **10 keys**, so re-running to mint an extra
+  key is harmless. Prune or rotate old keys as needed.
+- An AWS IAM user allows only **2 access keys**. Re-running on additional hosts
+  fails once that limit is reached — prefer copying the profile, or delete a
+  stale key before minting a new one.
 
 ---
 
