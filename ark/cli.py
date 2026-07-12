@@ -4123,6 +4123,72 @@ export PS1="(ark:{env_name}) $PS1"
 
 
 # ============================================================
+#  ark audit — delivery-contract verification over projects
+# ============================================================
+
+def cmd_audit(args):
+    """Verify delivered papers against the delivery contract; optionally apply
+    the mechanical repairs (disclosure insert + full recompile + re-verify).
+
+    Targets: one project dir, or a projects root scanned recursively for
+    paper/main.pdf. The same checks run inside the pipeline pre-delivery —
+    this is the batch/ops entry point for historical papers.
+    """
+    import subprocess as _sp
+    import yaml as _yaml
+    from ark.delivery_contract import evaluate, write_report, ensure_disclosure_in_tex
+
+    target = Path(args.path).expanduser().resolve()
+    if (target / "paper" / "main.tex").exists():
+        pdirs = [target]
+    else:
+        pdirs = sorted({p.parent.parent for p in target.glob("*/*/paper/main.pdf")}
+                       | {p.parent.parent for p in target.glob("*/paper/main.pdf")})
+    if not pdirs:
+        print(f"  {_c('No projects with paper/main.pdf under', Colors.YELLOW)} {target}")
+        return 1
+
+    def _venue_pages(pdir):
+        cfg = pdir / "config.yaml"
+        try:
+            return int((_yaml.safe_load(cfg.read_text()) or {}).get("venue_pages") or 0)
+        except Exception:
+            return 0
+
+    def _recompile(paper_dir):
+        for cmd in (["pdflatex", "-interaction=nonstopmode", "main.tex"],
+                    ["bibtex", "main"],
+                    ["pdflatex", "-interaction=nonstopmode", "main.tex"],
+                    ["pdflatex", "-interaction=nonstopmode", "main.tex"]):
+            _sp.run(cmd, cwd=paper_dir, capture_output=True, timeout=300)
+
+    total_viol = 0
+    for pdir in pdirs:
+        rep = evaluate(pdir, venue_pages=_venue_pages(pdir))
+        repaired = []
+        if getattr(args, "repair", False):
+            needs_disclosure = any(f.check == "disclosure_present" and f.status == "violated"
+                                   for f in rep.findings)
+            if needs_disclosure and ensure_disclosure_in_tex(pdir / "paper" / "main.tex"):
+                _recompile(pdir / "paper")
+                repaired.append("disclosure inserted + recompiled")
+                rep = evaluate(pdir, venue_pages=_venue_pages(pdir))  # re-verify
+        write_report(pdir, rep)
+        name = pdir.name[:8]
+        if rep.violations:
+            total_viol += len(rep.violations)
+            detail = "; ".join(f"{f.check}({f.severity})" for f in rep.violations)
+            print(f"  {_c('✗', Colors.RED)} {name}  {detail}"
+                  + (f"  [{', '.join(repaired)}]" if repaired else ""))
+        else:
+            print(f"  {_c('✓', Colors.GREEN)} {name}  all checks passed"
+                  + (f"  [{', '.join(repaired)}]" if repaired else ""))
+    print(f"\n  {len(pdirs)} project(s) audited, "
+          f"{total_viol} violation(s)" )
+    return 0 if total_viol == 0 else 2
+
+
+# ============================================================
 #  ark doctor — diagnose a self-host install
 # ============================================================
 
@@ -4579,6 +4645,12 @@ def main():
 
     p_doctor = subparsers.add_parser("doctor", help="Diagnose a self-host install (python, envs, API keys, webapp)")
     p_doctor.set_defaults(func=cmd_doctor)
+
+    p_audit = subparsers.add_parser("audit", help="Verify delivered papers against the delivery contract")
+    p_audit.add_argument("path", help="A project dir, or a projects root to scan")
+    p_audit.add_argument("--repair", action="store_true",
+                         help="Apply mechanical repairs (disclosure insert + recompile), then re-verify")
+    p_audit.set_defaults(func=cmd_audit)
 
     p_setup_bot = subparsers.add_parser("setup-bot", help="Set up Telegram notifications (per-project or global)")
     p_setup_bot.add_argument("project", nargs="?", default=None, help="Project name for per-project setup (omit for global)")

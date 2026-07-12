@@ -548,6 +548,27 @@ class PipelineMixin:
         # the delivered PDF (happened in 50350a67). Verify + fix on the final PDF.
         self.ensure_resolved_citations(context="pre-delivery")
 
+        # Delivery contract (observe-only v1): the gates above FIX; this
+        # VERIFIES their outcome on the final artifacts and persists a report.
+        # Violations are surfaced (log + chat), never blocking — enforcement
+        # comes after fleet reports establish the false-positive rate.
+        try:
+            from ark.delivery_contract import evaluate, write_report
+            _dr = evaluate(Path(self.code_dir),
+                           venue_pages=int(self.config.get("venue_pages") or 0))
+            write_report(Path(self.code_dir), _dr)
+            if _dr.violations:
+                _summary = "; ".join(f"{f.check}: {f.detail}" for f in _dr.violations)
+                self.log(f"Delivery contract: {len(_dr.hard_violations)} hard / "
+                         f"{len(_dr.violations)} total violation(s) — {_summary[:300]}", "WARN")
+                self._chat("agent",
+                           f"⚠ Delivery checks flagged {len(_dr.violations)} issue(s): "
+                           f"{_summary[:200]}", kind="notice")
+            else:
+                self.log("Delivery contract: all checks passed", "INFO")
+        except Exception as _e:
+            self.log(f"Delivery contract evaluation failed (non-fatal): {_e}", "WARN")
+
         self.send_iteration_summary(score, current_score, review_output)
         if not post_accept_cleanup: self._check_smart_intervention(score, current_score, review_output, True)
         self.cleanup_workspace()
@@ -603,6 +624,12 @@ class PipelineMixin:
         # (once the user fixes the key/model) redoes it instead of skipping it.
         self.iteration -= 1
         detail = getattr(self, "_terminal_error", "") or "non-retryable agent error"
+        # STICKY run-fatal marker. `_terminal_error` is attempt-scoped and gets
+        # reset by `_iteration_prep()` at the top of every iteration — a later
+        # phase's prep wiped the abort evidence and main() reported the run
+        # "done" (699d9538, 0bda3eef: credit-exhausted stubs delivered as
+        # completed papers). `_run_fatal` is run-scoped and NEVER cleared.
+        self._run_fatal = str(detail)[:400]
         self.log("", "RAW")
         self.log_summary_box(
             "Run ABORTED (non-retryable error)",

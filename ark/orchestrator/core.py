@@ -3176,13 +3176,35 @@ def main():
         #   - _stop_requested      → user asked it to stop → "stopped".
         #   - otherwise            → ran its full iteration budget (accepted or
         #     not; the score conveys quality) → "done".
-        if getattr(orchestrator, "_terminal_error", None):
+        # `_run_fatal` is the STICKY variant: `_terminal_error` is attempt-
+        # scoped and reset by _iteration_prep(), so an abort in one phase was
+        # wiped by the next phase's prep and the run reported "done"
+        # (699d9538, 0bda3eef).
+        _fatal = (getattr(orchestrator, "_run_fatal", None)
+                  or getattr(orchestrator, "_terminal_error", None))
+        if _fatal:
             final_status = "failed"
-            final_error = str(orchestrator._terminal_error)[:400]
+            final_error = str(_fatal)[:400]
         elif getattr(orchestrator, "_stop_requested", False):
             final_status = "stopped"
         else:
             final_status = "done"
+        # Evidence gate: "done" requires a deliverable — a rendered PDF and a
+        # non-zero score. Control flow can be fooled (soft-fail paths); the
+        # artifacts cannot. Applies only to this full-run path (chat/apply
+        # short paths above return early and never reach here).
+        if final_status == "done":
+            _pdf = Path(orchestrator.latex_dir) / "main.pdf"
+            _score = 0.0
+            try:
+                _score = float((orchestrator.load_paper_state() or {}).get("current_score") or 0.0)
+            except Exception:
+                pass
+            if not _pdf.exists() or _pdf.stat().st_size < 50_000 or _score <= 0:
+                final_status = "failed"
+                final_error = ("Run ended without a deliverable "
+                               f"(pdf={'present' if _pdf.exists() else 'missing'}, "
+                               f"score={_score}) — see the run log for the root cause.")
     except KeyboardInterrupt:
         final_status = "stopped"
     except Exception as e:
