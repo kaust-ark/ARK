@@ -231,6 +231,71 @@ ark webapp logs -f
 > the same DB) must set `ARK_CONTROL_LOOP=0`, or the two will double-launch
 > pending projects.
 
+### 3.8 Bootstrap admin credentials (to run the provider setup scripts)
+
+The `setup_ark_launcher_*` scripts in [§4](#4-gcp-provider-setup-operator-side)/[§5](#5-aws-provider-setup-operator-side)
+**create** the launcher identities, so whoever runs them needs cloud-**admin**
+rights (create a service account / IAM user, grant roles, mint a key). This is a
+**one-time** privilege used only at setup and later rotation — the running web
+app never uses it. Neither script hardcodes a credential; each just uses whatever
+the CLI currently resolves. So supply a **non-personal, short-lived** admin
+identity rather than a named individual's password/keys.
+
+**GCP.** The bootstrap identity needs, on the central project:
+`resourcemanager.projects.setIamPolicy`, `iam.serviceAccounts.create`, and
+`iam.serviceAccountKeys.create` (all in `roles/owner`, or the narrower
+`roles/resourcemanager.projectIamAdmin` + `roles/iam.serviceAccountAdmin`).
+Non-personal ways to hold it:
+
+- **Cloud Shell / a bootstrap VM with an attached SA (simplest).** Create an
+  `ark-bootstrap` SA with those roles, attach it to a Compute Engine VM (or open
+  Cloud Shell as a project member), and run the script there — credentials come
+  from the metadata server, nothing lands on a laptop.
+  ```bash
+  gcloud config set project $PROJECT_ID
+  gcloud auth list        # confirm the ACTIVE identity is the SA, not a human user
+  ```
+- **SA impersonation (for laptop runs).** Grant a **group** (not a person)
+  `roles/iam.serviceAccountTokenCreator` on `ark-bootstrap`, then have operators
+  impersonate it — permissions live on the SA; who may use it is group
+  membership, revocable without touching the SA:
+  ```bash
+  gcloud config set auth/impersonate_service_account \
+    ark-bootstrap@$PROJECT_ID.iam.gserviceaccount.com
+  ```
+- **Workload Identity Federation** if you drive bootstrap from CI (e.g. GitHub
+  Actions OIDC → impersonate `ark-bootstrap`) — fully keyless.
+
+**AWS.** The bootstrap identity needs `iam:CreateUser`, `iam:CreateAccessKey`,
+`iam:PutUserPolicy`, `iam:GetUser`, and `sts:GetCallerIdentity` (an admin /
+PowerUser-plus-IAM permission set). Non-personal ways to hold it:
+
+- **IAM Identity Center (SSO) permission set (recommended).** Create an
+  `ARK-Bootstrap-Admin` permission set, assign it to a group, then run the setup
+  script with that profile:
+  ```bash
+  aws configure sso                                       # one-time, per operator
+  aws sso login --profile ark-bootstrap
+  aws sts get-caller-identity --profile ark-bootstrap     # confirm before §5.3
+  AWS_PROFILE=ark-bootstrap scripts/setup_ark_launcher_aws.sh
+  ```
+  Short-lived STS creds tied to a group. SSO is discouraged for the *launcher*
+  (it can't self-refresh unattended — see [§5.2](#52-base-credentials-the-launcher-acts-as)),
+  but the bootstrap run is interactive and one-off, so that caveat doesn't apply.
+- **Assume a bootstrap role.** An `ark-bootstrap-admin` IAM role operators assume
+  via a profile (`role_arn` + `source_profile`) or `aws sts assume-role` —
+  permissions on the role, membership managed separately.
+- **AWS CloudShell / an EC2 instance profile.** Run the script from CloudShell or
+  a bootstrap EC2 host whose instance role carries the IAM permissions above — no
+  keys anywhere.
+
+> Whichever option you pick, the launcher scripts read the **ambient** CLI
+> credential — so make sure `gcloud auth list` / `aws sts get-caller-identity`
+> (or the right `--profile` / `AWS_PROFILE`) resolves to the bootstrap identity
+> **before** running §4.2 / §5.3. These bootstrap creds are distinct from the
+> long-lived *launcher* creds ([§5.2](#52-base-credentials-the-launcher-acts-as),
+> [§7.6](#76-bootstrapping-a-new-host)) that the running app uses.
+
 ---
 
 ## 4. GCP provider setup (operator side)
@@ -255,6 +320,10 @@ sky check                        # verify SkyPilot can reach your configured clo
 ```
 
 ### 4.2 Create the central launcher service account
+
+> Run this as a bootstrap **admin** identity (it creates an SA, grants roles, and
+> mints a key) — see [§3.8](#38-bootstrap-admin-credentials-to-run-the-provider-setup-scripts)
+> for non-personal options. Confirm `gcloud auth list` shows it before running.
 
 ```bash
 scripts/setup_ark_launcher_sa.sh $PROJECT_ID
@@ -349,13 +418,15 @@ require an interactive refresh. Two good options:
 > hours until a human re-authenticates. SSO is fine only for an interactive dev
 > box; the static keys / instance role above have no such expiry.
 
-To *run* the setup script in §5.3 you need your **own** AWS admin credentials
-configured (able to create IAM users) — `aws configure`, or an admin SSO profile.
-Those are used only to create the launcher identity; the running web app never
+To *run* the setup script in §5.3 you need **admin** credentials able to create
+IAM users. Don't tie this to a named user's password — see
+[§3.8](#38-bootstrap-admin-credentials-to-run-the-provider-setup-scripts) for
+non-personal options (an SSO permission set, an assumed role, or CloudShell).
+These are used only to create the launcher identity; the running web app never
 uses them.
 
 ```bash
-aws sts get-caller-identity     # confirm your admin creds resolve before §5.3
+aws sts get-caller-identity     # confirm the bootstrap identity resolves before §5.3
 ```
 
 ### 5.3 Create the central launcher identity
