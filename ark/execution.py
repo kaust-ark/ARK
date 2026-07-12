@@ -1114,18 +1114,31 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                     endmatter_blocks.append(m.group(0).rstrip())
                 appendix_block = endmatter_pattern.sub('', appendix_block)
 
-            # REQUIRED ARK-usage acknowledgment: preprocess_custom_template only
-            # seeds it for *uploaded* templates, so papers from built-in venue
-            # templates shipped with no disclosure at all (b5b24def, 50350a67).
-            # This routine runs on every finalize for every venue — if no
-            # Acknowledgments endmatter exists, insert the standard block here.
-            # Endmatter sits past the body \clearpage (zero body-page cost) and
-            # the wording carries no author identity (double-blind-safe).
-            if not any(_re.search(r'Acknowledg', b) for b in endmatter_blocks):
-                from ark.template_preprocess import ARK_ACK_TEXT
-                endmatter_blocks.append(
-                    "\\section*{Acknowledgments}\n" + ARK_ACK_TEXT)
-                self.log("Inserted ARK-usage Acknowledgments (required disclosure was missing)", "INFO")
+            # REQUIRED Idea2Paper disclosure: the check is for the DISCLOSURE
+            # TEXT itself, not merely "an Acknowledgments section exists" — a
+            # writer once authored its own acknowledgments crediting our
+            # internal stack ("supported by the OpenHands AI research
+            # platform... OpenRouter... Claude Sonnet 4", project 472e4874),
+            # which satisfied the old any-Acknowledgments guard and shipped
+            # WITHOUT the required disclosure. Now: if an Acknowledgments
+            # block exists but lacks the disclosure, append it INTO that
+            # block; if none exists, insert the standard section. Idempotent
+            # on the idea2paper.org marker. Endmatter sits past the body
+            # \clearpage (zero body-page cost); wording is double-blind-safe.
+            from ark.template_preprocess import ARK_ACK_TEXT
+            if not any("idea2paper.org" in b for b in endmatter_blocks):
+                ack_idx = next((i for i, b in enumerate(endmatter_blocks)
+                                if _re.search(r'Acknowledg', b)), None)
+                if ack_idx is not None:
+                    endmatter_blocks[ack_idx] = (
+                        endmatter_blocks[ack_idx].rstrip() + "\n\n" + ARK_ACK_TEXT)
+                    self.log("Appended Idea2Paper disclosure to the writer's "
+                             "Acknowledgments (required text was missing)", "INFO")
+                else:
+                    endmatter_blocks.append(
+                        "\\section*{Acknowledgments}\n" + ARK_ACK_TEXT)
+                    self.log("Inserted Idea2Paper Acknowledgments (required "
+                             "disclosure was missing)", "INFO")
 
             endmatter_text = "\n\n".join(b for b in endmatter_blocks if b.strip())
 
