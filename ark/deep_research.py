@@ -461,6 +461,14 @@ def run_deep_research_openrouter(
 
     cost = (data.get("usage") or {}).get("cost")
     cost_str = f" · cost ${cost:.3f}" if isinstance(cost, (int, float)) else ""
+    # Surface the provider-billed cost to the pipeline ledger: DR was the
+    # single most expensive call of a run yet appeared in NO cost report —
+    # a real user's dashboard showed $5 against a $20 OpenRouter bill.
+    if isinstance(cost, (int, float)):
+        try:
+            (output_dir / "deep_research_cost.usd").write_text(f"{float(cost):.6f}")
+        except Exception:
+            pass
     header = (
         f"# Deep Research Report\n\n"
         f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"

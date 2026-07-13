@@ -1198,6 +1198,9 @@ def _read_cost_report(project_dir: Path, project=None) -> dict:
                 "total_agent_seconds": d.get("total_agent_seconds", 0),
                 "per_agent": d.get("per_agent", {}),
                 "generated_at": d.get("generated_at"),
+                # Provider-billed truth (OpenRouter key-usage delta) — covers
+                # spend the per-call estimate can't see (DR, figures, fees).
+                "provider_billed_usd": d.get("provider_billed_usd"),
             }
 
     # Fall back to DB totals only when YAML has no data yet

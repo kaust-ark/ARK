@@ -4114,8 +4114,16 @@ function renderCost(report) {
 
   // Headline + meta line, depending on view
   if (_costView === 'cost') {
-    document.getElementById('cost-headline').textContent = _fmtUsd(report.total_cost_usd);
-    document.getElementById('cost-headline-unit').textContent = 'USD';
+    // Provider-billed (OpenRouter invoice truth) beats the price-table
+    // estimate when available — it includes deep research, figures and fees.
+    const billed = report.provider_billed_usd;
+    if (billed != null && billed > 0) {
+      document.getElementById('cost-headline').textContent = _fmtUsd(billed);
+      document.getElementById('cost-headline-unit').textContent = 'USD · billed';
+    } else {
+      document.getElementById('cost-headline').textContent = _fmtUsd(report.total_cost_usd);
+      document.getElementById('cost-headline-unit').textContent = 'USD · est.';
+    }
   } else {
     document.getElementById('cost-headline').textContent = _fmtTok(totalTok);
     document.getElementById('cost-headline-unit').textContent = 'TOKENS';

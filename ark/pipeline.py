@@ -1027,6 +1027,27 @@ Be thorough and faithful to the proposal.
                         )
                     if result:
                         self.log(f"Deep Research completed ({label}): {result}", "INFO")
+                        # Fold the provider-billed DR cost into the ledger as
+                        # its own line item (deep_research.py writes the
+                        # sidecar from OpenRouter's usage.cost).
+                        try:
+                            _cf = self.state_dir / "deep_research_cost.usd"
+                            if _cf.exists():
+                                _dr_cost = float(_cf.read_text().strip() or 0)
+                                if _dr_cost > 0:
+                                    self._agent_stats.append({
+                                        "agent_type": "deep_research",
+                                        "elapsed_seconds": 0, "prompt_len": 0,
+                                        "output_len": 0, "model": "openrouter/deep-research",
+                                        "input_tokens": 0, "output_tokens": 0,
+                                        "cache_read_tokens": 0, "cache_creation_tokens": 0,
+                                        "cost_usd": _dr_cost, "duration_api_ms": 0,
+                                        "timestamp": datetime.now().isoformat(),
+                                    })
+                                    self._write_cost_report()
+                                _cf.unlink(missing_ok=True)
+                        except Exception:
+                            pass
                         self._send_deep_research_telegram(result)
                     else:
                         self.log("Deep Research returned no result.", "WARN")
@@ -3484,6 +3505,24 @@ provide the title.
             "raw_stats": merged_stats[-100:],  # Keep last 100 entries
         }
 
+        # Provider-billed truth (baseline sampled at run() start): prior runs'
+        # persisted total + this run's key-usage delta. Covers EVERYTHING the
+        # provider charged (deep research, figures, utility calls, cache-price
+        # drift) — total_cost_usd above is a static-price-table ESTIMATE that
+        # undercounted a real user's spend by ~4x (Alessandro, 2026-07-13).
+        try:
+            if getattr(self, "_provider_base", None) is not None:
+                from ark.provider_billing import openrouter_key_usage_usd
+                _cur = openrouter_key_usage_usd()
+                if _cur is not None:
+                    self._provider_last_billed = round(
+                        getattr(self, "_provider_prev_runs", 0.0)
+                        + max(0.0, _cur - self._provider_base), 6)
+            if getattr(self, "_provider_last_billed", None) is not None:
+                report["provider_billed_usd"] = self._provider_last_billed
+        except Exception:
+            pass
+
         tmp_path = report_path.with_suffix(".yaml.tmp")
         try:
             with open(tmp_path, "w") as f:
@@ -3840,6 +3879,27 @@ provide the title.
     def run(self):
         """Main loop."""
         self.check_dependencies()
+
+        # Provider-billed baseline: sample the OpenRouter key's lifetime usage
+        # BEFORE any spend of this run (deep research fires before the first
+        # ledger write, so a lazy baseline would miss it). Every later ledger
+        # write records provider_billed_usd = prior-runs total + (current -
+        # baseline): the provider's invoice truth, covering spend the per-call
+        # estimate can't see (DR, figures, utility calls, cache-price drift).
+        # Fail-open: no OpenRouter key / API error → estimates only.
+        try:
+            from ark.provider_billing import openrouter_key_usage_usd
+            self._provider_base = openrouter_key_usage_usd()
+            # Cross-restart accumulation mirrors the ledger merge: freeze the
+            # previous report's billed total as this run's starting point.
+            self._provider_prev_runs = 0.0
+            _rp = self.state_dir / "cost_report.yaml"
+            if _rp.exists():
+                _prev = yaml.safe_load(_rp.read_text()) or {}
+                self._provider_prev_runs = float(_prev.get("provider_billed_usd") or 0.0)
+            self._provider_last_billed = self._provider_prev_runs or None
+        except Exception:
+            self._provider_base = None
 
         # Rehydrate any state + result files the prior VM projected but that this
         # (possibly freshly provisioned) VM's disk is missing, then resume.
