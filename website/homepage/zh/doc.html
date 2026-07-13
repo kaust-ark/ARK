@@ -200,431 +200,648 @@
 
   <!-- Sidebar -->
   <aside class="doc-sidebar">
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">入门指南</div>
-      <a href="#installation">安装</a>
-      <a href="#prerequisites">前置要求</a>
-      <a href="#quickstart">快速开始</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">CLI 参考</div>
-      <a href="#ark-new">ark new</a>
-      <a href="#ark-run">ark run</a>
-      <a href="#ark-status">ark status</a>
-      <a href="#ark-monitor">ark monitor</a>
-      <a href="#ark-update">ark update</a>
-      <a href="#ark-stop">ark stop</a>
-      <a href="#ark-delete">ark delete</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">配置</div>
-      <a href="#project-config">项目配置</a>
-      <a href="#venue-presets">会议模板</a>
-      <a href="#agent-prompts">Agent Prompt</a>
-      <a href="#hooks">自定义钩子</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">Pipeline</div>
-      <a href="#research-phase">研究阶段</a>
-      <a href="#development-phase">开发阶段</a>
-      <a href="#review-phase">审稿阶段</a>
-      <a href="#memory-system">记忆系统</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">高级功能</div>
-      <a href="#telegram-bot">Telegram 集成</a>
-      <a href="#slurm">Slurm / HPC</a>
-      <a href="#multi-model">多模型支持</a>
-      <a href="#state-management">状态管理</a>
-      <a href="#troubleshooting">故障排除</a>
-    </div>
+      <a href="#由-idea2paper-撰写的论文" class="doc-nav-link">由 idea2paper 撰写的论文</a>
+      <a href="#快速上手" class="doc-nav-link">快速上手</a>
+      <a href="#环境要求" class="doc-nav-link">环境要求</a>
+      <a href="#架构" class="doc-nav-link">架构</a>
+      <a href="#流水线" class="doc-nav-link">流水线</a>
+      <a href="#智能体" class="doc-nav-link">智能体</a>
+      <a href="#护栏与步骤日志" class="doc-nav-link">护栏与步骤日志</a>
+      <a href="#idea2paper-的独特之处" class="doc-nav-link">idea2paper 的独特之处</a>
+      <a href="#环境隔离" class="doc-nav-link">环境隔离</a>
+      <a href="#技能系统" class="doc-nav-link">技能系统</a>
+      <a href="#cli-参考" class="doc-nav-link">CLI 参考</a>
+      <a href="#仪表板-dashboard" class="doc-nav-link">仪表板 (Dashboard)</a>
+      <a href="#docker-使用" class="doc-nav-link">Docker 使用</a>
+      <a href="#云端计算-cloud-compute" class="doc-nav-link">云端计算 (Cloud Compute)</a>
+      <a href="#telegram-集成" class="doc-nav-link">Telegram 集成</a>
+      <a href="#支持的会议" class="doc-nav-link">支持的会议</a>
+      <a href="#社区" class="doc-nav-link">社区</a>
+      <a href="#许可证" class="doc-nav-link">许可证</a>
   </aside>
 
   <!-- Main content -->
   <main class="doc-content">
-    <h1>文档</h1>
-    <p>自托管 Idea2Paper 的安装、配置与开发者参考。<span style="color:var(--text-muted,#888)">产品叫 <strong>Idea2Paper</strong>；底层是 <strong>ARK</strong> 框架，因此下文的命令行与路径均使用 <code>ark</code> 这个名字。</span></p>
-
-    <!-- ===== GETTING STARTED ===== -->
-    <h2 id="installation">安装</h2>
-    <p>以可编辑模式安装 ARK：</p>
-    <pre><code>pip install -e .</code></pre>
-
-    <p>如需研究阶段功能（Deep Research 集成），请安装 research 扩展：</p>
-    <pre><code>pip install -e ".[research]"</code></pre>
-
-    <h2 id="prerequisites">前置要求</h2>
-    <ul>
-      <li><strong>Python 3.9+</strong></li>
-      <li><strong>至少一个 AI 后端</strong>，装好并登录：
-        <ul>
-          <li><a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank">Claude Code CLI</a> (<code>claude</code>) — 推荐</li>
-          <li><a href="https://github.com/google-gemini/gemini-cli" target="_blank">Gemini CLI</a> (<code>gemini</code>)</li>
-          <li><a href="https://github.com/openai/codex" target="_blank">Codex CLI</a> (<code>codex</code>)</li>
-        </ul>
-      </li>
-      <li><strong>LaTeX 工具链</strong>（可选）— <code>pdflatex</code>、<code>bibtex</code>，编译 PDF 用</li>
-      <li><strong>PyYAML</strong> — 装 Idea2Paper 时自动装好</li>
-    </ul>
-
-    <div class="callout">
-      <strong>提示：</strong>建议使用 Claude Code Max 订阅。Agent 对 token 消耗较高 &mdash; 一篇论文的完整迭代可能产生 50k+ 行输出。
-    </div>
-
-    <h2 id="quickstart">快速开始</h2>
-    <p>建个项目，填标题和想法，剩下的交给 Idea2Paper：</p>
-    <pre><code># 创建新项目（交互式向导）
-ark new my-project
-
-# 运行完整 Pipeline
-ark run my-project
-
-# 随时查看进度
-ark status my-project</code></pre>
-
-    <p><code>ark new</code> 向导将询问：</p>
-    <ol>
-      <li><strong>论文标题</strong> — 例如 "Efficient Cache-Aware Matrix Multiplication on Modern CPUs"</li>
-      <li><strong>研究想法</strong> — 描述核心贡献和方法的段落</li>
-      <li><strong>目标会议</strong> — NeurIPS、ICML、ICLR、ACL、IEEE 等</li>
-      <li><strong>代码目录</strong> — 实验代码所在位置</li>
-      <li><strong>模型后端</strong> — Claude、Gemini 或 Codex</li>
-    </ol>
-
-    <p>也可以从已有 PDF 提案直接起步：</p>
-    <pre><code>ark new my-project --from-pdf proposal.pdf</code></pre>
-
-    <!-- ===== CLI REFERENCE ===== -->
-    <h2 id="ark-new">ark new</h2>
-    <p>交互式向导，创建研究项目。</p>
-    <pre><code>ark new &lt;project-name&gt; [options]</code></pre>
-    <table>
-      <tr><th>选项</th><th>描述</th></tr>
-      <tr><td><code>--from-pdf &lt;path&gt;</code></td><td>从提案 PDF 启动项目</td></tr>
-      <tr><td><code>--venue &lt;venue&gt;</code></td><td>设置目标会议（例如 neurips、icml）</td></tr>
-      <tr><td><code>--model &lt;model&gt;</code></td><td>AI 后端：<code>claude</code>、<code>gemini</code> 或 <code>codex</code></td></tr>
-    </table>
-    <p>会在 <code>ARK/projects/&lt;project-name&gt;/</code> 下生成：</p>
-    <ul>
-      <li><code>config.yaml</code> — 项目配置</li>
-      <li><code>hooks.py</code> — 自定义研究/图表生成逻辑</li>
-      <li><code>agents/</code> — 各 Agent 的 prompt 文件</li>
-    </ul>
-
-    <h2 id="ark-run">ark run</h2>
-    <p>启动自主研究 Pipeline。</p>
-    <pre><code>ark run &lt;project-name&gt; [options]</code></pre>
-    <table>
-      <tr><th>选项</th><th>描述</th></tr>
-      <tr><td><code>--mode paper|research</code></td><td>Pipeline 模式（默认：<code>paper</code>）</td></tr>
-      <tr><td><code>--max-iterations &lt;n&gt;</code></td><td>最大审稿迭代次数（默认：14）</td></tr>
-      <tr><td><code>--max-days &lt;n&gt;</code></td><td>研究模式的最大天数</td></tr>
-    </table>
-
-    <div class="callout">
-      <strong>注意：</strong><code>paper</code> 模式跑完整三阶段 Pipeline（研究 → 开发 → 审稿）。<code>research</code> 模式专注实验设计和执行，不写论文。
-    </div>
-
-    <p>也可以直接调 orchestrator，控制更细：</p>
-    <pre><code># 指定模型和迭代限制的论文模式
-python -m ark.orchestrator --project my-project --mode paper --model claude --max-iterations 20
-
-# 带天数限制的研究模式
-python -m ark.orchestrator --project my-project --mode research --model claude --max-days 3
-
-# 后台执行并记录日志
-nohup python -m ark.orchestrator --project my-project --mode paper --model claude \
-  > auto_research/logs/orchestrator.log 2>&1 &</code></pre>
-
-    <h2 id="ark-status">ark status</h2>
-    <p>查看项目当前进度。</p>
-    <pre><code>ark status &lt;project-name&gt;</code></pre>
-    <p>显示：当前迭代、审稿分数、阶段、费用明细和最近的 Agent 动作。</p>
-
-    <h2 id="ark-monitor">ark monitor</h2>
-    <p>实时监控 Pipeline &mdash; 流式输出 Agent 日志和状态变化。</p>
-    <pre><code>ark monitor &lt;project-name&gt;</code></pre>
-
-    <h2 id="ark-update">ark update</h2>
-    <p>向 Pipeline 发送运行中指令，不停机就能调方向。</p>
-    <pre><code>ark update &lt;project-name&gt;
-
-# 示例指令：
-# "重点关注相关工作部分"
-# "添加与 TransformerFAM 的比较"
-# "增大图 3 的字体大小"</code></pre>
-
-    <h2 id="ark-stop">ark stop</h2>
-    <p>优雅停止运行中的 Pipeline。状态自动 checkpoint，随时恢复。</p>
-    <pre><code>ark stop &lt;project-name&gt;</code></pre>
-
-    <h2 id="ark-delete">ark delete</h2>
-    <p>删除项目及全部配置。</p>
-    <pre><code>ark delete &lt;project-name&gt;</code></pre>
-
-    <div class="callout callout-warn">
-      <strong>警告：</strong>会删掉 <code>ARK/projects/</code> 下的项目配置。你的代码目录和已生成论文不受影响。
-    </div>
-
-    <!-- ===== CONFIGURATION ===== -->
-    <h2 id="project-config">项目配置</h2>
-    <p>每个项目有一个 <code>config.yaml</code>，Pipeline 的一切都在这控制：</p>
-    <pre><code># ARK/projects/my-project/config.yaml
-code_dir: /home/user/my-research        # 实验代码所在目录
-venue: NeurIPS                           # 目标会议
-venue_format: neurips                    # LaTeX 模板格式
-venue_pages: 9                           # 正文页数限制
-
-title: "My Paper Title"
-model: claude                            # AI 后端 (claude/gemini/codex)
-
-# 目录结构
-latex_dir: paper                         # LaTeX 源文件目录（相对于 code_dir）
-figures_dir: paper/figures               # 生成的图表
-scripts_dir: code                        # 实验脚本
-
-# 图表生成
-create_figures_script: code/create_paper_figures.py
-
-# 质量阈值 — 当审稿分数达到此值时停止
-paper_accept_threshold: 8
-
-# 目标锚点 — 让 Agent 在迭代中不跑偏
-goal_anchor: |
-  ## Goal Anchor
-  **Paper Title**: My Paper Title
-  **Target Venue**: NeurIPS 2025
-  **Core Contributions**:
-  1. First contribution...
-  2. Second contribution...
-
-# 计算设置（可选）
-use_slurm: false
-slurm_job_prefix: EXP_
-conda_env: my-env
-
-# Telegram 通知（可选）
-telegram_bot_token: "YOUR_BOT_TOKEN"
-telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
-
-    <h2 id="venue-presets">会议模板</h2>
-    <p>内置 11+ 会议的精确 LaTeX 排版预设，图表和表格开箱就能对齐：</p>
-    <table>
-      <tr><th>会议</th><th>格式键</th><th>文本宽度</th><th>页数</th></tr>
-      <tr><td>NeurIPS</td><td><code>neurips</code></td><td>5.5in</td><td>9</td></tr>
-      <tr><td>ICML</td><td><code>icml</code></td><td>6.75in</td><td>8</td></tr>
-      <tr><td>ICLR</td><td><code>iclr</code></td><td>6.0in</td><td>9</td></tr>
-      <tr><td>AAAI</td><td><code>aaai</code></td><td>7.0in</td><td>7</td></tr>
-      <tr><td>ACL</td><td><code>acl</code></td><td>6.3in</td><td>8</td></tr>
-      <tr><td>IEEE</td><td><code>ieee</code></td><td>7.0in</td><td>10</td></tr>
-      <tr><td>ACM SIGPLAN</td><td><code>sigplan</code></td><td>5.5in</td><td>6</td></tr>
-      <tr><td>LNCS</td><td><code>lncs</code></td><td>4.8in</td><td>12</td></tr>
-      <tr><td>USENIX</td><td><code>usenix</code></td><td>7.0in</td><td>12</td></tr>
-      <tr><td>CVPR</td><td><code>cvpr</code></td><td>6.875in</td><td>8</td></tr>
-      <tr><td>ECCV</td><td><code>eccv</code></td><td>4.8in</td><td>14</td></tr>
-    </table>
-
-    <h2 id="agent-prompts">Agent Prompt</h2>
-    <p>每个 Agent 在 <code>projects/&lt;name&gt;/agents/</code> 下都有一个 <code>.prompt</code> 文件，改它就能调 Agent 行为：</p>
-    <table>
-      <tr><th>文件</th><th>Agent</th><th>职责</th></tr>
-      <tr><td><code>reviewer.prompt</code></td><td>Reviewer</td><td>给论文打分（1-10），列出具体问题</td></tr>
-      <tr><td><code>planner.prompt</code></td><td>Planner</td><td>把审稿意见转成优先级 YAML 行动计划</td></tr>
-      <tr><td><code>writer.prompt</code></td><td>Writer</td><td>起草和打磨 LaTeX 章节</td></tr>
-      <tr><td><code>experimenter.prompt</code></td><td>Experimenter</td><td>设计和跑实验</td></tr>
-      <tr><td><code>researcher.prompt</code></td><td>Researcher</td><td>文献调研和结果分析</td></tr>
-      <tr><td><code>validator.prompt</code></td><td>Validator</td><td>验证改动是否正确落地</td></tr>
-      <tr><td><code>figure_fixer.prompt</code></td><td>Visualizer</td><td>修图表、调绘图</td></tr>
-      <tr><td><code>literature.prompt</code></td><td>Literature</td><td>深度文献搜索和摘要</td></tr>
-      <tr><td><code>meta_debugger.prompt</code></td><td>Meta-debugger</td><td>Pipeline 卡住时做系统级诊断</td></tr>
-    </table>
-
-    <h2 id="hooks">自定义钩子</h2>
-    <p>每个项目可以定义 <code>hooks.py</code> 注入自定义逻辑：</p>
-    <pre><code># ARK/projects/my-project/hooks.py
-
-def pre_experiment(config, state):
-    """在每次实验运行前调用。"""
-    pass
-
-def post_experiment(config, state, results):
-    """实验完成后调用。在此处理结果。"""
-    pass
-
-def create_figures(config, state):
-    """自定义图表生成逻辑。"""
-    pass</code></pre>
-
-    <!-- ===== PIPELINE ===== -->
-    <h2 id="research-phase">阶段一：研究</h2>
-    <p>用 Deep Research 收集背景知识：</p>
-    <ol>
-      <li>以论文标题和研究想法作为输入</li>
-      <li>进行全面的文献调研</li>
-      <li>识别相关工作、空白和定位</li>
-      <li>输出结构化的研究摘要到 <code>auto_research/state/</code></li>
-    </ol>
-    <div class="callout">
-      <strong>提示：</strong>用 <code>pip install -e ".[research]"</code> 安装以启用 Deep Research。没装的话可以跳过这步，自己提供文献调研。
-    </div>
-
-    <h2 id="development-phase">阶段二：开发</h2>
-    <p>完成实验设计与执行：</p>
-    <ol>
-      <li><strong>Planner</strong> 根据研究摘要定实验方案</li>
-      <li><strong>Experimenter</strong> 写脚本、提交运行（Slurm / 本地 / 云端）</li>
-      <li><strong>Researcher</strong> 分析结果，找出还差什么</li>
-      <li><strong>Writer</strong> 用 LaTeX 写初稿</li>
-    </ol>
-
-    <h2 id="review-phase">阶段三：审稿</h2>
-    <p>这是 Idea2Paper 的核心。每轮迭代：</p>
-    <ol>
-      <li><strong>编译</strong> — LaTeX → PDF，生成页面截图供视觉审查</li>
-      <li><strong>审稿</strong> — Reviewer 打分（1-10）并写详细反馈</li>
-      <li><strong>规划 + 执行</strong> — Planner 拆任务，Writer / Experimenter / Researcher 干活</li>
-      <li><strong>可视化</strong> — 修图表、重新编译、验证改动</li>
-    </ol>
-
-    <p>什么时候停：</p>
-    <ul>
-      <li>审稿分数达到 <code>paper_accept_threshold</code>（默认 8）</li>
-      <li>跑满最大迭代次数</li>
-      <li>你手动 <code>ark stop</code></li>
-    </ul>
-
-    <p>达到目标分数后，Idea2Paper 会再执行一轮收尾迭代处理遗留问题，再输出最终 PDF。</p>
-
-    <h2 id="memory-system">记忆系统</h2>
-    <p>Idea2Paper 跨迭代追踪进展，防止死循环和停滞：</p>
-    <pre><code># 存储在 auto_research/state/memory.yaml
-scores: [5.0, 5.5, 6.0, 6.2, 6.5, 7.0, 7.2]
-best_score: 7.2
-stagnation_count: 0</code></pre>
-
-    <h3>分数跟踪</h3>
-    <p>保留最近 20 轮审稿分数历史，用于衡量进展和触发干预。</p>
-
-    <h3>停滞检测</h3>
-    <p>分数连续多轮不涨，Idea2Paper 会：</p>
-    <ol>
-      <li>给 Planner 标记停滞状态</li>
-      <li>触发 <strong>Meta-debugger</strong> 做系统级诊断</li>
-      <li>通过 Telegram 通知你（如已配置），请求人工介入</li>
-    </ol>
-
-    <h3>问题重复跟踪</h3>
-    <p>记录每个问题在审稿中反复出现的次数。修了还不行？Idea2Paper 会封掉无效策略，换条路走。</p>
-
-    <h3>目标锚点</h3>
-    <p>每次 Agent 调用都带上目标锚点 &mdash; 项目核心目标的固定描述，防止 Agent 跑偏。</p>
-
-    <!-- ===== ADVANCED ===== -->
-    <h2 id="telegram-bot">Telegram 集成</h2>
-    <p>Idea2Paper 通过 Telegram 推送实时通知，也能接收运行中指令：</p>
-
-    <h3>设置</h3>
-    <pre><code># 交互式设置
-ark setup-bot
-
-# 或手动添加到 config.yaml：
-telegram_bot_token: "YOUR_BOT_TOKEN"
-telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
-
-    <h3>功能</h3>
-    <ul>
-      <li><strong>迭代通知</strong> — 每轮审稿后推送分数</li>
-      <li><strong>PDF 推送</strong> — 随时拿当前论文 PDF</li>
-      <li><strong>运行中指令</strong> — 发消息就能调 Agent 方向</li>
-      <li><strong>停滞警报</strong> — 进展停了自动通知你</li>
-      <li><strong>主动确认</strong> — Agent 要做大动作前先问你</li>
-    </ul>
-
-    <h2 id="slurm">Slurm / HPC</h2>
-    <p>Idea2Paper 支持在 Slurm 管理的 HPC 集群上运行实验：</p>
-    <pre><code># config.yaml
-use_slurm: true
-slurm_job_prefix: EXP_       # 作业名前缀
-conda_env: my-env             # 要激活的 Conda 环境</code></pre>
-
-    <p>开启 <code>use_slurm: true</code> 后，Experimenter Agent 会：</p>
-    <ol>
-      <li>生成带有适当资源请求的 Slurm 批处理脚本</li>
-      <li>通过 <code>sbatch</code> 提交作业</li>
-      <li>使用 <code>squeue</code> 监控作业状态</li>
-      <li>在作业完成后收集结果</li>
-    </ol>
-
-    <p>没 Slurm？实验直接在本地或任意可 SSH 的服务器上跑。</p>
-
-    <h2 id="multi-model">多模型支持</h2>
-    <p>支持三种 AI 后端，在 <code>config.yaml</code> 或 CLI 里切换：</p>
-    <table>
-      <tr><th>模型</th><th>CLI</th><th>最适合</th></tr>
-      <tr><td>Claude Code</td><td><code>claude</code></td><td>综合最强，写论文首选</td></tr>
-      <tr><td>Gemini CLI</td><td><code>gemini</code></td><td>适合研究阶段、文献调研</td></tr>
-      <tr><td>Codex CLI</td><td><code>codex</code></td><td>适合代码密集型实验</td></tr>
-    </table>
-
-    <pre><code># 为特定运行切换模型
-python -m ark.orchestrator --project my-project --model gemini</code></pre>
-
-    <h2 id="state-management">状态管理</h2>
-    <p>所有运行时状态在 <code>&lt;code_dir&gt;/auto_research/</code> 下：</p>
-    <pre><code>auto_research/
-├── state/
-│   ├── paper_state.yaml      # 当前论文元数据
-│   ├── action_plan.yaml      # 规划师的当前行动计划
-│   ├── latest_review.md      # 最新审稿输出
-│   ├── memory.yaml           # 分数历史、停滞跟踪
-│   ├── checkpoint.yaml       # 恢复检查点
-│   └── findings.yaml         # 累积的研究发现
-└── logs/
-    └── *.log                  # 每轮迭代的 Agent 日志</code></pre>
-
-    <h3>检查点与恢复</h3>
-    <p>Idea2Paper 每轮迭代后自动存档。中断了？再跑一次 <code>ark run</code> 就从上次断点继续。</p>
-
-    <h3>从头再来</h3>
-    <p>想从零开始？清掉状态文件：</p>
-    <pre><code>rm -f auto_research/state/checkpoint.yaml \
-      auto_research/state/paper_state.yaml \
-      auto_research/state/action_plan.yaml \
-      auto_research/state/latest_review.md \
-      auto_research/state/memory.yaml</code></pre>
-
-    <h2 id="troubleshooting">故障排除</h2>
-
-    <h3>LaTeX 编译失败</h3>
-    <p>确保已安装 <code>pdflatex</code> 和 <code>bibtex</code>。在 Ubuntu 上：</p>
-    <pre><code>sudo apt install texlive-full</code></pre>
-
-    <h3>Agent 超时或失败</h3>
-    <p>看 <code>auto_research/logs/</code> 下的日志。常见原因：</p>
-    <ul>
-      <li>Claude Code CLI 没登录 — 跑一次 <code>claude</code> 完成认证</li>
-      <li>速率限制 — Idea2Paper 有内置重试和退避</li>
-      <li>上下文太长 — 试试精简目标锚点</li>
-    </ul>
-
-    <h3>分数卡住</h3>
-    <p>审稿分数不涨？</p>
-    <ol>
-      <li>看 <code>auto_research/state/latest_review.md</code> 里的具体问题</li>
-      <li>通过 <code>ark update</code> 或 Telegram 发针对性指令</li>
-      <li>调整 <code>projects/&lt;name&gt;/agents/</code> 里的 Agent Prompt</li>
-    </ol>
-
-    <h3>Pipeline 跑不起来</h3>
-    <ul>
-      <li>确认 <code>config.yaml</code> 里的路径是绝对路径且存在</li>
-      <li>确认模型 CLI 装好了：<code>which claude</code></li>
-      <li>跑 <code>ark status &lt;project&gt;</code> 看诊断输出</li>
-    </ul>
-
-    <div class="callout" style="margin-top:3rem">
-      <strong>需要帮助？</strong>到 <a href="https://github.com/kaust-ark/ARK" target="_blank">GitHub</a> 提 Issue，或看 <a href="https://github.com/kaust-ark/ARK/blob/main/README.md" target="_blank">README</a> 获取最新信息。
-    </div>
+<p>idea2paper 协调 <strong>6 个专业 AI 智能体</strong>，将研究构想转化为完整论文 &mdash; 从方案分析、文献检索、Slurm 实验、LaTeX 撰写到迭代同行评审 &mdash; 同时通过 <strong>命令行 (CLI)</strong>、<strong>仪表板 (Dashboard)</strong> 或 <strong>Telegram</strong> 保持您的全程控制。</p>
+<pre><code>提供想法和目标会议，剩下的交给 idea2paper。
+</code></pre>
+<p>想最快上手，直接用托管实例 <strong><a href="https://idea2paper.org/">idea2paper.org</a></strong>——邮箱登录，填一个 <a href="https://openrouter.ai/keys">OpenRouter</a> API key 就能开跑。用 DeepSeek 这类平价模型跑完一整篇论文，通常只花 <strong>约 $5 的自有 API 额度</strong>。想自托管也只需一行命令安装（见下文）。</p>
+<h2 id="由-idea2paper-撰写的论文">由 idea2paper 撰写的论文</h2>
+<table align="center">
+<tr>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/marco.pdf"><img src="https://idea2paper.org/assets/paper-marco.png" alt="Budget-Constrained Multi-Modal Research Synthesis" width="320"></a>
+<br>
+<strong>Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</strong>
+<br>
+<sub>模板: EuroMLSys</sub>
+</td>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/heteroserve.pdf"><img src="https://idea2paper.org/assets/paper-heteroserve.png" alt="HeteroServe" width="320"></a>
+<br>
+<strong>HeteroServe: Capability-Weighted Batch Scheduling for Heterogeneous GPU Clusters in LLM Inference</strong>
+<br>
+<sub>模板: ICML</sub>
+</td>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/tierkv.pdf"><img src="https://idea2paper.org/assets/paper-tierkv.png" alt="TierKV" width="320"></a>
+<br>
+<strong>TierKV: Prefetch-Aware Memory Tiering for KV Cache in LLM Serving</strong>
+<br>
+<sub>模板: NeurIPS</sub>
+</td>
+</tr>
+</table>
+
+<hr />
+<h2 id="快速上手">快速上手</h2>
+<pre><code class="language-bash">curl -fsSL https://idea2paper.org/install.sh | bash
+</code></pre>
+<p>脚本会：</p>
+<ol>
+<li>检测系统、按需安装 miniforge、创建 <code>ark-base</code> 与 <code>ark</code> 两个 conda env、以可编辑模式将 idea2paper 装到 <code>~/ARK</code>，并安装 OpenHands CLI（智能体运行时，经 <code>uv</code> 安装——自带独立的 Python 3.12）。</li>
+<li>询问你的 API key 和<strong>仪表板登录邮箱</strong>。推荐只配一个 <strong>OpenRouter</strong> key——它解锁全部模型，外加深度研究和图表生成；直接填 Anthropic / OpenAI / Gemini / DeepSeek 的官方 key 也可以。回车跳过任意一项。</li>
+<li>把仪表板装成 <code>systemd --user</code> 服务（端口 <code>9527</code>，用 <code>--no-webapp</code> 退出）。</li>
+<li>打印一个一次性的 <strong>magic-link URL</strong> 到你输入的邮箱地址——点一次链接就登录本地仪表板。<strong>不需要 SMTP，也不需要 Google OAuth</strong>。</li>
+</ol>
+<p>之后 <a href="http://localhost:9527">http://localhost:9527</a> 仪表板就是主要的交互界面——建项目、选模型、运行、监控。CLI 也照常可用：</p>
+<pre><code class="language-bash">ark doctor          # 验证安装
+ark new myproject   # 交互式项目向导
+ark run  myproject
+ark monitor myproject
+</code></pre>
+<p>随时跑 <code>ark webapp login &lt;email&gt;</code> 获取新的登录链接。完整脚本参数见 <a href="https://github.com/kaust-ark/ARK/blob/main/website/homepage/install.sh"><code>website/homepage/install.sh --help</code></a>。</p>
+<h3 id="从现有-pdf-开始">从现有 PDF 开始</h3>
+<pre><code class="language-bash">ark new myproject --from-pdf proposal.pdf
+</code></pre>
+<p>idea2paper 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息，并根据提取的规格开始工作。</p>
+<hr />
+<h2 id="环境要求">环境要求</h2>
+<ul>
+<li><strong>Python 3.10+</strong> (需安装 <code>pyyaml</code> 和 <code>PyMuPDF</code>)</li>
+<li><strong>智能体运行时</strong>：<a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a>（经 <code>uv</code> 安装，自带 Python 3.12）&mdash; 一个运行时即可驱动 Claude / GPT / Gemini / 任何 <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a> 支持的模型，通过 <code>config.yaml</code> 里的 <code>model</code> 字段按项目选择。</li>
+<li><strong>API key</strong>：一个 <a href="https://openrouter.ai/keys">OpenRouter</a> key 即可覆盖全部模型、深度研究（Perplexity）和 AI 绘图；单一厂商的 key（Anthropic / OpenAI / Gemini / DeepSeek 等）也能用，只是会缺少该厂商不提供的那部分能力。</li>
+<li><strong>可选</strong>: LaTeX (<code>pdflatex</code> + <code>bibtex</code>)、Slurm。</li>
+</ul>
+<h3 id="安装步骤">安装步骤</h3>
+<p>最简单的方式是 <a href="#快速上手">快速上手</a> 中的一键安装脚本，它会替你执行下面这些步骤并打印上手提示。手动安装如下：</p>
+<pre><code class="language-bash"># 1. 创建项目研究栈模板（这里不要装 idea2paper —— 每个新项目都会克隆此环境，
+#    所以必须保持纯净）。
+conda env create -f environment.yml         # Linux 系统 (创建 &quot;ark-base&quot;)
+# 或 macOS 系统:
+conda env create -f environment-macos.yml   # macOS 系统 (创建 &quot;ark-base&quot;)
+
+# 2. 把 idea2paper 本体装进一个独立的 env（不要装进 ark-base）。
+conda create -n ark python=3.11 -y
+conda activate ark
+pip install -e .                    # 核心库
+pip install -e &quot;.[research]&quot;       # + Gemini 深度研究与 Nano Banana
+pip install -e &quot;.[webapp]&quot;         # + 仪表板 / systemd 服务支持
+
+# 3. 安装 OpenHands CLI（智能体运行时）。它是一个独立的 `uv` 工具，
+#    自带专属的 Python 3.12——不是 pip 依赖——且必须位于 PATH 上，
+#    编排器子进程才能找到它。
+pip install uv &amp;&amp; uv tool install --python 3.12 openhands
+
+# 4. 验证（检查 openhands 运行时是否在 PATH 上、密钥是否就位等）
+ark doctor
+</code></pre>
+<hr />
+<h2 id="架构">架构</h2>
+<p align="center">
+  <img src="assets/framework.png" alt="idea2paper framework" width="900">
+</p>
+
+<p>idea2paper 协调三个阶段 &mdash; <strong>初始化与研究</strong>、<strong>迭代开发</strong> 和 <strong>迭代评审</strong> &mdash; 通过共享记忆、在每次智能体调用时重新注入的 <strong>Goal Anchor</strong>（防止跨迭代漂移），以及经 Web 仪表板或 Telegram 的人机协同来协同工作。</p>
+<hr />
+<h2 id="流水线">流水线</h2>
+<p>idea2paper 按顺序运行三个阶段。评审阶段会循环进行，直到论文达到目标分数。</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">阶段</th>
+<th style="text-align: left;">过程内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>研究</strong></td>
+<td style="text-align: left;">5步流水线：设置 (conda 环境) &rarr; 分析方案 (researcher) &rarr; 深度研究 (Perplexity via OpenRouter，或 Gemini) &rarr; 专项化 (researcher) &rarr; 引导 (技能与引用)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>开发</strong></td>
+<td style="text-align: left;">迭代实验循环：规划实验 &rarr; 运行实验 (Slurm 或本地) &rarr; 分析结果 &rarr; 评估完成度</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>评审</strong></td>
+<td style="text-align: left;">编译 &rarr; 评审 &rarr; 计划 &rarr; 执行 &rarr; 验证，循环直到得分 &ge; 阈值</td>
+</tr>
+</tbody>
+</table>
+<h3 id="评审循环">评审循环</h3>
+<p>评审阶段的每次迭代包含 <strong>5 个步骤</strong>：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">步骤</th>
+<th style="text-align: left;">描述</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>编译</strong></td>
+<td style="text-align: left;">LaTeX &rarr; PDF，计算页数，生成页面图像</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>评审</strong></td>
+<td style="text-align: left;">AI 评审员评分 (1-10)，列出主要和次要问题</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>计划</strong></td>
+<td style="text-align: left;">规划器 (Planner) 创建优先处理的任务计划</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>执行</strong></td>
+<td style="text-align: left;">研究员与实验员并行工作；撰写员修改 LaTeX</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>验证</strong></td>
+<td style="text-align: left;">验证修改是否可编译；重新生成 PDF</td>
+</tr>
+</tbody>
+</table>
+<p>循环将重复进行，直到分数达到录取阈值 &mdash; 或者您通过 Telegram 进行人工干预。</p>
+<hr />
+<h2 id="智能体">智能体</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">智能体</th>
+<th style="text-align: left;">职责</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>研究员</strong></td>
+<td style="text-align: left;">分析方案；执行深度研究文献调研；为项目定制智能体提示词</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>评审员</strong></td>
+<td style="text-align: left;">根据会议标准为论文评分，生成改进任务</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>规划器</strong></td>
+<td style="text-align: left;">将评审反馈转化为优先行动计划；分析开发阶段的结果</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>撰写员</strong></td>
+<td style="text-align: left;">撰写和精炼 LaTeX 章节，并附带经过 DBLP 验证的参考文献</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>实验员</strong></td>
+<td style="text-align: left;">设计实验，提交 Slurm 任务，分析实验结果</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>编程员</strong></td>
+<td style="text-align: left;">编写和调试实验代码及分析脚本</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="护栏与步骤日志">护栏与步骤日志</h2>
+<p>自主运行全程受监督、有关卡，不是黑箱。</p>
+<ul>
+<li><strong>实时步骤日志。</strong> 每个智能体的动作——每条 bash 命令、每次文件编辑及其结果——都会实时写入日志（不再有 30 分钟的空白），并同时落入结构化的 <code>agent_steps.jsonl</code>。密钥等敏感值会被自动打码。用 <code>log_verbosity: quiet|normal|verbose|debug</code> 调整详细程度。</li>
+<li><strong>高风险操作先停下来问你。</strong> 在删除文件、批量提交任务、开通付费云实例、处理凭据、推送/外传数据或触及花费上限之前，idea2paper 会通过 <strong>Telegram</strong> 请求你的批准（同意 / 拒绝 / 记住本次选择）并等待答复。它会记住你的回答避免重复打扰，超时视为拒绝；未配置 Telegram 时则<strong>放行并记录</strong>——所以永远不会卡死。</li>
+<li><strong>想法把关（Gate A / Gate B）。</strong> 每个提交的想法都要先过一道启动前的伦理与合理性审查（Gate A）；文献调研之后再做一次新颖性/范围检查（Gate B），标记与已有工作的重叠，把实事求是的定位写进论文，而不是夸大其词。</li>
+<li><strong>交付检查。</strong> 论文交付前会对照一份明确的契约逐项核验——AI 使用声明齐备、所有引用均已解析、参考文献非空、生成的图确实被用上、页数符合预算。同样的检查也可以用 <code>ark audit &lt;project&gt; [--repair]</code> 单独运行。</li>
+<li><strong>AI 使用声明。</strong> 每篇论文都自动附带一段致谢，说明它由 Idea2Paper 生成并经作者审阅——对所有会议一视同仁。</li>
+<li><strong>两层强制机制。</strong> Shadow-PATH 包装器在危险命令<em>运行前</em>拦截；熔断器兜底任何绕过它的行为。编排器自身的云开通 / git push / 花费动作同样受管控——但你亲手触发的命令（<code>ark clear</code>、删除、停止）不受限制。</li>
+</ul>
+<p>以上都在 <a href="https://github.com/kaust-ark/ARK/blob/main/config.example.yaml"><code>config.example.yaml</code></a> 的 <code>intervention:</code> 块中配置；默认的自主级别（<code>standard</code>）只在真正高风险的操作上打断你。</p>
+<hr />
+<h2 id="idea2paper-的独特之处">idea2paper 的独特之处</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th style="text-align: left;">其他工具</th>
+<th style="text-align: left;">idea2paper</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>控制力</strong></td>
+<td style="text-align: left;">完全自主 &mdash; 容易偏离意图，无法中途纠正</td>
+<td style="text-align: left;">人机协同：在关键决策点暂停，通过 Telegram 或 Web 引导</td>
+</tr>
+<tr>
+<td><strong>排版</strong></td>
+<td style="text-align: left;">布局损坏、LaTeX 错误、需要手动清理</td>
+<td style="text-align: left;">会议模板 + 亚页级长度控制，精准卡住页数上限</td>
+</tr>
+<tr>
+<td><strong>引用</strong></td>
+<td style="text-align: left;">LLM 编造看似真实的虚假参考文献</td>
+<td style="text-align: left;">API 优先生成 BibTeX (DBLP / CrossRef / arXiv)，并做内容&ndash;论断对齐</td>
+</tr>
+<tr>
+<td><strong>评审</strong></td>
+<td style="text-align: left;">仅对 LaTeX 源码做纯文本评审</td>
+<td style="text-align: left;">视觉接地：页面图像 <strong>加</strong> 源码，按会议标准打分</td>
+</tr>
+<tr>
+<td><strong>插图</strong></td>
+<td style="text-align: left;">默认样式、尺寸错误、缺乏页面意识</td>
+<td style="text-align: left;">AI 概念图 (PaperBanana) + 面向会议的尺寸控制：图片按印刷尺寸保存，从不放大</td>
+</tr>
+<tr>
+<td><strong>隔离性</strong></td>
+<td style="text-align: left;">共享环境 &mdash; 项目之间相互干扰</td>
+<td style="text-align: left;">每个项目独立的 conda 环境、沙盒化 HOME 目录、完整的隔离</td>
+</tr>
+<tr>
+<td><strong>真实性</strong></td>
+<td style="text-align: left;">LLM 模拟结果而非运行真实实验</td>
+<td style="text-align: left;">防模拟提示词 + 内置技能强制执行真实运行</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="环境隔离">环境隔离</h2>
+<p>每个项目都在其独立的 <strong>conda 环境</strong>中运行。这确保了完整的隔离：</p>
+<ul>
+<li><strong>隔离的 Python</strong> &mdash; 每个项目拥有独立的 <code>.env/</code> 目录和包。</li>
+<li><strong>隔离的 HOME 目录</strong> &mdash; 每个编排器运行时将 <code>HOME</code> 设置为项目目录。</li>
+<li><strong>无交叉污染</strong> &mdash; <code>PYTHONNOUSERSITE=1</code> 防止泄露全局用户包。</li>
+<li><strong>自动配置</strong> &mdash; <code>ark run</code> 和 Web 门户会自动检测并使用项目的 conda 环境；如果缺失，流水线将引导安装。</li>
+</ul>
+<pre><code class="language-bash"># conda 环境在第一次运行时自动创建。
+# ark run 将检测并使用它：
+ark run myproject
+#   Conda env: /path/to/projects/myproject/.env
+</code></pre>
+<h2 id="技能系统">技能系统</h2>
+<p>idea2paper 附带 <strong>内置技能</strong> &mdash; 智能体在运行时加载的模块化指令集，用于强制执行最佳实践：</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">技能</th>
+<th style="text-align: left;">目的</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>研究真实性</strong></td>
+<td style="text-align: left;">防模拟提示词：智能体必须运行真实实验，不得编造输出</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>人工干预</strong></td>
+<td style="text-align: left;">升级协议：智能体在执行不可逆操作前会通过 Telegram 询问</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>环境隔离</strong></td>
+<td style="text-align: left;">强制执行每个项目的环境边界</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>运行时沙箱</strong></td>
+<td style="text-align: left;">在运行时把每个项目锁定在自己的 conda 环境、<code>HOME</code> 与临时目录中</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>插图真实性</strong></td>
+<td style="text-align: left;">验证插图内容与数据匹配；防止占位符或幻觉图表</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>页面调整</strong></td>
+<td style="text-align: left;">通过调整内容密度而非删除章节来维持页面限制</td>
+</tr>
+</tbody>
+</table>
+<p>内置技能位于 <code>skills/builtin/</code>，在流水线引导期间自动安装。领域技能（例如 HPC）位于 <code>skills/library/</code>，由研究员在初始化阶段按需取用。</p>
+<hr />
+<h2 id="cli-参考">CLI 参考</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">命令</th>
+<th style="text-align: left;">描述</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>ark new &lt;name&gt;</code></td>
+<td style="text-align: left;">通过交互式向导创建项目</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark run &lt;name&gt;</code></td>
+<td style="text-align: left;">启动流水线 (自动检测项目环境)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark status [name]</code></td>
+<td style="text-align: left;">得分、迭代次数、阶段、成本</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark monitor &lt;name&gt;</code></td>
+<td style="text-align: left;">实时监控：智能体活动、得分趋势</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark update &lt;name&gt;</code></td>
+<td style="text-align: left;">注入中途指令</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark stop &lt;name&gt;</code></td>
+<td style="text-align: left;">优雅停止</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark restart &lt;name&gt;</code></td>
+<td style="text-align: left;">停止并重启</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark research &lt;name&gt;</code></td>
+<td style="text-align: left;">独立运行 Gemini 深度研究</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark config &lt;name&gt; [key] [val]</code></td>
+<td style="text-align: left;">查看或编辑配置</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark clear &lt;name&gt;</code></td>
+<td style="text-align: left;">重置状态以重新开始</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark delete &lt;name&gt;</code></td>
+<td style="text-align: left;">完全删除项目</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark setup-bot</code></td>
+<td style="text-align: left;">配置 Telegram 机器人</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark list</code></td>
+<td style="text-align: left;">列出所有项目及其状态</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark doctor</code></td>
+<td style="text-align: left;">自托管安装诊断（环境、API key、Web 服务）</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark cite-check &lt;name&gt;</code></td>
+<td style="text-align: left;">用 DBLP / CrossRef 校验项目引用</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark cite-search &lt;query&gt;</code></td>
+<td style="text-align: left;">搜索学术数据库</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark audit &lt;dir&gt; [--repair]</code></td>
+<td style="text-align: left;">按交付契约核验已交付的论文</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark share create &lt;name&gt;</code></td>
+<td style="text-align: left;">为项目生成分享链接</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp install</code></td>
+<td style="text-align: left;">安装 Web 仪表板服务</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark access …</code></td>
+<td style="text-align: left;">管理（可选的）Cloudflare Access 允许列表</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="仪表板-dashboard">仪表板 (Dashboard)</h2>
+<p>idea2paper 包含一个基于 Web 的仪表板，用于管理项目、查看分数和引导智能体——由单个 FastAPI 进程提供服务，主页也由它托管（一个端口，一个 systemd 单元）。除了实时阶段状态和日志，它还提供：</p>
+<ul>
+<li><strong>公平排队</strong> &mdash; 每次启动最多跑 2 轮开发 + 2 轮评审迭代；通道占满时，新项目进入队列，显示排位和<strong>预计完成时间</strong>，论文完成后你会收到邮件通知。</li>
+<li><strong>诚实的账单</strong> &mdash; 成本卡片优先展示<strong>按供应商实际计费</strong>的总额（真实的 OpenRouter 账单，含深度研究和绘图开销）；拿不到实际账单时才显示估算值，并明确标注。</li>
+<li><strong>按 key 过滤的模型选择器</strong> &mdash; 只有你持有对应 key 的模型才可选；一个 OpenRouter key 解锁整个列表。</li>
+<li><strong>与论文对话</strong> &mdash; 就已完成的项目提问、要求定向修改，或单独重跑某个实验，无需完整迭代。</li>
+<li><strong>页面适配模式</strong> &mdash; Relaxed / Balanced / Strict 三档，控制论文向会议页数限制压缩的力度。</li>
+</ul>
+<h3 id="配置">配置</h3>
+<p>通过 <code>.ark/webapp.env</code> 配置（首次运行 <code>ark webapp</code> 时自动创建）。设置 <code>SMTP_*</code> 启用魔术链接登录，用 <code>ALLOWED_EMAILS</code> / <code>EMAIL_DOMAINS</code> 限制访问，可选设置 <code>GOOGLE_CLIENT_ID</code> / <code>GOOGLE_CLIENT_SECRET</code> 启用 Google OAuth。</p>
+<h3 id="管理命令">管理命令</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">命令</th>
+<th style="text-align: left;">描述</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>ark webapp</code></td>
+<td style="text-align: left;">在前台启动仪表板 (对调试很有用)。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp release</code></td>
+<td style="text-align: left;">标记当前代码并部署到生产工作树。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp install [--dev]</code></td>
+<td style="text-align: left;">作为 <code>systemd</code> 用户服务安装并启动。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp status</code></td>
+<td style="text-align: left;">显示 systemd 服务的状态。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp restart</code></td>
+<td style="text-align: left;">重启仪表板服务。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp logs [-f]</code></td>
+<td style="text-align: left;">查看或跟踪服务日志。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp login &lt;email&gt;</code></td>
+<td style="text-align: left;">打印一个新的 magic-link 登录链接。</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp publish</code></td>
+<td style="text-align: left;">把 origin/main 打上标签作为下一个发布版本（标签驱动部署）。</td>
+</tr>
+</tbody>
+</table>
+<details>
+<summary><strong>服务详情 (生产 vs 开发)</strong></summary>
+
+| | 生产 (Prod) | 开发 (Dev) |
+|---|:-----|:----|
+| **端口** | 9527 | 1027 |
+| **服务名称** | `ark-webapp` | `ark-webapp-dev` |
+| **Conda 环境** | `ark-prod` | `ark-dev` |
+| **代码源** | `~/.ark/prod/` (已固定) | 当前存储库 (实时) |
+
+</details>
+
+<h3 id="为他人托管-idea2paper">为他人托管 Idea2Paper？</h3>
+<p>搭建一个<strong>托管的、多租户</strong>的 Idea2Paper 实例——主机与 Web 应用配置、共享 prod 的团队发布，以及让客户在各自云账号中运行云端计算的 GCP/AWS 启动器设置——在运维手册中有完整的分步说明（英文）：</p>
+<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong></p>
+<details>
+<summary><strong>直接调用编排器</strong></summary>
+
+
+<pre><code class="language-bash">python -m ark.orchestrator --project myproject --mode paper --max-iterations 20
+python -m ark.orchestrator --project myproject --mode dev
+</code></pre>
+
+
+</details>
+
+<hr />
+<h2 id="docker-使用">Docker 使用</h2>
+<h3 id="架构要求">架构要求</h3>
+<blockquote>
+<p>idea2paper 研究运行时依赖的科学库在 x86_64 上最稳定。如果您在 <strong>Apple Silicon (M1/M2/M3)</strong> Mac 上构建，必须为 <code>linux/amd64</code> 平台构建。</p>
+<p>所有的 idea2paper Dockerfile 和 <code>docker-compose.yml</code> 默认都配置为强制使用 <code>linux/amd64</code>。</p>
+</blockquote>
+<h3 id="使用-docker-compose-运行">使用 Docker Compose 运行</h3>
+<p>运行 idea2paper Web 门户最简单的方法是使用 <code>docker-compose</code>。在项目根目录下：</p>
+<pre><code class="language-bash"># 启动 Web 门户 (自动为 amd64 构建镜像)
+docker compose -f docker/docker-compose.yml up --build -d
+</code></pre>
+<p>Web 门户可以通过 <code>http://localhost:9527</code> 访问。所有数据库、配置和项目数据都自动持久化在 Docker 命名卷 (<code>ark_data</code>) 中。</p>
+<p>查看 Web 门户的实时日志：</p>
+<pre><code class="language-bash">docker compose -f docker/docker-compose.yml logs -f webapp
+</code></pre>
+<h3 id="推送到-google-cloud-platform-gcp">推送到 Google Cloud Platform (GCP)</h3>
+<p>idea2paper 包含一个构建并推送镜像到 Google Artifact Registry 或 GCR 的脚本。</p>
+<pre><code class="language-bash"># 推送到 Artifact Registry (推荐)
+./docker/push-gcp.sh --project [PROJECT_ID] --region [REGION] --repo [REPO] --build
+
+# 推送到旧版 Container Registry (gcr.io)
+./docker/push-gcp.sh --project [PROJECT_ID] --legacy --build
+</code></pre>
+<p>即使在 macOS 上运行，<code>--build</code> 标志也会自动为 <code>linux/amd64</code> 构建镜像。</p>
+<h3 id="配置_1">配置</h3>
+<p>自定义 Web 门户配置 (例如，设置用于魔术链接登录的 SMTP 或 OAuth)：</p>
+<pre><code class="language-bash"># 创建自定义配置
+cp .ark/webapp.env.example .ark/webapp.env
+# 编辑 .ark/webapp.env 以填写您的凭据
+</code></pre>
+<p>然后取消注释 <code>docker/docker-compose.yml</code> 中 <code>webapp</code> 服务下的环境卷映射：</p>
+<pre><code class="language-yaml">      - ../.ark/webapp.env:/data/.ark/webapp.env:ro
+</code></pre>
+<h3 id="运行单个作业">运行单个作业</h3>
+<p>您可以使用 idea2paper 作业容器与 Web 应用程序一起运行隔离的研究作业。取消注释 <code>docker/docker-compose.yml</code> 中的 <code>job</code> 服务，然后运行：</p>
+<pre><code class="language-bash">docker compose -f docker/docker-compose.yml run --rm job \
+  --project myproject \
+  --project-dir /data/projects/&lt;user-id&gt;/myproject \
+  --mode research \
+  --iterations 10
+</code></pre>
+<p><em>注意：您必须将所需的 API 密钥 (例如 <code>ANTHROPIC_API_KEY</code>、<code>GEMINI_API_KEY</code>) 作为环境变量传递。</em></p>
+<hr />
+<h2 id="云端计算-cloud-compute">云端计算 (Cloud Compute)</h2>
+<p>idea2paper 的 <strong>v2 云端架构</strong>将<em>控制平面 (Control Plane)</em> 与<em>执行平面 (Execution Plane)</em> 解耦，使完整的编排器能够运行在 <strong>SkyPilot 预配置的集群</strong>上，而您只需通过一个轻量级的本地 Web 应用进行交互。<a href="https://docs.skypilot.co">SkyPilot</a> 现在是唯一的云端计算路径 &mdash; 它通过单一抽象层跨 AWS/GCP/Azure/Kubernetes 进行预配置，内置抢占式实例 (spot)、重试以及 autostop 自动销毁机制。</p>
+<p><strong>工作原理：</strong>
+1. 本地 Web 应用（或 CLI）充当轻量级启动器 &mdash; 它运行 <code>sky launch</code> 来预配置远程<strong>编排器集群 (Orchestrator cluster)</strong>，通过 SkyPilot 的 <code>workdir</code>/<code>file_mounts</code> 同步您的项目代码与 API 密钥，并触发编排器进程。
+2. <strong>编排器集群</strong>在一个分离的会话 (detached session) 中远程运行所有高层逻辑（研究员、规划器、写作者、LaTeX、图表）。
+3. 实验既可以运行在同一个编排器集群上，也可以运行在一个独立的、由 SkyPilot 预配置的 GPU 集群上（可独立配置）。
+4. 编排器通过 <code>/v1</code> 控制平面 API 向本地回报状态；Web 应用则流式传输日志并刷新仪表板。运行完成后（或在空闲一段时间后），集群通过 <strong>autostop</strong> 自动终止。</p>
+<blockquote>
+<p>云端凭据使用您的 <code>SECRET_KEY</code> 在静态时加密。您的密钥绝不会被记录或传输给第三方。</p>
+</blockquote>
+<details>
+<summary><strong>配置层级</strong></summary>
+
+idea2paper 为云端计算使用三层配置模型：
+1. **系统默认值**: 在 `webapp.env` 中设置（持有已烘焙 ARK 镜像的中央 `CLOUD_GCP_PROJECT`，以及 `CLOUD_LAUNCHER_SA`、`CLOUD_LAUNCHER_SA_KEY` 和 `CLOUD_CONDA_ENV`）。
+2. **全局用户默认值**: 在**设置**面板 (⚙️) 中设置。这些适用于您的所有项目。
+3. **项目覆盖**: 在项目创建或重启期间设置。这些具有最高优先级。
+
+这种层级结构允许您只需定义一次标准默认值，同时可以轻松地为特定的实验切换到强大的 GPU 实例（加速器、抢占式）。
+
+</details>
+
+<hr />
+<h3 id="通过仪表板启用云端计算">通过仪表板启用云端计算</h3>
+<ol>
+<li>打开<strong>设置</strong>面板 (顶部导航栏中的 ⚙️ 图标)。</li>
+<li>打开 <strong>Compute</strong> 标签页。</li>
+<li>输入您的 <strong>GCP Project ID</strong>，为显示的 <code>ark-launcher</code> 服务账号授予您项目上所需的角色，然后点击 <strong>Verify access</strong>。（不会上传任何服务账号密钥 &mdash; 您通过 IAM 将访问权限委托给您自己的项目。运维者请参见 <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md"><code>docs/DEPLOYMENT.md</code></a> §4。）</li>
+<li>点击<strong>保存</strong>。</li>
+</ol>
+<p>创建新项目时，您现在可以独立选择：
+- <strong>编排器后端 (Orchestrator Backend)</strong> &mdash; <code>skypilot</code> 表示在 SkyPilot 预配置的集群上运行控制平面，<code>local</code> 表示在与 Web 应用相同的机器上运行。
+- <strong>实验后端 (Experiment Backend)</strong> &mdash; <code>skypilot</code> 用于 GPU 实验，<code>local</code> 表示在编排器集群本身上运行实验。</p>
+<hr />
+<details>
+<summary><strong>创建项目</strong></summary>
+
+配置好云端计算后，通过仪表板启动项目：
+
+1. 从仪表板主页点击 **New Project**。
+2. 填写研究目标、目标会议和任何附加说明。
+3. 点击 **Submit** &mdash; Web 应用会生成 `config.yaml`，通过 SkyPilot 预配置编排器集群，同步您的项目，并启动运行。
+
+生成的 `config.yaml` 存储在：
+
+
+<pre><code>~/.ark/data/projects/&lt;user_id&gt;/&lt;project_id&gt;/config.yaml
+</code></pre>
+
+
+您可以随时检查或手动编辑此文件（例如，调整实例类型或添加 `setup_commands`）。更改在下次运行或重启时生效。
+
+>
+> 如果在您的 `.ark/webapp.env` 中设置了 `PROJECTS_ROOT`，上述路径将被替换为 `$PROJECTS_ROOT/<user_id>/<project_id>/config.yaml`。
+
+</details>
+
+<hr />
+<h3 id="云端提供商设置">云端提供商设置</h3>
+<p>配置 GCP / AWS / SkyPilot 启动器——构建预烘焙镜像、创建中央 <code>ark-launcher</code> 身份、写入 <code>webapp.env</code>——是每个托管实例只需做一次的<strong>运维</strong>任务。它按云分步记录在部署指南中（英文）：</p>
+<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong> — §4 GCP · §5 AWS · §6 客户接入 · §8.4 <code>config.yaml</code> 参考。</p>
+<p>如果您只是<em>使用</em>托管实例，则无需运行上述任何步骤——只需打开 <strong>Settings → Compute</strong>，输入您的 GCP 项目 / AWS 账号，然后点击 <strong>Verify access</strong>（见上）。在 <strong>Azure 或 Kubernetes</strong> 上运行？SkyPilot 同样支持；请按 <a href="https://docs.skypilot.co">SkyPilot 文档</a> 配置该云的凭据。</p>
+<hr />
+<details>
+<summary><strong>日志流式传输与重新连接</strong></summary>
+
+- **日志流式传输** &mdash; 编排器集群通过 `/v1` 控制平面 API 向本地回传日志；Web 应用定期轮询以显示实时进度。
+- **状态同步** &mdash; 编排器定期将其 `auto_research/` 状态检查点保存到控制平面，因此仪表板 UI 保持最新，且运行可在 VM 丢失后存续。
+- **重新连接** &mdash; 如果您重启本地 Web 应用，idea2paper 会检测到持久化的 SkyPilot 集群并重新连接到正在运行的进程，无需重新预配置。
+
+</details>
+
+<details>
+<summary><strong>成本控制</strong></summary>
+
+>
+> 云端集群按小时计费。idea2paper 依赖 SkyPilot 内置的销毁机制来防止成本失控：
+>
+> - **Autostop-down** &mdash; 每个集群在启动时都带有一个 autostop-down 时间窗；若空闲超过该时间窗，它会**自我终止**。实验集群*始终* autostop-down（只能调整，不能禁用）；编排器集群默认设有一个时间窗作为崩溃安全网（可通过 `idle_minutes_to_autostop` 调整）。
+> - **手动停止** &mdash; 在仪表板中点击 **Stop** 会刷新结果并销毁集群 (`sky down`)。
+>
+> 如果 Web 应用进程被意外杀死，autostop-down 时间窗仍会自行终止集群。在意外关闭后，请务必确认没有残留集群 (`sky status`)。
+
+</details>
+
+<hr />
+<h2 id="telegram-集成">Telegram 集成</h2>
+<pre><code class="language-bash">ark setup-bot    # 一次性操作：粘贴 BotFather 令牌，自动检测聊天 ID
+</code></pre>
+<p>您将获得：
+- <strong>丰富通知</strong> &mdash; 格式化的分数变化、阶段转换、智能体活动和错误
+- <strong>发送指令</strong> &mdash; 实时指导当前迭代
+- <strong>请求 PDF</strong> &mdash; 将最新编译的论文发送到聊天
+- <strong>人工干预</strong> &mdash; 智能体在执行不可逆操作前会向您请示
+- <strong>HPC 友好</strong> &mdash; 处理企业/HPC 网络上的自签名 SSL 证书</p>
+<hr />
+<h2 id="支持的会议">支持的会议</h2>
+<p>随仓库提供的 LaTeX 模板：<strong>NeurIPS、ICML、ICLR、AAAI、MLSys</strong>，以及 <strong>ACL</strong> 族（ACL / EMNLP / NAACL / EACL / AACL / COLING）、<strong>CVF</strong> 族（CVPR / ICCV / WACV）、<strong>ACM acmart</strong> 族（SOSP / EuroSys / ASPLOS / EuroMLSys）、<strong>USENIX</strong> 族（OSDI / NSDI / ATC / FAST / Security）、<strong>IEEE / IEEEtran</strong>（INFOCOM 及其他 IEEE 会议）——全部取自官方 2026 样式文件（MLSys 沿用其未变的 2025 套件）——另含通用 <strong>article</strong> 兜底模板（TMLR、Workshop、技术报告）。同样接受自定义模板 &mdash; idea2paper 会扫描 <code>.tex</code> / <code>.aux</code> / <code>.sty</code> 学习排版、修编译错误、并精确控制页数。</p>
+<h2 id="社区">社区</h2>
+<p align="center">
+  <strong>微信交流群 / Join our WeChat group</strong><br>
+  <img src="assets/wechat_qr.jpg" alt="WeChat group: Idea2Paper" width="240"><br>
+  <sub>微信群二维码会定期更新；若已过期，请提 issue 联系我们。</sub>
+</p>
+
+<h2 id="许可证">许可证</h2>
+<p><a href="LICENSE">Apache 2.0</a></p>
   </main>
 </div>
 

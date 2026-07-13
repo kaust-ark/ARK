@@ -248,453 +248,634 @@
 
   <!-- Sidebar -->
   <aside class="doc-sidebar">
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">البدء</div>
-      <a href="#installation">التثبيت</a>
-      <a href="#prerequisites">المتطلبات المسبقة</a>
-      <a href="#quickstart">البدء السريع</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">مرجع سطر الأوامر</div>
-      <a href="#ark-new">ark new</a>
-      <a href="#ark-run">ark run</a>
-      <a href="#ark-status">ark status</a>
-      <a href="#ark-monitor">ark monitor</a>
-      <a href="#ark-update">ark update</a>
-      <a href="#ark-stop">ark stop</a>
-      <a href="#ark-delete">ark delete</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">التهيئة</div>
-      <a href="#project-config">إعدادات المشروع</a>
-      <a href="#venue-presets">قوالب المؤتمرات</a>
-      <a href="#agent-prompts">موجّهات الوكلاء</a>
-      <a href="#hooks">الخطافات المخصّصة</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">خط الأنابيب</div>
-      <a href="#research-phase">مرحلة البحث</a>
-      <a href="#development-phase">مرحلة التطوير</a>
-      <a href="#review-phase">مرحلة المراجعة</a>
-      <a href="#memory-system">نظام الذاكرة</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">متقدم</div>
-      <a href="#telegram-bot">تكامل Telegram</a>
-      <a href="#slurm">Slurm / الحوسبة عالية الأداء</a>
-      <a href="#multi-model">دعم النماذج المتعددة</a>
-      <a href="#state-management">إدارة الحالة</a>
-      <a href="#troubleshooting">استكشاف الأخطاء</a>
-    </div>
+      <a href="#أوراق-بحثية-كتبها-idea2paper" class="doc-nav-link">أوراق بحثية كتبها idea2paper</a>
+      <a href="#بداية-سريعة" class="doc-nav-link">بداية سريعة</a>
+      <a href="#المتطلبات" class="doc-nav-link">المتطلبات</a>
+      <a href="#إطار-العمل" class="doc-nav-link">إطار العمل</a>
+      <a href="#مسار-العمل" class="doc-nav-link">مسار العمل</a>
+      <a href="#الوكلاء" class="doc-nav-link">الوكلاء</a>
+      <a href="#الضوابط-وسجل-الخطوات" class="doc-nav-link">الضوابط وسجل الخطوات</a>
+      <a href="#ما-الذي-يميز-idea2paper" class="doc-nav-link">ما الذي يميز idea2paper</a>
+      <a href="#عزل-البيئة" class="doc-nav-link">عزل البيئة</a>
+      <a href="#نظام-المهارات" class="doc-nav-link">نظام المهارات</a>
+      <a href="#مرجع-cli" class="doc-nav-link">مرجع CLI</a>
+      <a href="#لوحة-التحكم-dashboard" class="doc-nav-link">لوحة التحكم (Dashboard)</a>
+      <a href="#استخدام-docker" class="doc-nav-link">استخدام Docker</a>
+      <a href="#الحوسبة-السحابية-cloud-compute" class="doc-nav-link">الحوسبة السحابية (Cloud Compute)</a>
+      <a href="#تيليجرام-telegram-integration" class="doc-nav-link">تيليجرام (Telegram Integration)</a>
+      <a href="#المؤتمرات-العلمية-المدعومة" class="doc-nav-link">المؤتمرات العلمية المدعومة</a>
+      <a href="#المجتمع" class="doc-nav-link">المجتمع</a>
+      <a href="#الترخيص" class="doc-nav-link">الترخيص</a>
   </aside>
 
   <!-- Main content -->
   <main class="doc-content">
-    <h1>التوثيق</h1>
-    <p>التثبيت والتهيئة ومرجع المطوّرين للاستضافة الذاتية لـ Idea2Paper. <span style="color:var(--text-muted,#888)">اسم المنتج هو <strong>Idea2Paper</strong>؛ وخلف الكواليس يعمل إطار <strong>ARK</strong>، لذا تستخدم أوامر سطر الأوامر والمسارات أدناه الاسم <code>ark</code>.</span></p>
+<p>يقوم نظام idea2paper بتنسيق عمل <strong>6 وكلاء ذكاء اصطناعي متخصصين</strong> لتحويل فكرة بحثية إلى ورقة علمية كاملة &mdash; من تحليل المقترح، والبحث في المراجع، وتجارب Slurm، وصولاً إلى صياغة LaTeX والمراجعة العلمية المتكررة &mdash; كل ذلك مع بقائك في موقع التحكم عبر <strong>واجهة الأوامر (CLI)</strong>، أو <strong>لوحة التحكم</strong>، أو <strong>تيليجرام</strong>.</p>
+<pre><code>أعطه فكرة ومؤتمراً علمياً. وسيتولى idea2paper الباقي.
+</code></pre>
+<p>أسرع طريقة لتجربته هي النسخة المستضافة على <strong><a href="https://idea2paper.org/">idea2paper.org</a></strong> — سجّل الدخول ببريدك الإلكتروني، وأضف مفتاح <a href="https://openrouter.ai/keys">OpenRouter</a> واحداً، ثم انطلق. ورقة كاملة بنموذج اقتصادي مثل DeepSeek تكلّف عادةً <strong>نحو 5 دولارات من رصيد API الخاص بك</strong>. أما الاستضافة الذاتية فتثبيتها بسطر واحد (أدناه).</p>
+<h2 id="أوراق-بحثية-كتبها-idea2paper">أوراق بحثية كتبها idea2paper</h2>
+<table align="center">
+<tr>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/marco.pdf"><img src="https://idea2paper.org/assets/paper-marco.png" alt="Budget-Constrained Multi-Modal Research Synthesis" width="320"></a>
+<br>
+<strong>Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</strong>
+<br>
+<sub>القالب: EuroMLSys</sub>
+</td>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/heteroserve.pdf"><img src="https://idea2paper.org/assets/paper-heteroserve.png" alt="HeteroServe" width="320"></a>
+<br>
+<strong>HeteroServe: Capability-Weighted Batch Scheduling for Heterogeneous GPU Clusters in LLM Inference</strong>
+<br>
+<sub>القالب: ICML</sub>
+</td>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/tierkv.pdf"><img src="https://idea2paper.org/assets/paper-tierkv.png" alt="TierKV" width="320"></a>
+<br>
+<strong>TierKV: Prefetch-Aware Memory Tiering for KV Cache in LLM Serving</strong>
+<br>
+<sub>القالب: NeurIPS</sub>
+</td>
+</tr>
+</table>
 
-    <!-- ===== GETTING STARTED ===== -->
-    <h2 id="installation">التثبيت</h2>
+<hr />
+<h2 id="بداية-سريعة">بداية سريعة</h2>
+<pre><code class="language-bash">curl -fsSL https://idea2paper.org/install.sh | bash
+</code></pre>
+<p>السكربت سيقوم بـ:</p>
+<ol>
+<li>كشف النظام، تثبيت miniforge عند الحاجة، إنشاء بيئتي <code>ark-base</code> و <code>ark</code>، تثبيت idea2paper بصيغة <code>pip install -e</code> داخل <code>~/ARK</code>، وتثبيت OpenHands CLI (بيئة تشغيل الوكلاء، عبر <code>uv</code> — وهي تأتي مع نسخة Python 3.12 خاصة بها).</li>
+<li>سؤالك عن مفاتيح API و<strong>بريد إلكتروني لتسجيل الدخول إلى لوحة التحكم</strong>. الإعداد الموصى به هو مفتاح <strong>OpenRouter</strong> واحد — فهو يفتح كل النماذج إضافةً إلى البحث العميق وتوليد الأشكال؛ كما تعمل المفاتيح المباشرة من Anthropic / OpenAI / Gemini / DeepSeek أيضاً. اضغط Enter لتخطّي أي حقل.</li>
+<li>تثبيت لوحة التحكم كخدمة <code>systemd --user</code> على المنفذ <code>9527</code> (استخدم <code>--no-webapp</code> للتخطّي).</li>
+<li>طباعة <strong>رابط سحري لمرة واحدة</strong> للبريد المُدخل — انقر عليه مرة واحدة وستدخل لوحة التحكم المحلية. لا حاجة لـ SMTP أو Google OAuth.</li>
+</ol>
+<p>بعد ذلك، لوحة التحكم على <a href="http://localhost:9527">http://localhost:9527</a> هي واجهة العمل الرئيسية — إنشاء المشاريع، اختيار النموذج، التشغيل، والمراقبة. سطر الأوامر يعمل كذلك:</p>
+<pre><code class="language-bash">ark doctor          # التحقّق من التثبيت
+ark new myproject   # معالج إنشاء المشروع
+ark run  myproject
+ark monitor myproject
+</code></pre>
+<p>شغّل <code>ark webapp login &lt;email&gt;</code> في أي وقت للحصول على رابط دخول جديد. خيارات السكربت الكاملة: <a href="https://github.com/kaust-ark/ARK/blob/main/website/homepage/install.sh"><code>website/homepage/install.sh --help</code></a>.</p>
+<h3 id="البدء-من-ملف-pdf-موجود">البدء من ملف PDF موجود</h3>
+<pre><code class="language-bash">ark new myproject --from-pdf proposal.pdf
+</code></pre>
+<p>يقوم idea2paper بتحليل ملف PDF باستخدام PyMuPDF + Claude Haiku، ويملأ البيانات تلقائياً، ويبدأ من المواصفات المستخرجة.</p>
+<hr />
+<h2 id="المتطلبات">المتطلبات</h2>
+<ul>
+<li><strong>Python 3.10+</strong> مع <code>pyyaml</code> و <code>PyMuPDF</code></li>
+<li><strong>بيئة تشغيل الوكلاء</strong>: <a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a> (تُثبَّت عبر <code>uv</code> وتأتي مع Python 3.12 خاص بها) &mdash; بيئة تشغيل واحدة تدير Claude / GPT / Gemini / أي نموذج يدعمه <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a>، ويُختار النموذج لكل مشروع عبر <code>model</code> في <code>config.yaml</code>.</li>
+<li><strong>مفتاح API</strong>: مفتاح <a href="https://openrouter.ai/keys">OpenRouter</a> واحد يغطي كل النماذج، والبحث العميق (Perplexity)، والأشكال المولَّدة بالذكاء الاصطناعي؛ وتعمل مفاتيح المزوّد الواحد (Anthropic / OpenAI / Gemini / DeepSeek / …) أيضاً لكنها تفقد ما لا يقدّمه ذلك المزوّد.</li>
+<li><strong>اختياري</strong>: LaTeX (<code>pdflatex</code> + <code>bibtex</code>)، Slurm.</li>
+</ul>
+<h3 id="التثبيت">التثبيت</h3>
+<p>أسرع طريقة هي السكربت ذو الأمر الواحد المذكور في <a href="#بداية-سريعة">بداية سريعة</a>، فهو يقوم بهذه الخطوات نيابة عنك ويطبع إرشادات البدء. للتنفيذ اليدوي:</p>
+<pre><code class="language-bash"># 1. أنشئ قالب بيئة المشاريع (المكدّس البحثي فقط، بدون كود idea2paper —
+#    كل مشروع جديد يستنسخ هذه البيئة، لذلك يجب أن تبقى نظيفة).
+conda env create -f environment.yml         # لأنظمة Linux (ينشئ &quot;ark-base&quot;)
+# أو لنظام macOS:
+conda env create -f environment-macos.yml   # لأنظمة macOS (ينشئ &quot;ark-base&quot;)
 
-    <p><strong>تثبيت ذاتي بنقرة واحدة</strong> (Linux / macOS):</p>
-    <pre><code>curl -fsSL https://idea2paper.org/install.sh | bash</code></pre>
-    <p>يقوم السكربت بما يلي:</p>
-    <ol>
-      <li>يثبّت miniforge (إن لم يكن موجوداً)، ويبني بيئتَي conda باسم <code>ark-base</code> و<code>ark</code>، ويثبّت ARK عبر pip بوضع editable في <code>~/ARK</code>، ويضيف واجهتَي سطر الأوامر Claude Code وGemini.</li>
-      <li>يطلب <strong>مفتاح Gemini API</strong>، و<strong>رمز Claude OAuth</strong> (<code>sk-ant-oat01-…</code>)، و<strong>البريد الإلكتروني لتسجيل الدخول إلى لوحة التحكم</strong>. اضغط Enter لتخطي أيٍّ منها.</li>
-      <li>يثبّت لوحة التحكم كخدمة <code>systemd --user</code> على المنفذ 9527.</li>
-      <li>يطبع <strong>رابطاً سحرياً لمرة واحدة</strong> لبريدك الإلكتروني. انقر عليه مرة واحدة → تصبح مسجَّل الدخول إلى لوحة التحكم المحلية. <strong>بدون SMTP وبدون Google OAuth</strong>.</li>
-    </ol>
-    <p>خيارات مفيدة:</p>
-    <ul>
-      <li><code>--no-webapp</code> — تخطّي خدمة لوحة التحكم المحلية</li>
-      <li><code>--prefix DIR</code> — تثبيت مصدر ARK في مجلد مخصّص</li>
-      <li><code>--branch NAME</code> / <code>--repo URL</code> — تجاوز مصدر git</li>
-      <li><code>--no-research</code> / <code>--no-base</code> — تخطّي المكوّنات الاختيارية</li>
-      <li><code>--noninteractive</code> — تخطّي الأسئلة التفاعلية (CI / تشغيل غير مُراقَب)</li>
-      <li><code>--dry-run</code> — طباعة الخطة دون إجراء أي تغييرات</li>
-    </ul>
-    <p>يمكنك أيضاً تعبئة الإجابات مسبقاً عبر متغيرات البيئة: <code>ARK_GEMINI_KEY</code> و<code>ARK_CLAUDE_OAUTH</code> و<code>ARK_LOGIN_EMAIL</code>. شغّل <code>ark doctor</code> للتحقق، و<code>ark webapp login &lt;email&gt;</code> في أي وقت للحصول على رابط تسجيل دخول جديد. السكربت الكامل: <a href="../install.sh">install.sh</a>.</p>
-
-    <p><strong>التثبيت اليدوي</strong> — إن كنت تفضّل القيام بذلك بنفسك:</p>
-    <pre><code>conda env create -f environment.yml      # creates ark-base (Linux)
+# 2. ثبّت idea2paper نفسه في بيئة منفصلة (ليست ark-base).
 conda create -n ark python=3.11 -y
 conda activate ark
-pip install -e ".[research,webapp]"
-ark doctor</code></pre>
+pip install -e .                    # النواة الأساسية
+pip install -e &quot;.[research]&quot;       # + Gemini Deep Research و Nano Banana
+pip install -e &quot;.[webapp]&quot;         # + دعم لوحة التحكم وخدمة systemd
 
-    <h2 id="prerequisites">المتطلبات المسبقة</h2>
-    <ul>
-      <li><strong>Python 3.9+</strong></li>
-      <li><strong>خلفية AI واحدة على الأقل</strong> — مثبَّتة ومُوثَّقة:
-        <ul>
-          <li><a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank">Claude Code CLI</a> (<code>claude</code>) — مُوصى به</li>
-          <li><a href="https://github.com/google-gemini/gemini-cli" target="_blank">Gemini CLI</a> (<code>gemini</code>)</li>
-          <li><a href="https://github.com/openai/codex" target="_blank">Codex CLI</a> (<code>codex</code>)</li>
-        </ul>
-      </li>
-      <li><strong>حزمة أدوات LaTeX</strong> (اختيارية) — <code>pdflatex</code> و<code>bibtex</code> لتجميع ملفات PDF</li>
-      <li><strong>PyYAML</strong> — يُثبَّت تلقائياً مع Idea2Paper</li>
-    </ul>
+# 3. ثبّت OpenHands CLI (بيئة تشغيل الوكلاء). وهي أداة `uv` مستقلة
+#    تأتي مع Python 3.12 خاص بها — وليست اعتمادية pip — ويجب أن تكون
+#    على PATH كي تعثر عليها عملية المنسق الفرعية.
+pip install uv &amp;&amp; uv tool install --python 3.12 openhands
 
-    <div class="callout">
-      <strong>💡 نصيحة:</strong> يُوصى باستخدام Claude Code مع اشتراك Max. وكلاء Idea2Paper مستهلكون جداً للرموز (tokens) — قد يستهلك تشغيل ورقة واحدة أكثر من 50 ألف سطر من مخرجات الوكلاء عبر جميع التكرارات.
-    </div>
+# 4. تحقّق (يفحص وجود openhands على PATH، وتوفر المفاتيح، وغير ذلك)
+ark doctor
+</code></pre>
+<hr />
+<h2 id="إطار-العمل">إطار العمل</h2>
+<p align="center">
+  <img src="assets/framework.png" alt="idea2paper framework" width="900">
+</p>
 
-    <h2 id="quickstart">البدء السريع</h2>
-    <p>أنشئ مشروعاً جديداً، وأدخل عنوان ورقتك وفكرتك، ثم دع Idea2Paper يتولى الباقي:</p>
-    <pre><code># Create a new project (interactive wizard)
-ark new my-project
+<p>ينسق idea2paper ثلاث مراحل &mdash; <strong>التهيئة والبحث</strong>، <strong>التطوير المتكرر</strong>، و <strong>المراجعة المتكررة</strong> &mdash; من خلال ذاكرة مشتركة، و<strong>Goal Anchor</strong> ثابت يُحقن من جديد في كل استدعاء وكيل لمنع الانحراف عبر التكرارات، إضافةً إلى تدخل بشري عبر لوحة التحكم أو تيليجرام.</p>
+<hr />
+<h2 id="مسار-العمل">مسار العمل</h2>
+<p>ينفذ idea2paper ثلاث مراحل بالتتابع. وتتكرر مرحلة المراجعة حتى تصل الورقة إلى الدرجة المستهدفة.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">المرحلة</th>
+<th style="text-align: left;">ماذا يحدث</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>البحث</strong></td>
+<td style="text-align: left;">مسار من 5 خطوات: الإعداد (بيئة conda) &larr; تحليل المقترح (researcher) &larr; بحث عميق (Perplexity عبر OpenRouter، أو Gemini) &larr; التخصيص (researcher) &larr; التمهيد (المهارات والاستشهادات)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>التطوير</strong></td>
+<td style="text-align: left;">دورة تجارب متكررة: تخطيط التجارب &larr; تشغيل التجارب (Slurm أو محلياً) &larr; تحليل النتائج &larr; تقييم الاكتمال</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>المراجعة</strong></td>
+<td style="text-align: left;">تجميع &larr; مراجعة &larr; تخطيط &larr; تنفيذ &larr; تحقق، مع التكرار حتى تصل الدرجة &ge; العتبة المطلوبة</td>
+</tr>
+</tbody>
+</table>
+<h3 id="حلقة-المراجعة">حلقة المراجعة</h3>
+<p>كل تكرار لمرحلة المراجعة يتكون من <strong>5 خطوات</strong>:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">الخطوة</th>
+<th style="text-align: left;">الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>التجميع</strong></td>
+<td style="text-align: left;">تحويل LaTeX إلى PDF، حساب عدد الصفحات، وصور الصفحات</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>المراجعة</strong></td>
+<td style="text-align: left;">مراجع ذكاء اصطناعي يعطي درجة من 1-10، ويسرد القضايا الكبرى والصغرى</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>التخطيط</strong></td>
+<td style="text-align: left;">المخطط (Planner) ينشئ خطة عمل ذات أولوية</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>التنفيذ</strong></td>
+<td style="text-align: left;">الباحث والمجرب يعملان بالتوازي؛ والكاتب يراجع نصوص LaTeX</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>التحقق</strong></td>
+<td style="text-align: left;">التأكد من نجاح تجميع التعديلات؛ وإعادة إنشاء ملف PDF</td>
+</tr>
+</tbody>
+</table>
+<p>تتكرر الحلقة حتى تصل الدرجة إلى عتبة القبول &mdash; أو تتدخل أنت عبر تيليجرام.</p>
+<hr />
+<h2 id="الوكلاء">الوكلاء</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">الوكيل</th>
+<th style="text-align: left;">الدور</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>الباحث</strong></td>
+<td style="text-align: left;">يحلل المقترح؛ يجري مسح المراجع عبر البحث العميق؛ ويخصص مطالبات الوكلاء للمشروع</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>المراجع</strong></td>
+<td style="text-align: left;">يقيم الورقة وفقاً لمعايير المؤتمر، ويولد مهام التحسين</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>المخطط</strong></td>
+<td style="text-align: left;">يحول ملاحظات المراجعة إلى خطة عمل؛ يحلل نتائج مرحلة التطوير</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>الكاتب</strong></td>
+<td style="text-align: left;">يصيغ ويحسن أقسام LaTeX مع استشهادات موثقة من DBLP</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>المجرب</strong></td>
+<td style="text-align: left;">يصمم التجارب، يرسل وظائف Slurm، ويحلل النتائج</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>المبرمج</strong></td>
+<td style="text-align: left;">يكتب ويصحح أكواد التجارب وسكربتات التحليل</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="الضوابط-وسجل-الخطوات">الضوابط وسجل الخطوات</h2>
+<p>التشغيل المستقل مراقَب ومضبوط ببوابات، وليس صندوقاً أسود.</p>
+<ul>
+<li><strong>سجل خطوات حي.</strong> كل ما يفعله أي وكيل — كل أمر bash، وكل تعديل ملف، ونتيجته — يتدفق إلى السجل لحظة حدوثه (لا مزيد من فراغ الثلاثين دقيقة)، وإلى ملف منظَّم <code>agent_steps.jsonl</code>. تُحجب القيم السرية تلقائياً. اضبط مستوى التفصيل عبر <code>log_verbosity: quiet|normal|verbose|debug</code>.</li>
+<li><strong>توقّف واسأل قبل الخطوات الخطرة.</strong> قبل حذف الملفات، أو إطلاق دفعة كبيرة من المهام، أو تجهيز مثيل سحابي مدفوع، أو التعامل مع بيانات الاعتماد، أو دفع البيانات وتسريبها للخارج، أو تجاوز سقف الإنفاق، يسألك idea2paper عبر <strong>تيليجرام</strong> وينتظر موافقتك (موافقة / رفض / تذكّر هذا القرار). وهو يتذكّر إجابتك فلا يعيد السؤال، ويرفض عند انتهاء المهلة، و<strong>يسمح تلقائياً مع التسجيل</strong> إن لم يكن تيليجرام مضبوطاً — فلا يتعطل شيء أبداً.</li>
+<li><strong>بوابة فحص الأفكار (Gate A / Gate B).</strong> تمر كل فكرة مُقدَّمة بمراجعة أخلاقية وعلمية قبل الإطلاق (Gate A)؛ وبعد مسح المراجع يجري فحص للجِدّة والنطاق (Gate B) يكشف التداخل مع الأعمال السابقة ويُدرج تحديداً صادقاً للنطاق في الورقة بدلاً من المبالغة في الادعاءات.</li>
+<li><strong>فحوص التسليم.</strong> قبل تسليم أي ورقة يجري التحقق منها وفق عقد صريح — وجود إفصاح استخدام الذكاء الاصطناعي، وحلّ جميع الاستشهادات، وقائمة مراجع غير فارغة، واستخدام الأشكال المولَّدة فعلاً، واحترام حد الصفحات. ويمكن تشغيل الفحوص نفسها بشكل مستقل عبر <code>ark audit &lt;project&gt; [--repair]</code>.</li>
+<li><strong>إفصاح استخدام الذكاء الاصطناعي.</strong> تحمل كل ورقة تنويهاً بأنها أُنتجت بواسطة Idea2Paper وروجعت من قبل المؤلفين — يُدرج تلقائياً، ولكل مؤتمر.</li>
+<li><strong>طبقتا إنفاذ.</strong> تعترض أغلفة Shadow-PATH الأوامر الخطرة <em>قبل</em> تشغيلها؛ ويتكفل قاطع الدارة بأي شيء يتجاوزها. كما تخضع إجراءات المنسق الذاتية (تجهيز السحابة / git push / الإنفاق) للرقابة أيضاً — أما الأوامر التي تطلقها أنت بنفسك (<code>ark clear</code>، الحذف، الإيقاف) فلا.</li>
+</ul>
+<p>يُضبط كل ذلك ضمن كتلة <code>intervention:</code> في <a href="https://github.com/kaust-ark/ARK/blob/main/config.example.yaml"><code>config.example.yaml</code></a>؛ ومستوى الاستقلالية الافتراضي (<code>standard</code>) لا يقاطعك إلا في الإجراءات عالية الخطورة فعلاً.</p>
+<hr />
+<h2 id="ما-الذي-يميز-idea2paper">ما الذي يميز idea2paper</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th style="text-align: left;">أدوات أخرى</th>
+<th style="text-align: left;">idea2paper</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>التحكم</strong></td>
+<td style="text-align: left;">استقلالية كاملة &mdash; انحراف عن القصد، لا تصحيح أثناء التشغيل</td>
+<td style="text-align: left;">تدخل بشري: توقف عند القرارات الرئيسية، توجيه عبر تيليجرام أو الويب</td>
+</tr>
+<tr>
+<td><strong>التنسيق</strong></td>
+<td style="text-align: left;">تخطيطات مكسورة، أخطاء LaTeX، تنظيف يدوي</td>
+<td style="text-align: left;">قوالب المؤتمرات + تحكم دون مستوى الصفحة للالتزام بالحد الأقصى للصفحات بدقة</td>
+</tr>
+<tr>
+<td><strong>الاستشهاد</strong></td>
+<td style="text-align: left;">النماذج اللغوية تبتكر مراجع وهمية</td>
+<td style="text-align: left;">BibTeX من واجهات برمجية أولاً (DBLP / CrossRef / arXiv) مع مواءمة المحتوى مع الادعاء</td>
+</tr>
+<tr>
+<td><strong>المراجعة</strong></td>
+<td style="text-align: left;">مراجعة نصية فقط لمصدر LaTeX</td>
+<td style="text-align: left;">مراجعة بصرية: صور الصفحات <strong>و</strong> المصدر، بتقييم وفق معايير المؤتمر</td>
+</tr>
+<tr>
+<td><strong>الأشكال</strong></td>
+<td style="text-align: left;">أنماط افتراضية، أحجام خاطئة، لا وعي بالصفحة</td>
+<td style="text-align: left;">أشكال مفاهيمية بالذكاء الاصطناعي (PaperBanana) + تحجيم واعٍ بالمؤتمر: تُحفظ الأشكال بحجم الطباعة ولا تُكبَّر أبداً</td>
+</tr>
+<tr>
+<td><strong>العزل</strong></td>
+<td style="text-align: left;">بيئة مشتركة &mdash; المشاريع تتداخل مع بعضها</td>
+<td style="text-align: left;">بيئة conda لكل مشروع، HOME معزول، عزل كامل للمستأجرين</td>
+</tr>
+<tr>
+<td><strong>النزاهة</strong></td>
+<td style="text-align: left;">المحاكاة بدلاً من التجارب الحقيقية</td>
+<td style="text-align: left;">مطالبات تمنع المحاكاة + مهارات مدمجة تفرض التنفيذ الحقيقي</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="عزل-البيئة">عزل البيئة</h2>
+<p>يعمل كل مشروع في <strong>بيئة conda خاصة به</strong>، يتم استنساخها من بيئة أساسية عند إنشاء المشروع. وهذا يضمن عزلاً كاملاً:</p>
+<ul>
+<li><strong>Python معزول</strong> &mdash; دليل <code>.env/</code> خاص لكل مشروع مع حزمه الخاصة.</li>
+<li><strong>HOME معزول</strong> &mdash; يعمل كل منسق مع ضبط <code>HOME</code> على دليل المشروع.</li>
+<li><strong>لا تلوث متبادل</strong> &mdash; تمنع <code>PYTHONNOUSERSITE=1</code> تسرب حزم المستخدم العامة.</li>
+<li><strong>تجهيز تلقائي</strong> &mdash; يكتشف <code>ark run</code> وبوابة الويب بيئة المشروع ويستخدمانها؛ ويقوم المسار بتهيئتها إذا كانت مفقودة.</li>
+</ul>
+<pre><code class="language-bash"># يتم إنشاء بيئة conda تلقائياً عند أول تشغيل.
+# ark run سيكتشفها ويستخدمها:
+ark run myproject
+#   Conda env: /path/to/projects/myproject/.env
+</code></pre>
+<h2 id="نظام-المهارات">نظام المهارات</h2>
+<p>يأتي idea2paper مع <strong>مهارات مدمجة</strong> &mdash; مجموعات تعليمات برمجية يحملها الوكلاء لفرض أفضل الممارسات:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">المهارة</th>
+<th style="text-align: left;">الغرض</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>نزاهة البحث</strong></td>
+<td style="text-align: left;">تمنع المحاكاة: يجب على الوكلاء تشغيل تجارب حقيقية</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>التدخل البشري</strong></td>
+<td style="text-align: left;">بروتوكول التصعيد: يتوقف الوكلاء للسؤال قبل الإجراءات غير القابلة للتراجع</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>عزل البيئة</strong></td>
+<td style="text-align: left;">يفرض حدود البيئة الخاصة بكل مشروع</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>صندوق وقت التشغيل</strong></td>
+<td style="text-align: left;">يقيّد كل مشروع وقت التشغيل ببيئة conda الخاصة به و<code>HOME</code> ودليل مؤقت خاص</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>نزاهة الأشكال البيانية</strong></td>
+<td style="text-align: left;">يتحقق من مطابقة الأشكال للبيانات؛ يمنع الرسوم الوهمية</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>تعديل الصفحات</strong></td>
+<td style="text-align: left;">يحافظ على حدود عدد الصفحات عبر تعديل كثافة المحتوى</td>
+</tr>
+</tbody>
+</table>
+<p>تعيش المهارات المدمجة في <code>skills/builtin/</code> ويتم تثبيتها تلقائياً أثناء تهيئة المسار. وتقع مهارات المجالات (مثل HPC) في <code>skills/library/</code>، ويختارها الباحث عند الحاجة.</p>
+<hr />
+<h2 id="مرجع-cli">مرجع CLI</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">الأمر</th>
+<th style="text-align: left;">الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>ark new &lt;name&gt;</code></td>
+<td style="text-align: left;">إنشاء مشروع عبر معالج تفاعلي</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark run &lt;name&gt;</code></td>
+<td style="text-align: left;">إطلاق مسار العمل (يكتشف بيئة المشروع تلقائياً)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark status [name]</code></td>
+<td style="text-align: left;">الدرجة، التكرار، المرحلة، التكلفة</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark monitor &lt;name&gt;</code></td>
+<td style="text-align: left;">لوحة مراقبة حية: نشاط الوكلاء، اتجاه الدرجة</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark update &lt;name&gt;</code></td>
+<td style="text-align: left;">حقن تعليمات أثناء التشغيل</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark stop &lt;name&gt;</code></td>
+<td style="text-align: left;">إيقاف هادئ</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark restart &lt;name&gt;</code></td>
+<td style="text-align: left;">إيقاف + إعادة تشغيل</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark research &lt;name&gt;</code></td>
+<td style="text-align: left;">تشغيل Gemini Deep Research بشكل مستقل</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark config &lt;name&gt; [key] [val]</code></td>
+<td style="text-align: left;">عرض أو تحرير الإعدادات</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark clear &lt;name&gt;</code></td>
+<td style="text-align: left;">إعادة ضبط الحالة لبداية جديدة</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark delete &lt;name&gt;</code></td>
+<td style="text-align: left;">حذف المشروع تماماً</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark setup-bot</code></td>
+<td style="text-align: left;">إعداد بوت تيليجرام</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark list</code></td>
+<td style="text-align: left;">سرد جميع المشاريع مع حالتها</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark doctor</code></td>
+<td style="text-align: left;">تشخيص التثبيت الذاتي (البيئات، مفاتيح API، الويب)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark cite-check &lt;name&gt;</code></td>
+<td style="text-align: left;">التحقق من استشهادات المشروع عبر DBLP / CrossRef</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark cite-search &lt;query&gt;</code></td>
+<td style="text-align: left;">البحث في قواعد البيانات الأكاديمية</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark audit &lt;dir&gt; [--repair]</code></td>
+<td style="text-align: left;">التحقق من الأوراق المُسلَّمة وفق عقد التسليم</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark share create &lt;name&gt;</code></td>
+<td style="text-align: left;">إنشاء رابط مشاركة للمشروع</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp install</code></td>
+<td style="text-align: left;">تثبيت خدمة لوحة التحكم</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark access …</code></td>
+<td style="text-align: left;">إدارة قائمة السماح (الاختيارية) في Cloudflare Access</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="لوحة-التحكم-dashboard">لوحة التحكم (Dashboard)</h2>
+<p>يتضمن idea2paper لوحة تحكم على الويب لإدارة المشاريع وعرض الدرجات وتوجيه الوكلاء — تعمل من عملية FastAPI واحدة تستضيف الصفحة الرئيسية أيضاً (منفذ واحد، وحدة systemd واحدة). وإلى جانب شارات المراحل والسجلات الحية، تمنحك:</p>
+<ul>
+<li><strong>اصطفاف عادل</strong> &mdash; كل إطلاق محدود بتكرارين للتطوير وتكرارين للمراجعة؛ وعندما تمتلئ المسارات، تصطف المشاريع الجديدة في طابور مع رقم ترتيب و<strong>وقت إنجاز متوقَّع</strong>، ويصلك بريد إلكتروني عند اكتمال الورقة.</li>
+<li><strong>ميزانيات صادقة</strong> &mdash; تعرض بطاقة التكلفة الإجمالي <strong>كما فوتره المزوّد</strong> (فاتورة OpenRouter الفعلية، شاملة البحث العميق والأشكال) متى توفّر، وتُوسم التقديرات بوضوح فيما عدا ذلك.</li>
+<li><strong>منتقي نماذج واعٍ بالمفاتيح</strong> &mdash; لا يمكن اختيار سوى النماذج التي تملك مفتاحاً لها؛ ومفتاح OpenRouter واحد يفتح القائمة كاملة.</li>
+<li><strong>حاور ورقتك</strong> &mdash; اطرح أسئلة عن مشروع منتهٍ، أو اطلب تعديلات محددة، أو أعد تشغيل تجربة واحدة دون تكرار كامل.</li>
+<li><strong>أوضاع ملاءمة الصفحات</strong> &mdash; Relaxed / Balanced / Strict تتحكم في مدى صرامة ملاءمة الورقة لحد صفحات المؤتمر.</li>
+</ul>
+<h3 id="الإعدادات">الإعدادات</h3>
+<p>يُضبط الإعداد عبر <code>.ark/webapp.env</code> (يُنشأ تلقائياً عند أول تشغيل لـ <code>ark webapp</code>). اضبط <code>SMTP_*</code> لتفعيل تسجيل الدخول عبر الرابط السحري، واستخدم <code>ALLOWED_EMAILS</code> / <code>EMAIL_DOMAINS</code> لتقييد الوصول، واختيارياً <code>GOOGLE_CLIENT_ID</code> / <code>GOOGLE_CLIENT_SECRET</code> لتفعيل Google OAuth.</p>
+<h3 id="أوامر-الإدارة">أوامر الإدارة</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">الأمر</th>
+<th style="text-align: left;">الوصف</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>ark webapp</code></td>
+<td style="text-align: left;">بدء لوحة التحكم في المقدمة (مفيد للتصحيح).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp release</code></td>
+<td style="text-align: left;">وسم الكود الحالي ونشره في بيئة الإنتاج.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp install [--dev]</code></td>
+<td style="text-align: left;">تثبيت والبدء كخدمة <code>systemd</code> للمستخدم.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp status</code></td>
+<td style="text-align: left;">عرض حالة خدمة systemd.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp restart</code></td>
+<td style="text-align: left;">إعادة تشغيل خدمة لوحة التحكم.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp logs [-f]</code></td>
+<td style="text-align: left;">عرض أو تتبع سجلات الخدمة.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp login &lt;email&gt;</code></td>
+<td style="text-align: left;">طباعة رابط تسجيل دخول سحري جديد.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp publish</code></td>
+<td style="text-align: left;">وسم origin/main كالإصدار التالي (نشر مُوجَّه بالوسوم).</td>
+</tr>
+</tbody>
+</table>
+<details>
+<summary><strong>تفاصيل الخدمة (الإنتاج vs التطوير)</strong></summary>
 
-# Run the full pipeline
-ark run my-project
+| | الإنتاج | التطوير |
+|---|:-----|:----|
+| **المنفذ** | 9527 | 1027 |
+| **اسم الخدمة** | `ark-webapp` | `ark-webapp-dev` |
+| **بيئة Conda** | `ark-prod` | `ark-dev` |
+| **مصدر الكود** | `~/.ark/prod/` (مثبت) | المستودع الحالي (مباشر) |
 
-# Check progress anytime
-ark status my-project</code></pre>
+</details>
 
-    <p>سيسألك معالج <code>ark new</code> عن:</p>
-    <ol>
-      <li><strong>عنوان الورقة</strong> — مثال: "Efficient Cache-Aware Matrix Multiplication on Modern CPUs"</li>
-      <li><strong>الفكرة البحثية</strong> — فقرة تصف المساهمة الأساسية والمنهجية</li>
-      <li><strong>المؤتمر المستهدف</strong> — NeurIPS أو ICML أو ICLR أو ACL أو IEEE وغيرها</li>
-      <li><strong>مجلد الكود</strong> — مكان وجود كود التجارب</li>
-      <li><strong>خلفية النموذج</strong> — Claude أو Gemini أو Codex</li>
-    </ol>
+<h3 id="استضافة-idea2paper-للآخرين؟">استضافة Idea2Paper للآخرين؟</h3>
+<p>إعداد نسخة Idea2Paper <strong>مستضافة ومتعددة المستأجرين</strong> — إعداد الخادم وتطبيق الويب، والنشر الجماعي عبر prod المشترك، وإعداد مشغّل GCP/AWS الذي يتيح للعملاء تشغيل الحوسبة السحابية في حساباتهم الخاصة — موثّق بالكامل في دليل المشغّل (بالإنجليزية):</p>
+<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong></p>
+<details>
+<summary><strong>الاستدعاء المباشر للمنسق</strong></summary>
 
-    <p>يمكنك أيضاً البدء انطلاقاً من ملف PDF لمقترح موجود:</p>
-    <pre><code>ark new my-project --from-pdf proposal.pdf</code></pre>
 
-    <!-- ===== CLI REFERENCE ===== -->
-    <h2 id="ark-new">ark new</h2>
-    <p>إنشاء مشروع بحثي جديد عبر معالج تفاعلي.</p>
-    <pre><code>ark new &lt;project-name&gt; [options]</code></pre>
-    <table>
-      <tr><th>الخيار</th><th>الوصف</th></tr>
-      <tr><td><code>--from-pdf &lt;path&gt;</code></td><td>بدء المشروع من ملف PDF لمقترح</td></tr>
-      <tr><td><code>--venue &lt;venue&gt;</code></td><td>تحديد المؤتمر المستهدف (مثل neurips أو icml)</td></tr>
-      <tr><td><code>--model &lt;model&gt;</code></td><td>خلفية AI: <code>claude</code> أو <code>gemini</code> أو <code>codex</code></td></tr>
-    </table>
-    <p>ينشئ هذا الأمر <code>ARK/projects/&lt;project-name&gt;/</code> ويحتوي على:</p>
-    <ul>
-      <li><code>config.yaml</code> — إعدادات المشروع</li>
-      <li><code>hooks.py</code> — منطق مخصّص للبحث/توليد الأشكال</li>
-      <li><code>agents/</code> — ملفات الموجّهات لكل دور من أدوار الوكلاء</li>
-    </ul>
+<pre><code class="language-bash">python -m ark.orchestrator --project myproject --mode paper --max-iterations 20
+python -m ark.orchestrator --project myproject --mode dev
+</code></pre>
 
-    <h2 id="ark-run">ark run</h2>
-    <p>بدء خط أنابيب البحث الذاتي لمشروع ما.</p>
-    <pre><code>ark run &lt;project-name&gt; [options]</code></pre>
-    <table>
-      <tr><th>الخيار</th><th>الوصف</th></tr>
-      <tr><td><code>--mode paper|research</code></td><td>وضع خط الأنابيب (الافتراضي: <code>paper</code>)</td></tr>
-      <tr><td><code>--max-iterations &lt;n&gt;</code></td><td>الحد الأقصى لتكرارات المراجعة (الافتراضي: 14)</td></tr>
-      <tr><td><code>--max-days &lt;n&gt;</code></td><td>الحد الأقصى للأيام في وضع البحث</td></tr>
-    </table>
 
-    <div class="callout">
-      <strong>📝 ملاحظة:</strong> في وضع <code>paper</code>، يشغّل Idea2Paper خط الأنابيب الكامل ذا المراحل الثلاث (بحث → تطوير → مراجعة). أما في وضع <code>research</code>، فيركّز على تصميم التجارب وتنفيذها دون كتابة الورقة.
-    </div>
+</details>
 
-    <p>يمكنك أيضاً استدعاء المنسّق مباشرة لمزيد من التحكم:</p>
-    <pre><code># Paper mode with specific model and iteration limit
-python -m ark.orchestrator --project my-project --mode paper --model claude --max-iterations 20
+<hr />
+<h2 id="استخدام-docker">استخدام Docker</h2>
+<h3 id="متطلبات-المعمارية">متطلبات المعمارية</h3>
+<blockquote>
+<p>يعتمد وقت تشغيل idea2paper على مكتبات علمية تكون أكثر استقراراً على x86_64. إذا كنت تستخدم <strong>Apple Silicon (M1/M2/M3)</strong>، يجب عليك البناء لمنصة <code>linux/amd64</code>.</p>
+<p>جميع ملفات idea2paper Dockerfiles و <code>docker-compose.yml</code> مضبوطة لفرض <code>linux/amd64</code> افتراضياً.</p>
+</blockquote>
+<h3 id="التشغيل-عبر-docker-compose">التشغيل عبر Docker Compose</h3>
+<p>أسهل طريقة لتشغيل بوابة idea2paper هي استخدام <code>docker-compose</code>. من جذر المشروع:</p>
+<pre><code class="language-bash"># بدء البوابة (يبني الصورة تلقائياً لـ amd64)
+docker compose -f docker/docker-compose.yml up --build -d
+</code></pre>
+<p>ستكون البوابة متاحة على <code>http://localhost:9527</code>. يتم حفظ جميع قواعد البيانات والإعدادات والمشاريع تلقائياً في Docker volume باسم <code>ark_data</code>.</p>
+<p>لعرض السجلات المباشرة:</p>
+<pre><code class="language-bash">docker compose -f docker/docker-compose.yml logs -f webapp
+</code></pre>
+<h3 id="الرفع-إلى-منصة-google-cloud-gcp">الرفع إلى منصة Google Cloud (GCP)</h3>
+<p>يتضمن idea2paper سكربت لبناء ورفع الصور إلى Google Artifact Registry أو GCR.</p>
+<pre><code class="language-bash"># الرفع إلى Artifact Registry (موصى به)
+./docker/push-gcp.sh --project [PROJECT_ID] --region [REGION] --repo [REPO] --build
 
-# Research mode with day limit
-python -m ark.orchestrator --project my-project --mode research --model claude --max-days 3
+# الرفع إلى Container Registry القديم (gcr.io)
+./docker/push-gcp.sh --project [PROJECT_ID] --legacy --build
+</code></pre>
+<p>يعمل خيار <code>--build</code> تلقائياً على بناء الصور لمعمارية <code>linux/amd64</code> حتى عند التشغيل على macOS.</p>
+<hr />
+<h2 id="الحوسبة-السحابية-cloud-compute">الحوسبة السحابية (Cloud Compute)</h2>
+<p>تفصل <strong>بنية السحابة v2</strong> في idea2paper بين <em>مستوى التحكم (Control Plane)</em> و<em>مستوى التنفيذ (Execution Plane)</em>، مما يتيح تشغيل المنسق الكامل على <strong>عنقود مُجهَّز عبر SkyPilot</strong> بينما تتفاعل أنت مع تطبيق ويب محلي خفيف. أصبح <a href="https://docs.skypilot.co">SkyPilot</a> الآن المسار الوحيد للحوسبة السحابية — فهو يُجهِّز الموارد عبر AWS/GCP/Azure/Kubernetes من تجريد واحد، مع مثيلات spot، وإعادة المحاولات، والإنهاء التلقائي (autostop) المدمج.</p>
+<p><strong>كيف يعمل:</strong>
+1. يعمل تطبيق الويب المحلي (أو CLI) كمُطلِق خفيف — فهو يشغّل <code>sky launch</code> لتجهيز <strong>عنقود المنسق (Orchestrator)</strong> البعيد، ويزامن كود مشروعك (عبر <code>workdir</code>/<code>file_mounts</code> الخاصة بـ SkyPilot) ومفاتيح API، ثم يشغّل عملية المنسق.
+2. يشغّل <strong>عنقود المنسق</strong> كل المنطق عالي المستوى (الباحث، المخطِّط، الكاتب، LaTeX، الأشكال) عن بُعد في جلسة منفصلة.
+3. يمكن تشغيل التجارب على عنقود المنسق نفسه أو على عنقود GPU منفصل مُجهَّز عبر SkyPilot (قابل للضبط بشكل مستقل).
+4. يبلّغ المنسق عن حالته إلى الديار عبر واجهة <code>/v1</code> لمستوى التحكم؛ ويبثّ تطبيق الويب السجلات ويحدّث لوحة التحكم. يُنهي العنقود نفسه ذاتياً عبر <strong>autostop</strong> عند اكتمال التشغيل (أو بعد فترة خمول).</p>
+<blockquote>
+<p>يتم تشفير بيانات اعتماد السحابة في حالة السكون باستخدام <code>SECRET_KEY</code> الخاص بك. لا يتم تسجيل مفاتيحك أو إرسالها إلى أطراف ثالثة.</p>
+</blockquote>
+<details>
+<summary><strong>تسلسل الإعدادات الهرمي (Configuration Hierarchy)</strong></summary>
 
-# Background execution with logging
-nohup python -m ark.orchestrator --project my-project --mode paper --model claude \
-  > auto_research/logs/orchestrator.log 2>&1 &</code></pre>
+يستخدم idea2paper نموذج إعدادات من ثلاث طبقات للحوسبة السحابية:
+1. **الإعدادات الافتراضية للنظام**: تُضبط في `webapp.env` (المتغير المركزي `CLOUD_GCP_PROJECT` الذي يحوي صورة ARK المخبوزة، إضافة إلى `CLOUD_LAUNCHER_SA` و`CLOUD_LAUNCHER_SA_KEY` و`CLOUD_CONDA_ENV`).
+2. **الإعدادات الافتراضية العامة للمستخدم**: تُضبط في لوحة **Settings** (⚙️). وتنطبق على كل مشاريعك.
+3. **تجاوزات المشروع**: تُضبط أثناء إنشاء المشروع أو إعادة تشغيله. ولها الأولوية القصوى.
 
-    <h2 id="ark-status">ark status</h2>
-    <p>التحقق من التقدم الحالي لمشروع ما.</p>
-    <pre><code>ark status &lt;project-name&gt;</code></pre>
-    <p>يعرض: التكرار الحالي، ودرجة المراجِع، والمرحلة، وتفصيل التكلفة، وأحدث إجراءات الوكلاء.</p>
+يتيح لك هذا التسلسل تعريف إعدادات افتراضية قياسية مرة واحدة، مع سهولة التبديل إلى مثيل GPU قوي (accelerators، spot) لتجربة محددة.
 
-    <h2 id="ark-monitor">ark monitor</h2>
-    <p>مراقبة خط الأنابيب في الوقت الفعلي — بث مباشر لمخرجات الوكلاء وتغيّرات الحالة.</p>
-    <pre><code>ark monitor &lt;project-name&gt;</code></pre>
+</details>
 
-    <h2 id="ark-update">ark update</h2>
-    <p>إرسال تعليمات إلى خط الأنابيب أثناء التشغيل. مفيد لتوجيه الوكلاء دون إيقافهم.</p>
-    <pre><code>ark update &lt;project-name&gt;
+<hr />
+<h3 id="تفعيل-الحوسبة-السحابية-عبر-لوحة-التحكم">تفعيل الحوسبة السحابية عبر لوحة التحكم</h3>
+<ol>
+<li>افتح لوحة <strong>Settings</strong> (أيقونة ⚙️ في شريط التنقل العلوي).</li>
+<li>افتح تبويب <strong>Compute</strong>.</li>
+<li>أدخل <strong>GCP Project ID</strong> الخاص بك، وامنح حساب الخدمة المعروض <code>ark-launcher</code> الأدوار المطلوبة على مشروعك، ثم انقر <strong>Verify access</strong>. (لا يتم رفع أي مفتاح لحساب خدمة — بل تفوّض الوصول إلى مشروعك عبر IAM. للمشغّلين: راجع <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md"><code>docs/DEPLOYMENT.md</code></a> §4.)</li>
+<li>انقر <strong>Save</strong>.</li>
+</ol>
+<p>عند إنشاء مشروع جديد يمكنك الآن الاختيار بشكل مستقل:
+- <strong>Orchestrator Backend</strong> — <code>skypilot</code> لتشغيل مستوى التحكم على عنقود مُجهَّز عبر SkyPilot، أو <code>local</code> لتشغيله على نفس جهاز تطبيق الويب.
+- <strong>Experiment Backend</strong> — <code>skypilot</code> لتجارب GPU، أو <code>local</code> لتشغيلها على عنقود المنسق نفسه.</p>
+<hr />
+<details>
+<summary><strong>إنشاء مشروع</strong></summary>
 
-# Example instructions:
-# "Focus on the related work section"
-# "Add a comparison with TransformerFAM"
-# "Increase the font size in Figure 3"</code></pre>
+بمجرد ضبط الحوسبة السحابية، أطلق مشروعاً عبر لوحة التحكم:
 
-    <h2 id="ark-stop">ark stop</h2>
-    <p>إيقاف خط أنابيب قيد التشغيل بسلاسة. تُحفَظ الحالة في نقطة تفتيش حتى تتمكن من الاستئناف لاحقاً.</p>
-    <pre><code>ark stop &lt;project-name&gt;</code></pre>
+1. انقر **New Project** من الصفحة الرئيسية للوحة التحكم.
+2. املأ هدف البحث، والمؤتمر المستهدف، وأي تعليمات إضافية.
+3. انقر **Submit** — يولّد تطبيق الويب ملف `config.yaml`، ويجهّز عنقود المنسق عبر SkyPilot، ويزامن مشروعك، ويبدأ التشغيل.
 
-    <h2 id="ark-delete">ark delete</h2>
-    <p>حذف مشروع وجميع إعداداته.</p>
-    <pre><code>ark delete &lt;project-name&gt;</code></pre>
+يُخزَّن ملف `config.yaml` المُولَّد في:
 
-    <div class="callout callout-warn">
-      <strong>⚠️ تحذير:</strong> يحذف هذا الأمر إعدادات المشروع الموجودة تحت <code>ARK/projects/</code>. لن يتأثر مجلد الكود الخاص بك ولا الأوراق المولَّدة.
-    </div>
 
-    <!-- ===== CONFIGURATION ===== -->
-    <h2 id="project-config">إعدادات المشروع</h2>
-    <p>لكل مشروع ملف <code>config.yaml</code> يتحكم في جميع جوانب خط الأنابيب:</p>
-    <pre><code># ARK/projects/my-project/config.yaml
-code_dir: /home/user/my-research        # Where experiment code lives
-venue: NeurIPS                           # Target venue
-venue_format: neurips                    # LaTeX template format
-venue_pages: 9                           # Main content page limit
+<pre><code>~/.ark/data/projects/&lt;user_id&gt;/&lt;project_id&gt;/config.yaml
+</code></pre>
 
-title: "My Paper Title"
-model: claude                            # AI backend (claude/gemini/codex)
 
-# Directory structure
-latex_dir: paper                         # LaTeX source directory (relative to code_dir)
-figures_dir: paper/figures               # Generated figures
-scripts_dir: code                        # Experiment scripts
+يمكنك فحص هذا الملف أو تحريره يدوياً في أي وقت (مثلاً لضبط نوع المثيل أو إضافة `setup_commands`). تسري التغييرات في التشغيل أو إعادة التشغيل التالي.
 
-# Figure generation
-create_figures_script: code/create_paper_figures.py
+>
+> إذا كان `PROJECTS_ROOT` مضبوطاً في `.ark/webapp.env`، فسيُستبدل المسار أعلاه بـ `$PROJECTS_ROOT/<user_id>/<project_id>/config.yaml`.
 
-# Quality threshold — stop when reviewer score hits this
-paper_accept_threshold: 8
+</details>
 
-# Goal Anchor — keeps agents focused across iterations
-goal_anchor: |
-  ## Goal Anchor
-  **Paper Title**: My Paper Title
-  **Target Venue**: NeurIPS 2025
-  **Core Contributions**:
-  1. First contribution...
-  2. Second contribution...
+<hr />
+<h3 id="إعداد-مزودي-السحاب">إعداد مزودي السحاب</h3>
+<p>إعداد مشغّل GCP / AWS / SkyPilot — بناء الصورة المخبوزة، وإنشاء هوية <code>ark-launcher</code>
+المركزية، وضبط <code>webapp.env</code> — هو مهمة <strong>مشغّل</strong> تُنفَّذ مرة واحدة لكل نسخة مستضافة.
+وهي موثّقة خطوة بخطوة لكل سحابة في دليل النشر (بالإنجليزية):</p>
+<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong> — §4 GCP · §5 AWS · §6 إعداد العملاء · §8.4 مرجع <code>config.yaml</code>.</p>
+<p>إن كنت <em>تستخدم</em> نسخة مستضافة، فلا حاجة لتشغيل أيٍّ من ذلك — افتح فقط
+<strong>Settings → Compute</strong>، أدخل مشروع GCP / حساب AWS الخاص بك، وانقر <strong>Verify access</strong>
+(أعلاه). التشغيل على <strong>Azure أو Kubernetes</strong>؟ يدعم SkyPilot ذلك أيضاً؛ اضبط بيانات
+اعتماد تلك السحابة وفق <a href="https://docs.skypilot.co">توثيق SkyPilot</a>.</p>
+<hr />
+<details>
+<summary><strong>بثّ السجلات وإعادة الارتباط</strong></summary>
 
-# Compute settings (optional)
-use_slurm: false
-slurm_job_prefix: EXP_
-conda_env: my-env
+- **بثّ السجلات** — يبثّ عنقود المنسق السجلات إلى الديار عبر واجهة `/v1` لمستوى التحكم؛ ويستقصيها تطبيق الويب دورياً لعرض التقدم الحي.
+- **مزامنة الحالة** — يحفظ المنسق نقاط تفتيش لحالة `auto_research/` إلى مستوى التحكم دورياً، فتبقى واجهة لوحة التحكم محدَّثة ويبقى التشغيل صامداً عند فقدان الـ VM.
+- **إعادة الارتباط** — إذا أعدت تشغيل تطبيق الويب المحلي، يكتشف idea2paper عنقود SkyPilot المُخزَّن ويعيد الارتباط بالعملية الجارية دون إعادة تجهيز.
 
-# Telegram notifications (optional)
-telegram_bot_token: "YOUR_BOT_TOKEN"
-telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
+</details>
 
-    <h2 id="venue-presets">قوالب المؤتمرات</h2>
-    <p>يتضمن Idea2Paper إعدادات هندسية دقيقة مسبقة لقوالب LaTeX لأكثر من 11 مؤتمراً، بما يضمن ملاءمة الأشكال والجداول تماماً:</p>
-    <table>
-      <tr><th>المؤتمر</th><th>مفتاح التنسيق</th><th>عرض النص</th><th>الصفحات</th></tr>
-      <tr><td>NeurIPS</td><td><code>neurips</code></td><td>5.5in</td><td>9</td></tr>
-      <tr><td>ICML</td><td><code>icml</code></td><td>6.75in</td><td>8</td></tr>
-      <tr><td>ICLR</td><td><code>iclr</code></td><td>6.0in</td><td>9</td></tr>
-      <tr><td>AAAI</td><td><code>aaai</code></td><td>7.0in</td><td>7</td></tr>
-      <tr><td>ACL</td><td><code>acl</code></td><td>6.3in</td><td>8</td></tr>
-      <tr><td>IEEE</td><td><code>ieee</code></td><td>7.0in</td><td>10</td></tr>
-      <tr><td>ACM SIGPLAN</td><td><code>sigplan</code></td><td>5.5in</td><td>6</td></tr>
-      <tr><td>LNCS</td><td><code>lncs</code></td><td>4.8in</td><td>12</td></tr>
-      <tr><td>USENIX</td><td><code>usenix</code></td><td>7.0in</td><td>12</td></tr>
-      <tr><td>CVPR</td><td><code>cvpr</code></td><td>6.875in</td><td>8</td></tr>
-      <tr><td>ECCV</td><td><code>eccv</code></td><td>4.8in</td><td>14</td></tr>
-    </table>
+<details>
+<summary><strong>التحكم في التكاليف</strong></summary>
 
-    <h2 id="agent-prompts">موجّهات الوكلاء</h2>
-    <p>لكل وكيل ملف <code>.prompt</code> تحت <code>projects/&lt;name&gt;/agents/</code>. يمكنك تخصيص هذه الملفات لتغيير سلوك الوكلاء:</p>
-    <table>
-      <tr><th>الملف</th><th>الوكيل</th><th>الدور</th></tr>
-      <tr><td><code>reviewer.prompt</code></td><td>المراجِع</td><td>يقيّم الورقة (1–10) ويحدد مشكلات بعينها</td></tr>
-      <tr><td><code>planner.prompt</code></td><td>المخطِّط</td><td>يحوّل المراجعة إلى خطة عمل YAML مرتّبة حسب الأولوية</td></tr>
-      <tr><td><code>writer.prompt</code></td><td>الكاتب</td><td>يصوغ أقسام LaTeX ويراجعها</td></tr>
-      <tr><td><code>experimenter.prompt</code></td><td>المجرِّب</td><td>يصمم التجارب ويشغّلها</td></tr>
-      <tr><td><code>researcher.prompt</code></td><td>الباحث</td><td>مسح الأدبيات وتحليل النتائج</td></tr>
-      <tr><td><code>validator.prompt</code></td><td>المدقِّق</td><td>يتحقق من تطبيق التغييرات بشكل صحيح</td></tr>
-      <tr><td><code>figure_fixer.prompt</code></td><td>المصوِّر</td><td>يصلح مشكلات الأشكال والرسوم البيانية</td></tr>
-      <tr><td><code>literature.prompt</code></td><td>الأدبيات</td><td>بحث معمّق في الأدبيات وتلخيصها</td></tr>
-      <tr><td><code>meta_debugger.prompt</code></td><td>المصحِّح الفوقي</td><td>تشخيص على مستوى النظام عند تعثّر خط الأنابيب</td></tr>
-    </table>
+>
+> تُحاسَب العناقيد السحابية بالساعة. يعتمد idea2paper على الإنهاء المدمج في SkyPilot لمنع التكاليف الجامحة:
+>
+> - **Autostop-down** — يُطلَق كل عنقود بنافذة autostop-down؛ فإذا بقي خاملاً بعد تلك النافذة **أنهى نفسه**. عناقيد التجارب *تُنهى دائماً* تلقائياً (يمكن ضبطها فقط، لا تعطيلها)؛ أما عناقيد المنسق فتفترض نافذة كشبكة أمان عند الأعطال (قابلة للضبط عبر `idle_minutes_to_autostop`).
+> - **الإيقاف اليدوي** — النقر على **Stop** في لوحة التحكم يُفرِّغ النتائج ويُنهي العنقود (`sky down`).
+>
+> إذا قُتلت عملية تطبيق الويب فجأة، فإن نافذة autostop-down تُنهي العنقود بنفسها. تحقق دائماً من عدم بقاء عناقيد شاردة (`sky status`) بعد الإغلاق غير المتوقع.
 
-    <h2 id="hooks">الخطافات المخصّصة</h2>
-    <p>يمكن لكل مشروع تعريف ملف <code>hooks.py</code> لمنطق مخصّص. يتيح لك هذا حقن سلوك خاص بالمشروع في خط الأنابيب:</p>
-    <pre><code># ARK/projects/my-project/hooks.py
+</details>
 
-def pre_experiment(config, state):
-    """Called before each experiment run."""
-    pass
+<hr />
+<h2 id="تيليجرام-telegram-integration">تيليجرام (Telegram Integration)</h2>
+<pre><code class="language-bash">ark setup-bot    # لمرة واحدة: الصق توكن BotFather، وسيتم اكتشاف chat ID تلقائياً
+</code></pre>
+<p>ما ستحصل عليه:
+- <strong>تنبيهات غنية</strong> &mdash; تغيرات الدرجات، انتقالات المراحل، نشاط الوكلاء، والأخطاء.
+- <strong>إرسال تعليمات</strong> &mdash; توجيه التكرار الحالي في الوقت الفعلي.
+- <strong>طلب ملفات PDF</strong> &mdash; إرسال أحدث نسخة من الورقة للمحادثة.
+- <strong>التدخل البشري</strong> &mdash; يتوقف الوكلاء للسؤال قبل الإجراءات غير القابلة للتراجع.</p>
+<hr />
+<h2 id="المؤتمرات-العلمية-المدعومة">المؤتمرات العلمية المدعومة</h2>
+<p>تأتي قوالب LaTeX جاهزة لـ <strong>NeurIPS وICML وICLR وAAAI وMLSys</strong>، وعائلة <strong>ACL</strong> (ACL / EMNLP / NAACL / EACL / AACL / COLING)، وعائلة <strong>CVF</strong> (CVPR / ICCV / WACV)، وعائلة <strong>ACM acmart</strong> (SOSP / EuroSys / ASPLOS / EuroMLSys)، وعائلة <strong>USENIX</strong> (OSDI / NSDI / ATC / FAST / Security)، و<strong>IEEE / IEEEtran</strong> (INFOCOM وغيرها من مؤتمرات IEEE) &mdash; جميعها من ملفات الأنماط الرسمية لعام 2026 (يستخدم MLSys حزمة 2025 دون تغيير) &mdash; إضافةً إلى قالب <strong>article</strong> عام لـ TMLR وورش العمل والتقارير التقنية. كما يُقبل استخدام قوالب مخصّصة &mdash; إذ يفحص idea2paper ملفات <code>.tex</code> / <code>.aux</code> / <code>.sty</code> لاستيعاب التنسيق، ويصلح أخطاء التجميع، ويضبط حد الصفحات بدقة.</p>
+<h2 id="المجتمع">المجتمع</h2>
+<p align="center">
+  <strong>微信交流群 / Join our WeChat group</strong><br>
+  <img src="assets/wechat_qr.jpg" alt="WeChat group: Idea2Paper" width="240"><br>
+  <sub>يتم تحديث رمز QR لمجموعة WeChat دوريًا — افتح issue إذا انتهت صلاحيته.</sub>
+</p>
 
-def post_experiment(config, state, results):
-    """Called after experiment completes. Process results here."""
-    pass
-
-def create_figures(config, state):
-    """Custom figure generation logic."""
-    pass</code></pre>
-
-    <!-- ===== PIPELINE ===== -->
-    <h2 id="research-phase">المرحلة 1: البحث</h2>
-    <p>تستخدم مرحلة البحث «بحث عميق» (Deep Research) لجمع المعرفة الخلفية:</p>
-    <ol>
-      <li>تأخذ عنوان ورقتك وفكرتك كمدخلات</li>
-      <li>تجري مسحاً شاملاً للأدبيات</li>
-      <li>تحدد الأعمال ذات الصلة والفجوات وتموضع الورقة</li>
-      <li>تُخرج ملخصاً بحثياً منظماً إلى <code>auto_research/state/</code></li>
-    </ol>
-    <div class="callout">
-      <strong>💡 نصيحة:</strong> ثبّت بـ <code>pip install -e ".[research]"</code> لتفعيل تكامل «بحث عميق». بدونه، يمكنك تخطي هذه المرحلة وتقديم مسح الأدبيات بنفسك.
-    </div>
-
-    <h2 id="development-phase">المرحلة 2: التطوير</h2>
-    <p>تتولى مرحلة التطوير تصميم التجارب وتنفيذها:</p>
-    <ol>
-      <li><strong>المخطِّط</strong> ينشئ خطة تجارب بناءً على الملخص البحثي</li>
-      <li><strong>المجرِّب</strong> يكتب سكربتات التجارب ويرسلها (يدعم Slurm والتشغيل المحلي والسحابة)</li>
-      <li><strong>الباحث</strong> يحلل النتائج ويحدد فجوات الاكتمال</li>
-      <li><strong>الكاتب</strong> ينتج المسودة الأولى للورقة بصيغة LaTeX</li>
-    </ol>
-
-    <h2 id="review-phase">المرحلة 3: المراجعة</h2>
-    <p>مرحلة المراجعة هي حيث يحدث السحر. في كل تكرار:</p>
-    <ol>
-      <li><strong>التجميع</strong> — LaTeX → PDF، وتوليد صور الصفحات للمراجعة البصرية</li>
-      <li><strong>المراجعة</strong> — وكيل المراجِع يقيّم الورقة (1–10) ويكتب ملاحظات تفصيلية</li>
-      <li><strong>التخطيط والتنفيذ</strong> — المخطِّط يحوّل الملاحظات إلى مهام؛ ينفّذها الكاتب/المجرِّب/الباحث</li>
-      <li><strong>الإخراج البصري</strong> — إصلاح الأشكال، وإعادة التجميع، والتحقق من التغييرات</li>
-    </ol>
-
-    <p>تستمر العملية حتى:</p>
-    <ul>
-      <li>تبلغ درجة المراجِع قيمة <code>paper_accept_threshold</code> (الافتراضي: 8)</li>
-      <li>يُبلَغ الحد الأقصى لعدد التكرارات</li>
-      <li>توقفها يدوياً بأمر <code>ark stop</code></li>
-    </ul>
-
-    <p>عند بلوغ عتبة الدرجة، يشغّل Idea2Paper تكرار تنظيف أخيراً لمعالجة أي مشكلات طفيفة متبقية قبل إنتاج ملف PDF النهائي.</p>
-
-    <h2 id="memory-system">نظام الذاكرة</h2>
-    <p>يتتبع Idea2Paper التقدم عبر التكرارات لمنع الحلقات المفرغة واكتشاف الركود:</p>
-    <pre><code># Stored in auto_research/state/memory.yaml
-scores: [5.0, 5.5, 6.0, 6.2, 6.5, 7.0, 7.2]
-best_score: 7.2
-stagnation_count: 0</code></pre>
-
-    <h3>تتبع الدرجات</h3>
-    <p>يحتفظ بسجل درجات المراجِع (آخر 20 تكراراً). يُستخدم لقياس التقدم وإطلاق التدخلات.</p>
-
-    <h3>اكتشاف الركود</h3>
-    <p>إذا لم تتحسن الدرجة لعدة تكرارات متتالية، يقوم Idea2Paper بما يلي:</p>
-    <ol>
-      <li>يُنبّه المخطِّط إلى حالة الركود</li>
-      <li>يستدعي وكيل <strong>المصحِّح الفوقي</strong> لتشخيص على مستوى النظام</li>
-      <li>يرسل إشعار Telegram (إن كان مهيّأً) يطلب تدخلاً بشرياً</li>
-    </ol>
-
-    <h3>تتبع تكرار المشكلات</h3>
-    <p>يحصي عدد المرات التي تعاود فيها كل مشكلة الظهور عبر المراجعات. إذا استمر فشل إصلاح ما، يحظر Idea2Paper الاستراتيجية غير الفعالة ويجرّب مقاربات بديلة.</p>
-
-    <h3>مرساة الهدف</h3>
-    <p>يتضمن كل استدعاء وكيل «مرساة الهدف» (Goal Anchor) — وصفاً ثابتاً للأهداف الأساسية للمشروع. يمنع هذا الوكلاء من الانحراف عن الموضوع عبر التكرارات الكثيرة.</p>
-
-    <!-- ===== ADVANCED ===== -->
-    <h2 id="telegram-bot">تكامل Telegram</h2>
-    <p>يستطيع Idea2Paper إرسال إشعارات فورية واستقبال تعليمات أثناء التشغيل عبر Telegram:</p>
-
-    <h3>الإعداد</h3>
-    <pre><code># Interactive setup
-ark setup-bot
-
-# Or manually add to config.yaml:
-telegram_bot_token: "YOUR_BOT_TOKEN"
-telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
-
-    <h3>الميزات</h3>
-    <ul>
-      <li><strong>إشعارات التكرارات</strong> — تحديثات الدرجة بعد كل دورة مراجعة</li>
-      <li><strong>توصيل PDF</strong> — اطلب ملف PDF الحالي للورقة في أي وقت</li>
-      <li><strong>تعليمات أثناء التشغيل</strong> — أرسل نصاً لتوجيه الوكلاء</li>
-      <li><strong>تنبيهات الركود</strong> — إشعار تلقائي عند تعثّر التقدم</li>
-      <li><strong>تأكيدات استباقية</strong> — يسأل الوكلاء قبل إجراء تغييرات محفوفة بالمخاطر</li>
-    </ul>
-
-    <h2 id="slurm">Slurm / الحوسبة عالية الأداء</h2>
-    <p>يدعم Idea2Paper تشغيل التجارب على عناقيد الحوسبة عالية الأداء المُدارة بواسطة Slurm:</p>
-    <pre><code># config.yaml
-use_slurm: true
-slurm_job_prefix: EXP_       # Prefix for job names
-conda_env: my-env             # Conda environment to activate</code></pre>
-
-    <p>عند تفعيل <code>use_slurm: true</code>، يقوم وكيل المجرِّب بما يلي:</p>
-    <ol>
-      <li>يولّد سكربتات دفعات Slurm بطلبات موارد مناسبة</li>
-      <li>يرسل المهام عبر <code>sbatch</code></li>
-      <li>يراقب حالة المهام بواسطة <code>squeue</code></li>
-      <li>يجمع النتائج عند اكتمال المهام</li>
-    </ol>
-
-    <p>في البيئات التي لا تستخدم Slurm، تعمل التجارب محلياً أو على أي خادم يمكن الوصول إليه عبر SSH.</p>
-
-    <h2 id="multi-model">دعم النماذج المتعددة</h2>
-    <p>يدعم Idea2Paper ثلاث خلفيات AI. حدّد النموذج في <code>config.yaml</code> أو عبر سطر الأوامر:</p>
-    <table>
-      <tr><th>النموذج</th><th>سطر الأوامر</th><th>الأنسب لـ</th></tr>
-      <tr><td>Claude Code</td><td><code>claude</code></td><td>أفضل جودة إجمالية، مُوصى به لكتابة الأوراق</td></tr>
-      <tr><td>Gemini CLI</td><td><code>gemini</code></td><td>مرحلة البحث ومسح الأدبيات</td></tr>
-      <tr><td>Codex CLI</td><td><code>codex</code></td><td>التجارب كثيفة الكود</td></tr>
-    </table>
-
-    <pre><code># Switch model for a specific run
-python -m ark.orchestrator --project my-project --model gemini</code></pre>
-
-    <h2 id="state-management">إدارة الحالة</h2>
-    <p>تُخزَّن جميع حالات التشغيل تحت <code>&lt;code_dir&gt;/auto_research/</code>:</p>
-    <pre><code>auto_research/
-├── state/
-│   ├── paper_state.yaml      # Current paper metadata
-│   ├── action_plan.yaml      # Current action plan from planner
-│   ├── latest_review.md      # Most recent review output
-│   ├── memory.yaml           # Score history, stagnation tracking
-│   ├── checkpoint.yaml       # Resume checkpoint
-│   └── findings.yaml         # Accumulated research findings
-└── logs/
-    └── *.log                  # Per-iteration agent logs</code></pre>
-
-    <h3>نقاط التفتيش والاستئناف</h3>
-    <p>ينشئ Idea2Paper نقطة تفتيش تلقائياً بعد كل تكرار. إذا انقطع التشغيل، شغّل <code>ark run</code> مرة أخرى فحسب — سيستأنف من آخر نقطة تفتيش.</p>
-
-    <h3>بداية جديدة</h3>
-    <p>لإعادة البدء من الصفر، امسح ملفات الحالة:</p>
-    <pre><code>rm -f auto_research/state/checkpoint.yaml \
-      auto_research/state/paper_state.yaml \
-      auto_research/state/action_plan.yaml \
-      auto_research/state/latest_review.md \
-      auto_research/state/memory.yaml</code></pre>
-
-    <h2 id="troubleshooting">استكشاف الأخطاء</h2>
-
-    <h3>فشل تجميع LaTeX</h3>
-    <p>تأكد من تثبيت <code>pdflatex</code> و<code>bibtex</code>. على Ubuntu:</p>
-    <pre><code>sudo apt install texlive-full</code></pre>
-
-    <h3>انتهاء مهلة الوكيل أو فشله</h3>
-    <p>راجع سجلات الوكلاء تحت <code>auto_research/logs/</code>. الأسباب الشائعة:</p>
-    <ul>
-      <li>Claude Code CLI غير مُوثَّق — شغّل <code>claude</code> وأكمل تسجيل الدخول</li>
-      <li>تقييد المعدل (Rate limiting) — يملك Idea2Paper آلية إعادة محاولة مدمجة مع تأخير تصاعدي</li>
-      <li>سياق غير كافٍ — جرّب تبسيط مرساة الهدف</li>
-    </ul>
-
-    <h3>درجة عالقة / ركود</h3>
-    <p>إذا استقرت درجة المراجِع دون تحسن:</p>
-    <ol>
-      <li>راجع <code>auto_research/state/latest_review.md</code> لمعرفة المشكلات المحددة</li>
-      <li>أرسل تعليمات موجّهة عبر <code>ark update</code> أو Telegram</li>
-      <li>فكّر في تعديل موجّهات الوكلاء في <code>projects/&lt;name&gt;/agents/</code></li>
-    </ol>
-
-    <h3>خط الأنابيب لا يبدأ</h3>
-    <ul>
-      <li>تحقق من أن مسارات <code>config.yaml</code> مطلقة وموجودة</li>
-      <li>تأكد من تثبيت واجهة سطر الأوامر للنموذج المحدد: <code>which claude</code></li>
-      <li>شغّل <code>ark status &lt;project&gt;</code> للحصول على مخرجات تشخيصية</li>
-    </ul>
-
-    <div class="callout" style="margin-top:3rem">
-      <strong>تحتاج مساعدة؟</strong> افتح مشكلة (issue) على <a href="https://github.com/kaust-ark/ARK" target="_blank">GitHub</a> أو راجع <a href="https://github.com/kaust-ark/ARK/blob/main/README.md" target="_blank">README</a> لأحدث التحديثات.
-    </div>
+<h2 id="الترخيص">الترخيص</h2>
+<p><a href="LICENSE">Apache 2.0</a></p>
   </main>
 </div>
 

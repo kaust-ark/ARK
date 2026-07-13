@@ -200,453 +200,715 @@
 
   <!-- Sidebar -->
   <aside class="doc-sidebar">
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">Getting Started</div>
-      <a href="#installation">Installation</a>
-      <a href="#prerequisites">Prerequisites</a>
-      <a href="#quickstart">Quick Start</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">CLI Reference</div>
-      <a href="#ark-new">ark new</a>
-      <a href="#ark-run">ark run</a>
-      <a href="#ark-status">ark status</a>
-      <a href="#ark-monitor">ark monitor</a>
-      <a href="#ark-update">ark update</a>
-      <a href="#ark-stop">ark stop</a>
-      <a href="#ark-delete">ark delete</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">Configuration</div>
-      <a href="#project-config">Project Config</a>
-      <a href="#venue-presets">Venue Presets</a>
-      <a href="#agent-prompts">Agent Prompts</a>
-      <a href="#hooks">Custom Hooks</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">Pipeline</div>
-      <a href="#research-phase">Research Phase</a>
-      <a href="#development-phase">Development Phase</a>
-      <a href="#review-phase">Review Phase</a>
-      <a href="#memory-system">Memory System</a>
-    </div>
-    <div class="sidebar-group">
-      <div class="sidebar-group-title">Advanced</div>
-      <a href="#telegram-bot">Telegram Integration</a>
-      <a href="#slurm">Slurm / HPC</a>
-      <a href="#multi-model">Multi-Model Support</a>
-      <a href="#state-management">State Management</a>
-      <a href="#troubleshooting">Troubleshooting</a>
-    </div>
+      <a href="#papers-written-by-idea2paper" class="doc-nav-link">Papers Written by idea2paper</a>
+      <a href="#quick-start" class="doc-nav-link">Quick Start</a>
+      <a href="#requirements" class="doc-nav-link">Requirements</a>
+      <a href="#framework" class="doc-nav-link">Framework</a>
+      <a href="#pipeline" class="doc-nav-link">Pipeline</a>
+      <a href="#agents" class="doc-nav-link">Agents</a>
+      <a href="#guardrails-step-log" class="doc-nav-link">Guardrails &amp; Step Log</a>
+      <a href="#what-sets-idea2paper-apart" class="doc-nav-link">What Sets idea2paper Apart</a>
+      <a href="#cli-reference" class="doc-nav-link">CLI Reference</a>
+      <a href="#dashboard" class="doc-nav-link">Dashboard</a>
+      <a href="#cloud-compute" class="doc-nav-link">Cloud Compute</a>
+      <a href="#supported-venues" class="doc-nav-link">Supported Venues</a>
+      <a href="#community" class="doc-nav-link">Community</a>
+      <a href="#license" class="doc-nav-link">License</a>
   </aside>
 
   <!-- Main content -->
   <main class="doc-content">
-    <h1>Documentation</h1>
-    <p>Installation, configuration, and the developer reference for self-hosting Idea2Paper. <span style="color:var(--text-muted,#888)">The product is <strong>Idea2Paper</strong>; under the hood it's the <strong>ARK</strong> framework, so the CLI and paths below use the <code>ark</code> name.</span></p>
+<p>idea2paper orchestrates <strong>6 specialized AI agents</strong> to turn a research idea into a paper &mdash; proposal analysis, literature search, Slurm experiments, LaTeX drafting, and iterative peer review &mdash; while you stay in control via <strong>CLI</strong>, <strong>Dashboard</strong>, or <strong>Telegram</strong>.</p>
+<pre><code>Give it an idea and a venue. idea2paper handles the rest.
+</code></pre>
+<p>The fastest way to try it is the hosted instance at <strong><a href="https://idea2paper.org/">idea2paper.org</a></strong> — sign in with your email, add one <a href="https://openrouter.ai/keys">OpenRouter</a> API key, and launch. A full paper with a budget model like DeepSeek typically costs <strong>~$5 of your own API credit</strong>. Self-hosting is a one-line install (below).</p>
+<h2 id="papers-written-by-idea2paper">Papers Written by idea2paper</h2>
+<table align="center">
+<tr>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/marco.pdf"><img src="https://idea2paper.org/assets/paper-marco.png" alt="Budget-Constrained Multi-Modal Research Synthesis" width="320"></a>
+<br>
+<strong>Budget-Constrained Multi-Modal Research Synthesis via Iterative-Deepening Agentic Search</strong>
+<br>
+<sub>Template: EuroMLSys</sub>
+</td>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/heteroserve.pdf"><img src="https://idea2paper.org/assets/paper-heteroserve.png" alt="HeteroServe" width="320"></a>
+<br>
+<strong>HeteroServe: Capability-Weighted Batch Scheduling for Heterogeneous GPU Clusters in LLM Inference</strong>
+<br>
+<sub>Template: ICML</sub>
+</td>
+<td align="center" width="33%">
+<a href="https://idea2paper.org/assets/papers/tierkv.pdf"><img src="https://idea2paper.org/assets/paper-tierkv.png" alt="TierKV" width="320"></a>
+<br>
+<strong>TierKV: Prefetch-Aware Memory Tiering for KV Cache in LLM Serving</strong>
+<br>
+<sub>Template: NeurIPS</sub>
+</td>
+</tr>
+</table>
 
-    <!-- ===== GETTING STARTED ===== -->
-    <h2 id="installation">Installation</h2>
+<hr />
+<h2 id="quick-start">Quick Start</h2>
+<pre><code class="language-bash">curl -fsSL https://idea2paper.org/install.sh | bash
+</code></pre>
+<p>The script:</p>
+<ol>
+<li>Detects your OS, installs miniforge if missing, builds the <code>ark-base</code> and <code>ark</code> conda envs, pip-installs idea2paper editable into <code>~/ARK</code>, and installs the OpenHands CLI (the agent runtime, via <code>uv</code> — it bundles its own Python 3.12).</li>
+<li>Asks for your API keys and an <strong>email for dashboard login</strong>. One <strong>OpenRouter</strong> key is the recommended setup — it unlocks every model plus deep research and figure generation; direct Anthropic / OpenAI / Gemini / DeepSeek keys also work. Press Enter to skip any.</li>
+<li>Installs the dashboard as a <code>systemd --user</code> service on port <code>9527</code> (use <code>--no-webapp</code> to opt out).</li>
+<li>Prints a one-time <strong>magic-link URL</strong> for your email — click it once and you're logged into the local dashboard. No SMTP, no Google OAuth.</li>
+</ol>
+<p>After that the dashboard at <a href="http://localhost:9527">http://localhost:9527</a> is the primary UX — create projects, set the model, run, monitor. The CLI also works:</p>
+<pre><code class="language-bash">ark doctor          # verify install
+ark new myproject   # interactive project wizard
+ark run  myproject
+ark monitor myproject
+</code></pre>
+<p>Re-run <code>ark webapp login &lt;email&gt;</code> anytime for a fresh sign-in link. Full installer flags: <a href="https://github.com/kaust-ark/ARK/blob/main/website/homepage/install.sh"><code>website/homepage/install.sh --help</code></a>.</p>
+<h3 id="start-from-an-existing-pdf">Start from an Existing PDF</h3>
+<pre><code class="language-bash">ark new myproject --from-pdf proposal.pdf
+</code></pre>
+<p>idea2paper parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and kicks off from the extracted spec.</p>
+<hr />
+<h2 id="requirements">Requirements</h2>
+<ul>
+<li><strong>Python 3.10+</strong> with <code>pyyaml</code> and <code>PyMuPDF</code></li>
+<li><strong>Agent runtime</strong>: <a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a> (installed via <code>uv</code>, bundles its own Python 3.12) &mdash; one runtime that drives Claude / GPT / Gemini / any <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a> model, selected per project via <code>model</code> in <code>config.yaml</code></li>
+<li><strong>API key</strong>: one <a href="https://openrouter.ai/keys">OpenRouter</a> key covers every model, deep research (Perplexity), and AI figures; single-vendor keys (Anthropic / OpenAI / Gemini / DeepSeek / …) work too but lose the pieces their vendor doesn't serve</li>
+<li><strong>Optional</strong>: LaTeX (<code>pdflatex</code> + <code>bibtex</code>), Slurm</li>
+</ul>
+<details>
+<summary><strong>Manual Installation</strong></summary>
 
-    <p><strong>One-click self-host install</strong> (Linux / macOS):</p>
-    <pre><code>curl -fsSL https://idea2paper.org/install.sh | bash</code></pre>
-    <p>The script:</p>
-    <ol>
-      <li>Installs miniforge (if missing), builds <code>ark-base</code> + <code>ark</code> conda envs, pip-installs ARK editable into <code>~/ARK</code>, and adds Claude Code + Gemini CLIs.</li>
-      <li>Asks for <strong>Gemini API key</strong>, <strong>Claude OAuth token</strong> (<code>sk-ant-oat01-…</code>), and <strong>email for dashboard login</strong>. Press Enter to skip any.</li>
-      <li>Installs the dashboard as a <code>systemd --user</code> service on port 9527.</li>
-      <li>Prints a one-time <strong>magic-link URL</strong> for your email. Click it once → you're logged into the local dashboard. <strong>No SMTP, no Google OAuth needed</strong>.</li>
-    </ol>
-    <p>Useful flags:</p>
-    <ul>
-      <li><code>--no-webapp</code> — skip the local dashboard service</li>
-      <li><code>--prefix DIR</code> — install ARK source to a custom directory</li>
-      <li><code>--branch NAME</code> / <code>--repo URL</code> — override the git source</li>
-      <li><code>--no-research</code> / <code>--no-base</code> — skip optional components</li>
-      <li><code>--noninteractive</code> — skip the prompts (CI / unattended)</li>
-      <li><code>--dry-run</code> — print the plan without making changes</li>
-    </ul>
-    <p>You can also pre-fill answers via env vars: <code>ARK_GEMINI_KEY</code>, <code>ARK_CLAUDE_OAUTH</code>, <code>ARK_LOGIN_EMAIL</code>. Run <code>ark doctor</code> to verify, and <code>ark webapp login &lt;email&gt;</code> any time for a fresh sign-in link. Full script: <a href="install.sh">install.sh</a>.</p>
+The fastest path is the one-line installer in [Quick Start](#quick-start). It runs the steps below for you and prints onboarding hints. To do it by hand:
 
-    <p><strong>Manual install</strong> — if you prefer to do it yourself:</p>
-    <pre><code>conda env create -f environment.yml      # creates ark-base (Linux)
+
+<pre><code class="language-bash"># 1. Create the project research-stack template (no idea2paper code in here —
+#    each new project clones this env, so it must stay clean).
+conda env create -f environment.yml         # Linux (creates &quot;ark-base&quot;)
+# OR for macOS:
+conda env create -f environment-macos.yml   # macOS (creates &quot;ark-base&quot;)
+
+# 2. Install idea2paper itself into a SEPARATE env (not ark-base).
 conda create -n ark python=3.11 -y
 conda activate ark
-pip install -e ".[research,webapp]"
-ark doctor</code></pre>
+pip install -e .                    # Core
+pip install -e &quot;.[research]&quot;       # + Gemini Deep Research &amp; Nano Banana
+pip install -e &quot;.[webapp]&quot;         # + dashboard / systemd service support
 
-    <h2 id="prerequisites">Prerequisites</h2>
-    <ul>
-      <li><strong>Python 3.9+</strong></li>
-      <li><strong>At least one AI backend</strong> — installed and authenticated:
-        <ul>
-          <li><a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank">Claude Code CLI</a> (<code>claude</code>) — recommended</li>
-          <li><a href="https://github.com/google-gemini/gemini-cli" target="_blank">Gemini CLI</a> (<code>gemini</code>)</li>
-          <li><a href="https://github.com/openai/codex" target="_blank">Codex CLI</a> (<code>codex</code>)</li>
-        </ul>
-      </li>
-      <li><strong>LaTeX toolchain</strong> (optional) — <code>pdflatex</code>, <code>bibtex</code> for PDF compilation</li>
-      <li><strong>PyYAML</strong> — installed automatically with Idea2Paper</li>
-    </ul>
+# 3. Install the OpenHands CLI (the agent runtime). It is a standalone `uv`
+#    tool with its OWN bundled Python 3.12 — NOT a pip dependency — and must be
+#    on PATH for the orchestrator subprocess to find it.
+pip install uv &amp;&amp; uv tool install --python 3.12 openhands
 
-    <div class="callout">
-      <strong>💡 Tip:</strong> Claude Code with a Max subscription is recommended. Idea2Paper agents are very token-intensive — a single paper run can use 50k+ lines of agent output across all iterations.
-    </div>
+# 4. Verify (checks the openhands runtime is on PATH, keys are present, etc.)
+ark doctor
+</code></pre>
 
-    <h2 id="quickstart">Quick Start</h2>
-    <p>Create a new project, provide your paper title and idea, then let Idea2Paper handle the rest:</p>
-    <pre><code># Create a new project (interactive wizard)
-ark new my-project
 
-# Run the full pipeline
-ark run my-project
+</details>
 
-# Check progress anytime
-ark status my-project</code></pre>
+<hr />
+<h2 id="framework">Framework</h2>
+<p align="center">
+  <img src="assets/framework.png" alt="idea2paper framework" width="900">
+</p>
 
-    <p>The <code>ark new</code> wizard will ask for:</p>
-    <ol>
-      <li><strong>Paper title</strong> — e.g., "Efficient Cache-Aware Matrix Multiplication on Modern CPUs"</li>
-      <li><strong>Research idea</strong> — a paragraph describing the core contribution and approach</li>
-      <li><strong>Target venue</strong> — NeurIPS, ICML, ICLR, ACL, IEEE, etc.</li>
-      <li><strong>Code directory</strong> — where experiment code lives</li>
-      <li><strong>Model backend</strong> — Claude, Gemini, or Codex</li>
-    </ol>
+<p>idea2paper orchestrates three phases &mdash; <strong>Initialization &amp; Research</strong>, <strong>Iterative Development</strong>, and <strong>Iterative Review</strong> &mdash; coordinated through shared memory, a persistent <strong>Goal Anchor</strong> re-injected into every agent call to prevent drift, and human-in-the-loop steering via the web dashboard or Telegram.</p>
+<hr />
+<h2 id="pipeline">Pipeline</h2>
+<p>idea2paper runs three phases in sequence. The Review phase loops until the paper reaches the target score.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Phase</th>
+<th style="text-align: left;">What Happens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>Research</strong></td>
+<td style="text-align: left;">5-step pipeline: Setup (conda env) &rarr; Analyze Proposal (researcher) &rarr; Deep Research (Perplexity via OpenRouter, or Gemini) &rarr; Specialization (researcher) &rarr; Bootstrap (skills &amp; citations)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Dev</strong></td>
+<td style="text-align: left;">Iterative experiment cycle: Plan Experiments &rarr; Run Experiments (Slurm or local) &rarr; Analyze Results &rarr; Evaluate Completeness</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Review</strong></td>
+<td style="text-align: left;">Compile &rarr; Review &rarr; Plan &rarr; Execute &rarr; Validate, repeating until score &ge; threshold</td>
+</tr>
+</tbody>
+</table>
+<details>
+<summary><strong>Review Loop details</strong></summary>
 
-    <p>You can also bootstrap from an existing proposal PDF:</p>
-    <pre><code>ark new my-project --from-pdf proposal.pdf</code></pre>
+Each iteration of the Review phase runs **5 steps**:
 
-    <!-- ===== CLI REFERENCE ===== -->
-    <h2 id="ark-new">ark new</h2>
-    <p>Create a new research project with an interactive wizard.</p>
-    <pre><code>ark new &lt;project-name&gt; [options]</code></pre>
-    <table>
-      <tr><th>Option</th><th>Description</th></tr>
-      <tr><td><code>--from-pdf &lt;path&gt;</code></td><td>Bootstrap project from a proposal PDF</td></tr>
-      <tr><td><code>--venue &lt;venue&gt;</code></td><td>Set target venue (e.g., neurips, icml)</td></tr>
-      <tr><td><code>--model &lt;model&gt;</code></td><td>AI backend: <code>claude</code>, <code>gemini</code>, or <code>codex</code></td></tr>
-    </table>
-    <p>This creates <code>ARK/projects/&lt;project-name&gt;/</code> with:</p>
-    <ul>
-      <li><code>config.yaml</code> — project configuration</li>
-      <li><code>hooks.py</code> — custom logic for research/figure generation</li>
-      <li><code>agents/</code> — prompt files for each agent role</li>
-    </ul>
+| Step | Description |
+|:-----|:------------|
+| **Compile** | LaTeX &rarr; PDF, page count, page images |
+| **Review** | AI reviewer scores 1&ndash;10, lists Major &amp; Minor issues |
+| **Plan** | Planner creates a prioritized action plan |
+| **Execute** | Researcher + Experimenter run in parallel; Writer revises LaTeX |
+| **Validate** | Verify changes compile; recompile PDF |
 
-    <h2 id="ark-run">ark run</h2>
-    <p>Start the autonomous research pipeline for a project.</p>
-    <pre><code>ark run &lt;project-name&gt; [options]</code></pre>
-    <table>
-      <tr><th>Option</th><th>Description</th></tr>
-      <tr><td><code>--mode paper|research</code></td><td>Pipeline mode (default: <code>paper</code>)</td></tr>
-      <tr><td><code>--max-iterations &lt;n&gt;</code></td><td>Maximum review iterations (default: 14)</td></tr>
-      <tr><td><code>--max-days &lt;n&gt;</code></td><td>Maximum days for research mode</td></tr>
-    </table>
+The loop repeats until the score reaches the acceptance threshold &mdash; or you intervene via Telegram.
 
-    <div class="callout">
-      <strong>📝 Note:</strong> In <code>paper</code> mode, Idea2Paper runs the full 3-phase pipeline (research → development → review). In <code>research</code> mode, it focuses on experiment design and execution without paper writing.
-    </div>
+</details>
 
-    <p>You can also invoke the orchestrator directly for more control:</p>
-    <pre><code># Paper mode with specific model and iteration limit
-python -m ark.orchestrator --project my-project --mode paper --model claude --max-iterations 20
+<hr />
+<h2 id="agents">Agents</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Agent</th>
+<th style="text-align: left;">Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>Researcher</strong></td>
+<td style="text-align: left;">Analyzes the proposal, runs the deep-research literature survey, and specializes agent prompts for the project</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Reviewer</strong></td>
+<td style="text-align: left;">Scores the paper against venue standards, generates improvement tasks</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Planner</strong></td>
+<td style="text-align: left;">Turns review feedback into a prioritized action plan; analyzes Dev-phase results</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Writer</strong></td>
+<td style="text-align: left;">Drafts and refines LaTeX sections with DBLP-verified references</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Experimenter</strong></td>
+<td style="text-align: left;">Designs experiments, submits Slurm jobs, analyzes results</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Coder</strong></td>
+<td style="text-align: left;">Writes and debugs experiment code and analysis scripts</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="guardrails-step-log">Guardrails &amp; Step Log</h2>
+<p>An autonomous run is watched and gated, not a black box.</p>
+<ul>
+<li><strong>Live step log.</strong> Every agent's actions — each bash command, file edit, and
+  result — stream into the log as they happen (no more 30-minute blank), and into
+  a structured <code>agent_steps.jsonl</code>. Secret values are redacted automatically.
+  Tune detail with <code>log_verbosity: quiet|normal|verbose|debug</code>.</li>
+<li><strong>Pause-and-ask before the risky stuff.</strong> Before deleting files, launching a
+  burst of jobs, provisioning a paid cloud instance, handling credentials,
+  pushing/exfiltrating data, or crossing a spend cap, idea2paper asks you on
+  <strong>Telegram</strong> and waits for approval (Approve / Deny / remember-this). It
+  remembers your answer so it doesn't re-ask, denies on timeout, and <strong>fails open</strong>
+  (auto-allows + logs) when no Telegram is configured — so nothing ever hangs.</li>
+<li><strong>Idea gatekeeper (Gate A / Gate B).</strong> Every submitted idea passes a
+  pre-launch ethics-and-soundness review (Gate A); after the literature survey
+  a novelty/scope check (Gate B) flags overlap with existing work and folds
+  honest scoping into the paper instead of overclaiming.</li>
+<li><strong>Delivery checks.</strong> Before a paper is delivered it is verified against an
+  explicit contract — disclosure present, every citation resolved, references
+  non-empty, generated figures actually used, page budget respected. The same
+  checks run standalone via <code>ark audit &lt;project&gt; [--repair]</code>.</li>
+<li><strong>AI-use disclosure.</strong> Every paper carries an acknowledgment that it was
+  produced with Idea2Paper and reviewed by the authors — inserted
+  automatically, for every venue.</li>
+<li><strong>Two enforcement layers.</strong> Shadow-PATH wrappers gate risky commands <em>before</em>
+  they run; a circuit breaker backstops anything that bypasses them. The
+  orchestrator's own autonomous cloud-provision / git-push / spend actions are
+  gated too — but commands you trigger yourself (<code>ark clear</code>, delete, stop) are not.</li>
+</ul>
+<p>Configure it all under the <code>intervention:</code> block in
+<a href="https://github.com/kaust-ark/ARK/blob/main/config.example.yaml"><code>config.example.yaml</code></a>; the default autonomy level
+(<code>standard</code>) only interrupts you for genuinely high-stakes actions.</p>
+<hr />
+<h2 id="what-sets-idea2paper-apart">What Sets idea2paper Apart</h2>
+<table>
+<thead>
+<tr>
+<th></th>
+<th style="text-align: left;">Other Tools</th>
+<th style="text-align: left;">idea2paper</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Control</strong></td>
+<td style="text-align: left;">Fully autonomous &mdash; drifts from intent, no mid-run correction</td>
+<td style="text-align: left;">Human-in-the-loop: pause at key decisions, steer via Telegram or web</td>
+</tr>
+<tr>
+<td><strong>Formatting</strong></td>
+<td style="text-align: left;">Broken layouts, LaTeX errors, manual cleanup</td>
+<td style="text-align: left;">Venue templates + sub-page length control to hit page limits exactly</td>
+</tr>
+<tr>
+<td><strong>Citations</strong></td>
+<td style="text-align: left;">LLMs fabricate plausible-looking references</td>
+<td style="text-align: left;">API-first BibTeX (DBLP / CrossRef / arXiv) with content&ndash;claim alignment</td>
+</tr>
+<tr>
+<td><strong>Review</strong></td>
+<td style="text-align: left;">Text-only review of the LaTeX source</td>
+<td style="text-align: left;">Visual-grounded: page images <strong>and</strong> source, scored against venue standards</td>
+</tr>
+<tr>
+<td><strong>Figures</strong></td>
+<td style="text-align: left;">Default styles, wrong sizes, no page awareness</td>
+<td style="text-align: left;">AI concept figures (PaperBanana) + venue-aware sizing: figures are saved at print size and never upscaled</td>
+</tr>
+<tr>
+<td><strong>Isolation</strong></td>
+<td style="text-align: left;">Shared env &mdash; projects interfere with each other</td>
+<td style="text-align: left;">Per-project conda env, sandboxed HOME, full multi-tenant isolation</td>
+</tr>
+<tr>
+<td><strong>Integrity</strong></td>
+<td style="text-align: left;">LLMs simulate results instead of running real experiments</td>
+<td style="text-align: left;">Anti-simulation prompts + builtin skills enforce real execution</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<details>
+<summary><strong>Environment Isolation</strong></summary>
 
-# Research mode with day limit
-python -m ark.orchestrator --project my-project --mode research --model claude --max-days 3
+Each project runs in its own **per-project conda environment**, cloned from a base env at project creation. This ensures full multi-tenant isolation:
 
-# Background execution with logging
-nohup python -m ark.orchestrator --project my-project --mode paper --model claude \
-  > auto_research/logs/orchestrator.log 2>&1 &</code></pre>
+- **Sandboxed Python** &mdash; per-project `.env/` directory with its own packages
+- **Isolated HOME** &mdash; each orchestrator runs with `HOME` set to the project directory
+- **No cross-contamination** &mdash; `PYTHONNOUSERSITE=1` prevents leaking user-site packages
+- **Automatic provisioning** &mdash; `ark run` and the Web Portal detect and use the project conda env; the pipeline bootstraps it if missing
 
-    <h2 id="ark-status">ark status</h2>
-    <p>Check the current progress of a project.</p>
-    <pre><code>ark status &lt;project-name&gt;</code></pre>
-    <p>Shows: current iteration, reviewer score, phase, cost breakdown, and recent agent actions.</p>
 
-    <h2 id="ark-monitor">ark monitor</h2>
-    <p>Real-time monitoring of the pipeline — streams agent output and state changes.</p>
-    <pre><code>ark monitor &lt;project-name&gt;</code></pre>
+<pre><code class="language-bash"># The conda env is created automatically on first run.
+# ark run will detect and use it:
+ark run myproject
+#   Conda env: /path/to/projects/myproject/.env
+</code></pre>
 
-    <h2 id="ark-update">ark update</h2>
-    <p>Send a mid-run instruction to the pipeline. Useful for steering the agents without stopping.</p>
-    <pre><code>ark update &lt;project-name&gt;
 
-# Example instructions:
-# "Focus on the related work section"
-# "Add a comparison with TransformerFAM"
-# "Increase the font size in Figure 3"</code></pre>
+</details>
 
-    <h2 id="ark-stop">ark stop</h2>
-    <p>Gracefully stop a running pipeline. State is checkpointed so you can resume later.</p>
-    <pre><code>ark stop &lt;project-name&gt;</code></pre>
+<details>
+<summary><strong>Skills System</strong></summary>
 
-    <h2 id="ark-delete">ark delete</h2>
-    <p>Remove a project and all its configuration.</p>
-    <pre><code>ark delete &lt;project-name&gt;</code></pre>
+idea2paper ships with **builtin skills** &mdash; modular instruction sets that agents load at runtime to enforce best practices:
 
-    <div class="callout callout-warn">
-      <strong>⚠️ Warning:</strong> This deletes the project configuration under <code>ARK/projects/</code>. Your code directory and generated papers are not affected.
-    </div>
+| Skill | Purpose |
+|:------|:--------|
+| **research-integrity** | Anti-simulation prompts: agents must run real experiments, not fabricate outputs |
+| **human-intervention** | Escalation protocol: agents pause and ask via Telegram before irreversible actions |
+| **env-isolation** | Enforces per-project environment boundaries |
+| **runtime-sandbox** | Locks each project to its own conda env, `HOME`, and tmp dir at runtime |
+| **figure-integrity** | Validates figure content matches data; prevents placeholder or hallucinated plots |
+| **page-adjustment** | Maintains page limits by adjusting content density, not deleting sections |
 
-    <!-- ===== CONFIGURATION ===== -->
-    <h2 id="project-config">Project Configuration</h2>
-    <p>Each project has a <code>config.yaml</code> that controls all aspects of the pipeline:</p>
-    <pre><code># ARK/projects/my-project/config.yaml
-code_dir: /home/user/my-research        # Where experiment code lives
-venue: NeurIPS                           # Target venue
-venue_format: neurips                    # LaTeX template format
-venue_pages: 9                           # Main content page limit
+Skills live in `skills/builtin/` and are auto-installed during pipeline bootstrap. Domain skills (e.g., HPC) live in `skills/library/` and are pulled in by the Researcher when relevant.
 
-title: "My Paper Title"
-model: claude                            # AI backend (claude/gemini/codex)
+</details>
 
-# Directory structure
-latex_dir: paper                         # LaTeX source directory (relative to code_dir)
-figures_dir: paper/figures               # Generated figures
-scripts_dir: code                        # Experiment scripts
+<hr />
+<h2 id="cli-reference">CLI Reference</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Command</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>ark new &lt;name&gt;</code></td>
+<td style="text-align: left;">Create project via interactive wizard</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark run &lt;name&gt;</code></td>
+<td style="text-align: left;">Launch the pipeline (auto-detects per-project conda env)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark status [name]</code></td>
+<td style="text-align: left;">Score, iteration, phase, cost</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark monitor &lt;name&gt;</code></td>
+<td style="text-align: left;">Live dashboard: agent activity, score trend</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark update &lt;name&gt;</code></td>
+<td style="text-align: left;">Inject a mid-run instruction</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark stop &lt;name&gt;</code></td>
+<td style="text-align: left;">Gracefully stop</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark restart &lt;name&gt;</code></td>
+<td style="text-align: left;">Stop + restart</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark research &lt;name&gt;</code></td>
+<td style="text-align: left;">Run Gemini Deep Research standalone</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark config &lt;name&gt; [key] [val]</code></td>
+<td style="text-align: left;">View or edit config</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark clear &lt;name&gt;</code></td>
+<td style="text-align: left;">Reset state for a fresh start</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark delete &lt;name&gt;</code></td>
+<td style="text-align: left;">Remove project entirely</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark setup-bot</code></td>
+<td style="text-align: left;">Configure Telegram bot</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark list</code></td>
+<td style="text-align: left;">List all projects with status</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark doctor</code></td>
+<td style="text-align: left;">Diagnose a self-host install (envs, API keys, webapp)</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark cite-check &lt;name&gt;</code></td>
+<td style="text-align: left;">Verify project citations against DBLP / CrossRef</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark cite-search &lt;query&gt;</code></td>
+<td style="text-align: left;">Search academic databases for papers</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark audit &lt;dir&gt; [--repair]</code></td>
+<td style="text-align: left;">Verify delivered papers against the delivery contract</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark share create &lt;name&gt;</code></td>
+<td style="text-align: left;">Generate a share URL for a project</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp install</code></td>
+<td style="text-align: left;">Install web dashboard service</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark access …</code></td>
+<td style="text-align: left;">Manage the (optional) Cloudflare Access allowlist</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="dashboard">Dashboard</h2>
+<p>idea2paper includes a web dashboard for managing projects, viewing scores, and steering agents — served from a single FastAPI process that also hosts the homepage (one port, one systemd unit). Beyond live phase badges and logs it gives you:</p>
+<ul>
+<li><strong>Fair queueing</strong> — every launch is capped at 2 dev + 2 review iterations; when the lanes are full, new projects queue with a position and an <strong>estimated finish time</strong>, and you get an email when the paper is done.</li>
+<li><strong>Honest budgets</strong> — the cost card shows the <strong>provider-billed</strong> total (the actual OpenRouter invoice, including deep research and figures) when available, and clearly labels estimates otherwise.</li>
+<li><strong>Key-aware model picker</strong> — only models you hold a key for are selectable; one OpenRouter key unlocks the whole list.</li>
+<li><strong>Chat with your paper</strong> — ask questions about a finished project, request targeted edits, or re-run a single experiment without a full iteration.</li>
+<li><strong>Page-fit modes</strong> — Relaxed / Balanced / Strict control how aggressively the paper is fitted to the venue page limit.</li>
+</ul>
+<h3 id="configuration">Configuration</h3>
+<p>Configured via <code>.ark/webapp.env</code> (auto-created on first <code>ark webapp</code> run). Set <code>SMTP_*</code> for magic-link login, <code>ALLOWED_EMAILS</code> / <code>EMAIL_DOMAINS</code> to restrict access, and optionally <code>GOOGLE_CLIENT_ID</code> / <code>GOOGLE_CLIENT_SECRET</code> for Google OAuth.</p>
+<h3 id="management-commands">Management Commands</h3>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Command</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><code>ark webapp</code></td>
+<td style="text-align: left;">Start the dashboard in the foreground (useful for debugging).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp release</code></td>
+<td style="text-align: left;">Tag the current code and deploy to the production worktree.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp install [--dev]</code></td>
+<td style="text-align: left;">Install and start as a <code>systemd</code> user service.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp status</code></td>
+<td style="text-align: left;">Show status of the systemd service.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp restart</code></td>
+<td style="text-align: left;">Restart the dashboard service.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp logs [-f]</code></td>
+<td style="text-align: left;">View or tail service logs.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp login &lt;email&gt;</code></td>
+<td style="text-align: left;">Print a fresh magic-link sign-in URL.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><code>ark webapp publish</code></td>
+<td style="text-align: left;">Tag origin/main as the next release (tag-driven deploy).</td>
+</tr>
+</tbody>
+</table>
+<details>
+<summary><strong>Service Details (Prod vs. Dev)</strong></summary>
 
-# Figure generation
-create_figures_script: code/create_paper_figures.py
+| | Prod | Dev |
+|---|:-----|:----|
+| **Port** | 9527 | 1027 |
+| **Service Name** | `ark-webapp` | `ark-webapp-dev` |
+| **Conda Env** | `ark-prod` | `ark-dev` |
+| **Code Source** | `~/.ark/prod/` (pinned) | Current repository (live) |
 
-# Quality threshold — stop when reviewer score hits this
-paper_accept_threshold: 8
+</details>
 
-# Goal Anchor — keeps agents focused across iterations
-goal_anchor: |
-  ## Goal Anchor
-  **Paper Title**: My Paper Title
-  **Target Venue**: NeurIPS 2025
-  **Core Contributions**:
-  1. First contribution...
-  2. Second contribution...
+<h3 id="hosting-idea2paper-for-others">Hosting Idea2Paper for others?</h3>
+<p>Standing up a <strong>hosted, multi-tenant</strong> Idea2Paper instance — host + web app setup,
+shared-prod team releases, and the GCP/AWS launcher setup that lets clients run
+cloud compute in their own accounts — is covered end-to-end in the operator
+runbook:</p>
+<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong></p>
+<details>
+<summary><strong>Direct orchestrator invocation</strong></summary>
 
-# Compute settings (optional)
-use_slurm: false
-slurm_job_prefix: EXP_
-conda_env: my-env
 
-# Telegram notifications (optional)
-telegram_bot_token: "YOUR_BOT_TOKEN"
-telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
+<pre><code class="language-bash">python -m ark.orchestrator --project myproject --mode paper --max-iterations 20
+python -m ark.orchestrator --project myproject --mode dev
+</code></pre>
 
-    <h2 id="venue-presets">Venue Presets</h2>
-    <p>Idea2Paper includes precise LaTeX geometry presets for 11+ venues, ensuring figures and tables fit perfectly:</p>
-    <table>
-      <tr><th>Venue</th><th>Format Key</th><th>Text Width</th><th>Pages</th></tr>
-      <tr><td>NeurIPS</td><td><code>neurips</code></td><td>5.5in</td><td>9</td></tr>
-      <tr><td>ICML</td><td><code>icml</code></td><td>6.75in</td><td>8</td></tr>
-      <tr><td>ICLR</td><td><code>iclr</code></td><td>6.0in</td><td>9</td></tr>
-      <tr><td>AAAI</td><td><code>aaai</code></td><td>7.0in</td><td>7</td></tr>
-      <tr><td>ACL</td><td><code>acl</code></td><td>6.3in</td><td>8</td></tr>
-      <tr><td>IEEE</td><td><code>ieee</code></td><td>7.0in</td><td>10</td></tr>
-      <tr><td>ACM SIGPLAN</td><td><code>sigplan</code></td><td>5.5in</td><td>6</td></tr>
-      <tr><td>LNCS</td><td><code>lncs</code></td><td>4.8in</td><td>12</td></tr>
-      <tr><td>USENIX</td><td><code>usenix</code></td><td>7.0in</td><td>12</td></tr>
-      <tr><td>CVPR</td><td><code>cvpr</code></td><td>6.875in</td><td>8</td></tr>
-      <tr><td>ECCV</td><td><code>eccv</code></td><td>4.8in</td><td>14</td></tr>
-    </table>
 
-    <h2 id="agent-prompts">Agent Prompts</h2>
-    <p>Each agent has a <code>.prompt</code> file under <code>projects/&lt;name&gt;/agents/</code>. You can customize these to change agent behavior:</p>
-    <table>
-      <tr><th>File</th><th>Agent</th><th>Role</th></tr>
-      <tr><td><code>reviewer.prompt</code></td><td>Reviewer</td><td>Scores the paper (1–10) and identifies specific issues</td></tr>
-      <tr><td><code>planner.prompt</code></td><td>Planner</td><td>Converts review into a prioritized YAML action plan</td></tr>
-      <tr><td><code>writer.prompt</code></td><td>Writer</td><td>Drafts and revises LaTeX sections</td></tr>
-      <tr><td><code>experimenter.prompt</code></td><td>Experimenter</td><td>Designs and runs experiments</td></tr>
-      <tr><td><code>researcher.prompt</code></td><td>Researcher</td><td>Literature survey and result analysis</td></tr>
-      <tr><td><code>validator.prompt</code></td><td>Validator</td><td>Verifies changes were correctly applied</td></tr>
-      <tr><td><code>figure_fixer.prompt</code></td><td>Visualizer</td><td>Fixes figure and plot issues</td></tr>
-      <tr><td><code>literature.prompt</code></td><td>Literature</td><td>Deep literature search and summarization</td></tr>
-      <tr><td><code>meta_debugger.prompt</code></td><td>Meta-Debugger</td><td>System-level diagnosis when pipeline stalls</td></tr>
-    </table>
+</details>
 
-    <h2 id="hooks">Custom Hooks</h2>
-    <p>Each project can define a <code>hooks.py</code> for custom logic. This lets you inject project-specific behavior into the pipeline:</p>
-    <pre><code># ARK/projects/my-project/hooks.py
+<hr />
+<details>
+<summary><strong>Docker Usage</strong></summary>
 
-def pre_experiment(config, state):
-    """Called before each experiment run."""
-    pass
+>
+> The idea2paper research runtime depends on scientific libraries that are most stable on x86_64. If you are building on an **Apple Silicon (M1/M2/M3)** Mac, you must build for the `linux/amd64` platform.
+>
+> All idea2paper Dockerfiles and the `docker-compose.yml` are configured to force `linux/amd64` by default.
 
-def post_experiment(config, state, results):
-    """Called after experiment completes. Process results here."""
-    pass
+**Running with Docker Compose**
 
-def create_figures(config, state):
-    """Custom figure generation logic."""
-    pass</code></pre>
 
-    <!-- ===== PIPELINE ===== -->
-    <h2 id="research-phase">Phase 1: Research</h2>
-    <p>The research phase uses Deep Research to gather background knowledge:</p>
-    <ol>
-      <li>Takes your paper title and idea as input</li>
-      <li>Performs a comprehensive literature survey</li>
-      <li>Identifies related work, gaps, and positioning</li>
-      <li>Outputs a structured research summary to <code>auto_research/state/</code></li>
-    </ol>
-    <div class="callout">
-      <strong>💡 Tip:</strong> Install with <code>pip install -e ".[research]"</code> to enable the Deep Research integration. Without it, you can skip this phase and provide your own literature survey.
-    </div>
+<pre><code class="language-bash"># Start the web portal (builds the image automatically for amd64)
+docker compose -f docker/docker-compose.yml up --build -d
+</code></pre>
 
-    <h2 id="development-phase">Phase 2: Development</h2>
-    <p>The development phase handles experiment design and execution:</p>
-    <ol>
-      <li><strong>Planner</strong> creates an experiment plan based on the research summary</li>
-      <li><strong>Experimenter</strong> writes and submits experiment scripts (supports Slurm, local, cloud)</li>
-      <li><strong>Researcher</strong> analyzes results and identifies completeness gaps</li>
-      <li><strong>Writer</strong> produces the initial paper draft in LaTeX</li>
-    </ol>
 
-    <h2 id="review-phase">Phase 3: Review</h2>
-    <p>The review phase is where the magic happens. Each iteration:</p>
-    <ol>
-      <li><strong>Compile</strong> — LaTeX → PDF, generate page images for visual review</li>
-      <li><strong>Review</strong> — Reviewer agent scores the paper (1–10) and writes detailed feedback</li>
-      <li><strong>Plan &amp; Execute</strong> — Planner converts feedback into tasks; writer/experimenter/researcher execute</li>
-      <li><strong>Visualize</strong> — Fix figures, recompile, validate changes</li>
-    </ol>
+The web portal will be accessible at `http://localhost:9527`. All databases, configurations, and project data are persisted in a Docker named volume (`ark_data`).
 
-    <p>The process continues until:</p>
-    <ul>
-      <li>The reviewer score reaches <code>paper_accept_threshold</code> (default: 8)</li>
-      <li>The maximum iteration count is reached</li>
-      <li>You manually stop with <code>ark stop</code></li>
-    </ul>
 
-    <p>When the score threshold is reached, Idea2Paper runs one final cleanup iteration for any remaining minor issues before producing the final PDF.</p>
+<pre><code class="language-bash">docker compose -f docker/docker-compose.yml logs -f webapp
+</code></pre>
 
-    <h2 id="memory-system">Memory System</h2>
-    <p>Idea2Paper tracks progress across iterations to prevent loops and detect stagnation:</p>
-    <pre><code># Stored in auto_research/state/memory.yaml
-scores: [5.0, 5.5, 6.0, 6.2, 6.5, 7.0, 7.2]
-best_score: 7.2
-stagnation_count: 0</code></pre>
 
-    <h3>Score Tracking</h3>
-    <p>Maintains a history of reviewer scores (last 20 iterations). Used to measure progress and trigger interventions.</p>
+**Configuration**
 
-    <h3>Stagnation Detection</h3>
-    <p>If the score doesn't improve for several consecutive iterations, Idea2Paper:</p>
-    <ol>
-      <li>Flags the stagnation to the planner</li>
-      <li>Triggers the <strong>meta-debugger</strong> agent for system-level diagnosis</li>
-      <li>Sends a Telegram notification (if configured) requesting human intervention</li>
-    </ol>
 
-    <h3>Issue Repeat Tracking</h3>
-    <p>Counts how many times each issue reappears across reviews. If a fix keeps failing, Idea2Paper bans the ineffective strategy and tries alternative approaches.</p>
+<pre><code class="language-bash">cp .ark/webapp.env.example .ark/webapp.env
+# Edit .ark/webapp.env with your credentials
+</code></pre>
 
-    <h3>Goal Anchor</h3>
-    <p>Every agent invocation includes the Goal Anchor — a constant description of the project's core objectives. This prevents agents from drifting off-topic over many iterations.</p>
 
-    <!-- ===== ADVANCED ===== -->
-    <h2 id="telegram-bot">Telegram Integration</h2>
-    <p>Idea2Paper can send real-time notifications and receive mid-run instructions via Telegram:</p>
+Then uncomment the environment volume mapping in `docker/docker-compose.yml` under the `webapp` service:
 
-    <h3>Setup</h3>
-    <pre><code># Interactive setup
-ark setup-bot
 
-# Or manually add to config.yaml:
-telegram_bot_token: "YOUR_BOT_TOKEN"
-telegram_chat_id: "YOUR_CHAT_ID"</code></pre>
+<pre><code class="language-yaml">      - ../.ark/webapp.env:/data/.ark/webapp.env:ro
+</code></pre>
 
-    <h3>Features</h3>
-    <ul>
-      <li><strong>Iteration notifications</strong> — score updates after each review cycle</li>
-      <li><strong>PDF delivery</strong> — request the current paper PDF anytime</li>
-      <li><strong>Mid-run instructions</strong> — send text to steer the agents</li>
-      <li><strong>Stagnation alerts</strong> — automatic notification when progress stalls</li>
-      <li><strong>Proactive confirmations</strong> — agents ask before making risky changes</li>
-    </ul>
 
-    <h2 id="slurm">Slurm / HPC</h2>
-    <p>Idea2Paper supports running experiments on Slurm-managed HPC clusters:</p>
-    <pre><code># config.yaml
-use_slurm: true
-slurm_job_prefix: EXP_       # Prefix for job names
-conda_env: my-env             # Conda environment to activate</code></pre>
+**Running Individual Jobs**
 
-    <p>When <code>use_slurm: true</code>, the experimenter agent:</p>
-    <ol>
-      <li>Generates Slurm batch scripts with appropriate resource requests</li>
-      <li>Submits jobs via <code>sbatch</code></li>
-      <li>Monitors job status with <code>squeue</code></li>
-      <li>Collects results when jobs complete</li>
-    </ol>
+Uncomment the `job` service in `docker/docker-compose.yml`, then run:
 
-    <p>For non-Slurm environments, experiments run locally or on any SSH-accessible server.</p>
 
-    <h2 id="multi-model">Multi-Model Support</h2>
-    <p>Idea2Paper supports three AI backends. Set the model in <code>config.yaml</code> or via CLI:</p>
-    <table>
-      <tr><th>Model</th><th>CLI</th><th>Best For</th></tr>
-      <tr><td>Claude Code</td><td><code>claude</code></td><td>Best overall quality, recommended for paper writing</td></tr>
-      <tr><td>Gemini CLI</td><td><code>gemini</code></td><td>Research phase, literature survey</td></tr>
-      <tr><td>Codex CLI</td><td><code>codex</code></td><td>Code-heavy experiments</td></tr>
-    </table>
+<pre><code class="language-bash">docker compose -f docker/docker-compose.yml run --rm job \
+  --project myproject \
+  --project-dir /data/projects/&lt;user-id&gt;/myproject \
+  --mode research \
+  --iterations 10
+</code></pre>
 
-    <pre><code># Switch model for a specific run
-python -m ark.orchestrator --project my-project --model gemini</code></pre>
 
-    <h2 id="state-management">State Management</h2>
-    <p>All runtime state lives under <code>&lt;code_dir&gt;/auto_research/</code>:</p>
-    <pre><code>auto_research/
-├── state/
-│   ├── paper_state.yaml      # Current paper metadata
-│   ├── action_plan.yaml      # Current action plan from planner
-│   ├── latest_review.md      # Most recent review output
-│   ├── memory.yaml           # Score history, stagnation tracking
-│   ├── checkpoint.yaml       # Resume checkpoint
-│   └── findings.yaml         # Accumulated research findings
-└── logs/
-    └── *.log                  # Per-iteration agent logs</code></pre>
+*Pass required API keys (e.g., `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) as environment variables.*
 
-    <h3>Checkpointing &amp; Resume</h3>
-    <p>Idea2Paper automatically checkpoints after each iteration. If a run is interrupted, simply run <code>ark run</code> again — it will resume from the last checkpoint.</p>
+**Running Standalone Containers**
 
-    <h3>Fresh Start</h3>
-    <p>To restart from scratch, clear the state files:</p>
-    <pre><code>rm -f auto_research/state/checkpoint.yaml \
-      auto_research/state/paper_state.yaml \
-      auto_research/state/action_plan.yaml \
-      auto_research/state/latest_review.md \
-      auto_research/state/memory.yaml</code></pre>
 
-    <h2 id="troubleshooting">Troubleshooting</h2>
+<pre><code class="language-bash"># Build images (force amd64)
+docker build --platform linux/amd64 -f docker/Dockerfile.webapp -t ark-webapp .
+docker build --platform linux/amd64 -f docker/Dockerfile.job -t ark-job .
 
-    <h3>LaTeX compilation fails</h3>
-    <p>Ensure <code>pdflatex</code> and <code>bibtex</code> are installed. On Ubuntu:</p>
-    <pre><code>sudo apt install texlive-full</code></pre>
+# Run the Web Portal
+docker run -d --name ark-webapp \
+  --platform linux/amd64 \
+  -p 9527:9527 \
+  -v ark_data:/data \
+  ark-webapp
 
-    <h3>Agent times out or fails</h3>
-    <p>Check the agent logs under <code>auto_research/logs/</code>. Common causes:</p>
-    <ul>
-      <li>Claude Code CLI not authenticated — run <code>claude</code> and complete login</li>
-      <li>Rate limiting — Idea2Paper has built-in retry with backoff</li>
-      <li>Insufficient context — try simplifying the goal anchor</li>
-    </ul>
+# Run a Research Job
+docker run --rm -it \
+  --platform linux/amd64 \
+  -v ark_data:/data \
+  -e ANTHROPIC_API_KEY=&quot;sk-ant-...&quot; \
+  ark-job \
+  --project myproject \
+  --project-dir /data/projects/myproject \
+  --mode research
+</code></pre>
 
-    <h3>Score stuck / stagnation</h3>
-    <p>If the reviewer score plateaus:</p>
-    <ol>
-      <li>Check <code>auto_research/state/latest_review.md</code> for the specific issues</li>
-      <li>Send a targeted instruction via <code>ark update</code> or Telegram</li>
-      <li>Consider adjusting agent prompts in <code>projects/&lt;name&gt;/agents/</code></li>
-    </ol>
 
-    <h3>Pipeline won't start</h3>
-    <ul>
-      <li>Verify <code>config.yaml</code> paths are absolute and exist</li>
-      <li>Check that the selected model CLI is installed: <code>which claude</code></li>
-      <li>Run <code>ark status &lt;project&gt;</code> for diagnostic output</li>
-    </ul>
+**Pushing to GCP**
 
-    <div class="callout" style="margin-top:3rem">
-      <strong>Need help?</strong> Open an issue on <a href="https://github.com/kaust-ark/ARK" target="_blank">GitHub</a> or check the <a href="https://github.com/kaust-ark/ARK/blob/main/README.md" target="_blank">README</a> for the latest updates.
-    </div>
+
+<pre><code class="language-bash"># Push to Artifact Registry (recommended)
+./docker/push-gcp.sh --project [PROJECT_ID] --region [REGION] --repo [REPO] --build
+
+# Push to Legacy Container Registry (gcr.io)
+./docker/push-gcp.sh --project [PROJECT_ID] --legacy --build
+</code></pre>
+
+
+The `--build` flag automatically builds the images for `linux/amd64` even when running on macOS.
+
+</details>
+
+<hr />
+<h2 id="cloud-compute">Cloud Compute</h2>
+<p>idea2paper's <strong>v2 cloud architecture</strong> decouples the <em>Control Plane</em> from the <em>Execution Plane</em>, enabling the full orchestrator to run on a <strong>SkyPilot-provisioned cluster</strong> while you interact with a lightweight local webapp. <a href="https://docs.skypilot.co">SkyPilot</a> is now the only cloud compute path — it provisions across AWS/GCP/Azure/Kubernetes from one abstraction, with spot instances, retries, and autostop teardown built in.</p>
+<p><strong>How it works:</strong>
+1. The local webapp (or CLI) acts as a lightweight launcher — it runs <code>sky launch</code> to provision a remote <strong>Orchestrator cluster</strong>, syncs your project code (via SkyPilot <code>workdir</code>/<code>file_mounts</code>) and API keys, and triggers the orchestrator process.
+2. The <strong>Orchestrator cluster</strong> runs all high-level logic (Researcher, Planner, Writer, LaTeX, figures) remotely in a detached session.
+3. Experiments can run on the same orchestrator cluster or on a separate SkyPilot-provisioned GPU cluster (configurable independently).
+4. The orchestrator reports state home over the <code>/v1</code> control-plane API; the webapp streams logs and refreshes the Dashboard. The cluster self-terminates via <strong>autostop</strong> when the run completes (or after an idle window).</p>
+<blockquote>
+<p>Cloud credentials are encrypted at rest using your <code>SECRET_KEY</code>. Your keys are never logged or transmitted to third parties.</p>
+</blockquote>
+<details>
+<summary><strong>Configuration Hierarchy</strong></summary>
+
+idea2paper uses a three-tier configuration model for cloud compute:
+1. **System Defaults**: Set in `webapp.env` — for GCP the central `CLOUD_GCP_PROJECT` holding the baked ARK image, plus `CLOUD_LAUNCHER_SA`, `CLOUD_LAUNCHER_SA_KEY`; for AWS `CLOUD_LAUNCHER_ROLE_ARN` + `CLOUD_LAUNCHER_AWS_PROFILE`; plus the shared `CLOUD_CONDA_ENV`.
+2. **Global User Defaults**: Set in the **Settings** panel (⚙️). These apply to all your projects.
+3. **Project Overrides**: Set during project creation or restart. These have the highest priority.
+
+This hierarchy lets you define standard defaults once, while easily swapping to a powerful GPU instance (accelerators, spot) for a specific experiment.
+
+</details>
+
+<hr />
+<h3 id="enabling-cloud-compute-via-the-dashboard">Enabling Cloud Compute via the Dashboard</h3>
+<ol>
+<li>Open the <strong>Settings</strong> panel (⚙️ icon in the top navigation bar).</li>
+<li>Open the <strong>Compute</strong> tab.</li>
+<li>Enter your <strong>GCP Project ID</strong>, grant the shown <code>ark-launcher</code> service account the required roles on your project, then click <strong>Verify access</strong>. (No service-account key is uploaded — you delegate access to your own project via IAM. Operators: see <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md"><code>docs/DEPLOYMENT.md</code></a> §4.)</li>
+<li>Click <strong>Save</strong>.</li>
+</ol>
+<p>When creating a new project you can now independently select:
+- <strong>Orchestrator Backend</strong> — <code>skypilot</code> to run the control plane on a SkyPilot-provisioned cluster, or <code>local</code> to run it on the same machine as the webapp.
+- <strong>Experiment Backend</strong> — <code>skypilot</code> for GPU experiments, or <code>local</code> to run them on the Orchestrator cluster itself.</p>
+<hr />
+<details>
+<summary><strong>Creating a Project</strong></summary>
+
+Once cloud compute is configured, launch a project through the dashboard:
+
+1. Click **New Project** from the dashboard home.
+2. Fill in the research goal, target venue, and any additional instructions.
+3. Click **Submit** — the webapp generates a `config.yaml`, provisions the Orchestrator cluster via SkyPilot, syncs your project, and starts the run.
+
+The generated `config.yaml` is stored at:
+
+
+<pre><code>~/.ark/data/projects/&lt;user_id&gt;/&lt;project_id&gt;/config.yaml
+</code></pre>
+
+
+You can inspect or hand-edit this file at any time (e.g., to tune instance type or add `setup_commands`). Changes take effect on the next run or restart.
+
+>
+> If `PROJECTS_ROOT` is set in your `.ark/webapp.env`, the path above is replaced by `$PROJECTS_ROOT/<user_id>/<project_id>/config.yaml`.
+
+</details>
+
+<hr />
+<h3 id="cloud-provider-setup">Cloud Provider Setup</h3>
+<p>Configuring the GCP / AWS / SkyPilot launcher — building the baked image,
+creating the central <code>ark-launcher</code> identity, and wiring <code>webapp.env</code> — is an
+<strong>operator</strong> task done once per hosted instance. It's documented step-by-step,
+per cloud, in the deployment guide:</p>
+<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong> — §4 GCP · §5 AWS · §6 client onboarding · §8.4 <code>config.yaml</code> reference.</p>
+<p>If you're <em>using</em> a hosted instance, you don't run any of that — just open
+<strong>Settings → Compute</strong>, enter your GCP project / AWS account, and click
+<strong>Verify access</strong> (above). Running on <strong>Azure or Kubernetes</strong>? SkyPilot handles
+those too; configure that cloud's credentials per the
+<a href="https://docs.skypilot.co">SkyPilot docs</a>.</p>
+<hr />
+<details>
+<summary><strong>Log Streaming &amp; Re-attachment</strong></summary>
+
+- **Log Streaming** — the Orchestrator cluster streams logs home over the `/v1` control-plane API; the webapp polls it periodically to show live progress.
+- **State Sync** — the orchestrator checkpoints its `auto_research/` state to the control plane periodically, so the Dashboard UI stays current and the run survives VM loss.
+- **Re-attachment** — if you restart your local webapp, idea2paper detects the persisted SkyPilot cluster and re-attaches to the running process without re-provisioning.
+
+</details>
+
+<details>
+<summary><strong>Cost Control</strong></summary>
+
+>
+> Cloud clusters are billed by the hour. idea2paper leans on SkyPilot's built-in teardown to prevent runaway costs:
+>
+> - **Autostop-down** — every cluster is launched with an autostop-down window; if it sits idle past that window it **terminates itself**. Experiment clusters *always* autostop-down (it can only be tuned, not disabled); orchestrator clusters default to a window as a crash safety-net (tunable via `idle_minutes_to_autostop`).
+> - **Manual Stop** — clicking **Stop** in the dashboard flushes results and tears the cluster down (`sky down`).
+>
+> If the webapp process is killed unexpectedly, the autostop-down window still terminates the cluster on its own. Always verify no stray clusters remain (`sky status`) after unexpected shutdowns.
+
+</details>
+
+<hr />
+<details>
+<summary><strong>Telegram Integration</strong></summary>
+
+
+<pre><code class="language-bash">ark setup-bot    # one-time: paste BotFather token, auto-detect chat ID
+</code></pre>
+
+
+What you get:
+- **Rich notifications** &mdash; formatted score changes, phase transitions, agent activity, and errors
+- **Send instructions** &mdash; steer the current iteration in real time
+- **Request PDFs** &mdash; latest compiled paper sent to chat
+- **Human intervention** &mdash; agents escalate decisions to you before irreversible actions
+- **HPC-friendly** &mdash; handles self-signed SSL certificates on enterprise/HPC networks
+
+</details>
+
+<hr />
+<h2 id="supported-venues">Supported Venues</h2>
+<p>LaTeX templates ship for <strong>NeurIPS, ICML, ICLR, AAAI, MLSys</strong>, the <strong>ACL</strong> family (ACL / EMNLP / NAACL / EACL / AACL / COLING), the <strong>CVF</strong> family (CVPR / ICCV / WACV), the <strong>ACM acmart</strong> family (SOSP / EuroSys / ASPLOS / EuroMLSys), the <strong>USENIX</strong> family (OSDI / NSDI / ATC / FAST / Security), and <strong>IEEE / IEEEtran</strong> (INFOCOM and other IEEE venues) &mdash; all from official 2026 style files (MLSys reuses its unchanged 2025 kit) &mdash; plus a generic <strong>article</strong> fallback for TMLR, workshops, and technical reports. Custom templates are still accepted: idea2paper scans <code>.tex</code> / <code>.aux</code> / <code>.sty</code> to learn the layout, fixes compile errors, and enforces the venue page limit.</p>
+<h2 id="community">Community</h2>
+<p align="center">
+  <strong>微信交流群 / Join our WeChat group</strong><br>
+  <img src="assets/wechat_qr.jpg" alt="WeChat group: Idea2Paper" width="240"><br>
+  <sub>The WeChat group QR refreshes periodically — open an issue if it has expired.</sub>
+</p>
+
+<h2 id="license">License</h2>
+<p><a href="LICENSE">Apache 2.0</a></p>
   </main>
 </div>
 

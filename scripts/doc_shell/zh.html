@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>文档 — Idea2Paper</title>
+  <meta name="description" content="Idea2Paper 完整文档 — 自动科研套件。安装、配置、CLI 参考和进阶用法。">
+  <link rel="icon" href="../assets/logo_ark_transparent.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css?v=3">
+  <style>
+    /* ===== Doc-specific styles ===== */
+    .doc-layout {
+      display: flex;
+      gap: 2rem;
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 6rem 1.5rem 4rem;
+    }
+
+    /* Sidebar */
+    .doc-sidebar {
+      position: sticky;
+      top: 5rem;
+      width: 240px;
+      flex-shrink: 0;
+      height: fit-content;
+      max-height: calc(100vh - 6rem);
+      overflow-y: auto;
+      padding-right: 1rem;
+    }
+    .doc-sidebar a {
+      display: block;
+      padding: .4rem .75rem;
+      font-size: .85rem;
+      color: var(--text-muted);
+      border-left: 2px solid transparent;
+      transition: all .2s;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    .doc-sidebar a:hover,
+    .doc-sidebar a.active {
+      color: var(--teal);
+      border-left-color: var(--teal);
+      background: rgba(13, 148, 136, .05);
+    }
+    .doc-sidebar .sidebar-group {
+      margin-bottom: 1.2rem;
+    }
+    .doc-sidebar .sidebar-group-title {
+      font-size: .7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-primary);
+      padding: .4rem .75rem;
+      margin-bottom: .25rem;
+    }
+
+    /* Main content */
+    .doc-content {
+      flex: 1;
+      min-width: 0;
+      max-width: 800px;
+    }
+    .doc-content h1 {
+      font-size: 2.2rem;
+      margin-bottom: 1rem;
+      padding-bottom: .75rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .doc-content h2 {
+      font-size: 1.5rem;
+      margin-top: 3rem;
+      margin-bottom: 1rem;
+      padding-bottom: .5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .doc-content h3 {
+      font-size: 1.15rem;
+      margin-top: 2rem;
+      margin-bottom: .75rem;
+    }
+    .doc-content p {
+      margin-bottom: 1rem;
+      line-height: 1.7;
+    }
+    .doc-content ul, .doc-content ol {
+      margin-bottom: 1rem;
+      padding-left: 1.5rem;
+    }
+    .doc-content li {
+      list-style: disc;
+      margin-bottom: .4rem;
+      line-height: 1.6;
+    }
+    .doc-content ol li {
+      list-style: decimal;
+    }
+    .doc-content code {
+      font-family: var(--mono);
+      font-size: .85em;
+      background: var(--card);
+      padding: .15em .4em;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .doc-content pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 1.25rem 1.5rem;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin-bottom: 1.5rem;
+      font-family: var(--mono);
+      font-size: .85rem;
+      line-height: 1.6;
+    }
+    .doc-content pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    .doc-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1.5rem;
+      font-size: .9rem;
+    }
+    .doc-content th, .doc-content td {
+      text-align: left;
+      padding: .6rem .75rem;
+      border: 1px solid var(--border);
+    }
+    .doc-content th {
+      background: var(--card);
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .doc-content .callout {
+      background: rgba(13, 148, 136, .06);
+      border-left: 3px solid var(--teal);
+      padding: 1rem 1.25rem;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      margin-bottom: 1.5rem;
+    }
+    .doc-content .callout-warn {
+      background: rgba(180, 83, 9, .06);
+      border-left-color: var(--gold);
+    }
+    .doc-content .callout strong {
+      color: var(--text-primary);
+    }
+
+    /* Mobile sidebar */
+    @media (max-width: 768px) {
+      .doc-layout { flex-direction: column; padding-top: 5rem; }
+      .doc-sidebar {
+        position: relative;
+        top: 0;
+        width: 100%;
+        max-height: none;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 1rem;
+        margin-bottom: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ===== Navbar ===== -->
+<nav class="navbar" id="navbar" style="background:rgba(248,250,252,.95);backdrop-filter:blur(12px)">
+  <div class="container">
+    <a href="index.html" class="nav-brand">
+      <img src="../assets/logo_ark_transparent.png" alt="Idea2Paper logo">
+      Idea2Paper
+    </a>
+    <div class="nav-links" id="navLinks">
+      <a href="index.html">首页</a>
+      <a href="/dashboard">Dashboard</a>
+      <a href="doc.html" style="color:var(--teal);font-weight:600">文档</a>
+      <a href="about.html">关于</a>
+      <a href="../doc.html" class="lang-toggle" title="Switch to English">🌐 EN</a>
+      <a href="../ar/doc.html" class="lang-toggle" title="التبديل إلى العربية">العربية</a>
+      <a class="nav-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="../assets/kaust-logo.svg" alt="KAUST" /></a>
+    </div>
+    <button class="hamburger" id="hamburger" aria-label="菜单">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- ===== Doc Layout ===== -->
+<div class="doc-layout">
+
+  <!-- Sidebar -->
+  <aside class="doc-sidebar">
+{{TOC}}
+  </aside>
+
+  <!-- Main content -->
+  <main class="doc-content">
+{{CONTENT}}
+  </main>
+</div>
+
+<!-- ===== Footer ===== -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-brand">
+      <img src="../assets/logo_ark_transparent.png" alt="Idea2Paper">
+      Idea2Paper
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/kaust-ark/ARK/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0 许可证</a>
+    </div>
+    <p class="footer-note">使用 <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">Claude Code</a> 构建</p>
+    <a class="footer-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="../assets/kaust-logo.svg" alt="KAUST" /></a>
+  </div>
+</footer>
+
+<script>
+// Navbar scroll effect
+const navbar = document.getElementById('navbar');
+window.addEventListener('scroll', () => {
+  navbar.classList.toggle('scrolled', window.scrollY > 20);
+});
+
+// Mobile hamburger
+const hamburger = document.getElementById('hamburger');
+const navLinks = document.getElementById('navLinks');
+hamburger?.addEventListener('click', () => {
+  hamburger.classList.toggle('open');
+  navLinks.classList.toggle('open');
+});
+
+// Active sidebar link tracking
+const sections = document.querySelectorAll('.doc-content h2[id], .doc-content h3[id]');
+const sidebarLinks = document.querySelectorAll('.doc-sidebar a');
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      sidebarLinks.forEach(link => link.classList.remove('active'));
+      const activeLink = document.querySelector(`.doc-sidebar a[href="#${entry.target.id}"]`);
+      if (activeLink) activeLink.classList.add('active');
+    }
+  });
+}, { rootMargin: '-80px 0px -60% 0px' });
+
+sections.forEach(section => observer.observe(section));
+</script>
+</body>
+</html>

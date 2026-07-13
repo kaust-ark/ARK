@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>التوثيق — Idea2Paper</title>
+  <meta name="description" content="التوثيق الكامل لـ Idea2Paper. التثبيت، والتهيئة، ومرجع سطر الأوامر، والاستخدام المتقدم.">
+  <link rel="icon" href="../assets/logo_ark_transparent.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/style.css?v=3">
+  <style>
+    /* ===== Doc-specific styles ===== */
+    .doc-layout {
+      display: flex;
+      gap: 2rem;
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 6rem 1.5rem 4rem;
+    }
+
+    /* Sidebar */
+    .doc-sidebar {
+      position: sticky;
+      top: 5rem;
+      width: 240px;
+      flex-shrink: 0;
+      height: fit-content;
+      max-height: calc(100vh - 6rem);
+      overflow-y: auto;
+      padding-right: 1rem;
+    }
+    .doc-sidebar a {
+      display: block;
+      padding: .4rem .75rem;
+      font-size: .85rem;
+      color: var(--text-muted);
+      border-left: 2px solid transparent;
+      transition: all .2s;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    .doc-sidebar a:hover,
+    .doc-sidebar a.active {
+      color: var(--teal);
+      border-left-color: var(--teal);
+      background: rgba(13, 148, 136, .05);
+    }
+    .doc-sidebar .sidebar-group {
+      margin-bottom: 1.2rem;
+    }
+    .doc-sidebar .sidebar-group-title {
+      font-size: .7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-primary);
+      padding: .4rem .75rem;
+      margin-bottom: .25rem;
+    }
+
+    /* Main content */
+    .doc-content {
+      flex: 1;
+      min-width: 0;
+      max-width: 800px;
+    }
+    .doc-content h1 {
+      font-size: 2.2rem;
+      margin-bottom: 1rem;
+      padding-bottom: .75rem;
+      border-bottom: 2px solid var(--border);
+    }
+    .doc-content h2 {
+      font-size: 1.5rem;
+      margin-top: 3rem;
+      margin-bottom: 1rem;
+      padding-bottom: .5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .doc-content h3 {
+      font-size: 1.15rem;
+      margin-top: 2rem;
+      margin-bottom: .75rem;
+    }
+    .doc-content p {
+      margin-bottom: 1rem;
+      line-height: 1.7;
+    }
+    .doc-content ul, .doc-content ol {
+      margin-bottom: 1rem;
+      padding-left: 1.5rem;
+    }
+    .doc-content li {
+      list-style: disc;
+      margin-bottom: .4rem;
+      line-height: 1.6;
+    }
+    .doc-content ol li {
+      list-style: decimal;
+    }
+    .doc-content code {
+      font-family: var(--mono);
+      font-size: .85em;
+      background: var(--card);
+      padding: .15em .4em;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+    }
+    .doc-content pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: 1.25rem 1.5rem;
+      border-radius: var(--radius);
+      overflow-x: auto;
+      margin-bottom: 1.5rem;
+      font-family: var(--mono);
+      font-size: .85rem;
+      line-height: 1.6;
+    }
+    .doc-content pre code {
+      background: none;
+      border: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    .doc-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 1.5rem;
+      font-size: .9rem;
+    }
+    .doc-content th, .doc-content td {
+      text-align: left;
+      padding: .6rem .75rem;
+      border: 1px solid var(--border);
+    }
+    .doc-content th {
+      background: var(--card);
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .doc-content .callout {
+      background: rgba(13, 148, 136, .06);
+      border-left: 3px solid var(--teal);
+      padding: 1rem 1.25rem;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      margin-bottom: 1.5rem;
+    }
+    .doc-content .callout-warn {
+      background: rgba(180, 83, 9, .06);
+      border-left-color: var(--gold);
+    }
+    .doc-content .callout strong {
+      color: var(--text-primary);
+    }
+
+    /* Mobile sidebar */
+    @media (max-width: 768px) {
+      .doc-layout { flex-direction: column; padding-top: 5rem; }
+      .doc-sidebar {
+        position: relative;
+        top: 0;
+        width: 100%;
+        max-height: none;
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 1rem;
+        margin-bottom: 1rem;
+      }
+    }
+
+    /* ===== RTL / Arabic adaptations ===== */
+    body { font-family: 'Cairo', 'Inter', sans-serif; }
+    .nav-brand, h1, h2, h3, p, li, a, span, .btn,
+    .doc-sidebar .sidebar-group-title, .footer-note { font-family: 'Cairo', 'Inter', sans-serif; }
+    .nav-links { gap: .25rem; }
+    .lang-toggle { font-size: .85rem; }
+    .lang-dropdown-menu { left: 0; right: auto; }
+    .footer { direction: rtl; }
+    .footer-links { flex-wrap: wrap; }
+    /* Code stays LTR */
+    pre, code { direction: ltr; text-align: left; unicode-bidi: embed; }
+    .doc-content pre { text-align: left; }
+    /* Flip sidebar accent to the right edge */
+    .doc-sidebar { padding-right: 0; padding-left: 1rem; }
+    .doc-sidebar a {
+      border-left: none;
+      border-right: 2px solid transparent;
+      border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    }
+    .doc-sidebar a:hover,
+    .doc-sidebar a.active {
+      border-left-color: transparent;
+      border-right-color: var(--teal);
+    }
+    /* Lists indent from the right */
+    .doc-content ul, .doc-content ol { padding-left: 0; padding-right: 1.5rem; }
+    /* Tables read right-to-left */
+    .doc-content th, .doc-content td { text-align: right; }
+    /* Callout accent on the right */
+    .doc-content .callout {
+      border-left: none;
+      border-right: 3px solid var(--teal);
+      border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    }
+    .doc-content .callout-warn { border-right-color: var(--gold); }
+  </style>
+</head>
+<body>
+
+<!-- ===== Navbar ===== -->
+<nav class="navbar" id="navbar" style="background:rgba(248,250,252,.95);backdrop-filter:blur(12px)">
+  <div class="container">
+    <a href="index.html" class="nav-brand">
+      <img src="../assets/logo_ark_transparent.png" alt="شعار Idea2Paper">
+      Idea2Paper
+    </a>
+    <div class="nav-links" id="navLinks">
+      <a href="index.html">الرئيسية</a>
+      <a href="/dashboard">لوحة التحكم</a>
+      <a href="doc.html" style="color:var(--teal);font-weight:600">التوثيق</a>
+      <a href="about.html">حول</a>
+      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener" class="gh-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 00-3.8 23.38c.6.11.82-.26.82-.58v-2.16c-3.34.73-4.04-1.61-4.04-1.61a3.18 3.18 0 00-1.33-1.76c-1.09-.74.08-.73.08-.73a2.52 2.52 0 011.84 1.24 2.56 2.56 0 003.5 1 2.56 2.56 0 01.76-1.61c-2.67-.3-5.47-1.33-5.47-5.93a4.64 4.64 0 011.24-3.22 4.3 4.3 0 01.12-3.18s1-.33 3.3 1.23a11.4 11.4 0 016 0c2.3-1.56 3.3-1.23 3.3-1.23a4.3 4.3 0 01.12 3.18 4.64 4.64 0 011.24 3.22c0 4.61-2.81 5.63-5.48 5.93a2.86 2.86 0 01.82 2.22v3.29c0 .32.21.7.82.58A12 12 0 0012 .3"/></svg>
+        GitHub
+      </a>
+      <div class="lang-dropdown">
+        <button class="lang-toggle-btn" aria-label="Language">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+        </button>
+        <div class="lang-dropdown-menu">
+          <a href="../doc.html">English</a>
+          <a href="../zh/doc.html">中文</a>
+          <a href="doc.html" class="active">العربية</a>
+        </div>
+      </div>
+      <a class="nav-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="../assets/kaust-logo.svg" alt="KAUST" /></a>
+    </div>
+    <button class="hamburger" id="hamburger" aria-label="القائمة">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- ===== Doc Layout ===== -->
+<div class="doc-layout">
+
+  <!-- Sidebar -->
+  <aside class="doc-sidebar">
+{{TOC}}
+  </aside>
+
+  <!-- Main content -->
+  <main class="doc-content">
+{{CONTENT}}
+  </main>
+</div>
+
+<!-- ===== Footer ===== -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-brand">
+      <img src="../assets/logo_ark_transparent.png" alt="Idea2Paper">
+      Idea2Paper
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/kaust-ark/ARK/blob/main/LICENSE" target="_blank" rel="noopener">رخصة Apache 2.0</a>
+    </div>
+    <p class="footer-note">بُني باستخدام <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">Claude Code</a></p>
+    <a class="footer-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="../assets/kaust-logo.svg" alt="KAUST" /></a>
+  </div>
+</footer>
+
+<script>
+// Navbar scroll effect
+const navbar = document.getElementById('navbar');
+window.addEventListener('scroll', () => {
+  navbar.classList.toggle('scrolled', window.scrollY > 20);
+});
+
+// Mobile hamburger
+const hamburger = document.getElementById('hamburger');
+const navLinks = document.getElementById('navLinks');
+hamburger?.addEventListener('click', () => {
+  hamburger.classList.toggle('open');
+  navLinks.classList.toggle('open');
+});
+
+// Active sidebar link tracking
+const sections = document.querySelectorAll('.doc-content h2[id], .doc-content h3[id]');
+const sidebarLinks = document.querySelectorAll('.doc-sidebar a');
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      sidebarLinks.forEach(link => link.classList.remove('active'));
+      const activeLink = document.querySelector(`.doc-sidebar a[href="#${entry.target.id}"]`);
+      if (activeLink) activeLink.classList.add('active');
+    }
+  });
+}, { rootMargin: '-80px 0px -60% 0px' });
+
+sections.forEach(section => observer.observe(section));
+</script>
+</body>
+</html>

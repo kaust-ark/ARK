@@ -32,11 +32,15 @@
 
 ---
 
+<!-- docs:start -->
+
 idea2paper orchestrates **6 specialized AI agents** to turn a research idea into a paper &mdash; proposal analysis, literature search, Slurm experiments, LaTeX drafting, and iterative peer review &mdash; while you stay in control via **CLI**, **Dashboard**, or **Telegram**.
 
 ```
 Give it an idea and a venue. idea2paper handles the rest.
 ```
+
+The fastest way to try it is the hosted instance at **[idea2paper.org](https://idea2paper.org/)** — sign in with your email, add one [OpenRouter](https://openrouter.ai/keys) API key, and launch. A full paper with a budget model like DeepSeek typically costs **~$5 of your own API credit**. Self-hosting is a one-line install (below).
 
 ## Papers Written by idea2paper
 
@@ -77,7 +81,7 @@ curl -fsSL https://idea2paper.org/install.sh | bash
 The script:
 
 1. Detects your OS, installs miniforge if missing, builds the `ark-base` and `ark` conda envs, pip-installs idea2paper editable into `~/ARK`, and installs the OpenHands CLI (the agent runtime, via `uv` — it bundles its own Python 3.12).
-2. Asks you for **Anthropic / OpenAI / Gemini API keys** (fill whichever provider(s) you'll use; the Gemini key also powers Deep Research) and an **email for dashboard login**. Press Enter to skip any.
+2. Asks for your API keys and an **email for dashboard login**. One **OpenRouter** key is the recommended setup — it unlocks every model plus deep research and figure generation; direct Anthropic / OpenAI / Gemini / DeepSeek keys also work. Press Enter to skip any.
 3. Installs the dashboard as a `systemd --user` service on port `9527` (use `--no-webapp` to opt out).
 4. Prints a one-time **magic-link URL** for your email — click it once and you're logged into the local dashboard. No SMTP, no Google OAuth.
 
@@ -106,7 +110,8 @@ idea2paper parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and
 
 - **Python 3.10+** with `pyyaml` and `PyMuPDF`
 - **Agent runtime**: [OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI) (installed via `uv`, bundles its own Python 3.12) &mdash; one runtime that drives Claude / GPT / Gemini / any [LiteLLM](https://docs.litellm.ai/docs/providers) model, selected per project via `model` in `config.yaml`
-- **Optional**: LaTeX (`pdflatex` + `bibtex`), Slurm, `google-genai` for AI figures
+- **API key**: one [OpenRouter](https://openrouter.ai/keys) key covers every model, deep research (Perplexity), and AI figures; single-vendor keys (Anthropic / OpenAI / Gemini / DeepSeek / …) work too but lose the pieces their vendor doesn't serve
+- **Optional**: LaTeX (`pdflatex` + `bibtex`), Slurm
 
 <details>
 <summary><strong>Manual Installation</strong></summary>
@@ -156,8 +161,8 @@ idea2paper runs three phases in sequence. The Review phase loops until the paper
 
 | Phase | What Happens |
 |:------|:-------------|
-| **Research** | 5-step pipeline: Setup (conda env) &rarr; Analyze Proposal (researcher) &rarr; Deep Research (Gemini) &rarr; Specialization (researcher) &rarr; Bootstrap (skills &amp; citations) |
-| **Dev** | Iterative experiment cycle: plan &rarr; run on Slurm &rarr; analyze &rarr; write initial draft |
+| **Research** | 5-step pipeline: Setup (conda env) &rarr; Analyze Proposal (researcher) &rarr; Deep Research (Perplexity via OpenRouter, or Gemini) &rarr; Specialization (researcher) &rarr; Bootstrap (skills &amp; citations) |
+| **Dev** | Iterative experiment cycle: Plan Experiments &rarr; Run Experiments (Slurm or local) &rarr; Analyze Results &rarr; Evaluate Completeness |
 | **Review** | Compile &rarr; Review &rarr; Plan &rarr; Execute &rarr; Validate, repeating until score &ge; threshold |
 
 <details>
@@ -183,7 +188,7 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
 
 | Agent | Role |
 |:------|:-----|
-| **Researcher** | Analyzes the proposal, runs the Gemini-backed literature survey, and specializes agent prompts for the project |
+| **Researcher** | Analyzes the proposal, runs the deep-research literature survey, and specializes agent prompts for the project |
 | **Reviewer** | Scores the paper against venue standards, generates improvement tasks |
 | **Planner** | Turns review feedback into a prioritized action plan; analyzes Dev-phase results |
 | **Writer** | Drafts and refines LaTeX sections with DBLP-verified references |
@@ -206,6 +211,17 @@ An autonomous run is watched and gated, not a black box.
   **Telegram** and waits for approval (Approve / Deny / remember-this). It
   remembers your answer so it doesn't re-ask, denies on timeout, and **fails open**
   (auto-allows + logs) when no Telegram is configured — so nothing ever hangs.
+- **Idea gatekeeper (Gate A / Gate B).** Every submitted idea passes a
+  pre-launch ethics-and-soundness review (Gate A); after the literature survey
+  a novelty/scope check (Gate B) flags overlap with existing work and folds
+  honest scoping into the paper instead of overclaiming.
+- **Delivery checks.** Before a paper is delivered it is verified against an
+  explicit contract — disclosure present, every citation resolved, references
+  non-empty, generated figures actually used, page budget respected. The same
+  checks run standalone via `ark audit <project> [--repair]`.
+- **AI-use disclosure.** Every paper carries an acknowledgment that it was
+  produced with Idea2Paper and reviewed by the authors — inserted
+  automatically, for every venue.
 - **Two enforcement layers.** Shadow-PATH wrappers gate risky commands *before*
   they run; a circuit breaker backstops anything that bypasses them. The
   orchestrator's own autonomous cloud-provision / git-push / spend actions are
@@ -225,7 +241,7 @@ Configure it all under the `intervention:` block in
 | **Formatting** | Broken layouts, LaTeX errors, manual cleanup | Venue templates + sub-page length control to hit page limits exactly |
 | **Citations** | LLMs fabricate plausible-looking references | API-first BibTeX (DBLP / CrossRef / arXiv) with content&ndash;claim alignment |
 | **Review** | Text-only review of the LaTeX source | Visual-grounded: page images **and** source, scored against venue standards |
-| **Figures** | Default styles, wrong sizes, no page awareness | Nano Banana + venue-aware canvas, column widths, and fonts |
+| **Figures** | Default styles, wrong sizes, no page awareness | AI concept figures (PaperBanana) + venue-aware sizing: figures are saved at print size and never upscaled |
 | **Isolation** | Shared env &mdash; projects interfere with each other | Per-project conda env, sandboxed HOME, full multi-tenant isolation |
 | **Integrity** | LLMs simulate results instead of running real experiments | Anti-simulation prompts + builtin skills enforce real execution |
 
@@ -290,14 +306,22 @@ Skills live in `skills/builtin/` and are auto-installed during pipeline bootstra
 | `ark doctor` | Diagnose a self-host install (envs, API keys, webapp) |
 | `ark cite-check <name>` | Verify project citations against DBLP / CrossRef |
 | `ark cite-search <query>` | Search academic databases for papers |
+| `ark audit <dir> [--repair]` | Verify delivered papers against the delivery contract |
+| `ark share create <name>` | Generate a share URL for a project |
 | `ark webapp install` | Install web dashboard service |
-| `ark access {list,add,remove,add-domain,remove-domain}` | Manage Dashboard Cloudflare Access allowlist |
+| `ark access …` | Manage the (optional) Cloudflare Access allowlist |
 
 ---
 
 ## Dashboard
 
-idea2paper includes a web-based dashboard for managing projects, viewing scores, and steering agents. The dashboard shows **live phase badges** (Research / Dev / Review), per-project conda env status, and real-time cost tracking. It is served from a single FastAPI process that also hosts the homepage &mdash; one port, one systemd unit.
+idea2paper includes a web dashboard for managing projects, viewing scores, and steering agents — served from a single FastAPI process that also hosts the homepage (one port, one systemd unit). Beyond live phase badges and logs it gives you:
+
+- **Fair queueing** — every launch is capped at 2 dev + 2 review iterations; when the lanes are full, new projects queue with a position and an **estimated finish time**, and you get an email when the paper is done.
+- **Honest budgets** — the cost card shows the **provider-billed** total (the actual OpenRouter invoice, including deep research and figures) when available, and clearly labels estimates otherwise.
+- **Key-aware model picker** — only models you hold a key for are selectable; one OpenRouter key unlocks the whole list.
+- **Chat with your paper** — ask questions about a finished project, request targeted edits, or re-run a single experiment without a full iteration.
+- **Page-fit modes** — Relaxed / Balanced / Strict control how aggressively the paper is fitted to the venue page limit.
 
 ### Configuration
 
@@ -313,6 +337,8 @@ Configured via `.ark/webapp.env` (auto-created on first `ark webapp` run). Set `
 | `ark webapp status` | Show status of the systemd service. |
 | `ark webapp restart` | Restart the dashboard service. |
 | `ark webapp logs [-f]` | View or tail service logs. |
+| `ark webapp login <email>` | Print a fresh magic-link sign-in URL. |
+| `ark webapp publish` | Tag origin/main as the next release (tag-driven deploy). |
 
 <details>
 <summary><strong>Service Details (Prod vs. Dev)</strong></summary>
@@ -326,9 +352,9 @@ Configured via `.ark/webapp.env` (auto-created on first `ark webapp` run). Set `
 
 </details>
 
-### Hosting ARK for others?
+### Hosting Idea2Paper for others?
 
-Standing up a **hosted, multi-tenant** ARK instance — host + web app setup,
+Standing up a **hosted, multi-tenant** Idea2Paper instance — host + web app setup,
 shared-prod team releases, and the GCP/AWS launcher setup that lets clients run
 cloud compute in their own accounts — is covered end-to-end in the operator
 runbook:
