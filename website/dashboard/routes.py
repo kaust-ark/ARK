@@ -461,8 +461,8 @@ def _provider_preflight(keys: dict) -> None:
         raise HTTPException(
             400,
             f"Your OpenRouter balance is ${remaining:.2f} -- too low to complete a paper "
-            f"(a full run needs at least ~${_PREFLIGHT_MIN_USD:.0f}, typically $5-10 with a "
-            f"budget model). Top up at https://openrouter.ai/credits and launch again.")
+            f"(a full run typically bills $10-25 with a budget model, depending on length). "
+            f"Top up at https://openrouter.ai/credits and launch again.")
 
 
 def _admin_user_ids(session) -> set:

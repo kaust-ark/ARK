@@ -40,7 +40,7 @@ idea2paper 协调 **6 个专业 AI 智能体**，将研究构想转化为完整�
 提供想法和目标会议，剩下的交给 idea2paper。
 ```
 
-想最快上手，直接用托管实例 **[idea2paper.org](https://idea2paper.org/)**——邮箱登录，填一个 [OpenRouter](https://openrouter.ai/keys) API key 就能开跑。用 DeepSeek 这类平价模型跑完一整篇论文，通常只花 **约 $5 的自有 API 额度**。想自托管也只需一行命令安装（见下文）。
+想最快上手，直接用托管实例 **[idea2paper.org](https://idea2paper.org/)**——邮箱登录，填一个 [OpenRouter](https://openrouter.ai/keys) API key 就能开跑。用 DeepSeek 这类平价模型跑完一整篇论文，实际计费通常为 **$10–25 的自有 API 额度**（视篇幅而定）——面板会显示每次运行的真实账单。想自托管也只需一行命令安装（见下文）。
 
 ## 由 idea2paper 撰写的论文
 

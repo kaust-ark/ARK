@@ -40,7 +40,7 @@ idea2paper orchestrates **6 specialized AI agents** to turn a research idea into
 Give it an idea and a venue. idea2paper handles the rest.
 ```
 
-The fastest way to try it is the hosted instance at **[idea2paper.org](https://idea2paper.org/)** — sign in with your email, add one [OpenRouter](https://openrouter.ai/keys) API key, and launch. A full paper with a budget model like DeepSeek typically costs **~$5 of your own API credit**. Self-hosting is a one-line install (below).
+The fastest way to try it is the hosted instance at **[idea2paper.org](https://idea2paper.org/)** — sign in with your email, add one [OpenRouter](https://openrouter.ai/keys) API key, and launch. A full paper with a budget model like DeepSeek typically bills **$10–25 of your own API credit**, depending on length — the dashboard shows the actual billed total per run. Self-hosting is a one-line install (below).
 
 ## Papers Written by idea2paper
 

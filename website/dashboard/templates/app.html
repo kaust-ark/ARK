@@ -1905,8 +1905,7 @@ Strict — hit the exact page limit (spends the most tokens).">
       Deep Research are unavailable</strong> — they need Gemini or OpenRouter.
     </p>
     <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px 14px;margin:0 0 10px;font-size:.84rem;color:#1e3a8a;text-align:left;line-height:1.6">
-      <span data-i18n-html="onboard_cost">💰 Recommended model: <strong>DeepSeek V4 Pro</strong> (via OpenRouter) — a full paper
-      typically costs <strong>~$5</strong>, about 10× cheaper than GPT/Claude flagship models, with solid results.</span>
+      <span data-i18n-html="onboard_cost">💰 Recommended model: <strong>DeepSeek V4 Pro</strong> (via OpenRouter) — a full paper typically bills <strong>$10–25</strong> depending on length</span>
     </div>
     <div style="background:#f0fdfa;border:1px solid #ccfbf1;border-radius:10px;padding:12px 14px;margin:0 0 20px;font-size:.84rem;color:#134e4a;text-align:left;line-height:1.6">
       <span data-i18n-html="onboard_hint">🔐 Your keys are stored <strong>encrypted</strong> (per-user key derivation, AES/Fernet) and
@@ -2664,7 +2663,7 @@ const TRANSLATIONS = {
     telegram_clear_hint: 'To turn Telegram off, clear both fields and save. New projects will no longer send messages.',
     onboard_title: 'Welcome to Idea2Paper 👋',
     onboard_body: 'One quick step before you launch research: add an API key. We <strong>strongly recommend OpenRouter</strong> — one key powers the entire pipeline. With a single-vendor key (only OpenAI or only Anthropic), <strong>AI concept figures and Deep Research are unavailable</strong> — they need Gemini or OpenRouter.',
-    onboard_cost: '💰 Recommended model: <strong>DeepSeek V4 Pro</strong> (via OpenRouter) — a full paper typically costs <strong>~$5</strong>, about 10× cheaper than GPT/Claude flagship models, with solid results.',
+    onboard_cost: '💰 Recommended model: <strong>DeepSeek V4 Pro</strong> (via OpenRouter) — a full paper typically bills <strong>$10–25</strong> of API credit depending on length (lighter models can go lower), still far cheaper than GPT/Claude flagships. The dashboard shows the actual billed total per run.',
     onboard_hint: '🔐 Your keys are stored <strong>encrypted</strong> (per-user key derivation, AES/Fernet) and used only for your own projects. Best practice: create a <strong>dedicated API key with a spending cap</strong>, and revoke it when you\'re done. Manage keys anytime in Settings.',
     onboard_later: 'Maybe later',
     onboard_cta: 'Add API key',
@@ -2814,7 +2813,7 @@ const TRANSLATIONS = {
     telegram_clear_hint: 'لإيقاف Telegram، امسح الحقلين واحفظ. لن ترسل المشاريع الجديدة أي رسائل.',
     onboard_title: 'مرحبًا بك في Idea2Paper 👋',
     onboard_body: 'خطوة سريعة قبل إطلاق بحثك: أضف مفتاح API. <strong>نوصي بشدة بـ OpenRouter</strong> — مفتاح واحد يشغّل كامل خط الأنابيب. مع مفتاح مزوّد واحد فقط (OpenAI أو Anthropic وحدهما)، <strong>لن تتوفر الأشكال المفاهيمية بالذكاء الاصطناعي ولا البحث المعمّق</strong> — فهما يحتاجان Gemini أو OpenRouter.',
-    onboard_cost: '💰 النموذج الموصى به: <strong>DeepSeek V4 Pro</strong> (عبر OpenRouter) — تكلفة الورقة الكاملة عادةً <strong>نحو 5$</strong>، أي أرخص بنحو 10 مرات من نماذج GPT/Claude الرائدة، وبنتائج جيدة.',
+    onboard_cost: '💰 النموذج الموصى به: <strong>DeepSeek V4 Pro</strong> (عبر OpenRouter) — الورقة الكاملة تُحاسَب عادةً بـ <strong>10–25$</strong> من رصيد الواجهة البرمجية حسب الطول (النماذج الأخف قد تكون أرخص)، وهي مع ذلك أرخص بكثير من نماذج GPT/Claude الرائدة. تعرض لوحة التحكم التكلفة الفعلية لكل تشغيل.',
     onboard_hint: '🔐 تُخزَّن مفاتيحك <strong>مشفّرة</strong> (اشتقاق مفتاح لكل مستخدم، AES/Fernet) وتُستخدم فقط لمشاريعك. أفضل ممارسة: أنشئ <strong>مفتاح API مستقلاً بسقف إنفاق</strong>، واسحبه عند الانتهاء. يمكنك إدارة المفاتيح في أي وقت من الإعدادات.',
     onboard_later: 'لاحقًا',
     onboard_cta: 'إضافة مفتاح API',
@@ -2951,7 +2950,7 @@ const TRANSLATIONS = {
     telegram_clear_hint: '要关闭 Telegram，请清空两个字段并保存。新项目将不再发送消息。',
     onboard_title: '欢迎使用 Idea2Paper 👋',
     onboard_body: '启动研究前还有一步：添加一个 API Key。<strong>强烈推荐使用 OpenRouter</strong>——一个 Key 驱动整条流水线。若只配置单一厂商的 Key（仅 OpenAI 或仅 Anthropic），<strong>AI 概念图和 Deep Research 将不可用</strong>——它们需要 Gemini 或 OpenRouter。',
-    onboard_cost: '💰 推荐模型：<strong>DeepSeek V4 Pro</strong>（经 OpenRouter）——一篇完整论文成本约 <strong>$5</strong>，比 GPT/Claude 旗舰模型便宜约 10 倍，效果不错。',
+    onboard_cost: '💰 推荐模型：<strong>DeepSeek V4 Pro</strong>（经 OpenRouter）——一篇完整论文实际计费通常 <strong>$10–25</strong>（视篇幅而定，更轻量的模型可更低），仍远低于 GPT/Claude 旗舰。面板会显示每次运行的真实账单。',
     onboard_hint: '🔐 你的密钥<strong>加密存储</strong>（按用户派生密钥，AES/Fernet），仅用于你自己的项目。最佳实践：创建一个<strong>带消费上限的独立 API Key</strong>，用完即回收。可随时在设置中管理。',
     onboard_later: '稍后再说',
     onboard_cta: '添加 API Key',
