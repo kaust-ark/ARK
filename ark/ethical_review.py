@@ -45,6 +45,26 @@ Return STRICT JSON only, with NO surrounding prose, NO markdown code fences:
 Verdict guidance: "reject" = clearly in a category above. "human_review" = a borderline ethics case you genuinely can't call (rare). "refine" = admissible but you'd flag a soundness concern worth telling the user (non-blocking). "proceed" = fine. Scores: ethics 5 = no concern, 1 = hard violation; feasibility 5 = physically plausible, 1 = impossible; scientific_value is a rough first impression. When in doubt, prefer "proceed" or "refine" over "human_review", and never use "reject" outside the five categories."""
 
 
+# The gate's judge is FIXED per key family — never the run's own model. Using
+# the defendant's chosen model made the verdict vary by user (a reasoning
+# model at provider-default temperature flipped reject→proceed on an identical
+# idea 26 minutes apart, 2026-07-16). Cheap, stable chat models only.
+_JUDGE_BY_FAMILY = {
+    "openrouter": "openrouter/openai/gpt-4o-mini",
+    "anthropic": "anthropic/claude-haiku-4-5",
+    "openai": "openai/gpt-4o-mini",
+    "gemini": "gemini/gemini-2.5-flash",
+}
+
+
+def _judge_for(run_model: str) -> str:
+    """Fixed judge slug reachable with the run's key; falls back to the run
+    model for long-tail direct keys (deepseek/... etc.) where no other slug
+    is reachable."""
+    family = (run_model or "").split("/", 1)[0].lower()
+    return _JUDGE_BY_FAMILY.get(family, run_model)
+
+
 def review_idea(
     idea_text: str,
     model: str = "",
@@ -79,14 +99,17 @@ def review_idea(
     if not model:
         return _fail_open("review skipped — no model configured")
 
+    judge = _judge_for(model)
     from ark.llm_lite import complete
     try:
+        # temperature=0: a gate must not sample its verdict.
         text = complete(
             f"Idea to review:\n\n{idea_text}\n\nReturn JSON now.",
-            model=model,
+            model=judge,
             system=_SYSTEM_PROMPT,
             api_key=api_key or None,
             timeout=int(timeout),
+            temperature=0.0,
         )
     except Exception as e:  # noqa: BLE001 — fail-open by design
         return _fail_open(f"review error: {e}")
@@ -119,6 +142,19 @@ def review_idea(
         verdict = "proceed"
     if verdict not in ("proceed", "refine", "human_review", "reject"):
         verdict = "proceed"
+    # A hard block gets a second opinion: two confirmation samples (temp 0.7
+    # so they are genuinely independent draws). If NEITHER confirms, the reject
+    # was an outlier — downgrade to human_review, whose HITL flow still
+    # defaults to block if nobody answers. Costs two cheap calls only on the
+    # (rare) reject path; protects users from a spuriously sampled rejection.
+    if verdict == "reject":
+        confirms = 0
+        for _ in range(2):
+            v2 = _sample_verdict(idea_text, judge, api_key, timeout, temperature=0.7)
+            if v2 == "reject":
+                confirms += 1
+        if confirms == 0:
+            verdict = "human_review"
     # Legacy derivation — reject => block, everything else => allow. Keeps the
     # existing `if not _run_ethical_review()` caller and old caches working.
     decision = "block" if verdict == "reject" else "allow"
@@ -132,6 +168,25 @@ def review_idea(
         "scores": scores,
         "reviewed": True,
     }
+
+
+def _sample_verdict(idea_text: str, judge: str, api_key: str,
+                    timeout: float, temperature: float) -> str:
+    """One extra verdict draw for reject confirmation; '' on any failure."""
+    from ark.llm_lite import complete
+    try:
+        t = complete(f"Idea to review:\n\n{idea_text}\n\nReturn JSON now.",
+                     model=judge, system=_SYSTEM_PROMPT,
+                     api_key=api_key or None, timeout=int(timeout),
+                     temperature=temperature) or ""
+        start, end = t.find("{"), t.rfind("}")
+        if start < 0 or end <= start:
+            return ""
+        o = json.loads(t[start:end + 1]) or {}
+        v = str(o.get("verdict", o.get("decision", ""))).strip().lower()
+        return "reject" if v in ("reject", "block") else v
+    except Exception:
+        return ""
 
 
 def _fail_open(reason: str) -> dict:

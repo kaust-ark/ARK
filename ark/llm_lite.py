@@ -138,6 +138,7 @@ def complete(
     api_key: Optional[str] = None,
     timeout: int = 60,
     max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
 ) -> str:
     """One-shot LiteLLM completion. Returns the response text ("" on failure).
 
@@ -156,12 +157,16 @@ def complete(
     messages.append({"role": "user", "content": prompt})
 
     try:
+        kwargs = {}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         resp = litellm.completion(
             model=model,
             messages=messages,
             api_key=resolve_key(model, api_key),
             timeout=timeout,
             max_tokens=max_tokens,
+            **kwargs,
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception:

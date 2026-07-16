@@ -3629,6 +3629,10 @@ provide the title.
             # Do NOT cache a block — a resumed run must re-evaluate.
             self._sync_db(status="failed", phase="blocked_ethical",
                           error_message=f"Idea rejected ({category}): {reason}")
+            # Sticky: without this, main()'s evidence gate re-derives the
+            # terminal status and OVERWRITES this specific reason with the
+            # generic "no deliverable" message (4c1746b8, 2026-07-16).
+            self._run_fatal = f"Idea rejected ({category}): {reason}"
             return False
 
         if verdict == "human_review":
@@ -3655,6 +3659,7 @@ provide the title.
             self.log_section("Idea review — rejected by human")
             self._sync_db(status="failed", phase="blocked_review",
                           error_message=f"Idea rejected by human after review: {reason}")
+            self._run_fatal = f"Idea rejected by human after review: {reason}"
             return False
 
         review_file.parent.mkdir(parents=True, exist_ok=True)
@@ -3664,6 +3669,33 @@ provide the title.
             # but surface it so the user can sharpen the idea.
             self.log(f"⚠ Idea review: proceed with a concern — {reason[:120]}", "WARN")
             self.notify_progress("Idea review", reason[:200], level="warn")
+            # The concern must be ENFORCED, not just logged: inject it as a
+            # standing user instruction (agents read user_updates.yaml), and
+            # tell the user. Previously it vanished into the log while agents
+            # e.g. fabricated the very simulated data the concern was about.
+            try:
+                import yaml as _yaml
+                from datetime import datetime as _dt
+                _uf = self.state_dir / "user_updates.yaml"
+                _data = _yaml.safe_load(_uf.read_text()) if _uf.exists() else {}
+                _ups = (_data or {}).get("updates", [])
+                _ups.append({"consumed": False, "source": "gate_a",
+                             "timestamp": _dt.utcnow().isoformat(),
+                             "message": (
+                                 f"PRE-LAUNCH REVIEW CONSTRAINT (Gate A): {reason} "
+                                 f"— address this honestly in the paper's framing and "
+                                 f"methods. Never misrepresent data provenance: any "
+                                 f"simulated/synthetic data MUST be labeled as such and "
+                                 f"the paper must not claim real-world data collection "
+                                 f"that did not happen.")})
+                _uf.parent.mkdir(parents=True, exist_ok=True)
+                _uf.write_text(_yaml.dump({"updates": _ups}, allow_unicode=True))
+                self._chat("agent",
+                           f"⚠ Pre-launch review flagged a concern: {reason[:200]} — "
+                           f"the paper will address it honestly (e.g. simulated data "
+                           f"will be labeled as simulated).", kind="notice")
+            except Exception as _e:
+                self.log(f"gate-a constraint injection failed (non-fatal): {_e}", "WARN")
         elif result.get("reviewed"):
             self.log_step(f"Idea review passed: {reason[:80]}", "success")
         else:

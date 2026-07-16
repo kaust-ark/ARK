@@ -30,14 +30,17 @@ def test_review_idea_no_model_is_skip_not_pass():
 def test_review_idea_uses_complete_and_marks_reviewed(monkeypatch):
     captured = {}
 
-    def fake_complete(prompt, *, model, system=None, api_key=None, timeout=60):
+    def fake_complete(prompt, *, model, system=None, api_key=None, timeout=60, temperature=None):
         captured["model"] = model
-        return '{"decision": "allow", "category": "none", "reason": "benign"}'
+        captured["temperature"] = temperature
+        return '{"verdict": "proceed", "category": "none", "reason": "benign"}'
 
     monkeypatch.setattr("ark.llm_lite.complete", fake_complete)
     out = review_idea("Study bird migration.", model="openai/gpt-5.5")
-    # Ran on the SELECTED model (provider-agnostic), not a hardcoded Anthropic id
-    assert captured["model"] == "openai/gpt-5.5"
+    # Runs on a FIXED judge for the key family (openai -> gpt-4o-mini), NOT the
+    # run's own model, at temperature 0 — a gate must not sample its verdict.
+    assert captured["model"] == "openai/gpt-4o-mini"
+    assert captured["temperature"] == 0.0
     assert out["decision"] == "allow"
     assert out["reviewed"] is True
 
