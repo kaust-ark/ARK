@@ -1076,29 +1076,70 @@ class CompilerMixin:
             if results:
                 needs_check = [r for r in results if r.status == "NEEDS-CHECK"]
                 corrected = [r for r in results if r.status == "CORRECTED"]
+                verified = [r for r in results if r.status == "VERIFIED"]
 
                 # 2. Apply fixes (add note field for NEEDS-CHECK, overwrite CORRECTED)
                 if corrected or needs_check:
                     fix_bib(bib_str, results)
 
+                # 2.5 Close the loop: an unverified reference must not reach
+                # delivery as-is. verify_bib only consults DBLP+CrossRef, so
+                # give every NEEDS-CHECK entry a second chance against the
+                # FULL API set (arXiv + Semantic Scholar too): a confident
+                # title match REPLACES the entry with real API BibTeX
+                # (re-keyed, so \cite still resolves); anything no database
+                # can confirm is DROPPED (entry + its \cite uses) rather than
+                # shipped as an LLM's guess. Guard: if nothing at all
+                # verified this round the APIs were likely unreachable —
+                # keep the marks and touch nothing.
+                replaced_keys, removed_keys = [], []
+                if needs_check:
+                    from ark.citation import replace_unverified_entries, remove_entries
+                    replaced_keys, unresolved_keys = replace_unverified_entries(
+                        bib_str, needs_check)
+                    if replaced_keys:
+                        self.log("Citation loop: replaced "
+                                 f"{len(replaced_keys)} unverified entr{'y' if len(replaced_keys)==1 else 'ies'} "
+                                 f"with API-verified BibTeX: {', '.join(replaced_keys)}", "INFO")
+                    if unresolved_keys and (verified or corrected or replaced_keys):
+                        removed_keys = remove_entries(bib_str, unresolved_keys)
+                        if removed_keys:
+                            pruned = self._prune_undefined_citations()
+                            self.log("Citation loop: dropped "
+                                     f"{len(removed_keys)} unconfirmable reference(s) "
+                                     f"(+{pruned} \\cite use(s) pruned): {', '.join(removed_keys)}",
+                                     "WARN")
+                    elif unresolved_keys:
+                        self.log("Citation loop: nothing verified this round (APIs "
+                                 "unreachable?) — keeping NEEDS-CHECK marks untouched", "WARN")
+                    if replaced_keys or removed_keys:
+                        self.compile_latex()
+
+                still_marked = [r.entry_key for r in needs_check
+                                if r.entry_key not in replaced_keys
+                                and r.entry_key not in removed_keys]
+
                 # 3. Log summary
                 summary = []
-                verified = [r for r in results if r.status == "VERIFIED"]
                 if verified:
                     summary.append(f"{len(verified)} verified")
                 if corrected:
                     summary.append(f"{len(corrected)} fixed")
-                if needs_check:
-                    summary.append(f"{len(needs_check)} marked needs-check")
+                if replaced_keys:
+                    summary.append(f"{len(replaced_keys)} replaced (2nd-pass API match)")
+                if removed_keys:
+                    summary.append(f"{len(removed_keys)} dropped (unconfirmable)")
+                if still_marked:
+                    summary.append(f"{len(still_marked)} marked needs-check")
 
                 if summary:
                     self.log(f"BibTeX audit: {', '.join(summary)}", "INFO")
 
-                # 4. Notify about needs-check
-                if needs_check:
+                # 4. Notify about entries that stayed marked (loop couldn't act)
+                if still_marked:
                     self.send_notification(
                         "BibTeX Check Needed",
-                        f"{len(needs_check)} citation(s) in references.bib need manual verification. "
+                        f"{len(still_marked)} citation(s) in references.bib need manual verification. "
                         "Marked with 'ark-note: NEEDS-CHECK' in the .bib file.",
                         priority="warning",
                     )

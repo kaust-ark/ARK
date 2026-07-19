@@ -197,7 +197,12 @@ def _search_crossref(query: str, max_results: int = 10) -> list[Paper]:
                 given = a.get("given", "")
                 family = a.get("family", "")
                 authors.append(f"{given} {family}".strip())
-            date_parts = item.get("published-print", item.get("published-online", {})).get("date-parts", [[0]])
+            # "issued" is the one date CrossRef guarantees; print/online are
+            # often absent (e.g. proceedings papers), which left year=0.
+            date_parts = item.get(
+                "published-print",
+                item.get("published-online", item.get("issued", {})),
+            ).get("date-parts", [[0]])
             year = date_parts[0][0] if date_parts and date_parts[0] else 0
             container = item.get("container-title", [])
 
@@ -982,6 +987,87 @@ def fix_bib(bib_path: str, results: list[VerificationResult]) -> None:
                 )
 
     bib_file.write_text(content)
+
+
+def replace_unverified_entries(
+    bib_path: str, results: list[VerificationResult],
+) -> tuple[list[str], list[str]]:
+    """Second-chance resolution for NEEDS-CHECK entries.
+
+    verify_bib only consults DBLP + CrossRef; this widens the search to the
+    full API set (arXiv + Semantic Scholar included) and, on a confident
+    title match, REPLACES the unverified entry in the file with the real
+    API-fetched BibTeX re-keyed to the original cite key — so a reference an
+    LLM wrote from memory becomes a database-confirmed one. Entries with no
+    title, or that no API can confirm, are left untouched and returned as
+    unresolved for the caller to decide (drop or keep marked).
+
+    Returns (replaced_keys, unresolved_keys).
+    """
+    bib_file = Path(bib_path)
+    if not bib_file.exists():
+        return [], []
+    content = bib_file.read_text(errors="replace")
+    replaced, unresolved = [], []
+    for r in results:
+        if r.status != "NEEDS-CHECK":
+            continue
+        try:
+            parsed = parse_bib_string(r.original_bibtex)
+            title = (parsed[0]["fields"].get("title") or "").strip() if parsed else ""
+            if not title:
+                unresolved.append(r.entry_key)
+                continue
+            match = None
+            for p in search_papers(title, max_results=5):
+                if title_similarity(title, p.title) >= _SIMILARITY_THRESHOLD:
+                    match = p
+                    break
+            bib = fetch_bibtex(match) if match else None
+            if not bib:
+                unresolved.append(r.entry_key)
+                continue
+            # Re-key to the ORIGINAL cite key so existing \cite commands resolve.
+            bib = re.sub(r"(@\w+\s*\{)\s*[^,]+,", r"\1" + r.entry_key + ",", bib, count=1)
+            tagged = f"% {_ARK_SOURCE_TAG}verified-replace]\n{bib.strip()}"
+            # fix_bib has already prepended the NEEDS-CHECK marker — swap the
+            # marked block if present, else the bare entry.
+            marked = "% [NEEDS-CHECK: citation not verified]\n" + r.original_bibtex
+            old = marked if marked in content else r.original_bibtex
+            content = content.replace(old, tagged)
+            replaced.append(r.entry_key)
+        except Exception:
+            unresolved.append(r.entry_key)
+    if replaced:
+        bib_file.write_text(content)
+    return replaced, unresolved
+
+
+def remove_entries(bib_path: str, keys: list[str]) -> list[str]:
+    """Remove specific entries (and their preceding comment lines, e.g. the
+    NEEDS-CHECK marker) from references.bib. Returns the keys actually removed.
+    """
+    bib_file = Path(bib_path)
+    if not bib_file.exists() or not keys:
+        return []
+    want = set(keys)
+    content = bib_file.read_text(errors="replace")
+    removed = []
+    for entry in parse_bib(bib_path):
+        if entry["key"] not in want:
+            continue
+        to_remove = entry["raw"]
+        if entry["preceding_comments"]:
+            to_remove = entry["preceding_comments"] + "\n" + to_remove
+        if to_remove in content:
+            content = content.replace(to_remove, "")
+        else:
+            content = content.replace(entry["raw"], "")
+        removed.append(entry["key"])
+    if removed:
+        content = re.sub(r"\n{3,}", "\n\n", content)
+        bib_file.write_text(content)
+    return removed
 
 
 # ═══════════════════════════════════════════════════════════
