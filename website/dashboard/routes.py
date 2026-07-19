@@ -2412,7 +2412,15 @@ async def api_create_project(
         # below): skip_ai_figures pre-seeds a concept figure so the figure phase
         # reuses it (Phase-0 skip, zero PaperBanana cost) — so keep nano_banana.
         figure_generation = "nano_banana"
-        compute_backend = orchestrator_compute_backend = "local"
+        # Experiments belong on the cluster, not the box hosting the webapp —
+        # local experiments contend with the orchestrator/webapp for CPU. The
+        # test preset now runs experiments on Slurm WHEN A CLUSTER IS PRESENT,
+        # falling back to local only on a slurm-less host (self-host / CI) so
+        # the smoke test still runs everywhere. The orchestrator itself stays
+        # local (a lightweight detached driver — Slurm for it is wasteful).
+        from .jobs import slurm_available
+        compute_backend = "slurm" if slurm_available() else "local"
+        orchestrator_compute_backend = "local"
         # Respect the model the user actually picked in the dropdown (e.g.
         # MiniMax); only fall back to the cheapest available when they left the
         # default (Sonnet). The model picker is visible for the Test venue, so a
