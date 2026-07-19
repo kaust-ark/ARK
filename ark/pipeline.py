@@ -546,7 +546,17 @@ class PipelineMixin:
         # LAST compile-touching gate: page-fitting above may have recompiled via
         # agent-side bare pdflatex (no bibtex), which can strand "?" citations in
         # the delivered PDF (happened in 50350a67). Verify + fix on the final PDF.
-        self.ensure_resolved_citations(context="pre-delivery")
+        # Hard gate: backfill + prune should always clear "?" markers; if they
+        # survive even that, the bibliography is broken beyond auto-repair — do
+        # NOT deliver a paper full of "?" as a clean result. Flag it (sticky)
+        # so the run ends failed with an actionable reason rather than shipping
+        # garbage (the recurring missing-references failure).
+        if not self.ensure_resolved_citations(context="pre-delivery"):
+            self._run_fatal = ("Bibliography could not be resolved: the paper cites "
+                               "works that no academic database could confirm and "
+                               "auto-repair (backfill + prune) failed. references.bib "
+                               "is incomplete.")
+            self.log("Delivery blocked: unresolved citations after backfill+prune", "ERROR")
 
         # Delivery contract (observe-only v1): the gates above FIX; this
         # VERIFIES their outcome on the final artifacts and persists a report.
