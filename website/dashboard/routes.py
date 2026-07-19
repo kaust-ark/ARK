@@ -2663,6 +2663,9 @@ async def api_get_project(project_id: str, request: Request):
             "score_history": _read_score_history(pdir, project=project),
             "current_iteration": _read_current_iteration(pdir, project=project),
             "max_iterations": project.max_iterations,
+            "max_dev_iterations": project.max_dev_iterations,
+            "layout_mode": getattr(project, "layout_mode", "balanced") or "balanced",
+            "figure_generation": getattr(project, "figure_generation", None) or "nano_banana",
             "phase_status": _read_phase_status(pdir, project),
             "has_pdf": pdf is not None,
             "has_pdf_upload": bool(project.has_pdf_upload),
@@ -3163,6 +3166,27 @@ async def api_continue_project(project_id: str, request: Request):
         # (iter > max from pre-c077e15 code) still honor the requested +N.
         new_max = max(project.max_iterations, project.iteration) + additional
         update_project(session, project, max_iterations=new_max)
+        # Editable launch fields: Continue may revise the same inputs the user
+        # gave at launch (title/idea/venue/pages/layout/dev-iterations), so a
+        # finished paper can be re-steered without starting a new project.
+        # Each is applied only when present in the body (partial update).
+        _edits = {}
+        if "title" in body:
+            _edits["title"] = (body.get("title") or "").strip()
+        if body.get("idea"):
+            _edits["idea"] = body["idea"]
+        if body.get("venue"):
+            _edits["venue"] = body["venue"]
+        if body.get("venue_format"):
+            _edits["venue_format"] = body["venue_format"]
+        if "venue_pages" in body:
+            _edits["venue_pages"] = max(1, min(30, int(body["venue_pages"])))
+        if body.get("layout_mode") in ("relaxed", "balanced", "strict"):
+            _edits["layout_mode"] = body["layout_mode"]
+        if "max_dev_iterations" in body:
+            _edits["max_dev_iterations"] = max(1, min(MAX_ITER_PER_START, int(body["max_dev_iterations"])))
+        if _edits:
+            update_project(session, project, **_edits)
         pdir = _project_dir(settings, project.user_id, project_id)
         # Use requested model, or fall back to existing
         model = body.get("model") or _read_project_model(pdir, project=project) or "claude-sonnet-4-6"

@@ -1369,10 +1369,42 @@ Strict — hit the exact page limit (spends the most tokens).">
 <div class="modal-backdrop" id="modal-continue">
   <div class="modal">
     <h3 data-i18n="continue_project">Continue Project</h3>
+    <!-- Editable launch fields (prefilled from the project by openContinue). -->
+    <div class="form-group">
+      <label data-i18n="info_title">Title</label>
+      <input type="text" id="continue-title" style="width:100%" />
+    </div>
+    <div class="form-group">
+      <label>Research Idea</label>
+      <textarea id="continue-idea" rows="3" style="width:100%"></textarea>
+    </div>
+    <div class="form-row">
+      <div class="form-group" style="flex:2">
+        <label data-i18n="info_venue">Venue</label>
+        <select id="continue-venue-select" onchange="continueVenueChanged()"></select>
+      </div>
+      <div class="form-group" style="flex:1">
+        <label data-i18n="info_pages">Pages</label>
+        <input type="number" id="continue-venue-pages" min="1" max="30" style="width:90px" />
+      </div>
+      <div class="form-group" style="flex:1">
+        <label data-i18n="info_layout">Page fit</label>
+        <select id="continue-layout-mode">
+          <option value="relaxed" data-i18n="layout_relaxed">Relaxed</option>
+          <option value="balanced" data-i18n="layout_balanced">Balanced</option>
+          <option value="strict" data-i18n="layout_strict">Strict</option>
+        </select>
+      </div>
+    </div>
+    <input type="hidden" id="continue-venue-format" />
     <div class="form-row">
       <div class="form-group" style="flex:1">
         <label data-i18n-html="additional_iterations_label">Additional iterations <span style="color:var(--text-muted);font-weight:400">(max 5)</span></label>
         <input type="number" id="continue-iter" value="1" min="1" max="5" style="width:80px" />
+      </div>
+      <div class="form-group" style="flex:1">
+        <label>Dev iterations</label>
+        <input type="number" id="continue-dev-iter" value="1" min="1" max="2" style="width:80px" />
       </div>
       <div class="form-group" style="flex:2">
         <label>Model</label>
@@ -2707,6 +2739,8 @@ const TRANSLATIONS = {
     status_waiting_template: '⏳ Awaiting Template', status_pending: '⏳ In Queue',
     // detail info
     info_venue: 'Venue', info_user: 'User', info_model: 'Model',
+    info_title: 'Title', info_pages: 'Pages', info_layout: 'Page fit', info_iterations: 'Iterations', info_figures: 'Figures',
+    layout_relaxed: 'Relaxed (no adjustment)', layout_balanced: 'Balanced', layout_strict: 'Strict',
     info_environment: 'Environment', info_created: 'Created', info_updated: 'Updated',
     info_status: 'Status', info_phase: 'Phase',
     completed_iter: 'Completed (%d iterations)',
@@ -2852,6 +2886,8 @@ const TRANSLATIONS = {
     status_failed: 'فشل', status_stopped: 'موقوف',
     status_waiting_template: '⏳ في انتظار القالب', status_pending: '⏳ في قائمة الانتظار',
     info_venue: 'المؤتمر', info_user: 'المستخدم', info_model: 'النموذج',
+    info_title: 'العنوان', info_pages: 'الصفحات', info_layout: 'ملاءمة الصفحة', info_iterations: 'التكرارات', info_figures: 'الأشكال',
+    layout_relaxed: 'مرن (بدون تعديل)', layout_balanced: 'متوازن', layout_strict: 'صارم',
     info_environment: 'البيئة', info_created: 'تاريخ الإنشاء', info_updated: 'آخر تحديث',
     info_status: 'الحالة', info_phase: 'المرحلة',
     completed_iter: 'مكتمل (%d تكرارات)',
@@ -2989,6 +3025,8 @@ const TRANSLATIONS = {
     status_failed: '失败', status_stopped: '已停止',
     status_waiting_template: '⏳ 等待模板', status_pending: '⏳ 排队中',
     info_venue: '会议', info_user: '用户', info_model: '模型',
+    info_title: '标题', info_pages: '页数', info_layout: '页面适配', info_iterations: '迭代次数', info_figures: '插图',
+    layout_relaxed: '宽松（不调整）', layout_balanced: '平衡', layout_strict: '严格',
     info_environment: '环境', info_created: '创建时间', info_updated: '更新时间',
     info_status: '状态', info_phase: '阶段',
     completed_iter: '已完成（%d 次迭代）',
@@ -3820,10 +3858,20 @@ async function loadDetail(id) {
   const condaEnvLine = p.conda_env
     ? `<div><b>Conda Env:</b> <code style="font-size:.78em;background:var(--bg-hover);padding:1px 5px;border-radius:4px">${esc(p.conda_env)}</code></div>`
     : '';
+  const _layoutName = { relaxed: t('layout_relaxed'), balanced: t('layout_balanced'), strict: t('layout_strict') };
+  const _lm = p.layout_mode || 'balanced';
+  const _pagesLine = p.venue_pages ? `<div><b>${t('info_pages')}:</b> ${esc(String(p.venue_pages))}</div>` : '';
+  const _iterLine = `<div><b>${t('info_iterations')}:</b> ${esc(String(p.max_dev_iterations || 1))} dev · ${esc(String(p.max_iterations || 1))} review</div>`;
+  const _figLine = p.figure_generation ? `<div><b>${t('info_figures')}:</b> ${esc(p.figure_generation)}</div>` : '';
   document.getElementById('detail-info').innerHTML = `
     <div><b>Project ID:</b> <code style="font-size:.85em;background:var(--bg-hover);padding:1px 5px;border-radius:4px">${esc(p.id)}</code></div>
-    <div><b>${t('info_venue')}:</b> ${esc(p.venue)}</div>
+    ${p.title ? `<div><b>${t('info_title')}:</b> ${esc(p.title)}</div>` : ''}
+    <div><b>${t('info_venue')}:</b> ${esc(p.venue)}${p.venue_format ? ` <span style="color:var(--text-muted)">(${esc(p.venue_format)})</span>` : ''}</div>
+    ${_pagesLine}
+    <div><b>${t('info_layout')}:</b> ${esc(_layoutName[_lm] || _lm)}</div>
     <div><b>${t('info_model')}:</b> ${esc(p.model || 'claude-sonnet-4-6')}</div>
+    ${_iterLine}
+    ${_figLine}
     ${_renderPhaseStatus(p)}
     <div><b>${t('info_environment')}:</b> ${esc(p.environment || 'Local')}</div>
     ${condaEnvLine}
@@ -5100,11 +5148,21 @@ async function openContinueModal(id) {
   continueProjectId = id;
   document.getElementById('continue-comment').value = '';
   document.getElementById('continue-iter').value = '1';
+  await loadVenues();  // populate the venue select before prefill
 
   // Fetch project detail to pre-fill model
   const res = await fetch(`${APP_BASE}/api/projects/${id}`);
   if (res.ok) {
     const p = await res.json();
+    // Prefill the editable launch fields from the project so Continue can
+    // re-steer a finished paper (title/idea/venue/pages/layout/dev-iters).
+    document.getElementById('continue-title').value = p.title || '';
+    document.getElementById('continue-idea').value = p.idea || '';
+    document.getElementById('continue-venue-pages').value = p.venue_pages || 9;
+    document.getElementById('continue-venue-format').value = p.venue_format || '';
+    document.getElementById('continue-layout-mode').value = p.layout_mode || 'balanced';
+    document.getElementById('continue-dev-iter').value = Math.min(p.max_dev_iterations || 1, 2);
+    _populateVenueSelect('continue-venue-select', p.venue, p.venue_format);
     // Preselect the EXACT stored model (no lossy map) so Continue re-runs what
     // the project actually ran. A project's own prior model is ALWAYS re-runnable,
     // even if the provider key is now missing (gating must not wipe it below).
@@ -5168,7 +5226,16 @@ async function submitContinue() {
   const btn = document.getElementById('continue-btn');
   btn.disabled = true;
   try {
-    const payload = { additional_iterations: iter, comment, model, compute_backend: backend, orchestrator_compute_backend: _withCloud('continue', orchBackend), orchestrator_instance_type: _selectedInstanceType('continue') };
+    const payload = { additional_iterations: iter, comment, model, compute_backend: backend, orchestrator_compute_backend: _withCloud('continue', orchBackend), orchestrator_instance_type: _selectedInstanceType('continue'),
+      // Editable launch fields (see api_continue_project — applied when present).
+      title: document.getElementById('continue-title').value.trim(),
+      idea: document.getElementById('continue-idea').value.trim(),
+      venue: document.getElementById('continue-venue-select').value,
+      venue_format: document.getElementById('continue-venue-format').value,
+      venue_pages: parseInt(document.getElementById('continue-venue-pages').value) || 9,
+      layout_mode: document.getElementById('continue-layout-mode').value,
+      max_dev_iterations: Math.max(1, Math.min(2, parseInt(document.getElementById('continue-dev-iter').value) || 1)),
+    };
     const res = await fetch(`${APP_BASE}/api/projects/${continueProjectId}/continue`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -5303,6 +5370,28 @@ function restartVenueChanged(sel) {
     document.getElementById('restart-venue-pages-input').value = defaultPages;
     const pagesDefaultEl = document.getElementById('restart-pages-default');
     if (pagesDefaultEl) pagesDefaultEl.textContent = '(default: ' + defaultPages + ')';
+  }
+}
+
+// Fill any venue <select> from the global venues list, selecting the project's
+// current venue. Shared by the Continue dialog (mirrors the Restart pattern).
+function _populateVenueSelect(selectId, venueName, venueFormat) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  sel.innerHTML = venues.map(v =>
+    `<option value="${esc(v.name)}" data-format="${esc(v.format)}" data-pages="${v.pages}">${esc(v.name)} (${v.year || 2025})${v.tag ? ' ' + esc(v.tag) : ''}</option>`
+  ).join('') + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
+  for (const opt of sel.options) {
+    if (opt.value === venueName) { opt.selected = true; break; }
+  }
+}
+
+function continueVenueChanged() {
+  const sel = document.getElementById('continue-venue-select');
+  const opt = sel.options[sel.selectedIndex];
+  if (opt && opt.dataset.format) {
+    document.getElementById('continue-venue-format').value = opt.dataset.format;
+    document.getElementById('continue-venue-pages').value = opt.dataset.pages || '9';
   }
 }
 
