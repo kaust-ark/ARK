@@ -6,15 +6,15 @@ OpenRouter routing map (website/dashboard/routes.py `_OPENROUTER_SLUG`) hardcode
 a slug per model family (e.g. ``openrouter/minimax/minimax-m3``). Those go stale
 as vendors ship new versions. This script pulls https://openrouter.ai/api/v1/models,
 finds the latest STABLE version per tracked family, and either reports the drift
-(``--check``, default) or patches the files in place (``--apply``).
+(default, check-only) or patches the files in place (``--apply``).
 
 "Stable" = the slug matches the family's exact ``base-<version>[suffix]`` shape
 with the highest numeric version. Preview / experimental / dated / image / audio
 / ``-fast`` / ``-thinking`` variants are skipped — they share a family stem but
 are not drop-in replacements, and surfacing one unattended could break a run.
 
-Designed to be run by a systemd timer every 2 days. ``--check`` is safe to run
-unattended (it only reads + reports); ``--apply`` edits source — every change is
+Designed to be run by a systemd timer every 2 days. Default (no flag) is safe to
+run unattended (it only reads + reports); ``--apply`` edits source — every change is
 git-revertible and logged. The timer runs ``--check`` by default; flip it to
 ``--apply`` if you want fully hands-off updates.
 """
@@ -110,28 +110,98 @@ def latest_per_family(ids: set[str]) -> dict[str, str]:
     return out
 
 
+# Every picker in app.html: create (name="model"), continue (continue-model),
+# restart (restart-model). All three are hand-duplicated, so a partial patch
+# (the old bug) left continue/restart pointing at a stale slug while create
+# advanced — a value/label mismatch and a wrong model on restart.
+_PICKER_NAMES = ("model", "continue-model", "restart-model")
+
+
+def _version_token(slug: str) -> str:
+    """The trailing version substring of a slug's last segment, as it appears
+    in the human label (kimi-k3 -> 'k3', claude-sonnet-5 -> '5',
+    minimax-m3 -> 'm3', glm-5.2 -> '5.2', deepseek-v4-pro -> '4')."""
+    seg = slug.rsplit("/", 1)[-1]
+    m = re.search(r"(\d+(?:\.\d+)?)", seg)
+    return m.group(1) if m else ""
+
+
 def apply_to_text(text: str, latest: dict[str, str]) -> tuple[str, list[str]]:
-    """Rewrite only the showcase radio chips: name="model" value="openrouter/<id>".
-    The id is captured anchored between that prefix and the closing quote, so
-    dropdown <option>s and native dash-format strings are never matched."""
+    """Advance every showcase radio chip — value AND adjacent display label —
+    across all three pickers. The value is matched anchored to the radio-chip
+    context (``name="<picker>" value="openrouter/<id>"``) so dropdown
+    ``<option>``s and native dash-format strings (claude-sonnet-4-6) are never
+    touched. The label update replaces just the version token in the
+    ``model-chip`` span that immediately follows the input, so 'Kimi K2.6' ->
+    'Kimi K3' and 'Claude Sonnet 4.6' / 'Sonnet 4.6' -> '... 5' all work
+    regardless of label phrasing."""
     changes = []
     for fam, find in SLUG_IN_FILE.items():
         new_id = latest.get(fam)
         if not new_id:
             continue
-        rx = re.compile(r'(name="model" value="openrouter/)(' + find + r')(")')
-        stale = {m.group(2) for m in rx.finditer(text) if m.group(2) != new_id}
-        if not stale:
-            continue
-        text = rx.sub(lambda m: m.group(1) + new_id + m.group(3), text)
-        for s in sorted(stale):
-            changes.append(f"{fam}: {s} -> {new_id}")
+        names = "|".join(_PICKER_NAMES)
+        # Capture the chip as a UNIT: input (with its slug) + the following
+        # model-chip label text up to the nested model-meta span (or chip end).
+        chip_rx = re.compile(
+            r'(name="(?:' + names + r')" value="openrouter/)(' + find + r')(")'
+            r'([\s\S]*?<span class="model-chip">)([^<]*)',
+        )
+        old_ver = None
+
+        def _repl(m):
+            nonlocal old_ver
+            cur_slug = m.group(2)
+            if cur_slug != new_id:
+                old_ver = _version_token(cur_slug)
+            label = m.group(5)
+            new_ver = _version_token(new_id)
+            ov = _version_token(cur_slug)
+            if ov and new_ver and ov in label:
+                label = label.replace(ov, new_ver)
+            return m.group(1) + new_id + m.group(3) + m.group(4) + label
+
+        new_text, n = chip_rx.subn(_repl, text)
+        if n and old_ver is not None:
+            text = new_text
+            changes.append(f"{fam}: ...-{old_ver} -> {new_id} ({n} picker chip(s))")
     return text, changes
+
+
+def _notify_admin(changes: list[str]) -> None:
+    """Best-effort email to the primary admin when new models are available.
+
+    Closes the automation loop: the timer runs check-only every 2 days, but a
+    report file nobody reads is not a notification. On drift we tell the admin,
+    who runs ``--apply`` + release (one command). Fully hands-off auto-apply is
+    deliberately NOT wired: a bad slug would break every launch, so a human
+    still gates the deploy — same observe-first stance as the delivery
+    contract. Fail-silent: a notification hiccup must never fail the timer."""
+    try:
+        sys.path.insert(0, str(REPO))
+        from website.dashboard.config import get_settings
+        from website.dashboard.notify import send_failure_email
+        s = get_settings()
+        admins = getattr(s, "admin_emails", []) or []
+        if not admins:
+            return
+        body = ("New OpenRouter models are available for the picker:\n\n  "
+                + "\n  ".join(changes)
+                + "\n\nApply + deploy:\n"
+                  "  python scripts/refresh_model_versions.py --apply\n"
+                  "  # review the diff, then: ark webapp release\n")
+        send_failure_email(s, to_email=admins[0],
+                           project_name="Model picker — updates available",
+                           owner_email="model-refresh",
+                           error=body, project_url="")
+    except Exception:
+        pass
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--apply", action="store_true", help="patch the files (default: check-only)")
+    ap.add_argument("--apply", action="store_true", help="patch the files in place (default: check-only, report drift)")
+    ap.add_argument("--notify", action="store_true", help="email the admin when drift is found (for the timer)")
     args = ap.parse_args()
 
     try:
@@ -161,12 +231,16 @@ def main() -> int:
     print(f"[refresh-models] {len(all_changes)} chip update(s) {verb}:")
     for c in all_changes:
         print(f"  - {c}")
-    print("[refresh-models] NOTE: chip display labels (e.g. 'MiniMax M3') are NOT "
-          "auto-edited — eyeball them after an --apply bump.")
+    print("[refresh-models] chip values AND display labels updated across all "
+          "three pickers (create / continue / restart). Native direct-vendor "
+          "chips (dash-format, e.g. claude-sonnet-4-6) are intentionally left alone.")
     # A machine-readable report next to the script, for the timer / notifier.
     (REPO / ".ark_model_refresh_report.json").write_text(
         json.dumps({"applied": args.apply, "changes": all_changes, "latest": latest}, indent=2)
     )
+    # Close the loop: when the (check-only) timer finds drift, tell the admin.
+    if args.notify and not args.apply:
+        _notify_admin(all_changes)
     return 0
 
 
