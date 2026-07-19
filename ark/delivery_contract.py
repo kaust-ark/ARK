@@ -202,17 +202,19 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
         if col_in:
             import fitz
             for m2 in re.finditer(
-                    r"\\includegraphics\[[^\]]*width\s*=\s*\\(columnwidth|textwidth|linewidth)[^\]]*\]\{([^}]+)\}",
+                    r"\\includegraphics\[[^\]]*width\s*=\s*([0-9.]*)\\(columnwidth|textwidth|linewidth)[^\]]*\]\{([^}]+)\}",
                     tex):
-                fname = Path(m2.group(2)).name
+                coef = float(m2.group(1) or 1.0)
+                target_w = coef * col_in
+                fname = Path(m2.group(3)).name
                 fp = figs_dir / fname
                 if fp.suffix == ".pdf" and fp.exists():
                     try:
                         d2 = fitz.open(str(fp))
                         nat_w = d2[0].rect.width / 72.0
                         d2.close()
-                        if nat_w < 0.75 * col_in:
-                            upscaled.append(f"{fname} ({nat_w:.1f}in → {col_in:.1f}in)")
+                        if nat_w < 0.75 * target_w:
+                            upscaled.append(f"{fname} ({nat_w:.1f}in → {target_w:.1f}in)")
                     except Exception:
                         pass
     except Exception:
@@ -223,6 +225,39 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
             f"vector figures enlarged at insertion: {', '.join(upscaled[:4])}"))
     else:
         rep.findings.append(Finding("figures_not_upscaled", "pass", "soft"))
+
+    # ── dense bitmaps not crushed into a column ───────────────────────────
+    # A 12.5in multi-panel concept diagram shrunk to a 3.3in column (3.8x)
+    # is unreadable (30c70039). Bitmaps are "scalable", but legibility isn't.
+    crushed = []
+    try:
+        if col_in:
+            import fitz
+            for m3 in re.finditer(
+                    r"\\includegraphics\[[^\]]*width\s*=\s*([0-9.]*)\\columnwidth[^\]]*\]\{([^}]+)\}",
+                    tex):
+                coef3 = float(m3.group(1) or 1.0)
+                target_w3 = coef3 * col_in
+                fname = Path(m3.group(2)).name
+                fp = figs_dir / fname
+                if fp.suffix == ".png" and fp.exists():
+                    try:
+                        d3 = fitz.open(str(fp))
+                        nat_w = d3[0].rect.width / 72.0
+                        d3.close()
+                        if target_w3 and nat_w > 2.5 * target_w3:
+                            crushed.append(f"{fname} ({nat_w:.1f}in → {target_w3:.1f}in)")
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    if crushed:
+        rep.findings.append(Finding(
+            "figures_not_crushed", "violated", "soft",
+            f"dense bitmaps shrunk beyond legibility: {', '.join(crushed[:4])} — "
+            f"use figure* or regenerate simpler"))
+    else:
+        rep.findings.append(Finding("figures_not_crushed", "pass", "soft"))
 
     # ── no internal-stack credits in the acknowledgments ─────────────────
     ack = _ack_block(tex)

@@ -248,6 +248,13 @@ writer must honor:
 - `scalable`:
   - `true`  → the figure is a bitmap (PaperBanana / Nano-Banana output); shrinking via `\includegraphics[width=0.9\textwidth]` etc. is safe
   - `false` → the figure is a matplotlib vector PDF with baked-in fonts; **never** resize it via `\includegraphics` in either direction. If a different rendering size is needed, change `figsize` in `scripts/create_paper_figures.py` and re-run the script.
+- **Dense bitmaps must not be crushed into one column.** A concept/diagram
+  bitmap whose natural width exceeds ~1.5× the column width (check the file —
+  PaperBanana images are often 12in+ wide, multi-panel) becomes unreadable
+  when shrunk to a single column of a two-column template (a real paper
+  shipped a 12.5in diagram at 3.3in — 3.8× down, illegible). Place such
+  figures in `\begin{figure*}` at `width=\textwidth`, or ask for a simpler
+  regeneration; never solve density by shrinking harder.
 
 **Before writing any `\includegraphics`, read the manifest entry for
 that file and use the matching environment.** The `_list_available_figures`
