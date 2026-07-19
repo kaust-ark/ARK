@@ -92,9 +92,14 @@ def copy_test_fixtures(code_dir: Path, seed_deep_research: bool = True,
                        seed_figures: bool = False) -> bool:
     """Seed a project with cheap test-project fixtures (the "Test" venue).
 
-    - ``seed_deep_research``: drop the canned Deep Research report into the
-      project state dir so the pipeline SKIPS the (expensive) live Deep Research
-      call — Step 2 skips when ``deep_research.md`` already exists.
+    - ``seed_deep_research``: drop the canned Deep Research report AND its
+      companion bibliography (references.bib + literature.yaml) into the project
+      so the pipeline SKIPS the (expensive) live Deep Research call — Step 2
+      skips when ``deep_research.md`` already exists. The bibliography MUST
+      travel with the report: without it references.bib stays empty and the
+      writer hallucinates \\cite keys that all render as "?" (f15fe8db,
+      2026-07-19). literature.yaml is the citation system's source of truth;
+      references.bib is the ready-to-compile output.
     - ``seed_figures``: drop a canned concept figure + its spec + manifest into
       ``paper/figures/`` so the AI-figure phase's Phase-0 check sees the concept
       figures already exist and SKIPS generation (zero PaperBanana cost) while
@@ -111,6 +116,16 @@ def copy_test_fixtures(code_dir: Path, seed_deep_research: bool = True,
             state_dir = code_dir / "auto_research" / "state"
             state_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, state_dir / "deep_research.md")
+            # The report's companion citations — the bibliography that the
+            # skipped Deep Research would otherwise have produced.
+            lit = _TEST_FIXTURES_ROOT / "literature.yaml"
+            if lit.exists():
+                shutil.copy2(lit, state_dir / "literature.yaml")
+            bib = _TEST_FIXTURES_ROOT / "references.bib"
+            if bib.exists():
+                paper_dir = code_dir / "paper"
+                paper_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(bib, paper_dir / "references.bib")
             did = True
     if seed_figures:
         fig_src = _TEST_FIXTURES_ROOT / "figures"

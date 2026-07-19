@@ -1,0 +1,56 @@
+references:
+- bibtex_key: hastie2009elements
+  source: fixture
+  title: 'The Elements of Statistical Learning: Data Mining, Inference, and Prediction'
+  bibtex: "@book{hastie2009elements,\n  title = {The Elements of Statistical Learning:\
+    \ Data Mining, Inference, and Prediction},\n  author = {Hastie, Trevor and Tibshirani,\
+    \ Robert and Friedman, Jerome},\n  edition = {2},\n  year = {2009},\n  publisher\
+    \ = {Springer},\n  series = {Springer Series in Statistics}\n}"
+- bibtex_key: nocedal2006numerical
+  source: fixture
+  title: Numerical Optimization
+  bibtex: "@book{nocedal2006numerical,\n  title = {Numerical Optimization},\n  author\
+    \ = {Nocedal, Jorge and Wright, Stephen J.},\n  edition = {2},\n  year = {2006},\n\
+    \  publisher = {Springer},\n  series = {Springer Series in Operations Research\
+    \ and Financial Engineering}\n}"
+- bibtex_key: lecun1998efficient
+  source: fixture
+  title: Efficient {BackProp
+  bibtex: "@incollection{lecun1998efficient,\n  title = {Efficient {BackProp}},\n\
+    \  author = {LeCun, Yann and Bottou, L{\\'e}on and Orr, Genevieve B. and M{\\\"\
+    u}ller, Klaus-Robert},\n  booktitle = {Neural Networks: Tricks of the Trade},\n\
+    \  pages = {9--50},\n  year = {1998},\n  publisher = {Springer}\n}"
+- bibtex_key: pedregosa2011scikit
+  source: fixture
+  title: 'Scikit-learn: Machine Learning in {Python'
+  bibtex: "@article{pedregosa2011scikit,\n  title = {Scikit-learn: Machine Learning\
+    \ in {Python}},\n  author = {Pedregosa, Fabian and Varoquaux, Ga{\\\"e}l and Gramfort,\
+    \ Alexandre and Michel, Vincent and Thirion, Bertrand and Grisel, Olivier and\
+    \ Blondel, Mathieu and Prettenhofer, Peter and Weiss, Ron and Dubourg, Vincent\
+    \ and Vanderplas, Jake and Passos, Alexandre and Cournapeau, David and Brucher,\
+    \ Matthieu and Perrot, Matthieu and Duchesnay, {\\'E}douard},\n  journal = {Journal\
+    \ of Machine Learning Research},\n  volume = {12},\n  pages = {2825--2830},\n\
+    \  year = {2011}\n}"
+- bibtex_key: bishop2006pattern
+  source: fixture
+  title: Pattern Recognition and Machine Learning
+  bibtex: "@book{bishop2006pattern,\n  title = {Pattern Recognition and Machine Learning},\n\
+    \  author = {Bishop, Christopher M.},\n  year = {2006},\n  publisher = {Springer},\n\
+    \  series = {Information Science and Statistics}\n}"
+- bibtex_key: liu1989limited
+  source: fixture
+  title: On the Limited Memory {BFGS
+  bibtex: "@article{liu1989limited,\n  title = {On the Limited Memory {BFGS} Method\
+    \ for Large Scale Optimization},\n  author = {Liu, Dong C. and Nocedal, Jorge},\n\
+    \  journal = {Mathematical Programming},\n  volume = {45},\n  number = {1--3},\n\
+    \  pages = {503--528},\n  year = {1989},\n  publisher = {Springer}\n}"
+- bibtex_key: wolberg1990multisurface
+  source: fixture
+  title: Multisurface Method of Pattern Separation for Medical Diagnosis Applied to
+    Breast Cytology
+  bibtex: "@article{wolberg1990multisurface,\n  title = {Multisurface Method of Pattern\
+    \ Separation for Medical Diagnosis Applied to Breast Cytology},\n  author = {Wolberg,\
+    \ William H. and Mangasarian, Olvi L.},\n  journal = {Proceedings of the National\
+    \ Academy of Sciences},\n  volume = {87},\n  number = {23},\n  pages = {9193--9196},\n\
+    \  year = {1990}\n}"
+needs_check: []
