@@ -402,6 +402,20 @@ Execute the task and update the corresponding files.
                 full_prompt += experimenter_directive()
             except Exception:
                 pass
+            # Shared-env protection — ALWAYS on, sandbox or not. A project's
+            # agent once ran `conda activate ark-base && pip install ...`,
+            # downgrading sqlalchemy for the whole platform (every user's
+            # status/score sync silently died for 5 days).
+            full_prompt += (
+                "\n\n## CRITICAL RULES — Python environments\n"
+                "Install packages ONLY into this project's own environment: "
+                "`.conda_env/bin/pip install <pkg>`. NEVER `conda activate` or "
+                "install into any shared/named conda env (ark-base, base, or "
+                "anything outside this project directory) — those are shared "
+                "platform infrastructure and changing them breaks other users' "
+                "runs. If `.conda_env` is missing, report it instead of "
+                "falling back to a shared env.\n"
+            )
 
         # Brief task description for logging
         task_brief = task.split("\n")[0][:50].strip()

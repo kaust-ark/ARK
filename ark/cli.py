@@ -4189,6 +4189,79 @@ def cmd_audit(args):
 
 
 # ============================================================
+#  ark env — shared base-env write protection
+# ============================================================
+
+def _shared_env_site_packages(env_name: str) -> "Path | None":
+    """Resolve the env's REAL site-packages by asking its own interpreter.
+
+    Never glob lib/python*/ — envs accumulate stray dirs and version
+    symlinks (ark-base has python3.1 → python3.11 AND a junk python3.14),
+    so lexical picks land on the wrong one.
+    """
+    conda_root = Path(os.environ.get("ARK_CONDA_ROOT", "/data/fat/ark/conda"))
+    env_dir = conda_root / "envs" / env_name
+    py = env_dir / "bin" / "python"
+    if py.exists():
+        import subprocess as _sp
+        try:
+            r = _sp.run([str(py), "-c",
+                         "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+                        capture_output=True, text=True, timeout=30)
+            if r.returncode == 0 and r.stdout.strip():
+                p = Path(r.stdout.strip())
+                if p.is_dir():
+                    return p
+        except Exception:
+            pass
+    if not env_dir.exists():
+        return None
+    hits = sorted(env_dir.glob("lib/python*/site-packages"))
+    return hits[-1] if hits else None
+
+
+def cmd_env(args):
+    """Write-protect the shared base conda env against accidental installs.
+
+    An agent once ran `conda activate ark-base && pip install ...` and
+    downgraded sqlalchemy for the whole platform. `lock` removes the write
+    bits from site-packages so any pip install there fails loudly; `unlock`
+    restores them for deliberate maintenance (upgrade → lock again).
+    """
+    sp = _shared_env_site_packages(args.env)
+    if sp is None:
+        print(f"  {_c('Error:', Colors.RED)} env '{args.env}' not found under "
+              f"$ARK_CONDA_ROOT/envs")
+        return 1
+    import subprocess as _sp
+    if args.env_cmd == "status":
+        mode = sp.stat().st_mode
+        locked = not (mode & 0o222)
+        print(f"  {sp}")
+        print(f"  {_c('LOCKED (read-only)', Colors.GREEN) if locked else _c('UNLOCKED (writable)', Colors.YELLOW)}")
+        return 0
+    if args.env_cmd == "lock":
+        r = _sp.run(["chmod", "-R", "a-w", str(sp)], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"  {_c('Error:', Colors.RED)} {r.stderr.strip()[:200]}")
+            return 1
+        print(f"  {_c('Locked:', Colors.GREEN)} {sp} is now read-only "
+              f"(pip installs there will fail). Unlock for maintenance with: "
+              f"ark env unlock")
+        return 0
+    if args.env_cmd == "unlock":
+        r = _sp.run(["chmod", "-R", "ug+w", str(sp)], capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"  {_c('Error:', Colors.RED)} {r.stderr.strip()[:200]}")
+            return 1
+        print(f"  {_c('Unlocked:', Colors.YELLOW)} {sp} is writable. "
+              f"Re-lock after maintenance: ark env lock")
+        return 0
+    print(f"  Unknown env subcommand: {args.env_cmd} (try: lock | unlock | status)")
+    return 1
+
+
+# ============================================================
 #  ark doctor — diagnose a self-host install
 # ============================================================
 
@@ -4645,6 +4718,12 @@ def main():
 
     p_doctor = subparsers.add_parser("doctor", help="Diagnose a self-host install (python, envs, API keys, webapp)")
     p_doctor.set_defaults(func=cmd_doctor)
+
+    p_env = subparsers.add_parser("env", help="Write-protect the shared base conda env (lock/unlock/status)")
+    p_env.add_argument("env_cmd", choices=["lock", "unlock", "status"],
+                       help="lock = make site-packages read-only; unlock = writable for maintenance")
+    p_env.add_argument("--env", default="ark-base", help="Env name under $ARK_CONDA_ROOT/envs (default: ark-base)")
+    p_env.set_defaults(func=cmd_env)
 
     p_audit = subparsers.add_parser("audit", help="Verify delivered papers against the delivery contract")
     p_audit.add_argument("path", help="A project dir, or a projects root to scan")
