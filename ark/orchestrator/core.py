@@ -3227,6 +3227,16 @@ def main():
             orchestrator._sync_db(**_kw)
         orchestrator._flush_events()
 
+    # Exit-code truth: the launch wrapper records our return code (SLURM uses
+    # the job state) and the webapp poller maps 0 → done / non-zero → failed.
+    # When the control plane is unreachable — e.g. broken deps in the run env
+    # made the LocalDb client silently unavailable (ff5a2e5b: ark-base's
+    # sqlalchemy was downgraded under us) — the status sync above is skipped
+    # and this exit code is the ONLY terminal signal that still reaches the
+    # webapp. A failed run must never exit 0.
+    if final_status == "failed":
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

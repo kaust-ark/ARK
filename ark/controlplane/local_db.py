@@ -77,8 +77,10 @@ class LocalDbControlPlaneClient(ControlPlaneClient):
             return self._db_module
         try:
             import sqlalchemy  # noqa: F401 — availability check (mirrors old _sync_db)
-        except ImportError:
+        except ImportError as e:
             self._import_failed = True
+            self.log(f"control-plane (localdb) DISABLED — sqlalchemy unavailable: {e}. "
+                     "Status/score will NOT sync to the dashboard for this run.", "ERROR")
             return None
         try:
             if _REPO_ROOT not in sys.path:
@@ -86,8 +88,15 @@ class LocalDbControlPlaneClient(ControlPlaneClient):
             from website.dashboard import db as _db
             self._db_module = _db
             return _db
-        except Exception:
+        except Exception as e:
+            # Loud, once. A silently-unavailable control plane made an aborted
+            # run masquerade as done (ff5a2e5b: ark-base's sqlalchemy was
+            # downgraded to 1.3 → sqlmodel import failed → every sync no-oped
+            # with zero log evidence).
             self._import_failed = True
+            self.log(f"control-plane (localdb) DISABLED — cannot import "
+                     f"website.dashboard.db: {type(e).__name__}: {e}. "
+                     "Status/score will NOT sync to the dashboard for this run.", "ERROR")
             return None
 
     def _note_error(self, e: Exception) -> None:

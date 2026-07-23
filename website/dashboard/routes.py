@@ -1215,7 +1215,42 @@ def _read_cost_report(project_dir: Path, project=None) -> dict:
     return result
 
 
-_TEMPLATE_TITLES = {"Paper Title", "Title Text", "Insert Title Here", ""}
+_TEMPLATE_TITLES = {"Paper Title", "Title Text", "Insert Title Here", "Title", ""}
+
+
+def _extract_tex_title(text: str) -> str:
+    """Extract the \\title{...} argument from LaTeX source, robustly.
+
+    The naive `\\title\\{([^}]+)\\}` regex burned us on ff5a2e5b: a user's
+    custom elsarticle template carries a COMMENTED example
+    ``%% \\title{Title\\tnoteref{label1}}`` before the real title, and the
+    first-``}`` capture truncated mid-brace → garbage like
+    ``Title\\tnoteref{label1`` synced into the DB. So: strip comments first,
+    then brace-aware capture, then drop annotation markers.
+    """
+    import re as _re
+    # LaTeX comments: an unescaped % kills the rest of the line.
+    text = _re.sub(r'(?<!\\)%.*', '', text)
+    m = _re.search(r'\\(?:icmltitle|title)\s*\{', text)
+    if not m:
+        return ""
+    depth, i = 1, m.end()
+    while i < len(text) and depth:
+        c = text[i]
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+        i += 1
+    if depth:  # unbalanced braces — refuse rather than guess
+        return ""
+    title = text[m.end():i - 1]
+    # Footnote-ish markers belong to the title BLOCK, not the title TEXT.
+    title = _re.sub(r'\\(?:tnoteref|thanks|footnote|fnref)\s*\{[^{}]*\}', '', title)
+    title = _re.sub(r'\\\\', ' ', title)          # line-break command → space
+    title = _re.sub(r'\s+', ' ', title).strip()   # then collapse whitespace
+    return title
+
 
 def _read_paper_title(project_dir: Path) -> str:
     """Read paper title from paper/main.tex \\title{...}, fallback to config.yaml.
@@ -1228,13 +1263,9 @@ def _read_paper_title(project_dir: Path) -> str:
     tex = project_dir / "paper" / "main.tex"
     if tex.exists():
         try:
-            import re as _re
-            text = tex.read_text(errors="replace")
-            m = _re.search(r'\\(?:icmltitle|title)\{([^}]+)\}', text)
-            if m:
-                title = m.group(1).strip()
-                if title not in _TEMPLATE_TITLES:
-                    return title
+            title = _extract_tex_title(tex.read_text(errors="replace"))
+            if title and title not in _TEMPLATE_TITLES:
+                return title
         except Exception:
             pass
     # Fallback: config.yaml title (set by pipeline _update_title_from_idea)
