@@ -907,23 +907,19 @@ we'll be happy to take another look.
 
     return _sendmail_fallback(from_addr, to_email, msg_str)
 
-def send_failure_email(settings, to_email: str, project_name: str,
-                       owner_email: str, error: str, project_url: str) -> bool:
-    """Alert an ADMIN that a user's project failed (plain text, ops-oriented)."""
+def send_admin_notice(settings, to_email: str, subject: str, body: str) -> bool:
+    """Plain-text ops email to an admin (neutral framing).
+
+    For routine operational notices — e.g. "model picker updates available" —
+    that are informational, NOT failures. send_failure_email layers its alert
+    framing on top of this same pipe."""
     from email.mime.text import MIMEText as _MT
     from email.utils import formatdate, make_msgid
-    body = (
-        f"Project FAILED on Idea2Paper\n\n"
-        f"Project: {project_name}\n"
-        f"Owner:   {owner_email}\n"
-        f"Error:   {(error or '(no error message)')[:600]}\n\n"
-        f"Open: {project_url}\n"
-    )
     msg = _MT(body)
     from_addr = getattr(settings, "smtp_from", "") or "contact@idea2paper.org"
     msg["From"] = f"Idea2Paper Ops <{from_addr}>"
     msg["To"] = to_email
-    msg["Subject"] = f"[Idea2Paper] FAILED: {project_name[:60]} ({owner_email})"
+    msg["Subject"] = subject
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = make_msgid(domain="idea2paper.org")
     msg_str = msg.as_string()
@@ -945,6 +941,20 @@ def send_failure_email(settings, to_email: str, project_name: str,
         except Exception as e:
             logger.warning(f"SMTP failed ({e}), trying sendmail fallback…")
     return _sendmail_fallback(from_addr, to_email, msg_str)
+
+
+def send_failure_email(settings, to_email: str, project_name: str,
+                       owner_email: str, error: str, project_url: str) -> bool:
+    """Alert an ADMIN that a user's project failed (plain text, ops-oriented)."""
+    body = (
+        f"Project FAILED on Idea2Paper\n\n"
+        f"Project: {project_name}\n"
+        f"Owner:   {owner_email}\n"
+        f"Error:   {(error or '(no error message)')[:600]}\n\n"
+        f"Open: {project_url}\n"
+    )
+    subject = f"[Idea2Paper] FAILED: {project_name[:60]} ({owner_email})"
+    return send_admin_notice(settings, to_email, subject, body)
 
 
 # Failures ONLY the user can fix (their provider account, not our platform).

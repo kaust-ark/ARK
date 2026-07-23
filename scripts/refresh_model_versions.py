@@ -180,20 +180,22 @@ def _notify_admin(changes: list[str]) -> None:
     try:
         sys.path.insert(0, str(REPO))
         from website.dashboard.config import get_settings
-        from website.dashboard.notify import send_failure_email
+        from website.dashboard.notify import send_admin_notice
         s = get_settings()
         admins = getattr(s, "admin_emails", []) or []
         if not admins:
             return
-        body = ("New OpenRouter models are available for the picker:\n\n  "
+        body = ("Routine notice from the model-refresh timer — nothing is broken.\n\n"
+                "New OpenRouter models are available for the picker:\n\n  "
                 + "\n  ".join(changes)
-                + "\n\nApply + deploy:\n"
+                + "\n\nApply + deploy (hotfix from the released tag, not dev main):\n"
+                  "  git checkout -b hotfix/model-picker <released-tag>\n"
                   "  python scripts/refresh_model_versions.py --apply\n"
-                  "  # review the diff, then: ark webapp release\n")
-        send_failure_email(s, to_email=admins[0],
-                           project_name="Model picker — updates available",
-                           owner_email="model-refresh",
-                           error=body, project_url="")
+                  "  # review the diff, run tests, then: ark webapp release\n"
+                  "  # finally merge the hotfix branch back into main\n")
+        send_admin_notice(s, to_email=admins[0],
+                          subject="[Idea2Paper] Model picker updates available",
+                          body=body)
     except Exception:
         pass
 
