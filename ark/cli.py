@@ -4231,6 +4231,44 @@ def cmd_env(args):
     """
     import subprocess as _sp
 
+    if args.env_cmd == "build-base":
+        # The platform env, rebuilt from pyproject — the single source of
+        # dependency truth. Deliberately MINIMAL: ark itself is not installed
+        # (the orchestrator gets its code via PYTHONPATH), and nothing beyond
+        # the declared extras belongs here. ark-base once reached 17 GB because
+        # experiment packages were installed into it; anything extra belongs in
+        # an env derived from this one.
+        repo = Path(__file__).parent.parent
+        conda_root = Path(os.environ.get("ARK_CONDA_ROOT", "/data/fat/ark/conda"))
+        target = conda_root / "envs" / args.env
+        if target.exists():
+            print(f"  {_c('Error:', Colors.RED)} {target} already exists. "
+                  f"Build under a new --env name, validate it, then swap.")
+            return 1
+        conda_bin = shutil.which("conda") or str(conda_root / "condabin" / "conda")
+        print(f"  Creating {_c(str(target), Colors.CYAN)} (python 3.11 + weasyprint)...")
+        # weasyprint via conda-forge so its cairo/pango system libs come along.
+        r = _sp.run([conda_bin, "create", "-y", "--prefix", str(target),
+                     "-c", "conda-forge", "python=3.11", "pip", "weasyprint"])
+        if r.returncode != 0:
+            print(f"  {_c('Failed at the conda step.', Colors.RED)}")
+            return 1
+        py = target / "bin" / "python"
+        print("  Installing platform dependencies from pyproject...")
+        r = _sp.run([str(py), "-m", "pip", "install",
+                     f"{repo}[research,webapp,skypilot]"])
+        if r.returncode != 0:
+            print(f"  {_c('Failed at the pip step.', Colors.RED)}")
+            return 1
+        # Drop the ark package itself: the running code must come from the
+        # deployed tree via PYTHONPATH, never from a stale installed copy.
+        _sp.run([str(py), "-m", "pip", "uninstall", "-y", "-q", "ark-research"],
+                capture_output=True)
+        print(f"  {_c('Ready:', Colors.GREEN)} {target}")
+        print(f"  Validate before swapping it in: "
+              f"{_c(f'python scripts/check_arkbase_integrity.py --env {args.env} --bless', Colors.BOLD)}")
+        return 0
+
     if args.env_cmd == "build-project-base":
         spec = Path(__file__).parent.parent / "envs" / "project-base.yml"
         if not spec.exists():
@@ -4746,10 +4784,13 @@ def main():
     p_doctor.set_defaults(func=cmd_doctor)
 
     p_env = subparsers.add_parser("env", help="Write-protect the shared base conda env (lock/unlock/status)")
-    p_env.add_argument("env_cmd", choices=["lock", "unlock", "status", "build-project-base"],
+    p_env.add_argument("env_cmd",
+                       choices=["lock", "unlock", "status",
+                                "build-base", "build-project-base"],
                        help="lock = make site-packages read-only; unlock = writable for "
-                            "maintenance; build-project-base = create/refresh the lean env "
-                            "that user projects clone")
+                            "maintenance; build-base = rebuild the minimal PLATFORM env "
+                            "from pyproject; build-project-base = create/refresh the lean "
+                            "env that user projects clone")
     p_env.add_argument("--env", default="ark-base", help="Env name under $ARK_CONDA_ROOT/envs (default: ark-base)")
     p_env.set_defaults(func=cmd_env)
 
