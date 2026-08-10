@@ -378,6 +378,55 @@ def run_deep_research(
         return ""
 
 
+_DR_ATTEMPTS = 3
+_DR_BACKOFF_SECONDS = 20
+
+
+def _parse_openrouter_body(text: str, elapsed_str: str) -> tuple:
+    """Turn an OpenRouter response body into (data, reason).
+
+    ``data`` is the parsed JSON, or None with a human reason. Two shapes that
+    are NOT plain JSON have bitten us, both while the status line already said
+    200 (so the gateway could no longer signal an error):
+
+    * whitespace-only — OpenRouter pads a slow generation to hold the
+      connection open, and when the upstream model dies the body ends with
+      nothing but that padding. Observed 2026-08-06: 974 lines / ~5.4 KB of
+      padding, which `resp.json()` reported as the baffling
+      "Expecting value: line 975 column 1".
+    * SSE comment lines (": OPENROUTER PROCESSING") mixed in, which are
+      comments per the SSE spec and must simply be skipped.
+
+    Neither is a bug in our request, so both are worth retrying rather than
+    surfacing as a JSON traceback.
+    """
+    import json
+
+    if not text or not text.strip():
+        return None, (f"provider returned an empty body after {elapsed_str} "
+                      f"(HTTP 200 with only keep-alive padding — the upstream "
+                      f"research model did not finish)")
+    # Drop SSE comments/blank lines, keep everything else.
+    payload = "\n".join(
+        ln for ln in text.splitlines()
+        if ln.strip() and not ln.lstrip().startswith(":")
+    ).strip()
+    if not payload:
+        return None, (f"provider returned only keep-alive comments after "
+                      f"{elapsed_str} — no report was generated")
+    # A streamed body arrives as `data: {...}` events; take the last complete one.
+    if payload.startswith("data:"):
+        events = [ln[5:].strip() for ln in payload.splitlines()
+                  if ln.startswith("data:") and ln[5:].strip() not in ("", "[DONE]")]
+        payload = events[-1] if events else ""
+        if not payload:
+            return None, f"stream carried no data events after {elapsed_str}"
+    try:
+        return json.loads(payload), ""
+    except Exception as e:  # noqa: BLE001
+        return None, f"response was not JSON after {elapsed_str}: {e}"
+
+
 def run_deep_research_openrouter(
     config: dict,
     output_dir: Path,
@@ -411,28 +460,43 @@ def run_deep_research_openrouter(
     import httpx
     print(f"  Starting OpenRouter Deep Research ({model})...")
     print("  This may take 2-10 minutes. You can safely wait.")
-    start = time.time()
-    try:
-        resp = httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json=body, timeout=900,
-        )
-    except Exception as e:  # noqa: BLE001
-        print(f"  Deep Research error: {e}")
+
+    data = None
+    for attempt in range(1, _DR_ATTEMPTS + 1):
+        start = time.time()
+        try:
+            resp = httpx.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json=body, timeout=900,
+            )
+        except Exception as e:  # noqa: BLE001
+            reason = f"request failed: {e}"
+            resp = None
+        else:
+            elapsed = int(time.time() - start)
+            elapsed_str = f"{elapsed // 60}m {elapsed % 60}s"
+            if resp.status_code != 200:
+                reason = f"HTTP {resp.status_code}: {resp.text[:200]}"
+            else:
+                data, reason = _parse_openrouter_body(resp.text, elapsed_str)
+                if data is not None:
+                    break
+        print(f"  Deep Research attempt {attempt}/{_DR_ATTEMPTS} failed — {reason}")
+        if attempt < _DR_ATTEMPTS:
+            backoff = _DR_BACKOFF_SECONDS * attempt
+            print(f"  Retrying in {backoff}s...")
+            time.sleep(backoff)
+
+    if data is None:
+        print("  Deep Research failed after "
+              f"{_DR_ATTEMPTS} attempts — no report was produced.")
         return ""
 
-    elapsed = int(time.time() - start)
-    elapsed_str = f"{elapsed // 60}m {elapsed % 60}s"
-    if resp.status_code != 200:
-        print(f"  Deep Research HTTP {resp.status_code}: {resp.text[:200]}")
-        return ""
-
     try:
-        data = resp.json()
         msg = data["choices"][0]["message"]
     except Exception as e:  # noqa: BLE001
-        print(f"  Deep Research: could not parse response: {e}")
+        print(f"  Deep Research: unexpected response shape: {e}")
         return ""
 
     report_text = (msg.get("content") or "").strip()

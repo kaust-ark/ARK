@@ -4221,13 +4221,39 @@ def _shared_env_site_packages(env_name: str) -> "Path | None":
 
 
 def cmd_env(args):
-    """Write-protect the shared base conda env against accidental installs.
+    """Manage the shared conda envs the platform depends on.
 
-    An agent once ran `conda activate ark-base && pip install ...` and
-    downgraded sqlalchemy for the whole platform. `lock` removes the write
-    bits from site-packages so any pip install there fails loudly; `unlock`
-    restores them for deliberate maintenance (upgrade → lock again).
+    `lock`/`unlock`/`status` write-protect an env against accidental installs
+    (an agent once ran `conda activate ark-base && pip install ...` and
+    downgraded sqlalchemy for the whole platform). `build-project-base`
+    creates the LEAN env that user projects clone, so project startup no
+    longer copies the orchestrator's dependencies.
     """
+    import subprocess as _sp
+
+    if args.env_cmd == "build-project-base":
+        spec = Path(__file__).parent.parent / "envs" / "project-base.yml"
+        if not spec.exists():
+            print(f"  {_c('Error:', Colors.RED)} spec not found: {spec}")
+            return 1
+        conda_root = Path(os.environ.get("ARK_CONDA_ROOT", "/data/fat/ark/conda"))
+        target = conda_root / "envs" / args.env
+        exists = target.exists()
+        print(f"  {'Updating' if exists else 'Creating'} "
+              f"{_c(str(target), Colors.CYAN)} from {spec.name}...")
+        cmd = ["conda", "env", "update" if exists else "create",
+               "--prefix", str(target), "--file", str(spec)]
+        conda_bin = shutil.which("conda") or str(conda_root / "condabin" / "conda")
+        cmd[0] = conda_bin
+        r = _sp.run(cmd)
+        if r.returncode != 0:
+            print(f"  {_c('Failed.', Colors.RED)} See the conda output above.")
+            return 1
+        print(f"  {_c('Ready:', Colors.GREEN)} {target}")
+        print(f"  Point projects at it with "
+              f"{_c(f'PROJECT_BASE_CONDA_ENV={args.env}', Colors.BOLD)} in webapp.env")
+        return 0
+
     sp = _shared_env_site_packages(args.env)
     if sp is None:
         print(f"  {_c('Error:', Colors.RED)} env '{args.env}' not found under "
@@ -4720,8 +4746,10 @@ def main():
     p_doctor.set_defaults(func=cmd_doctor)
 
     p_env = subparsers.add_parser("env", help="Write-protect the shared base conda env (lock/unlock/status)")
-    p_env.add_argument("env_cmd", choices=["lock", "unlock", "status"],
-                       help="lock = make site-packages read-only; unlock = writable for maintenance")
+    p_env.add_argument("env_cmd", choices=["lock", "unlock", "status", "build-project-base"],
+                       help="lock = make site-packages read-only; unlock = writable for "
+                            "maintenance; build-project-base = create/refresh the lean env "
+                            "that user projects clone")
     p_env.add_argument("--env", default="ark-base", help="Env name under $ARK_CONDA_ROOT/envs (default: ark-base)")
     p_env.set_defaults(func=cmd_env)
 

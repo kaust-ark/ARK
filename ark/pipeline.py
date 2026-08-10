@@ -1063,8 +1063,10 @@ Be thorough and faithful to the proposal.
                         self._send_deep_research_telegram(result)
                     else:
                         self.log("Deep Research returned no result.", "WARN")
+                        self._fallback_literature_survey(query)
                 except Exception as e:
                     self.log(f"Deep Research failed: {e}", "WARN")
+                    self._fallback_literature_survey(query)
             else:
                 self.log("No Deep Research key (OpenRouter/Gemini) — skipping", "WARN")
 
@@ -1968,6 +1970,78 @@ in what that file actually says — do not guess.
                 # unbalanced — bail on this entry, advance past @
                 i = at + 1
         return out
+
+    def _fallback_literature_survey(self, query: str) -> bool:
+        """Build a minimal literature base from academic search when Deep
+        Research fails, so a paper is never written on an empty foundation.
+
+        Deep Research failure used to be a WARN that the pipeline walked
+        straight past: the writer then produced a full paper with zero
+        literature grounding and nobody was told (2026-08-06, and the same
+        root shape as the recurring missing-references bug). The provider is
+        the flaky part, not the idea of grounding — and we already talk to
+        DBLP/CrossRef/arXiv/S2 for citations, so fall back to those.
+
+        The result is deliberately marked as degraded, both in the report
+        itself and via ``research_degraded.txt``, which the delivery contract
+        reads. A thinner foundation is acceptable; an INVISIBLE one is not.
+        """
+        try:
+            from ark.citation import search_papers
+        except Exception as e:  # noqa: BLE001
+            self.log(f"Literature fallback unavailable: {e}", "WARN")
+            return False
+
+        self.log_step("Deep Research unavailable — falling back to a direct "
+                      "literature search (DBLP/CrossRef/arXiv/S2)...", "progress")
+        try:
+            papers = search_papers(query[:300], max_results=12)
+        except Exception as e:  # noqa: BLE001
+            papers = []
+            self.log(f"Literature fallback search failed: {e}", "WARN")
+
+        if not papers:
+            # Still no grounding: record it so the run is auditable and the
+            # delivery contract can flag the paper rather than pretend.
+            (self.state_dir / "research_degraded.txt").write_text(
+                "Deep Research failed and the literature-search fallback found "
+                "nothing. This paper has no literature grounding.\n")
+            self.log("Literature fallback found no papers — the paper will have "
+                     "NO literature grounding", "ERROR")
+            return False
+
+        lines = [
+            "# Literature Survey (fallback)",
+            "",
+            "> Deep Research was unavailable for this run, so this survey was "
+            "assembled directly from academic search APIs "
+            "(DBLP / CrossRef / arXiv / Semantic Scholar). It lists real, "
+            "verifiable work but is THINNER than a full Deep Research report: "
+            "no synthesis, no methodology section. Treat coverage as partial.",
+            "",
+            f"Query: {query[:300]}",
+            "",
+            "## Related Work",
+            "",
+        ]
+        for i, p in enumerate(papers, 1):
+            authors = ", ".join((getattr(p, "authors", None) or [])[:3])
+            venue = getattr(p, "venue", "") or ""
+            year = getattr(p, "year", "") or ""
+            lines.append(f"{i}. **{p.title}**" + (f" — {authors}" if authors else ""))
+            if venue or year:
+                lines.append(f"   - {venue} {year}".rstrip())
+            if getattr(p, "abstract", None):
+                lines.append(f"   - {p.abstract[:300]}")
+            lines.append("")
+
+        (self.state_dir / "deep_research.md").write_text("\n".join(lines))
+        (self.state_dir / "research_degraded.txt").write_text(
+            f"Deep Research failed; literature assembled from search APIs "
+            f"({len(papers)} papers). Coverage is partial.\n")
+        self.log_step(f"Literature fallback: {len(papers)} real papers found "
+                      f"(report is thinner than Deep Research)", "success")
+        return True
 
     def _bootstrap_citations_from_deep_research(self):
         r"""Extract paper titles from Deep Research report via LLM, then fetch BibTeX via API.

@@ -163,6 +163,21 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
         rep.findings.append(Finding("references_nonempty", "skipped", "hard",
                                     "paper has no citations"))
 
+    # ── literature grounding ──────────────────────────────────────────────
+    # Deep Research can fail (flaky provider); the pipeline then falls back to
+    # a direct academic search and drops a marker. Surface that here so a
+    # thinner foundation is visible in the report and to `ark audit` — it used
+    # to pass silently, and a paper written on no literature at all looked
+    # exactly like one written on a full survey.
+    degraded = project_dir / "auto_research" / "state" / "research_degraded.txt"
+    if degraded.exists():
+        rep.findings.append(Finding(
+            "research_grounded", "violated", "soft",
+            degraded.read_text(errors="replace").strip()[:200]))
+    else:
+        rep.findings.append(Finding("research_grounded", "pass", "soft",
+                                    "full research report available"))
+
     # ── generated figures actually used ───────────────────────────────────
     figs_dir = paper_dir / "figures"
     figs = ([f for f in figs_dir.glob("*")

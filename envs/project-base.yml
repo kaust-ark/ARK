@@ -1,0 +1,40 @@
+# Base environment for USER PROJECT experiment code.
+#
+# Every project gets its own conda env cloned from this one. Keep it LEAN:
+# clone time is a step the user watches, and it is paid once per project.
+#
+# It is deliberately NOT the orchestrator env (ark-base). Cloning that was the
+# original design and it decayed badly: teammates installed a GPU stack into
+# the shared env (nvidia 5.3 GB, torch 2.3 GB, vllm, triton, flashinfer, ray,
+# jaxlib …) until it reached 17 GB / 287k files, making provisioning a
+# 24-minute step — and on 2026-08-03 a wedged clone hung for five days.
+# Separating the two means orchestrator dependencies can never again inflate
+# what a project pays at startup.
+#
+# Build/refresh:  ark env build-project-base
+# Point projects at it: PROJECT_BASE_CONDA_ENV=ark-project-base in webapp.env
+#
+# Agents install anything else they need into their OWN project env
+# (.conda_env/bin/pip install ...), which is exactly where it belongs.
+name: ark-project-base
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+  # matplotlib-base, NOT matplotlib: the full package drags in Qt6, mesa,
+  # libLLVM and libclang (~200 MB and thousands of files) for interactive
+  # backends that a headless pipeline never opens. Figures render via Agg.
+  - matplotlib-base
+  - statsmodels
+  - seaborn
+  - sympy
+  - tqdm
+  - pyyaml
+  - requests
+  - pip:
+      - tabulate

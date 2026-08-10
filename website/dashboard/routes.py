@@ -920,6 +920,13 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
     # Deep Research toggle (webapp) — when set, the orchestrator skips the
     # Gemini literature survey (pipeline handles a missing deep_research.md).
     config["skip_deep_research"] = bool(getattr(project, "skip_deep_research", False))
+    # Which env the project's own .conda_env is cloned from. The setting
+    # existed but nothing ever wrote it here, so every project silently cloned
+    # the ORCHESTRATOR env (ark-base) — 17 GB and 287k files after teammates
+    # installed a GPU stack into it, i.e. a 24-minute step for a project that
+    # needs about a gigabyte of scientific Python. Passing it through decouples
+    # the project runtime from the orchestrator env for good.
+    config["base_conda_env"] = getattr(settings, "project_base_conda_env", "") or "ark-base"
     config_path = project_dir / "config.yaml"
     config_path.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
 
