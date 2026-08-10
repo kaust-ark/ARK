@@ -143,6 +143,11 @@ def _advance_pending_queue(session, settings):
 _stuck_alerted: set[str] = set()     # project_ids already sent stuck alert
 _tg_offsets: dict[str, int] = {}     # project_id → last Telegram update_id seen
 STUCK_MINUTES = 60
+# Total silence beyond this = wedged, not slow. The run is cancelled and
+# marked failed so it stops holding a queue lane and reaches the owner through
+# the normal terminal-notification path. Generous: every real step (agent call,
+# Deep Research, page fitting) reports progress far more often than this.
+STUCK_FAIL_MINUTES = int(os.environ.get("ARK_STUCK_FAIL_MINUTES", "180"))
 
 # Grace period after a cloud orchestrator turns terminal before its VM is torn
 # down (see _reap_terminal_clusters). Long enough for post-run inspection and for
@@ -294,11 +299,22 @@ def _reap_terminal_clusters(session, settings):
         logger.warning(f"cluster reap sweep failed: {e}")
 
 
-def _stuck_watchdog(p, launcher, pdir):
-    """Alert once if a running project's orchestrator log has been silent for
-    more than STUCK_MINUTES. The launcher reports the newest log mtime (or None
-    for backends with no local log to watch, e.g. cloud). Behavior-identical to
-    the pre-Phase-4 per-branch watchdogs (local_*.out / slurm_*.out).
+def _stuck_watchdog(p, launcher, pdir, session=None):
+    """Alert on a silent orchestrator, then GIVE UP on a wedged one.
+
+    The launcher reports the newest log mtime (or None for backends with no
+    local log to watch, e.g. cloud).
+
+    Two thresholds, because alerting alone proved not to be enough. On
+    2026-08-03 a conda clone wedged on a sick NFS mount: the STUCK_MINUTES
+    alert fired into the void (the owner had no Telegram configured — token
+    and chat_id both empty) and the run sat at "running" for FIVE DAYS,
+    holding a queue lane. So after STUCK_FAIL_MINUTES of total silence the
+    run is cancelled and marked failed, which routes it into the ordinary
+    terminal-notification sweep — email to the admin (and the owner when the
+    cause is theirs). Reusing that path is deliberate: a stuck run should
+    reach people through the same channel every other failure does, not a
+    second bespoke one that can rot unnoticed.
 
     ``update_project`` refreshes ``p`` in place, so after a transition p.status
     already equals the new status — no separate new_status arg needed."""
@@ -311,15 +327,34 @@ def _stuck_watchdog(p, launcher, pdir):
     _log_mtimes[p.id] = mtime
     if mtime != last:
         _stuck_alerted.discard(p.id)  # new output → clear alert
-    elif p.id not in _stuck_alerted:
-        idle_min = (time.time() - mtime) / 60
-        if idle_min > STUCK_MINUTES:
-            send_telegram_notify(
-                f"⚠️ <b>{_pname(p)}</b> may be stuck\n"
-                f"No log output for {int(idle_min)} min",
-                bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
-            )
-            _stuck_alerted.add(p.id)
+        return
+
+    idle_min = (time.time() - mtime) / 60
+
+    # Hard stop: wedged beyond any plausible long step.
+    if idle_min > STUCK_FAIL_MINUTES and session is not None:
+        try:
+            launcher.cancel(p.slurm_job_id, pdir)
+        except Exception as e:
+            logger.warning(f"Stuck-run cancel failed for {p.id}: {e}")
+        from .db import update_project as _update
+        _update(session, p, status="failed", pid=0, error_message=(
+            f"No progress for {int(idle_min)} minutes — the run was stuck and "
+            f"has been stopped. The last step never reported back (a wedged "
+            f"external command or an unresponsive filesystem is the usual "
+            f"cause). Nothing was lost: restart or continue the project."))
+        logger.info(f"Stuck-run watchdog failed {p.id} after {int(idle_min)} min idle")
+        _log_mtimes.pop(p.id, None)
+        _stuck_alerted.discard(p.id)
+        return
+
+    if idle_min > STUCK_MINUTES and p.id not in _stuck_alerted:
+        send_telegram_notify(
+            f"⚠️ <b>{_pname(p)}</b> may be stuck\n"
+            f"No log output for {int(idle_min)} min",
+            bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
+        )
+        _stuck_alerted.add(p.id)
 
 
 async def _poll_jobs(app: FastAPI):
@@ -360,7 +395,7 @@ async def _poll_jobs(app: FastAPI):
                         # UNKNOWN → transient probe failure / no state yet. Leave the
                         # project as-is and retry next cycle (still run the watchdog).
                         if result.state == UNKNOWN:
-                            _stuck_watchdog(p, launcher, pdir)
+                            _stuck_watchdog(p, launcher, pdir, session)
                             continue
 
                         # GONE → the remote process vanished with no authoritative
@@ -450,7 +485,7 @@ async def _poll_jobs(app: FastAPI):
                                 _stuck_alerted.discard(p.id)
 
                         # Stuck watchdog — projects that are (or just became) running.
-                        _stuck_watchdog(p, launcher, pdir)
+                        _stuck_watchdog(p, launcher, pdir, session)
                     except Exception as _poll_err:
                         # Isolate per-project failures so one bad poll/finalize (DB lock,
                         # notify error) can't abort the whole cycle — restores the guard the

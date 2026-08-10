@@ -840,7 +840,9 @@ class PipelineMixin:
                     "Env setup", f"cloning base env <code>{base_env}</code>...",
                     level="working",
                 )
-                success, msg = provision_project_env(self.code_dir, base_env)
+                success, msg = provision_project_env(
+                    self.code_dir, base_env,
+                    log_fn=lambda m: self.log_step(m, "progress"))
                 if success:
                     self.log_step(f"Conda env ready: {msg}", "success")
                     self.notify_progress("Env ready", f"{msg}", level="done")

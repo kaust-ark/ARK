@@ -137,14 +137,51 @@ def _accept_conda_tos(conda_bin: str, log_file=None) -> None:
                 log_file.write(f"# conda tos accept {channel} failed: {e}\n")
 
 
+_PROVISION_HEARTBEAT_SECONDS = 30
+# Generous: a lean base clones in well under a minute, but a cold NFS cache
+# can make even that slow. Overridable for hosts with an unusual base env.
+_PROVISION_TIMEOUT_SECONDS = int(os.environ.get("ARK_ENV_PROVISION_TIMEOUT", "600"))
+
+
+def _kill_tree(proc) -> None:
+    """Kill a process group started with start_new_session=True. Best-effort.
+
+    SIGTERM first so conda can unwind, escalating to SIGKILL only if it is
+    still alive — a wedged NFS call often ignores TERM.
+    """
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except Exception:
+            return
+        try:
+            proc.wait(timeout=3)
+            return
+        except Exception:
+            continue
+
+
+def _env_file_count(target: Path) -> int:
+    """Rough progress signal for the heartbeat. Never raises."""
+    try:
+        return sum(1 for _ in target.rglob("*"))
+    except Exception:
+        return 0
+
+
 def provision_project_env(project_dir: Path, base_env: str = "ark-base",
-                          log_path: Path | None = None) -> tuple[bool, str]:
+                          log_path: Path | None = None,
+                          timeout: int = _PROVISION_TIMEOUT_SECONDS,
+                          log_fn=None) -> tuple[bool, str]:
     """
     Create a per-project conda env at <project_dir>/.env by cloning ``base_env``.
 
     Returns ``(success, message)``. Idempotent: returns success immediately if
     the env is already present. Writes the conda command output to ``log_path``
     (or <project_dir>/.env_provision.log) for debugging.
+
+    The clone is BOUNDED: it is killed after ``timeout`` seconds and emits a
+    heartbeat through ``log_fn`` every 30s so a long clone is visibly alive.
     """
     project_dir = Path(project_dir)
     target = project_env_prefix(project_dir)
@@ -173,7 +210,37 @@ def provision_project_env(project_dir: Path, base_env: str = "ark-base",
             _accept_conda_tos(conda_bin, log_file=lf)
             lf.write(f"$ {' '.join(cmd)}\n")
             lf.flush()
-            proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT)
+            proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT,
+                                    start_new_session=True)
+            # Bounded wait with a heartbeat. `subprocess.run` here had no
+            # timeout: on 2026-08-03 a clone wedged on a sick NFS mount and
+            # hung for FIVE DAYS with zero output, the project stuck at
+            # "running" the whole time. An unbounded external call in the
+            # launch path is never acceptable — and silence for minutes is
+            # its own bug (users read it as a freeze).
+            deadline = started + timeout
+            next_beat = started + _PROVISION_HEARTBEAT_SECONDS
+            while True:
+                try:
+                    proc.wait(timeout=2)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+                now = time.time()
+                if now >= deadline:
+                    _kill_tree(proc)
+                    lf.write(f"\n[ark] TIMEOUT after {timeout}s — killed\n")
+                    lf.flush()
+                    shutil.rmtree(target, ignore_errors=True)
+                    return False, (
+                        f"conda create timed out after {timeout // 60} min cloning "
+                        f"'{base_env}'. The base env may be enormous or the "
+                        f"filesystem unresponsive; see {log_path}")
+                if now >= next_beat:
+                    next_beat = now + _PROVISION_HEARTBEAT_SECONDS
+                    if log_fn:
+                        log_fn(f"still provisioning… {_env_file_count(target)} files "
+                               f"copied, {int(now - started)}s elapsed")
         elapsed = time.time() - started
         if proc.returncode != 0 or not project_env_ready(project_dir):
             return False, f"conda create failed (rc={proc.returncode}); see {log_path}"
