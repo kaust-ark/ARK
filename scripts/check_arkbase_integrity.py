@@ -35,11 +35,34 @@ CRITICAL_PACKAGES = [
 ]
 
 # Functional probes run INSIDE the target env — they catch breakage that
-# version pins can't (e.g. the fitz-before-sqlite3 ICU landmine).
+# version pins can't (e.g. the fitz-before-sqlite3 ICU landmine), and they
+# cover every import the orchestrator actually performs. A dependency missing
+# here does not crash loudly: it degrades silently (a missing PaperBanana dep
+# drops every paper to the simpler figure pipeline; a broken dashboard.db
+# kills status sync for a whole run), which is exactly why they are probed.
 PROBES = [
     ("sqlite3+fitz order", "import sqlite3, fitz"),
     ("litellm (Gate A)", "import litellm"),
     ("dashboard db layer", "from website.dashboard import db"),
+    ("orchestrator entry", "import sqlite3, ark.orchestrator.core"),
+    ("pipeline + latex", "import sqlite3, ark.pipeline, ark.latex.compiler"),
+    ("citation + research", "import ark.citation, ark.deep_research"),
+    ("delivery contract", "import sqlite3, ark.delivery_contract"),
+    ("agent engine", "import ark.engines"),
+    ("control plane client", "import ark.controlplane"),
+    ("provider SDKs", "import openai, anthropic, google.genai"),
+    ("figure pipeline (PaperBanana)",
+     "import sys, pathlib; "
+     "sys.path.insert(0, str(pathlib.Path('submodules/PaperBanana').resolve())); "
+     "import aiofiles, json_repair, matplotlib, huggingface_hub"),
+]
+
+# Probed but not required: absence is reported, never a failure. `sky` is the
+# cloud (SkyPilot) launcher — the dashboard offers a "☁️ Cloud" backend, but
+# no env has ever had skypilot installed and no project has used it, so
+# demanding it here would just cry wolf every day.
+OPTIONAL_PROBES = [
+    ("cloud launcher (SkyPilot)", "import sky"),
 ]
 
 
@@ -154,6 +177,13 @@ def main() -> int:
     baseline = json.loads(bp.read_text())
     problems = diff_state(baseline, current)
     problems += run_probes(py)
+
+    for name, code in OPTIONAL_PROBES:
+        r = subprocess.run([str(py), "-c", code], capture_output=True,
+                           text=True, timeout=120, env={**os.environ, "PYTHONPATH": str(REPO)})
+        if r.returncode != 0:
+            print(f"[integrity] note: optional '{name}' unavailable "
+                  f"(feature is offered in the UI but cannot run)")
 
     if not problems:
         print(f"[integrity] {args.env} OK — {len(baseline)} pinned packages match, all probes pass")
