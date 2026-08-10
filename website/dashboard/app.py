@@ -413,8 +413,9 @@ async def _poll_jobs(app: FastAPI):
                                         f"(attempt {restart.attempt})"
                                     )
                                     send_telegram_notify(
-                                        f"⚡ <b>{_pname(p)}</b> 自动重启（集群 cancel，第 {restart.attempt} 次）\n"
-                                        f"新 Job: #{restart.handle}\n<a href='{url}'>{url}</a>",
+                                        f"⚡ <b>{_pname(p)}</b> auto-restarted "
+                                        f"(cluster cancelled it, attempt {restart.attempt})\n"
+                                        f"New job: #{restart.handle}\n<a href='{url}'>{url}</a>",
                                         bot_token=p.telegram_token, chat_id=p.telegram_chat_id,
                                     )
                                     _log_mtimes.pop(p.id, None)

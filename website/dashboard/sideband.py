@@ -200,4 +200,4 @@ def answer_from_state(question: str, state_text: str, keys: dict) -> str:
     out = _cheap_llm(keys, system, user, max_tokens=500, timeout=15)
     if out:
         return out
-    return "📊 当前进度:\n" + state_text
+    return "📊 Current progress:\n" + state_text

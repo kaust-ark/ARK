@@ -2941,7 +2941,8 @@ async def api_post_message(project_id: str, request: Request):
         with get_session(settings.db_path) as session:
             add_message(session, project_id, "user", text, kind="message")
             add_message(session, project_id, "agent",
-                        "⏳ 我还在处理上一条，稍等一下再发。", kind="notice")
+                        "⏳ Still working on your previous message. "
+                        "Please send this again in a moment.", kind="notice")
         return JSONResponse({"ok": True, "routed": "busy"})
 
     # Phase 2 (no session held): classify; LLM calls are offloaded so the async
@@ -2990,9 +2991,10 @@ async def api_post_message(project_id: str, request: Request):
         if running:
             enqueue_command(session, project_id, "steer", payload=text,
                             source="webapp", created_by=user.email)
-            where = f"「{activity}」" if activity else "the current step"
+            where = f'"{activity}"' if activity else "the current step"
             add_message(session, project_id, "agent",
-                        f"收到 ✅ 当前在 {where}。我会在这一步结束后应用这条指令。",
+                        f"✅ Got it. Currently at {where}. "
+                        f"I will apply your instruction once this step finishes.",
                         kind="message")
     return JSONResponse({"ok": True, "routed": "steer", "running": running, "scope": scope})
 
