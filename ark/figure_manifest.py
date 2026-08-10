@@ -197,6 +197,89 @@ def register_figure(manifest: dict, filename: str, source: str,
     figures[filename] = entry
 
 
+# Magic bytes → the extension the file must carry for its content.
+_IMAGE_SIGNATURES = (
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"GIF87a", ".gif"),
+    (b"GIF89a", ".gif"),
+    (b"RIFF", ".webp"),      # RIFF....WEBP; refined below
+)
+
+
+def _actual_format(path: Path) -> Optional[str]:
+    """Extension implied by the file's magic bytes, or None if unrecognised."""
+    try:
+        head = path.open("rb").read(16)
+    except OSError:
+        return None
+    for sig, ext in _IMAGE_SIGNATURES:
+        if head.startswith(sig):
+            if ext == ".webp" and head[8:12] != b"WEBP":
+                continue
+            return ext
+    return None
+
+
+def normalize_image_formats(figures_dir: Path, log_fn=None) -> list[str]:
+    """Re-encode images whose BYTES disagree with their file extension.
+
+    Image models return whatever format they like, and both PaperBanana and
+    our own shipped fixtures saved JPEG bytes under a .png name. LaTeX sniffs
+    content so the paper still compiled, which let the mismatch survive all
+    the way to the reviewer — where Anthropic validates the declared media
+    type against the bytes and rejects the whole request:
+
+        "The image was specified using the image/png media type,
+         but the image appears to be a image/jpeg image"
+
+    That aborted an entire run as a non-retryable error (2026-08-10).
+
+    Re-encoding (rather than renaming) is deliberate: the filename is already
+    referenced by main.tex, the manifest and concept_figures.json, so changing
+    it would break those. Fixing the bytes keeps every reference valid.
+
+    Returns the filenames that were rewritten. Fail-soft: an unreadable or
+    unconvertible file is left alone.
+    """
+    fixed: list[str] = []
+    if not figures_dir.is_dir():
+        return fixed
+    try:
+        from PIL import Image
+    except Exception:
+        return fixed
+
+    for path in sorted(figures_dir.iterdir()):
+        if not path.is_file():
+            continue
+        want = path.suffix.lower()
+        if want not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+            continue
+        actual = _actual_format(path)
+        if actual is None:
+            continue
+        # .jpg and .jpeg both denote JPEG.
+        if actual == want or (actual == ".jpg" and want in (".jpg", ".jpeg")):
+            continue
+        try:
+            img = Image.open(path)
+            target = "PNG" if want == ".png" else (
+                "JPEG" if want in (".jpg", ".jpeg") else want.lstrip(".").upper())
+            if target == "JPEG" and img.mode in ("RGBA", "P", "LA"):
+                img = img.convert("RGB")
+            img.save(path, target)
+            fixed.append(path.name)
+            if log_fn:
+                log_fn(f"Figure format normalised: {path.name} held "
+                       f"{actual.lstrip('.')} bytes, re-encoded as {want.lstrip('.')}",
+                       "INFO")
+        except Exception as e:  # noqa: BLE001
+            if log_fn:
+                log_fn(f"Could not normalise {path.name}: {e}", "WARN")
+    return fixed
+
+
 def get_protected_files(manifest: dict) -> set[str]:
     """Return set of filenames that are protected (AI-generated)."""
     return {

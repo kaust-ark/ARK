@@ -1514,6 +1514,17 @@ and also output it in your response. Format:
             else:
                 self.log(f"  Failed: {name}", "WARN")
 
+        # Bytes must match the extension before anything reads these files.
+        # Image models return whatever format they please; a JPEG saved as
+        # .png compiles fine but makes the reviewer's vision call fail with
+        # a 400 that aborts the whole run. Runs on the reuse path too — a
+        # pre-existing (seeded or resumed) figure is just as likely to lie.
+        try:
+            from ark.figure_manifest import normalize_image_formats
+            normalize_image_formats(self.figures_dir, log_fn=self.log)
+        except Exception as e:  # noqa: BLE001
+            self.log(f"Figure format normalisation skipped: {e}", "WARN")
+
         if generated > 0:
             self.log_step(f"Generated {generated} AI concept figures", "success")
         elif skipped > 0:
