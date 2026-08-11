@@ -3873,7 +3873,7 @@ async function loadDetail(id) {
     ${_iterLine}
     ${_figLine}
     ${_renderPhaseStatus(p)}
-    <div><b>${t('info_environment')}:</b> ${esc(p.environment || 'Local')}</div>
+    <div><b>${t('info_environment')}:</b> ${esc(p.experiment_backend || p.environment || 'Local')} <span style="color:var(--text-muted)">(experiments)</span> · ${esc(p.orchestrator_backend || 'Local')} <span style="color:var(--text-muted)">(orchestrator)</span></div>
     ${condaEnvLine}
     <div><b>${t('info_user')}:</b> ${esc(p.user_email || '')}</div>
     <div><b>${t('info_created')}:</b> ${fmtDate(p.created_at)}</div>

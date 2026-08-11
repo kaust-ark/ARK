@@ -2688,12 +2688,28 @@ async def api_get_project(project_id: str, request: Request):
             else:
                 conda_env_display = settings.slurm_conda_env or ""
         # Environment label shown in the dashboard, keyed off the handle prefix.
+        # NOTE: this describes where the ORCHESTRATOR runs, which is not where
+        # experiments run — they are separate settings and the orchestrator is
+        # deliberately local (a lightweight driver). Reporting only this made
+        # a project whose experiments were on Slurm read as "Local" in the
+        # panel, so the two roles are surfaced explicitly below.
         if sid.startswith("skypilot"):
             environment = "SkyPilot"
         elif sid and not sid.startswith("local"):
             environment = "ROCS Testbed"
         else:
             environment = "Local"
+
+        def _backend_label(value: str) -> str:
+            base = (value or "local").split(":", 1)[0]
+            return {"local": "Local", "slurm": "Slurm",
+                    "skypilot": "Cloud"}.get(base, base)
+
+        # Straight from the DB — the launch settings themselves, not inferred
+        # from a job handle.
+        experiment_backend = _backend_label(
+            project.experiment_compute_backend or project.compute_backend)
+        orchestrator_backend = _backend_label(project.orchestrator_compute_backend)
         return JSONResponse({
             "id": project.id,
             "name": project.name,
@@ -2724,6 +2740,8 @@ async def api_get_project(project_id: str, request: Request):
             "telegram_chat_id": project.telegram_chat_id,
             "has_deep_research": (pdir / "auto_research" / "state" / "deep_research.md").exists(),
             "environment": environment,
+            "experiment_backend": experiment_backend,
+            "orchestrator_backend": orchestrator_backend,
             "conda_env": conda_env_display,
             "conda_env_ready": env_ready,
             "created_at": project.created_at.isoformat(),
