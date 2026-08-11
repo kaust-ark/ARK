@@ -34,15 +34,23 @@ class SlurmBackend(ComputeBackend):
                 or self.config.get("slurm_job_prefix")
                 or f"{self.project_name.upper()}_")
 
+    # The project's own conda env, created by provisioning. Must match
+    # website.dashboard.jobs.PROJECT_ENV_DIRNAME — this used to read ".env",
+    # a name provisioning has never used, so the branch below was dead and
+    # Slurm jobs silently fell through to the shared base env.
+    PROJECT_ENV_DIRNAME = ".conda_env"
+
     @property
     def conda_env(self) -> str:
+        # The project's own env wins: experiments depend on packages the agent
+        # installed there, and the shared base env is read-only by design.
+        local_env = self.code_dir / self.PROJECT_ENV_DIRNAME
+        if (local_env / "conda-meta").is_dir():
+            return str(local_env)
         explicit = (self._compute_config.get("conda_env")
                     or self.config.get("conda_env"))
         if explicit:
             return explicit
-        local_env = self.code_dir / ".env"
-        if (local_env / "conda-meta").is_dir():
-            return str(local_env)
         return self.project_name
 
     @property
@@ -178,9 +186,16 @@ template, preemption signal handlers, `jobstats`/`ninfo`/`ginfo` usage):
 
         return f"""## Compute Environment: Slurm HPC
 
-Use Slurm to submit GPU jobs. Key settings:
+This project's experiments are configured to run on Slurm. Submit any
+experiment that needs a GPU, needs more than a few minutes of CPU, or runs a
+sweep. Trivial checks (a quick script that finishes in seconds) may run
+inline — but say which route you took in your findings, so the record shows
+where each result was produced.
+
+Key settings:
 - Job name prefix: `{self.job_prefix}`
-- Conda environment: `{self.conda_env}` (project-local — do not substitute a shared env)
+- Conda environment: `{self.conda_env}` — this is the project's own env; the
+  agent-installed packages your code imports live only here
 - Activate before running (both lines required):
   ```bash
   source "$(conda info --base)/etc/profile.d/conda.sh"

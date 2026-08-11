@@ -737,11 +737,19 @@ def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, sett
 
     def _resolve_compute_config(chosen: str, is_orchestrator: bool = False):
         if chosen == "slurm":
-            return {
+            cfg = {
                 "type": "slurm",
                 "job_prefix": f"{project.name.upper()[:8]}_",
-                "conda_env": settings.slurm_conda_env or "ark-base",
             }
+            # Only the ORCHESTRATOR runs in the shared base env. Experiments
+            # must use the project's own conda env — that is where the agent
+            # installs what its code needs, and the shared env is read-only
+            # by design. Pinning experiments to the shared env here meant a
+            # submitted Slurm job activated a base env that has neither the
+            # project's packages nor (since the env was slimmed) a GPU stack.
+            if is_orchestrator:
+                cfg["conda_env"] = settings.slurm_conda_env or "ark-base"
+            return cfg
         elif chosen.split(":", 1)[0] == "skypilot":
             if not is_orchestrator:
                 # ── Layer-1 experiments (phased rollout) ──────────────────────
