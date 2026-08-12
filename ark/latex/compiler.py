@@ -8,6 +8,11 @@ import sys
 import yaml
 from pathlib import Path
 from ark.latex import utils as latex_utils
+# The one citation-command regex + key extractors (ark.citation is stdlib-only,
+# so this top-level import cannot cycle). Every "which keys are cited?" question
+# in this module goes through these — divergent copies silently delete valid
+# references; see CITE_CMD_RE's docstring.
+from ark.citation import CITE_CMD_RE, NOCITE_ALL, cited_keys_in_dir
 
 
 GEMINI_IMAGE_ASPECT_RATIOS = frozenset({
@@ -350,18 +355,11 @@ class CompilerMixin:
             self.log(f"Page count check failed: {e}", "WARN")
         return 0
 
-    # Citation commands recognised when pruning. Matches \cite, \citep,
-    # \citet, \nocite, biblatex's \autocite / \parencite / \textcite /
-    # \smartcite / \fullcite, and any project-specific custom command
-    # whose name contains "cite". Math operators and unrelated commands
-    # are left untouched.
-    _CITE_CMD_RE = re.compile(
-        # \cmdname  optional [pre] [post]  {keys}
-        r'\\(\w*cite\w*)\s*'
-        r'(\[[^\]]*\])?\s*'
-        r'(\[[^\]]*\])?\s*'
-        r'\{([^}]*)\}'
-    )
+    # Citation commands recognised when pruning — the shared definition from
+    # ark.citation, NOT a local copy. cleanup_unused() decides which bib entries
+    # to delete using the same regex; when the two drifted apart, a citation one
+    # of them could not see was deleted by the first and stripped by the second.
+    _CITE_CMD_RE = CITE_CMD_RE
 
     # Top-level BibTeX entry headers, e.g. "@article{tiecke2017mapping,"
     _BIB_KEY_RE = re.compile(r'@\w+\s*\{\s*([^,\s]+)\s*,', re.MULTILINE)
@@ -426,6 +424,11 @@ class CompilerMixin:
                 post = match.group(3) or ""
                 key_str = match.group(4)
                 keys = [k.strip() for k in key_str.split(",")]
+                # `\nocite{*}` is a wildcard meaning "every entry in the bib",
+                # not a key — stripping it would silently drop the author's
+                # request to print the full bibliography.
+                if NOCITE_ALL in keys:
+                    return match.group(0)
                 valid = [k for k in keys if k and k in defined]
                 invalid = [k for k in keys if k and k not in defined]
                 if not invalid:
@@ -1183,15 +1186,10 @@ class CompilerMixin:
         if not critical:
             return
 
-        # Collect all cited keys from tex
-        import re
-        cited_keys = set()
-        tex_path = Path(tex_dir)
-        for tex_file in tex_path.glob("**/*.tex"):
-            content = tex_file.read_text(errors="replace")
-            for m in re.finditer(r"\\cite[pt]?\{([^}]+)\}", content):
-                for key in m.group(1).split(","):
-                    cited_keys.add(key.strip())
+        # Collect all cited keys from tex (shared extractor — a narrower regex
+        # here reports keys as missing that the paper already cites, and burns a
+        # writer agent call telling it to add a citation that is right there).
+        cited_keys = cited_keys_in_dir(tex_dir)
 
         # Find missing critical citations
         missing = [(key, title) for key, title in critical if key and key not in cited_keys]

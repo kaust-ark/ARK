@@ -64,6 +64,60 @@ _CROSSREF_DELAY = 0.2
 _ARK_SOURCE_TAG = "[ARK:source="   # tag in bib comments to mark our entries
 _SIMILARITY_THRESHOLD = 0.82
 
+# ── The one citation-command regex ───────────────────────────────────────────
+# Every "which keys does this .tex cite?" question in the codebase MUST use
+# this. It used to be answered by two divergent regexes — a narrow
+# r"\\cite[pt]?\{...}" here in cleanup_unused, and the wide one in
+# CompilerMixin._CITE_CMD_RE — which silently destroyed valid citations in two
+# steps: the narrow regex missed `\citep[e.g.,][]{key}` (natbib's standard form,
+# used by ACL/ICLR/TMLR/MLSys), so cleanup_unused judged the entry uncited and
+# DELETED it from references.bib; the next compile_latex() ran the wide regex,
+# found the now-undefined key, and stripped the \cite from the prose. A real,
+# API-verified reference vanished and each module looked correct in isolation.
+#
+# Matches \cite, \citep, \citet, \nocite, \citeauthor, \citeyear, biblatex's
+# \parencite / \autocite / \textcite / \smartcite / \fullcite, and any
+# project-specific command whose name contains "cite" — plus natbib's optional
+# [pre] and [post] arguments. Groups: (1) command name, (2) [pre], (3) [post],
+# (4) comma-separated keys.
+CITE_CMD_RE = re.compile(
+    r'\\(\w*cite\w*)\s*'
+    r'(\[[^\]]*\])?\s*'
+    r'(\[[^\]]*\])?\s*'
+    r'\{([^}]*)\}'
+)
+
+# `\nocite{*}` means "put every bib entry in the bibliography". It is a wildcard,
+# not a key: nothing may treat it as a missing reference.
+NOCITE_ALL = "*"
+
+
+def cited_keys_in_tex(tex_content: str) -> set[str]:
+    """Every citation key referenced by ``tex_content``.
+
+    The single source of truth for "is this key cited?". Includes the
+    ``\\nocite{*}`` wildcard verbatim when present, so callers can detect it
+    (see :data:`NOCITE_ALL`) rather than mistaking it for a real key.
+    """
+    keys: set[str] = set()
+    for m in CITE_CMD_RE.finditer(tex_content):
+        for key in (m.group(4) or "").split(","):
+            key = key.strip()
+            if key:
+                keys.add(key)
+    return keys
+
+
+def cited_keys_in_dir(tex_dir) -> set[str]:
+    """Union of :func:`cited_keys_in_tex` over every ``.tex`` under ``tex_dir``."""
+    keys: set[str] = set()
+    for tex_file in Path(tex_dir).glob("**/*.tex"):
+        try:
+            keys |= cited_keys_in_tex(tex_file.read_text(errors="replace"))
+        except Exception:
+            continue
+    return keys
+
 
 # ═══════════════════════════════════════════════════════════
 #  HTTP helper
@@ -769,14 +823,13 @@ def cleanup_unused(bib_path: str, tex_dir: str) -> list[str]:
     if not bib_file.exists():
         return []
 
-    # Collect all cited keys from .tex files
-    cited_keys = set()
-    for tex_file in tex_path.glob("**/*.tex"):
-        tex_content = tex_file.read_text(errors="replace")
-        # Match \cite{key}, \citep{key}, \citet{key}, \cite{a,b,c}, etc.
-        for m in re.finditer(r"\\cite[pt]?\{([^}]+)\}", tex_content):
-            for key in m.group(1).split(","):
-                cited_keys.add(key.strip())
+    # Collect all cited keys from .tex files. Uses the shared CITE_CMD_RE — a
+    # narrower regex here deletes entries that ARE cited (see its docstring).
+    cited_keys = cited_keys_in_dir(tex_path)
+
+    # `\nocite{*}` pulls the whole bib into the bibliography — nothing is unused.
+    if NOCITE_ALL in cited_keys:
+        return []
 
     # Parse bib and filter
     entries = parse_bib(bib_path)

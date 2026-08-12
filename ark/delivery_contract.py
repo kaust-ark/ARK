@@ -148,7 +148,11 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
         rep.findings.append(Finding("citations_resolved", "pass", "hard"))
 
     # ── references exist when the paper cites ─────────────────────────────
-    n_cites = len(re.findall(r"\\cite", tex))
+    # Shared extractor: a literal r"\\cite" scan misses biblatex's \parencite /
+    # \autocite / \textcite, so an all-biblatex paper counted 0 cites and this
+    # hard gate downgraded itself to "skipped" on the papers that needed it.
+    from ark.citation import cited_keys_in_tex
+    n_cites = len(cited_keys_in_tex(tex))
     bib = paper_dir / "references.bib"
     n_bib = len(re.findall(r"^@", bib.read_text(errors="replace"), re.M)) if bib.exists() else 0
     inline_bib = bool(re.search(r"\\begin\{thebibliography\}", tex))
