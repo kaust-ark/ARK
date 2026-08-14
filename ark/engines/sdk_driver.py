@@ -144,8 +144,13 @@ def main() -> int:
                 msg = getattr(action, "message", None)
                 if isinstance(msg, str) and msg.strip():
                     state["finish_message"] = msg
-        elif "Error" in kind:
-            state["error_code"] = state["error_code"] or kind
+        elif kind == "ConversationErrorEvent":
+            # ONLY this one ends a run. Treating every *Error* event as fatal
+            # (as this driver first did) kills runs the CLI path survives:
+            # AgentErrorEvent is the agent reporting a recoverable problem,
+            # such as a tool call that failed, and the loop carries on.
+            state["error_code"] = (state["error_code"]
+                                   or getattr(event, "code", None) or kind)
             state["error_detail"] = text[:500]
 
     conversation = Conversation(

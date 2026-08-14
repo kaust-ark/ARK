@@ -45,10 +45,26 @@ from ark.engines.cli import OpenHandsCLI
 
 _DRIVER = Path(__file__).parent / "sdk_driver.py"
 
-# Fraction of the model's input window that conversation history may occupy
-# before compaction. Below 1.0 so compaction happens while there is still
-# room to work rather than at the cliff.
-_BUDGET_FRACTION = float(os.environ.get("ARK_CONTEXT_BUDGET_FRACTION", "0.45"))
+# How much conversation history may accumulate before compaction.
+#
+# Calibrated, not guessed. Replaying a real run's event stream at different
+# budgets gives total input tokens:
+#
+#     90k → 100%   50k → 74%   30k → 54%   20k → 39%   12k → 32%   8k → 32%
+#
+# Two things follow. A generous budget buys almost nothing: at 90k the
+# condenser fired in 3 of 15 conversations and the run cost what the stock
+# CLI cost. And there is a floor near 32%, because every request must still
+# carry the system prompt, the tool definitions and the recent turns, no
+# matter how hard history is compacted. Going below that needs fewer turns,
+# not a smaller budget.
+#
+# ~20k sits just above the floor while leaving a working window. The
+# absolute ceiling matters as much as the fraction: on a million-token model
+# a percentage alone would hand back a budget that never binds.
+_BUDGET_FRACTION = float(os.environ.get("ARK_CONTEXT_BUDGET_FRACTION", "0.12"))
+_BUDGET_CEILING = int(os.environ.get("ARK_CONTEXT_BUDGET_CEILING", "40000"))
+_BUDGET_FLOOR = int(os.environ.get("ARK_CONTEXT_BUDGET_FLOOR", "20000"))
 _FALLBACK_CONTEXT_TOKENS = int(os.environ.get("ARK_CONTEXT_FALLBACK_TOKENS", "200000"))
 # Secondary guard, for runs that accumulate many tiny events.
 _MAX_EVENTS = int(os.environ.get("ARK_CONTEXT_MAX_EVENTS", "120"))
@@ -98,7 +114,8 @@ def _context_window(model: str) -> int:
 
 def history_token_budget(model: str) -> int:
     """Tokens of conversation history allowed before compacting."""
-    return max(20_000, int(_context_window(model) * _BUDGET_FRACTION))
+    scaled = int(_context_window(model) * _BUDGET_FRACTION)
+    return max(_BUDGET_FLOOR, min(scaled, _BUDGET_CEILING))
 
 
 class OpenHandsSDK(OpenHandsCLI):
