@@ -1987,27 +1987,83 @@ in what that file actually says — do not guess.
         reads. A thinner foundation is acceptable; an INVISIBLE one is not.
         """
         try:
-            from ark.citation import search_papers
+            from ark.citation import (looks_like_paper, search_papers,
+                                      search_queries_from_topic, title_on_topic,
+                                      topic_terms)
         except Exception as e:  # noqa: BLE001
             self.log(f"Literature fallback unavailable: {e}", "WARN")
             return False
 
         self.log_step("Deep Research unavailable — falling back to a direct "
                       "literature search (DBLP/CrossRef/arXiv/S2)...", "progress")
-        try:
-            papers = search_papers(query[:300], max_results=12)
-        except Exception as e:  # noqa: BLE001
-            papers = []
-            self.log(f"Literature fallback search failed: {e}", "WARN")
+
+        # `query` is the Deep Research PROMPT — prose written for an LLM, with
+        # markdown headers, LaTeX and full sentences. Sending it (even truncated)
+        # to keyword search engines made CrossRef fuzzy-match incidental words
+        # and return 12/12 topically unrelated papers on a real run: dentistry,
+        # civil engineering, veterinary ophthalmology, plus three CrossRef
+        # *figure* records. Ask short, keyword-shaped questions instead, and
+        # keep the project's own idea in the topic corpus — its Related Work
+        # names real prior papers, the most precise query material there is.
+        idea = self.config.get("research_idea") or self.config.get("goal_anchor") or ""
+        title = self.config.get("title") or ""
+        queries = search_queries_from_topic(f"{query}\n{idea}", title, limit=4)
+        if not queries:                      # nothing usable — last resort
+            queries = [" ".join((title or query).split()[:8])]
+        # The relevance backstop needs a vocabulary to compare against. With a
+        # one-line topic ("transformers") it would have almost no terms and
+        # would reject everything — turning a thin survey into NO survey, which
+        # is the worse failure. A gate that cannot discriminate must not judge.
+        terms = topic_terms(f"{title}\n{query}\n{idea}")
+        gate_on = len(terms) >= 6
+        if not gate_on:
+            self.log(f"Literature fallback: topic too thin for a relevance "
+                     f"filter ({len(terms)} distinctive terms) — keeping all hits",
+                     "WARN")
+
+        papers, seen_titles, dropped = [], set(), 0
+        for q in queries:
+            try:
+                hits = search_papers(q, max_results=8)
+            except Exception as e:  # noqa: BLE001
+                self.log(f"Literature fallback query {q!r} failed: {e}", "WARN")
+                continue
+            for p in hits:
+                key = (p.title or "").strip().lower()
+                if not key or key in seen_titles:
+                    continue
+                seen_titles.add(key)
+                # Indexes carry non-papers: CrossRef figure/table records,
+                # Springer reference-work term stubs ("laser spectral width",
+                # no author, no year). They keyword-match perfectly and are not
+                # citable.
+                if not looks_like_paper(p.title, getattr(p, "authors", None),
+                                        getattr(p, "year", None)):
+                    dropped += 1
+                    continue
+                # Backstop: a keyword query is far more precise than prose, but
+                # CrossRef can still drag in an unrelated field. Require the hit
+                # to share distinctive terms with the topic.
+                if gate_on and not title_on_topic(p.title, terms):
+                    dropped += 1
+                    continue
+                papers.append(p)
+            if len(papers) >= 12:
+                break
+        papers = papers[:12]
+        self.log(f"Literature fallback: {len(queries)} queries "
+                 f"({', '.join(repr(q) for q in queries)}), kept {len(papers)} "
+                 f"on-topic, dropped {dropped} off-topic", "INFO")
 
         if not papers:
             # Still no grounding: record it so the run is auditable and the
             # delivery contract can flag the paper rather than pretend.
             (self.state_dir / "research_degraded.txt").write_text(
                 "Deep Research failed and the literature-search fallback found "
-                "nothing. This paper has no literature grounding.\n")
-            self.log("Literature fallback found no papers — the paper will have "
-                     "NO literature grounding", "ERROR")
+                f"nothing on-topic ({dropped} off-topic hits discarded). "
+                "This paper has no literature grounding.\n")
+            self.log("Literature fallback found no on-topic papers — the paper "
+                     "will have NO literature grounding", "ERROR")
             return False
 
         lines = [
@@ -2019,7 +2075,7 @@ in what that file actually says — do not guess.
             "verifiable work but is THINNER than a full Deep Research report: "
             "no synthesis, no methodology section. Treat coverage as partial.",
             "",
-            f"Query: {query[:300]}",
+            "Search queries used: " + "; ".join(f"`{q}`" for q in queries),
             "",
             "## Related Work",
             "",
@@ -2038,9 +2094,11 @@ in what that file actually says — do not guess.
         (self.state_dir / "deep_research.md").write_text("\n".join(lines))
         (self.state_dir / "research_degraded.txt").write_text(
             f"Deep Research failed; literature assembled from search APIs "
-            f"({len(papers)} papers). Coverage is partial.\n")
-        self.log_step(f"Literature fallback: {len(papers)} real papers found "
-                      f"(report is thinner than Deep Research)", "success")
+            f"({len(papers)} on-topic papers kept, {dropped} off-topic hits "
+            f"discarded). No synthesis, and coverage is narrower than a full "
+            f"survey — verify the related-work framing before trusting it.\n")
+        self.log_step(f"Literature fallback: {len(papers)} real on-topic papers "
+                      f"found (report is thinner than Deep Research)", "success")
         return True
 
     def _bootstrap_citations_from_deep_research(self):

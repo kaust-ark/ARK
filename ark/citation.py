@@ -120,6 +120,220 @@ def cited_keys_in_dir(tex_dir) -> set[str]:
 
 
 # ═══════════════════════════════════════════════════════════
+#  Research topic → academic-search queries
+# ═══════════════════════════════════════════════════════════
+#
+# DBLP/CrossRef/arXiv/S2 are KEYWORD engines. Handing them a paragraph of
+# LLM-oriented prose (the Deep Research prompt) makes CrossRef's
+# `query.bibliographic` fuzzy-match incidental words and return topically
+# random work: a real run on "spectral bias in two-layer ReLU MLPs" got
+# peri-implant mucositis, tunnel-face failure in two-LAYER soils, retinal
+# LAYER thickness in dogs, and three CrossRef *figure* records — 12/12 wrong,
+# all from CrossRef (DBLP, being CS-only, returned nothing). The same topic as
+# 2-4 short keyword queries returns the intended papers on the first page.
+
+# Grammatical filler.
+_STOPWORDS = frozenset("""
+a an the of in on for to and or with without from as at by is are was were be been being am
+this that these those it its their our we they you your he she his her them us
+can may might will would should could must not no nor but if then than so such
+into over under between among during after before while about across through via
+where when which who whom whose what how why there here both each all any some more most
+less least very much many few other others same own too also only just even still yet
+""".split())
+
+# Words that appear in every other academic title. Keeping them in a query is
+# what pulls in "A Multi-Vertical Empirical STUDY" and "COMPARISON of TWO
+# methods" from unrelated fields.
+_GENERIC_TERMS = frozenset("""
+study studies investigation investigating empirical analysis analyses analytical
+approach approaches method methods methodology technique techniques framework frameworks
+system systems model models modeling comparison comparing evaluation evaluating assessment
+results result findings effect effects impact role toward towards case cases application
+applications paper work works research review survey report letter note chapter section
+figure supplement supplementary appendix table pilot experience overview introduction
+novel new recent proposed present presents presented using used use based via
+experiment experiments experimental observation observations quantifying characterization
+properties property changes development different various multiple several general
+sample samples population populations participants subjects cohort patients trial trials
+""".split())
+
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9\-]{2,}")
+# `**bold**` / `*emph*` — where a writer marks the actual subject of the work.
+_EMPHASIS_RE = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
+# "Rahaman et al. (2019)" / "Basri et al. 2019" — named prior work is the most
+# precise query material available: it names a paper that provably exists.
+_AUTHOR_YEAR_RE = re.compile(r"\b([A-Z][a-z]{2,})\s+et\s+al\.?,?\s*\(?((?:19|20)\d{2})")
+# Formulas, inline code, urls and markdown scaffolding: noise in a keyword query.
+_NOISE_RE = re.compile(
+    r"\$[^$]*\$|\\\w+(?:\{[^}]*\})?|`[^`]*`|https?://\S+|\|[^\n]*\||^[#>\-\*\d\.\s]+",
+    re.MULTILINE)
+
+
+def _clean_phrase(text: str) -> str:
+    """Strip markup/math and glue the remaining words back together."""
+    return " ".join(_WORD_RE.findall(_NOISE_RE.sub(" ", text)))
+
+
+def topic_terms(text: str) -> set[str]:
+    """Distinctive lowercase terms of a research topic.
+
+    Drops grammar words and cross-field academic filler, so what remains is
+    what actually identifies the subject ("spectral", "relu", "frequency",
+    "kernel") rather than what identifies a paper as a paper ("empirical",
+    "study", "comparison").
+    """
+    out: set[str] = set()
+    for w in _WORD_RE.findall(_NOISE_RE.sub(" ", text.lower())):
+        w = w.strip("-")
+        if len(w) >= 4 and w not in _STOPWORDS and w not in _GENERIC_TERMS:
+            out.add(w)
+    return out
+
+
+# CrossRef indexes a paper's FIGURES, TABLES and supplements as records of
+# their own, with the caption as the "title". They match topical keywords
+# perfectly ("Table 6: Extra layer in attention with ReLU and CNN with
+# sigmoid.") and are never citable work.
+# The `\b` after the keyword is what keeps real papers out: "Figures of Merit
+# …" and "Tabular Data Learning …" have a word character right after
+# figure/tab, so they never match.
+_ARTIFACT_TITLE_RE = re.compile(
+    r"^\s*(?:supplementary\s+|extended\s+data\s+|supporting\s+)?"
+    r"(?:fig(?:ure)?|table|scheme|chart|plate|exhibit|appendix|"
+    r"algorithm|listing|movie|video|dataset)\b"
+    r"\s*(?:[\dIVXivx]{1,4}|[A-Za-z])?\s*"
+    r"(?:[.:\)—–-]|figure\s+supplement|$)",
+    re.IGNORECASE)
+
+
+# Publishers also register the supplementary FILE beside the paper, keeping the
+# paper's own title and appending the file tag — "…in Coordinate Networks_supp1-3".
+# On topic, indistinguishable by keywords, still not the citable record.
+_SUPPLEMENT_SUFFIX_RE = re.compile(
+    r"[_\-\s](?:supp|suppl|supplement(?:ary|al)?|esm)"
+    r"(?:[\s_\-]*(?:material|information|data|file|note|method|text)s?)?"
+    r"[\s_\-]*[\dIVXivx]*(?:\s*[-–—]\s*[\dIVXivx]+)?\s*$",
+    re.IGNORECASE)
+
+
+def is_artifact_record(paper_title: str) -> bool:
+    """True for a figure/table/supplement record masquerading as a paper."""
+    title = paper_title or ""
+    return bool(_ARTIFACT_TITLE_RE.match(title)
+                or _SUPPLEMENT_SUFFIX_RE.search(title))
+
+
+def looks_like_paper(title: str, authors=None, year=None) -> bool:
+    """Is this search hit citable work, as opposed to an indexed fragment?
+
+    Academic indexes carry more than papers. CrossRef registers figures, tables
+    and supplements; Springer registers its reference works term by term, so a
+    query containing "spectral" and "width" returns encyclopedia stubs titled
+    "spectral width", "laser spectral width", "pulse spectral width" — perfect
+    keyword matches, zero authors, no year, and nothing to cite. Real work has a
+    title plus at least one of an author or a year.
+    """
+    title = (title or "").strip()
+    if not title or is_artifact_record(title):
+        return False
+    return bool((authors or []) or year)
+
+
+def title_on_topic(paper_title: str, terms: set[str], min_overlap: int = 2) -> bool:
+    """Backstop: does a search hit share enough distinctive terms with the topic?
+
+    Deliberately lenient (two terms). Precision comes from asking a good
+    question — this only catches what a keyword query still drags in.
+    """
+    if not terms or not paper_title:
+        return False
+    if is_artifact_record(paper_title):
+        return False
+    return len(topic_terms(paper_title) & terms) >= min_overlap
+
+
+def search_queries_from_topic(prose: str, title: str = "", limit: int = 4) -> list[str]:
+    """Short keyword queries for academic search, from a prose research topic.
+
+    Deterministic on purpose: this feeds the fallback that runs *because* the
+    LLM-backed Deep Research just failed, so it must not need an LLM itself.
+
+    Sources, most precise first:
+      1. emphasised spans (``**spectral bias in two-layer ReLU MLPs**``);
+      2. the paper title, minus generic academic words;
+      3. named prior work (``Rahaman et al. (2019)`` → ``Rahaman 2019 …``);
+      4. the topic's most distinctive remaining terms.
+
+    Every query is capped at 8 words — long queries are what turn a keyword
+    search back into fuzzy prose matching.
+    """
+    def _shorten(words: list[str], cap: int = 8) -> str:
+        keep, seen = [], set()
+        for w in words:
+            low = w.lower()
+            if low in _STOPWORDS or low in _GENERIC_TERMS or low in seen:
+                continue
+            seen.add(low)
+            keep.append(w)
+        return " ".join((keep or words)[:cap])
+
+    queries: list[str] = []
+
+    def _add(q: str):
+        q = " ".join(q.split())
+        if len(q.split()) < 2:
+            return
+        low = q.lower()
+        if any(low == e.lower() for e in queries):
+            return
+        queries.append(q)
+
+    for m in _EMPHASIS_RE.finditer(prose or ""):
+        _add(_shorten(_clean_phrase(m.group(1) or m.group(2) or "").split()))
+
+    if title:
+        _add(_shorten(_clean_phrase(title).split()))
+
+    # Rank by how often the topic actually repeats a term — a subject gets
+    # restated, incidental vocabulary does not. (Ranking by word LENGTH picks
+    # things like "frequency-dependent higher-dimensional": long, not central.)
+    corpus = f"{title}\n{prose or ''}"
+    wanted = topic_terms(corpus)
+    counts: dict[str, int] = {}
+    for w in _WORD_RE.findall(_NOISE_RE.sub(" ", corpus.lower())):
+        w = w.strip("-")
+        if w in wanted:
+            counts[w] = counts.get(w, 0) + 1
+    ranked = sorted(wanted, key=lambda w: (-counts.get(w, 0), w))
+
+    # Anchor named prior work to the TITLE's own words, in title order — never
+    # to corpus frequency. Frequency shifts with how the prose happens to be
+    # worded on a given run, and two frequent-but-unrelated terms silently
+    # compose into another field's term of art: a real run ranked "width" high
+    # (the hypothesis is about width-invariance) and asked for "Rahaman 2019
+    # spectral width", which is a laser/radar concept — back came SpringerReference
+    # glossary entries for spectral line width and a paper on radar echo
+    # turbulence. The title is curated and stable across runs.
+    anchor_source = _clean_phrase(title) or _clean_phrase(
+        next((m.group(1) or m.group(2) or "" for m in _EMPHASIS_RE.finditer(prose or "")), ""))
+    anchor_terms: list[str] = []
+    for w in anchor_source.split():
+        low = w.lower().strip("-")
+        if low in topic_terms(anchor_source) and low not in anchor_terms:
+            anchor_terms.append(low)
+    anchor = " ".join(anchor_terms[:2]) or " ".join(ranked[:1])
+
+    for surname, year in _AUTHOR_YEAR_RE.findall(corpus):
+        _add(f"{surname} {year} {anchor}".strip())
+
+    if ranked:
+        _add(" ".join(ranked[:5]))
+
+    return queries[:limit]
+
+
+# ═══════════════════════════════════════════════════════════
 #  HTTP helper
 # ═══════════════════════════════════════════════════════════
 

@@ -44,10 +44,14 @@ class TestBodyParsing:
 class TestFallbackSurvey:
     """The pipeline mixin method, exercised on a bare host object."""
 
-    def _host(self, tmp_path):
+    def _host(self, tmp_path, config=None):
         from ark.pipeline import PipelineMixin
         h = SimpleNamespace()
         h.state_dir = tmp_path
+        # The survey builds its search queries from the project's own title and
+        # idea (its Related Work names real prior papers), so a host without a
+        # config is not a realistic stub.
+        h.config = config if config is not None else {}
         h.log = lambda *a, **k: None
         h.log_step = lambda *a, **k: None
         h._fallback_literature_survey = PipelineMixin._fallback_literature_survey.__get__(h)
@@ -66,7 +70,7 @@ class TestFallbackSurvey:
         # The report must admit what it is, so downstream agents aren't misled.
         assert "THINNER" in report
         marker = (tmp_path / "research_degraded.txt").read_text()
-        assert "1 papers" in marker
+        assert "1 on-topic papers kept" in marker
 
     def test_no_results_still_records_the_gap(self, tmp_path):
         host = self._host(tmp_path)
@@ -80,6 +84,76 @@ class TestFallbackSurvey:
         with patch("ark.citation.search_papers", side_effect=RuntimeError("net down")):
             assert host._fallback_literature_survey("x") is False
         assert (tmp_path / "research_degraded.txt").exists()
+
+    def test_prose_topic_is_asked_as_short_keyword_queries(self, tmp_path):
+        """The DR prompt is prose written for an LLM. Sent verbatim to keyword
+        search it fuzzy-matches incidental words: a real run on spectral bias in
+        ReLU MLPs got dentistry, civil engineering and CrossRef figure records.
+        """
+        host = self._host(tmp_path, config={
+            "title": "Empirical Investigation of Spectral Bias in Small ReLU MLPs",
+            "research_idea": "Two-layer ReLU MLPs show spectral bias: low-frequency "
+                             "modes converge before high-frequency ones under "
+                             "gradient descent. Rahaman et al. (2019) named it.",
+        })
+        seen = []
+
+        def _capture(q, max_results=15):
+            seen.append(q)
+            return [SimpleNamespace(
+                title="On the Spectral Bias of Neural Networks",
+                authors=["N Rahaman"], venue="ICML", year=2019, abstract="")]
+
+        with patch("ark.citation.search_papers", _capture):
+            assert host._fallback_literature_survey(
+                "## Research Topic Summary\n\nThis project provides an empirical "
+                "study of **spectral bias in two-layer ReLU MLPs** trained on "
+                "univariate multi-frequency targets. y(x) = $\\sin(2\\pi k x)$\n") is True
+
+        assert seen, "no search was issued"
+        for q in seen:
+            assert len(q.split()) <= 8, f"prose leaked into the query: {q!r}"
+            for junk in ("##", "**", "$", "\\", "\n"):
+                assert junk not in q, f"markup leaked into the query: {q!r}"
+        assert any("spectral" in q.lower() for q in seen), seen
+        # The report records what was actually asked, for auditing.
+        assert "Search queries used:" in (tmp_path / "deep_research.md").read_text()
+
+    def test_off_topic_hits_are_discarded(self, tmp_path):
+        """CrossRef returns real papers from unrelated fields; they must not
+        become the paper's literature base."""
+        host = self._host(tmp_path, config={
+            "title": "Empirical Investigation of Spectral Bias in Small ReLU MLPs",
+            "research_idea": "spectral bias, two-layer ReLU MLP, gradient descent, "
+                             "sinusoidal modes, frequency convergence, neural tangent kernel",
+        })
+        hits = [
+            SimpleNamespace(title="On the Spectral Bias of Neural Networks",
+                            authors=[], venue="ICML", year=2019, abstract=""),
+            SimpleNamespace(title="Study on Tunnel Face Failure Mechanism in Two-Layer Soils",
+                            authors=[], venue="", year=2021, abstract=""),
+            SimpleNamespace(title="Figure 6. Pathway bias and neuromodulatory control",
+                            authors=[], venue="", year=2020, abstract=""),
+        ]
+        with patch("ark.citation.search_papers", return_value=hits):
+            assert host._fallback_literature_survey("spectral bias in ReLU MLPs") is True
+
+        report = (tmp_path / "deep_research.md").read_text()
+        assert "On the Spectral Bias of Neural Networks" in report
+        assert "Tunnel Face" not in report
+        assert "Figure 6" not in report
+        assert "off-topic hits discarded" in (tmp_path / "research_degraded.txt").read_text()
+
+    def test_thin_topic_disables_the_relevance_filter(self, tmp_path):
+        """With a one-word topic there is no vocabulary to judge against. The
+        filter must stand down rather than reject everything and leave the paper
+        with no literature at all."""
+        host = self._host(tmp_path, config={})
+        papers = [SimpleNamespace(title="Attention Is All You Need", authors=[],
+                                  venue="NeurIPS", year=2017, abstract="")]
+        with patch("ark.citation.search_papers", return_value=papers):
+            assert host._fallback_literature_survey("transformers") is True
+        assert "Attention Is All You Need" in (tmp_path / "deep_research.md").read_text()
 
 
 def test_delivery_contract_flags_degraded_research(tmp_path):
