@@ -47,24 +47,29 @@ _DRIVER = Path(__file__).parent / "sdk_driver.py"
 
 # How much conversation history may accumulate before compaction.
 #
-# Calibrated, not guessed. Replaying a real run's event stream at different
-# budgets gives total input tokens:
+# MEASURED, and the measurement overturned the idea this runtime was built
+# on. Two A/B runs of the same 2-page paper against the stock CLI baseline
+# (12.5M input tokens, $13.19, score 6.8):
 #
-#     90k → 100%   50k → 74%   30k → 54%   20k → 39%   12k → 32%   8k → 32%
+#     90k budget → 11.4M tokens, $11.99   (compaction fired 3/15 sessions)
+#     24k budget → 27.6M tokens, $29.75   (compaction fired 4/9; run died)
 #
-# Two things follow. A generous budget buys almost nothing: at 90k the
-# condenser fired in 3 of 15 conversations and the run cost what the stock
-# CLI cost. And there is a floor near 32%, because every request must still
-# carry the system prompt, the tool definitions and the recent turns, no
-# matter how hard history is compacted. Going below that needs fewer turns,
-# not a smaller budget.
+# Compacting harder made it more than twice as expensive. Sessions in the
+# 24k run reached 463 and 408 agent actions with 37 and 92 compactions:
+# starved of its working context, the agent re-read files, re-ran commands
+# and re-planned. Turn count exploded, and total input with it.
 #
-# ~20k sits just above the floor while leaving a working window. The
-# absolute ceiling matters as much as the fraction: on a million-token model
-# a percentage alone would hand back a budget that never binds.
-_BUDGET_FRACTION = float(os.environ.get("ARK_CONTEXT_BUDGET_FRACTION", "0.12"))
-_BUDGET_CEILING = int(os.environ.get("ARK_CONTEXT_BUDGET_CEILING", "40000"))
-_BUDGET_FLOOR = int(os.environ.get("ARK_CONTEXT_BUDGET_FLOOR", "20000"))
+# An offline replay of the event stream had predicted 20k would cost 39% of
+# 90k. That prediction was worthless because it assumed the event stream is
+# independent of the budget. It is not — the budget changes what the agent
+# does, and that feedback dominates everything else.
+#
+# So: a generous budget only, as a ceiling against pathological histories,
+# never as a cost lever. The real lever is turn count, which this knob
+# cannot touch.
+_BUDGET_FRACTION = float(os.environ.get("ARK_CONTEXT_BUDGET_FRACTION", "0.45"))
+_BUDGET_CEILING = int(os.environ.get("ARK_CONTEXT_BUDGET_CEILING", "150000"))
+_BUDGET_FLOOR = int(os.environ.get("ARK_CONTEXT_BUDGET_FLOOR", "60000"))
 _FALLBACK_CONTEXT_TOKENS = int(os.environ.get("ARK_CONTEXT_FALLBACK_TOKENS", "200000"))
 # Secondary guard, for runs that accumulate many tiny events.
 _MAX_EVENTS = int(os.environ.get("ARK_CONTEXT_MAX_EVENTS", "120"))

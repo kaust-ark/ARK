@@ -45,26 +45,32 @@ class TestRuntimeSelection:
 class TestBudget:
     def test_budget_scales_with_the_model_window(self):
         with patch.object(sr, "_context_window", return_value=200_000), \
-             patch.object(sr, "_BUDGET_FRACTION", 0.12), \
-             patch.object(sr, "_BUDGET_CEILING", 40_000), \
-             patch.object(sr, "_BUDGET_FLOOR", 20_000):
-            assert sr.history_token_budget("any/model") == 24_000
+             patch.object(sr, "_BUDGET_FRACTION", 0.45), \
+             patch.object(sr, "_BUDGET_CEILING", 150_000), \
+             patch.object(sr, "_BUDGET_FLOOR", 60_000):
+            assert sr.history_token_budget("any/model") == 90_000
 
     def test_a_huge_window_is_capped_by_the_absolute_ceiling(self):
         """A percentage alone would hand a 1M-token model a budget that never
         binds, which is how the first calibration bought nothing."""
         with patch.object(sr, "_context_window", return_value=1_000_000), \
-             patch.object(sr, "_BUDGET_CEILING", 40_000):
-            assert sr.history_token_budget("huge/model") == 40_000
+             patch.object(sr, "_BUDGET_CEILING", 150_000):
+            assert sr.history_token_budget("huge/model") == 150_000
 
-    def test_unknown_model_gets_a_conservative_budget(self):
+    def test_unknown_model_gets_a_workable_budget(self):
         with patch("litellm.get_model_info", side_effect=Exception("unknown")):
-            assert sr.history_token_budget("made/up") >= 20_000
+            assert sr.history_token_budget("made/up") >= 60_000
+
+    def test_budget_is_never_starvation_tight(self):
+        """A 24k budget cost 2.5x MORE than 90k: the agent lost its working
+        context and repeated work for hundreds of turns. The floor exists to
+        make that configuration unreachable by accident."""
+        assert sr._BUDGET_FLOOR >= 60_000
 
     def test_a_tiny_window_still_leaves_room_to_work(self):
         with patch.object(sr, "_context_window", return_value=8_000), \
-             patch.object(sr, "_BUDGET_FLOOR", 20_000):
-            assert sr.history_token_budget("tiny/model") == 20_000
+             patch.object(sr, "_BUDGET_FLOOR", 60_000):
+            assert sr.history_token_budget("tiny/model") == 60_000
 
 
 class TestOutputContract:
