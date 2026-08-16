@@ -107,6 +107,30 @@ class TestOutputContract:
         assert out == {"result": "", "usage": None,
                        "error_code": None, "error_detail": None}
 
+    def test_rejected_tool_calls_survive_a_successful_run(self):
+        """A run with no error code can still have hidden failures.
+
+        This is the false-success path: the agent's own summary says the file
+        was written, the run reports success, and the only trace that the write
+        was refused is this list.
+        """
+        stdout = json.dumps({
+            "kind": "__result__", "result": "The file has been created.",
+            "usage": None, "error_code": None, "error_detail": None,
+            "failed_tools": ["str_replace_editor: Ran into [Errno 13] "
+                             "Permission denied: '/local_ok.txt'"],
+        })
+        out = self._runtime().parse_output(stdout)
+        assert out["error_code"] is None          # the run "succeeded"
+        assert len(out["failed_tools"]) == 1
+        assert "Permission denied" in out["failed_tools"][0]
+
+    def test_a_clean_run_reports_no_rejected_calls(self):
+        stdout = json.dumps({"kind": "__result__", "result": "done",
+                             "usage": None, "error_code": None,
+                             "error_detail": None})
+        assert self._runtime().parse_output(stdout)["failed_tools"] == []
+
 
 class TestCommandBuilding:
     def test_config_carries_the_token_budget_and_is_not_world_readable(self, tmp_path):
@@ -128,3 +152,71 @@ class TestCommandBuilding:
         with patch.object(sr, "openhands_python", return_value=None):
             cmd = rt.build_command("do it", "stay here", tmp_path)
         assert cmd[0] == "openhands"
+
+
+class TestDriverReadsRealSdkFields:
+    """The driver names SDK attributes that no unit test can otherwise reach.
+
+    ``sdk_driver`` runs under OpenHands' own interpreter, so its callback is
+    invisible to this suite — a renamed field would break silently and the
+    failure mode is quiet (rejected tool calls stop being recorded, and the
+    false-success guard goes dark without a single error). Assert the names
+    against the installed SDK, skipping where that interpreter is absent.
+    """
+
+    def test_observation_fields_the_driver_depends_on_still_exist(self):
+        import subprocess
+
+        py = sr.openhands_python()
+        if not py:
+            pytest.skip("no OpenHands interpreter on this machine")
+        probe = (
+            "from openhands.sdk.event import ObservationEvent;"
+            "from openhands.sdk.tool import Observation;"
+            "assert 'tool_name' in ObservationEvent.model_fields;"
+            "assert 'is_error' in Observation.model_fields;"
+            "print('ok')"
+        )
+        r = subprocess.run([py, "-c", probe], capture_output=True, text=True,
+                           timeout=180, env={**os.environ,
+                                             "OPENHANDS_SUPPRESS_BANNER": "1"})
+        assert "ok" in r.stdout, f"SDK shape changed: {r.stderr[-400:]}"
+
+
+class TestSandboxIsRecordedPerCall:
+    """Confinement must be evidenced per call, not asserted once at startup.
+
+    The pipeline's "sandbox: STRUCTURAL" banner is a capability check made
+    before any agent runs — it proves the image exists, not that this call
+    entered it. The driver reports the real outcome (including a sandbox that
+    failed to start and fell back to the host) and nothing was reading it.
+    """
+
+    def _runtime(self):
+        return sr.OpenHandsSDK("openrouter/x", "openrouter/x")
+
+    def test_a_sandbox_that_started_is_reported(self):
+        stdout = "\n".join([
+            json.dumps({"kind": "__sandbox__",
+                        "text": "apptainer: agent confined to /img/server.sif"}),
+            json.dumps({"kind": "__result__", "result": "ok", "usage": None,
+                        "error_code": None, "error_detail": None}),
+        ])
+        out = self._runtime().parse_output(stdout)
+        assert "confined to" in out["sandbox"]
+
+    def test_a_sandbox_that_fell_back_to_the_host_is_reported(self):
+        stdout = "\n".join([
+            json.dumps({"kind": "__sandbox__",
+                        "text": "apptainer sandbox FAILED to start (OSError: no "
+                                "such file) — running on the HOST, unconfined"}),
+            json.dumps({"kind": "__result__", "result": "ok", "usage": None,
+                        "error_code": None, "error_detail": None}),
+        ])
+        out = self._runtime().parse_output(stdout)
+        assert "FAILED" in out["sandbox"] and "unconfined" in out["sandbox"]
+
+    def test_an_unsandboxed_run_reports_nothing_rather_than_claiming_success(self):
+        stdout = json.dumps({"kind": "__result__", "result": "ok", "usage": None,
+                             "error_code": None, "error_detail": None})
+        assert not self._runtime().parse_output(stdout).get("sandbox")

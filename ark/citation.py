@@ -373,11 +373,21 @@ def title_similarity(a: str, b: str) -> float:
 
 
 def _first_author_surname(authors: list) -> str:
-    """Extract first author's surname (last token) in lowercase."""
+    """First author's surname, lowercased, from either name convention.
+
+    The two sources disagree: the APIs return "Ashish Vaswani" (surname last)
+    while BibTeX overwhelmingly writes "Vaswani, Ashish" (surname first). A
+    single last-token rule reads the comma form as "ashish", so comparing a
+    bib entry against an API hit would never match and every author check
+    would quietly fail open. The comma is the discriminator — where it is
+    present, everything before it is the surname.
+    """
     if not authors:
         return ""
     name = authors[0] if isinstance(authors[0], str) else str(authors[0])
-    parts = name.replace(",", " ").split()
+    if "," in name:
+        name = name.split(",", 1)[0]
+    parts = name.split()
     return parts[-1].lower() if parts else ""
 
 
@@ -1281,15 +1291,12 @@ def replace_unverified_entries(
             continue
         try:
             parsed = parse_bib_string(r.original_bibtex)
-            title = (parsed[0]["fields"].get("title") or "").strip() if parsed else ""
+            fields = parsed[0]["fields"] if parsed else {}
+            title = (fields.get("title") or "").strip()
             if not title:
                 unresolved.append(r.entry_key)
                 continue
-            match = None
-            for p in search_papers(title, max_results=5):
-                if title_similarity(title, p.title) >= _SIMILARITY_THRESHOLD:
-                    match = p
-                    break
+            match = _same_paper(title, fields, search_papers(title, max_results=10))
             bib = fetch_bibtex(match) if match else None
             if not bib:
                 unresolved.append(r.entry_key)
@@ -1308,6 +1315,60 @@ def replace_unverified_entries(
     if replaced:
         bib_file.write_text(content)
     return replaced, unresolved
+
+
+def _as_year(value) -> int:
+    """A 4-digit year from whatever the field happens to hold, else 0."""
+    m = re.search(r"(1[89]|20)\d{2}", str(value or ""))
+    return int(m.group()) if m else 0
+
+
+def _same_paper(title: str, fields: dict, candidates) -> "Paper | None":
+    """Pick the candidate that is the SAME PAPER, not merely the same title.
+
+    Title similarity alone is not identity, and treating it as identity is how
+    a correct citation gets swapped for a wrong one. Measured on DBLP: a search
+    for "Attention Is All You Need" returns several distinct papers that reuse
+    the phrase verbatim, and the 2017 original does not appear until well past
+    the tenth hit. First-above-threshold therefore replaced a Vaswani 2017
+    reference with an unrelated recent paper — a silent corruption, because the
+    result is a real, database-confirmed entry that simply is not the work the
+    author cited.
+
+    The entry we are replacing already carries a year and an author list. Use
+    them: require agreement where the field exists, and fall back to year-only
+    agreement so an LLM's misspelled author name still resolves. When nothing
+    agrees we return None and the caller leaves the entry unresolved — a marked
+    or dropped citation is recoverable, a confidently wrong one is not.
+    """
+    want_year = _as_year(fields.get("year"))
+    raw_authors = (fields.get("author") or "").split(" and ")
+    want_author = _first_author_surname([a.strip() for a in raw_authors if a.strip()])
+    # Veto on CONTRADICTION, never on absence. arXiv and Semantic Scholar both
+    # return records with no year or no author list, and treating a missing
+    # field as disagreement would reject the very sources this second pass was
+    # widened to reach. A field only counts against a candidate when both sides
+    # state it and they disagree.
+    fallback = None
+    for p in candidates:
+        if title_similarity(title, p.title) < _SIMILARITY_THRESHOLD:
+            continue
+        # Preprint and proceedings years routinely differ by one. The APIs are
+        # not disciplined about this field — it arrives as None, "2017", or
+        # "2017-06" depending on the source — so coerce rather than trust it.
+        got_year = _as_year(getattr(p, "year", None))
+        got_author = _first_author_surname(getattr(p, "authors", None) or [])
+        if want_year and got_year and abs(got_year - want_year) > 1:
+            continue
+        if want_author and got_author and want_author != got_author:
+            continue
+        # Positive agreement on both wins outright; anything merely
+        # uncontradicted is held as a fallback behind it.
+        if want_year and got_year and want_author and got_author:
+            return p
+        if fallback is None:
+            fallback = p
+    return fallback
 
 
 def remove_entries(bib_path: str, keys: list[str]) -> list[str]:

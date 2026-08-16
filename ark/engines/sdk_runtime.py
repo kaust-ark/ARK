@@ -206,6 +206,17 @@ class OpenHandsSDK(OpenHandsCLI):
                 out["usage"] = evt.get("usage")
                 out["error_code"] = evt.get("error_code")
                 out["error_detail"] = evt.get("error_detail")
+                out["failed_tools"] = evt.get("failed_tools") or []
+            elif evt.get("kind") == "__sandbox__":
+                # Per-call proof that confinement actually happened. The
+                # pipeline's one-time "sandbox: STRUCTURAL" banner reports a
+                # CAPABILITY check made before any agent ran; it says the image
+                # is present, not that this call went into it. The driver emits
+                # this event either way — it also reports a sandbox that failed
+                # to start and fell back to the host — and nothing was reading
+                # it, so a run could degrade to unconfined execution with the
+                # banner still claiming otherwise.
+                out["sandbox"] = evt.get("text") or ""
             elif evt.get("kind") == "MessageEvent" and evt.get("text"):
                 last_agent_msg = evt["text"]
         if not out["result"]:

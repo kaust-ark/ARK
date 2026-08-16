@@ -485,6 +485,26 @@ Execute the task and update the corresponding files.
                     usage_record = parsed.get("usage")
                     oh_error_code = parsed.get("error_code")
                     oh_error_detail = parsed.get("error_detail")
+                    # Tool calls the environment REJECTED. Not fatal — the agent
+                    # is allowed to fail and recover — but they must be visible,
+                    # because the failure mode they precede is silent: the agent
+                    # summarises the rejected call as if it had worked, and every
+                    # later phase builds on a file that was never written.
+                    # Observed end-to-end on a local 32B: write to "/local_ok.txt"
+                    # → "Permission denied" → "The file has been created."
+                    # Weaker models do this far more, and free/local models are
+                    # exactly where we now run. Logged rather than raised: a
+                    # rejected call is often a legitimate probe.
+                    for line in (parsed.get("failed_tools") or [])[-3:]:
+                        self.log(f"  [{agent_type}] tool call rejected — {line}",
+                                 "WARN")
+                    sandbox_note = parsed.get("sandbox")
+                    if sandbox_note:
+                        # WARN when the sandbox fell back to the host, INFO when
+                        # it held. Either way it is now on the record per call.
+                        held = "FAILED" not in sandbox_note.upper()
+                        self.log(f"  [{agent_type}] {sandbox_note}",
+                                 "INFO" if held else "WARN")
                 else:
                     result = stdout
 

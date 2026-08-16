@@ -187,15 +187,33 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     figs = ([f for f in figs_dir.glob("*")
              if f.suffix in (".png", ".pdf") and f.stat().st_size > MIN_FIG_BYTES]
             if figs_dir.exists() else [])
+    # Count DISTINCT figures, not files: the generator emits a .png and a .pdf
+    # of the same plot, so a file count doubles every figure and makes any
+    # ratio meaningless.
+    made = {f.stem for f in figs}
+    used = {Path(m).stem for m in
+            re.findall(r"\\includegraphics\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}", tex)}
     n_inc = len(re.findall(r"\\includegraphics", tex))
-    if len(figs) >= 2 and n_inc == 0:
+    unused = sorted(made - used)
+    if made and not (made & used):
         rep.findings.append(Finding(
             "figures_referenced", "violated", "soft",
-            f"{len(figs)} usable figures generated, none referenced in the paper"))
+            f"{len(made)} usable figures generated, none referenced in the paper"))
+    elif len(made) >= 3 and len(made & used) * 2 < len(made):
+        # The old rule only fired at ZERO references, so a paper that generated
+        # four figures and shipped one passed cleanly. That is the case that
+        # actually occurs: a writing pass deleted three \includegraphics blocks
+        # and the contract reported "all checks passed" on a paper missing two
+        # thirds of its evidence. Producing a spare figure is normal; leaving
+        # most of them on the floor is worth a look.
+        rep.findings.append(Finding(
+            "figures_referenced", "violated", "soft",
+            f"only {len(made & used)} of {len(made)} generated figures are "
+            f"referenced; unused: {', '.join(unused)}"))
     else:
         rep.findings.append(Finding("figures_referenced",
                                     "pass" if figs else "skipped", "soft",
-                                    f"{len(figs)} figures / {n_inc} includegraphics"))
+                                    f"{len(made)} figures / {n_inc} includegraphics"))
 
     # ── page budget ───────────────────────────────────────────────────────
     npages = _pdf_pages(pdf)

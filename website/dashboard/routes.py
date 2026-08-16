@@ -696,6 +696,29 @@ def _reject_unknown_backend(value: str, valid: frozenset, label: str) -> None:
     base = (value or "local").split(":", 1)[0]
     if base not in valid:
         raise HTTPException(400, f"Unknown {label} compute backend: {value!r}")
+    # A cloud backend on a deployment with no cloud configured. The experiment
+    # chips are already hidden for this, but the ORCHESTRATOR's "☁️ Cloud" radio
+    # was never gated, so it stayed selectable on a host with no cloud project
+    # and no `sky` installed. Rejecting here rather than at launch matters: past
+    # that point the project row exists and the user watches a "running" project
+    # fail minutes later on a missing optional dependency.
+    if base == "skypilot" and not _any_cloud_configured():
+        raise HTTPException(
+            400,
+            "Cloud compute is not configured on this deployment. Choose Local or "
+            "Slurm, or ask an operator to configure a cloud provider in settings.",
+        )
+
+
+def _any_cloud_configured() -> bool:
+    """Whether ANY SkyPilot cloud has an operator-configured launcher.
+
+    Same signal ``/api/system`` hands the UI, kept in one place so the button
+    the user sees and the check that admits the request cannot disagree.
+    """
+    return bool(settings.cloud_gcp_project
+                or settings.cloud_launcher_role_arn
+                or settings.cloud_launcher_aws_credential_source)
 
 
 async def _validate_instance_type_or_400(backend: str, instance_type: str) -> str:

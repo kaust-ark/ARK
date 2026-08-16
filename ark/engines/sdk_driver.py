@@ -259,7 +259,14 @@ def main() -> int:
     )
 
     state = {"last_agent_message": "", "finish_message": "",
-             "error_code": None, "error_detail": ""}
+             "error_code": None, "error_detail": "",
+             # Tool calls the environment rejected. An agent that claims
+             # success over a failed tool call is the single most damaging
+             # thing it can do, because every later phase believes it.
+             # Observed on a local 32B: it wrote to "/local_ok.txt", got
+             # "Permission denied", and finished with "The file has been
+             # created." The run reported success and produced nothing.
+             "failed_tools": []}
 
     def _callback(event) -> None:
         kind = type(event).__name__
@@ -278,6 +285,16 @@ def main() -> int:
                 msg = getattr(action, "message", None)
                 if isinstance(msg, str) and msg.strip():
                     state["finish_message"] = msg
+        elif kind == "ObservationEvent":
+            # Record tool calls the environment rejected. These are NOT fatal
+            # (the agent may recover), but they must survive to the caller: a
+            # model that reports success over a failed tool call otherwise
+            # hands the next phase a false premise, and nothing downstream can
+            # tell the difference between "wrote the section" and "tried to".
+            obs = getattr(event, "observation", None)
+            if getattr(obs, "is_error", False):
+                tool = str(getattr(event, "tool_name", "") or "tool")
+                state["failed_tools"].append(f"{tool}: {text[:120]}")
         elif kind == "ConversationErrorEvent":
             # ONLY this one ends a run. Treating every *Error* event as fatal
             # (as this driver first did) kills runs the CLI path survives:
@@ -352,6 +369,7 @@ def main() -> int:
         "usage": usage,
         "error_code": state["error_code"],
         "error_detail": state["error_detail"],
+        "failed_tools": state["failed_tools"][-10:],
     })
     return rc
 

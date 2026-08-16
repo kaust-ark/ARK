@@ -2715,18 +2715,35 @@ a {{ color: #0d9488; }}
             except Exception as e:
                 self.log(f"Telegram notification failed: {e}, falling back to email", "WARN")
 
-        # Fallback: email
+        # Fallback: email, over the same SMTP pipe the dashboard uses.
+        #
+        # This used to shell out to `mail`, which is not installed on our hosts
+        # (nor on most containers), so every fallback died on ENOENT and the
+        # notification was lost — logged, but lost. Telegram covers the normal
+        # case, which is exactly why the broken path went unnoticed: it only
+        # runs when Telegram is unconfigured or already failing, i.e. when the
+        # message matters most. The dashboard's mailer (relay → SMTP auth →
+        # sendmail) is a real transport that is known to work here; import it
+        # lazily and tolerate its absence, the same way ark.access does, so the
+        # library half of the codebase keeps working standalone.
+        subject_line = f"[{self.project_name.upper()}] {subject}"
+        body = re.sub(r"<[^>]+>", "", full_message)     # Telegram HTML → text
         try:
-            email = self.config.get("notification_email", "contact@idea2paper.org")
-            subprocess.run(
-                ["mail", "-s", f"[{self.project_name.upper()}] {subject}", email],
-                input=full_message,
-                text=True,
-                timeout=30,
-            )
-            self.log(f"Email notification sent: {subject}", "INFO")
+            from website.dashboard.config import get_settings
+            from website.dashboard.notify import send_admin_notice
+            settings = get_settings()
+            admins = getattr(settings, "admin_emails", None) or []
+            email = (self.config.get("notification_email")
+                     or (admins[0] if admins else "")
+                     or "contact@idea2paper.org")
+            if send_admin_notice(settings, email, subject_line, body):
+                self.log(f"Email notification sent: {subject}", "INFO")
+            else:
+                self.log(f"Email notification NOT sent (no working SMTP "
+                         f"transport): {subject}", "WARN")
         except Exception as e:
-            self.log(f"Failed to send notification: {e}", "WARN")
+            self.log(f"Failed to send notification: {type(e).__name__}: {e}",
+                     "WARN")
 
     # ========== Telegram Enhancements ==========
 

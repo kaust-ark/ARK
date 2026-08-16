@@ -3686,6 +3686,27 @@ async function loadGateBanner() {
   if (slurmLbl) slurmLbl.style.display = window._sysSlurm ? '' : 'none';
   const orchSlurmLbl = document.getElementById('hero-orch-backend-slurm-label');
   if (orchSlurmLbl) orchSlurmLbl.style.display = window._sysSlurm ? '' : 'none';
+  // Same treatment for the orchestrator's "☁️ Cloud" radio. The per-cloud
+  // EXPERIMENT chips have always been gated on operator configuration, but
+  // these three were not, so on a deployment with no cloud configured (and no
+  // `sky` installed) the option still looked available and the run only failed
+  // once the project was already created. The API rejects it too — this just
+  // stops offering a button that cannot work.
+  ['hero', 'continue', 'restart'].forEach(prefix => {
+    const lbl = document.getElementById(prefix + '-orch-backend-skypilot-label');
+    if (!lbl) return;
+    const usable = window._sysCloudGcp || window._sysCloudAws;
+    lbl.style.display = usable ? '' : 'none';
+    if (!usable) {
+      const radio = lbl.querySelector('input[type="radio"]');
+      if (radio && radio.checked) {
+        radio.checked = false;
+        const local = document.querySelector(
+          `input[name="${radio.name}"][value="local"]`);
+        if (local) local.checked = true;
+      }
+    }
+  });
   if (!window._sysSlurm) {
     // No slurm on this host. Default the experiments backend to the first configured
     // cloud so the form always submits a valid backend rather than falling back to

@@ -73,3 +73,40 @@ class TestComputeFactory:
         with pytest.raises(NotImplementedError):
             from_config({"orchestrator_compute_backend": {"type": "skypilot"}},
                         "proj", tmp_path, is_orchestrator=True)
+
+
+class TestCloudBackendRequiresConfiguration:
+    """A cloud backend must be refused where no cloud is configured.
+
+    The orchestrator's "☁️ Cloud" radio was never gated on operator settings
+    (the per-cloud experiment chips always were), so on a deployment with no
+    cloud project and no `sky` installed it stayed selectable. The failure then
+    landed after the project row existed, as a missing optional dependency
+    minutes into a "running" project. Reject it at the write path instead.
+    """
+
+    def _reject(self, value, configured):
+        from unittest.mock import patch
+        from website.dashboard import routes
+        with patch.object(routes, "_any_cloud_configured", return_value=configured):
+            routes._reject_unknown_backend(value, frozenset({"local", "slurm", "skypilot"}),
+                                           "orchestrator")
+
+    def test_cloud_is_refused_when_nothing_is_configured(self):
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as e:
+            self._reject("skypilot", configured=False)
+        assert e.value.status_code == 400
+        assert "not configured" in e.value.detail
+
+    def test_the_compound_selector_is_refused_too(self):
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException):
+            self._reject("skypilot:gcp", configured=False)
+
+    def test_cloud_is_admitted_once_configured(self):
+        self._reject("skypilot:gcp", configured=True)      # must not raise
+
+    def test_local_and_slurm_are_never_touched_by_this_gate(self):
+        self._reject("local", configured=False)
+        self._reject("slurm", configured=False)
