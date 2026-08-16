@@ -858,12 +858,24 @@ class PipelineMixin:
         # Seed the Apptainer experiment-sandbox helper so experiments run isolated
         # from the host. Best-effort: no-op if apptainer / base image are missing.
         try:
-            from ark.sandbox import write_sandbox_helper, sandbox_available, sandbox_sif_path
-            if sandbox_available():
-                if write_sandbox_helper(self.code_dir):
-                    self.log_step("Experiment sandbox ready (Apptainer): ./sandbox/run.sh", "success")
-            else:
-                self.log(f"Experiment sandbox unavailable (apptainer/image at {sandbox_sif_path()} missing) — experiments will run on host", "WARN")
+            from ark.sandbox import (write_sandbox_helper, sandbox_available,
+                                     sandbox_sif_path, structural_sandbox_requested,
+                                     structural_sandbox_status)
+            structural, reason = structural_sandbox_status()
+            if structural:
+                self.log_step(f"Experiment sandbox: STRUCTURAL — the agent itself runs "
+                              f"inside Apptainer ({reason})", "success")
+            elif structural_sandbox_requested():
+                # Asked for and not delivered is the one case that must be loud:
+                # otherwise the run looks confined and is not.
+                self.log(f"Structural sandbox REQUESTED but unavailable: {reason} — "
+                         f"falling back to the advisory sandbox", "WARN")
+            if not structural:
+                if sandbox_available():
+                    if write_sandbox_helper(self.code_dir):
+                        self.log_step("Experiment sandbox ready (Apptainer): ./sandbox/run.sh", "success")
+                else:
+                    self.log(f"Experiment sandbox unavailable (apptainer/image at {sandbox_sif_path()} missing) — experiments will run on host", "WARN")
         except Exception as e:
             self.log(f"Sandbox helper seeding skipped: {e}", "WARN")
 

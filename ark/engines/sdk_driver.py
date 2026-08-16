@@ -21,7 +21,7 @@ Protocol
 --------
 argv[1]: path to a JSON file with
     {model, api_key, base_url, task, workdir, persistence_dir,
-     max_tokens, max_size, keep_first}
+     max_tokens, max_size, keep_first, sandbox}
 stdout: one JSON object per line.
     {"kind": "<EventType>", "text": "..."}      streamed, for the live log
     {"kind": "__result__", "result": ..., "usage": ..., "error_code": ...}
@@ -30,6 +30,9 @@ stdout: one JSON object per line.
 from __future__ import annotations
 
 import json
+import os
+import secrets
+import signal
 import sys
 from pathlib import Path
 
@@ -40,21 +43,32 @@ def _emit(obj: dict) -> None:
 
 
 def _event_text(event) -> str:
-    """Best-effort human text for an SDK event. Never raises."""
-    for attr in ("message", "content", "text"):
-        v = getattr(event, attr, None)
-        if isinstance(v, str) and v.strip():
-            return v
-        if isinstance(v, list):
-            parts = []
-            for p in v:
-                t = getattr(p, "text", None)
-                if t is None and isinstance(p, dict):
-                    t = p.get("text")
-                if t:
-                    parts.append(str(t))
-            if parts:
-                return " ".join(parts)
+    """Best-effort human text for an SDK event. Never raises.
+
+    A MessageEvent holds nothing readable itself — its words live one hop down,
+    at ``llm_message.content``. Reading only the event meant every agent message
+    streamed as empty text, so a run whose last word is a message (i.e. any
+    model that ends without a FinishAction) reported no result at all despite
+    having done the work. Observed on a sandboxed run: 2 MessageEvents, 6
+    actions, 6 observations, and a blank result.
+    """
+    for obj in (getattr(event, "llm_message", None), event):
+        if obj is None:
+            continue
+        for attr in ("message", "content", "text"):
+            v = getattr(obj, attr, None)
+            if isinstance(v, str) and v.strip():
+                return v
+            if isinstance(v, list):
+                parts = []
+                for p in v:
+                    t = getattr(p, "text", None)
+                    if t is None and isinstance(p, dict):
+                        t = p.get("text")
+                    if t:
+                        parts.append(str(t))
+                if parts:
+                    return " ".join(parts)
     return ""
 
 
@@ -93,6 +107,126 @@ def _collect_usage(persistence_dir: str, conversation_id: str, model: str):
                 "cost_usd": cost, "duration_api_ms": 0}
     except Exception:
         return None
+
+
+def _usage_from_stats(conversation, model):
+    """Token/cost totals for a REMOTE conversation.
+
+    The sandboxed path cannot use ``_collect_usage``: a RemoteConversation
+    refuses ``persistence_dir`` outright, so there is no ``base_state.json`` on
+    this side of the HTTP boundary. The same numbers come back off the wire
+    under ``stats.usage_to_metrics``, so only the reader changes.
+    """
+    try:
+        metrics = getattr(conversation.conversation_stats,
+                          "usage_to_metrics", None) or {}
+        cost = 0.0
+        tin = tout = cread = cwrite = 0
+        for m in metrics.values():
+            cost += float(getattr(m, "accumulated_cost", 0) or 0)
+            tu = getattr(m, "accumulated_token_usage", None)
+            if tu is None:
+                continue
+            tin += int(getattr(tu, "prompt_tokens", 0) or 0)
+            tout += int(getattr(tu, "completion_tokens", 0) or 0)
+            cread += int(getattr(tu, "cache_read_tokens", 0) or 0)
+            cwrite += int(getattr(tu, "cache_write_tokens", 0) or 0)
+        if not (tin or tout or cost):
+            return None
+        return {"model": model, "input_tokens": tin, "output_tokens": tout,
+                "cache_read_tokens": cread, "cache_creation_tokens": cwrite,
+                "cost_usd": cost, "duration_api_ms": 0}
+    except Exception:
+        return None
+
+
+def _open_sandbox(sb: dict):
+    """Start the agent-server inside Apptainer and return its workspace.
+
+    This is what makes the sandbox an actual boundary. The advisory version
+    asked the agent to prefix its commands and was ignored 14 times out of 14
+    on project 76759cf7. Here the agent-server itself lives in the container,
+    so the process that would run a host command does not exist — there is no
+    command the model can choose to type that escapes.
+    """
+    from openhands.workspace import ApptainerWorkspace
+
+    # The server listens on localhost with NO authentication unless it finds a
+    # session key. These are shared HPC nodes, so an unauthenticated port would
+    # hand every other user on the box a fully-armed agent. Mint one per run.
+    #
+    # It travels via APPTAINERENV_* rather than the workspace's own forward_env,
+    # which apptainer renders as `--env KEY=value` on the command line — where
+    # `ps` shows it to exactly the users it was meant to keep out. (Verified:
+    # APPTAINERENV_* still reaches the container under --compat, which implies
+    # --cleanenv and strips plain host vars.)
+    token = secrets.token_urlsafe(32)
+    os.environ["SESSION_API_KEY"] = token
+    os.environ["APPTAINERENV_SESSION_API_KEY"] = token
+
+    # ApptainerWorkspace's own mount_dir hardcodes the container path to
+    # /workspace; we need the project at its host path instead (see
+    # ark.sandbox.structural_sandbox_config), so bind it through the env var
+    # apptainer reads directly.
+    os.environ["APPTAINER_BIND"] = sb["bind"]
+
+    # detach_logs stays on: the workspace pipes the container's output and only
+    # drains that pipe from the logging thread, so turning it off deadlocks the
+    # server at the first 64 KB of logs. Its "[APPTAINER] " prefix keeps those
+    # lines out of our JSON protocol, which ignores anything not starting "{".
+    return ApptainerWorkspace(
+        sif_file=sb["sif_file"],
+        working_dir=sb["working_dir"],
+        detach_logs=True,
+    )
+
+
+def _descendants(pid: int) -> list:
+    """Every process under ``pid``, parents before children."""
+    children: dict = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            stat = Path(f"/proc/{entry}/stat").read_text(errors="replace")
+            # comm sits in parens and may itself contain spaces or parens, so
+            # parse the fields after the LAST ')': state, ppid, ...
+            ppid = int(stat[stat.rindex(")") + 1:].split()[1])
+        except (OSError, ValueError):
+            continue
+        children.setdefault(ppid, []).append(int(entry))
+    out, stack = [], [pid]
+    while stack:
+        for kid in children.get(stack.pop(), []):
+            out.append(kid)
+            stack.append(kid)
+    return out
+
+
+def _stop_sandbox(workspace) -> None:
+    """Stop the container AND everything it spawned.
+
+    ``ApptainerWorkspace.cleanup()`` only SIGTERMs the ``apptainer run`` process
+    it started, and that does not bring the container down. Counted on this
+    host after four test runs: four full sets of starter / fakeroot shim / tini
+    / squashfuse_ll / fuse-overlayfs / agent-server still alive, 17 processes,
+    the oldest half an hour after its driver had exited. One leaked agent-server
+    per phase on a shared node is how a machine ends up unusable for everyone.
+
+    The tree has to be collected BEFORE cleanup: once the parent dies its
+    children are reparented to init and the trail is gone.
+    """
+    pid = getattr(getattr(workspace, "_process", None), "pid", None)
+    tree = _descendants(pid) if pid else []
+    try:
+        workspace.cleanup()
+    except Exception:
+        pass
+    for victim in reversed(tree + ([pid] if pid else [])):
+        try:
+            os.kill(victim, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def main() -> int:
@@ -153,27 +287,69 @@ def main() -> int:
                                    or getattr(event, "code", None) or kind)
             state["error_detail"] = text[:500]
 
-    conversation = Conversation(
-        agent=agent,
-        workspace=cfg["workdir"],
-        persistence_dir=cfg.get("persistence_dir") or None,
-        callbacks=[_callback],
-    )
+    # Structural sandbox. Failing to start the container drops the phase back
+    # onto the host rather than killing it — the sandbox is opt-in and still
+    # being proven, and a lost run costs more than an unsandboxed one. The
+    # fallback is emitted as an event so it shows up in the run log instead of
+    # being discovered months later by counting executions.
+    sandbox = cfg.get("sandbox") or None
+    workspace = None
+    if sandbox:
+        try:
+            workspace = _open_sandbox(sandbox)
+            _emit({"kind": "__sandbox__",
+                   "text": f"apptainer: agent confined to {sandbox['sif_file']}"})
+        except Exception as e:
+            _emit({"kind": "__sandbox__",
+                   "text": f"apptainer sandbox FAILED to start ({type(e).__name__}: "
+                           f"{str(e)[:300]}) — running on the HOST, unconfined"})
+            workspace = None
 
+    # Everything below runs under `finally: cleanup`. The apptainer process is
+    # our child but nothing reaps it for us, so any escape from this function
+    # that skips cleanup strands a container — and on a shared node those
+    # accumulate against every user, not just this run. Conversation() itself
+    # can raise (the server rejects the agent spec), which is exactly the path
+    # a plain trailing cleanup call would miss.
     rc = 0
+    usage = None
     try:
-        conversation.send_message(cfg["task"])
-        conversation.run()
+        conversation = Conversation(
+            agent=agent,
+            workspace=workspace if workspace is not None else cfg["workdir"],
+            # A RemoteConversation rejects persistence_dir: its state lives in
+            # the container, and usage comes back over the wire instead.
+            persistence_dir=(None if workspace is not None
+                             else (cfg.get("persistence_dir") or None)),
+            callbacks=[_callback],
+        )
+        try:
+            conversation.send_message(cfg["task"])
+            conversation.run()
+        except Exception as e:
+            state["error_code"] = state["error_code"] or type(e).__name__
+            state["error_detail"] = str(e)[:500]
+            rc = 1
+        # Read usage HERE, before the finally below stops the container: for a
+        # sandboxed run the numbers are an HTTP call to the agent-server, so
+        # collecting after cleanup would silently report nothing.
+        usage = (_usage_from_stats(conversation, cfg["model"])
+                 if workspace is not None
+                 else _collect_usage(cfg.get("persistence_dir") or "",
+                                     str(getattr(conversation, "id", "")),
+                                     cfg["model"]))
     except Exception as e:
         state["error_code"] = state["error_code"] or type(e).__name__
         state["error_detail"] = str(e)[:500]
         rc = 1
+    finally:
+        if workspace is not None:
+            _stop_sandbox(workspace)
 
     _emit({
         "kind": "__result__",
         "result": state["last_agent_message"] or state["finish_message"],
-        "usage": _collect_usage(cfg.get("persistence_dir") or "",
-                                str(getattr(conversation, "id", "")), cfg["model"]),
+        "usage": usage,
         "error_code": state["error_code"],
         "error_detail": state["error_detail"],
     })

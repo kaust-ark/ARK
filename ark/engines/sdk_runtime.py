@@ -30,6 +30,10 @@ same project:
 
     ARK_AGENT_RUNTIME=sdk   → this runtime
     ARK_AGENT_RUNTIME=cli   → the stock headless CLI (default)
+
+Assembling the Conversation ourselves also gives us somewhere to put a
+workspace, which is what the structural Apptainer sandbox needs
+(``ARK_AGENT_SANDBOX=apptainer``, off by default — see ``ark.sandbox``).
 """
 
 from __future__ import annotations
@@ -78,6 +82,20 @@ _KEEP_FIRST = 4
 
 def sdk_runtime_enabled() -> bool:
     return os.environ.get("ARK_AGENT_RUNTIME", "cli").strip().lower() == "sdk"
+
+
+def _sandbox_config(code_dir: Path) -> Optional[dict]:
+    """Structural-sandbox settings for the driver, or None.
+
+    Swallowing the error is deliberate. This runtime already promises that a
+    broken helper cannot stop a run, and an unsandboxed phase is a far smaller
+    failure than a phase that never starts.
+    """
+    try:
+        from ark.sandbox import structural_sandbox_config
+        return structural_sandbox_config(code_dir)
+    except Exception:
+        return None
 
 
 def openhands_python() -> Optional[str]:
@@ -151,6 +169,7 @@ class OpenHandsSDK(OpenHandsCLI):
             "max_tokens": history_token_budget(model),
             "max_size": _MAX_EVENTS,
             "keep_first": _KEEP_FIRST,
+            "sandbox": _sandbox_config(code_dir),
         }
         # 0600 so the API key never sits world-readable; removed by execute().
         fd, path = tempfile.mkstemp(prefix="ark-sdk-", suffix=".json")
