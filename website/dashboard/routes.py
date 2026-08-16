@@ -428,7 +428,12 @@ def _require_model_key(keys: dict, model_variant: str) -> None:
 _PREFLIGHT_MIN_USD = 2.0
 
 
-def _provider_preflight(keys: dict) -> None:
+def _is_free_model(model_variant: str) -> bool:
+    """OpenRouter's zero-cost variants are the same slug with a ':free' suffix."""
+    return (model_variant or "").strip().endswith(":free")
+
+
+def _provider_preflight(keys: dict, model_variant: str = "") -> None:
     """Fail-fast on CONFIRMED insufficient provider balance at launch.
 
     Seam: one function per provider with a queryable balance; only OpenRouter
@@ -436,7 +441,14 @@ def _provider_preflight(keys: dict) -> None:
     free and instant). Fail-OPEN on every uncertainty: no key, no endpoint,
     timeout, schema drift -> allow the launch. Only a positive signal
     'remaining < $2' blocks, with the exact numbers in the message.
+
+    A ':free' model bills nothing, so balance is irrelevant to it -- gating it
+    on credit would disable the free row exactly when it is needed (the account
+    sat at $0.27 with all paid testing blocked, which is why free models exist
+    in the picker at all).
     """
+    if _is_free_model(model_variant):
+        return
     key = keys.get("openrouter")
     if not key:
         return
@@ -633,6 +645,12 @@ def _cheapest_model_for(keys: dict) -> str:
     """Pick the cheapest first-party model for whichever provider the user has a
     key for (used by the cheap test-project preset). Falls back to Haiku — which,
     if only an OpenRouter key is present, gets routed through OpenRouter at launch.
+
+    Deliberately NOT an OpenRouter ``:free`` model, even though those cost $0:
+    the free tier is rate-limited per DAY and the quota is shared account-wide,
+    so the test preset — whose whole job is a dependable end-to-end smoke run —
+    would stall mid-pipeline on a 429 and burn the same quota the team needs for
+    manual testing. Free models stay an explicit pick in the picker's free row.
     """
     keys = keys or {}
     if keys.get("anthropic"):
@@ -2577,7 +2595,7 @@ async def api_create_project(
 
     # Model↔key match guard (fail fast; see _require_model_key).
     _require_model_key(keys, model_variant)
-    _provider_preflight(keys)
+    _provider_preflight(keys, model_variant)
 
     # Page fitting strictness: relaxed (no adjustment) | balanced (within ~1 page,
     # default) | strict (exact). Back-compat: old 'off' == new 'relaxed'.
@@ -3052,7 +3070,7 @@ async def api_restart_project(project_id: str, request: Request):
             raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
         _owner = get_user(session, project.user_id)
         _require_model_key(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
-        _provider_preflight(_get_user_keys(_owner) if _owner else {})
+        _provider_preflight(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
         # No concurrent hard-reject: if the user's lane is full the restart is
         # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
         # consistent with new-project submission.
@@ -3232,7 +3250,7 @@ async def api_continue_project(project_id: str, request: Request):
             raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
         _owner = get_user(session, project.user_id)
         _require_model_key(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
-        _provider_preflight(_get_user_keys(_owner) if _owner else {})
+        _provider_preflight(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
         # No concurrent hard-reject: if the user's lane is full the continue is
         # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
         # consistent with new-project submission.

@@ -60,6 +60,29 @@ def test_no_change_when_current():
     assert out == text and not changes
 
 
+def test_free_chips_are_never_rewritten():
+    """The row-3 ':free' chips are curated by hand. They sit right after a tracked
+    chip in the real picker, so the refresh must neither adopt them as a family
+    version nor smear a version token into their label."""
+    text = "\n".join([
+        _chip("model", "google/gemini-3.6-flash", "Gemini 3.6 Flash"),
+        _chip("model", "google/gemma-4-31b-it:free", "Gemma 4 31B"),
+        _chip("model", "nvidia/nemotron-3.5-lightning:free", "Nemotron 3.5 Lightning"),
+    ])
+    out, _ = rmv.apply_to_text(text, {"gemini-flash": "google/gemini-4-flash"})
+    assert "openrouter/google/gemma-4-31b-it:free" in out
+    assert "openrouter/nvidia/nemotron-3.5-lightning:free" in out
+    assert ">Gemma 4 31B " in out and ">Nemotron 3.5 Lightning " in out
+    assert "openrouter/google/gemini-4-flash" in out   # the paid chip did advance
+
+
+def test_free_variants_are_not_picked_as_a_family_latest():
+    """A ':free' catalog id must never win latest_per_family and be promoted into
+    a paid chip (the TRACKED patterns are end-anchored — this guards that)."""
+    latest = rmv.latest_per_family({"google/gemini-3.6-flash", "google/gemini-9.9-flash:free"})
+    assert latest["gemini-flash"] == "google/gemini-3.6-flash"
+
+
 def test_version_token():
     assert rmv._version_token("moonshotai/kimi-k3") == "3"
     assert rmv._version_token("anthropic/claude-sonnet-5") == "5"
