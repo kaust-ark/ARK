@@ -404,5 +404,19 @@ class OpenHandsCLI(AgentCLI):
 
 def get_cli_for_model(model: str, variant: Optional[str] = None) -> AgentCLI:
     """Return the agent runtime. Everything runs through OpenHands now; ``model``
-    / ``variant`` is the LiteLLM model string (e.g. ``anthropic/claude-sonnet-4-6``)."""
+    / ``variant`` is the LiteLLM model string (e.g. ``anthropic/claude-sonnet-4-6``).
+
+    ``ARK_AGENT_RUNTIME=sdk`` swaps the subprocess CLI for the in-process SDK
+    runtime, which is the only place we can bound what the conversation
+    history costs (see ark/engines/sdk_runtime.py). Both paths present the
+    same interface, so they can be A/B compared on the same project. The CLI
+    remains the default until the SDK path has been measured against it.
+    """
+    try:
+        from ark.engines.sdk_runtime import OpenHandsSDK, sdk_runtime_enabled
+        if sdk_runtime_enabled():
+            return OpenHandsSDK(model, variant or model)
+    except Exception:
+        # A broken/absent SDK must never take the agent runtime down with it.
+        pass
     return OpenHandsCLI(model, variant or model)
