@@ -166,3 +166,33 @@ class TestDriverConfig:
         with patch.object(sb, "structural_sandbox_config",
                           side_effect=RuntimeError("boom")):
             assert self._cfg(tmp_path)["sandbox"] is None
+
+
+def test_sif_lookup_ignores_a_rewritten_home(tmp_path, monkeypatch):
+    """The launcher rewrites HOME to the PROJECT directory so an agent's stray
+    dotfiles stay with the project. The SIF is a machine-level asset shared by
+    every project, so resolving it through $HOME sent the lookup into the
+    project dir and reported the image missing on a node where it was already
+    pulled. The structural sandbox then degraded to the advisory one on every
+    real run while standalone tests, which have no HOME override, passed.
+    """
+    import os
+    from ark.sandbox import agent_server_sif
+
+    monkeypatch.delenv("ARK_AGENT_SERVER_SIF", raising=False)
+    monkeypatch.delenv("ARK_AGENT_SERVER_CACHE", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "project-not-a-home"))
+
+    resolved = agent_server_sif()
+    assert str(tmp_path) not in str(resolved), (
+        f"SIF lookup followed the rewritten HOME: {resolved}")
+
+    import pwd
+    assert str(pwd.getpwuid(os.getuid()).pw_dir) in str(resolved)
+
+
+def test_explicit_cache_override_still_wins(tmp_path, monkeypatch):
+    from ark.sandbox import agent_server_sif
+    monkeypatch.delenv("ARK_AGENT_SERVER_SIF", raising=False)
+    monkeypatch.setenv("ARK_AGENT_SERVER_CACHE", str(tmp_path))
+    assert str(tmp_path) in str(agent_server_sif())

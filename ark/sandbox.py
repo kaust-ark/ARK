@@ -100,8 +100,26 @@ def agent_server_sif() -> Path:
     if override:
         return Path(override)
     cache = Path(os.environ.get("ARK_AGENT_SERVER_CACHE")
-                 or (Path.home() / ".apptainer_cache"))
+                 or (_account_home() / ".apptainer_cache"))
     return cache / (AGENT_SERVER_IMAGE.replace(":", "_").replace("/", "_") + ".sif")
+
+
+def _account_home() -> Path:
+    """The real account home, ignoring any ``HOME`` override.
+
+    ``Path.home()`` reads ``$HOME``, and the launcher deliberately rewrites
+    ``HOME`` to the PROJECT directory so an agent's stray dotfiles stay with
+    the project. The SIF is a machine-level asset shared by every project, so
+    resolving it through ``$HOME`` sent the lookup into the project directory
+    and reported the image missing on a node where it was already pulled —
+    the structural sandbox then silently degraded to the advisory one on
+    every real run, while standalone tests (no HOME override) passed.
+    """
+    try:
+        import pwd
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except Exception:
+        return Path.home()
 
 
 def structural_sandbox_requested() -> bool:

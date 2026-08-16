@@ -539,6 +539,16 @@ Execute the task and update the corresponding files.
                         "connection broken", "server disconnected",
                         "eof occurred", "remoteprotocolerror",
                         "bad gateway", "gateway timeout",
+                        # An upstream provider 5xx relayed by the gateway. The
+                        # code is a generic APIError; only the detail names the
+                        # real cause ("Upstream error from Nvidia: Internal
+                        # server error"). This killed a run that had already
+                        # produced a clean 7.6/10 paper — one hiccup at the
+                        # review step discarded the whole thing. Any provider
+                        # can 5xx, so this is not a free-tier concern.
+                        "upstream error", "internal server error",
+                        "service unavailable", "temporarily unavailable",
+                        "overloaded",
                         # Empty/truncated provider body: litellm fails to parse a
                         # JSON response because OpenRouter (or its upstream) returned
                         # blank/non-JSON bytes mid-request. Same transient class as
