@@ -56,9 +56,12 @@ TRACKED = {
 # The family-id shape as it appears in a picker chip's slug. Only the row-1/row-2
 # showcase chips (radio inputs, ``name="model" value="openrouter/<id>"``) are
 # auto-tracked — NOT the deliberately-curated "more…" dropdown (which lists older
-# / variant models on purpose) and NOT routes.py's translation map. Matching is
-# anchored to the radio-chip context in apply_to_text(), so dropdown <option>s
-# and dash-format native strings (claude-sonnet-4-6) are never touched.
+# / variant models on purpose), NOT the row-3 ``:free`` chips (a free variant is
+# not a drop-in version of a paid family, and free slugs come and go with the
+# vendor's promotion — they are curated by hand), and NOT routes.py's translation
+# map. Matching is anchored to the radio-chip context in apply_to_text(), so
+# dropdown <option>s, ``:free`` slugs and dash-format native strings
+# (claude-sonnet-4-6) are never touched.
 SLUG_IN_FILE = {
     "claude-sonnet":  r"anthropic/claude-sonnet-\d+(?:\.\d+)?",
     "claude-opus":    r"anthropic/claude-opus-\d+(?:\.\d+)?",

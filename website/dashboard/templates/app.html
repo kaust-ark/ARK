@@ -898,7 +898,32 @@ Strict — hit the exact page limit (spends the most tokens).">
                 <span class="model-chip">Gemini 3.6 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
               </label>
               <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-              <!-- Row 3: everything else -->
+              <!-- Row 3: free tier — zero token cost, so testing survives an exhausted
+                   balance. Placed BELOW the paid rows on purpose: selectDefaultModel()
+                   takes the first enabled chip, so the default must stay a paid,
+                   un-throttled model. The tooltip sits on the chip SPAN, not the
+                   label — applyModelGating() overwrites the label's title with the
+                   no-key hint. Slugs carry the ':free' suffix; refresh_model_versions
+                   tracks none of these families, so they are never auto-rewritten. -->
+              <div class="model-legend">🆓 Free tier — no token cost, but OpenRouter caps free requests per day, so a long run can stall once the cap is hit. Deep Research and AI figures still bill separately.</div>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free" />
+                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3 Ultra <span class="model-meta"><span class="cost">🆓</span></span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/nvidia/nemotron-3.5-lightning:free" />
+                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3.5 Lightning <span class="model-meta"><span class="cost">🆓</span></span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/google/gemma-4-31b-it:free" />
+                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Gemma 4 31B <span class="model-meta"><span class="cost">🆓</span></span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/poolside/laguna-s-2.1:free" />
+                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Laguna S 2.1 <span class="model-meta"><span class="cost">🆓</span></span></span>
+              </label>
+              <div class="model-row-break" style="flex-basis:100%;height:0"></div>
+              <!-- Row 4: everything else -->
               <select id="model-openrouter-more" onchange="onExtraModelPick(this)" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
                 <option value="">▾ more…</option>
                 <optgroup label="Anthropic">
@@ -1446,7 +1471,26 @@ Strict — hit the exact page limit (spends the most tokens).">
             <span class="model-chip">Gemini 3.6 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
           </label>
           <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-          <!-- Row 3: everything else -->
+          <!-- Row 3: free tier (see the hero picker for why it sits below the paid rows) -->
+          <div class="model-legend">🆓 Free tier — no token cost, but OpenRouter caps free requests per day, so a long run can stall once the cap is hit. Deep Research and AI figures still bill separately.</div>
+          <label class="model-option" data-provider="openrouter">
+            <input type="radio" name="continue-model" value="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free" />
+            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3 Ultra <span class="model-meta"><span class="cost">🆓</span></span></span>
+          </label>
+          <label class="model-option" data-provider="openrouter">
+            <input type="radio" name="continue-model" value="openrouter/nvidia/nemotron-3.5-lightning:free" />
+            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3.5 Lightning <span class="model-meta"><span class="cost">🆓</span></span></span>
+          </label>
+          <label class="model-option" data-provider="openrouter">
+            <input type="radio" name="continue-model" value="openrouter/google/gemma-4-31b-it:free" />
+            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Gemma 4 31B <span class="model-meta"><span class="cost">🆓</span></span></span>
+          </label>
+          <label class="model-option" data-provider="openrouter">
+            <input type="radio" name="continue-model" value="openrouter/poolside/laguna-s-2.1:free" />
+            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Laguna S 2.1 <span class="model-meta"><span class="cost">🆓</span></span></span>
+          </label>
+          <div class="model-row-break" style="flex-basis:100%;height:0"></div>
+          <!-- Row 4: everything else -->
           <select id="continue-model-openrouter-more" onchange="onExtraModelPick(this, 'continue')" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
             <option value="">▾ more…</option>
             <optgroup label="Anthropic">
@@ -1642,7 +1686,26 @@ Strict — hit the exact page limit (spends the most tokens).">
           <span class="model-chip">Gemini 3.6 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
         </label>
         <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-        <!-- Row 3: everything else -->
+        <!-- Row 3: free tier (see the hero picker for why it sits below the paid rows) -->
+        <div class="model-legend">🆓 Free tier — no token cost, but OpenRouter caps free requests per day, so a long run can stall once the cap is hit. Deep Research and AI figures still bill separately.</div>
+        <label class="model-option" data-provider="openrouter">
+          <input type="radio" name="restart-model" value="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free" />
+          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3 Ultra <span class="model-meta"><span class="cost">🆓</span></span></span>
+        </label>
+        <label class="model-option" data-provider="openrouter">
+          <input type="radio" name="restart-model" value="openrouter/nvidia/nemotron-3.5-lightning:free" />
+          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3.5 Lightning <span class="model-meta"><span class="cost">🆓</span></span></span>
+        </label>
+        <label class="model-option" data-provider="openrouter">
+          <input type="radio" name="restart-model" value="openrouter/google/gemma-4-31b-it:free" />
+          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Gemma 4 31B <span class="model-meta"><span class="cost">🆓</span></span></span>
+        </label>
+        <label class="model-option" data-provider="openrouter">
+          <input type="radio" name="restart-model" value="openrouter/poolside/laguna-s-2.1:free" />
+          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Laguna S 2.1 <span class="model-meta"><span class="cost">🆓</span></span></span>
+        </label>
+        <div class="model-row-break" style="flex-basis:100%;height:0"></div>
+        <!-- Row 4: everything else -->
         <select id="restart-model-openrouter-more" onchange="onExtraModelPick(this, 'restart')" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
           <option value="">▾ more…</option>
           <optgroup label="Anthropic">
