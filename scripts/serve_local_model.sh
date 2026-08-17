@@ -30,6 +30,13 @@
 #    and `import sqlite3` dies on a missing CXXABI. Interactive srun happens
 #    to escape this, which makes it look like a batch-only bug. Put the env's
 #    lib first, explicitly.
+# 4b. LEAVE HEADROOM OR DIE MID-SERVE. At --gpu-memory-utilization 0.94 the
+#    server STARTS fine and then OOMs under load ("Tried to allocate 1.41 GiB,
+#    1.33 GiB free", 2026-08-17 02:49): CUDA-graph pools plus a few concurrent
+#    long-context requests claim memory the startup accounting never saw, and
+#    the whole engine shuts down — every client sees "Connection refused", not
+#    a per-request error. 0.90 plus a bounded --max-num-seqs survives the same
+#    load. A dead server fails ALL runs; slightly less KV cache slows them.
 # 4. CONTEXT IS BOUNDED BY KV CACHE, NOT WEIGHTS. Per token, KV costs
 #    2 * layers * kv_heads * head_dim * 2 bytes: roughly 260 KB/token for a
 #    32B model, so 100k tokens of context needs ~26 GB of VRAM ON TOP of the
@@ -88,7 +95,8 @@ esac
 exec "$ENV_PREFIX/bin/vllm" serve "$MODEL" \
   --host 0.0.0.0 --port "$PORT" \
   --max-model-len "$MAXLEN" \
-  --gpu-memory-utilization 0.94 \
+  --gpu-memory-utilization 0.90 \
+  --max-num-seqs "${ARK_LOCAL_MODEL_MAXSEQS:-8}" \
   --enable-auto-tool-choice --tool-call-parser hermes \
   --served-model-name "$SERVED_NAME" \
   "${QUANT[@]}"

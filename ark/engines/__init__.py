@@ -466,6 +466,22 @@ Execute the task and update the corresponding files.
                 )
                 timer.stop()
 
+                # Keep the runner's raw event stream. It is the ONLY record of
+                # what the agent actually did (every action, observation and
+                # rejection); parse_output distils it to a summary and the rest
+                # used to vanish with the pipe. Three post-mortems in one night
+                # dead-ended on exactly that — "the agent ran 161s and produced
+                # nothing" with no way to see the 161 seconds.
+                try:
+                    _ld = getattr(self, "log_dir", None)
+                    if _ld and stdout:
+                        _f = (Path(_ld) / "agent_streams" /
+                              f"{time.strftime('%Y%m%d_%H%M%S')}_{agent_type}.jsonl")
+                        _f.parent.mkdir(parents=True, exist_ok=True)
+                        _f.write_text(stdout)
+                except Exception:
+                    pass
+
                 if timeout_expired:
                     self.log(f"Agent {agent_type} timed out ({timeout}s)", "WARN")
                 

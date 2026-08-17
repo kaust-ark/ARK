@@ -292,7 +292,10 @@ def main() -> int:
              # Observed on a local 32B: it wrote to "/local_ok.txt", got
              # "Permission denied", and finished with "The file has been
              # created." The run reported success and produced nothing.
-             "failed_tools": []}
+             "failed_tools": [],
+             # Actions the agent actually took; zero after a completed run is
+             # the narrate-instead-of-act signature the nudge below targets.
+             "actions": 0}
 
     def _callback(event) -> None:
         kind = type(event).__name__
@@ -303,6 +306,7 @@ def main() -> int:
             if text.strip():
                 state["last_agent_message"] = text
         elif kind == "ActionEvent":
+            state["actions"] += 1
             # Many models never emit a closing MessageEvent and instead end
             # with a FinishAction carrying the summary. Without this the
             # result comes back empty even on a perfectly successful run.
@@ -320,7 +324,11 @@ def main() -> int:
             obs = getattr(event, "observation", None)
             if getattr(obs, "is_error", False):
                 tool = str(getattr(event, "tool_name", "") or "tool")
-                state["failed_tools"].append(f"{tool}: {text[:120]}")
+                # 240 not 120: the reason is usually "errno + absolute path",
+                # and our project paths alone run ~110 characters — the first
+                # cap kept the errno and cut the path, which is the half a
+                # post-mortem needs.
+                state["failed_tools"].append(f"{tool}: {text[:240]}")
         elif kind == "ConversationErrorEvent":
             # ONLY this one ends a run. Treating every *Error* event as fatal
             # (as this driver first did) kills runs the CLI path survives:
@@ -369,6 +377,27 @@ def main() -> int:
         try:
             conversation.send_message(cfg["task"])
             conversation.run()
+            # One bounded nudge for a turn that PLANNED instead of ACTING. A
+            # weaker model regularly answers a large task with a prose plan and
+            # no tool call at all; the SDK reads any message without tool calls
+            # as the agent's final answer, so the run ends with the plan
+            # written and nothing done (observed 5x on a local 32B: ~40s, ~300
+            # tokens out, zero actions). Escalations are exempt — an agent
+            # that wrote a needs_human report finished on purpose. A model
+            # that acted at least once never triggers this.
+            if (state["actions"] == 0 and not state["error_code"]
+                    and "needs_human" not in (state["last_agent_message"]
+                                              + state["finish_message"])):
+                _emit({"kind": "__nudge__",
+                       "text": "agent produced a plan but zero tool calls — "
+                               "sending one continue nudge"})
+                conversation.send_message(
+                    "You wrote a plan but executed none of it. Do it NOW, in "
+                    "this same session: carry out those steps one at a time "
+                    "with your terminal and file_editor tools. Do not restate "
+                    "the plan. Do not finish until the outputs your task asks "
+                    "for actually exist on disk.")
+                conversation.run()
         except Exception as e:
             state["error_code"] = state["error_code"] or type(e).__name__
             state["error_detail"] = str(e)[:500]

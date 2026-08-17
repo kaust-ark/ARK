@@ -110,3 +110,47 @@ class TestCloudBackendRequiresConfiguration:
     def test_local_and_slurm_are_never_touched_by_this_gate(self):
         self._reject("local", configured=False)
         self._reject("slurm", configured=False)
+
+
+class TestLocalInstructionsMatchTheExecutionReality:
+    """The agent's compute instructions must describe where its shell IS.
+
+    Under the structural sandbox the shell is inside the container, where the
+    host-machine text becomes a resignation script for an obedient model:
+    `conda activate` names a tool that does not exist (and the sandbox
+    directive says report unreachable host tools rather than work around
+    them), `nohup` suggests backgrounding, and the generic shell rules add
+    "just exit — the system handles waiting". A local 32B followed that to the
+    letter four runs in a row: one turn, zero tool calls, empty results/.
+    """
+
+    def _backend(self):
+        from ark.compute.local import LocalBackend
+        return LocalBackend({"conda_env": "ark-base"}, "proj", Path("/tmp/x"))
+
+    def test_container_instructions_when_the_structural_sandbox_is_on(self):
+        from unittest.mock import patch
+        with patch("ark.sandbox.structural_sandbox_status",
+                   return_value=(True, "active")):
+            text = self._backend().get_agent_instructions()
+        assert ".conda_env/bin/python" in text
+        assert "FOREGROUND" in text
+        # `conda activate` may appear only as a prohibition, never a step.
+        assert "Activate before running" not in text
+        assert "never run" in text and "`conda activate`" in text
+        assert "Do NOT use `nohup`" in text
+        assert "verify your result files" in text
+
+    def test_host_instructions_when_the_sandbox_is_off(self):
+        from unittest.mock import patch
+        with patch("ark.sandbox.structural_sandbox_status",
+                   return_value=(False, "not requested")):
+            text = self._backend().get_agent_instructions()
+        assert "conda activate ark-base" in text
+
+    def test_a_broken_sandbox_probe_falls_back_to_host_text(self):
+        from unittest.mock import patch
+        with patch("ark.sandbox.structural_sandbox_status",
+                   side_effect=RuntimeError("boom")):
+            text = self._backend().get_agent_instructions()
+        assert "conda activate ark-base" in text
