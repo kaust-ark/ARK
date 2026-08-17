@@ -2677,6 +2677,14 @@ a {{ color: #0d9488; }}
         notifications are routed to notify_progress() so the user actually
         sees them, instead of being silently dropped.
         """
+        # Quiet mode for smoke/dev runs. A night of pipeline testing emailed
+        # the operator on every transient agent error and rate-limit — each
+        # message correct in isolation, all of them noise in aggregate. The
+        # run log keeps everything; this only silences the outbound channels.
+        if self.config.get("suppress_notifications", False):
+            self.log(f"Notification suppressed (quiet mode): {subject}", "INFO")
+            return
+
         critical_keywords = ["error", "failed", "token", "accepted", "completed", "timeout", "started", "finished"]
         should_send = priority == "critical" or any(kw in subject.lower() for kw in critical_keywords)
 

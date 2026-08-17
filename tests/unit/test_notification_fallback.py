@@ -94,3 +94,16 @@ def test_a_standalone_ark_install_degrades_quietly(orch):
                                     "website.dashboard.notify": None}):
         orch.send_notification("Run finished", "done")   # must not raise
     assert any(lvl == "WARN" for lvl, _ in orch.logs)
+
+
+def test_quiet_mode_silences_every_channel(orch):
+    """Dev/smoke runs must not page anyone: a night of pipeline testing
+    emailed the operator on every transient error. The log keeps the record."""
+    orch.config = {"suppress_notifications": True}
+    orch.telegram = SimpleNamespace(is_configured=True, send=MagicMock())
+    sent = []
+    with _patch_mailer(sent):
+        orch.send_notification("Run finished", "done", priority="critical")
+    assert not orch.telegram.send.called
+    assert sent == []
+    assert any("suppressed" in m for _, m in orch.logs)

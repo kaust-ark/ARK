@@ -86,6 +86,17 @@ export LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}"   # landmine 3
 echo "NODE=$(hostname)  PORT=$PORT  MODEL=$MODEL"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
+# 6. THE CODER VARIANT SHIPS A TEMPLATE WITHOUT TOOLS. Qwen2.5-Coder-32B's AWQ
+#    repo carries a chat template lacking the tools section, so the model is
+#    never told to wrap calls in <tool_call> tags — it emits perfectly-formed
+#    tool JSON as plain TEXT, the hermes parser sees nothing, and every agent
+#    looks like it "narrates instead of acting". Borrow the Instruct variant's
+#    template (same family, tool section included) via ARK_LOCAL_MODEL_TEMPLATE.
+TEMPLATE_ARGS=()
+if [ -n "${ARK_LOCAL_MODEL_TEMPLATE:-}" ] && [ -f "${ARK_LOCAL_MODEL_TEMPLATE}" ]; then
+  TEMPLATE_ARGS=(--chat-template "${ARK_LOCAL_MODEL_TEMPLATE}")
+fi
+
 QUANT=()
 case "$MODEL" in
   *AWQ*|*awq*)  QUANT=(--quantization awq_marlin) ;;
@@ -99,4 +110,5 @@ exec "$ENV_PREFIX/bin/vllm" serve "$MODEL" \
   --max-num-seqs "${ARK_LOCAL_MODEL_MAXSEQS:-8}" \
   --enable-auto-tool-choice --tool-call-parser hermes \
   --served-model-name "$SERVED_NAME" \
+  "${TEMPLATE_ARGS[@]}" \
   "${QUANT[@]}"
