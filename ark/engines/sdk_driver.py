@@ -42,6 +42,21 @@ def _emit(obj: dict) -> None:
     sys.stdout.flush()
 
 
+#: Delegation tool: spawns a named sub-agent. We register none, so every call
+#: it can make comes back "Unknown agent 'X'. Available types: none registered."
+#: Offering a tool that cannot succeed is a trap — a capable model ignores it,
+#: a weaker one burns its turns on it. Observed on a local 32B, which spent its
+#: planning phase trying to delegate to a 'Planner' that does not exist.
+_UNUSABLE_TOOLS = {"task_tool_set"}
+
+
+def _usable_tools(tools: list) -> list:
+    """Drop tools that have no chance of succeeding in this configuration."""
+    kept = [t for t in tools
+            if str(getattr(t, "name", "")) not in _UNUSABLE_TOOLS]
+    return kept or tools      # never hand the agent an empty toolbox
+
+
 def _event_text(event) -> str:
     """Best-effort human text for an SDK event. Never raises.
 
@@ -52,10 +67,21 @@ def _event_text(event) -> str:
     having done the work. Observed on a sandboxed run: 2 MessageEvents, 6
     actions, 6 observations, and a blank result.
     """
-    for obj in (getattr(event, "llm_message", None), event):
+    # An ObservationEvent is likewise a wrapper: the tool's reply — including
+    # the reason a call was refused — lives at ``observation.content``. Without
+    # this hop, a rejected call is recorded as "file_editor:" with nothing after
+    # the colon, which names the failure but not its cause.
+    for obj in (getattr(event, "llm_message", None),
+                getattr(event, "observation", None), event):
         if obj is None:
             continue
-        for attr in ("message", "content", "text"):
+        # "detail" and "error" are where the FAILURE events keep their words:
+        # ConversationErrorEvent is (code, detail, ...) and AgentErrorEvent is
+        # (error, tool_name, ...) — neither has a message/content/text. Omitting
+        # them meant every agent failure in this runtime surfaced as
+        # "OpenHands error: ConversationRunError — " with nothing after the
+        # dash, so a whole run could fail 29 times over and leave no clue why.
+        for attr in ("message", "content", "text", "detail", "error"):
             v = getattr(obj, attr, None)
             if isinstance(v, str) and v.strip():
                 return v
@@ -253,7 +279,7 @@ def main() -> int:
     )
     agent = Agent(
         llm=llm,
-        tools=get_default_cli_tools(),
+        tools=_usable_tools(get_default_cli_tools()),
         system_prompt_kwargs={"cli_mode": True},
         condenser=condenser,
     )

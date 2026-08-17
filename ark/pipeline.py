@@ -2427,6 +2427,14 @@ Rules:
         # Steps 1-4: Iterative experiment loop
         self._run_experiment_loop(dev_state, start_iter, max_dev_iters, research_idea)
 
+        # The loop returning is not the same as the loop succeeding. Leaving it
+        # early on a terminal error only skipped the remaining experiment steps
+        # — control still fell straight into drafting below, so the run kept
+        # writing the paper the abort was meant to prevent (seen on e2f643ab:
+        # "Dev phase aborted" at 02:02:40, writer editing main.tex at 02:05:31).
+        if getattr(self, "_terminal_error", None):
+            return
+
         # Steps 5-7: Generate figures, write draft, deliver
         self.log("", "RAW")
         self.log_section("✏️ Writing Initial Paper Draft")
@@ -2435,6 +2443,28 @@ Rules:
         self._generate_all_figures()
         self._write_initial_draft(research_idea)
         self._deliver_dev_phase(dev_state, max_dev_iters)
+
+    def _abort_dev_on_terminal_error(self, during: str) -> bool:
+        """Stop the dev phase when an agent hit a non-retryable error.
+
+        The review loop has checked ``_terminal_error`` between steps for a
+        while; the dev loop never did, and that asymmetry is expensive. Seen
+        live: a misresolved API key made every agent die on a 401, each dead
+        agent was still logged "✓ completed", and the loop walked through plan
+        → run → analyze → evaluate producing nothing. Downstream then read the
+        absent results as "no experiments are running" and went on to write a
+        paper about findings that did not exist.
+
+        Failing here is what makes the run's own report trustworthy: no
+        experiments means no paper, not a paper with no experiments.
+        """
+        err = getattr(self, "_terminal_error", None)
+        if not err:
+            return False
+        self.log(f"Dev phase aborted while {during} — {err}", "ERROR")
+        self.log("No experiments were produced; refusing to draft a paper "
+                 "on absent results.", "ERROR")
+        return True
 
     def _run_experiment_loop(self, dev_state: dict, start_iter: int,
                              max_dev_iters: int, research_idea: str):
@@ -2460,6 +2490,8 @@ Rules:
             # Step 1: Plan experiments
             self._plan_experiments(dev_iter, max_dev_iters, research_idea,
                                    findings_summary)
+            if self._abort_dev_on_terminal_error("planning experiments"):
+                return
 
             # HITL gate: on the first dev iteration, let the user approve or
             # steer the experiment plan before spending compute (大实验前把关).
@@ -2468,9 +2500,13 @@ Rules:
 
             # Step 2: Run experiments
             self._run_experiments(dev_iter, max_dev_iters)
+            if self._abort_dev_on_terminal_error("running experiments"):
+                return
 
             # Step 3: Analyze results
             self._analyze_results()
+            if self._abort_dev_on_terminal_error("analyzing results"):
+                return
 
             # Step 4: Evaluate completeness
             findings_summary = self._load_findings_summary()
@@ -2652,8 +2688,42 @@ system or it fails with a clear report of what is needed.
         # Check if experimenter requested human intervention
         self._check_human_intervention(stage="Run Experiments")
 
+        self._require_experiment_evidence()
+
         self.log_step_header(2, 4, "Run Experiments", "end")
         return exp_output
+
+    def _require_experiment_evidence(self) -> None:
+        """An experiment step that produced nothing did not succeed.
+
+        The agent's own "done" is a claim; a file on disk is evidence. Seen live
+        on smoke run 8ad45646: a local model's experimenter had three tool calls
+        refused by the environment, wrote nothing, and still reported success —
+        after which the compute backend read the missing results directory as
+        "nothing is running" and returned done, and the pipeline proceeded to
+        analyse and write up results that did not exist.
+
+        Checked only after ``wait_for_completion``, so an asynchronous backend
+        has already had its chance to finish and sync. Sets the terminal flag
+        rather than raising: the dev loop's own checkpoint then ends the run the
+        same way any other non-retryable failure does.
+        """
+        scripts_dir = self.config.get("scripts_dir", "scripts")
+        candidates = [self.code_dir / "results",
+                      self.code_dir / scripts_dir / "results"]
+        produced = [f for d in candidates if d.exists()
+                    for f in d.rglob("*") if f.is_file()]
+        if produced:
+            return
+        if os.environ.get("ARK_ALLOW_EMPTY_EXPERIMENTS", "").strip() == "1":
+            self.log("Experiments produced no result files — continuing anyway "
+                     "(ARK_ALLOW_EMPTY_EXPERIMENTS=1)", "WARN")
+            return
+        self._terminal_error = (
+            "Experiments produced no result files. The experimenter reported "
+            "success but wrote nothing to results/ — there is no evidence to "
+            "write a paper from.")
+        self.log(self._terminal_error, "ERROR")
 
     def _analyze_results(self) -> str:
         """Step 3: Analyze experiment results using planner agent."""
@@ -4138,6 +4208,13 @@ provide the title.
             # Dev Phase first, if not already done in a prior run.
             if self._should_run_dev_phase():
                 self._run_dev_phase()
+                # A dev phase that aborted produced no experiments. Entering the
+                # paper loop here would review, plan and write around results
+                # that were never generated — the failure would come out the
+                # far end as a finished-looking PDF.
+                if getattr(self, "_terminal_error", None):
+                    # No score exists yet — the dev phase never reached review.
+                    self._handle_terminal_error(0.0)
 
             while (
                 datetime.now() < self.max_end_time

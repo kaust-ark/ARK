@@ -67,10 +67,34 @@ class TestBudget:
         make that configuration unreachable by accident."""
         assert sr._BUDGET_FLOOR >= 60_000
 
-    def test_a_tiny_window_still_leaves_room_to_work(self):
+    def test_a_small_window_is_never_handed_more_than_it_holds(self):
+        """The floor must not outgrow the model's own context.
+
+        This previously asserted the opposite — floor wins, always — which is
+        right for a large model and nonsense for a small one: a 32k local model
+        given the 60k floor never reaches the compaction trigger, so history
+        grows unchecked until the request overflows the window and every call
+        fails. Cap by the window instead, leaving room for the reply.
+        """
         with patch.object(sr, "_context_window", return_value=8_000), \
-             patch.object(sr, "_BUDGET_FLOOR", 60_000):
-            assert sr.history_token_budget("tiny/model") == 60_000
+             patch.object(sr, "_BUDGET_FLOOR", 60_000), \
+             patch.object(sr, "_WINDOW_SAFETY", 0.8):
+            assert sr.history_token_budget("tiny/model") == 6_400
+
+    def test_a_local_32k_model_compacts_inside_its_window(self):
+        with patch.object(sr, "_context_window", return_value=32_768), \
+             patch.object(sr, "_BUDGET_FLOOR", 60_000), \
+             patch.object(sr, "_WINDOW_SAFETY", 0.8):
+            budget = sr.history_token_budget("hosted_vllm/qwen2.5-32b-awq")
+        assert budget < 32_768, "compaction would never fire"
+        assert budget > 20_000, "and it must not be starvation-tight either"
+
+    def test_a_large_window_is_unaffected_by_the_cap(self):
+        with patch.object(sr, "_context_window", return_value=200_000), \
+             patch.object(sr, "_BUDGET_FRACTION", 0.45), \
+             patch.object(sr, "_BUDGET_CEILING", 150_000), \
+             patch.object(sr, "_WINDOW_SAFETY", 0.8):
+            assert sr.history_token_budget("big/model") == 90_000
 
 
 class TestOutputContract:

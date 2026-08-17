@@ -75,6 +75,9 @@ _BUDGET_FRACTION = float(os.environ.get("ARK_CONTEXT_BUDGET_FRACTION", "0.45"))
 _BUDGET_CEILING = int(os.environ.get("ARK_CONTEXT_BUDGET_CEILING", "150000"))
 _BUDGET_FLOOR = int(os.environ.get("ARK_CONTEXT_BUDGET_FLOOR", "60000"))
 _FALLBACK_CONTEXT_TOKENS = int(os.environ.get("ARK_CONTEXT_FALLBACK_TOKENS", "200000"))
+# Share of the model's window history may occupy; the rest is the reply and the
+# system prompt. Only binds on models smaller than the floor.
+_WINDOW_SAFETY = float(os.environ.get("ARK_CONTEXT_WINDOW_SAFETY", "0.8"))
 # Secondary guard, for runs that accumulate many tiny events.
 _MAX_EVENTS = int(os.environ.get("ARK_CONTEXT_MAX_EVENTS", "120"))
 _KEEP_FIRST = 4
@@ -137,8 +140,15 @@ def _context_window(model: str) -> int:
 
 def history_token_budget(model: str) -> int:
     """Tokens of conversation history allowed before compacting."""
-    scaled = int(_context_window(model) * _BUDGET_FRACTION)
-    return max(_BUDGET_FLOOR, min(scaled, _BUDGET_CEILING))
+    window = _context_window(model)
+    scaled = int(window * _BUDGET_FRACTION)
+    budget = max(_BUDGET_FLOOR, min(scaled, _BUDGET_CEILING))
+    # The floor keeps a large model from being starved into repeating itself.
+    # It must not, however, promise a SMALL model more history than its context
+    # can physically hold: a 32k local model given the 60k floor never reaches
+    # the compaction trigger at all, so history grows until the request itself
+    # overflows the window. Cap by the window, leaving room for the reply.
+    return min(budget, int(window * _WINDOW_SAFETY)) if window else budget
 
 
 class OpenHandsSDK(OpenHandsCLI):
@@ -149,6 +159,24 @@ class OpenHandsSDK(OpenHandsCLI):
     CLI runner, so the only intended difference between the two paths is who
     assembles the conversation.
     """
+
+    def _resolve_api_key(self, model: str) -> str:
+        """The provider key for ``model``, by the same rule as ``build_env``.
+
+        Prefers <PROVIDER>_API_KEY (openrouter/… → OPENROUTER_API_KEY, which is
+        what the launcher actually sets) and accepts a pre-set LLM_API_KEY for
+        callers that export it directly.
+        """
+        try:
+            from ark.llm_lite import provider_key_env
+            provider = model.split("/", 1)[0] if "/" in model else ""
+            if provider:
+                key = os.environ.get(provider_key_env(provider))
+                if key:
+                    return key
+        except Exception:
+            pass
+        return os.environ.get("LLM_API_KEY") or ""
 
     def build_command(self, prompt: str, path_boundary: str, code_dir: Path) -> list:
         py = openhands_python()
@@ -161,7 +189,16 @@ class OpenHandsSDK(OpenHandsCLI):
         model = self._llm_model()
         cfg = {
             "model": model,
-            "api_key": os.environ.get("LLM_API_KEY") or "",
+            # Resolve the key the same way build_env does, rather than reading
+            # LLM_API_KEY out of the parent environment. LLM_API_KEY is an
+            # OUTPUT of build_env — it maps <PROVIDER>_API_KEY onto the name
+            # the CLI child expects — so reading it here found a value only
+            # when someone happened to export it globally. Everywhere else the
+            # SDK runtime ran with api_key="" and every agent died on a 401
+            # whose reason never reached the log ("ConversationRunError —"
+            # with nothing after the dash). The pipeline then logged each dead
+            # agent as "✓ completed" and wrote a paper with no experiments.
+            "api_key": self._resolve_api_key(model),
             "base_url": os.environ.get("LLM_BASE_URL") or "",
             "task": f"[SYSTEM RULE] {path_boundary}\n\n{prompt}",
             "workdir": str(code_dir),
