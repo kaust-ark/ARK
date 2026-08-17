@@ -267,6 +267,24 @@ def main() -> int:
         api_key=cfg.get("api_key") or None,
         base_url=cfg.get("base_url") or None,
         usage_id="agent",
+        # Free-tier providers meter by the MINUTE (Gemini free: 15 requests
+        # and 250K tokens per minute). The SDK default retry budget — 5 tries,
+        # ~4.5 minutes of total patience — dies inside one bad window, the
+        # conversation dies with it, and the pipeline's outer retry restarts
+        # the whole agent call from zero: a restart storm that burns daily
+        # quota while completing nothing (watched gemini free do exactly this
+        # to the specialization step, one death every ~3 minutes). Ten tries
+        # at up to 2 minutes apart outwaits any minute-window quota. Paid
+        # providers rarely 429, so for them this changes nothing.
+        num_retries=int(cfg.get("num_retries", 10)),
+        retry_max_wait=int(cfg.get("retry_max_wait", 120)),
+        # Gemini's FREE tier caps cached-content STORAGE per model
+        # (TotalCachedContentStorageTokensPerModelFreeTier). With caching on,
+        # our large contexts fill that pool within minutes and every request
+        # 429s until blobs expire — patience does not help, it is a storage
+        # quota, not a rate window. Caching stays on everywhere else: for paid
+        # Anthropic/OpenAI it is the difference between 80% and 0% cache hits.
+        caching_prompt=bool(cfg.get("caching_prompt", True)),
     )
     # The one line this whole driver exists for: compact on SIZE, not on a
     # count of events. max_size stays as a secondary guard against runs that

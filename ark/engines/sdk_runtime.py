@@ -207,6 +207,11 @@ class OpenHandsSDK(OpenHandsCLI):
             "max_size": _MAX_EVENTS,
             "keep_first": _KEEP_FIRST,
             "sandbox": _sandbox_config(code_dir),
+            # Gemini free tier caps cached-content STORAGE (a pool, not a rate
+            # window); with caching on, agent-sized contexts fill it within
+            # minutes and every call 429s until blobs expire. Cache stays on
+            # for every other provider — it is 80% of our input tokens.
+            "caching_prompt": not model.startswith("gemini/"),
         }
         # 0600 so the API key never sits world-readable; removed by execute().
         fd, path = tempfile.mkstemp(prefix="ark-sdk-", suffix=".json")

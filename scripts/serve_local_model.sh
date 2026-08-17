@@ -83,6 +83,17 @@ ENV_PREFIX="${ARK_VLLM_ENV:-/data/fat/ark/conda/envs/ark-vllm}"
 export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
 export LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}"   # landmine 3
 
+# THE DRIVER CEILING HAS A USER-SPACE EXIT (measured 2026-08-17). NVIDIA's
+# forward-compatibility package puts a newer user-mode libcuda in front of the
+# old kernel driver — datacenter GPUs only, no root needed. With
+# ARK_VLLM_COMPAT pointing at the extracted libs, torch 2.11+cu128 ran real
+# matmuls on driver 535.216.01 (A100, mcnode23). This is what unlocks
+# 2026-era vLLM and models WITHOUT waiting for IT; landmine 1 above then only
+# applies to envs served without this variable.
+if [ -n "${ARK_VLLM_COMPAT:-}" ] && [ -d "${ARK_VLLM_COMPAT}" ]; then
+  export LD_LIBRARY_PATH="${ARK_VLLM_COMPAT}:$LD_LIBRARY_PATH"
+fi
+
 echo "NODE=$(hostname)  PORT=$PORT  MODEL=$MODEL"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
@@ -111,4 +122,5 @@ exec "$ENV_PREFIX/bin/vllm" serve "$MODEL" \
   --enable-auto-tool-choice --tool-call-parser hermes \
   --served-model-name "$SERVED_NAME" \
   "${TEMPLATE_ARGS[@]}" \
-  "${QUANT[@]}"
+  "${QUANT[@]}" \
+  ${ARK_LOCAL_MODEL_EXTRA_ARGS:-}

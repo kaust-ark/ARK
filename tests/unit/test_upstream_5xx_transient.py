@@ -43,3 +43,15 @@ def test_real_terminal_errors_are_not_swallowed():
               "media type, but the image appears to be a image/jpeg image",
               "model `foo/bar` not found"):
         assert not _is_transient(d), d
+
+
+def test_gemini_quota_429_is_transient_even_as_badrequesterror():
+    """litellm wraps Gemini's quota 429 as BadRequestError, and its 'check
+    your plan and billing details' text read like a billing cap → terminal.
+    That killed 382656fd's review pass minutes after the dev phase delivered
+    a complete free-tier paper. A 429 is transient by definition; a real
+    daily cap still fails after the bounded retries exhaust."""
+    assert _is_transient(
+        'litellm.BadRequestError: GeminiException BadRequestError - '
+        '{"error": {"code": 429, "message": "You exceeded your current '
+        'quota, please check your plan and billing details."}}')

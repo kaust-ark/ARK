@@ -922,6 +922,16 @@ Strict — hit the exact page limit (spends the most tokens).">
                 <input type="radio" name="model" value="openrouter/poolside/laguna-s-2.1:free" />
                 <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Laguna S 2.1 <span class="model-meta"><span class="cost">🆓</span></span></span>
               </label>
+              <!-- Gemini AI Studio free tier: needs the USER's gemini key from a
+                   no-billing project ("Free of charge" in AI Studio). Verified
+                   2026-08-17: FreeTier quota metrics, structurally unbillable;
+                   produced complete papers (6.5/10) at $0. Quotas are per-account
+                   per-MINUTE, so runs self-pace rather than fight a shared pool
+                   like the OpenRouter free row. -->
+              <label class="model-option" data-provider="gemini">
+                <input type="radio" name="model" value="gemini/gemini-3.1-flash-lite" />
+                <span class="model-chip" title="Free — Google AI Studio free tier (needs your Gemini key from a no-billing project). Per-minute quotas can slow or occasionally fail long runs.">Gemini 3.1 Flash-Lite <span class="model-meta"><span class="cost">🆓</span></span></span>
+              </label>
               <div class="model-row-break" style="flex-basis:100%;height:0"></div>
               <!-- Row 4: everything else -->
               <select id="model-openrouter-more" onchange="onExtraModelPick(this)" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">

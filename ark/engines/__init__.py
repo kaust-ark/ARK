@@ -585,6 +585,18 @@ Execute the task and update the corresponding files.
                         "upstream error", "internal server error",
                         "service unavailable", "temporarily unavailable",
                         "overloaded",
+                        # A 429 is transient BY DEFINITION, but litellm does not
+                        # always say RateLimitError: Gemini's quota 429 comes
+                        # wrapped as BadRequestError, whose "check your plan and
+                        # billing details" text then reads like a billing-cap
+                        # message and was classified terminal. That combination
+                        # killed run 382656fd in its review pass, minutes after
+                        # the dev phase had delivered a complete paper on the
+                        # free tier. If it is really a DAILY cap, the bounded
+                        # retries below exhaust and the run still fails — this
+                        # only stops a minute-window 429 from being lethal.
+                        '"code": 429', "resource_exhausted",
+                        "exceeded your current quota",
                         # Empty/truncated provider body: litellm fails to parse a
                         # JSON response because OpenRouter (or its upstream) returned
                         # blank/non-JSON bytes mid-request. Same transient class as
@@ -605,8 +617,22 @@ Execute the task and update the corresponding files.
                     if _is_transient and attempt < MAX_RETRIES:
                         # Network/stream disconnects clear immediately — retry
                         # promptly; rate-limit codes honour the server's wait.
+                        # QUOTA hits are neither: a minute-window 429 stays
+                        # closed for up to 60s no matter how it was wrapped, so
+                        # short network-style waits (5/10/15s) burn all four
+                        # attempts inside ONE window — that tail-end pattern
+                        # took down two gemini free runs (382656fd, a3ecafe8)
+                        # AFTER their papers were written. Wait a full window.
+                        _quota = ("429" in _detail_l or "quota" in _detail_l
+                                  or "resource_exhausted" in _detail_l
+                                  or "rate limit" in _detail_l)
                         _net = any(s in _detail_l for s in _TRANSIENT_DETAIL)
-                        wait_s = 5 * attempt if _net else min(self._parse_rate_limit_wait(oh_error_detail or ""), 120)
+                        if _quota:
+                            wait_s = min(max(self._parse_rate_limit_wait(oh_error_detail or ""), 65), 180)
+                        elif _net:
+                            wait_s = 5 * attempt
+                        else:
+                            wait_s = min(self._parse_rate_limit_wait(oh_error_detail or ""), 120)
                         self.log(
                             f"  Transient ({oh_error_code}) — waiting {wait_s}s, then "
                             f"retry (attempt {attempt + 1}/{MAX_RETRIES})",

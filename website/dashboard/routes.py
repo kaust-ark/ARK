@@ -429,8 +429,17 @@ _PREFLIGHT_MIN_USD = 2.0
 
 
 def _is_free_model(model_variant: str) -> bool:
-    """OpenRouter's zero-cost variants are the same slug with a ':free' suffix."""
-    return (model_variant or "").strip().endswith(":free")
+    """Models that bill nothing, so credit balance is irrelevant to them.
+
+    OpenRouter's zero-cost variants carry a ':free' suffix. Gemini AI Studio
+    free-tier models have no marker in the slug — a `gemini/…` model is billed
+    (or not) by the KEY's project, and the picker's chip is only offered for
+    the free lane. Without this clause the OpenRouter credit preflight blocked
+    gemini launches whenever the user ALSO had a low-balance OpenRouter key:
+    a balance check for a provider the run never touches.
+    """
+    mv = (model_variant or "").strip()
+    return mv.endswith(":free") or mv.startswith("gemini/")
 
 
 def _provider_preflight(keys: dict, model_variant: str = "") -> None:
