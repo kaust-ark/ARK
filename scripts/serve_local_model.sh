@@ -30,6 +30,11 @@
 #    and `import sqlite3` dies on a missing CXXABI. Interactive srun happens
 #    to escape this, which makes it look like a batch-only bug. Put the env's
 #    lib first, explicitly.
+# 4a. THE JOB'S WALL CLOCK IS PART OF THE SLA. An 8h limit sounded generous
+#    and then a run launched in hour 7 lost its endpoint mid-experiment
+#    ("Connection refused", ba4a1fa7) when Slurm killed the server on
+#    schedule. Serve with a horizon longer than any run that might start
+#    near the end of it.
 # 4b. LEAVE HEADROOM OR DIE MID-SERVE. At --gpu-memory-utilization 0.94 the
 #    server STARTS fine and then OOMs under load ("Tried to allocate 1.41 GiB,
 #    1.33 GiB free", 2026-08-17 02:49): CUDA-graph pools plus a few concurrent
@@ -67,7 +72,7 @@
 #SBATCH -p mc
 #SBATCH --gres=gpu:a100:1
 #SBATCH -c 16
-#SBATCH -t 08:00:00
+#SBATCH -t 48:00:00
 #SBATCH -J ark-vllm
 #SBATCH -o %x-%j.out
 set -euo pipefail
@@ -119,6 +124,7 @@ exec "$ENV_PREFIX/bin/vllm" serve "$MODEL" \
   --max-model-len "$MAXLEN" \
   --gpu-memory-utilization 0.90 \
   --max-num-seqs "${ARK_LOCAL_MODEL_MAXSEQS:-8}" \
+  --tensor-parallel-size "${ARK_LOCAL_MODEL_TP:-1}" \
   --enable-auto-tool-choice --tool-call-parser hermes \
   --served-model-name "$SERVED_NAME" \
   "${TEMPLATE_ARGS[@]}" \
