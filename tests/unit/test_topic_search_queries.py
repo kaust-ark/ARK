@@ -216,17 +216,46 @@ def test_artifact_records_are_rejected_even_with_metadata():
     assert not looks_like_paper("Figure 6. Pathway bias", ["A Author"], 2020)
 
 
+# Verbatim from projects/citefix_verify3's deep_research.md. The record is the
+# paper's supplementary FILE, so the title is the paper's own title plus a file
+# tag AND the extension.
+#
+# The first version of this fixture was copied out of a LOG LINE that had
+# truncated the title at 86 chars, cutting ".pdf" off. The pattern matched the
+# truncated string, the test passed, and the filter was a no-op on the real
+# data. Fixtures come from the data source, never from formatted output.
+REAL_SUPPLEMENT_TITLE = (
+    "Towards the Spectral bias Alleviation by Normalizations in "
+    "Coordinate Networks_supp1-3667002.pdf"
+)
+
+
+def test_supplement_fixture_is_not_truncated():
+    """Guard the guard: a shortened fixture is what let the bug through."""
+    assert len(REAL_SUPPLEMENT_TITLE) == 96, "fixture was truncated again"
+    assert REAL_SUPPLEMENT_TITLE.endswith(".pdf")
+
+
 @pytest.mark.parametrize("title", [
-    # Real hit from a run: the paper is on topic, but this record is its
-    # supplementary FILE, carrying the paper's title plus the file tag.
-    "Towards the Spectral bias Alleviation by Normalizations in Coordinate Networks_supp1-3",
+    REAL_SUPPLEMENT_TITLE,
+    "Paper Title_supp1-3",                        # tag, no extension
+    "Paper Title_supp1-3667002.pdf",              # tag + extension
     "Some Paper - Supplementary Material",
-    "A Method — Supplementary Information",
+    "A Method — Supplementary Information.docx",
+    "Study Y_suppl_data.xlsx",
     "Method X supp 2",
-    "Study Y_suppl_data",
 ])
 def test_supplementary_file_records_are_rejected(title):
     assert is_artifact_record(title), title
+
+
+@pytest.mark.parametrize("title", [
+    "PDF Estimation via Kernel Methods",          # "PDF" in the title, not a suffix
+    "Deep Learning",
+    "On the Spectral Bias of Neural Networks",
+])
+def test_extension_rule_does_not_eat_real_titles(title):
+    assert not is_artifact_record(title), title
 
 
 @pytest.mark.parametrize("title", [

@@ -213,7 +213,12 @@ _ARTIFACT_TITLE_RE = re.compile(
 _SUPPLEMENT_SUFFIX_RE = re.compile(
     r"[_\-\s](?:supp|suppl|supplement(?:ary|al)?|esm)"
     r"(?:[\s_\-]*(?:material|information|data|file|note|method|text)s?)?"
-    r"[\s_\-]*[\dIVXivx]*(?:\s*[-–—]\s*[\dIVXivx]+)?\s*$",
+    r"[\s_\-]*[\dIVXivx]*(?:\s*[-–—]\s*[\dIVXivx]+)?"
+    # …and the record is often the FILE, so the title carries its extension:
+    # "…in Coordinate Networks_supp1-3667002.pdf". Missing this made the whole
+    # pattern a no-op on the real data — the fixture it was written against had
+    # been truncated by a log line, which cut the extension off.
+    r"(?:\.(?:pdf|docx?|xlsx?|zip|csv|txt|tex|tif{1,2}|png|jpe?g))?\s*$",
     re.IGNORECASE)
 
 
