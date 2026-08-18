@@ -266,6 +266,36 @@ class PipelineMixin:
             self.save_step_checkpoint(step_num - 1, "Compile LaTeX")
             return "", score, []
 
+        # The reviewer's ANSWER is often just "report saved to latest_review.md"
+        # — a pointer, not the review. If the pointed-at file is missing or
+        # empty, there is no score anywhere and the run ends 0.0/failed with a
+        # perfectly good paper on disk (95241962: contract all-pass, then the
+        # reviewer claimed the save and wrote nothing). Same contract as
+        # experiments and idea.md: the artifact, not the claim, is the output —
+        # give one corrective pass before accepting a scoreless review.
+        review_file = self.state_dir / "latest_review.md"
+        review_written = review_file.exists() and review_file.stat().st_size > 200
+        if not review_written and len((review_output or "").strip()) < 400:
+            self.log("Reviewer produced no report file — one corrective pass",
+                     "WARN")
+            try:
+                review_output = self.run_agent(
+                    "reviewer",
+                    "Your previous review attempt saved NOTHING: "
+                    "auto_research/state/latest_review.md is missing or empty. "
+                    "Write the FULL review report to that file now (use the "
+                    "file editor's create command, not str_replace), including "
+                    "an explicit line 'Overall Score: X/10'. Then print the "
+                    "file (`cat auto_research/state/latest_review.md`) to "
+                    "confirm it is non-empty before finishing.",
+                    timeout=defaults.TIMEOUT_REVIEWER,
+                )
+            except Exception as e:
+                self.log(f"Review corrective pass failed: {e}", "WARN")
+        if review_file.exists() and review_file.stat().st_size > 200:
+            # The file is the review of record; the chat answer may be a stub.
+            review_output = review_file.read_text(errors="replace")
+
         score = self.parse_review_score(review_output)
         if score == 0.0 and review_output and len(review_output.strip()) > 100:
             score = self._retry_score_parsing(review_output) or 0.0

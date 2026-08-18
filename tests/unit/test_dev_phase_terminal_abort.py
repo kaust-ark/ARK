@@ -263,3 +263,67 @@ class TestSkipDeepResearchSkipsOnlyDeepResearch:
     def test_without_the_flag_a_missing_dr_report_still_triggers_the_phase(self, tmp_path):
         p = self._pipe(tmp_path, skip=False, idea=True, project_context=True)
         assert p._should_run_research_phase() is True
+
+
+class TestReviewIsTheFileNotTheClaim:
+    """'Report saved to latest_review.md' is a pointer, not a review.
+
+    95241962: delivery contract all-pass, then the reviewer claimed the save,
+    wrote nothing, no score existed anywhere, and the run ended 0.0/failed
+    with a perfectly good paper on disk.
+    """
+
+    def _step(self, tmp_path, file_text, answer, corrective_writes=None):
+        from unittest.mock import patch
+        import ark.pipeline as pl
+        p = PipelineMixin.__new__(PipelineMixin)
+        p.state_dir = tmp_path
+        p.config = {"venue": "V", "latex_dir": "paper"}
+        p.logs = []
+        p.log = lambda m, l="INFO": p.logs.append((l, m))
+        p.log_step = lambda *a, **k: None
+        p.log_step_header = lambda *a, **k: None
+        p._run_citation_verification = lambda: None
+        p._archive_and_load_prior_review = lambda: ""
+        p._build_visual_review_section = lambda: ""
+        p.extract_issue_ids = lambda: []
+        p.save_step_checkpoint = lambda *a, **k: None
+        p.notify_progress = lambda *a, **k: None
+        p.send_notification = lambda *a, **k: None
+        p.parse_review_score = PipelineMixin.parse_review_score.__get__(p) \
+            if hasattr(PipelineMixin, "parse_review_score") else (lambda t: 7.0 if "Overall Score" in (t or "") else 0.0)
+        if file_text is not None:
+            (tmp_path / "latest_review.md").write_text(file_text)
+
+        calls = []
+        def fake_agent(agent_type, task, timeout=None, **kw):
+            calls.append(task[:60])
+            if len(calls) > 1 and corrective_writes is not None:
+                (tmp_path / "latest_review.md").write_text(corrective_writes)
+            return answer
+        p.run_agent = fake_agent
+        from types import SimpleNamespace
+        p.memory = SimpleNamespace(record_issues=lambda *a, **k: None,
+                                   get_repeat_issues=lambda *a, **k: [])
+        p.iteration = 1
+        p.extract_issue_ids = lambda: []
+        p._check_repeat_issues = lambda: None
+        p.telegram = SimpleNamespace(is_configured=False)
+        p.save_paper_state = lambda *a, **k: None
+        p.log_file = tmp_path / "x.log"
+        out, score, _ = PipelineMixin._step_review(p, 2, 5, 0, {'reviews': []}, 0.0)
+        return out, score, calls
+
+    def test_a_real_report_file_becomes_the_review_of_record(self, tmp_path):
+        body = "Detailed review... Overall Score: 7/10\n" + "x" * 300
+        out, score, calls = self._step(tmp_path, body, "report saved to latest_review.md")
+        assert "Overall Score" in out
+        assert len(calls) == 1                     # no corrective needed
+
+    def test_a_claimed_but_empty_report_gets_one_corrective_pass(self, tmp_path):
+        body = "Second try review. Overall Score: 6/10\n" + "y" * 300
+        out, score, calls = self._step(tmp_path, None,
+                                       "Review report has been saved to latest_review.md",
+                                       corrective_writes=body)
+        assert len(calls) == 2                     # corrective fired
+        assert "Overall Score" in out

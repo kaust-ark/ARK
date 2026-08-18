@@ -55,3 +55,13 @@ def test_gemini_quota_429_is_transient_even_as_badrequesterror():
         'litellm.BadRequestError: GeminiException BadRequestError - '
         '{"error": {"code": 429, "message": "You exceeded your current '
         'quota, please check your plan and billing details."}}')
+
+
+def test_a_stuck_conversation_is_retried_not_aborted():
+    """The loop detector's verdict names a wedged agent, not a dead provider.
+    A fresh conversation (carrying the RETRY NOTE) is the remedy. 4906d1a2
+    died on its FIRST stuck verdict with zero retries because the note was
+    wired into a branch this error never reached."""
+    assert _is_transient(
+        "ConversationRunError: Conversation run failed for id=x: "
+        "Remote conversation got stuck")

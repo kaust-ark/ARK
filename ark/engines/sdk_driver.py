@@ -285,6 +285,14 @@ def main() -> int:
         # quota, not a rate window. Caching stays on everywhere else: for paid
         # Anthropic/OpenAI it is the difference between 80% and 0% cache hits.
         caching_prompt=bool(cfg.get("caching_prompt", True)),
+        # Bound every turn's generation. A hybrid-thinking model (Qwen3) can
+        # nondeterministically spend tens of thousands of <think> tokens on
+        # one turn; at a local card's ~14 tok/s that is a half-hour of silence,
+        # which the SDK's stuck-watchdog rightly executes ("Remote conversation
+        # got stuck", c27952f2 — the previous, identical run had sailed
+        # through). No agent turn legitimately needs more than 8K of output;
+        # a truncated think costs one retry, an unbounded one costs the run.
+        max_output_tokens=int(cfg.get("max_output_tokens", 8192)),
     )
     # The one line this whole driver exists for: compact on SIZE, not on a
     # count of events. max_size stays as a secondary guard against runs that

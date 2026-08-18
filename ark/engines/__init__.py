@@ -597,6 +597,14 @@ Execute the task and update the corresponding files.
                         # only stops a minute-window 429 from being lethal.
                         '"code": 429', "resource_exhausted",
                         "exceeded your current quota",
+                        # The SDK's loop detector ("Remote conversation got
+                        # stuck") means the agent wedged on a repeated action —
+                        # a fresh conversation with the RETRY NOTE below is the
+                        # remedy, not an abort. Wiring the note without adding
+                        # this pattern was a half-fix: 4906d1a2 died on its
+                        # first stuck verdict with zero retries, because the
+                        # note lived in a branch this error never reached.
+                        "got stuck",
                         # Empty/truncated provider body: litellm fails to parse a
                         # JSON response because OpenRouter (or its upstream) returned
                         # blank/non-JSON bytes mid-request. Same transient class as
@@ -648,6 +656,29 @@ Execute the task and update the corresponding files.
                         timer.stop()
                         RateLimitCountdown(wait_s).run()
                         self._rate_limit_notified = False
+                        # A "stuck" verdict is the SDK's loop detector: the
+                        # agent repeated an identical failing tool call until
+                        # the pattern threshold fired. Retrying the SAME task
+                        # verbatim reproduces the loop — a weak model repeats
+                        # its own prior even across fresh conversations (B20
+                        # spent three hours failing four identical attempts;
+                        # B21 looped a str_replace whose LaTeX old_str never
+                        # matched). Tell the retry what happened and take the
+                        # brittle move off the table.
+                        if "got stuck" in _detail_l:
+                            full_prompt += (
+                                "\n\n## RETRY NOTE — your previous attempt was "
+                                "terminated for looping\n"
+                                "It repeated an identical failing tool call "
+                                "(often a str_replace whose old_str did not "
+                                "match) until the loop detector stopped it. On "
+                                "this attempt: NEVER re-issue a tool call that "
+                                "just failed with the same arguments. If a "
+                                "str_replace fails once, do not adjust it — "
+                                "re-read the file and REWRITE THE WHOLE FILE "
+                                "with the file editor's create command instead. "
+                                "If a command fails twice, move on and note it "
+                                "in your summary.\n")
                         start_time = time.time()
                         continue  # one bounded transient retry
                     # Not transient (or transient retries exhausted): surface the
