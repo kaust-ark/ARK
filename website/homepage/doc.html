@@ -275,7 +275,7 @@ ark monitor myproject
 <h2 id="requirements">Requirements</h2>
 <ul>
 <li><strong>Python 3.10+</strong> with <code>pyyaml</code> and <code>PyMuPDF</code></li>
-<li><strong>Agent runtime</strong>: <a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a> (installed via <code>uv</code>, bundles its own Python 3.12) &mdash; one runtime that drives Claude / GPT / Gemini / any <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a> model, selected per project via <code>model</code> in <code>config.yaml</code></li>
+<li><strong>Agent runtime</strong>: <a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a> (installed via <code>uv</code>, bundles its own Python 3.12) &mdash; one runtime that drives Claude / GPT / Gemini / any <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a> model, selected per project via <code>model</code> in <code>config.yaml</code>. Alternatively, <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a> runs a project's agents in an OS-enforced sandbox (<code>model: dsh/deepseek-v4</code> &mdash; see <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEEPSEEK_HARNESS.md">docs/DEEPSEEK_HARNESS.md</a>)</li>
 <li><strong>API key</strong>: one <a href="https://openrouter.ai/keys">OpenRouter</a> key covers every model, deep research (Perplexity), and AI figures; single-vendor keys (Anthropic / OpenAI / Gemini / DeepSeek / …) work too but lose the pieces their vendor doesn't serve</li>
 <li><strong>Optional</strong>: LaTeX (<code>pdflatex</code> + <code>bibtex</code>), Slurm</li>
 </ul>

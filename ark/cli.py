@@ -4424,13 +4424,28 @@ def cmd_doctor(args):
                   else "create with `conda create -n ark python=3.11 && pip install -e .[webapp]`"
             line("WARN", f"conda env: {env}", msg)
 
-    # 4. Agent runtime (OpenHands — every agent runs through it)
+    # 4. Agent runtime (OpenHands by default; DeepSeek Harness for dsh/* models)
     openhands_cli = shutil.which("openhands")
     if openhands_cli:
         line("PASS", "agent runtime", f"openhands={openhands_cli}")
     else:
         line("WARN", "agent runtime",
              "install with `uv tool install --python 3.12 openhands` — needed to run agents")
+    dsh_cli = shutil.which(os.environ.get("ARK_DSH_BIN", "dsh"))
+    if dsh_cli:
+        line("PASS", "agent runtime (dsh)", f"dsh={dsh_cli}")
+    else:
+        # dsh is optional — only warn when the global config actually selects it.
+        try:
+            _gcfg = get_config_dir() / "config.yaml"
+            _gmodel = (yaml.safe_load(_gcfg.read_text()) or {}).get("model", "") \
+                if _gcfg.exists() else ""
+        except Exception:
+            _gmodel = ""
+        if str(_gmodel).startswith("dsh/"):
+            line("WARN", "agent runtime (dsh)",
+                 f"config model is {_gmodel} but `dsh` is not on PATH — "
+                 "install with `npm install -g @deepseek-ai/dsh`")
 
     # 5. API keys (any LiteLLM provider works; the mainstream three are checked
     #    explicitly — the model prefix in config.yaml picks which one is used)

@@ -109,7 +109,7 @@ idea2paper 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息�
 ## 环境要求
 
 - **Python 3.10+** (需安装 `pyyaml` 和 `PyMuPDF`)
-- **智能体运行时**：[OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI)（经 `uv` 安装，自带 Python 3.12）&mdash; 一个运行时即可驱动 Claude / GPT / Gemini / 任何 [LiteLLM](https://docs.litellm.ai/docs/providers) 支持的模型，通过 `config.yaml` 里的 `model` 字段按项目选择。
+- **智能体运行时**：[OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI)（经 `uv` 安装，自带 Python 3.12）&mdash; 一个运行时即可驱动 Claude / GPT / Gemini / 任何 [LiteLLM](https://docs.litellm.ai/docs/providers) 支持的模型，通过 `config.yaml` 里的 `model` 字段按项目选择。也可选用 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 作为替代运行时，在操作系统级强制沙箱中运行智能体（`model: dsh/deepseek-v4`，详见 [docs/DEEPSEEK_HARNESS.md](docs/DEEPSEEK_HARNESS.md)）。
 - **API key**：一个 [OpenRouter](https://openrouter.ai/keys) key 即可覆盖全部模型、深度研究（Perplexity）和 AI 绘图；单一厂商的 key（Anthropic / OpenAI / Gemini / DeepSeek 等）也能用，只是会缺少该厂商不提供的那部分能力。
 - **可选**: LaTeX (`pdflatex` + `bibtex`)、Slurm。
 

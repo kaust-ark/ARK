@@ -109,7 +109,7 @@ ark new myproject --from-pdf proposal.pdf
 ## المتطلبات
 
 - **Python 3.10+** مع `pyyaml` و `PyMuPDF`
-- **بيئة تشغيل الوكلاء**: [OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI) (تُثبَّت عبر `uv` وتأتي مع Python 3.12 خاص بها) &mdash; بيئة تشغيل واحدة تدير Claude / GPT / Gemini / أي نموذج يدعمه [LiteLLM](https://docs.litellm.ai/docs/providers)، ويُختار النموذج لكل مشروع عبر `model` في `config.yaml`.
+- **بيئة تشغيل الوكلاء**: [OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI) (تُثبَّت عبر `uv` وتأتي مع Python 3.12 خاص بها) &mdash; بيئة تشغيل واحدة تدير Claude / GPT / Gemini / أي نموذج يدعمه [LiteLLM](https://docs.litellm.ai/docs/providers)، ويُختار النموذج لكل مشروع عبر `model` في `config.yaml`. ويمكن بدلاً من ذلك استخدام [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) كبيئة تشغيل بديلة تعزل الوكلاء في صندوق رمل مفروض على مستوى نظام التشغيل (`model: dsh/deepseek-v4` &mdash; انظر [docs/DEEPSEEK_HARNESS.md](docs/DEEPSEEK_HARNESS.md)).
 - **مفتاح API**: مفتاح [OpenRouter](https://openrouter.ai/keys) واحد يغطي كل النماذج، والبحث العميق (Perplexity)، والأشكال المولَّدة بالذكاء الاصطناعي؛ وتعمل مفاتيح المزوّد الواحد (Anthropic / OpenAI / Gemini / DeepSeek / …) أيضاً لكنها تفقد ما لا يقدّمه ذلك المزوّد.
 - **اختياري**: LaTeX (`pdflatex` + `bibtex`)، Slurm.
 

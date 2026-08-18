@@ -22,6 +22,11 @@ model: anthropic/claude-sonnet-4-6
 #   ANY OpenHands/LiteLLM provider also works: deepseek/… , xai/… ,
 #   mistral/… , groq/… , bedrock/… , ollama/… — the three above are just
 #   the common ones. (exact model ids: see the LiteLLM provider docs)
+#
+#   dsh/deepseek-v4                  (DeepSeek Harness runtime — alternative
+#   agent runtime with an OS-enforced workspace sandbox; needs the `dsh`
+#   binary (`npm i -g @deepseek-ai/dsh`) and a native deepseek_api_key.
+#   See docs/DEEPSEEK_HARNESS.md)
 
 # Light helpers (paper title, iteration summary, Telegram bot replies, message
 # classification). These are simple one-shot LLM calls (via LiteLLM, NOT the

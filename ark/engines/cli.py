@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, Tuple
 from pathlib import Path
 
+import yaml
+
 # ── Blocking-command watchdog ─────────────────────────────
 # Executables that will block forever waiting for user input.
 # Matched against argv[0] basename only — never against arguments/prompts.
@@ -143,9 +145,22 @@ class AgentCLI(ABC):
     def __init__(self, model_name: str, model_variant: Optional[str] = None):
         self.model_name = model_name
         self.model_variant = model_variant
-        
+
     @abstractmethod
     def build_command(self, prompt: str, path_boundary: str, code_dir: Path) -> list:
+        pass
+
+    def _start_aux_stream(self, process, on_event):
+        """Optional side-channel event source started right after the agent
+        process spawns. Runtimes whose live events do NOT arrive on stdout
+        (dsh writes them to a session log on disk) override this to start a
+        tailer that feeds ``on_event`` — same contract as stdout lines,
+        including killing the process tree on an ``"ABORT"`` return. Returns
+        an opaque handle passed back to ``_stop_aux_stream``."""
+        return None
+
+    def _stop_aux_stream(self, handle) -> None:
+        """Stop the side-channel started by ``_start_aux_stream`` (no-op)."""
         pass
 
     def build_env(self, code_dir: Optional[Path] = None) -> dict:
@@ -187,6 +202,11 @@ class AgentCLI(ABC):
 
         watchdog = _BlockingCommandWatchdog(process.pid, log_fn=log_fn)
         watchdog.start()
+
+        try:
+            aux_stream = self._start_aux_stream(process, on_event)
+        except Exception:
+            aux_stream = None
 
         # Hard-timeout killer: fires even if the process emits no output at all
         # (a plain read loop could otherwise block forever on a silent hang).
@@ -245,6 +265,10 @@ class AgentCLI(ABC):
         killer.join(timeout=2)
         watchdog.stop()
         err_thread.join(timeout=2)
+        try:
+            self._stop_aux_stream(aux_stream)
+        except Exception:
+            pass
 
         elapsed = int(time.time() - start_time)
         rc = process.returncode if process.returncode is not None else -1
@@ -402,7 +426,394 @@ class OpenHandsCLI(AgentCLI):
             return None
 
 
+class _DshSessionTailer(threading.Thread):
+    """Follow a dsh session log as it is appended and feed lines to ``on_event``.
+
+    dsh's headless runner prints ONLY the final assistant text on stdout; the
+    live event stream (tool calls, assistant messages, turn boundaries) goes to
+    an append-only ``session.jsonl`` under ``$DSH_HOME/sessions``. This tailer
+    is the bridge that keeps ARK's live step log and circuit breaker working:
+    it discovers the session file the run creates, streams each new line to the
+    same ``on_event`` callback the stdout loop uses, and kills the agent
+    process tree if the callback returns ``"ABORT"`` (same contract).
+    """
+
+    POLL_SECONDS = 1.0
+
+    def __init__(self, sessions_root: Path, baseline: set, process, on_event):
+        super().__init__(daemon=True)
+        self._root = sessions_root
+        self._baseline = baseline
+        self._process = process
+        self._on_event = on_event
+        self._stop = threading.Event()
+        self.session_file: Optional[Path] = None
+
+    def _discover(self) -> Optional[Path]:
+        try:
+            candidates = [p for p in self._root.rglob("session.jsonl")
+                          if p not in self._baseline]
+        except OSError:
+            return None
+        if not candidates:
+            return None
+        return max(candidates, key=lambda p: p.stat().st_mtime)
+
+    def _emit(self, raw: bytes) -> Optional[str]:
+        try:
+            if self._on_event:
+                return self._on_event(raw.decode("utf-8", "replace"))
+        except Exception:
+            pass
+        return None
+
+    def run(self):
+        # Binary mode: a partial line's rewind must count BYTES, not chars
+        # (session events routinely carry multi-byte UTF-8 text).
+        fh = None
+        try:
+            while not self._stop.is_set():
+                if fh is None:
+                    found = self._discover()
+                    if found is not None:
+                        self.session_file = found
+                        try:
+                            fh = open(found, "rb")
+                        except OSError:
+                            fh = None
+                    if fh is None:
+                        if self._stop.wait(self.POLL_SECONDS):
+                            break
+                        continue
+                line = fh.readline()
+                if not line:
+                    if self._stop.wait(self.POLL_SECONDS):
+                        break
+                    continue
+                if not line.endswith(b"\n"):
+                    # Partial line still being written — rewind and retry.
+                    fh.seek(-len(line), os.SEEK_CUR)
+                    if self._stop.wait(self.POLL_SECONDS):
+                        break
+                    continue
+                if self._emit(line) == "ABORT":
+                    kill_process_tree(self._process.pid)
+                    break
+        finally:
+            # Drain whatever is already on disk so a fast run loses no events —
+            # including runs that finished before the first discovery poll.
+            try:
+                if fh is None:
+                    found = self._discover()
+                    if found is not None:
+                        self.session_file = found
+                        try:
+                            fh = open(found, "rb")
+                        except OSError:
+                            fh = None
+                if fh is not None:
+                    for line in fh:
+                        if line.endswith(b"\n"):
+                            self._emit(line)
+                    fh.close()
+            except Exception:
+                pass
+
+    def stop(self):
+        self._stop.set()
+        self.join(timeout=5)
+
+
+class DshCLI(AgentCLI):
+    """Drive DeepSeek Harness's one-shot runner (`dsh --profile headless`).
+
+    Selected with a ``dsh/`` model prefix, e.g. ``dsh/deepseek-v4`` or the
+    explicit ``dsh/<provider>/<model>`` form (default provider:
+    ``deepseek-official``). Unlike OpenHands, dsh enforces the workspace
+    boundary at the OS level (Landlock sandbox, ``DSH_PERMISSION_MODE``,
+    default ``workspace-write`` rooted at the agent's cwd = the project dir)
+    and fails CLOSED on approval escalations when no human answerer is
+    attached — so the ARK path restriction is enforced, not just prompted.
+
+    Runtime contract (verified against dsh 0.1.0-rc.7):
+      * stdout: the final assistant text only (+ trailing newline)
+      * stderr: ``dsh: <CODE>: <detail>`` on failure
+      * exit code: 0 only when the turn ended with reason ``completed``
+      * full event stream: ``$DSH_HOME/sessions/<project>/<session-id>/
+        session.jsonl`` (we patch compression to ``none`` so Python can read
+        it); usage lives in ``assistant/chunk``/``assistant/message`` events,
+        errors in ``turn/end``.
+
+    Each project gets its own ``DSH_HOME`` (``<code_dir>/.dsh_home``) —
+    sessions, profile state, and skills stay inside the project sandbox,
+    mirroring ARK's per-project conda env isolation.
+    """
+
+    DEFAULT_PROVIDER = "deepseek-official"
+
+    # dsh provider id → env var holding its API key. Anything not listed
+    # falls back to the shared <PROVIDER>_API_KEY convention on the first
+    # dash-separated token ("deepseek-official" → DEEPSEEK_API_KEY).
+    _PROVIDER_KEY_ENV = {
+        "deepseek-official": "DEEPSEEK_API_KEY",
+    }
+
+    def __init__(self, model_name: str, model_variant: Optional[str] = None):
+        super().__init__(model_name, model_variant)
+        self._sessions_root: Optional[Path] = None
+        self._session_baseline: set = set()
+        self._tailer: Optional[_DshSessionTailer] = None
+
+    # ---- model / provider resolution ----
+
+    def _spec(self) -> Tuple[str, str]:
+        """Resolve (provider, model) from the ``dsh/...`` model string."""
+        raw = self.model_variant or self.model_name or ""
+        if raw.startswith("dsh/"):
+            raw = raw[len("dsh/"):]
+        parts = raw.split("/", 1)
+        if len(parts) == 2 and parts[0]:
+            return parts[0], parts[1]
+        return self.DEFAULT_PROVIDER, raw
+
+    def _key_env(self, provider: str) -> str:
+        try:
+            from ark.llm_lite import provider_key_env
+        except Exception:
+            provider_key_env = lambda p: f"{p.upper()}_API_KEY"  # noqa: E731
+        return self._PROVIDER_KEY_ENV.get(
+            provider, provider_key_env(provider.split("-", 1)[0]))
+
+    def _dsh_home(self, code_dir: Path) -> Path:
+        return Path(code_dir) / ".dsh_home"
+
+    # ---- launch ----
+
+    def _write_patch(self, code_dir: Path) -> Path:
+        """Write the per-run patch overlay that configures dsh for ARK.
+
+        NOTE: a patch entry's ``config`` REPLACES the plugin's whole config
+        (no deep-merge), so every entry restates required fields.
+        """
+        provider, model = self._spec()
+        dsh_home = self._dsh_home(code_dir)
+        sessions_root = dsh_home / "sessions"
+        sessions_root.mkdir(parents=True, exist_ok=True)
+
+        bash_timeout_ms = int(os.environ.get("ARK_DSH_BASH_TIMEOUT_MS", "600000"))
+        patch = [
+            # Which model answers — the same knob the Web UI's model picker sets.
+            {"id": "agent-default-model",
+             "config": {"provider": provider, "model": model}},
+            # Plain (uncompressed) session logs so the orchestrator can tail
+            # and parse them without a zstd dependency.
+            {"id": "session-persistence-jsonl",
+             "config": {"root": str(sessions_root), "compression": "none"}},
+            # dsh's default per-command limit is 60s — far too short for
+            # experiment installs/compiles. Match ARK's long-running reality.
+            {"id": "bash-sandbox",
+             "config": {"timeoutMs": bash_timeout_ms}},
+        ]
+        patch_file = dsh_home / "ark.patch.yml"
+        patch_file.write_text(yaml.safe_dump(patch, sort_keys=False))
+        return patch_file
+
+    @staticmethod
+    def _ensure_agents_skills_link(code_dir: Path) -> None:
+        """Expose ARK's installed skills to dsh.
+
+        ARK installs skills into ``<project>/.claude/skills``; dsh discovers
+        project skills in ``<project>/.agents/skills`` (same SKILL.md +
+        YAML-frontmatter format, verified compatible). A symlink shares one
+        skill tree across both runtimes.
+        """
+        skills_src = Path(code_dir) / ".claude" / "skills"
+        agents_dir = Path(code_dir) / ".agents"
+        link = agents_dir / "skills"
+        if not skills_src.is_dir() or link.exists():
+            return
+        try:
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(Path("..") / ".claude" / "skills")
+        except OSError:
+            pass  # e.g. FS without symlinks — dsh just won't see the skills
+
+    def build_command(self, prompt: str, path_boundary: str, code_dir: Path) -> list:
+        patch_file = self._write_patch(code_dir)
+        self._ensure_agents_skills_link(code_dir)
+        self._sessions_root = self._dsh_home(code_dir) / "sessions"
+        try:
+            self._session_baseline = set(self._sessions_root.rglob("session.jsonl"))
+        except OSError:
+            self._session_baseline = set()
+        # The OS sandbox enforces the boundary; the [SYSTEM RULE] line keeps the
+        # agent's *intent* aligned too (same convention as the OpenHands path).
+        task = f"[SYSTEM RULE] {path_boundary}\n\n{prompt}"
+        dsh_bin = os.environ.get("ARK_DSH_BIN", "dsh")
+        return [dsh_bin, "--profile", "headless", "--patch", str(patch_file), task]
+
+    def build_env(self, code_dir: Optional[Path] = None) -> dict:
+        env = super().build_env(code_dir)
+        if code_dir is not None:
+            env["DSH_HOME"] = str(self._dsh_home(code_dir))
+        # workspace-write = OS-enforced writes only inside cwd (the project),
+        # with approval escalations failing closed in headless runs.
+        env.setdefault(
+            "DSH_PERMISSION_MODE",
+            os.environ.get("ARK_DSH_PERMISSION_MODE", "workspace-write"))
+        # Never phone telemetry home from an autonomous research run unless
+        # the operator explicitly opted in.
+        env.setdefault("DSH_TELEMETRY_MODE", "DISABLED")
+        provider, _ = self._spec()
+        key_env = self._key_env(provider)
+        key = os.environ.get(key_env)
+        if key:
+            env[key_env] = key
+        return env
+
+    def _start_aux_stream(self, process, on_event):
+        if on_event is None or self._sessions_root is None:
+            return None
+        tailer = _DshSessionTailer(
+            self._sessions_root, self._session_baseline, process, on_event)
+        tailer.start()
+        self._tailer = tailer
+        return tailer
+
+    def _stop_aux_stream(self, handle) -> None:
+        if handle is not None:
+            handle.stop()
+
+    # ---- result parsing ----
+
+    def _find_session_file(self) -> Optional[Path]:
+        if self._tailer is not None and self._tailer.session_file is not None:
+            return self._tailer.session_file
+        if self._sessions_root is None:
+            return None
+        try:
+            fresh = [p for p in self._sessions_root.rglob("session.jsonl")
+                     if p not in self._session_baseline]
+        except OSError:
+            return None
+        if not fresh:
+            return None
+        return max(fresh, key=lambda p: p.stat().st_mtime)
+
+    @staticmethod
+    def _estimate_cost(model: str, in_tok: int, out_tok: int,
+                       cache_read: int, cache_write: int) -> float:
+        """Best-effort USD estimate via LiteLLM's price table (0.0 if unknown).
+
+        dsh session logs carry provider-reported token counts but no price;
+        the dashboard already labels non-provider-billed totals as estimates.
+        """
+        try:
+            from litellm import cost_per_token
+            prompt_tokens = in_tok + cache_read + cache_write
+            for candidate in (f"deepseek/{model}", model):
+                try:
+                    in_cost, out_cost = cost_per_token(
+                        model=candidate,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=out_tok,
+                    )
+                    return float(in_cost) + float(out_cost)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return 0.0
+
+    def parse_output(self, stdout: str) -> dict:
+        """Assemble ARK's runner result from stdout + the session event log.
+
+        Returns the same shape as ``OpenHandsCLI.parse_output``:
+        ``{result, usage, error_code, error_detail, conversation_id}``.
+        """
+        import json as _json
+
+        result = (stdout or "").strip()
+        error_code = None
+        error_detail = None
+        conv_id = None
+        model_seen = ""
+        # Usage events repeat per (turn, step) with running totals — keep the
+        # LAST value per step (mirrors dsh's own token-meter fold), then sum.
+        step_usage: dict = {}
+
+        session_file = self._find_session_file()
+        if session_file is not None:
+            conv_id = session_file.parent.name
+            try:
+                with open(session_file, "r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            evt = _json.loads(line)
+                        except (ValueError, TypeError):
+                            continue
+                        etype = evt.get("type")
+                        data = evt.get("data") or {}
+                        if etype == "request/header":
+                            cfg = (data.get("header") or {}).get("config") or {}
+                            model_seen = cfg.get("model") or model_seen
+                        elif etype == "assistant/chunk":
+                            chunk = data.get("chunk") or {}
+                            if chunk.get("type") == "usage" and chunk.get("usage"):
+                                step_usage[(data.get("turn"), data.get("step"))] = chunk["usage"]
+                        elif etype == "assistant/message":
+                            if data.get("usage"):
+                                step_usage[(data.get("turn"), data.get("step"))] = data["usage"]
+                        elif etype == "turn/end":
+                            reason = data.get("reason") or {}
+                            if reason.get("kind") == "error":
+                                err = reason.get("error") or {}
+                                error_code = str(err.get("code") or "DSH_ERROR")
+                                error_detail = str(err.get("message") or "")[:500]
+                            else:
+                                error_code = None
+                                error_detail = None
+            except OSError:
+                pass
+
+        usage = None
+        if step_usage:
+            in_tok = sum(int(u.get("inputTokens") or 0) for u in step_usage.values())
+            out_tok = sum(int(u.get("outputTokens") or 0) for u in step_usage.values())
+            cache_read = sum(int(u.get("cacheReadTokens") or 0) for u in step_usage.values())
+            cache_write = sum(int(u.get("cacheWriteTokens") or 0) for u in step_usage.values())
+            _, model = self._spec()
+            usage = {
+                "model": model_seen or model,
+                "input_tokens": in_tok,
+                "output_tokens": out_tok,
+                "cache_read_tokens": cache_read,
+                "cache_creation_tokens": cache_write,
+                "cost_usd": self._estimate_cost(
+                    model_seen or model, in_tok, out_tok, cache_read, cache_write),
+                "duration_api_ms": 0,
+            }
+
+        return {
+            "result": result,
+            "usage": usage,
+            "error_code": error_code,
+            "error_detail": error_detail,
+            "conversation_id": conv_id,
+        }
+
+
 def get_cli_for_model(model: str, variant: Optional[str] = None) -> AgentCLI:
-    """Return the agent runtime. Everything runs through OpenHands now; ``model``
-    / ``variant`` is the LiteLLM model string (e.g. ``anthropic/claude-sonnet-4-6``)."""
+    """Return the agent runtime for a model string.
+
+    ``dsh/...`` prefixes select the DeepSeek Harness runtime (e.g.
+    ``dsh/deepseek-v4``); everything else runs through OpenHands, where
+    ``model`` / ``variant`` is the LiteLLM model string (e.g.
+    ``anthropic/claude-sonnet-4-6``)."""
+    selected = variant or model or ""
+    if selected.startswith("dsh/"):
+        return DshCLI(model, selected)
     return OpenHandsCLI(model, variant or model)

@@ -109,7 +109,7 @@ idea2paper parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and
 ## Requirements
 
 - **Python 3.10+** with `pyyaml` and `PyMuPDF`
-- **Agent runtime**: [OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI) (installed via `uv`, bundles its own Python 3.12) &mdash; one runtime that drives Claude / GPT / Gemini / any [LiteLLM](https://docs.litellm.ai/docs/providers) model, selected per project via `model` in `config.yaml`
+- **Agent runtime**: [OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI) (installed via `uv`, bundles its own Python 3.12) &mdash; one runtime that drives Claude / GPT / Gemini / any [LiteLLM](https://docs.litellm.ai/docs/providers) model, selected per project via `model` in `config.yaml`. Alternatively, [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) runs a project's agents in an OS-enforced sandbox (`model: dsh/deepseek-v4` &mdash; see [docs/DEEPSEEK_HARNESS.md](docs/DEEPSEEK_HARNESS.md))
 - **API key**: one [OpenRouter](https://openrouter.ai/keys) key covers every model, deep research (Perplexity), and AI figures; single-vendor keys (Anthropic / OpenAI / Gemini / DeepSeek / …) work too but lose the pieces their vendor doesn't serve
 - **Optional**: LaTeX (`pdflatex` + `bibtex`), Slurm
 

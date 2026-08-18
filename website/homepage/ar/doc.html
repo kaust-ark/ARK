@@ -327,7 +327,7 @@ ark monitor myproject
 <h2 id="المتطلبات">المتطلبات</h2>
 <ul>
 <li><strong>Python 3.10+</strong> مع <code>pyyaml</code> و <code>PyMuPDF</code></li>
-<li><strong>بيئة تشغيل الوكلاء</strong>: <a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a> (تُثبَّت عبر <code>uv</code> وتأتي مع Python 3.12 خاص بها) &mdash; بيئة تشغيل واحدة تدير Claude / GPT / Gemini / أي نموذج يدعمه <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a>، ويُختار النموذج لكل مشروع عبر <code>model</code> في <code>config.yaml</code>.</li>
+<li><strong>بيئة تشغيل الوكلاء</strong>: <a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a> (تُثبَّت عبر <code>uv</code> وتأتي مع Python 3.12 خاص بها) &mdash; بيئة تشغيل واحدة تدير Claude / GPT / Gemini / أي نموذج يدعمه <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a>، ويُختار النموذج لكل مشروع عبر <code>model</code> في <code>config.yaml</code>. ويمكن بدلاً من ذلك استخدام <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a> كبيئة تشغيل بديلة تعزل الوكلاء في صندوق رمل مفروض على مستوى نظام التشغيل (<code>model: dsh/deepseek-v4</code> &mdash; انظر <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEEPSEEK_HARNESS.md">docs/DEEPSEEK_HARNESS.md</a>).</li>
 <li><strong>مفتاح API</strong>: مفتاح <a href="https://openrouter.ai/keys">OpenRouter</a> واحد يغطي كل النماذج، والبحث العميق (Perplexity)، والأشكال المولَّدة بالذكاء الاصطناعي؛ وتعمل مفاتيح المزوّد الواحد (Anthropic / OpenAI / Gemini / DeepSeek / …) أيضاً لكنها تفقد ما لا يقدّمه ذلك المزوّد.</li>
 <li><strong>اختياري</strong>: LaTeX (<code>pdflatex</code> + <code>bibtex</code>)، Slurm.</li>
 </ul>

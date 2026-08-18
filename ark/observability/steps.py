@@ -1,14 +1,21 @@
-"""Parse OpenHands JSONL events into a clean, redacted step log.
+"""Parse agent-runtime JSONL events into a clean, redacted step log.
 
-The OpenHands ``--json`` stream interleaves real events with terminal-UI noise.
+Two runtime event dialects are understood:
+
+* **OpenHands** ``--json`` stream events (``kind``-keyed: ``ActionEvent``,
+  ``ObservationEvent``, ``MessageEvent``, ``ConversationErrorEvent``), which
+  arrive interleaved with terminal-UI noise on stdout.
+* **DeepSeek Harness (dsh)** session-log events (``type``-keyed:
+  ``tool/call``, ``tool/result``, ``assistant/message``, ``turn/end``), which
+  the dsh engine tails from the session's append-only ``session.jsonl``.
+
 :func:`parse_line` keeps only the meaningful events and maps each to a
 :class:`StepEvent`. :class:`StepLogger` writes them to ``agent_steps.jsonl`` and
 emits one human-readable line per step (respecting a verbosity level), routing
 everything through a :class:`Redactor` first so a secret never lands in a log.
 
-The event-kind mapping is best-effort: OpenHands' action schema varies by
-model/version, so unknown shapes degrade to a generic ``action`` step rather
-than being dropped.
+The event mapping is best-effort: runtime schemas vary by model/version, so
+unknown shapes degrade to a generic ``action`` step rather than being dropped.
 """
 
 from __future__ import annotations
@@ -68,6 +75,10 @@ def parse_line(line: str) -> Optional[StepEvent]:
     except (json.JSONDecodeError, ValueError):
         return None
     kind = evt.get("kind")
+    # dsh session-log events are keyed by a slash-namespaced `type`
+    # ("tool/call", "turn/end", …); OpenHands events never use that shape.
+    if kind is None and isinstance(evt.get("type"), str) and "/" in evt["type"]:
+        return _parse_dsh(evt)
 
     if kind == "ActionEvent":
         return _parse_action(evt)
@@ -98,6 +109,88 @@ def parse_line(line: str) -> Optional[StepEvent]:
             return StepEvent("result", _truncate(text), detail=text,
                              raw_kind=evt.get("tool_name") or "observation")
         return None
+    return None
+
+
+# dsh tool names → step types (see `docs/DEEPSEEK_HARNESS.md`). The bash tool's
+# argument is `command`; fs tools take `file_path`; str_replace_editor takes
+# a sub-verb `command` (view/create/str_replace/insert) plus `path`.
+_DSH_EDIT_TOOLS = {"write", "edit"}
+_DSH_READ_TOOLS = {"read", "read_image"}
+
+
+def _parse_dsh(evt: dict) -> Optional[StepEvent]:
+    """Map one dsh session-log event (``type``-keyed) to a StepEvent."""
+    etype = evt.get("type") or ""
+    data = evt.get("data") or {}
+    if not isinstance(data, dict):
+        return None
+
+    if etype == "tool/call":
+        name = str(data.get("name") or "")
+        args = data.get("arguments") or {}
+        if not isinstance(args, dict):
+            args = {}
+        if name == "bash":
+            cmd = _first_str(args, "command")
+            return StepEvent("command", _truncate(cmd), detail=cmd, raw_kind="dsh:bash")
+        if name in _DSH_EDIT_TOOLS:
+            path = _first_str(args, "file_path", "path")
+            return StepEvent("edit", (f"edit {path}").strip() if path else "edit",
+                             detail=path, raw_kind=f"dsh:{name}")
+        if name in _DSH_READ_TOOLS:
+            path = _first_str(args, "file_path", "path")
+            return StepEvent("read", (f"read {path}").strip() if path else "read",
+                             detail=path, raw_kind=f"dsh:{name}")
+        if name == "str_replace_editor":
+            verb = _first_str(args, "command")
+            path = _first_str(args, "path")
+            if verb in _VIEW_VERBS:
+                return StepEvent("read", (f"read {path}").strip() if path else "read",
+                                 detail=path, raw_kind="dsh:str_replace_editor")
+            return StepEvent("edit", (f"edit {path}").strip() if path else "edit",
+                             detail=path, raw_kind="dsh:str_replace_editor")
+        summary = name or "tool"
+        return StepEvent("action", _truncate(summary),
+                         detail=_truncate(str(args), 500), raw_kind=f"dsh:{name}")
+
+    if etype == "tool/result":
+        msg = data.get("message") or {}
+        parts = msg.get("content") if isinstance(msg, dict) else None
+        text = ""
+        if isinstance(parts, list):
+            text = "".join(p.get("text", "") for p in parts
+                           if isinstance(p, dict) and p.get("type") == "text")
+        if not text.strip():
+            return None
+        return StepEvent("result", _truncate(text), detail=text, raw_kind="dsh:tool/result")
+
+    if etype == "assistant/message":
+        msg = data.get("message") or {}
+        parts = msg.get("content") if isinstance(msg, dict) else None
+        text = ""
+        if isinstance(parts, list):
+            text = "".join(p.get("text", "") for p in parts
+                           if isinstance(p, dict) and p.get("type") == "text")
+        if not text.strip():
+            return None
+        return StepEvent("thought", _truncate(text), detail=text, raw_kind="dsh:assistant")
+
+    if etype == "turn/end":
+        reason = data.get("reason") or {}
+        rkind = reason.get("kind") if isinstance(reason, dict) else None
+        if rkind == "error":
+            err = reason.get("error") or {}
+            detail = f"{err.get('code', '')}: {err.get('message', '')}".strip(": ")
+            return StepEvent("error", _truncate(detail) or "error",
+                             detail=detail, raw_kind="dsh:turn/end")
+        if rkind == "completed":
+            return StepEvent("finish", "finished", raw_kind="dsh:turn/end")
+        if rkind:
+            return StepEvent("error", f"turn ended: {rkind}",
+                             detail=str(rkind), raw_kind="dsh:turn/end")
+        return None
+
     return None
 
 

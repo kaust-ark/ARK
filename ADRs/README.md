@@ -46,3 +46,4 @@ cross-link — the docs carry the full detail; the ADRs carry the *decision*:
 | [0011](0011-postgres-dsn-and-unified-alembic.md) | Postgres via a DSN-or-path seam, with one Alembic history for both backends | Implemented |
 | [0012](0012-artifact-store-seam.md) | Artifact blobs via an `ArtifactStore` seam (proxy now, presigned later) | Proposed |
 | [0013](0013-state-db-projection.md) | Control-plane state as a DB projection of orchestrator-local files | Proposed |
+| [0014](0014-deepseek-harness-runtime.md) | DeepSeek Harness as a second agent runtime, selected by model prefix | Implemented |

@@ -279,7 +279,7 @@ ark monitor myproject
 <h2 id="环境要求">环境要求</h2>
 <ul>
 <li><strong>Python 3.10+</strong> (需安装 <code>pyyaml</code> 和 <code>PyMuPDF</code>)</li>
-<li><strong>智能体运行时</strong>：<a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a>（经 <code>uv</code> 安装，自带 Python 3.12）&mdash; 一个运行时即可驱动 Claude / GPT / Gemini / 任何 <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a> 支持的模型，通过 <code>config.yaml</code> 里的 <code>model</code> 字段按项目选择。</li>
+<li><strong>智能体运行时</strong>：<a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a>（经 <code>uv</code> 安装，自带 Python 3.12）&mdash; 一个运行时即可驱动 Claude / GPT / Gemini / 任何 <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a> 支持的模型，通过 <code>config.yaml</code> 里的 <code>model</code> 字段按项目选择。也可选用 <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a> 作为替代运行时，在操作系统级强制沙箱中运行智能体（<code>model: dsh/deepseek-v4</code>，详见 <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEEPSEEK_HARNESS.md">docs/DEEPSEEK_HARNESS.md</a>）。</li>
 <li><strong>API key</strong>：一个 <a href="https://openrouter.ai/keys">OpenRouter</a> key 即可覆盖全部模型、深度研究（Perplexity）和 AI 绘图；单一厂商的 key（Anthropic / OpenAI / Gemini / DeepSeek 等）也能用，只是会缺少该厂商不提供的那部分能力。</li>
 <li><strong>可选</strong>: LaTeX (<code>pdflatex</code> + <code>bibtex</code>)、Slurm。</li>
 </ul>

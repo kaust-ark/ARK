@@ -404,6 +404,22 @@ def _require_model_key(keys: dict, model_variant: str) -> None:
     it dies the same way unless the owner added the matching key).
     """
     prov = (model_variant.split("/", 1)[0] if "/" in (model_variant or "") else "anthropic").lower()
+    if prov == "dsh":
+        # DeepSeek Harness runtime (`dsh/<model>` or `dsh/<provider>/<model>`):
+        # dsh authenticates with its provider's NATIVE key (default provider
+        # deepseek-official reads DEEPSEEK_API_KEY). An OpenRouter key does not
+        # cover it — dsh's LLM client is not LiteLLM and is never rerouted.
+        rest = model_variant.split("/", 1)[1]
+        inner = rest.split("/", 1)[0] if "/" in rest else "deepseek-official"
+        prov = (inner.split("-", 1)[0] or "deepseek").lower()
+        if not keys.get(prov):
+            nice = prov.capitalize()
+            raise HTTPException(
+                400,
+                f"This model runs on the DeepSeek Harness (dsh) runtime, which "
+                f"needs a native {nice} API key — OpenRouter keys don't apply. "
+                f"Add one in Settings → API Keys.")
+        return
     ok = bool(keys.get(prov)) or (
         prov == "anthropic" and keys.get("claude_oauth_token")) or (
         prov == "gemini" and keys.get("gemini_oauth_json")) or (
@@ -655,6 +671,10 @@ def _maybe_route_via_openrouter(model_str: str, keys: dict) -> str:
         return model_str
     provider = model_str.split("/", 1)[0]
     if provider == "openrouter":
+        return model_str
+    if provider == "dsh":
+        # DeepSeek Harness runtime strings are engine selectors, not LiteLLM
+        # routes — dsh authenticates natively and must never be rerouted.
         return model_str
     if keys.get(provider):
         return model_str  # user has the direct key (mainstream or long-tail) — use it

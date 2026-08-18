@@ -526,6 +526,13 @@ Execute the task and update the corresponding files.
                         # the agent's real work usually completed. Retry once
                         # instead of hard-aborting an otherwise-healthy run.
                         "MissingStyle", "StyleSyntaxError",
+                        # dsh (DeepSeek Harness) engine codes: a blank provider
+                        # response is the same transient class as OpenHands'
+                        # "unable to get json response" — one bounded retry.
+                        # (dsh's llm-retry plugin already retried rate limits
+                        # internally; AUTH / QUOTA / CONTEXT_WINDOW_EXCEEDED
+                        # stay terminal and surface verbatim.)
+                        "EMPTY_RESPONSE",
                     )
                     # Mid-stream network disconnects surface as a generic
                     # APIError whose *code* isn't in _TRANSIENT — but the upstream
