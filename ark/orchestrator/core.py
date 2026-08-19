@@ -2740,10 +2740,18 @@ a {{ color: #0d9488; }}
             from website.dashboard.config import get_settings
             from website.dashboard.notify import send_admin_notice
             settings = get_settings()
-            admins = getattr(settings, "admin_emails", None) or []
-            email = (self.config.get("notification_email")
-                     or (admins[0] if admins else "")
-                     or "contact@idea2paper.org")
+            # STRICTLY opt-in. The old default recipient was our own
+            # contact@ box, so a teammate's un-configured CLI run mailed HIS
+            # pipeline's FINISHED notice to us, stamped with his university
+            # address by the relay (observed 2026-08-19, pengyuan's run) —
+            # confusing for everyone and a small privacy leak of his run's
+            # score. A notification nobody asked for goes nowhere: webapp
+            # projects get owner emails through the dashboard's own channel.
+            email = (self.config.get("notification_email") or "").strip()
+            if not email:
+                self.log(f"Notification (no notification_email configured, "
+                         f"not emailing): {subject}", "INFO")
+                return
             if send_admin_notice(settings, email, subject_line, body):
                 self.log(f"Email notification sent: {subject}", "INFO")
             else:

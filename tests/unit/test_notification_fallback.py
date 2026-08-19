@@ -19,7 +19,8 @@ from ark.orchestrator.core import Orchestrator
 def orch():
     o = Orchestrator.__new__(Orchestrator)
     o.project_name = "proj"
-    o.config = {}
+    # Email is strictly opt-in now; most tests exercise the configured path.
+    o.config = {"notification_email": "ops@example.org"}
     o.logs = []
     o.log = lambda msg, level="INFO": o.logs.append((level, msg))
     o.telegram = SimpleNamespace(is_configured=False, send=MagicMock())
@@ -61,12 +62,24 @@ def test_html_markup_does_not_leak_into_the_email_body(orch):
     assert "FINISHED" in body and "all good" in body
 
 
-def test_an_explicit_notification_email_wins_over_the_admin_default(orch):
+def test_an_explicit_notification_email_is_honoured(orch):
     sent = []
     orch.config = {"notification_email": "owner@example.org"}
     with _patch_mailer(sent):
         orch.send_notification("Run finished", "done")
     assert sent[0]["to"] == "owner@example.org"
+
+
+def test_no_configured_recipient_means_no_email_at_all(orch):
+    """The old default recipient was OUR contact@ box: a teammate's
+    un-configured CLI run mailed us his run's FINISHED notice under his own
+    university address (2026-08-19). Unaddressed notifications go nowhere."""
+    sent = []
+    orch.config = {}
+    with _patch_mailer(sent):
+        orch.send_notification("Run finished", "done")
+    assert sent == []
+    assert any("no notification_email" in m for _, m in orch.logs)
 
 
 def test_a_transport_that_refuses_is_reported_as_not_sent(orch):
