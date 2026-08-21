@@ -2717,7 +2717,16 @@ a {{ color: #0d9488; }}
 
         # Fallback: email
         try:
-            email = self.config.get("notification_email", "contact@idea2paper.org")
+            # HOTFIX v0.5.21: strictly opt-in. The old default recipient
+            # was our own contact@ box, so a teammate's un-configured CLI run
+            # on a mail-equipped host emailed US his run's notices, stamped
+            # From: his own address by the relay (2026-08-19). A notification
+            # nobody asked for goes nowhere.
+            email = (self.config.get("notification_email") or "").strip()
+            if not email:
+                self.log(f"Notification (no notification_email configured, "
+                         f"not emailing): {subject}", "INFO")
+                return
             subprocess.run(
                 ["mail", "-s", f"[{self.project_name.upper()}] {subject}", email],
                 input=full_message,
