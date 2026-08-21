@@ -4063,6 +4063,7 @@ provide the title.
         # held the cumulative total. Display ("Iteration 11/8") was
         # the visible tell.
         max_iteration_target = self._get_max_iteration_target()
+        iterations_at_start = self.iteration
 
         try:
             # Dev Phase first, if not already done in a prior run.
@@ -4097,7 +4098,7 @@ provide the title.
         final_score = paper_state.get('current_score', 0)
         status = paper_state.get('status', 'unknown')
         self.log_section(f"{self.project_name.upper()} Finished  |  Score: {final_score}/10  |  Status: {status.upper()}")
-        if status not in ("accepted",):
+        if self._should_send_end_summary(status, self.iteration - iterations_at_start):
             self.send_notification(
                 f"{self.project_name.upper()} Finished",
                 f"Score: {final_score}/10 (target: {self.paper_accept_threshold}/10)\n"
@@ -4105,7 +4106,22 @@ provide the title.
                 f"Reply with a new direction →\nauto-applied on next ark run",
                 priority="critical",
             )
+        elif status not in ("accepted",):
+            self.log("End summary: no new iterations this run — not notifying "
+                     "(a rerun without added budget changes nothing to report)", "INFO")
         self.log(f"Total iterations: {self.iteration}", "RAW")
+    @staticmethod
+    def _should_send_end_summary(status: str, iterations_this_run: int) -> bool:
+        """Whether the end-of-run summary deserves a notification.
+
+        Accepted runs already sent their own ACCEPTED notice. A run that
+        performed zero new iterations (a rerun of a project whose cumulative
+        budget is spent) has nothing new to say — under an external rerun
+        wrapper that notification becomes one email per invocation, forever
+        (the 2026-08-20 VIGIL_SEMANTIC inbox flood).
+        """
+        return status not in ("accepted",) and iterations_this_run > 0
+
     def _get_max_iteration_target(self) -> int:
         """Calculate the absolute iteration cap.
         

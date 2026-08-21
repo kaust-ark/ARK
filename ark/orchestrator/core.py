@@ -2727,9 +2727,13 @@ a {{ color: #0d9488; }}
                 self.log(f"Notification (no notification_email configured, "
                          f"not emailing): {subject}", "INFO")
                 return
+            # full_message is Telegram HTML; a mail client shows those tags
+            # as literal text (the "<b>🏁 ══ FINISHED ══</b>" incident mails
+            # of 2026-08-19/20). Email gets plain text.
+            plain_message = re.sub(r"<[^>]+>", "", full_message)
             subprocess.run(
                 ["mail", "-s", f"[{self.project_name.upper()}] {subject}", email],
-                input=full_message,
+                input=plain_message,
                 text=True,
                 timeout=30,
             )
