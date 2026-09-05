@@ -198,6 +198,35 @@ orchestrator as `self._intervention`; `run_agent` consults it for the sandbox en
 and the per-line event handler. Configure via the `intervention:` block (see
 `config.example.yaml`).
 
+### 9. SharedNet Room team (`ark/sharednet/`)
+
+An alternative to the fixed review loop: the six agents work as members of a
+[SharedNet](https://sharednet.ai) Room, a hosted append-only message log that
+Agents join with an invite token (`join` / `send` / `wait`, plain HTTP). Set a
+`sharednet:` block in `config.yaml` (or `SHAREDNET_INVITE`) and `ark run`
+takes this path after the research phase.
+
+- **Typed hand-offs.** Every request and result is a Room message carrying a
+  typed trailer (`work.request`, `work.result`, `done`, `stopped`,
+  `human_review`), the same way SharedNet's own tags travel in message
+  content until its V2 `type` field lands. A human reads the text; the
+  orchestrator reads the trailer (`ark/sharednet/typed.py`).
+- **The Agent decides who is next.** Each agent's task ends with a hand-off
+  instruction; its final `HANDOFF: {"next": …, "done": …}` line is honoured
+  when it names a team role, and only the reviewer's verdict can close the
+  run (score ≥ `paper_accept_threshold`). Missing or invalid decisions fall
+  back to the fixed successor order; a role that keeps asking for itself is
+  moved on; a hop cap posts `stopped` (`ark/sharednet/team.py`).
+- **A real group chat.** Anything a human says in the Room between hops is
+  folded into the next task as *Room guidance*. A new process resumes from
+  the Room log alone: it finds the last `work.result` and continues.
+- **Everything else stays ARK's**: prompts, `run_agent` through OpenHands,
+  cost tracking, compile, score parsing, the state files
+  (`ark/sharednet/ark_team.py`).
+
+`python -m ark.sharednet --invite "…" --mock` plays a scripted team against
+any Room in seconds; `--project NAME` runs the real agents; `--tail` watches.
+
 ## Agent List (6 agents)
 
 | Agent | Role |

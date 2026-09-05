@@ -4124,18 +4124,27 @@ provide the title.
         iterations_at_start = self.iteration
 
         try:
-            # Dev Phase first, if not already done in a prior run.
-            if self._should_run_dev_phase():
-                self._run_dev_phase()
+            from ark.sharednet.ark_team import run_room_team, sharednet_settings
 
-            while (
-                datetime.now() < self.max_end_time
-                and self.iteration < max_iteration_target
-                and not self._stop_requested
-            ):
-                should_continue = self.run_paper_iteration()
-                if not should_continue:
-                    break
+            if sharednet_settings(self.config):
+                # The team works as members of a SharedNet Room: every hand-off is
+                # a typed message and the Agent that just finished decides who
+                # works next. Replaces the dev + review loops below; the research
+                # phase above is unchanged. See ark/sharednet/ark_team.py.
+                run_room_team(self)
+            else:
+                # Dev Phase first, if not already done in a prior run.
+                if self._should_run_dev_phase():
+                    self._run_dev_phase()
+
+                while (
+                    datetime.now() < self.max_end_time
+                    and self.iteration < max_iteration_target
+                    and not self._stop_requested
+                ):
+                    should_continue = self.run_paper_iteration()
+                    if not should_continue:
+                        break
 
         except KeyboardInterrupt:
             self.log("", "RAW")

@@ -97,3 +97,18 @@ artifact_store:
   # prefix: ark/             # optional key prefix within the bucket
   # Credentials resolve from the ambient cloud SDK env (e.g. the SkyPilot
   # launcher's application-default credentials) if unset.
+
+# ── SharedNet Room (optional) ────────────────────────────────────────────────
+# Run the six agents as members of a SharedNet Room (https://sharednet.ai)
+# instead of the fixed review loop. Each hand-off is a typed message in the
+# Room, the Agent that just finished decides who works next (or that the work
+# is done), humans can steer by speaking in the Room, and a stopped run resumes
+# from the Room log. Paste the invite from the Room's "Invite an Agent" dialog;
+# the SHAREDNET_INVITE environment variable overrides it.
+# sharednet:
+#   invite: "ROOM=rom_xxxxxxxxxx TOKEN=rit_xxxxxxxx BASE=https://sharednet.ai"
+#   goal: ""                 # default: goal_anchor, else idea.md
+#   start_role: writer       # default: writer until something was reviewed, then reviewer
+#   max_hops: 12             # a `stopped` message is posted at the cap; rerun to continue
+#   roles: [experimenter, coder, writer, reviewer, planner]
+#   steer_wait_seconds: 0    # >0: pause this long before each hop for humans to speak
