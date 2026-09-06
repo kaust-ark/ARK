@@ -47,6 +47,12 @@ TIMEOUTS = {
 
 WORKING_ROLES: tuple[str, ...] = ("experimenter", "coder", "writer", "reviewer", "planner")
 
+# Roles that read the figures on disk: the writer cites them, the reviewer
+# judges the compiled PDF. The figure phase runs before each of them, which is
+# where the fixed loop puts it too (before the initial draft, and at the end of
+# every iteration — i.e. before the next review).
+FIGURE_CONSUMING_ROLES: tuple[str, ...] = ("writer", "reviewer")
+
 
 def sharednet_settings(config: dict) -> Optional[dict]:
     """The ``sharednet:`` block, with ``SHAREDNET_INVITE`` overriding the invite."""
@@ -114,16 +120,35 @@ class ArkRoomTeam:
 
     # ── run_agent with ARK's timeouts and score bookkeeping ─────────────────
     def run_agent(self, role: str, task: str) -> str:
-        if role == "reviewer":
-            self.orch.log_step("Compiling before review...", "progress")
-            try:
-                self.orch.compile_latex()
-            except Exception as error:  # the reviewer can still read main.tex
-                self.orch.log(f"compile before review failed: {error}", "WARN")
+        if role in FIGURE_CONSUMING_ROLES:
+            self._refresh_figures(role)
         output = self.orch.run_agent(role, task, timeout=TIMEOUTS.get(role, 1800))
         if role == "reviewer":
             self._record_review(output)
         return output
+
+    def _refresh_figures(self, role: str) -> None:
+        """Run ARK's figure phase, as the fixed loop does, before the roles that
+        read figures.
+
+        The fixed loop refreshes figures twice: ``_generate_all_figures`` before
+        the initial draft, and ``_run_figure_phase`` in ``_step_validate`` at the
+        end of every iteration — matplotlib regeneration, overlap detection, AI
+        concept figures (``figure_generation: nano_banana``), then compile. The
+        Room loop calls neither, so without this a RAC run ships with stale or
+        missing figures and no concept figure at all, and a comparison against
+        the fixed loop measures the missing wiring rather than the coordination.
+        Ends in a compile, which is what the reviewer needs anyway.
+        """
+        orch = self.orch
+        try:
+            if orch._should_skip_figure_phase():
+                orch.log_step("Figure phase skipped", "info")
+                orch.compile_latex()
+            else:
+                orch._run_figure_phase()  # step 6 of that phase is the compile
+        except Exception as error:  # a missing draft or a bad figure must not end the run
+            orch.log(f"figure phase before {role} failed: {error}", "WARN")
 
     def _record_review(self, output: str) -> None:
         orch = self.orch

@@ -155,3 +155,79 @@ def test_orchestrator_run_takes_the_room_branch(mock_integration_project_factory
     assert legacy_loop.call_count == 0 and dev_phase.call_count == 0
     assert controller.agent_calls == ["writer", "reviewer", "planner", "writer", "reviewer"]
     assert _typed(fake)[-1][1] == DONE
+
+
+def test_figure_phase_runs_before_the_roles_that_read_figures(mock_integration_project_factory, fake):
+    """The fixed loop draws figures in `_step_validate` (and `_generate_all_figures`
+    before the first draft); the Room loop has no such step of its own. Without
+    this the RAC arm ships stale plots and no AI concept figure at all, and a
+    comparison against the fixed loop measures the missing wiring, not the
+    coordination."""
+    orch, controller = mock_integration_project_factory(controller_cls=HandoffController)
+    orch.config["sharednet"] = {"invite": f"ROOM={fake.room_id} TOKEN={fake.invite} BASE={fake.base_url}",
+                                "max_hops": 8}
+    orch.config["figure_generation"] = "nano_banana"
+
+    before = []
+    real_run_agent = orch.run_agent
+
+    def record(role, *args, **kwargs):
+        return real_run_agent(role, *args, **kwargs)
+
+    with patch.object(orch, "_should_skip_figure_phase", return_value=False), \
+         patch.object(orch, "_run_figure_phase",
+                      side_effect=lambda: before.append(len(controller.agent_calls))) as figure_phase, \
+         patch.object(orch, "run_agent", side_effect=record):
+        result = run_room_team(orch)
+
+    assert result.route == ["writer", "reviewer", "planner", "writer", "reviewer"]
+    # once before each writer and each reviewer hop, never before the planner
+    assert figure_phase.call_count == 4
+    assert before == [0, 1, 3, 4]
+
+
+def test_figure_phase_failure_does_not_end_the_run(mock_integration_project_factory, fake):
+    """A missing draft or a bad figure must not kill a run mid-hop."""
+    orch, controller = mock_integration_project_factory(controller_cls=HandoffController)
+    orch.config["sharednet"] = {"invite": f"ROOM={fake.room_id} TOKEN={fake.invite} BASE={fake.base_url}",
+                                "max_hops": 8}
+    with patch.object(orch, "_should_skip_figure_phase", return_value=False), \
+         patch.object(orch, "_run_figure_phase", side_effect=RuntimeError("no main.tex yet")):
+        result = run_room_team(orch)
+    assert result.done is True
+    assert result.route == ["writer", "reviewer", "planner", "writer", "reviewer"]
+
+
+def test_rac_reaches_concept_figure_generation(mock_integration_project_factory, fake):
+    """End to end through the real figure phase: a RAC hop must actually arrive at
+    AI concept-figure generation when the project has none.
+
+    Nothing between the hop and the generator is mocked — run_agent →
+    _refresh_figures → _run_figure_phase → _generate_nano_banana_figures — so a
+    future refactor that drops the wiring fails here rather than silently
+    shipping a RAC arm with no concept figure (the arm A/B asymmetry this whole
+    patch exists to remove).
+    """
+    orch, controller = mock_integration_project_factory(controller_cls=HandoffController)
+    orch.config["sharednet"] = {"invite": f"ROOM={fake.room_id} TOKEN={fake.invite} BASE={fake.base_url}",
+                                "max_hops": 4}
+    orch.config["figure_generation"] = "nano_banana"
+    assert not list(orch.figures_dir.glob("*.png")), "fixture must start with no figures"
+
+    with patch.object(orch, "_should_skip_figure_phase", return_value=False), \
+         patch.object(type(orch), "_generate_nano_banana_figures", return_value=2) as generator:
+        run_room_team(orch)
+
+    assert generator.call_count >= 1, "the RAC arm never asked for concept figures"
+
+
+def test_concept_figures_are_skipped_when_disabled(mock_integration_project_factory, fake):
+    """The switch still switches: no `figure_generation: nano_banana`, no calls."""
+    orch, controller = mock_integration_project_factory(controller_cls=HandoffController)
+    orch.config["sharednet"] = {"invite": f"ROOM={fake.room_id} TOKEN={fake.invite} BASE={fake.base_url}",
+                                "max_hops": 4}
+    orch.config["figure_generation"] = "matplotlib"
+    with patch.object(orch, "_should_skip_figure_phase", return_value=False), \
+         patch.object(type(orch), "_generate_nano_banana_figures", return_value=0) as generator:
+        run_room_team(orch)
+    assert generator.call_count == 0
