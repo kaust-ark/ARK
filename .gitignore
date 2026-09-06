@@ -55,3 +55,9 @@ skills/library/*
 # Eval scripts and logs (local only)
 scripts/eval/
 logs/
+
+# Room message logs snapshotted from the local SharedNet server (process evidence, large)
+scripts/rac/room_logs/
+
+# PaperBanana smoke-test output
+scripts/rac/probe_out/
