@@ -642,6 +642,17 @@ on-prem SLURM).
 
 ## 9. Troubleshooting
 
+- **OpenHands terminal sessions.** OpenHands uses persistent tmux terminals so
+  shell state (such as `cd` and `export`) survives between commands. ARK gives
+  each CLI invocation a private `TMUX_TMPDIR` under `/tmp/ark-tmux-*` and closes
+  its `openhands` server when the invocation finishes, fails, times out, or is
+  interrupted. This applies to pipeline agents and chat turns; chat conversation
+  history stays on disk for `--resume`, while terminal lifetime ends with the
+  turn. To inspect a running invocation, use
+  `tmux -S /tmp/ark-tmux-<id>/tmux-<uid>/openhands list-sessions`.
+  Killing the orchestrator with `SIGKILL` bypasses cleanup. Older sessions on the
+  shared `tmux -L openhands` server are not automatically removed: other runs
+  may still own them.
 - **Web app launches jobs as a user account, not the SA (GCP).** SkyPilot uses
   ADC, not the gcloud active account. Ensure `CLOUD_LAUNCHER_SA_KEY` points at a
   valid key; the startup log (`ensure_launcher_credentials`) warns when it would

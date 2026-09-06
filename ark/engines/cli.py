@@ -1,12 +1,57 @@
+import logging
 import os
 import re
+import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import Optional, Tuple
 from pathlib import Path
+
+
+@contextmanager
+def _openhands_tmux_env(env: dict):
+    """Own the tmux server for one CLI invocation, including all its terminals.
+
+    OpenHands uses the fixed socket name ``openhands``. A private TMUX_TMPDIR
+    isolates concurrent invocations without changing OpenHands or the shell's
+    state within an invocation. A detached tmux server survives killing the CLI
+    process group, so it must also be stopped explicitly.
+    """
+    child_env = dict(env)
+    tmux = shutil.which("tmux", path=child_env.get("PATH"))
+    if tmux is None:
+        yield child_env  # OpenHands can fall back to its subprocess terminal.
+        return
+
+    # Keep the Unix socket path short even when TMPDIR is a long project path.
+    root = Path(tempfile.mkdtemp(prefix="ark-tmux-", dir="/tmp"))
+    child_env["TMUX_TMPDIR"] = str(root)
+    child_env.pop("TMUX", None)
+    socket = root / f"tmux-{os.getuid()}" / "openhands"
+    try:
+        yield child_env
+    finally:
+        try:
+            result = subprocess.run(
+                [tmux, "-S", str(socket), "kill-server"],
+                env=child_env, stdin=subprocess.DEVNULL,
+                capture_output=True, text=True, timeout=5,
+            )
+            if (result.returncode and socket.exists()
+                    and "no server running" not in result.stderr):
+                raise RuntimeError(result.stderr.strip())
+            shutil.rmtree(root)
+        except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+            # Retain the socket on failure so a live server stays reachable.
+            # Cleanup must not mask the agent result or an active exception.
+            logging.getLogger(__name__).warning(
+                "Could not clean up OpenHands tmux socket %s: %s", socket, exc,
+            )
 
 # ── Blocking-command watchdog ─────────────────────────────
 # Executables that will block forever waiting for user input.
@@ -186,7 +231,6 @@ class AgentCLI(ABC):
         )
 
         watchdog = _BlockingCommandWatchdog(process.pid, log_fn=log_fn)
-        watchdog.start()
 
         # Hard-timeout killer: fires even if the process emits no output at all
         # (a plain read loop could otherwise block forever on a silent hang).
@@ -200,7 +244,6 @@ class AgentCLI(ABC):
             kill_process_tree(process.pid)
 
         killer = threading.Thread(target=_deadline_killer, daemon=True)
-        killer.start()
 
         # Drain stderr on a side thread so a full stderr pipe can't deadlock the
         # stdout read loop.
@@ -218,33 +261,47 @@ class AgentCLI(ABC):
                 pass
 
         err_thread = threading.Thread(target=_drain_stderr, daemon=True)
-        err_thread.start()
-
         stdout_lines: list = []
         try:
-            if process.stdout:
-                for raw in process.stdout:
-                    line = _to_str(raw)
-                    stdout_lines.append(line)
-                    if on_event:
-                        try:
-                            if on_event(line) == "ABORT":
-                                kill_process_tree(process.pid)
-                                break
-                        except Exception:
-                            pass
-        except Exception:
-            pass
+            watchdog.start()
+            killer.start()
+            err_thread.start()
+            try:
+                if process.stdout:
+                    for raw in process.stdout:
+                        line = _to_str(raw)
+                        stdout_lines.append(line)
+                        if on_event:
+                            try:
+                                if on_event(line) == "ABORT":
+                                    kill_process_tree(process.pid)
+                                    break
+                            except Exception:
+                                pass
+            except Exception:
+                pass
 
-        # stdout closed → process is ending (or was just killed by the deadline).
-        try:
+            # stdout closed → process is ending (or the deadline killed it).
             process.wait(timeout=10)
-        except Exception:
-            kill_process_tree(process.pid)
-        finished.set()
-        killer.join(timeout=2)
-        watchdog.stop()
-        err_thread.join(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+        finally:
+            # Also runs for KeyboardInterrupt/SystemExit (orchestrator SIGTERM).
+            # Stop/reap the CLI before releasing its tmux server, otherwise a
+            # still-running CLI could create a new terminal during cleanup.
+            finished.set()
+            if killer.ident is not None:
+                killer.join(timeout=2)
+            watchdog.stop()
+            if process.poll() is None:
+                kill_process_tree(process.pid)
+                process.wait(timeout=10)
+            if err_thread.ident is not None:
+                err_thread.join(timeout=2)
+            if process.stdout:
+                process.stdout.close()
+            if process.stderr and not err_thread.is_alive():
+                process.stderr.close()
 
         elapsed = int(time.time() - start_time)
         rc = process.returncode if process.returncode is not None else -1
@@ -265,6 +322,15 @@ class OpenHandsCLI(AgentCLI):
 
     def _llm_model(self) -> str:
         return self.model_variant or self.model_name
+
+    def execute(self, prompt: str, path_boundary: str, code_dir: Path, timeout: int,
+                log_fn=None, on_event=None, env=None) -> Tuple[int, str, str, int, bool]:
+        env = env if env is not None else self.build_env(code_dir)
+        with _openhands_tmux_env(env) as child_env:
+            return super().execute(
+                prompt, path_boundary, code_dir, timeout,
+                log_fn=log_fn, on_event=on_event, env=child_env,
+            )
 
     def build_command(self, prompt: str, path_boundary: str, code_dir: Path) -> list:
         # OpenHands has no system-prompt flag; fold the path restriction into the

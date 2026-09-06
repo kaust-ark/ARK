@@ -15,14 +15,28 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
+from ark.engines.cli import OpenHandsCLI
 from ark.observability.steps import parse_line
 
 # conversation id is stored here, inside the project workspace
 CONV_FILE = ".ark_chat_conversation"
+
+
+class _ChatCLI(OpenHandsCLI):
+    """Resume chat using the same process/terminal lifecycle as pipeline agents."""
+
+    def __init__(self, model: str, conversation_id: Optional[str]):
+        super().__init__(model)
+        self.conversation_id = conversation_id
+
+    def build_command(self, prompt: str, path_boundary: str, code_dir: Path) -> list:
+        cmd = ["openhands", "--headless", "--json", "--override-with-envs"]
+        if self.conversation_id:
+            cmd += ["--resume", self.conversation_id]
+        return cmd + ["-t", prompt]
 
 
 def load_conversation_id(workspace: Path) -> Optional[str]:
@@ -110,65 +124,30 @@ def run_chat_turn(*, workspace, message: str, model: str,
     env = _build_env(model)
     env["HOME"] = str(workspace)  # conversations persist under workspace/.openhands
 
-    cmd = ["openhands", "--headless", "--json", "--override-with-envs"]
-    if conversation_id:
-        cmd += ["--resume", conversation_id]
-    cmd += ["-t", message]
-
     log(f"[chat] openhands {'resume '+conversation_id if conversation_id else 'new'} "
         f"model={model} ws={workspace}")
-    proc = subprocess.Popen(
-        cmd, cwd=str(workspace), env=env,
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        stdin=subprocess.DEVNULL, text=True, bufsize=1,
-    )
+
+    def on_event(line):
+        # Skip 'finish': the full answer is delivered below.
+        step = parse_line(line)
+        if step and on_step and step.type != "finish":
+            on_step(step)
+
+    runner = _ChatCLI(model, conversation_id)
     conv_id = conversation_id
-    last_agent_msg = ""
-    finish_msg = ""
+    answer = ""
     try:
-        for line in proc.stdout:
-            s = line.strip()
-            if conv_id is None and s.startswith("Conversation ID:"):
-                conv_id = s.split(":", 1)[1].strip()
-                continue
-            if s.startswith("{") and s.endswith("}"):
-                try:
-                    evt = json.loads(s)
-                except (json.JSONDecodeError, ValueError):
-                    evt = None
-                if evt:
-                    kind = evt.get("kind")
-                    if kind == "MessageEvent" and evt.get("source") == "agent":
-                        msg = evt.get("llm_message") or {}
-                        parts = msg.get("content") or []
-                        text = "".join(p.get("text", "") for p in parts
-                                       if isinstance(p, dict) and p.get("type") == "text")
-                        if text.strip():
-                            last_agent_msg = text
-                    elif kind == "ActionEvent":
-                        action = evt.get("action") or {}
-                        if isinstance(action, dict) and action.get("kind") == "FinishAction":
-                            fm = action.get("message")
-                            if isinstance(fm, str) and fm.strip():
-                                finish_msg = fm
-            # stream the step (skip 'finish' — the full answer is delivered below)
-            step = parse_line(line)
-            if step and on_step and step.type != "finish":
-                try:
-                    on_step(step)
-                except Exception:
-                    pass
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        log("[chat] timed out")
-        proc.kill()
+        _, stdout, _, _, timed_out = runner.execute(
+            message, "", workspace, timeout, env=env, on_event=on_event,
+            log_fn=lambda msg, level: log(msg),
+        )
+        if timed_out:
+            log("[chat] timed out")
+        parsed = runner.parse_output(stdout)
+        conv_id = conversation_id or parsed.get("conversation_id")
+        answer = (parsed.get("result") or "").strip()
     except Exception as e:
         log(f"[chat] error: {e}")
-        try:
-            proc.kill()
-        except Exception:
-            pass
-    answer = (last_agent_msg or finish_msg or "").strip()
     if conv_id:
         save_conversation_id(workspace, conv_id)
     if on_answer:
