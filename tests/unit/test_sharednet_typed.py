@@ -49,6 +49,16 @@ def test_human_review_carries_sharednets_tag():
         ("HANDOFF: {'next': 'reviewer', 'done': false}", "reviewer", False),  # single quotes
         ('first\nHANDOFF: {"next": "coder", "done": false}\nlater\nHANDOFF: {"next": "Writer", "done": false}', "writer", False),
         ('HANDOFF: {"next": "none", "done": true}', None, True),
+        # Shapes a real Agent produces at the end of a long run.
+        ('**HANDOFF:** {"next": "writer", "done": false, "reason": "draft it"}', "writer", False),  # bold
+        ('- HANDOFF: {"next": "planner", "done": false}', "planner", False),                        # bullet
+        ('> HANDOFF: {"next": "reviewer", "done": false}', "reviewer", False),                      # quoted
+        ('HANDOFF:\n```json\n{"next": "coder", "done": false}\n```', "coder", False),              # fenced
+        ('HANDOFF: {\n  "next": "writer",\n  "done": false,\n  "reason": "long"\n}', "writer", False),  # pretty-printed
+        ('HANDOFF: {"next": "writer", "done": false}.', "writer", False),                           # full stop after
+        ('HANDOFF: {"next": "planner", "done": fal', "planner", False),                             # truncated output
+        ('HANDOFF: {"next": "writer", "done": false, "reason": "fix {eq:1} in \u00a74"}', "writer", False),  # brace in a value
+        ('Handoff: {"next": "reviewer", "done": false}', "reviewer", False),                        # case
     ],
 )
 def test_parse_handoff_variants(output, expected_next, expected_done):
@@ -64,7 +74,28 @@ def test_parse_handoff_absent_or_garbage():
     assert parse_handoff("") is None
 
 
+def test_prose_mentioning_the_keyword_is_not_a_decision():
+    """The keyword in a sentence must not capture whatever brace comes next."""
+    assert parse_handoff("The HANDOFF protocol expects a line like {this}") is None
+    assert parse_handoff("I will write the HANDOFF once the run finishes.\n\n"
+                         "Config: {\"next\": \"writer\"}") is None
+
+
+def test_the_last_handoff_wins_across_shapes():
+    output = ('draft plan\nHANDOFF: {"next": "coder", "done": false}\n'
+              'on reflection\n**HANDOFF:** {"next": "reviewer", "done": false}')
+    handoff = parse_handoff(output)
+    assert handoff.next == "reviewer"
+
+
 def test_handoff_instruction_names_the_roles():
     text = handoff_instruction(("writer", "reviewer"))
     assert "writer, reviewer" in text
     assert 'HANDOFF: {"next": "<role>", "done": false' in text
+
+
+def test_handoff_instruction_says_where_the_line_goes_and_why():
+    """Agents dropped the line at the end of long runs; the stakes are stated."""
+    text = handoff_instruction(("writer", "reviewer"))
+    assert "last line" in text and "code fence" in text
+    assert "fixed hand-off order" in text

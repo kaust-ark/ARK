@@ -104,6 +104,11 @@ class TeamResult:
         return [hop.role for hop in self.hops]
 
 
+def _one_line(text: str) -> str:
+    """Collapse a fragment of Agent output onto a single log line."""
+    return " ".join(text.split())
+
+
 def summarize(output: str) -> str:
     text = (output or "").strip() or "(no output)"
     if len(text) <= SUMMARY_HEAD + SUMMARY_TAIL:
@@ -301,6 +306,18 @@ class RoomTeam:
     def _decide(self, role: str, handoff: Optional[Handoff], output: str, consecutive: int) -> Decision:
         fallback = self.successor.get(role) or self.roles[0]
         if handoff is None:
+            # Two different failures land here and they mean opposite things: an
+            # Agent that timed out produced nothing and its work is lost, while
+            # an Agent that worked but never wrote the line kept its work and
+            # lost only its judgement. Separating them keeps the policy-fallback
+            # rate readable.
+            if not (output or "").strip():
+                return Decision(next=fallback, done=False,
+                                reason="agent produced no output; policy successor",
+                                decided_by="policy")
+            self.log(f"[room] {role}: no hand-off in {len(output)} chars of output "
+                     f"(keyword {'present' if 'HANDOFF' in output.upper() else 'absent'}); "
+                     f"tail: {_one_line(output[-200:])}")
             return Decision(next=fallback, done=False, reason="no HANDOFF line; policy successor",
                             decided_by="policy")
         if handoff.done:
