@@ -4304,8 +4304,16 @@ def cmd_env(args):
         print(f"  {sp}")
         print(f"  {_c('LOCKED (read-only)', Colors.GREEN) if locked else _c('UNLOCKED (writable)', Colors.YELLOW)}")
         return 0
+    # DIRECTORIES ONLY, never files. Creating, replacing or deleting a file
+    # needs write permission on its DIRECTORY, so chmod'ing the directories is
+    # what actually stops pip — and directories are the one thing conda does
+    # not share between environments. Files are hardlinked into the shared
+    # package cache, so `chmod -R` on the whole tree silently reached through
+    # and left 811 cache files read-only for every OTHER env on the host
+    # (found 2026-09-10, traced back to the 2026-08-31 lock).
     if args.env_cmd == "lock":
-        r = _sp.run(["chmod", "-R", "a-w", str(sp)], capture_output=True, text=True)
+        r = _sp.run(["find", str(sp), "-type", "d", "-exec", "chmod", "a-w", "{}", "+"],
+                    capture_output=True, text=True)
         if r.returncode != 0:
             print(f"  {_c('Error:', Colors.RED)} {r.stderr.strip()[:200]}")
             return 1
@@ -4314,7 +4322,8 @@ def cmd_env(args):
               f"ark env unlock")
         return 0
     if args.env_cmd == "unlock":
-        r = _sp.run(["chmod", "-R", "ug+w", str(sp)], capture_output=True, text=True)
+        r = _sp.run(["find", str(sp), "-type", "d", "-exec", "chmod", "ug+w", "{}", "+"],
+                    capture_output=True, text=True)
         if r.returncode != 0:
             print(f"  {_c('Error:', Colors.RED)} {r.stderr.strip()[:200]}")
             return 1

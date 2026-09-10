@@ -141,6 +141,14 @@ _PROVISION_HEARTBEAT_SECONDS = 30
 # Generous: a lean base clones in well under a minute, but a cold NFS cache
 # can make even that slow. Overridable for hosts with an unusual base env.
 _PROVISION_TIMEOUT_SECONDS = int(os.environ.get("ARK_ENV_PROVISION_TIMEOUT", "600"))
+# Cloning onto NFS occasionally loses a race: conda cannot unlink a file it just
+# wrote ("Could not remove or rename ... you may need to reboot to free file
+# handles"), the link transaction rolls back, and rc=1 kills a run that had
+# already spent Gate A budget (2026-09-10, project b5fedacd, libglib). The exact
+# same clone succeeded on the next try, so the step is flaky rather than broken.
+# One retry on a clean slate costs a minute and saves the run.
+_PROVISION_ATTEMPTS = int(os.environ.get("ARK_ENV_PROVISION_ATTEMPTS", "2"))
+_PROVISION_RETRY_PAUSE_SECONDS = 5
 
 
 def _kill_tree(proc) -> None:
@@ -198,56 +206,72 @@ def provision_project_env(project_dir: Path, base_env: str = "ark-base",
         log_path.write_text(msg + "\n")
         return False, msg
 
-    # Stale partial env from a prior failed clone — wipe before retrying.
-    if target.exists():
-        shutil.rmtree(target, ignore_errors=True)
-
     cmd = [conda_bin, "create", "--prefix", str(target),
            "--clone", base_env, "--yes"]
-    started = time.time()
-    try:
-        with open(log_path, "w") as lf:
-            _accept_conda_tos(conda_bin, log_file=lf)
-            lf.write(f"$ {' '.join(cmd)}\n")
-            lf.flush()
-            proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT,
-                                    start_new_session=True)
-            # Bounded wait with a heartbeat. `subprocess.run` here had no
-            # timeout: on 2026-08-03 a clone wedged on a sick NFS mount and
-            # hung for FIVE DAYS with zero output, the project stuck at
-            # "running" the whole time. An unbounded external call in the
-            # launch path is never acceptable — and silence for minutes is
-            # its own bug (users read it as a freeze).
-            deadline = started + timeout
-            next_beat = started + _PROVISION_HEARTBEAT_SECONDS
-            while True:
-                try:
-                    proc.wait(timeout=2)
-                    break
-                except subprocess.TimeoutExpired:
-                    pass
-                now = time.time()
-                if now >= deadline:
-                    _kill_tree(proc)
-                    lf.write(f"\n[ark] TIMEOUT after {timeout}s — killed\n")
-                    lf.flush()
-                    shutil.rmtree(target, ignore_errors=True)
-                    return False, (
-                        f"conda create timed out after {timeout // 60} min cloning "
-                        f"'{base_env}'. The base env may be enormous or the "
-                        f"filesystem unresponsive; see {log_path}")
-                if now >= next_beat:
-                    next_beat = now + _PROVISION_HEARTBEAT_SECONDS
-                    if log_fn:
-                        log_fn(f"still provisioning… {_env_file_count(target)} files "
-                               f"copied, {int(now - started)}s elapsed")
-        elapsed = time.time() - started
-        if proc.returncode != 0 or not project_env_ready(project_dir):
-            return False, f"conda create failed (rc={proc.returncode}); see {log_path}"
 
-        return True, f"cloned {base_env} in {elapsed:.1f}s"
-    except Exception as e:
-        return False, f"conda create raised {type(e).__name__}: {e}"
+    def _clone_once(attempt: int) -> tuple[bool, str, bool]:
+        """One clone. Returns (ok, message, retryable)."""
+        # Stale partial env from a prior failed clone — wipe before retrying.
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        started = time.time()
+        try:
+            with open(log_path, "w" if attempt == 1 else "a") as lf:
+                if attempt > 1:
+                    lf.write(f"\n\n===== attempt {attempt} =====\n")
+                _accept_conda_tos(conda_bin, log_file=lf)
+                lf.write(f"$ {' '.join(cmd)}\n")
+                lf.flush()
+                proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT,
+                                        start_new_session=True)
+                # Bounded wait with a heartbeat. `subprocess.run` here had no
+                # timeout: on 2026-08-03 a clone wedged on a sick NFS mount and
+                # hung for FIVE DAYS with zero output, the project stuck at
+                # "running" the whole time. An unbounded external call in the
+                # launch path is never acceptable — and silence for minutes is
+                # its own bug (users read it as a freeze).
+                deadline = started + timeout
+                next_beat = started + _PROVISION_HEARTBEAT_SECONDS
+                while True:
+                    try:
+                        proc.wait(timeout=2)
+                        break
+                    except subprocess.TimeoutExpired:
+                        pass
+                    now = time.time()
+                    if now >= deadline:
+                        _kill_tree(proc)
+                        lf.write(f"\n[ark] TIMEOUT after {timeout}s — killed\n")
+                        lf.flush()
+                        shutil.rmtree(target, ignore_errors=True)
+                        # Not retryable: a wedged mount stays wedged, and a
+                        # second full timeout doubles the wait before the user
+                        # hears anything.
+                        return False, (
+                            f"conda create timed out after {timeout // 60} min cloning "
+                            f"'{base_env}'. The base env may be enormous or the "
+                            f"filesystem unresponsive; see {log_path}"), False
+                    if now >= next_beat:
+                        next_beat = now + _PROVISION_HEARTBEAT_SECONDS
+                        if log_fn:
+                            log_fn(f"still provisioning… {_env_file_count(target)} files "
+                                   f"copied, {int(now - started)}s elapsed")
+            elapsed = time.time() - started
+            if proc.returncode != 0 or not project_env_ready(project_dir):
+                return False, f"conda create failed (rc={proc.returncode}); see {log_path}", True
+            return True, f"cloned {base_env} in {elapsed:.1f}s", False
+        except Exception as e:
+            return False, f"conda create raised {type(e).__name__}: {e}", True
+
+    for attempt in range(1, _PROVISION_ATTEMPTS + 1):
+        ok, msg, retryable = _clone_once(attempt)
+        if ok or not retryable or attempt == _PROVISION_ATTEMPTS:
+            return ok, msg
+        if log_fn:
+            log_fn(f"env provisioning hit a transient error, retrying "
+                   f"({attempt}/{_PROVISION_ATTEMPTS - 1}) on a clean slate…")
+        time.sleep(_PROVISION_RETRY_PAUSE_SECONDS)
+    return False, "env provisioning exhausted all attempts"  # unreachable
 
 
 def find_claude_binary() -> str | None:

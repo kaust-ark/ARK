@@ -91,3 +91,84 @@ def test_existing_env_short_circuits(project):
     (jobs.project_env_prefix(project) / "conda-meta").mkdir(parents=True)
     ok, msg = jobs.provision_project_env(project, "ark-base")
     assert ok and "already exists" in msg
+
+
+# ---------------------------------------------------------------------------
+# A flaky clone gets a second chance (2026-09-10)
+# ---------------------------------------------------------------------------
+# Cloning onto NFS lost a race: conda could not unlink a file it had just
+# written, the link transaction rolled back, rc=1, and the run died at minute
+# one having already paid for Gate A. The identical clone succeeded moments
+# later, so the step is flaky, not broken.
+
+def _exit_cmd(tmp_path, code: int, name: str) -> list:
+    script = tmp_path / f"{name}.py"
+    script.write_text(f"import sys\nsys.exit({code})\n")
+    return [sys.executable, str(script)]
+
+
+def test_transient_clone_failure_is_retried_and_succeeds(project, tmp_path):
+    """rc=1 on the first attempt must not end the run."""
+    fail_cmd = _exit_cmd(tmp_path, 1, "fails")
+    good_cmd = _exit_cmd(tmp_path, 0, "succeeds")
+    calls = []
+
+    def popen(cmd, **kw):
+        calls.append(cmd)
+        # Flaky: the first clone dies, an identical retry goes through.
+        return _REAL_POPEN(fail_cmd if len(calls) == 1 else good_cmd, **kw)
+
+    # Probed once up front (nothing there yet), then after the good clone.
+    # Attempt 1 short-circuits on rc != 0 and never probes.
+    ready = iter([False, True])
+
+    with patch.object(jobs, "find_conda_binary", return_value=fail_cmd[0]), \
+         patch.object(jobs, "_accept_conda_tos", return_value=None), \
+         patch.object(jobs, "_PROVISION_RETRY_PAUSE_SECONDS", 0), \
+         patch.object(jobs, "project_env_ready", side_effect=lambda *_: next(ready)), \
+         patch.object(subprocess, "Popen", side_effect=popen):
+        ok, msg = jobs.provision_project_env(project, "ark-base", timeout=30)
+
+    assert ok is True, msg
+    assert len(calls) == 2, "the transient failure was not retried"
+
+
+def test_retry_is_bounded_not_infinite(project, tmp_path):
+    """A genuinely broken clone still fails, after a fixed number of tries."""
+    fail_cmd = _exit_cmd(tmp_path, 1, "always_fails")
+    calls = []
+
+    def popen(cmd, **kw):
+        calls.append(cmd)
+        return _REAL_POPEN(fail_cmd, **kw)
+
+    with patch.object(jobs, "find_conda_binary", return_value=fail_cmd[0]), \
+         patch.object(jobs, "_accept_conda_tos", return_value=None), \
+         patch.object(jobs, "_PROVISION_RETRY_PAUSE_SECONDS", 0), \
+         patch.object(jobs, "project_env_ready", return_value=False), \
+         patch.object(subprocess, "Popen", side_effect=popen):
+        ok, msg = jobs.provision_project_env(project, "ark-base", timeout=30)
+
+    assert ok is False
+    assert "conda create failed" in msg
+    assert len(calls) == jobs._PROVISION_ATTEMPTS
+
+
+def test_timeout_is_not_retried(project, tmp_path):
+    """A wedged mount stays wedged. Retrying only doubles the silence."""
+    hang_cmd = _hang_cmd(tmp_path)
+    calls = []
+
+    def popen(cmd, **kw):
+        calls.append(cmd)
+        return _REAL_POPEN(hang_cmd, **kw)
+
+    with patch.object(jobs, "find_conda_binary", return_value=hang_cmd[0]), \
+         patch.object(jobs, "_accept_conda_tos", return_value=None), \
+         patch.object(jobs, "_PROVISION_RETRY_PAUSE_SECONDS", 0), \
+         patch.object(subprocess, "Popen", side_effect=popen):
+        ok, msg = jobs.provision_project_env(project, "ark-base", timeout=3)
+
+    assert ok is False
+    assert "timed out" in msg
+    assert len(calls) == 1, "a timeout must not be retried"
