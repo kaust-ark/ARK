@@ -30,6 +30,28 @@ def _pname(p) -> str:
     return p.title if p.title else p.name
 
 
+def _handle_process_alive(handle: str) -> bool:
+    """True when a ``local:<pid>`` handle names a process that still exists.
+
+    Only local handles can be answered here; SLURM and cloud runs live on other
+    machines, so they report False and keep the previous behaviour.
+    """
+    if not handle or not str(handle).startswith("local:"):
+        return False
+    pid_str = str(handle)[len("local:"):]
+    if not pid_str.isdigit():
+        return False
+    try:
+        os.kill(int(pid_str), 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, we just may not signal it
+    except Exception:
+        return False
+
+
 def _gc_project_env(pdir, project_id: str = ""):
     """Reclaim disk by deleting the per-project conda env once terminal.
 
@@ -67,8 +89,19 @@ def _gc_terminal_envs(session, settings):
         ).all()
         for p in terminal:
             pdir = settings.projects_root / p.user_id / p.id
-            if (pdir / ".conda_env" / "conda-meta").is_dir():
-                _gc_project_env(pdir, p.id)
+            if not (pdir / ".conda_env" / "conda-meta").is_dir():
+                continue
+            # "The orchestrator has already exited" is an assumption, and on
+            # 2026-09-10 it was false: a bug held b5fedacd at `failed` while
+            # its run was healthy, and this sweep spent 20 hours deleting the
+            # env that run was executing experiments out of — 1205 times, once
+            # a minute. A terminal STATUS is not proof of a terminal PROCESS.
+            if _handle_process_alive(p.slurm_job_id):
+                logger.warning(
+                    f"GC: skipping {p.id} — status is {p.status} but its "
+                    f"process ({p.slurm_job_id}) is still alive")
+                continue
+            _gc_project_env(pdir, p.id)
     except Exception as e:
         logger.warning(f"terminal env GC sweep failed: {e}")
 
@@ -184,7 +217,20 @@ def _notify_terminal_sweep(session, settings):
         for p in recent:
             pdir = settings.projects_root / p.user_id / p.id
             marker = pdir / ".ark_terminal_notified"
-            if marker.exists() or not pdir.is_dir():
+            if not pdir.is_dir():
+                continue
+            # The marker records WHICH terminal status was announced, but this
+            # only checked that it existed — so a project that reached a
+            # terminal status twice was announced once, for the first one.
+            # b5fedacd (2026-09-10) was briefly marked failed by a bug, which
+            # armed the marker; when the run genuinely finished at 7.6/10 the
+            # sweep skipped it. The owner was told their paper had failed and
+            # never told it succeeded. Re-announce when the verdict changes.
+            try:
+                already = marker.read_text().strip()
+            except Exception:
+                already = ""
+            if already == p.status:
                 continue
             url = f"{settings.base_url}{DASHBOARD_PREFIX}/#project/{p.id}"
             owner = get_user(session, p.user_id)
