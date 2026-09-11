@@ -172,3 +172,52 @@ def test_timeout_is_not_retried(project, tmp_path):
     assert ok is False
     assert "timed out" in msg
     assert len(calls) == 1, "a timeout must not be retried"
+
+
+# ---------------------------------------------------------------------------
+# The heartbeat must not touch the tree conda is building (2026-09-11)
+# ---------------------------------------------------------------------------
+# It used to rglob the destination every 30s, over NFS, while conda was
+# mid-transaction. The walk holds directory references, so conda's unlink of a
+# file it had just written degraded to an NFS silly-rename and failed, rolling
+# back the whole link step. Two user projects died this way 13 and 17 seconds
+# after a heartbeat walk; clones that finished before the first heartbeat never
+# failed. Monitoring must not perturb what it monitors.
+
+def test_progress_signal_never_walks_the_target_tree(project, tmp_path, monkeypatch):
+    target = project / ".conda_env"
+    (target / "lib" / "deep").mkdir(parents=True)
+    (target / "lib" / "deep" / "f.py").write_text("x")
+    log_path = project / ".env_provision.log"
+    log_path.write_text("conda output\n" * 100)
+
+    walked = []
+    real_rglob = Path.rglob
+    real_iterdir = Path.iterdir
+
+    def spy_rglob(self, pattern):
+        walked.append(("rglob", str(self)))
+        return real_rglob(self, pattern)
+
+    def spy_iterdir(self):
+        walked.append(("iterdir", str(self)))
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "rglob", spy_rglob)
+    monkeypatch.setattr(Path, "iterdir", spy_iterdir)
+
+    msg = jobs._provision_progress(log_path)
+
+    assert not any(str(target) in where for _, where in walked), (
+        f"the heartbeat read the env being built: {walked}")
+    assert "KB" in msg, msg
+
+
+def test_progress_signal_survives_a_missing_log(project):
+    """Heartbeats run before conda has written anything; never raise."""
+    assert jobs._provision_progress(project / "nope.log")
+
+
+def test_retry_pause_gives_the_filesystem_room():
+    """5s retried straight back into the same wedged NFS state (5c0e44f1)."""
+    assert jobs._PROVISION_RETRY_PAUSE_SECONDS >= 15

@@ -148,7 +148,9 @@ _PROVISION_TIMEOUT_SECONDS = int(os.environ.get("ARK_ENV_PROVISION_TIMEOUT", "60
 # same clone succeeded on the next try, so the step is flaky rather than broken.
 # One retry on a clean slate costs a minute and saves the run.
 _PROVISION_ATTEMPTS = int(os.environ.get("ARK_ENV_PROVISION_ATTEMPTS", "2"))
-_PROVISION_RETRY_PAUSE_SECONDS = 5
+# 5s was not enough: on 2026-09-11 a retry fired 13s after the first failure
+# and hit the same wedged NFS state. Give the filesystem room to settle.
+_PROVISION_RETRY_PAUSE_SECONDS = 20
 
 
 def _kill_tree(proc) -> None:
@@ -169,12 +171,28 @@ def _kill_tree(proc) -> None:
             continue
 
 
-def _env_file_count(target: Path) -> int:
-    """Rough progress signal for the heartbeat. Never raises."""
+def _provision_progress(log_path: Path) -> str:
+    """Liveness signal for the heartbeat, read from OUTSIDE the env being built.
+
+    This used to be `sum(1 for _ in target.rglob("*"))` — a full recursive walk
+    of the very tree conda was mid-transaction on, every 30s, over NFS. The
+    walk holds directory references, so conda's unlink of a file it had just
+    written degraded to an NFS silly-rename and failed:
+
+        Could not remove or rename .../pandas/plotting/_matplotlib/hist.py.
+        Please remove this file manually (you may need to reboot to free
+        file handles)
+
+    …and the link transaction rolled back. Both 2026-09 provisioning failures
+    (b5fedacd, 5c0e44f1) died 13 and 17 seconds after a heartbeat walk, and
+    clones that finished inside the first 30s — before any walk — never failed.
+    Monitoring must not perturb what it monitors, so this stats one file conda
+    is only appending to.
+    """
     try:
-        return sum(1 for _ in target.rglob("*"))
+        return f"{log_path.stat().st_size // 1024} KB of conda output"
     except Exception:
-        return 0
+        return "no output yet"
 
 
 def provision_project_env(project_dir: Path, base_env: str = "ark-base",
@@ -254,8 +272,8 @@ def provision_project_env(project_dir: Path, base_env: str = "ark-base",
                     if now >= next_beat:
                         next_beat = now + _PROVISION_HEARTBEAT_SECONDS
                         if log_fn:
-                            log_fn(f"still provisioning… {_env_file_count(target)} files "
-                                   f"copied, {int(now - started)}s elapsed")
+                            log_fn(f"still provisioning… {_provision_progress(log_path)}, "
+                                   f"{int(now - started)}s elapsed")
             elapsed = time.time() - started
             if proc.returncode != 0 or not project_env_ready(project_dir):
                 return False, f"conda create failed (rc={proc.returncode}); see {log_path}", True
