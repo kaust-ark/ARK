@@ -91,3 +91,133 @@ def test_existing_env_short_circuits(project):
     (jobs.project_env_prefix(project) / "conda-meta").mkdir(parents=True)
     ok, msg = jobs.provision_project_env(project, "ark-base")
     assert ok and "already exists" in msg
+
+
+# ---------------------------------------------------------------------------
+# A flaky clone gets a second chance (2026-09-10)
+# ---------------------------------------------------------------------------
+# Cloning onto NFS lost a race: conda could not unlink a file it had just
+# written, the link transaction rolled back, rc=1, and the run died at minute
+# one having already paid for Gate A. The identical clone succeeded moments
+# later, so the step is flaky, not broken.
+
+def _exit_cmd(tmp_path, code: int, name: str) -> list:
+    script = tmp_path / f"{name}.py"
+    script.write_text(f"import sys\nsys.exit({code})\n")
+    return [sys.executable, str(script)]
+
+
+def test_transient_clone_failure_is_retried_and_succeeds(project, tmp_path):
+    """rc=1 on the first attempt must not end the run."""
+    fail_cmd = _exit_cmd(tmp_path, 1, "fails")
+    good_cmd = _exit_cmd(tmp_path, 0, "succeeds")
+    calls = []
+
+    def popen(cmd, **kw):
+        calls.append(cmd)
+        # Flaky: the first clone dies, an identical retry goes through.
+        return _REAL_POPEN(fail_cmd if len(calls) == 1 else good_cmd, **kw)
+
+    # Probed once up front (nothing there yet), then after the good clone.
+    # Attempt 1 short-circuits on rc != 0 and never probes.
+    ready = iter([False, True])
+
+    with patch.object(jobs, "find_conda_binary", return_value=fail_cmd[0]), \
+         patch.object(jobs, "_accept_conda_tos", return_value=None), \
+         patch.object(jobs, "_PROVISION_RETRY_PAUSE_SECONDS", 0), \
+         patch.object(jobs, "project_env_ready", side_effect=lambda *_: next(ready)), \
+         patch.object(subprocess, "Popen", side_effect=popen):
+        ok, msg = jobs.provision_project_env(project, "ark-base", timeout=30)
+
+    assert ok is True, msg
+    assert len(calls) == 2, "the transient failure was not retried"
+
+
+def test_retry_is_bounded_not_infinite(project, tmp_path):
+    """A genuinely broken clone still fails, after a fixed number of tries."""
+    fail_cmd = _exit_cmd(tmp_path, 1, "always_fails")
+    calls = []
+
+    def popen(cmd, **kw):
+        calls.append(cmd)
+        return _REAL_POPEN(fail_cmd, **kw)
+
+    with patch.object(jobs, "find_conda_binary", return_value=fail_cmd[0]), \
+         patch.object(jobs, "_accept_conda_tos", return_value=None), \
+         patch.object(jobs, "_PROVISION_RETRY_PAUSE_SECONDS", 0), \
+         patch.object(jobs, "project_env_ready", return_value=False), \
+         patch.object(subprocess, "Popen", side_effect=popen):
+        ok, msg = jobs.provision_project_env(project, "ark-base", timeout=30)
+
+    assert ok is False
+    assert "conda create failed" in msg
+    assert len(calls) == jobs._PROVISION_ATTEMPTS
+
+
+def test_timeout_is_not_retried(project, tmp_path):
+    """A wedged mount stays wedged. Retrying only doubles the silence."""
+    hang_cmd = _hang_cmd(tmp_path)
+    calls = []
+
+    def popen(cmd, **kw):
+        calls.append(cmd)
+        return _REAL_POPEN(hang_cmd, **kw)
+
+    with patch.object(jobs, "find_conda_binary", return_value=hang_cmd[0]), \
+         patch.object(jobs, "_accept_conda_tos", return_value=None), \
+         patch.object(jobs, "_PROVISION_RETRY_PAUSE_SECONDS", 0), \
+         patch.object(subprocess, "Popen", side_effect=popen):
+        ok, msg = jobs.provision_project_env(project, "ark-base", timeout=3)
+
+    assert ok is False
+    assert "timed out" in msg
+    assert len(calls) == 1, "a timeout must not be retried"
+
+
+# ---------------------------------------------------------------------------
+# The heartbeat must not touch the tree conda is building (2026-09-11)
+# ---------------------------------------------------------------------------
+# It used to rglob the destination every 30s, over NFS, while conda was
+# mid-transaction. The walk holds directory references, so conda's unlink of a
+# file it had just written degraded to an NFS silly-rename and failed, rolling
+# back the whole link step. Two user projects died this way 13 and 17 seconds
+# after a heartbeat walk; clones that finished before the first heartbeat never
+# failed. Monitoring must not perturb what it monitors.
+
+def test_progress_signal_never_walks_the_target_tree(project, tmp_path, monkeypatch):
+    target = project / ".conda_env"
+    (target / "lib" / "deep").mkdir(parents=True)
+    (target / "lib" / "deep" / "f.py").write_text("x")
+    log_path = project / ".env_provision.log"
+    log_path.write_text("conda output\n" * 100)
+
+    walked = []
+    real_rglob = Path.rglob
+    real_iterdir = Path.iterdir
+
+    def spy_rglob(self, pattern):
+        walked.append(("rglob", str(self)))
+        return real_rglob(self, pattern)
+
+    def spy_iterdir(self):
+        walked.append(("iterdir", str(self)))
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "rglob", spy_rglob)
+    monkeypatch.setattr(Path, "iterdir", spy_iterdir)
+
+    msg = jobs._provision_progress(log_path)
+
+    assert not any(str(target) in where for _, where in walked), (
+        f"the heartbeat read the env being built: {walked}")
+    assert "KB" in msg, msg
+
+
+def test_progress_signal_survives_a_missing_log(project):
+    """Heartbeats run before conda has written anything; never raise."""
+    assert jobs._provision_progress(project / "nope.log")
+
+
+def test_retry_pause_gives_the_filesystem_room():
+    """5s retried straight back into the same wedged NFS state (5c0e44f1)."""
+    assert jobs._PROVISION_RETRY_PAUSE_SECONDS >= 15

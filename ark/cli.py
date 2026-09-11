@@ -3049,6 +3049,39 @@ def _check_linger():
         pass
 
 
+_APP_LOG_HANDLER_TAG = "ark-app-log"
+
+
+def _configure_app_logging():
+    """Give our own loggers a handler so the control plane's decisions land in
+    the service log.
+
+    uvicorn's ``log_level`` configures uvicorn's loggers only, and nothing else
+    ever called basicConfig, so every ``logger.info()`` in website.dashboard
+    fell through to ``logging.lastResort`` — which emits WARNING and above.
+    Marking a run failed, auto-restarting a cancelled job and reclaiming a
+    project env therefore happened with ZERO trace in the journal. On
+    2026-09-10 that turned a healthy-run-marked-failed into hours of blind
+    probing from outside the process.
+
+    Scoped to our two loggers: root would drag in httpx/litellm INFO chatter
+    and bury the signal. Idempotent — create_app can run more than once in a
+    process (tests, reloads) and duplicate handlers would double every line.
+    """
+    import logging as _logging
+
+    for name in ("website.dashboard", "ark"):
+        lg = _logging.getLogger(name)
+        lg.setLevel(_logging.INFO)
+        if not any(getattr(h, "_ark_tag", "") == _APP_LOG_HANDLER_TAG
+                   for h in lg.handlers):
+            h = _logging.StreamHandler(sys.stdout)
+            h.setFormatter(_logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+            h._ark_tag = _APP_LOG_HANDLER_TAG
+            lg.addHandler(h)
+        lg.propagate = False
+
+
 def _cmd_webapp_install(host: str, port: int, dev: bool = False):
     """Install and start ARK webapp as a systemd user service."""
     import subprocess as _sp
@@ -3702,6 +3735,7 @@ def cmd_webapp(args):
     import threading
     threading.Thread(target=_deploy_watcher, daemon=True, name="deploy-watcher").start()
 
+    _configure_app_logging()
     app = create_app()
     uvicorn.run(app, host=host, port=port, log_level="info")
 
@@ -4304,8 +4338,16 @@ def cmd_env(args):
         print(f"  {sp}")
         print(f"  {_c('LOCKED (read-only)', Colors.GREEN) if locked else _c('UNLOCKED (writable)', Colors.YELLOW)}")
         return 0
+    # DIRECTORIES ONLY, never files. Creating, replacing or deleting a file
+    # needs write permission on its DIRECTORY, so chmod'ing the directories is
+    # what actually stops pip — and directories are the one thing conda does
+    # not share between environments. Files are hardlinked into the shared
+    # package cache, so `chmod -R` on the whole tree silently reached through
+    # and left 811 cache files read-only for every OTHER env on the host
+    # (found 2026-09-10, traced back to the 2026-08-31 lock).
     if args.env_cmd == "lock":
-        r = _sp.run(["chmod", "-R", "a-w", str(sp)], capture_output=True, text=True)
+        r = _sp.run(["find", str(sp), "-type", "d", "-exec", "chmod", "a-w", "{}", "+"],
+                    capture_output=True, text=True)
         if r.returncode != 0:
             print(f"  {_c('Error:', Colors.RED)} {r.stderr.strip()[:200]}")
             return 1
@@ -4314,7 +4356,8 @@ def cmd_env(args):
               f"ark env unlock")
         return 0
     if args.env_cmd == "unlock":
-        r = _sp.run(["chmod", "-R", "ug+w", str(sp)], capture_output=True, text=True)
+        r = _sp.run(["find", str(sp), "-type", "d", "-exec", "chmod", "ug+w", "{}", "+"],
+                    capture_output=True, text=True)
         if r.returncode != 0:
             print(f"  {_c('Error:', Colors.RED)} {r.stderr.strip()[:200]}")
             return 1

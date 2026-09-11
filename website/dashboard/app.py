@@ -467,7 +467,14 @@ async def _poll_jobs(app: FastAPI):
                                 if err is not None:
                                     kwargs["error_message"] = err
                             update_project(session, p, **kwargs)
-                            logger.info(f"Project {p.id}: {p.status} → {new_status}")
+                            # Carry the launcher's RAW answer, not just the
+                            # mapped status: when a healthy run gets marked
+                            # failed, the only question that matters is what
+                            # the probe actually saw, and reconstructing it
+                            # from outside the process is guesswork.
+                            logger.info(
+                                f"Project {p.id}: {p.status} → {new_status} "
+                                f"(handle={p.slurm_job_id} raw={result.raw!r})")
                             if new_status in ("done", "failed", "stopped"):
                                 _gc_project_env(pdir, p.id)
                                 _advance_pending_queue(session, settings)
