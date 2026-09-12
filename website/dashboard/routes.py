@@ -1615,6 +1615,9 @@ async def _restart_project_async(
     """Background task for restart/continue: offloads blocking GCP provisioning
     to a thread so the event loop stays free to serve other requests."""
     settings = get_settings()
+    # Chat / one-shot instruction helpers must not touch the run's status or
+    # announce a "restart" — see _try_submit_or_pending.
+    side_channel = bool(apply_instruction or chat_message)
 
     def _blocking_submit():
         with get_session(settings.db_path) as session:
@@ -1628,11 +1631,14 @@ async def _restart_project_async(
                 return final_status, _pname(project), None
             except Exception as e:
                 logger.error(f"Restart failed for {project_id}: {e}", exc_info=True)
-                update_project(session, project, status="failed", error_message=str(e))
+                if not side_channel:
+                    update_project(session, project, status="failed", error_message=str(e))
                 return None, _pname(project), str(e)
 
     final_status, pname, err = await asyncio.to_thread(_blocking_submit)
-    if pname is None:
+    if pname is None or side_channel:
+        # The chat surface reports its own outcome; a "restarted" ping for
+        # every message would be noise, and wrong.
         return
     if err:
         send_telegram_notify(
@@ -1682,21 +1688,33 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
     ).all()
     # Lane-aware admission: regular users and admins are separate pools so one
     # can't starve the other. Overflow queues as "pending".
-    admin_ids = _admin_user_ids(session)
-    owner_is_admin = project.user_id in admin_ids
-    if owner_is_admin:
-        admin_active = [p for p in active if p.user_id in admin_ids]
-        if len(admin_active) >= MAX_CONCURRENT_ADMIN_GLOBAL:
-            update_project(session, project, status="pending")
-            return "pending"
-    else:
-        regular_active = [p for p in active if p.user_id not in admin_ids]
-        user_active = [p for p in regular_active if p.user_id == project.user_id]
-        if (len(user_active) >= MAX_CONCURRENT_PER_USER
-                or len(regular_active) >= MAX_CONCURRENT_REGULAR_GLOBAL):
-            update_project(session, project, status="pending")
-            return "pending"
-    
+    # A chat message or a one-shot instruction is a SIDE-CHANNEL turn: a
+    # short-lived helper process that talks to the project, not the run
+    # itself. It must never own the project's status, pid or job handle —
+    # the main orchestrator does. On 2026-09-12 every chat turn on f028f3ba
+    # overwrote slurm_job_id with the chat process's pid, so when the chat
+    # exited seconds later the poller found "its" pid gone and marked the
+    # healthy run FAILED; the chat turn then wrote status=done on exit and the
+    # sweep mailed the owner a completion notice for a paper that did not
+    # exist yet — twice. It also must not be lane-gated or parked "pending":
+    # it is not a run.
+    side_channel = bool(apply_instruction or chat_message)
+    if not side_channel:
+        admin_ids = _admin_user_ids(session)
+        owner_is_admin = project.user_id in admin_ids
+        if owner_is_admin:
+            admin_active = [p for p in active if p.user_id in admin_ids]
+            if len(admin_active) >= MAX_CONCURRENT_ADMIN_GLOBAL:
+                update_project(session, project, status="pending")
+                return "pending"
+        else:
+            regular_active = [p for p in active if p.user_id not in admin_ids]
+            user_active = [p for p in regular_active if p.user_id == project.user_id]
+            if (len(user_active) >= MAX_CONCURRENT_PER_USER
+                    or len(regular_active) >= MAX_CONCURRENT_REGULAR_GLOBAL):
+                update_project(session, project, status="pending")
+                return "pending"
+
     # Fetch user keys
     user_obj = get_user(session, project.user_id)
     api_keys = _get_user_keys(user_obj) if user_obj else {}
@@ -1719,9 +1737,15 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
         job_id = launcher.launch(spec)
     except Exception as e:
         logger.error(f"Failed to launch orchestrator for {project.id}: {e}", exc_info=True)
+        if side_channel:
+            # A failed chat/apply helper is the helper's problem, not the run's.
+            return project.status
         update_project(session, project, status="failed",
                        error_message=f"Launch failed: {str(e)[:400]}")
         return "failed"
+    if side_channel:
+        # Leave status and the job handle exactly as the main run set them.
+        return project.status
     update_project(session, project, status=launcher.initial_status, slurm_job_id=job_id)
     return launcher.initial_status
 
