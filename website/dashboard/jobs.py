@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 from jinja2 import Template
@@ -146,11 +147,69 @@ _PROVISION_TIMEOUT_SECONDS = int(os.environ.get("ARK_ENV_PROVISION_TIMEOUT", "60
 # handles"), the link transaction rolls back, and rc=1 kills a run that had
 # already spent Gate A budget (2026-09-10, project b5fedacd, libglib). The exact
 # same clone succeeded on the next try, so the step is flaky rather than broken.
-# One retry on a clean slate costs a minute and saves the run.
-_PROVISION_ATTEMPTS = int(os.environ.get("ARK_ENV_PROVISION_ATTEMPTS", "2"))
+# Retries only help if each one starts from a genuinely empty target — which is
+# what _set_aside_partial_env guarantees. With that in place, three attempts
+# ride out a transient NFS wobble at the cost of a couple of minutes.
+_PROVISION_ATTEMPTS = int(os.environ.get("ARK_ENV_PROVISION_ATTEMPTS", "3"))
 # 5s was not enough: on 2026-09-11 a retry fired 13s after the first failure
-# and hit the same wedged NFS state. Give the filesystem room to settle.
+# and hit the same wedged NFS state. Give the filesystem room to settle. The
+# pause is multiplied by the attempt number so later retries back off further.
 _PROVISION_RETRY_PAUSE_SECONDS = 20
+
+
+def _set_aside_partial_env(target: Path) -> Path | None:
+    """Move a broken/partial env out of the way ATOMICALLY instead of deleting it.
+
+    This is the fix for the retry that never worked. `shutil.rmtree(...,
+    ignore_errors=True)` cannot remove files that still have handles open over
+    NFS — the server silly-renames them to .nfsXXXX and the unlink is silently
+    skipped. So the retry's `conda create --clone` landed in a directory that
+    was NOT empty, tried to replace the previous attempt's leftovers, and hit
+    the very same "Could not remove or rename ... free file handles" race that
+    killed attempt one. Every retry inherited the last attempt's corpse
+    (b5fedacd 09-10, 5c0e44f1 09-11, f028f3ba 09-12 — all three, both attempts).
+
+    `os.rename` of the directory is atomic on the same filesystem, NFS
+    included, and requires no unlink of anything inside. The debris is simply
+    no longer at the path conda writes to, so the next attempt starts from a
+    genuinely empty target. The set-aside dirs are reclaimed best-effort by
+    `_sweep_stale_envs`; if a sweep can't delete one yet, nothing is blocked.
+
+    The clone itself must still target the canonical prefix — conda bakes the
+    prefix into shebangs and activation scripts, so clone-to-temp-then-rename
+    would produce a broken env. Only the FAILED debris is ever renamed.
+    """
+    if not target.exists():
+        return None
+    aside = target.with_name(f"{target.name}.stale-{uuid.uuid4().hex[:8]}")
+    try:
+        os.rename(target, aside)
+        return aside
+    except OSError:
+        # Rename itself failed (target vanished mid-flight, or a truly odd
+        # mount). Fall back to the old best-effort delete; the attempt loop
+        # still gets whatever clean slate it can.
+        shutil.rmtree(target, ignore_errors=True)
+        return None
+
+
+def _sweep_stale_envs(target: Path) -> int:
+    """Best-effort reclaim of `<target>.stale-*` set-aside dirs. Never raises.
+
+    Returns how many were removed. A dir that still can't be deleted (handles
+    open on NFS) is left for a later sweep — it is out of conda's path, so it
+    costs disk, not correctness.
+    """
+    removed = 0
+    try:
+        for stale in target.parent.glob(f"{target.name}.stale-*"):
+            if stale.is_dir():
+                shutil.rmtree(stale, ignore_errors=True)
+                if not stale.exists():
+                    removed += 1
+    except Exception:
+        pass
+    return removed
 
 
 def _kill_tree(proc) -> None:
@@ -229,9 +288,11 @@ def provision_project_env(project_dir: Path, base_env: str = "ark-base",
 
     def _clone_once(attempt: int) -> tuple[bool, str, bool]:
         """One clone. Returns (ok, message, retryable)."""
-        # Stale partial env from a prior failed clone — wipe before retrying.
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
+        # A prior attempt's partial env is moved ASIDE atomically, never
+        # rmtree'd in place: over NFS an in-place delete leaves busy files
+        # behind and the retry clones into a polluted dir (see
+        # _set_aside_partial_env). Conda always targets the canonical prefix.
+        _set_aside_partial_env(target)
         started = time.time()
         try:
             with open(log_path, "w" if attempt == 1 else "a") as lf:
@@ -261,7 +322,7 @@ def provision_project_env(project_dir: Path, base_env: str = "ark-base",
                         _kill_tree(proc)
                         lf.write(f"\n[ark] TIMEOUT after {timeout}s — killed\n")
                         lf.flush()
-                        shutil.rmtree(target, ignore_errors=True)
+                        _set_aside_partial_env(target)
                         # Not retryable: a wedged mount stays wedged, and a
                         # second full timeout doubles the wait before the user
                         # hears anything.
@@ -281,14 +342,21 @@ def provision_project_env(project_dir: Path, base_env: str = "ark-base",
         except Exception as e:
             return False, f"conda create raised {type(e).__name__}: {e}", True
 
+    # Reclaim debris set aside by earlier runs before we start (best-effort).
+    _sweep_stale_envs(target)
     for attempt in range(1, _PROVISION_ATTEMPTS + 1):
         ok, msg, retryable = _clone_once(attempt)
-        if ok or not retryable or attempt == _PROVISION_ATTEMPTS:
+        if ok:
+            _sweep_stale_envs(target)
+            return ok, msg
+        if not retryable or attempt == _PROVISION_ATTEMPTS:
             return ok, msg
         if log_fn:
             log_fn(f"env provisioning hit a transient error, retrying "
                    f"({attempt}/{_PROVISION_ATTEMPTS - 1}) on a clean slate…")
-        time.sleep(_PROVISION_RETRY_PAUSE_SECONDS)
+        # Back off further on each retry so a transient NFS wobble has time to
+        # clear rather than being hit again 20s later.
+        time.sleep(_PROVISION_RETRY_PAUSE_SECONDS * attempt)
     return False, "env provisioning exhausted all attempts"  # unreachable
 
 
