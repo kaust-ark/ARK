@@ -30,9 +30,22 @@ class SlurmBackend(ComputeBackend):
 
     @property
     def job_prefix(self) -> str:
-        return (self._compute_config.get("job_prefix")
-                or self.config.get("slurm_job_prefix")
-                or f"{self.project_name.upper()}_")
+        # Must be non-empty AND unique per project. The old default
+        # f"{project_name.upper()}_" collapsed to a bare "_" whenever the
+        # project had no title yet — which is the norm at experiment time. The
+        # wait loop counts every squeue job whose name starts with this prefix,
+        # so a "_" prefix made one project wait on EVERY other project's (and
+        # every prior run's) "_"-named jobs. On 2026-09-12 f028f3ba sat in
+        # "waiting for all experiments" for hours, counting another project's
+        # leftover _e* jobs that were never its own. Fall back to the project's
+        # id (the last path segment of code_dir is the project UUID), which is
+        # always present and unique, so a project only ever waits on itself.
+        configured = (self._compute_config.get("job_prefix")
+                      or self.config.get("slurm_job_prefix"))
+        if configured:
+            return configured
+        token = (self.project_name or "").strip() or self.code_dir.name[:8]
+        return f"{token.upper()}_"
 
     # The project's own conda env, created by provisioning. Must match
     # website.dashboard.jobs.PROJECT_ENV_DIRNAME — this used to read ".env",
