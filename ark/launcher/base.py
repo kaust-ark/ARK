@@ -7,7 +7,7 @@ in the webapp. The concrete launchers are thin adapters over the battle-tested
 functions in `website/dashboard/jobs.py` and SkyPilot's SDK so behavior is
 identical to the pre-Phase-4 code paths.
 
-A launcher returns an **opaque handle** string (today: ``local:{pid}`` /
+A launcher returns an **opaque handle** string (today: ``local:{host}:{pid}`` /
 ``skypilot:{cluster}`` / a bare SLURM job id) which is what the webapp persists as
 ``Project.slurm_job_id``. `launcher_from_handle` maps a handle back to the
 launcher that owns it, so poll/cancel dispatch purely off the stored handle.

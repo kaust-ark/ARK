@@ -19,6 +19,7 @@ import os
 import re
 import signal
 import shutil
+import socket
 import subprocess
 import sys
 import textwrap
@@ -3003,7 +3004,12 @@ def _conda_env_python(env_name: str) -> str:
 def _generate_service_unit(host: str, port: int, work_dir: Path, description: str,
                            env_vars=None, python_bin: str = None,
                            env_file: Path | None = None) -> str:
-    """Generate a systemd user service unit file for the ARK webapp."""
+    """Generate a systemd user service unit file for the ARK webapp.
+
+    The unit is pinned to the installing node with ``ConditionHost``. The user
+    unit dir may live on an NFS-shared home, where any other node that starts a
+    user manager (a login, linger) would otherwise run a second webapp against
+    the same DB and judge this node's pids as dead."""
     if python_bin is None:
         python_bin = sys.executable
     env_lines = ""
@@ -3019,6 +3025,7 @@ def _generate_service_unit(host: str, port: int, work_dir: Path, description: st
 [Unit]
 Description={description}
 After=network.target
+ConditionHost={socket.gethostname()}
 
 [Service]
 Type=simple

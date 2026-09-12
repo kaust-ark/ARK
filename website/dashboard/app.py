@@ -17,12 +17,14 @@ from ark.launcher import (
     LaunchSpec, launcher_from_handle,
     STOPPED, GONE, UNKNOWN, ACTIVE_STATUSES,
 )
+from ark.launcher.local import handle_pid, handle_is_local
 from .notify import send_completion_email, send_telegram_notify
 from .routes import router
 
 logger = logging.getLogger("website.dashboard")
 
 _log_mtimes: dict[str, float] = {}   # project_id → last log mtime
+_foreign_warned: set[str] = set()    # handles spawned on another node, logged once
 
 
 def _pname(p) -> str:
@@ -31,18 +33,22 @@ def _pname(p) -> str:
 
 
 def _handle_process_alive(handle: str) -> bool:
-    """True when a ``local:<pid>`` handle names a process that still exists.
+    """True when a ``local:`` handle names a process that still exists.
 
-    Only local handles can be answered here; SLURM and cloud runs live on other
-    machines, so they report False and keep the previous behaviour.
+    Only this node's local handles can be answered here. A handle spawned on
+    another node reports True: we cannot see its processes, and guessing "dead"
+    is how a second control plane deleted a live run's env. SLURM and cloud
+    runs report False and keep the previous behaviour.
     """
     if not handle or not str(handle).startswith("local:"):
         return False
-    pid_str = str(handle)[len("local:"):]
-    if not pid_str.isdigit():
+    pid = handle_pid(str(handle))
+    if pid is None:
         return False
+    if not handle_is_local(str(handle)):
+        return True
     try:
-        os.kill(int(pid_str), 0)
+        os.kill(pid, 0)
         return True
     except ProcessLookupError:
         return False
@@ -441,6 +447,16 @@ async def _poll_jobs(app: FastAPI):
                         # UNKNOWN → transient probe failure / no state yet. Leave the
                         # project as-is and retry next cycle (still run the watchdog).
                         if result.state == UNKNOWN:
+                            if result.raw.startswith("foreign-host:"):
+                                # Another node's run is not ours to judge, not
+                                # even for staleness. Say so once per handle.
+                                if p.slurm_job_id not in _foreign_warned:
+                                    _foreign_warned.add(p.slurm_job_id)
+                                    logger.warning(
+                                        f"Project {p.id}: handle {p.slurm_job_id} was "
+                                        f"spawned on another node; this control plane "
+                                        f"is leaving it alone")
+                                continue
                             _stuck_watchdog(p, launcher, pdir, session)
                             continue
 

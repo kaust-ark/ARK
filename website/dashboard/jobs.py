@@ -946,17 +946,23 @@ def launch_local_job(
     apply_scope: str = "edit",
     chat_message: str = "",
 ) -> str:
-    """Launch orchestrator as a local subprocess. Returns 'local:{pid}'.
+    """Launch orchestrator as a local subprocess. Returns 'local:{host}:{pid}'.
 
     Prefers a detached systemd --user transient service (survives webapp
     restarts); falls back to an in-webapp child where systemd isn't available.
     """
+    from ark.launcher.local import local_handle
+
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     log_file = log_dir / f"local_{int(time.time())}.out"
-    exit_file = log_dir / "local_exit.txt"
-    exit_file.unlink(missing_ok=True)
+    # The exit sentinel is how the poller learns a vanished run's outcome. A
+    # chat/apply helper is a side channel of the run, so it must neither erase
+    # the run's sentinel nor leave its own exit code behind as the run's.
+    exit_file = None if (apply_instruction or chat_message) else log_dir / "local_exit.txt"
+    if exit_file is not None:
+        exit_file.unlink(missing_ok=True)
 
     # Build the orchestrator command, preferring the project-local conda env
     # at <project_dir>/.env. Falls back to the named env from settings, then
@@ -1020,10 +1026,14 @@ def launch_local_job(
         "_sig.signal(_sig.SIGINT, cleanup)\n"
         "try:\n"
         "    _r = _s.run({cmd!r})\n"
-        "    open({exit_file!r}, 'w').write(str(_r.returncode))\n"
+        "{record_exit}"
         "finally:\n"
         "    cleanup()\n"
-    ).format(project_dir=str(project_dir), cmd=cmd, exit_file=str(exit_file))
+    ).format(
+        project_dir=str(project_dir), cmd=cmd,
+        record_exit=(f"    open({str(exit_file)!r}, 'w').write(str(_r.returncode))\n"
+                     if exit_file is not None else ""),
+    )
 
     # Prepare environment with user keys and home isolation
     env = os.environ.copy()
@@ -1090,7 +1100,7 @@ def launch_local_job(
     # webapp restart/redeploy; fall back to an in-webapp child otherwise.
     pid = _launch_detached_orchestrator(wrapper, env, log_file, project_dir, project_id)
     if pid is not None:
-        return f"local:{pid}"
+        return local_handle(pid)
 
     with open(log_file, "w") as lf:
         proc = subprocess.Popen(
@@ -1102,7 +1112,7 @@ def launch_local_job(
             env=env,
         )
 
-    return f"local:{proc.pid}"
+    return local_handle(proc.pid)
 
 
 def poll_local_job(pid: int, log_dir: Path) -> str:
