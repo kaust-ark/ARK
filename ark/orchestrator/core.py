@@ -3149,8 +3149,15 @@ def main():
     if args.no_research:
         orchestrator.config["skip_deep_research"] = True
 
+    # A chat message or one-shot instruction is a side-channel helper, not the
+    # run. It must not stamp status/pid: on 2026-09-12 every chat turn on a
+    # live project flipped it to running→done, and the terminal-notify sweep
+    # mailed the owner a completion notice for a paper that did not exist
+    # yet. The main orchestrator is the only writer of status and pid.
+    side_channel = bool(args.chat_message or args.apply_instruction)
+
     # Mark as running via whichever control-plane transport is active.
-    if orchestrator.cp.available:
+    if orchestrator.cp.available and not side_channel:
         orchestrator._sync_db(status="running", pid=os.getpid())
 
     # Persistent streaming chat turn (out-of-band management), then back to done.
@@ -3160,9 +3167,9 @@ def main():
         except Exception as e:
             orchestrator.log(f"chat_turn error: {e}", "ERROR")
         finally:
+            # Flush the transcript only. No status/pid write: this helper does
+            # not own the run's state (see side_channel above).
             orchestrator._flush_events()
-            if orchestrator.cp.available:
-                orchestrator._sync_db(status="done", pid=0)
         return
 
     # Lightweight apply path: one targeted change, then back to done — no loop.
@@ -3172,9 +3179,9 @@ def main():
         except Exception as e:
             orchestrator.log(f"apply_instruction error: {e}", "ERROR")
         finally:
+            # Flush the transcript only. No status/pid write: this helper does
+            # not own the run's state (see side_channel above).
             orchestrator._flush_events()
-            if orchestrator.cp.available:
-                orchestrator._sync_db(status="done", pid=0)
         return
 
     final_status = None
