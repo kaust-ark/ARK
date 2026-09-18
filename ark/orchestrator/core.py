@@ -3060,6 +3060,9 @@ a {{ color: #0d9488; }}
 # after fork held a finished run (a247437e, 2026-09-17) for three hours, until
 # the stuck-run watchdog killed it and filed the finished paper as failed.
 _EXIT_GRACE_DEFAULT = 120.0
+# Room for the run's wrap-up (the bounded final results publish is up to
+# ten minutes) before the guard treats the process as hung.
+_FINALIZE_GRACE_SECONDS = 15 * 60.0
 
 
 def _child_pids() -> list[int]:
@@ -3305,6 +3308,12 @@ def main():
         final_error = f"{type(e).__name__}: {e}"[:400]
         raise
     finally:
+        # The run has ended; from here nothing may hold the process. Arm the
+        # guard now, with room for the wrap-up below, and tighten it once
+        # everything the run owes the control plane is recorded.
+        _code = 1 if final_status == "failed" else 0
+        _log_warn = lambda m: orchestrator.log(m, "WARN")  # noqa: E731
+        _guard = _arm_exit_guard(_code, grace=_FINALIZE_GRACE_SECONDS, log=_log_warn)
         # Durability: synchronously flush the paper PDF + result/state docs to the
         # control plane on the MAIN thread BEFORE recording the terminal status, so
         # a persisted status never implies a paper the control plane is missing.
@@ -3317,10 +3326,8 @@ def main():
                 _kw["error_message"] = final_error
             orchestrator._sync_db(**_kw)
         orchestrator._flush_events()
-        # Everything the run owes the control plane is on disk and recorded
-        # above. From here the only remaining job is to exit, so bound it.
-        _arm_exit_guard(1 if final_status == "failed" else 0,
-                        log=lambda m: orchestrator.log(m, "WARN"))
+        _guard.cancel()
+        _arm_exit_guard(_code, log=_log_warn)
 
     # Exit-code truth: the launch wrapper records our return code (SLURM uses
     # the job state) and the webapp poller maps 0 → done / non-zero → failed.

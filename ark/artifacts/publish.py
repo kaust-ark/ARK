@@ -12,6 +12,8 @@ exists. Every step is best-effort — a publish failure must never break a run.
 from __future__ import annotations
 
 import hashlib
+import os
+import time
 from pathlib import Path
 
 # key (relative to the project dir) → content type for common figure formats
@@ -41,6 +43,18 @@ _RESULT_TYPES = {
 # as everything else, so a runaway dump must not stall the run. Skips are logged
 # (never silently dropped) so it's clear the blob stayed on the VM only.
 _RESULT_MAX_BYTES = 25 * 1024 * 1024
+
+# Whole-call budgets. Results are published synchronously, per iteration and
+# again at run end, and one project's results/ held 650,215 files (46 GB): the
+# end-of-run publish registered 78,719 of them over three silent hours, until
+# the stuck-run watchdog killed the finished run and filed its paper as failed
+# (a247437e, 2026-09-17). Files are walked in sorted order, so what lands is
+# the export ZIP's sample of the results; the rest stays in the project dir on
+# disk, where it was all along. Progress is logged so the run is visibly alive.
+_RESULT_MAX_FILES = 5000
+_RESULT_MAX_TOTAL_BYTES = 256 * 1024 * 1024
+_RESULT_TIME_BUDGET_S = 600.0
+_RESULT_PROGRESS_EVERY_S = 60.0
 
 
 def _publish_one(store, cp, *, path: Path, key: str, kind: str,
@@ -100,8 +114,20 @@ def publish_paper_artifacts(store, cp, code_dir, *, latex_dir="paper",
     return n
 
 
+def _walk_files(root: Path):
+    """Files under ``root`` in sorted order, streamed: ``os.walk`` reads
+    directory entries without a stat per file and never holds the whole tree."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(filenames):
+            yield Path(dirpath) / name
+
+
 def publish_result_artifacts(store, cp, code_dir, *, results_dir="results",
-                             log=None) -> int:
+                             log=None, max_files=_RESULT_MAX_FILES,
+                             max_total_bytes=_RESULT_MAX_TOTAL_BYTES,
+                             time_budget_s=_RESULT_TIME_BUDGET_S,
+                             progress_every_s=_RESULT_PROGRESS_EVERY_S) -> int:
     """Publish experiment result files under ``results/`` to the control plane.
 
     Called each iteration after experiments run, so results are durable off the
@@ -109,17 +135,36 @@ def publish_result_artifacts(store, cp, code_dir, *, results_dir="results",
     pull — lost if the VM dies mid-run) and can rehydrate onto a replacement or
     land in the export ZIP. Only known text/data formats under ``_RESULT_MAX_BYTES``
     are shipped; anything else is left on disk and logged. Keys are stored
-    relative to the project root so a local store maps straight back. Returns the
-    number of files published.
+    relative to the project root so a local store maps straight back.
+
+    Bounded per call by ``max_files``, ``max_total_bytes`` and ``time_budget_s``
+    (the cap is logged once), and progress is logged every ``progress_every_s``
+    so a long publish reads as a live run, not a stuck one. Returns the number
+    of files published.
     """
     code_dir = Path(code_dir)
     root = code_dir / results_dir
     if not root.is_dir():
         return 0
-    n = 0
-    for f in sorted(root.rglob("*")):
-        if not f.is_file():
-            continue
+    n = total = seen = 0
+    started = last_report = time.monotonic()
+    for f in _walk_files(root):
+        seen += 1
+        now = time.monotonic()
+        if now - last_report >= progress_every_s:
+            last_report = now
+            if log:
+                log(f"results publish: {n} file(s), {total // (1024 * 1024)} MB so far "
+                    f"({seen} seen, {int(now - started)}s)", "INFO")
+        if n >= max_files or total >= max_total_bytes or now - started >= time_budget_s:
+            if log:
+                why = ("file cap" if n >= max_files
+                       else "byte cap" if total >= max_total_bytes
+                       else "time budget")
+                log(f"results publish stopped at {n} file(s) / {total // (1024 * 1024)} MB "
+                    f"after {int(now - started)}s ({why}); the rest stays in the "
+                    f"project's {results_dir}/ on disk", "WARN")
+            break
         ctype = _RESULT_TYPES.get(f.suffix.lower())
         if not ctype:
             continue
@@ -135,8 +180,10 @@ def publish_result_artifacts(store, cp, code_dir, *, results_dir="results",
                     f"stays on VM only): {f.relative_to(code_dir)}", "WARN")
             continue
         key = str(f.relative_to(code_dir))
-        n += _publish_one(store, cp, path=f, key=key, kind="result",
-                          content_type=ctype, log=log)
+        if _publish_one(store, cp, path=f, key=key, kind="result",
+                        content_type=ctype, log=log):
+            n += 1
+            total += size
     return n
 
 
