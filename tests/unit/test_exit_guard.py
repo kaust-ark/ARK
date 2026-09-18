@@ -79,9 +79,14 @@ def test_grace_comes_from_the_environment_by_default(monkeypatch):
 
 def test_every_exit_path_of_main_arms_the_guard():
     """Chat turn, apply instruction and the full run all end the process, so
-    all three arm the guard. A source-level check: main() needs a real project
-    to execute, and the arming lines are the contract worth pinning."""
+    all three arm the guard; the full run arms it before its wrap-up (with
+    room for the bounded final publish) and tightens it after. A source-level
+    check: main() needs a real project to execute, and the arming lines are
+    the contract worth pinning."""
     import inspect
     src = inspect.getsource(core.main)
-    assert src.count("_arm_exit_guard(") == 3
-    assert "_arm_exit_guard(1 if final_status == \"failed\" else 0" in src
+    assert src.count("_arm_exit_guard(") == 4
+    wrap_up = src.index("_guard = _arm_exit_guard(_code, grace=_FINALIZE_GRACE_SECONDS")
+    assert wrap_up < src.index("orchestrator.finalize_durability()")
+    assert src.index("_guard.cancel()") < src.index("_arm_exit_guard(_code, log=_log_warn)")
+    assert core._FINALIZE_GRACE_SECONDS > core._EXIT_GRACE_DEFAULT
