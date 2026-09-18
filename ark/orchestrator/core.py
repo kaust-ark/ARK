@@ -3053,6 +3053,75 @@ a {{ color: #0d9488; }}
         return None
 
 
+# The run is over; the process must end. Interpreter shutdown joins every
+# non-daemon thread, and a ProcessPoolExecutor's manager thread joins every
+# forked worker. PaperBanana forks 32 workers out of this multithreaded process
+# and closes them only in __del__ with wait=True: one worker that deadlocked
+# after fork held a finished run (a247437e, 2026-09-17) for three hours, until
+# the stuck-run watchdog killed it and filed the finished paper as failed.
+_EXIT_GRACE_DEFAULT = 120.0
+
+
+def _child_pids() -> list[int]:
+    """Direct children of this process (Linux /proc; empty elsewhere)."""
+    me, kids = os.getpid(), []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return kids
+    for d in entries:
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/stat") as f:
+                # "pid (comm) state ppid ..." — comm itself may contain spaces.
+                ppid = int(f.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, IndexError, ValueError):
+            continue
+        if ppid == me:
+            kids.append(int(d))
+    return kids
+
+
+def _arm_exit_guard(code: int, grace: float = None, log=None,
+                    _exit=os._exit, _kill=os.kill) -> threading.Timer:
+    """Force the process to end `grace` seconds from now if a normal exit has
+    not happened by then, naming whatever kept it alive so the run log shows
+    the culprit. Children are killed first: an orphaned worker would keep the
+    launch unit (and its cgroup) alive after we are gone."""
+    if grace is None:
+        grace = float(os.environ.get("ARK_EXIT_GRACE_SECONDS", _EXIT_GRACE_DEFAULT))
+
+    def _force():
+        threads = [t.name for t in threading.enumerate()
+                   if t is not threading.main_thread() and not t.daemon and t.is_alive()]
+        kids = _child_pids()
+        msg = (f"exit guard: process still alive {grace:.0f}s after the run ended; "
+               f"non-daemon threads={threads or 'none'} children={kids or 'none'}; "
+               f"forcing exit({code})")
+        try:
+            (log or print)(msg)
+        except Exception:
+            pass
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except Exception:
+                pass
+        for pid in kids:
+            try:
+                _kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        _exit(code)
+
+    t = threading.Timer(grace, _force)
+    t.daemon = True
+    t.name = "ark-exit-guard"
+    t.start()
+    return t
+
+
 def main():
     parser = argparse.ArgumentParser(description="ARK Automated Research Orchestrator")
     # `--mode` accepted for backward compatibility with existing slurm
@@ -3170,6 +3239,7 @@ def main():
             # Flush the transcript only. No status/pid write: this helper does
             # not own the run's state (see side_channel above).
             orchestrator._flush_events()
+            _arm_exit_guard(0, log=lambda m: orchestrator.log(m, "WARN"))
         return
 
     # Lightweight apply path: one targeted change, then back to done — no loop.
@@ -3182,6 +3252,7 @@ def main():
             # Flush the transcript only. No status/pid write: this helper does
             # not own the run's state (see side_channel above).
             orchestrator._flush_events()
+            _arm_exit_guard(0, log=lambda m: orchestrator.log(m, "WARN"))
         return
 
     final_status = None
@@ -3246,6 +3317,10 @@ def main():
                 _kw["error_message"] = final_error
             orchestrator._sync_db(**_kw)
         orchestrator._flush_events()
+        # Everything the run owes the control plane is on disk and recorded
+        # above. From here the only remaining job is to exit, so bound it.
+        _arm_exit_guard(1 if final_status == "failed" else 0,
+                        log=lambda m: orchestrator.log(m, "WARN"))
 
     # Exit-code truth: the launch wrapper records our return code (SLURM uses
     # the job state) and the webapp poller maps 0 → done / non-zero → failed.
