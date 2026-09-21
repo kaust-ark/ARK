@@ -44,13 +44,16 @@ _RESULT_TYPES = {
 # (never silently dropped) so it's clear the blob stayed on the VM only.
 _RESULT_MAX_BYTES = 25 * 1024 * 1024
 
-# Whole-call budgets. Results are published synchronously, per iteration and
+# Whole-walk budgets. Results are published synchronously, per iteration and
 # again at run end, and one project's results/ held 650,215 files (46 GB): the
 # end-of-run publish registered 78,719 of them over three silent hours, until
 # the stuck-run watchdog killed the finished run and filed its paper as failed
-# (a247437e, 2026-09-17). Files are walked in sorted order, so what lands is
-# the export ZIP's sample of the results; the rest stays in the project dir on
-# disk, where it was all along. Progress is logged so the run is visibly alive.
+# (a247437e, 2026-09-17). The export ZIP walked the same tree, in memory, on
+# the event loop: 6.5 minutes per download, the dashboard frozen for everyone
+# meanwhile, and Cloudflare's 100 s timeout showing the owner an error every
+# time. Files are walked in sorted order, so what lands is a stable sample of
+# the results; the rest stays in the project dir on disk, where it was all
+# along. Progress is logged so the run is visibly alive.
 _RESULT_MAX_FILES = 5000
 _RESULT_MAX_TOTAL_BYTES = 256 * 1024 * 1024
 _RESULT_TIME_BUDGET_S = 600.0
@@ -123,6 +126,88 @@ def _walk_files(root: Path):
             yield Path(dirpath) / name
 
 
+class ResultWalk:
+    """The result files worth keeping under ``root``, in sorted order, bounded.
+
+    Iterating yields ``(path, size, content_type)`` for each file of a known
+    result format (``_RESULT_TYPES``) under ``_RESULT_MAX_BYTES``, and stops at
+    the first budget spent: ``max_files`` files, ``max_total_bytes`` bytes, or
+    ``time_budget_s`` seconds of walking. Afterwards ``stopped`` names that
+    budget (``""`` when the tree was walked to the end), ``taken``/``total_bytes``
+    say what was yielded, and ``seen`` how many files the walk looked at. Both
+    the control-plane publish and the export ZIP consume it, so both stay
+    bounded by one definition of "a result".
+    """
+
+    def __init__(self, root, *, max_files=_RESULT_MAX_FILES,
+                 max_total_bytes=_RESULT_MAX_TOTAL_BYTES,
+                 time_budget_s=_RESULT_TIME_BUDGET_S,
+                 progress_every_s=_RESULT_PROGRESS_EVERY_S,
+                 log=None, label="results publish"):
+        self.root = Path(root)
+        self.max_files = max_files
+        self.max_total_bytes = max_total_bytes
+        self.time_budget_s = time_budget_s
+        self.progress_every_s = progress_every_s
+        self.log = log
+        self.label = label
+        self.taken = 0
+        self.total_bytes = 0
+        self.seen = 0
+        self.skipped_large = 0
+        self.stopped = ""
+
+    def _say(self, msg, level):
+        if self.log:
+            self.log(msg, level)
+
+    def _spent(self, started, now):
+        if self.taken >= self.max_files:
+            return "file cap"
+        if self.total_bytes >= self.max_total_bytes:
+            return "byte cap"
+        if now - started >= self.time_budget_s:
+            return "time budget"
+        return ""
+
+    def __iter__(self):
+        if not self.root.is_dir():
+            return
+        started = last_report = time.monotonic()
+        for f in _walk_files(self.root):
+            self.seen += 1
+            now = time.monotonic()
+            if now - last_report >= self.progress_every_s:
+                last_report = now
+                self._say(f"{self.label}: {self.taken} file(s), "
+                          f"{self.total_bytes // (1024 * 1024)} MB so far "
+                          f"({self.seen} seen, {int(now - started)}s)", "INFO")
+            self.stopped = self._spent(started, now)
+            if self.stopped:
+                self._say(f"{self.label} stopped at {self.taken} file(s) / "
+                          f"{self.total_bytes // (1024 * 1024)} MB after "
+                          f"{int(now - started)}s ({self.stopped}); the rest stays "
+                          f"in the project's {self.root.name}/ on disk", "WARN")
+                return
+            ctype = _RESULT_TYPES.get(f.suffix.lower())
+            if not ctype:
+                continue
+            try:
+                size = f.stat().st_size
+            except OSError:
+                continue
+            if size == 0:
+                continue
+            if size > _RESULT_MAX_BYTES:
+                self.skipped_large += 1
+                self._say(f"result file skipped (>{_RESULT_MAX_BYTES // (1024*1024)}MB, "
+                          f"left on disk): {f.relative_to(self.root.parent)}", "WARN")
+                continue
+            yield f, size, ctype
+            self.taken += 1
+            self.total_bytes += size
+
+
 def publish_result_artifacts(store, cp, code_dir, *, results_dir="results",
                              log=None, max_files=_RESULT_MAX_FILES,
                              max_total_bytes=_RESULT_MAX_TOTAL_BYTES,
@@ -137,53 +222,21 @@ def publish_result_artifacts(store, cp, code_dir, *, results_dir="results",
     are shipped; anything else is left on disk and logged. Keys are stored
     relative to the project root so a local store maps straight back.
 
-    Bounded per call by ``max_files``, ``max_total_bytes`` and ``time_budget_s``
-    (the cap is logged once), and progress is logged every ``progress_every_s``
-    so a long publish reads as a live run, not a stuck one. Returns the number
-    of files published.
+    Bounded per call by a :class:`ResultWalk` (``max_files``, ``max_total_bytes``,
+    ``time_budget_s``; the cap is logged once), and progress is logged every
+    ``progress_every_s`` so a long publish reads as a live run, not a stuck one.
+    Returns the number of files published.
     """
     code_dir = Path(code_dir)
-    root = code_dir / results_dir
-    if not root.is_dir():
-        return 0
-    n = total = seen = 0
-    started = last_report = time.monotonic()
-    for f in _walk_files(root):
-        seen += 1
-        now = time.monotonic()
-        if now - last_report >= progress_every_s:
-            last_report = now
-            if log:
-                log(f"results publish: {n} file(s), {total // (1024 * 1024)} MB so far "
-                    f"({seen} seen, {int(now - started)}s)", "INFO")
-        if n >= max_files or total >= max_total_bytes or now - started >= time_budget_s:
-            if log:
-                why = ("file cap" if n >= max_files
-                       else "byte cap" if total >= max_total_bytes
-                       else "time budget")
-                log(f"results publish stopped at {n} file(s) / {total // (1024 * 1024)} MB "
-                    f"after {int(now - started)}s ({why}); the rest stays in the "
-                    f"project's {results_dir}/ on disk", "WARN")
-            break
-        ctype = _RESULT_TYPES.get(f.suffix.lower())
-        if not ctype:
-            continue
-        try:
-            size = f.stat().st_size
-        except OSError:
-            continue
-        if size == 0:
-            continue
-        if size > _RESULT_MAX_BYTES:
-            if log:
-                log(f"result artifact skipped (>{_RESULT_MAX_BYTES // (1024*1024)}MB, "
-                    f"stays on VM only): {f.relative_to(code_dir)}", "WARN")
-            continue
+    walk = ResultWalk(code_dir / results_dir, max_files=max_files,
+                      max_total_bytes=max_total_bytes, time_budget_s=time_budget_s,
+                      progress_every_s=progress_every_s, log=log)
+    n = 0
+    for f, _size, ctype in walk:
         key = str(f.relative_to(code_dir))
         if _publish_one(store, cp, path=f, key=key, kind="result",
                         content_type=ctype, log=log):
             n += 1
-            total += size
     return n
 
 
