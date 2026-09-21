@@ -3613,6 +3613,165 @@ async def api_get_uploaded_pdf(project_id: str, request: Request):
                         filename="uploaded.pdf", content_disposition_type="inline")
 
 
+# Cloudflare closes a response that stays silent for 100 s. The paper members
+# leave first, so the walk of results/ is the only silent stretch; it must end
+# well inside that window even when nothing eligible turns up for a while.
+_EXPORT_RESULTS_TIME_BUDGET_S = 60.0
+
+
+class _ChunkSink(io.RawIOBase):
+    """Unseekable write target for ``zipfile``: keeps what was written since the
+    last ``drain()`` so a generator can hand it to the client as it is produced.
+    Being unseekable makes ``zipfile`` stream (data descriptors, Python 3.5+)."""
+
+    def __init__(self):
+        self._chunks = []
+
+    def writable(self):
+        return True
+
+    def write(self, b):
+        self._chunks.append(bytes(b))
+        return len(b)
+
+    def drain(self) -> bytes:
+        out = b"".join(self._chunks)
+        self._chunks.clear()
+        return out
+
+
+def _stream_zip(members):
+    """Yield a ZIP as it is written, one member at a time.
+
+    ``members`` yields ``(arcname, source)`` with ``source`` a ``Path`` to copy
+    in or ``str``/``bytes`` to write. Memory holds one member, the first bytes
+    leave before the last member has been found, and a member that vanished
+    between listing and reading is skipped, not fatal: on a shared filesystem
+    the run's own cleanup can race the export."""
+    sink = _ChunkSink()
+    with zipfile.ZipFile(sink, "w", zipfile.ZIP_DEFLATED) as zf:
+        for arcname, source in members:
+            try:
+                if isinstance(source, Path):
+                    zf.write(source, str(arcname))
+                else:
+                    zf.writestr(str(arcname), source)
+            except OSError as e:
+                logger.warning(f"export zip: skipped {arcname}: {e}")
+                continue
+            chunk = sink.drain()
+            if chunk:
+                yield chunk
+    yield sink.drain()
+
+
+def _export_members(pdir: Path, state_docs: dict, pdf_ref, *, results_walk=None):
+    """The export bundle's members in a stable order: paper sources first (so the
+    download starts at once), code, the bounded results sample, the sandbox
+    bundle, then config and state. ``results_walk`` is a ``ResultWalk`` over
+    ``pdir/results`` (built with the export budgets when not given)."""
+    from ark.artifacts.publish import ResultWalk
+
+    skip_exts = {".aux", ".log", ".fdb_latexmk", ".fls", ".synctex.gz",
+                 ".out", ".toc", ".lof", ".lot", ".blg"}
+    # paper/ — LaTeX source, PDF, figures, style files (skip build artifacts)
+    paper_dir = pdir / "paper"
+    if paper_dir.exists():
+        for f in sorted(paper_dir.rglob("*")):
+            if f.is_file() and f.suffix not in skip_exts and "__pycache__" not in str(f):
+                yield f.relative_to(pdir), f
+
+    # code directories
+    for subdir in ("experiments", "scripts", "code"):
+        d = pdir / subdir
+        if d.exists():
+            for f in sorted(d.rglob("*.py")):
+                if "__pycache__" not in str(f):
+                    yield f.relative_to(pdir), f
+
+    # results — the same bounded, sorted sample the control plane keeps
+    if results_walk is None:
+        results_walk = ResultWalk(pdir / "results", label="export zip results",
+                                  time_budget_s=_EXPORT_RESULTS_TIME_BUDGET_S,
+                                  log=lambda m, lvl: logger.log(
+                                      logging.WARNING if lvl == "WARN" else logging.INFO, m))
+    for f, _size, _ctype in results_walk:
+        yield f.relative_to(pdir), f
+    if results_walk.stopped or results_walk.skipped_large:
+        yield "results/EXPORT_NOTE.txt", _export_note(results_walk)
+
+    # sandbox_live/ — live-agent / firewall reproducibility bundle.
+    # Include source, policy, scenarios, skill bodies, container definition.
+    # Exclude: venvs, caches, slurm outputs, debug dumps, log spam.
+    sandbox_dir = pdir / "sandbox_live"
+    if sandbox_dir.exists():
+        sandbox_exts = {".py", ".sh", ".co", ".jsonl", ".md",
+                        ".yaml", ".toml", ".def", ".txt"}
+        sandbox_skip_dirs = {"litellm_venv", "__pycache__",
+                             "cl_debug", "local_out"}
+        for f in sorted(sandbox_dir.rglob("*")):
+            if not f.is_file():
+                continue
+            rel = f.relative_to(pdir)
+            parts = set(rel.parts)
+            if parts & sandbox_skip_dirs:
+                continue
+            # slurm_out_* subdirectories (one per run) — exclude
+            if any(p.startswith("slurm_out_") for p in rel.parts):
+                continue
+            # slurm .out / .err at any depth, and bare .log files
+            if f.name.startswith("slurm_") and f.suffix in {".out", ".err"}:
+                continue
+            if f.suffix == ".log":
+                continue
+            if f.suffix in sandbox_exts:
+                yield rel, f
+
+    # config (on disk) + key state docs (from the DB projection — ADR-0013;
+    # disk fallback for legacy/unsynced projects).
+    cfg_file = pdir / "config.yaml"
+    if cfg_file.exists():
+        yield "config.yaml", cfg_file
+    for name in ("paper_state", "findings", "action_plan", "memory"):
+        rel = f"auto_research/state/{name}.yaml"
+        doc = state_docs.get(name)
+        if doc:
+            yield rel, yaml.safe_dump(doc, default_flow_style=False, allow_unicode=True)
+        else:
+            f = pdir / rel
+            if f.exists():
+                yield rel, f
+
+    # Include the PDF from the artifact store when it isn't on a shared
+    # filesystem (object storage / remote runs); a no-op locally, where the
+    # paper/ walk above already added it.
+    if pdf_ref and not (paper_dir / "main.pdf").exists():
+        try:
+            from ark.artifacts import ArtifactRef
+            store = _artifact_store_for(pdir)
+            with store.open(ArtifactRef.from_dict(pdf_ref)) as fh:
+                yield "paper/main.pdf", fh.read()
+        except Exception:
+            pass
+
+
+def _export_note(walk) -> str:
+    """What the results/ folder in the bundle holds, when it is not everything."""
+    lines = [
+        f"This export carries {walk.taken} result files ({walk.total_bytes // (1024 * 1024)} MB), "
+        "in name order.",
+    ]
+    if walk.stopped:
+        lines.append(
+            f"The project produced more than fits in one download: {walk.seen} files were "
+            f"seen before the export's {walk.stopped} was reached.")
+    if walk.skipped_large:
+        lines.append(f"{walk.skipped_large} result file(s) larger than 25 MB were left out.")
+    lines.append("The full results directory is kept on the server. "
+                 "Ask the operator for a copy if you need the rest.")
+    return "\n".join(lines) + "\n"
+
+
 @router.get("/api/projects/{project_id}/zip")
 async def api_download_zip(project_id: str, request: Request):
     settings = get_settings()
@@ -3627,91 +3786,12 @@ async def api_download_zip(project_id: str, request: Request):
         pdf_ref = _latest_artifact_ref(session, project_id, "pdf")
     pdir = _project_dir(settings, owner_id, project_id)
 
-    buf = io.BytesIO()
-    skip_exts = {".aux", ".log", ".fdb_latexmk", ".fls", ".synctex.gz",
-                 ".out", ".toc", ".lof", ".lot", ".blg"}
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # paper/ — LaTeX source, PDF, figures, style files (skip build artifacts)
-        paper_dir = pdir / "paper"
-        if paper_dir.exists():
-            for f in paper_dir.rglob("*"):
-                if f.is_file() and f.suffix not in skip_exts and "__pycache__" not in str(f):
-                    zf.write(f, f.relative_to(pdir))
-
-        # code directories
-        for subdir in ("experiments", "scripts", "code"):
-            d = pdir / subdir
-            if d.exists():
-                for f in d.rglob("*.py"):
-                    if "__pycache__" not in str(f):
-                        zf.write(f, f.relative_to(pdir))
-
-        # results
-        results_dir = pdir / "results"
-        if results_dir.exists():
-            for f in results_dir.rglob("*"):
-                if f.is_file() and f.suffix in {".csv", ".json", ".txt", ".yaml", ".tsv"}:
-                    zf.write(f, f.relative_to(pdir))
-
-        # sandbox_live/ — live-agent / firewall reproducibility bundle.
-        # Include source, policy, scenarios, skill bodies, container definition.
-        # Exclude: venvs, caches, slurm outputs, debug dumps, log spam.
-        sandbox_dir = pdir / "sandbox_live"
-        if sandbox_dir.exists():
-            sandbox_exts = {".py", ".sh", ".co", ".jsonl", ".md",
-                            ".yaml", ".toml", ".def", ".txt"}
-            sandbox_skip_dirs = {"litellm_venv", "__pycache__",
-                                 "cl_debug", "local_out"}
-            for f in sandbox_dir.rglob("*"):
-                if not f.is_file():
-                    continue
-                rel = f.relative_to(pdir)
-                parts = set(rel.parts)
-                if parts & sandbox_skip_dirs:
-                    continue
-                # slurm_out_* subdirectories (one per run) — exclude
-                if any(p.startswith("slurm_out_") for p in rel.parts):
-                    continue
-                # slurm .out / .err at any depth, and bare .log files
-                if f.name.startswith("slurm_") and f.suffix in {".out", ".err"}:
-                    continue
-                if f.suffix == ".log":
-                    continue
-                if f.suffix in sandbox_exts:
-                    zf.write(f, rel)
-
-        # config (on disk) + key state docs (from the DB projection — ADR-0013;
-        # disk fallback for legacy/unsynced projects).
-        cfg_file = pdir / "config.yaml"
-        if cfg_file.exists():
-            zf.write(cfg_file, "config.yaml")
-        for name in ("paper_state", "findings", "action_plan", "memory"):
-            rel = f"auto_research/state/{name}.yaml"
-            doc = state_docs.get(name)
-            if doc:
-                zf.writestr(rel, yaml.safe_dump(doc, default_flow_style=False,
-                                                allow_unicode=True))
-            else:
-                f = pdir / rel
-                if f.exists():
-                    zf.write(f, rel)
-
-        # Include the PDF from the artifact store when it isn't on a shared
-        # filesystem (object storage / remote runs); a no-op locally, where the
-        # paper/ walk above already added it.
-        if pdf_ref and not (paper_dir / "main.pdf").exists():
-            try:
-                from ark.artifacts import ArtifactRef
-                store = _artifact_store_for(pdir)
-                with store.open(ArtifactRef.from_dict(pdf_ref)) as fh:
-                    zf.writestr("paper/main.pdf", fh.read())
-            except Exception:
-                pass
-
-    buf.seek(0)
+    # The bundle is produced while it downloads: Starlette drives a sync
+    # generator from the threadpool, so the walk never blocks the event loop
+    # (one export used to freeze the dashboard for everyone for 6.5 minutes).
     slug = project_id.replace("/", "_")
     return StreamingResponse(
-        buf,
+        _stream_zip(_export_members(pdir, state_docs, pdf_ref)),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{slug}.zip"'},
     )
