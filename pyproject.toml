@@ -33,7 +33,9 @@ research = [
 webapp = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
-    "sqlmodel>=0.0.14",
+    # 0.0.45 maps plain `datetime` fields to a strict tz-aware UTCDateTime; our
+    # models and the shared DB store naive UTC. Lift only with that migration.
+    "sqlmodel>=0.0.14,<0.0.45",
     "alembic>=1.13",           # schema migrations (sqlite dev + postgres)
     "psycopg[binary]>=3.1",    # postgres driver for deployed control planes
     "authlib>=1.3",
