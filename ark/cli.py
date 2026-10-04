@@ -1343,8 +1343,8 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
     _wizard_step_header(6, "AI Model")
     print("  Which model drives the pipeline? (runs via OpenHands; any LiteLLM model)")
     models = [
-        ("Claude Sonnet 4.6", "anthropic/claude-sonnet-4-6"),
-        ("Claude Opus 4.8", "anthropic/claude-opus-4-8"),
+        ("Claude Sonnet 5.5", "anthropic/claude-sonnet-5-5"),
+        ("Claude Opus 5.5", "anthropic/claude-opus-5-5"),
         ("GPT-5.5", "openai/gpt-5.5"),
         ("Gemini 3.1 Pro", "gemini/gemini-3.1-pro-preview"),
         ("Other (enter a LiteLLM model string)", "__other__"),
@@ -1357,8 +1357,8 @@ def _cmd_new_wizard(args, name: str, project_dir: Path, pdf_spec: dict):
     if model == "__other__":
         model = prompt_input(
             "  LiteLLM model string (e.g. deepseek/deepseek-chat, xai/grok-3)",
-            "anthropic/claude-sonnet-4-6",
-        ).strip() or "anthropic/claude-sonnet-4-6"
+            "anthropic/claude-sonnet-5-5",
+        ).strip() or "anthropic/claude-sonnet-5-5"
     # Unified scheme: the full LiteLLM string lives in `model`; no separate variant.
     model_variant = ""
     print(f"  {_c('✓', Colors.GREEN)} Selected: {model}")
@@ -1597,7 +1597,7 @@ def _finalize_project(name: str, project_dir: Path, config: dict,
                     max_iterations=config.get("max_iterations", 2),
                     max_dev_iterations=config.get("max_dev_iterations", 3),
                     mode=config.get("mode", "paper"),
-                    model=config.get("model", "anthropic/claude-sonnet-4-6"),
+                    model=config.get("model", "anthropic/claude-sonnet-5-5"),
                     model_variant=config.get("model_variant", ""),
                     code_dir=str(code_dir),
                     language=config.get("language", "en"),
@@ -1787,7 +1787,7 @@ def cmd_run(args):
             pid_file.unlink(missing_ok=True)
 
     code_dir = config.get("code_dir", str(get_ark_root().parent))
-    model = args.model or config.get("model", "anthropic/claude-sonnet-4-6")
+    model = args.model or config.get("model", "anthropic/claude-sonnet-5-5")
     model_variant = getattr(args, "model_variant", None) or config.get("model_variant", "")
     mode = "paper"  # only mode supported; flag kept for slurm-script compat
     max_iterations = args.iterations or 3
@@ -4652,7 +4652,7 @@ def cmd_cite_debug(args):
         project=args.project,
         max_iterations=1,
         mode="paper",
-        model=config.get("model", "anthropic/claude-sonnet-4-6"),
+        model=config.get("model", "anthropic/claude-sonnet-5-5"),
         code_dir=str(code_dir),
         project_dir=str(project_dir),
     )

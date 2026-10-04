@@ -41,6 +41,9 @@ TRACKED = {
     "claude-opus":    r"^anthropic/claude-opus-(\d+(?:\.\d+)?)$",
     "claude-haiku":   r"^anthropic/claude-haiku-(\d+(?:\.\d+)?)$",
     "gpt-flagship":   r"^openai/gpt-(\d+(?:\.\d+)?)$",
+    # GPT-6 dropped the bare "gpt-<v>" slug for tiers (sol / luna / astra); the
+    # showcase chip tracks Sol. Without this the script saw no GPT update at all.
+    "gpt-sol":        r"^openai/gpt-(\d+(?:\.\d+)?)-sol$",
     "gpt-pro":        r"^openai/gpt-(\d+(?:\.\d+)?)-pro$",
     "gpt-mini":       r"^openai/gpt-(\d+(?:\.\d+)?)-mini$",
     "gemini-flash":   r"^google/gemini-(\d+(?:\.\d+)?)-flash$",
@@ -64,6 +67,7 @@ SLUG_IN_FILE = {
     "claude-opus":    r"anthropic/claude-opus-\d+(?:\.\d+)?",
     "claude-haiku":   r"anthropic/claude-haiku-\d+(?:\.\d+)?",
     "gpt-flagship":   r"openai/gpt-\d+(?:\.\d+)?",
+    "gpt-sol":        r"openai/gpt-\d+(?:\.\d+)?-sol",
     "gemini-flash":   r"google/gemini-\d+(?:\.\d+)?-flash",
     "deepseek-pro":   r"deepseek/deepseek-v\d+(?:\.\d+)?-pro",
     "kimi":           r"moonshotai/kimi-k\d+(?:\.\d+)?",
