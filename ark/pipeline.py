@@ -719,7 +719,7 @@ class PipelineMixin:
             self.log(
                 f"Error: model '{model}' is not a LiteLLM model string. Set `model` "
                 f"in config.yaml as <provider>/<model>, e.g. "
-                f"anthropic/claude-sonnet-4-6, gemini/gemini-2.5-flash, "
+                f"anthropic/claude-sonnet-5-5, gemini/gemini-2.5-flash, "
                 f"deepseek/deepseek-chat.",
                 "ERROR",
             )

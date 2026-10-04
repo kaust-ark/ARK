@@ -127,7 +127,7 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
         self.hooks = self.workspace.setup_workspace()
 
         # Resolve model
-        self.model = self._model_arg or self.config.get("model") or "anthropic/claude-sonnet-4-6"
+        self.model = self._model_arg or self.config.get("model") or "anthropic/claude-sonnet-5-5"
         if model_variant:
             self.config["model_variant"] = model_variant
         # Export the selected model so every light helper (title / summary /

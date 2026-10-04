@@ -577,6 +577,12 @@ Output ONLY the summary, no preamble.
     return raw_text[:8000]
 
 
+# The model a new project gets when nothing else is chosen, and the fallback
+# when a project's stored model can't be read. The preselected chip in
+# templates/app.html and the JS fallbacks there must name the same model.
+DEFAULT_MODEL = "claude-sonnet-5-5"
+
+
 def _to_litellm_model(m: str) -> str:
     """Convert a Settings model value to a LiteLLM model string (provider/model).
 
@@ -585,7 +591,7 @@ def _to_litellm_model(m: str) -> str:
     """
     m = (m or "").strip()
     if not m:
-        return "anthropic/claude-sonnet-4-6"
+        return f"anthropic/{DEFAULT_MODEL}"
     if "/" in m:
         return m
     if m in ("gemini", "gemini-auto"):
@@ -600,7 +606,7 @@ def _to_litellm_model(m: str) -> str:
     # Fall back to the default rather than emit an unroutable model string.
     # Users on other providers (deepseek, xai, …) pass a full "provider/model"
     # string, which is handled by the '/' passthrough above.
-    return "anthropic/claude-sonnet-4-6"
+    return f"anthropic/{DEFAULT_MODEL}"
 
 
 # OpenRouter proxies all major model families behind a single key. When a user
@@ -612,7 +618,10 @@ def _to_litellm_model(m: str) -> str:
 # when adding models. Users who need an exact slug can also type a full
 # "openrouter/…" string in the unverified-model field, which passes through.
 _OPENROUTER_SLUG = {
-    # Anthropic
+    # Anthropic. Superseded entries stay: existing projects keep the model they
+    # were created with, and restarts must still route it.
+    "anthropic/claude-opus-5-5": "anthropic/claude-opus-5.5",
+    "anthropic/claude-sonnet-5-5": "anthropic/claude-sonnet-5.5",
     "anthropic/claude-opus-4-8": "anthropic/claude-opus-4.8",
     "anthropic/claude-sonnet-4-6": "anthropic/claude-sonnet-4.6",
     "anthropic/claude-haiku-4-5": "anthropic/claude-haiku-4.5",
@@ -621,6 +630,8 @@ _OPENROUTER_SLUG = {
     "openai/gpt-5.5": "openai/gpt-5.5",
     "openai/gpt-5.4-mini": "openai/gpt-5.4-mini",
     # Gemini (OpenRouter namespaces Google models under "google/")
+    "gemini/gemini-3.8-flash": "google/gemini-3.8-flash",
+    "gemini/gemini-3.1-pro-preview": "google/gemini-3.1-pro-preview",
     "gemini/gemini-3.5-flash": "google/gemini-3.5-flash",
     "gemini/gemini-2.5-pro": "google/gemini-2.5-pro",
     "gemini/gemini-2.5-flash": "google/gemini-2.5-flash",
@@ -700,7 +711,7 @@ async def _validate_instance_type_or_400(backend: str, instance_type: str) -> st
     return instance_type
 
 
-def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, settings, model: str = "claude-sonnet-4-6"):
+def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, settings, model: str = DEFAULT_MODEL):
     """Write config.yaml that ark orchestrator will read."""
     # All agents run through OpenHands; the orchestrator wants a LiteLLM string.
     model_str = _to_litellm_model(model)
@@ -1318,7 +1329,7 @@ def _read_project_model(project_dir: Path, project=None) -> str:
                 return "gemini"
         except Exception:
             pass
-    return "claude-sonnet-4-6"
+    return DEFAULT_MODEL
 
 
 def _find_pdf(project_dir: Path) -> Optional[Path]:
@@ -2427,7 +2438,7 @@ async def api_create_project(
     max_dev_iterations: int = Form(1),
     pdf_file: Optional[UploadFile] = File(None),
     template_zip: Optional[UploadFile] = File(None),
-    model: str = Form("claude-sonnet-4-6"),
+    model: str = Form(DEFAULT_MODEL),
     telegram_token: str = Form(""),
     telegram_chat_id: str = Form(""),
     comment: str = Form(""),
@@ -2496,7 +2507,7 @@ async def api_create_project(
         # default (Sonnet). The model picker is visible for the Test venue, so a
         # chosen model should win — Test's cheapness comes from 2 pages / 1
         # iteration / the Skip boxes, not from forcing a model.
-        if not model or model == "claude-sonnet-4-6":
+        if not model or model == DEFAULT_MODEL:
             model = _cheapest_model_for(keys)
         idea = read_test_idea() or idea
         if not title.strip():
@@ -2577,7 +2588,9 @@ async def api_create_project(
 
     # Map model to backend + variant for DB.
     MODEL_MAP = {
-        # Anthropic
+        # Anthropic (superseded chips stay mapped for restarts of old projects)
+        "claude-opus-5-5": ("anthropic", "claude-opus-5-5"),
+        "claude-sonnet-5-5": ("anthropic", "claude-sonnet-5-5"),
         "claude-opus-4-8": ("anthropic", "claude-opus-4-8"),
         "claude-sonnet-4-6": ("anthropic", "claude-sonnet-4-6"),
         "claude-haiku-4-5": ("anthropic", "claude-haiku-4-5"),
@@ -2586,6 +2599,8 @@ async def api_create_project(
         "gpt-5.5": ("openai", "gpt-5.5"),
         "gpt-5.4-mini": ("openai", "gpt-5.4-mini"),
         # Gemini (agent-verified after the FinishAction parse fix)
+        "gemini-3.8-flash": ("gemini", "gemini-3.8-flash"),
+        "gemini-3.1-pro-preview": ("gemini", "gemini-3.1-pro-preview"),
         "gemini-3.5-flash": ("gemini", "gemini-3.5-flash"),
         "gemini-2.5-pro": ("gemini", "gemini-2.5-pro"),
         "gemini-2.5-flash": ("gemini", "gemini-2.5-flash"),
@@ -2976,7 +2991,7 @@ async def api_post_message(project_id: str, request: Request):
             project = get_project(session, project_id)
             add_message(session, project_id, "user", text, kind="message")
             pdir = _project_dir(settings, project.user_id, project_id)
-            model = _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
+            model = _read_project_model(pdir, project=project) or DEFAULT_MODEL
             # Config must reflect the OWNER's keys (reroute, cloud, github),
             # not the requester's — an admin may be acting on a user's project.
             _owner = get_user(session, project.user_id) or user
@@ -3018,7 +3033,7 @@ async def api_post_message(project_id: str, request: Request):
                 project = get_project(session, project_id)
                 add_message(session, project_id, "user", text, kind="ask")
                 pdir = _project_dir(settings, project.user_id, project_id)
-                model = _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
+                model = _read_project_model(pdir, project=project) or DEFAULT_MODEL
                 _owner = get_user(session, project.user_id) or user
                 _write_config_yaml(pdir, project, _owner, settings, model=model)
                 tg_token = project.telegram_token
@@ -3170,7 +3185,7 @@ async def api_restart_project(project_id: str, request: Request):
         # Rewrite config.yaml with updated settings. Default to the project's
         # OWN model, not a hardcoded one — a restart without an explicit model
         # choice must never silently switch providers.
-        model = body.get("model") or _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
+        model = body.get("model") or _read_project_model(pdir, project=project) or DEFAULT_MODEL
         new_backend = body.get("compute_backend")
         if new_backend:
              _reject_unknown_backend(new_backend, VALID_EXPERIMENT_TYPES, "experiment")
@@ -3287,7 +3302,7 @@ async def api_continue_project(project_id: str, request: Request):
             update_project(session, project, **_edits)
         pdir = _project_dir(settings, project.user_id, project_id)
         # Use requested model, or fall back to existing
-        model = body.get("model") or _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
+        model = body.get("model") or _read_project_model(pdir, project=project) or DEFAULT_MODEL
         new_backend = body.get("compute_backend")
         if new_backend:
              _reject_unknown_backend(new_backend, VALID_EXPERIMENT_TYPES, "experiment")
@@ -3354,7 +3369,7 @@ async def api_apply_change(project_id: str, request: Request):
             raise HTTPException(400, f"You already have {len(active)} active projects. "
                                      f"Max {MAX_CONCURRENT_PER_USER} concurrent.")
         pdir = _project_dir(settings, project.user_id, project_id)
-        model = _read_project_model(pdir, project=project) or "claude-sonnet-4-6"
+        model = _read_project_model(pdir, project=project) or DEFAULT_MODEL
         _owner = get_user(session, project.user_id) or user
         _write_config_yaml(pdir, project, _owner, settings, model=model)
         tg_token = project.telegram_token

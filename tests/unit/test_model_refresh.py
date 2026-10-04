@@ -60,6 +60,27 @@ def test_no_change_when_current():
     assert out == text and not changes
 
 
+def test_gpt6_sol_tier_is_tracked():
+    # GPT-6 ships as tiers (sol / luna / astra, plus "-pro" reasoning modes);
+    # the bare gpt-<v> family stopped advancing at 5.5.
+    ids = {"openai/gpt-5.5", "openai/gpt-6-sol", "openai/gpt-6.1-sol",
+           "openai/gpt-6.1-sol-pro", "openai/gpt-6-luna", "openai/gpt-6-astra"}
+    latest = rmv.latest_per_family(ids)
+    assert latest["gpt-sol"] == "openai/gpt-6.1-sol"
+    assert latest["gpt-flagship"] == "openai/gpt-5.5"
+
+
+def test_sol_chip_advances_and_flagship_rule_leaves_it_alone():
+    text = "\n".join(_chip(p, "openai/gpt-6.1-sol", "GPT-6.1 Sol")
+                     for p in ("model", "continue-model", "restart-model"))
+    out, changes = rmv.apply_to_text(
+        text, {"gpt-flagship": "openai/gpt-5.5", "gpt-sol": "openai/gpt-6.2-sol"})
+    assert out.count('value="openrouter/openai/gpt-6.2-sol"') == 3
+    assert out.count(">GPT-6.2 Sol ") == 3
+    assert "gpt-5.5" not in out and "6.1" not in out
+    assert len(changes) == 1 and changes[0].startswith("gpt-sol:")
+
+
 def test_version_token():
     assert rmv._version_token("moonshotai/kimi-k3") == "3"
     assert rmv._version_token("anthropic/claude-sonnet-5") == "5"
