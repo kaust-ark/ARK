@@ -61,6 +61,14 @@ def test_key_guard_with_no_provider_key_says_add_one():
     assert "no DeepSeek API key is configured" in msg
 
 
+def test_key_guard_with_no_keys_at_all_never_claims_a_key():
+    # The ~14 sign-ups with no key: the create endpoint's own "add at least one
+    # key" gate answers first, but the guard alone must not invent a key list.
+    msg = _msg({}, "anthropic/claude-haiku-5-5")
+    assert "no Anthropic API key is configured" in msg
+    assert "You do have a key" not in msg
+
+
 def test_keys_that_cover_the_model_pass():
     R._require_model_key({"deepseek": "sk-x"}, "deepseek/deepseek-reasoner")
     R._require_model_key({"openrouter": "sk-or"}, "anthropic/claude-haiku-5-5")
