@@ -863,6 +863,9 @@ Strict — hit the exact page limit (spends the most tokens).">
           </div>
           <div class="hero-adv-field">
             <label data-i18n="model_vendor">Model Vendor</label>
+            <div id="model-nokey-note" hidden style="margin:2px 0 8px;padding:8px 10px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;line-height:1.45">
+              You need an API key before you can start. <a href="#" onclick="openSettingsModal();return false">Add one in Settings</a>. A single OpenRouter key works with every model below, and a full paper usually costs $10 to $25 on a budget model such as DeepSeek V4 Pro.
+            </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="if(event.target&&event.target.name==='model'){_userPickedModel=true;document.getElementById('model-unverified').value='';document.getElementById('model-openrouter-more').value='';}">
               <div class="model-legend"><span class="rec">★</span> Recommended &nbsp;·&nbsp; 💰 relative cost (per token)</div>
               <div class="model-group-label">OpenRouter</div>
@@ -882,6 +885,10 @@ Strict — hit the exact page limit (spends the most tokens).">
               <label class="model-option" data-provider="openrouter">
                 <input type="radio" name="model" value="openrouter/moonshotai/kimi-k3" />
                 <span class="model-chip">Kimi K3 <span class="model-meta"><span class="cost">💰💰</span></span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/qwen/qwen3.8-max-0902" />
+                <span class="model-chip">Qwen3.8 Max <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰</span></span></span>
               </label>
               <div class="model-row-break" style="flex-basis:100%;height:0"></div>
               <!-- Row 2: frontier models -->
@@ -903,19 +910,19 @@ Strict — hit the exact page limit (spends the most tokens).">
                 <option value="">▾ more…</option>
                 <optgroup label="Anthropic">
                   <option value="openrouter/anthropic/claude-opus-5.5">Claude Opus 5.5 — 💰💰💰</option>
-                  <option value="openrouter/anthropic/claude-haiku-4.5">Claude Haiku 4.5 — 💰💰</option>
+                  <option value="openrouter/anthropic/claude-haiku-5.5">Claude Haiku 5.5 — 💰</option>
                 </optgroup>
                 <optgroup label="OpenAI">
                   <option value="openrouter/openai/gpt-6.1-sol-pro">GPT-6.1 Sol Pro — 💰💰💰</option>
                   <option value="openrouter/openai/gpt-6-luna">GPT-6 Luna — 💰</option>
                 </optgroup>
                 <optgroup label="Gemini">
-                  <option value="openrouter/google/gemini-2.5-pro">Gemini 2.5 Pro — 💰💰</option>
+                  <option value="openrouter/google/gemini-4-argon">Gemini 4 Argon — 💰💰💰</option>
                   <option value="openrouter/google/gemini-2.5-flash">Gemini 2.5 Flash — 💰</option>
                 </optgroup>
                 <optgroup label="Open">
                   <option value="openrouter/deepseek/deepseek-v4.1-flash">DeepSeek V4.1 Flash — 💰</option>
-                  <option value="openrouter/qwen/qwen3.7-plus">Qwen3.7 Plus — 💰</option>
+                  <option value="openrouter/qwen/qwen3.8-flash">Qwen3.8 Flash — 💰</option>
                   <option value="openrouter/moonshotai/kimi-k2.7-code">Kimi K2.7 Code — 💰💰</option>
                 </optgroup>
               </select>
@@ -929,8 +936,8 @@ Strict — hit the exact page limit (spends the most tokens).">
                 <span class="model-chip">Sonnet 5.5 <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰💰</span></span></span>
               </label>
               <label class="model-option" data-provider="anthropic">
-                <input type="radio" name="model" value="claude-haiku-4-5" />
-                <span class="model-chip">Haiku 4.5 <span class="model-meta"><span class="cost">💰💰</span></span></span>
+                <input type="radio" name="model" value="claude-haiku-5-5" />
+                <span class="model-chip">Haiku 5.5 <span class="model-meta"><span class="cost">💰</span></span></span>
               </label>
               <div class="model-group-label" style="margin-top:7px">OpenAI</div>
               <label class="model-option" data-provider="openai">
@@ -963,8 +970,8 @@ Strict — hit the exact page limit (spends the most tokens).">
             <select id="model-unverified" onchange="onExtraModelPick(this)" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:360px">
               <option value="">none</option>
               <optgroup label="DeepSeek">
-                <option value="deepseek/deepseek-chat">deepseek-chat</option>
                 <option value="deepseek/deepseek-reasoner">deepseek-reasoner</option>
+                <option value="deepseek/deepseek-chat">deepseek-chat</option>
               </optgroup>
               <optgroup label="xAI (Grok)">
                 <option value="xai/grok-4">grok-4</option>
@@ -1431,6 +1438,10 @@ Strict — hit the exact page limit (spends the most tokens).">
             <input type="radio" name="continue-model" value="openrouter/moonshotai/kimi-k3" />
             <span class="model-chip">Kimi K3 <span class="model-meta"><span class="cost">💰💰</span></span></span>
           </label>
+          <label class="model-option" data-provider="openrouter">
+            <input type="radio" name="continue-model" value="openrouter/qwen/qwen3.8-max-0902" />
+            <span class="model-chip">Qwen3.8 Max <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰</span></span></span>
+          </label>
           <div class="model-row-break" style="flex-basis:100%;height:0"></div>
           <!-- Row 2: frontier models -->
           <label class="model-option" data-provider="openrouter">
@@ -1451,19 +1462,19 @@ Strict — hit the exact page limit (spends the most tokens).">
             <option value="">▾ more…</option>
             <optgroup label="Anthropic">
               <option value="openrouter/anthropic/claude-opus-5.5">Claude Opus 5.5 — 💰💰💰</option>
-              <option value="openrouter/anthropic/claude-haiku-4.5">Claude Haiku 4.5 — 💰💰</option>
+              <option value="openrouter/anthropic/claude-haiku-5.5">Claude Haiku 5.5 — 💰</option>
             </optgroup>
             <optgroup label="OpenAI">
               <option value="openrouter/openai/gpt-6.1-sol-pro">GPT-6.1 Sol Pro — 💰💰💰</option>
               <option value="openrouter/openai/gpt-6-luna">GPT-6 Luna — 💰</option>
             </optgroup>
             <optgroup label="Gemini">
-              <option value="openrouter/google/gemini-2.5-pro">Gemini 2.5 Pro — 💰💰</option>
+              <option value="openrouter/google/gemini-4-argon">Gemini 4 Argon — 💰💰💰</option>
               <option value="openrouter/google/gemini-2.5-flash">Gemini 2.5 Flash — 💰</option>
             </optgroup>
             <optgroup label="Open">
               <option value="openrouter/deepseek/deepseek-v4.1-flash">DeepSeek V4.1 Flash — 💰</option>
-              <option value="openrouter/qwen/qwen3.7-plus">Qwen3.7 Plus — 💰</option>
+              <option value="openrouter/qwen/qwen3.8-flash">Qwen3.8 Flash — 💰</option>
               <option value="openrouter/moonshotai/kimi-k2.7-code">Kimi K2.7 Code — 💰💰</option>
             </optgroup>
           </select>
@@ -1477,8 +1488,8 @@ Strict — hit the exact page limit (spends the most tokens).">
             <span class="model-chip">Sonnet 5.5 <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰💰</span></span></span>
           </label>
           <label class="model-option" data-provider="anthropic">
-            <input type="radio" name="continue-model" value="claude-haiku-4-5" />
-            <span class="model-chip">Haiku 4.5 <span class="model-meta"><span class="cost">💰💰</span></span></span>
+            <input type="radio" name="continue-model" value="claude-haiku-5-5" />
+            <span class="model-chip">Haiku 5.5 <span class="model-meta"><span class="cost">💰</span></span></span>
           </label>
           <div class="model-group-label" style="margin-top:7px">OpenAI</div>
           <label class="model-option" data-provider="openai">
@@ -1511,8 +1522,8 @@ Strict — hit the exact page limit (spends the most tokens).">
         <select id="continue-model-unverified" onchange="onExtraModelPick(this, 'continue')" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:360px">
           <option value="">none</option>
           <optgroup label="DeepSeek">
-            <option value="deepseek/deepseek-chat">deepseek-chat</option>
             <option value="deepseek/deepseek-reasoner">deepseek-reasoner</option>
+            <option value="deepseek/deepseek-chat">deepseek-chat</option>
           </optgroup>
           <optgroup label="xAI (Grok)">
             <option value="xai/grok-4">grok-4</option>
@@ -1627,6 +1638,10 @@ Strict — hit the exact page limit (spends the most tokens).">
           <input type="radio" name="restart-model" value="openrouter/moonshotai/kimi-k3" />
           <span class="model-chip">Kimi K3 <span class="model-meta"><span class="cost">💰💰</span></span></span>
         </label>
+        <label class="model-option" data-provider="openrouter">
+          <input type="radio" name="restart-model" value="openrouter/qwen/qwen3.8-max-0902" />
+          <span class="model-chip">Qwen3.8 Max <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰</span></span></span>
+        </label>
         <div class="model-row-break" style="flex-basis:100%;height:0"></div>
         <!-- Row 2: frontier models -->
         <label class="model-option" data-provider="openrouter">
@@ -1647,19 +1662,19 @@ Strict — hit the exact page limit (spends the most tokens).">
           <option value="">▾ more…</option>
           <optgroup label="Anthropic">
             <option value="openrouter/anthropic/claude-opus-5.5">Claude Opus 5.5 — 💰💰💰</option>
-            <option value="openrouter/anthropic/claude-haiku-4.5">Claude Haiku 4.5 — 💰💰</option>
+            <option value="openrouter/anthropic/claude-haiku-5.5">Claude Haiku 5.5 — 💰</option>
           </optgroup>
           <optgroup label="OpenAI">
             <option value="openrouter/openai/gpt-6.1-sol-pro">GPT-6.1 Sol Pro — 💰💰💰</option>
             <option value="openrouter/openai/gpt-6-luna">GPT-6 Luna — 💰</option>
           </optgroup>
           <optgroup label="Gemini">
-            <option value="openrouter/google/gemini-2.5-pro">Gemini 2.5 Pro — 💰💰</option>
+            <option value="openrouter/google/gemini-4-argon">Gemini 4 Argon — 💰💰💰</option>
             <option value="openrouter/google/gemini-2.5-flash">Gemini 2.5 Flash — 💰</option>
           </optgroup>
           <optgroup label="Open">
             <option value="openrouter/deepseek/deepseek-v4.1-flash">DeepSeek V4.1 Flash — 💰</option>
-            <option value="openrouter/qwen/qwen3.7-plus">Qwen3.7 Plus — 💰</option>
+            <option value="openrouter/qwen/qwen3.8-flash">Qwen3.8 Flash — 💰</option>
             <option value="openrouter/moonshotai/kimi-k2.7-code">Kimi K2.7 Code — 💰💰</option>
           </optgroup>
         </select>
@@ -1673,8 +1688,8 @@ Strict — hit the exact page limit (spends the most tokens).">
           <span class="model-chip">Sonnet 5.5 <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰💰</span></span></span>
         </label>
         <label class="model-option" data-provider="anthropic">
-          <input type="radio" name="restart-model" value="claude-haiku-4-5" />
-          <span class="model-chip">Haiku 4.5 <span class="model-meta"><span class="cost">💰💰</span></span></span>
+          <input type="radio" name="restart-model" value="claude-haiku-5-5" />
+          <span class="model-chip">Haiku 5.5 <span class="model-meta"><span class="cost">💰</span></span></span>
         </label>
         <div class="model-group-label" style="margin-top:7px">OpenAI</div>
         <label class="model-option" data-provider="openai">
@@ -1707,8 +1722,8 @@ Strict — hit the exact page limit (spends the most tokens).">
       <select id="restart-model-unverified" onchange="onExtraModelPick(this, 'restart')" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:360px">
         <option value="">none</option>
         <optgroup label="DeepSeek">
-          <option value="deepseek/deepseek-chat">deepseek-chat</option>
           <option value="deepseek/deepseek-reasoner">deepseek-reasoner</option>
+          <option value="deepseek/deepseek-chat">deepseek-chat</option>
         </optgroup>
         <optgroup label="xAI (Grok)">
           <option value="xai/grok-4">grok-4</option>
@@ -6161,7 +6176,10 @@ function applyModelGating(prefix) {
   // deepseek/… models from "Others" with no matching key (2026-07-05).
   // An option is usable iff its provider has a key, OR an OpenRouter key
   // exists (launch reroutes any model through OpenRouter).
-  const others = window._otherProviders || {};
+  // `_otherProviders` is a top-level `let`, which is never a window property:
+  // reading it off `window` saw {} for every user, so a DeepSeek-only account
+  // found its own DeepSeek models marked "(no key)" (2026-09/10).
+  const others = _otherProviders || {};
   const orKey = !!have.openrouter;
   const unver = document.getElementById(P + 'model-unverified');
   if (unver) {
@@ -6183,6 +6201,10 @@ function applyModelGating(prefix) {
   }
   applyVendorCollapse(prefix);
   selectDefaultModel(prefix);
+  if (!prefix || prefix === 'hero') {
+    const note = document.getElementById('model-nokey-note');
+    if (note) note.hidden = Object.values(have).some(Boolean) || Object.keys(others).length > 0;
+  }
 }
 
 // Default model selection follows configured keys, in vendor order (OpenRouter
@@ -6200,6 +6222,14 @@ function selectDefaultModel(prefix) {
   for (const r of radios) {
     if (!r.disabled) { r.checked = true; return; }
   }
+  // No usable chip. Never leave a disabled one checked: FormData drops it, the
+  // server falls back to its default model, and the user has no key for that.
+  // A direct key for a long-tail vendor (DeepSeek, Mistral, ...) is usable
+  // from Others, so preselect that instead. Set the value directly rather than
+  // through onExtraModelPick, which would mark it as a manual pick.
+  radios.forEach(r => { r.checked = false; });
+  const usable = unver && [...unver.options].find(o => o.value && !o.disabled);
+  if (usable) unver.value = usable.value;
 }
 
 // Req: a vendor group with no usable key (all chips greyed) is collapsed by

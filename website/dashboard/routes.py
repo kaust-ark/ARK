@@ -393,6 +393,18 @@ def _require_admin(request: Request) -> User:
     return user
 
 
+_PROVIDER_NAMES = {"openrouter": "OpenRouter", "anthropic": "Anthropic", "openai": "OpenAI",
+                   "gemini": "Gemini", "deepseek": "DeepSeek", "xai": "xAI", "mistral": "Mistral",
+                   "groq": "Groq", "moonshot": "Moonshot", "cohere_chat": "Cohere"}
+
+# Saved-settings fields that are not model-provider credentials.
+_NON_PROVIDER_KEY_FIELDS = frozenset({
+    "github_pat", "github_org", "gcp_project", "gcp_conda_env", "gcp_ssh_user",
+    "gcp_service_account_json", "aws_account_id", "aws_region",
+    "claude_oauth_token", "gemini_oauth_json",
+    "telegram_token", "telegram_chat_id", "verification"})
+
+
 def _require_model_key(keys: dict, model_variant: str) -> None:
     """Reject launches whose model's PROVIDER has no key configured.
 
@@ -411,13 +423,25 @@ def _require_model_key(keys: dict, model_variant: str) -> None:
         # rewrites native/long-tail models to openrouter/<slug> at launch.
         bool(keys.get("openrouter")))
     if not ok:
-        nice = {"openrouter": "OpenRouter", "anthropic": "Anthropic",
-                "openai": "OpenAI", "gemini": "Gemini"}.get(prov, prov.capitalize())
+        nice = _PROVIDER_NAMES.get(prov, prov.capitalize())
+        # Name the keys the user DOES have and where those models live: three
+        # DeepSeek-only users retried 4-6 times each against the old message,
+        # which only pointed at the OpenRouter row they had no key for.
+        have = sorted(k for k, v in keys.items() if v and k not in _NON_PROVIDER_KEY_FIELDS)
+        if have:
+            where = ", ".join(
+                f"{_PROVIDER_NAMES.get(k, k.capitalize())} in "
+                + (f"the {_PROVIDER_NAMES[k]} row" if k in _OPENROUTER_NATIVE_KEY else "the Others list")
+                for k in have)
+            raise HTTPException(
+                400,
+                f"This model runs on {nice}, but you have no {nice} API key. "
+                f"You do have a key for: {where}. Pick a model from there, "
+                f"or add your {nice} key in Settings → API Keys.")
         raise HTTPException(
             400,
             f"This model runs on {nice}, but no {nice} API key is configured. "
-            f"Add one in Settings → API Keys, or pick a model from a provider you already "
-            f"have a key for (the OpenRouter row covers most models with a single key).")
+            f"Add one in Settings → API Keys (an OpenRouter key covers every model).")
 
 
 # Below this remaining balance a full paper run cannot complete on ANY model --
@@ -622,6 +646,7 @@ _OPENROUTER_SLUG = {
     # were created with, and restarts must still route it.
     "anthropic/claude-opus-5-5": "anthropic/claude-opus-5.5",
     "anthropic/claude-sonnet-5-5": "anthropic/claude-sonnet-5.5",
+    "anthropic/claude-haiku-5-5": "anthropic/claude-haiku-5.5",
     "anthropic/claude-opus-4-8": "anthropic/claude-opus-4.8",
     "anthropic/claude-sonnet-4-6": "anthropic/claude-sonnet-4.6",
     "anthropic/claude-haiku-4-5": "anthropic/claude-haiku-4.5",
@@ -642,17 +667,17 @@ _OPENROUTER_NATIVE_KEY = {"anthropic": "anthropic", "openai": "openai", "gemini"
 
 def _cheapest_model_for(keys: dict) -> str:
     """Pick the cheapest first-party model for whichever provider the user has a
-    key for (used by the cheap test-project preset). Falls back to Haiku — which,
+    key for (used by the cheap test-project preset). Falls back to Haiku 5.5 — which,
     if only an OpenRouter key is present, gets routed through OpenRouter at launch.
     """
     keys = keys or {}
     if keys.get("anthropic"):
-        return "claude-haiku-4-5"
+        return "claude-haiku-5-5"
     if keys.get("openai"):
         return "gpt-5.4-mini"
     if keys.get("gemini"):
         return "gemini-2.5-flash"
-    return "claude-haiku-4-5"
+    return "claude-haiku-5-5"
 
 
 def _maybe_route_via_openrouter(model_str: str, keys: dict) -> str:
@@ -2591,6 +2616,7 @@ async def api_create_project(
         # Anthropic (superseded chips stay mapped for restarts of old projects)
         "claude-opus-5-5": ("anthropic", "claude-opus-5-5"),
         "claude-sonnet-5-5": ("anthropic", "claude-sonnet-5-5"),
+        "claude-haiku-5-5": ("anthropic", "claude-haiku-5-5"),
         "claude-opus-4-8": ("anthropic", "claude-opus-4-8"),
         "claude-sonnet-4-6": ("anthropic", "claude-sonnet-4-6"),
         "claude-haiku-4-5": ("anthropic", "claude-haiku-4-5"),
