@@ -459,8 +459,14 @@ def _is_free_model(model_variant: str) -> bool:
     free-tier models have no marker in the slug — a `gemini/…` model is billed
     (or not) by the KEY's project, and the picker's chip is only offered for
     the free lane. Without this clause the OpenRouter credit preflight blocked
-    gemini launches whenever the user ALSO had a low-balance OpenRouter key:
-    a balance check for a provider the run never touches.
+    gemini launches whenever the user ALSO had a low-balance OpenRouter key.
+
+    The MODEL bills nothing, but the run can still touch OpenRouter: Deep
+    Research and AI figures prefer it whenever the key is set. Blocking the
+    launch would disable the free lane exactly when the balance is spent, so
+    the pipeline steers those side tasks instead: it checks the balance before
+    each paid call and uses the Gemini key or the direct literature search
+    (ark.provider_billing.openrouter_too_low_for_side_tasks).
     """
     mv = (model_variant or "").strip()
     return mv.endswith(":free") or mv.startswith("gemini/")

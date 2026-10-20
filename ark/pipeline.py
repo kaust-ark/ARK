@@ -1102,13 +1102,12 @@ Be thorough and faithful to the proposal.
             # deep_research_backend` (openrouter|gemini|auto) can force one.
             or_key = _os.environ.get("OPENROUTER_API_KEY", "") or self.config.get("openrouter_api_key", "")
             gem_key = self.config.get("gemini_api_key", "") or get_gemini_api_key()
-            backend = (self.config.get("deep_research_backend", "auto") or "auto").lower()
-            use_or = bool(or_key) and backend in ("auto", "openrouter")
-            use_gem = bool(gem_key) and (backend == "gemini" or (backend == "auto" and not use_or))
-            label = "OpenRouter" if use_or else "Gemini"
+            use_or, use_gem, or_low = self._deep_research_route(or_key, gem_key)
+            label = ("OpenRouter" if use_or else "Gemini" if use_gem
+                     else "literature search")
             self.log_step_header(2, 4, f"Deep Research ({label})")
 
-            if use_or or use_gem:
+            if use_or or use_gem or or_low is not None:
                 # Extract query from researcher output, or build from idea.md
                 query = None
                 if dr_query and "DEEP_RESEARCH_QUERY:" in dr_query:
@@ -1140,6 +1139,10 @@ Be thorough and faithful to the proposal.
                             api_key=or_key,
                             custom_query=query,
                         )
+                    elif not use_gem:
+                        # Spent OpenRouter key and no Gemini key: the direct
+                        # literature search below is the plan, not a fallback.
+                        result = None
                     else:
                         result = run_deep_research(
                             config=self.config,
@@ -1172,7 +1175,8 @@ Be thorough and faithful to the proposal.
                             pass
                         self._send_deep_research_telegram(result)
                     else:
-                        self.log("Deep Research returned no result.", "WARN")
+                        if use_or or use_gem:
+                            self.log("Deep Research returned no result.", "WARN")
                         self._fallback_literature_survey(query)
                 except Exception as e:
                     self.log(f"Deep Research failed: {e}", "WARN")
@@ -2080,6 +2084,32 @@ in what that file actually says — do not guess.
                 # unbalanced — bail on this entry, advance past @
                 i = at + 1
         return out
+
+    def _deep_research_route(self, or_key: str, gem_key: str):
+        """``(use_openrouter, use_gemini, spent_balance)`` for Deep Research.
+
+        Default (auto): OpenRouter when its key is present, else Gemini.
+        ``deep_research_backend`` (openrouter|gemini|auto) can force one. A run
+        on a free model can still hold a spent OpenRouter key, and
+        sonar-deep-research is paid, so the call would 402 and fall back
+        anyway. When the balance is confirmed too low, OpenRouter is skipped:
+        Gemini if its key exists, else the caller runs the direct literature
+        search. ``spent_balance`` is that balance, or None when not spent.
+        """
+        backend = (self.config.get("deep_research_backend", "auto") or "auto").lower()
+        use_or = bool(or_key) and backend in ("auto", "openrouter")
+        spent = None
+        if use_or:
+            from ark.provider_billing import openrouter_too_low_for_side_tasks
+            spent = openrouter_too_low_for_side_tasks(or_key)
+            if spent is not None:
+                self.log(f"OpenRouter balance is ${spent:.2f}: not running the "
+                         f"paid Deep Research call on it", "WARN")
+                use_or = False
+        use_gem = bool(gem_key) and (
+            backend == "gemini"
+            or (not use_or and (backend == "auto" or spent is not None)))
+        return use_or, use_gem, spent
 
     def _fallback_literature_survey(self, query: str) -> bool:
         """Build a minimal literature base from academic search when Deep

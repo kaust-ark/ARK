@@ -1274,6 +1274,36 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
                 pass
             return 0
 
+        # A spent OpenRouter key. PaperBanana prefers OpenRouter whenever the
+        # key is set, so every figure would make a paid call that 402s before
+        # falling back. With a Gemini key, go straight to the Gemini-direct
+        # Nano Banana path; without one, say why the figures are missing.
+        skip_paperbanana = False
+        if os.environ.get("OPENROUTER_API_KEY"):
+            from ark.provider_billing import openrouter_too_low_for_side_tasks
+            or_low = openrouter_too_low_for_side_tasks()
+            if or_low is not None:
+                if api_key:
+                    self.log(f"OpenRouter balance is ${or_low:.2f}: generating concept "
+                             f"figures with the Gemini key instead", "WARN")
+                    skip_paperbanana = True
+                else:
+                    self.log(f"OpenRouter balance is ${or_low:.2f} and there is no Gemini "
+                             f"key: skipping AI figure generation", "WARN")
+                    try:
+                        self._chat(
+                            "agent",
+                            f"ℹ️ AI concept figures were skipped: your OpenRouter "
+                            f"balance is ${or_low:.2f}, too low for image generation. "
+                            f"Data figures are unaffected. Top up at "
+                            f"https://openrouter.ai/credits (or add a Gemini key in "
+                            f"Settings → API Keys), then Continue the project to add them.",
+                            kind="notice",
+                        )
+                    except Exception:
+                        pass
+                    return 0
+
         venue = self.config.get("venue", "")
 
         # ── Phase 2: Gather context for planner ──
@@ -1467,7 +1497,7 @@ and also output it in your response. Format:
 
             # Try PaperBanana pipeline first (best quality)
             source = "paperbanana"
-            ok = self._try_paperbanana(
+            ok = (not skip_paperbanana) and self._try_paperbanana(
                 name=name,
                 caption=caption,
                 paper_context=section_ctx or paper_text[:3000],

@@ -42,3 +42,45 @@ def openrouter_key_usage_usd(api_key: Optional[str] = None,
         return float(usage) if usage is not None else None
     except Exception:
         return None
+
+
+def openrouter_remaining_usd(api_key: Optional[str] = None,
+                             timeout: float = 5.0) -> Optional[float]:
+    """The account's remaining OpenRouter credit in USD, or None on any failure.
+
+    Same ``/credits`` call the dashboard's launch preflight makes. Remaining is
+    the ACCOUNT balance (credits minus usage), which is what a paid call draws
+    on, as opposed to this key's own usage counter above.
+    """
+    key = api_key or os.environ.get("OPENROUTER_API_KEY") or ""
+    if not key:
+        return None
+    try:
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/credits",
+            headers={"Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = (json.load(r) or {}).get("data") or {}
+        total, usage = data.get("total_credits"), data.get("total_usage")
+        if total is None or usage is None:
+            return None
+        return float(total) - float(usage)
+    except Exception:
+        return None
+
+
+# Below this, a paid side task (Deep Research, AI figures) is not attempted on
+# OpenRouter: it would 402 and fall back anyway, after a wasted call.
+SIDE_TASK_MIN_USD = 1.0
+
+
+def openrouter_too_low_for_side_tasks(api_key: Optional[str] = None) -> Optional[float]:
+    """The balance when it is CONFIRMED below SIDE_TASK_MIN_USD, else None.
+
+    Fail-open like everything here: no key, a timeout or an unknown schema all
+    return None, and the caller carries on with OpenRouter as before.
+    """
+    remaining = openrouter_remaining_usd(api_key)
+    if remaining is not None and remaining < SIDE_TASK_MIN_USD:
+        return remaining
+    return None
