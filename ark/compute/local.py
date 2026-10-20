@@ -37,6 +37,40 @@ class LocalBackend(ComputeBackend):
         return ctx
 
     def get_agent_instructions(self) -> str:
+        # Under the structural sandbox the agent's shell is INSIDE the
+        # container, and the host-machine text below turns into a trap there.
+        # It says `conda activate` (no conda exists in the container, and the
+        # sandbox directive tells the agent to REPORT unreachable host tools
+        # rather than work around them), suggests `nohup` for long tasks, and
+        # the generic shell rules add "to wait for results: just exit — the
+        # system handles waiting". Three individually-sensible passages that a
+        # literally-obedient model reads as one instruction: report, background,
+        # exit. A local 32B did exactly that four runs in a row — one turn,
+        # zero tool calls, empty results/ — then completed the identical work
+        # when told plainly what interpreter to run. The wording is the
+        # difference between an agent that experiments and one that resigns.
+        try:
+            from ark.sandbox import structural_sandbox_status
+            in_container = structural_sandbox_status()[0]
+        except Exception:
+            in_container = False
+        if in_container:
+            return """## Compute Environment: Inside the Project Container
+
+Your shell already runs inside the project's container; the project directory
+is mounted at its usual path and `results/` is shared with the host.
+
+- Run every experiment script in the FOREGROUND with the project interpreter:
+      .conda_env/bin/python scripts/exp1.py
+  (if `.conda_env` is absent, use `python3`)
+- There is NO `conda` command here and none is needed — never run
+  `conda activate`, and do not treat its absence as a broken environment.
+- Install extra packages with `.conda_env/bin/pip install <pkg>`.
+- Do NOT use `nohup` or background processes, and do NOT exit expecting the
+  system to wait for anything: nothing runs after you stop. Before finishing,
+  verify your result files actually exist in `results/` (e.g. `ls results/`).
+- Do NOT use sbatch/srun — Slurm is not reachable from in here."""
+
         gpu_section = ""
         if self.gpu_count > 0:
             gpu_section = f"\n- Available GPUs: {self.gpu_count}"

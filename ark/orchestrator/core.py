@@ -2677,6 +2677,14 @@ a {{ color: #0d9488; }}
         notifications are routed to notify_progress() so the user actually
         sees them, instead of being silently dropped.
         """
+        # Quiet mode for smoke/dev runs. A night of pipeline testing emailed
+        # the operator on every transient agent error and rate-limit — each
+        # message correct in isolation, all of them noise in aggregate. The
+        # run log keeps everything; this only silences the outbound channels.
+        if self.config.get("suppress_notifications", False):
+            self.log(f"Notification suppressed (quiet mode): {subject}", "INFO")
+            return
+
         critical_keywords = ["error", "failed", "token", "accepted", "completed", "timeout", "started", "finished"]
         should_send = priority == "critical" or any(kw in subject.lower() for kw in critical_keywords)
 
@@ -2715,31 +2723,43 @@ a {{ color: #0d9488; }}
             except Exception as e:
                 self.log(f"Telegram notification failed: {e}, falling back to email", "WARN")
 
-        # Fallback: email
+        # Fallback: email, over the same SMTP pipe the dashboard uses.
+        #
+        # This used to shell out to `mail`, which is not installed on our hosts
+        # (nor on most containers), so every fallback died on ENOENT and the
+        # notification was lost — logged, but lost. Telegram covers the normal
+        # case, which is exactly why the broken path went unnoticed: it only
+        # runs when Telegram is unconfigured or already failing, i.e. when the
+        # message matters most. The dashboard's mailer (relay → SMTP auth →
+        # sendmail) is a real transport that is known to work here; import it
+        # lazily and tolerate its absence, the same way ark.access does, so the
+        # library half of the codebase keeps working standalone.
+        subject_line = f"[{self.project_name.upper()}] {subject}"
+        body = re.sub(r"<[^>]+>", "", full_message)     # Telegram HTML → text
         try:
-            # HOTFIX v0.5.21: strictly opt-in. The old default recipient
-            # was our own contact@ box, so a teammate's un-configured CLI run
-            # on a mail-equipped host emailed US his run's notices, stamped
-            # From: his own address by the relay (2026-08-19). A notification
-            # nobody asked for goes nowhere.
+            from website.dashboard.config import get_settings
+            from website.dashboard.notify import send_admin_notice
+            settings = get_settings()
+            # STRICTLY opt-in. The old default recipient was our own
+            # contact@ box, so a teammate's un-configured CLI run mailed HIS
+            # pipeline's FINISHED notice to us, stamped with his university
+            # address by the relay (observed 2026-08-19, pengyuan's run) —
+            # confusing for everyone and a small privacy leak of his run's
+            # score. A notification nobody asked for goes nowhere: webapp
+            # projects get owner emails through the dashboard's own channel.
             email = (self.config.get("notification_email") or "").strip()
             if not email:
                 self.log(f"Notification (no notification_email configured, "
                          f"not emailing): {subject}", "INFO")
                 return
-            # full_message is Telegram HTML; a mail client shows those tags
-            # as literal text (the "<b>🏁 ══ FINISHED ══</b>" incident mails
-            # of 2026-08-19/20). Email gets plain text.
-            plain_message = re.sub(r"<[^>]+>", "", full_message)
-            subprocess.run(
-                ["mail", "-s", f"[{self.project_name.upper()}] {subject}", email],
-                input=plain_message,
-                text=True,
-                timeout=30,
-            )
-            self.log(f"Email notification sent: {subject}", "INFO")
+            if send_admin_notice(settings, email, subject_line, body):
+                self.log(f"Email notification sent: {subject}", "INFO")
+            else:
+                self.log(f"Email notification NOT sent (no working SMTP "
+                         f"transport): {subject}", "WARN")
         except Exception as e:
-            self.log(f"Failed to send notification: {e}", "WARN")
+            self.log(f"Failed to send notification: {type(e).__name__}: {e}",
+                     "WARN")
 
     # ========== Telegram Enhancements ==========
 

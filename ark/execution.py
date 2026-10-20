@@ -1771,6 +1771,8 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
         except Exception as e:
             self.log(f"Writing quality verification failed: {e}", "WARN")
 
+        self._report_dropped_figures(latex_dir_name)
+
         # Mark tasks completed if the writer actually changed the paper. A small
         # but real edit (e.g. a one-line title or number fix) is still meaningful
         # — only a completely empty diff (0 lines) counts as a failed writing pass.
@@ -1795,6 +1797,47 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
             self.log(f"Writing phase failed ({reason}), tasks NOT marked completed", "ERROR")
             self._save_action_plan(action_plan)
             return False
+
+    def _report_dropped_figures(self, latex_dir_name: str) -> list:
+        """Name any figure the writing pass removed from the paper.
+
+        A writing pass is prose work; it has no reason to delete a figure the
+        experiments produced. But it can, and until now nothing noticed. The
+        surrounding accounting reads only the ADDED column of ``git diff
+        --numstat``, so a pass that deletes a figure and writes two paragraphs
+        reports "added 15 lines" and looks healthy — the compile still
+        succeeds, the page count still fits, and the figure is simply gone.
+        Observed live: a writer dropped an \\includegraphics for a concept
+        figure and the PDF fell from 1.08 MB to 349 KB with no warning
+        anywhere in the run.
+
+        Compares removed against added targets so relocating a figure (which
+        shows up as a delete plus an insert) stays silent. Reports rather than
+        restores: an unexplained deletion is worth a human's attention, but
+        re-inserting a figure into prose the writer has since rearranged is
+        how you get a broken float or a duplicate.
+        """
+        pattern = re.compile(r"\\includegraphics\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}")
+        try:
+            diff = subprocess.run(
+                ["git", "diff", "-U0", "--", f"{latex_dir_name}/main.tex"],
+                capture_output=True, text=True, cwd=self.code_dir, timeout=60,
+            ).stdout
+        except Exception as e:
+            self.log(f"Figure-retention check skipped: {e}", "WARN")
+            return []
+        removed, added = set(), set()
+        for line in diff.splitlines():
+            if line.startswith("-") and not line.startswith("---"):
+                removed.update(pattern.findall(line))
+            elif line.startswith("+") and not line.startswith("+++"):
+                added.update(pattern.findall(line))
+        dropped = sorted(removed - added)
+        if dropped:
+            self.log(f"Writing phase REMOVED {len(dropped)} figure(s) from the "
+                     f"paper: {', '.join(dropped)} — a prose pass should not "
+                     f"drop figures; check the paper before delivery", "WARN")
+        return dropped
 
     def _get_literature_context_for_task(self, task: dict) -> str:
         """Read literature.yaml and extract context relevant to the current task."""

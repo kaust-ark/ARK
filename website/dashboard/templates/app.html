@@ -905,7 +905,42 @@ Strict — hit the exact page limit (spends the most tokens).">
                 <span class="model-chip">Gemini 3.8 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
               </label>
               <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-              <!-- Row 3: everything else -->
+              <!-- Row 3: free tier — zero token cost, so testing survives an exhausted
+                   balance. Placed BELOW the paid rows on purpose: selectDefaultModel()
+                   takes the first enabled chip, so the default must stay a paid,
+                   un-throttled model. The tooltip sits on the chip SPAN, not the
+                   label — applyModelGating() overwrites the label's title with the
+                   no-key hint. Slugs carry the ':free' suffix; refresh_model_versions
+                   tracks none of these families, so they are never auto-rewritten. -->
+              <div class="model-legend">🆓 Free tier — no token cost, but OpenRouter caps free requests per day, so a long run can stall once the cap is hit. Deep Research and AI figures still bill separately.</div>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free" />
+                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3 Ultra <span class="model-meta"><span class="cost">🆓</span></span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/nvidia/nemotron-3.5-lightning:free" />
+                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3.5 Lightning <span class="model-meta"><span class="cost">🆓</span></span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/google/gemma-4-31b-it:free" />
+                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Gemma 4 31B <span class="model-meta"><span class="cost">🆓</span></span></span>
+              </label>
+              <label class="model-option" data-provider="openrouter">
+                <input type="radio" name="model" value="openrouter/poolside/laguna-s-2.1:free" />
+                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Laguna S 2.1 <span class="model-meta"><span class="cost">🆓</span></span></span>
+              </label>
+              <!-- Gemini AI Studio free tier: needs the USER's gemini key from a
+                   no-billing project ("Free of charge" in AI Studio). Verified
+                   2026-08-17: FreeTier quota metrics, structurally unbillable;
+                   produced complete papers (6.5/10) at $0. Quotas are per-account
+                   per-MINUTE, so runs self-pace rather than fight a shared pool
+                   like the OpenRouter free row. -->
+              <label class="model-option" data-provider="gemini">
+                <input type="radio" name="model" value="gemini/gemini-3.1-flash-lite" />
+                <span class="model-chip" title="Free — Google AI Studio free tier (needs your Gemini key from a no-billing project). Daily budget is 500 requests per model ≈ ONE full run per day; per-minute quotas also slow long runs.">Gemini 3.1 Flash-Lite <span class="model-meta"><span class="cost">🆓</span></span></span>
+              </label>
+              <div class="model-row-break" style="flex-basis:100%;height:0"></div>
+              <!-- Row 4: everything else -->
               <select id="model-openrouter-more" onchange="onExtraModelPick(this)" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
                 <option value="">▾ more…</option>
                 <optgroup label="Anthropic">
@@ -1457,7 +1492,26 @@ Strict — hit the exact page limit (spends the most tokens).">
             <span class="model-chip">Gemini 3.8 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
           </label>
           <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-          <!-- Row 3: everything else -->
+          <!-- Row 3: free tier (see the hero picker for why it sits below the paid rows) -->
+          <div class="model-legend">🆓 Free tier — no token cost, but OpenRouter caps free requests per day, so a long run can stall once the cap is hit. Deep Research and AI figures still bill separately.</div>
+          <label class="model-option" data-provider="openrouter">
+            <input type="radio" name="continue-model" value="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free" />
+            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3 Ultra <span class="model-meta"><span class="cost">🆓</span></span></span>
+          </label>
+          <label class="model-option" data-provider="openrouter">
+            <input type="radio" name="continue-model" value="openrouter/nvidia/nemotron-3.5-lightning:free" />
+            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3.5 Lightning <span class="model-meta"><span class="cost">🆓</span></span></span>
+          </label>
+          <label class="model-option" data-provider="openrouter">
+            <input type="radio" name="continue-model" value="openrouter/google/gemma-4-31b-it:free" />
+            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Gemma 4 31B <span class="model-meta"><span class="cost">🆓</span></span></span>
+          </label>
+          <label class="model-option" data-provider="openrouter">
+            <input type="radio" name="continue-model" value="openrouter/poolside/laguna-s-2.1:free" />
+            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Laguna S 2.1 <span class="model-meta"><span class="cost">🆓</span></span></span>
+          </label>
+          <div class="model-row-break" style="flex-basis:100%;height:0"></div>
+          <!-- Row 4: everything else -->
           <select id="continue-model-openrouter-more" onchange="onExtraModelPick(this, 'continue')" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
             <option value="">▾ more…</option>
             <optgroup label="Anthropic">
@@ -1657,7 +1711,26 @@ Strict — hit the exact page limit (spends the most tokens).">
           <span class="model-chip">Gemini 3.8 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
         </label>
         <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-        <!-- Row 3: everything else -->
+        <!-- Row 3: free tier (see the hero picker for why it sits below the paid rows) -->
+        <div class="model-legend">🆓 Free tier — no token cost, but OpenRouter caps free requests per day, so a long run can stall once the cap is hit. Deep Research and AI figures still bill separately.</div>
+        <label class="model-option" data-provider="openrouter">
+          <input type="radio" name="restart-model" value="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free" />
+          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3 Ultra <span class="model-meta"><span class="cost">🆓</span></span></span>
+        </label>
+        <label class="model-option" data-provider="openrouter">
+          <input type="radio" name="restart-model" value="openrouter/nvidia/nemotron-3.5-lightning:free" />
+          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3.5 Lightning <span class="model-meta"><span class="cost">🆓</span></span></span>
+        </label>
+        <label class="model-option" data-provider="openrouter">
+          <input type="radio" name="restart-model" value="openrouter/google/gemma-4-31b-it:free" />
+          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Gemma 4 31B <span class="model-meta"><span class="cost">🆓</span></span></span>
+        </label>
+        <label class="model-option" data-provider="openrouter">
+          <input type="radio" name="restart-model" value="openrouter/poolside/laguna-s-2.1:free" />
+          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Laguna S 2.1 <span class="model-meta"><span class="cost">🆓</span></span></span>
+        </label>
+        <div class="model-row-break" style="flex-basis:100%;height:0"></div>
+        <!-- Row 4: everything else -->
         <select id="restart-model-openrouter-more" onchange="onExtraModelPick(this, 'restart')" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
           <option value="">▾ more…</option>
           <optgroup label="Anthropic">
@@ -3638,6 +3711,27 @@ async function loadGateBanner() {
   if (slurmLbl) slurmLbl.style.display = window._sysSlurm ? '' : 'none';
   const orchSlurmLbl = document.getElementById('hero-orch-backend-slurm-label');
   if (orchSlurmLbl) orchSlurmLbl.style.display = window._sysSlurm ? '' : 'none';
+  // Same treatment for the orchestrator's "☁️ Cloud" radio. The per-cloud
+  // EXPERIMENT chips have always been gated on operator configuration, but
+  // these three were not, so on a deployment with no cloud configured (and no
+  // `sky` installed) the option still looked available and the run only failed
+  // once the project was already created. The API rejects it too — this just
+  // stops offering a button that cannot work.
+  ['hero', 'continue', 'restart'].forEach(prefix => {
+    const lbl = document.getElementById(prefix + '-orch-backend-skypilot-label');
+    if (!lbl) return;
+    const usable = window._sysCloudGcp || window._sysCloudAws;
+    lbl.style.display = usable ? '' : 'none';
+    if (!usable) {
+      const radio = lbl.querySelector('input[type="radio"]');
+      if (radio && radio.checked) {
+        radio.checked = false;
+        const local = document.querySelector(
+          `input[name="${radio.name}"][value="local"]`);
+        if (local) local.checked = true;
+      }
+    }
+  });
   if (!window._sysSlurm) {
     // No slurm on this host. Default the experiments backend to the first configured
     // cloud so the form always submits a valid backend rather than falling back to

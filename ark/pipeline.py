@@ -266,6 +266,36 @@ class PipelineMixin:
             self.save_step_checkpoint(step_num - 1, "Compile LaTeX")
             return "", score, []
 
+        # The reviewer's ANSWER is often just "report saved to latest_review.md"
+        # — a pointer, not the review. If the pointed-at file is missing or
+        # empty, there is no score anywhere and the run ends 0.0/failed with a
+        # perfectly good paper on disk (95241962: contract all-pass, then the
+        # reviewer claimed the save and wrote nothing). Same contract as
+        # experiments and idea.md: the artifact, not the claim, is the output —
+        # give one corrective pass before accepting a scoreless review.
+        review_file = self.state_dir / "latest_review.md"
+        review_written = review_file.exists() and review_file.stat().st_size > 200
+        if not review_written and len((review_output or "").strip()) < 400:
+            self.log("Reviewer produced no report file — one corrective pass",
+                     "WARN")
+            try:
+                review_output = self.run_agent(
+                    "reviewer",
+                    "Your previous review attempt saved NOTHING: "
+                    "auto_research/state/latest_review.md is missing or empty. "
+                    "Write the FULL review report to that file now (use the "
+                    "file editor's create command, not str_replace), including "
+                    "an explicit line 'Overall Score: X/10'. Then print the "
+                    "file (`cat auto_research/state/latest_review.md`) to "
+                    "confirm it is non-empty before finishing.",
+                    timeout=defaults.TIMEOUT_REVIEWER,
+                )
+            except Exception as e:
+                self.log(f"Review corrective pass failed: {e}", "WARN")
+        if review_file.exists() and review_file.stat().st_size > 200:
+            # The file is the review of record; the chat answer may be a stub.
+            review_output = review_file.read_text(errors="replace")
+
         score = self.parse_review_score(review_output)
         if score == 0.0 and review_output and len(review_output.strip()) > 100:
             score = self._retry_score_parsing(review_output) or 0.0
@@ -810,11 +840,19 @@ class PipelineMixin:
         - deep_research.md missing (Gemini hasn't run yet)
         - project_context.md missing (specialization not done yet)
         """
-        if self.config.get("skip_deep_research", False):
-            return False
-
+        # skip_deep_research means exactly that — skip the literature survey.
+        # It used to early-return here and skip the WHOLE phase, so idea
+        # analysis and project_context.md (specialization) never ran either.
+        # The experimenter prompt makes project_context.md mandatory in three
+        # places, so every skip_deep_research project — including the webapp's
+        # cheap-test preset — sent its experimenter after a file that could not
+        # exist. A strong model shrugs past the lie; an obedient one follows
+        # the escalation protocol and reports the missing prerequisite instead
+        # of experimenting (1c9e7020, first corrective pass). Treat the flag as
+        # "the DR sub-step is already done", nothing more.
         idea_done = (self.state_dir / "idea.md").exists()
-        dr_done = (self.state_dir / "deep_research.md").exists()
+        dr_done = ((self.state_dir / "deep_research.md").exists()
+                   or self.config.get("skip_deep_research", False))
         ctx_done = (self.state_dir / "project_context.md").exists()
 
         if idea_done and dr_done and ctx_done:
@@ -858,12 +896,24 @@ class PipelineMixin:
         # Seed the Apptainer experiment-sandbox helper so experiments run isolated
         # from the host. Best-effort: no-op if apptainer / base image are missing.
         try:
-            from ark.sandbox import write_sandbox_helper, sandbox_available, sandbox_sif_path
-            if sandbox_available():
-                if write_sandbox_helper(self.code_dir):
-                    self.log_step("Experiment sandbox ready (Apptainer): ./sandbox/run.sh", "success")
-            else:
-                self.log(f"Experiment sandbox unavailable (apptainer/image at {sandbox_sif_path()} missing) — experiments will run on host", "WARN")
+            from ark.sandbox import (write_sandbox_helper, sandbox_available,
+                                     sandbox_sif_path, structural_sandbox_requested,
+                                     structural_sandbox_status)
+            structural, reason = structural_sandbox_status()
+            if structural:
+                self.log_step(f"Experiment sandbox: STRUCTURAL — the agent itself runs "
+                              f"inside Apptainer ({reason})", "success")
+            elif structural_sandbox_requested():
+                # Asked for and not delivered is the one case that must be loud:
+                # otherwise the run looks confined and is not.
+                self.log(f"Structural sandbox REQUESTED but unavailable: {reason} — "
+                         f"falling back to the advisory sandbox", "WARN")
+            if not structural:
+                if sandbox_available():
+                    if write_sandbox_helper(self.code_dir):
+                        self.log_step("Experiment sandbox ready (Apptainer): ./sandbox/run.sh", "success")
+                else:
+                    self.log(f"Experiment sandbox unavailable (apptainer/image at {sandbox_sif_path()} missing) — experiments will run on host", "WARN")
         except Exception as e:
             self.log(f"Sandbox helper seeding skipped: {e}", "WARN")
 
@@ -971,6 +1021,30 @@ Output the query as plain text at the END of your response, after a line that sa
 Be thorough and faithful to the proposal.
 """, timeout=defaults.TIMEOUT_INITIALIZER)
 
+            # idea.md is a CONTRACT — the planner and experimenter prompts both
+            # name it as required reading. Its existence must not depend on the
+            # agent's diligence when we hold the source text ourselves: a local
+            # model completed this step without writing the file, nothing
+            # checked, and two phases later the experimenter (correctly)
+            # refused to proceed over the missing prerequisite (9df9e778).
+            # The agent's version is richer when it exists; the verbatim
+            # proposal is strictly better than a broken promise when it
+            # doesn't.
+            # Missing OR empty: an agent that opens the file and writes nothing
+            # has kept the letter of the contract and none of it (c59edf94
+            # left a 0-byte idea.md; the first version of this check waved it
+            # through on existence alone — the same 0-byte lesson as the
+            # results files, one hour later).
+            if ((not idea_file.exists() or idea_file.stat().st_size == 0)
+                    and self._research_idea):
+                self.log("Researcher did not write idea.md — seeding it from "
+                         "the proposal text verbatim", "WARN")
+                idea_file.parent.mkdir(parents=True, exist_ok=True)
+                idea_file.write_text(
+                    "# Research Idea (verbatim from the launch form; the "
+                    "analysis step did not produce its enriched version)\n\n"
+                    + self._research_idea)
+
             self.log_step_header(1, 4, "Analyze Proposal", "end")
         else:
             self.log_step("idea.md exists, skipping proposal analysis", "info")
@@ -979,8 +1053,14 @@ Be thorough and faithful to the proposal.
         self._update_title_from_idea()
 
         # ── Step 2: Deep Research ───────────────────────────────────────
+        # Honor skip_deep_research HERE too, now that the flag no longer skips
+        # the phase wholesale: without this gate a skip project that reaches
+        # this step (to build project_context.md) would fall into the key-based
+        # backend selection and run a paid survey the user asked not to run.
         dr_file = self.state_dir / "deep_research.md"
-        if not dr_file.exists():
+        if self.config.get("skip_deep_research", False):
+            pass
+        elif not dr_file.exists():
             import os as _os
             from ark.deep_research import (
                 run_deep_research, run_deep_research_openrouter, get_gemini_api_key,
@@ -2415,6 +2495,14 @@ Rules:
         # Steps 1-4: Iterative experiment loop
         self._run_experiment_loop(dev_state, start_iter, max_dev_iters, research_idea)
 
+        # The loop returning is not the same as the loop succeeding. Leaving it
+        # early on a terminal error only skipped the remaining experiment steps
+        # — control still fell straight into drafting below, so the run kept
+        # writing the paper the abort was meant to prevent (seen on e2f643ab:
+        # "Dev phase aborted" at 02:02:40, writer editing main.tex at 02:05:31).
+        if getattr(self, "_terminal_error", None):
+            return
+
         # Steps 5-7: Generate figures, write draft, deliver
         self.log("", "RAW")
         self.log_section("✏️ Writing Initial Paper Draft")
@@ -2423,6 +2511,28 @@ Rules:
         self._generate_all_figures()
         self._write_initial_draft(research_idea)
         self._deliver_dev_phase(dev_state, max_dev_iters)
+
+    def _abort_dev_on_terminal_error(self, during: str) -> bool:
+        """Stop the dev phase when an agent hit a non-retryable error.
+
+        The review loop has checked ``_terminal_error`` between steps for a
+        while; the dev loop never did, and that asymmetry is expensive. Seen
+        live: a misresolved API key made every agent die on a 401, each dead
+        agent was still logged "✓ completed", and the loop walked through plan
+        → run → analyze → evaluate producing nothing. Downstream then read the
+        absent results as "no experiments are running" and went on to write a
+        paper about findings that did not exist.
+
+        Failing here is what makes the run's own report trustworthy: no
+        experiments means no paper, not a paper with no experiments.
+        """
+        err = getattr(self, "_terminal_error", None)
+        if not err:
+            return False
+        self.log(f"Dev phase aborted while {during} — {err}", "ERROR")
+        self.log("No experiments were produced; refusing to draft a paper "
+                 "on absent results.", "ERROR")
+        return True
 
     def _run_experiment_loop(self, dev_state: dict, start_iter: int,
                              max_dev_iters: int, research_idea: str):
@@ -2448,6 +2558,8 @@ Rules:
             # Step 1: Plan experiments
             self._plan_experiments(dev_iter, max_dev_iters, research_idea,
                                    findings_summary)
+            if self._abort_dev_on_terminal_error("planning experiments"):
+                return
 
             # HITL gate: on the first dev iteration, let the user approve or
             # steer the experiment plan before spending compute (大实验前把关).
@@ -2456,9 +2568,13 @@ Rules:
 
             # Step 2: Run experiments
             self._run_experiments(dev_iter, max_dev_iters)
+            if self._abort_dev_on_terminal_error("running experiments"):
+                return
 
             # Step 3: Analyze results
             self._analyze_results()
+            if self._abort_dev_on_terminal_error("analyzing results"):
+                return
 
             # Step 4: Evaluate completeness
             findings_summary = self._load_findings_summary()
@@ -2567,6 +2683,15 @@ IMPORTANT: If the research idea describes a specific platform, framework, or sys
 
         compute_ctx = self._compute_backend.setup()
 
+        # The task text tells the agent to put scripts in scripts/ and results
+        # in results/, but nothing ever created those directories. A capable
+        # model runs mkdir first; a weaker one writes straight to the promised
+        # path, takes ENOENT from the file tool, and gives up (seen live on
+        # ac5318e8 — 161s of real work ended by exactly this). If we name the
+        # directories, we provide them.
+        (self.code_dir / "results").mkdir(exist_ok=True)
+        (self.code_dir / self.config.get("scripts_dir", "scripts")).mkdir(exist_ok=True)
+
         # Sync project code to backend
         remote_work_dir = compute_ctx.get("work_dir", str(self.code_dir))
         self._compute_backend.sync_to_backend(str(self.code_dir), remote_work_dir)
@@ -2581,6 +2706,7 @@ Execute ALL planned experiments for this dev iteration.
 Use Read to load `auto_research/state/experiment_plan.yaml` in full. It
 contains the required_systems and every experiment definition. Do NOT
 proceed without having consulted it.
+{self._experiment_plan_digest()}
 
 {compute_instructions}
 
@@ -2640,8 +2766,128 @@ system or it fails with a clear report of what is needed.
         # Check if experimenter requested human intervention
         self._check_human_intervention(stage="Run Experiments")
 
+        # One evidence-driven second chance before giving up. The failure this
+        # covers is an agent that stopped one turn short: on a7235ecf the
+        # experimenter installed deps, wrote the script, RAN it, watched it
+        # crash on a missing import, said "let's fix that and rerun" — and
+        # ended its turn there, because a message without a tool call is how an
+        # agent declares itself finished. Everything it needed was in place;
+        # what it lacked was being told to continue. So tell it, once, with the
+        # evidence attached. If the retry also produces nothing, the normal
+        # abort stands.
+        if not self._experiment_evidence_files():
+            self.log("Experiments left no usable results — giving the "
+                     "experimenter one corrective pass", "WARN")
+            results_dir = self.code_dir / "results"
+            empties = ([str(f.relative_to(self.code_dir))
+                        for f in results_dir.rglob("*")
+                        if f.is_file() and f.stat().st_size == 0]
+                       if results_dir.exists() else [])
+            hint = (f"Empty files from the crashed attempt: {', '.join(empties)}. "
+                    if empties else "")
+            self.run_agent("experimenter", f"""
+Your previous experiment attempt did NOT finish: `results/` contains no file
+with actual content. {hint}Your scripts are still in `scripts/`.
+
+Diagnose the failure (run the script and read its error output), fix it, and
+rerun until the result files contain real numbers. Before you finish, print the
+result files (`cat results/*.json`) to confirm they are non-empty. Do not
+report success without that confirmation.
+""", timeout=defaults.TIMEOUT_EXPERIMENTER)
+            self._compute_backend.wait_for_completion(max_wait_hours=1)
+
+        self._require_experiment_evidence()
+
         self.log_step_header(2, 4, "Run Experiments", "end")
         return exp_output
+
+    def _experiment_plan_digest(self, limit: int = 12) -> str:
+        """A few lines naming what has to run, inlined into the task.
+
+        The pipeline's convention is that agents Read their source files rather
+        than being handed pre-loaded (and possibly truncated) content. That
+        holds up with a model that reliably follows a "go read this first"
+        instruction; a weaker one answers from the prompt alone and finishes
+        its turn having done nothing. Measured on a local 32B across three
+        runs: 13k tokens in, ~600 out, zero tool calls, an empty results/ — the
+        same model completed the identical work in ten tool calls when the task
+        itself said what to run.
+
+        So: seed the ids and one-line descriptions, and keep the instruction to
+        read the file for everything else. Costs a strong model a handful of
+        tokens it already had; gives a weak one somewhere to start.
+        """
+        plan = self.state_dir / "experiment_plan.yaml"
+        try:
+            data = yaml.safe_load(plan.read_text()) or {}
+            entries = data.get("experiments") or []
+        except Exception:
+            return ""
+        if not isinstance(entries, list) or not entries:
+            return ""
+        lines = []
+        for e in entries[:limit]:
+            if not isinstance(e, dict):
+                continue
+            eid = str(e.get("id") or "?")
+            # The planner is free-form about this key; observed "title" and
+            # "description" from the same model on consecutive runs.
+            what = str(e.get("description") or e.get("title") or e.get("name")
+                       or e.get("goal") or "").strip().replace("\n", " ")
+            lines.append(f"- {eid}: {what[:160]}" if what else f"- {eid}")
+        if not lines:
+            return ""
+        more = ("\n- … plus more; the file is authoritative"
+                if len(entries) > limit else "")
+        return ("\nFor orientation, the plan currently defines:\n"
+                + "\n".join(lines) + more + "\n")
+
+    def _experiment_evidence_files(self) -> list:
+        """Result files with actual content in them.
+
+        Zero-byte files are excluded deliberately: they are the fingerprint of
+        a crash, not of a result. Observed on a7235ecf — the script opened
+        results/exp1_results.json for writing and died on the very next line
+        (a missing `import json`), leaving an empty file that an existence
+        check happily accepted as evidence.
+        """
+        scripts_dir = self.config.get("scripts_dir", "scripts")
+        candidates = [self.code_dir / "results",
+                      self.code_dir / scripts_dir / "results"]
+        return [f for d in candidates if d.exists()
+                for f in d.rglob("*")
+                if f.is_file() and f.stat().st_size > 0
+                # An escalation report is a request for help, not a result;
+                # counting it as evidence sent a run into analysis with nothing
+                # to analyse but its own cry for help (9df9e778).
+                and not f.name.startswith("needs_human")]
+
+    def _require_experiment_evidence(self) -> None:
+        """An experiment step that produced nothing did not succeed.
+
+        The agent's own "done" is a claim; a file on disk is evidence. Seen live
+        on smoke run 8ad45646: a local model's experimenter had three tool calls
+        refused by the environment, wrote nothing, and still reported success —
+        after which the compute backend read the missing results directory as
+        "nothing is running" and returned done, and the pipeline proceeded to
+        analyse and write up results that did not exist.
+
+        Checked only after ``wait_for_completion``, so an asynchronous backend
+        has already had its chance to finish and sync. Sets the terminal flag
+        rather than raising: the dev loop's own checkpoint then ends the run the
+        same way any other non-retryable failure does.
+        """
+        if self._experiment_evidence_files():
+            return
+        if os.environ.get("ARK_ALLOW_EMPTY_EXPERIMENTS", "").strip() == "1":
+            self.log("Experiments produced no result files — continuing anyway "
+                     "(ARK_ALLOW_EMPTY_EXPERIMENTS=1)", "WARN")
+            return
+        self._terminal_error = (
+            "Experiments produced no result files. The experimenter reported "
+            "success but wrote nothing to results/ — there is no evidence to "
+            "write a paper from.")
+        self.log(self._terminal_error, "ERROR")
 
     def _analyze_results(self) -> str:
         """Step 3: Analyze experiment results using planner agent."""
@@ -4125,11 +4371,25 @@ provide the title.
 
         try:
             # Dev Phase first, if not already done in a prior run.
+            dev_failed = False
             if self._should_run_dev_phase():
                 self._run_dev_phase()
+                # A dev phase that aborted produced no experiments. Entering the
+                # paper loop here would review, plan and write around results
+                # that were never generated — the failure would come out the
+                # far end as a finished-looking PDF. Calling the handler is not
+                # enough: it RETURNS the stop decision rather than raising, and
+                # ignoring that return let the loop run anyway (25e4fb90 aborted
+                # the dev phase at 02:17:23 and began compiling LaTeX in the
+                # same second).
+                if getattr(self, "_terminal_error", None):
+                    # No score exists yet — the dev phase never reached review.
+                    self._handle_terminal_error(0.0)
+                    dev_failed = True
 
             while (
-                datetime.now() < self.max_end_time
+                not dev_failed
+                and datetime.now() < self.max_end_time
                 and self.iteration < max_iteration_target
                 and not self._stop_requested
             ):

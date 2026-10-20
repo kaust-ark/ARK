@@ -14,18 +14,32 @@ from pathlib import Path
 @pytest.mark.network
 class TestNetworkSearch:
     def test_search_and_fetch(self):
-        from ark.citation import search_papers, fetch_bibtex
-        papers = search_papers("Vaswani Attention Is All You Need", max_results=5)
-        assert len(papers) > 0
-        # Should find the Vaswani paper
-        match = [p for p in papers if "attention" in p.title.lower() and p.year == 2017]
-        assert len(match) > 0
+        """Find a specific known paper among live results, then fetch its BibTeX.
 
-        # Fetch BibTeX
-        bib = fetch_bibtex(match[0])
+        Identification goes through ``_same_paper`` rather than through the top
+        hit, because search RANKING is not a stable thing to assert on. This
+        test previously looked for the 2017 "Attention Is All You Need" in the
+        first five hits and rotted: DBLP now returns a crowd of later papers
+        reusing that exact title, and the original falls past the twentieth
+        result. That drift is also why the production path stopped trusting
+        rank — so exercise the same discriminators here.
+        """
+        from ark.citation import search_papers, fetch_bibtex, _same_paper
+        title = "Deep Residual Learning for Image Recognition"
+        papers = search_papers(title, max_results=10)
+        assert len(papers) > 0
+        # Real records, not empty shells — the sanity check that catches a
+        # parser change or a silently-failing HTTP layer.
+        assert all(p.title for p in papers)
+
+        match = _same_paper(title, {"title": title, "year": "2016",
+                                    "author": "He, Kaiming"}, papers)
+        assert match is not None, [(p.year, p.title) for p in papers]
+
+        bib = fetch_bibtex(match)
         assert bib is not None
-        assert "@" in bib
-        assert "Vaswani" in bib or "vaswani" in bib
+        assert bib.lstrip().startswith("@")
+        assert "he" in bib.lower()
 
     def test_verify_real_vs_fake(self, tmp_path):
         from ark.citation import verify_bib

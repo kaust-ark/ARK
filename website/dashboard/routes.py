@@ -452,7 +452,21 @@ def _require_model_key(keys: dict, model_variant: str) -> None:
 _PREFLIGHT_MIN_USD = 2.0
 
 
-def _provider_preflight(keys: dict) -> None:
+def _is_free_model(model_variant: str) -> bool:
+    """Models that bill nothing, so credit balance is irrelevant to them.
+
+    OpenRouter's zero-cost variants carry a ':free' suffix. Gemini AI Studio
+    free-tier models have no marker in the slug — a `gemini/…` model is billed
+    (or not) by the KEY's project, and the picker's chip is only offered for
+    the free lane. Without this clause the OpenRouter credit preflight blocked
+    gemini launches whenever the user ALSO had a low-balance OpenRouter key:
+    a balance check for a provider the run never touches.
+    """
+    mv = (model_variant or "").strip()
+    return mv.endswith(":free") or mv.startswith("gemini/")
+
+
+def _provider_preflight(keys: dict, model_variant: str = "") -> None:
     """Fail-fast on CONFIRMED insufficient provider balance at launch.
 
     Seam: one function per provider with a queryable balance; only OpenRouter
@@ -460,7 +474,14 @@ def _provider_preflight(keys: dict) -> None:
     free and instant). Fail-OPEN on every uncertainty: no key, no endpoint,
     timeout, schema drift -> allow the launch. Only a positive signal
     'remaining < $2' blocks, with the exact numbers in the message.
+
+    A ':free' model bills nothing, so balance is irrelevant to it -- gating it
+    on credit would disable the free row exactly when it is needed (the account
+    sat at $0.27 with all paid testing blocked, which is why free models exist
+    in the picker at all).
     """
+    if _is_free_model(model_variant):
+        return
     key = keys.get("openrouter")
     if not key:
         return
@@ -669,6 +690,12 @@ def _cheapest_model_for(keys: dict) -> str:
     """Pick the cheapest first-party model for whichever provider the user has a
     key for (used by the cheap test-project preset). Falls back to Haiku 5.5 — which,
     if only an OpenRouter key is present, gets routed through OpenRouter at launch.
+
+    Deliberately NOT an OpenRouter ``:free`` model, even though those cost $0:
+    the free tier is rate-limited per DAY and the quota is shared account-wide,
+    so the test preset — whose whole job is a dependable end-to-end smoke run —
+    would stall mid-pipeline on a 429 and burn the same quota the team needs for
+    manual testing. Free models stay an explicit pick in the picker's free row.
     """
     keys = keys or {}
     if keys.get("anthropic"):
@@ -714,6 +741,29 @@ def _reject_unknown_backend(value: str, valid: frozenset, label: str) -> None:
     base = (value or "local").split(":", 1)[0]
     if base not in valid:
         raise HTTPException(400, f"Unknown {label} compute backend: {value!r}")
+    # A cloud backend on a deployment with no cloud configured. The experiment
+    # chips are already hidden for this, but the ORCHESTRATOR's "☁️ Cloud" radio
+    # was never gated, so it stayed selectable on a host with no cloud project
+    # and no `sky` installed. Rejecting here rather than at launch matters: past
+    # that point the project row exists and the user watches a "running" project
+    # fail minutes later on a missing optional dependency.
+    if base == "skypilot" and not _any_cloud_configured():
+        raise HTTPException(
+            400,
+            "Cloud compute is not configured on this deployment. Choose Local or "
+            "Slurm, or ask an operator to configure a cloud provider in settings.",
+        )
+
+
+def _any_cloud_configured() -> bool:
+    """Whether ANY SkyPilot cloud has an operator-configured launcher.
+
+    Same signal ``/api/system`` hands the UI, kept in one place so the button
+    the user sees and the check that admits the request cannot disagree.
+    """
+    return bool(settings.cloud_gcp_project
+                or settings.cloud_launcher_role_arn
+                or settings.cloud_launcher_aws_credential_source)
 
 
 async def _validate_instance_type_or_400(backend: str, instance_type: str) -> str:
@@ -2642,7 +2692,7 @@ async def api_create_project(
 
     # Model↔key match guard (fail fast; see _require_model_key).
     _require_model_key(keys, model_variant)
-    _provider_preflight(keys)
+    _provider_preflight(keys, model_variant)
 
     # Page fitting strictness: relaxed (no adjustment) | balanced (within ~1 page,
     # default) | strict (exact). Back-compat: old 'off' == new 'relaxed'.
@@ -3117,7 +3167,7 @@ async def api_restart_project(project_id: str, request: Request):
             raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
         _owner = get_user(session, project.user_id)
         _require_model_key(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
-        _provider_preflight(_get_user_keys(_owner) if _owner else {})
+        _provider_preflight(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
         # No concurrent hard-reject: if the user's lane is full the restart is
         # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
         # consistent with new-project submission.
@@ -3297,7 +3347,7 @@ async def api_continue_project(project_id: str, request: Request):
             raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
         _owner = get_user(session, project.user_id)
         _require_model_key(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
-        _provider_preflight(_get_user_keys(_owner) if _owner else {})
+        _provider_preflight(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
         # No concurrent hard-reject: if the user's lane is full the continue is
         # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
         # consistent with new-project submission.

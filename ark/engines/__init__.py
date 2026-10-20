@@ -466,6 +466,22 @@ Execute the task and update the corresponding files.
                 )
                 timer.stop()
 
+                # Keep the runner's raw event stream. It is the ONLY record of
+                # what the agent actually did (every action, observation and
+                # rejection); parse_output distils it to a summary and the rest
+                # used to vanish with the pipe. Three post-mortems in one night
+                # dead-ended on exactly that — "the agent ran 161s and produced
+                # nothing" with no way to see the 161 seconds.
+                try:
+                    _ld = getattr(self, "log_dir", None)
+                    if _ld and stdout:
+                        _f = (Path(_ld) / "agent_streams" /
+                              f"{time.strftime('%Y%m%d_%H%M%S')}_{agent_type}.jsonl")
+                        _f.parent.mkdir(parents=True, exist_ok=True)
+                        _f.write_text(stdout)
+                except Exception:
+                    pass
+
                 if timeout_expired:
                     self.log(f"Agent {agent_type} timed out ({timeout}s)", "WARN")
                 
@@ -485,6 +501,26 @@ Execute the task and update the corresponding files.
                     usage_record = parsed.get("usage")
                     oh_error_code = parsed.get("error_code")
                     oh_error_detail = parsed.get("error_detail")
+                    # Tool calls the environment REJECTED. Not fatal — the agent
+                    # is allowed to fail and recover — but they must be visible,
+                    # because the failure mode they precede is silent: the agent
+                    # summarises the rejected call as if it had worked, and every
+                    # later phase builds on a file that was never written.
+                    # Observed end-to-end on a local 32B: write to "/local_ok.txt"
+                    # → "Permission denied" → "The file has been created."
+                    # Weaker models do this far more, and free/local models are
+                    # exactly where we now run. Logged rather than raised: a
+                    # rejected call is often a legitimate probe.
+                    for line in (parsed.get("failed_tools") or [])[-3:]:
+                        self.log(f"  [{agent_type}] tool call rejected — {line}",
+                                 "WARN")
+                    sandbox_note = parsed.get("sandbox")
+                    if sandbox_note:
+                        # WARN when the sandbox fell back to the host, INFO when
+                        # it held. Either way it is now on the record per call.
+                        held = "FAILED" not in sandbox_note.upper()
+                        self.log(f"  [{agent_type}] {sandbox_note}",
+                                 "INFO" if held else "WARN")
                 else:
                     result = stdout
 
@@ -539,6 +575,36 @@ Execute the task and update the corresponding files.
                         "connection broken", "server disconnected",
                         "eof occurred", "remoteprotocolerror",
                         "bad gateway", "gateway timeout",
+                        # An upstream provider 5xx relayed by the gateway. The
+                        # code is a generic APIError; only the detail names the
+                        # real cause ("Upstream error from Nvidia: Internal
+                        # server error"). This killed a run that had already
+                        # produced a clean 7.6/10 paper — one hiccup at the
+                        # review step discarded the whole thing. Any provider
+                        # can 5xx, so this is not a free-tier concern.
+                        "upstream error", "internal server error",
+                        "service unavailable", "temporarily unavailable",
+                        "overloaded",
+                        # A 429 is transient BY DEFINITION, but litellm does not
+                        # always say RateLimitError: Gemini's quota 429 comes
+                        # wrapped as BadRequestError, whose "check your plan and
+                        # billing details" text then reads like a billing-cap
+                        # message and was classified terminal. That combination
+                        # killed run 382656fd in its review pass, minutes after
+                        # the dev phase had delivered a complete paper on the
+                        # free tier. If it is really a DAILY cap, the bounded
+                        # retries below exhaust and the run still fails — this
+                        # only stops a minute-window 429 from being lethal.
+                        '"code": 429', "resource_exhausted",
+                        "exceeded your current quota",
+                        # The SDK's loop detector ("Remote conversation got
+                        # stuck") means the agent wedged on a repeated action —
+                        # a fresh conversation with the RETRY NOTE below is the
+                        # remedy, not an abort. Wiring the note without adding
+                        # this pattern was a half-fix: 4906d1a2 died on its
+                        # first stuck verdict with zero retries, because the
+                        # note lived in a branch this error never reached.
+                        "got stuck",
                         # Empty/truncated provider body: litellm fails to parse a
                         # JSON response because OpenRouter (or its upstream) returned
                         # blank/non-JSON bytes mid-request. Same transient class as
@@ -559,8 +625,22 @@ Execute the task and update the corresponding files.
                     if _is_transient and attempt < MAX_RETRIES:
                         # Network/stream disconnects clear immediately — retry
                         # promptly; rate-limit codes honour the server's wait.
+                        # QUOTA hits are neither: a minute-window 429 stays
+                        # closed for up to 60s no matter how it was wrapped, so
+                        # short network-style waits (5/10/15s) burn all four
+                        # attempts inside ONE window — that tail-end pattern
+                        # took down two gemini free runs (382656fd, a3ecafe8)
+                        # AFTER their papers were written. Wait a full window.
+                        _quota = ("429" in _detail_l or "quota" in _detail_l
+                                  or "resource_exhausted" in _detail_l
+                                  or "rate limit" in _detail_l)
                         _net = any(s in _detail_l for s in _TRANSIENT_DETAIL)
-                        wait_s = 5 * attempt if _net else min(self._parse_rate_limit_wait(oh_error_detail or ""), 120)
+                        if _quota:
+                            wait_s = min(max(self._parse_rate_limit_wait(oh_error_detail or ""), 65), 180)
+                        elif _net:
+                            wait_s = 5 * attempt
+                        else:
+                            wait_s = min(self._parse_rate_limit_wait(oh_error_detail or ""), 120)
                         self.log(
                             f"  Transient ({oh_error_code}) — waiting {wait_s}s, then "
                             f"retry (attempt {attempt + 1}/{MAX_RETRIES})",
@@ -576,6 +656,29 @@ Execute the task and update the corresponding files.
                         timer.stop()
                         RateLimitCountdown(wait_s).run()
                         self._rate_limit_notified = False
+                        # A "stuck" verdict is the SDK's loop detector: the
+                        # agent repeated an identical failing tool call until
+                        # the pattern threshold fired. Retrying the SAME task
+                        # verbatim reproduces the loop — a weak model repeats
+                        # its own prior even across fresh conversations (B20
+                        # spent three hours failing four identical attempts;
+                        # B21 looped a str_replace whose LaTeX old_str never
+                        # matched). Tell the retry what happened and take the
+                        # brittle move off the table.
+                        if "got stuck" in _detail_l:
+                            full_prompt += (
+                                "\n\n## RETRY NOTE — your previous attempt was "
+                                "terminated for looping\n"
+                                "It repeated an identical failing tool call "
+                                "(often a str_replace whose old_str did not "
+                                "match) until the loop detector stopped it. On "
+                                "this attempt: NEVER re-issue a tool call that "
+                                "just failed with the same arguments. If a "
+                                "str_replace fails once, do not adjust it — "
+                                "re-read the file and REWRITE THE WHOLE FILE "
+                                "with the file editor's create command instead. "
+                                "If a command fails twice, move on and note it "
+                                "in your summary.\n")
                         start_time = time.time()
                         continue  # one bounded transient retry
                     # Not transient (or transient retries exhausted): surface the

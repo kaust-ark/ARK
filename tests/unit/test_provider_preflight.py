@@ -45,3 +45,20 @@ def test_network_error_fails_open():
 def test_schema_drift_fails_open():
     with patch("urllib.request.urlopen", return_value=_resp({"data": {}})):
         _provider_preflight({"openrouter": "k"})
+
+
+def test_free_model_skips_the_balance_gate():
+    """A ':free' model bills nothing, so an empty balance must not block it —
+    the free row exists precisely for a spent account."""
+    with patch("urllib.request.urlopen",
+               return_value=_resp({"data": {"total_credits": 500.0, "total_usage": 499.73}})):
+        _provider_preflight({"openrouter": "k"},
+                            "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free")
+
+
+def test_paid_model_still_blocked_on_low_balance():
+    """The free-model bypass must not leak to paid slugs of the same vendor."""
+    with patch("urllib.request.urlopen",
+               return_value=_resp({"data": {"total_credits": 500.0, "total_usage": 499.73}})):
+        with pytest.raises(HTTPException):
+            _provider_preflight({"openrouter": "k"}, "openrouter/deepseek/deepseek-v4-pro")

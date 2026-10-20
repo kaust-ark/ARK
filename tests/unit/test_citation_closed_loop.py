@@ -24,9 +24,14 @@ _ENTRY = """@article{sola1997importance,
 _MARKER = "% [NEEDS-CHECK: citation not verified]\n"
 
 
-def _paper(title):
+def _paper(title, year=1997, authors=("J. Sola", "J. Sevilla")):
+    """An API hit. Year and authors default to the entry's own, because a real
+    DBLP/CrossRef record always carries them and the match now uses them to
+    tell a same-titled DIFFERENT paper from the one actually cited."""
     p = MagicMock()
     p.title = title
+    p.year = year
+    p.authors = list(authors)
     return p
 
 
@@ -76,3 +81,69 @@ def test_remove_entries_drops_entry_and_marker(tmp_path):
     assert "sola1997importance" not in text
     assert "NEEDS-CHECK" not in text
     assert "keepme2020" in text  # untouched sibling survives
+
+
+# ── Same title is not the same paper ─────────────────────────────────────────
+# Popular titles get reused. DBLP's live results for "Attention Is All You
+# Need" are dominated by recent unrelated papers reusing the phrase, with the
+# 2017 original nowhere in the first ten hits — so picking the first
+# title-similar result replaces a correct reference with a confidently wrong
+# one. These pin the discriminators the entry already carries.
+
+def test_same_title_different_year_is_not_accepted(tmp_path):
+    bib = tmp_path / "references.bib"
+    bib.write_text(_MARKER + _ENTRY + "\n")
+    impostor = _paper(  # exact title, but published 27 years later by others
+        "Importance of input data normalization for the application of "
+        "neural networks to complex industrial problems",
+        year=2024, authors=("Nobody, Q.",))
+    with patch("ark.citation.search_papers", return_value=[impostor]):
+        replaced, unresolved = replace_unverified_entries(str(bib), [_needs_check()])
+    assert replaced == [] and unresolved == ["sola1997importance"]
+    assert bib.read_text() == _MARKER + _ENTRY + "\n"   # left for a human
+
+
+def test_same_title_different_author_is_not_accepted(tmp_path):
+    bib = tmp_path / "references.bib"
+    bib.write_text(_MARKER + _ENTRY + "\n")
+    impostor = _paper(
+        "Importance of input data normalization for the application of "
+        "neural networks to complex industrial problems",
+        year=1997, authors=("Someone, Else",))
+    with patch("ark.citation.search_papers", return_value=[impostor]):
+        replaced, _ = replace_unverified_entries(str(bib), [_needs_check()])
+    assert replaced == []
+
+
+def test_the_real_paper_is_taken_even_when_impostors_rank_first(tmp_path):
+    """Ranking is the search engine's business, identity is ours."""
+    bib = tmp_path / "references.bib"
+    bib.write_text(_MARKER + _ENTRY + "\n")
+    title = ("Importance of input data normalization for the application of "
+             "neural networks to complex industrial problems")
+    hits = [_paper(title, year=2024, authors=("Nobody, Q.",)),
+            _paper(title, year=2023, authors=("Other, P.",)),
+            _paper(title, year=1997, authors=("Sola, J.", "Sevilla, J."))]
+    with patch("ark.citation.search_papers", return_value=hits), \
+         patch("ark.citation.fetch_bibtex",
+               return_value="@article{x1997,\n  title = {Importance},\n"
+                            "  author = {Sola, J.},\n  year = {1997}\n}"):
+        replaced, unresolved = replace_unverified_entries(str(bib), [_needs_check()])
+    assert replaced == ["sola1997importance"] and unresolved == []
+    assert "sola1997importance" in bib.read_text()      # re-keyed, \cite survives
+
+
+def test_a_source_that_omits_year_and_authors_is_still_usable(tmp_path):
+    """Missing evidence is not counter-evidence — arXiv and S2 records are
+    routinely sparse, and this second pass exists to reach them."""
+    bib = tmp_path / "references.bib"
+    bib.write_text(_MARKER + _ENTRY + "\n")
+    sparse = _paper(
+        "Importance of input data normalization for the application of "
+        "neural networks to complex industrial problems",
+        year=None, authors=())
+    with patch("ark.citation.search_papers", return_value=[sparse]), \
+         patch("ark.citation.fetch_bibtex",
+               return_value="@article{x,\n  title = {Importance}\n}"):
+        replaced, _ = replace_unverified_entries(str(bib), [_needs_check()])
+    assert replaced == ["sola1997importance"]

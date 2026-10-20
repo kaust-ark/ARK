@@ -143,3 +143,49 @@ def test_repair_creates_section_before_bib(tmp_path):
     assert ensure_disclosure_in_tex(tex_path) is True
     out = tex_path.read_text()
     assert re.search(r"\\section\*\{Acknowledgments\}[\s\S]*idea2paper\.org[\s\S]*\\bibliographystyle", out)
+
+
+# ── Most figures left on the floor ───────────────────────────────────────────
+# The rule used to fire only at ZERO references. Smoke run 36763067 generated
+# four figures, a writing pass deleted three \includegraphics blocks, one
+# remained — and the contract reported "all checks passed" on a paper missing
+# two thirds of its evidence.
+
+def _tex_with(*figures):
+    inc = "".join(f"\\includegraphics[width=\\columnwidth]{{figures/{f}}}\n"
+                  for f in figures)
+    return ("\\documentclass{article}\\begin{document}Body \\cite{a}.\n" + inc +
+            "\\section*{Acknowledgments}\n" + ARK_ACK_TEXT +
+            "\n\\bibliography{references}\\end{document}")
+
+
+def _figures(project, *stems):
+    for stem in stems:
+        (project / "paper" / "figures" / f"{stem}.pdf").write_bytes(b"x" * 6000)
+        (project / "paper" / "figures" / f"{stem}.png").write_bytes(b"x" * 6000)
+
+
+def test_shipping_one_of_four_generated_figures_is_flagged(tmp_path):
+    p = _project(tmp_path, _tex_with("fig_main.pdf"), GOOD_PDF_TEXT)
+    _figures(p, "fig_main", "fig_ablation", "fig_concept", "fig_convergence")
+    rep = evaluate(p)
+    v = [f for f in rep.violations if f.check == "figures_referenced"]
+    assert v, "a paper using 1 of 4 generated figures must not pass silently"
+    assert v[0].severity == "soft"
+    assert "fig_ablation" in v[0].detail        # names what went missing
+
+
+def test_the_png_pdf_pair_of_one_figure_counts_once(tmp_path):
+    """Both formats of a single plot must not read as two unused figures."""
+    p = _project(tmp_path, _tex_with("fig_main.pdf"), GOOD_PDF_TEXT)
+    _figures(p, "fig_main")
+    rep = evaluate(p)
+    assert not [f for f in rep.violations if f.check == "figures_referenced"]
+
+
+def test_a_spare_figure_is_tolerated(tmp_path):
+    """Generating one extra is normal practice, not a defect."""
+    p = _project(tmp_path, _tex_with("fig_a.pdf", "fig_b.pdf"), GOOD_PDF_TEXT)
+    _figures(p, "fig_a", "fig_b", "fig_spare")
+    rep = evaluate(p)
+    assert not [f for f in rep.violations if f.check == "figures_referenced"]
