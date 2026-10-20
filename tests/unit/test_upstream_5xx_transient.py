@@ -8,7 +8,7 @@ transient list missed it — only the detail text names the real cause.
 import re
 from pathlib import Path
 
-SRC = Path("/home/xinj/ARK/ark/engines/__init__.py").read_text()
+SRC = (Path(__file__).resolve().parents[2] / "ark" / "engines" / "__init__.py").read_text()
 
 
 def _transient_details():
