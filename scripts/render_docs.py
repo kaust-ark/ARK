@@ -43,9 +43,13 @@ def render_one(readme: Path, shell: Path, out: Path, asset_prefix: str) -> None:
     if MARKER in src:
         src = src.split(MARKER, 1)[1]
 
-    # Repo-relative artifacts don't exist on the website — point them at GitHub.
-    src = re.sub(r"\]\((?!http|#|mailto)([^)]+\.(?:ya?ml|sh|md|py))\)",
-                 r"](https://github.com/kaust-ark/ARK/blob/main/\1)", src)
+    # Repo-relative artifacts don't exist on the website, and the site does not
+    # link to the repository. The installer is the exception: this site serves
+    # it. Everything else keeps its name as text, which is what a self-hoster
+    # looks up in their own checkout.
+    src = re.sub(r"\]\(website/homepage/install\.sh\)", "](/install.sh)", src)
+    src = re.sub(r"(?<!!)\[([^\]]*)\]\((?!http|#|mailto|/)([^)]+\.(?:ya?ml|sh|md|py))\)",
+                 r"\1", src)
     # GitHub-flavored alert blocks → plain emphasized paragraphs.
     src = re.sub(r"^> \[!(?:NOTE|TIP|IMPORTANT|WARNING)\]\s*$", ">", src, flags=re.M)
 

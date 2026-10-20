@@ -221,10 +221,6 @@
       <a href="/dashboard">لوحة التحكم</a>
       <a href="doc.html" style="color:var(--teal);font-weight:600">التوثيق</a>
       <a href="about.html">حول</a>
-      <a href="https://github.com/kaust-ark/ARK" target="_blank" rel="noopener" class="gh-link">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 00-3.8 23.38c.6.11.82-.26.82-.58v-2.16c-3.34.73-4.04-1.61-4.04-1.61a3.18 3.18 0 00-1.33-1.76c-1.09-.74.08-.73.08-.73a2.52 2.52 0 011.84 1.24 2.56 2.56 0 003.5 1 2.56 2.56 0 01.76-1.61c-2.67-.3-5.47-1.33-5.47-5.93a4.64 4.64 0 011.24-3.22 4.3 4.3 0 01.12-3.18s1-.33 3.3 1.23a11.4 11.4 0 016 0c2.3-1.56 3.3-1.23 3.3-1.23a4.3 4.3 0 01.12 3.18 4.64 4.64 0 011.24 3.22c0 4.61-2.81 5.63-5.48 5.93a2.86 2.86 0 01.82 2.22v3.29c0 .32.21.7.82.58A12 12 0 0012 .3"/></svg>
-        GitHub
-      </a>
       <div class="lang-dropdown">
         <button class="lang-toggle-btn" aria-label="Language">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
@@ -318,7 +314,7 @@ ark new myproject   # معالج إنشاء المشروع
 ark run  myproject
 ark monitor myproject
 </code></pre>
-<p>شغّل <code>ark webapp login &lt;email&gt;</code> في أي وقت للحصول على رابط دخول جديد. خيارات السكربت الكاملة: <a href="https://github.com/kaust-ark/ARK/blob/main/website/homepage/install.sh"><code>website/homepage/install.sh --help</code></a>.</p>
+<p>شغّل <code>ark webapp login &lt;email&gt;</code> في أي وقت للحصول على رابط دخول جديد. خيارات السكربت الكاملة: <a href="/install.sh"><code>website/homepage/install.sh --help</code></a>.</p>
 <h3 id="البدء-من-ملف-pdf-موجود">البدء من ملف PDF موجود</h3>
 <pre><code class="language-bash">ark new myproject --from-pdf proposal.pdf
 </code></pre>
@@ -466,7 +462,7 @@ ark doctor
 <li><strong>إفصاح استخدام الذكاء الاصطناعي.</strong> تحمل كل ورقة تنويهاً بأنها أُنتجت بواسطة Idea2Paper وروجعت من قبل المؤلفين — يُدرج تلقائياً، ولكل مؤتمر.</li>
 <li><strong>طبقتا إنفاذ.</strong> تعترض أغلفة Shadow-PATH الأوامر الخطرة <em>قبل</em> تشغيلها؛ ويتكفل قاطع الدارة بأي شيء يتجاوزها. كما تخضع إجراءات المنسق الذاتية (تجهيز السحابة / git push / الإنفاق) للرقابة أيضاً — أما الأوامر التي تطلقها أنت بنفسك (<code>ark clear</code>، الحذف، الإيقاف) فلا.</li>
 </ul>
-<p>يُضبط كل ذلك ضمن كتلة <code>intervention:</code> في <a href="https://github.com/kaust-ark/ARK/blob/main/config.example.yaml"><code>config.example.yaml</code></a>؛ ومستوى الاستقلالية الافتراضي (<code>standard</code>) لا يقاطعك إلا في الإجراءات عالية الخطورة فعلاً.</p>
+<p>يُضبط كل ذلك ضمن كتلة <code>intervention:</code> في <code>config.example.yaml</code>؛ ومستوى الاستقلالية الافتراضي (<code>standard</code>) لا يقاطعك إلا في الإجراءات عالية الخطورة فعلاً.</p>
 <hr />
 <h2 id="ما-الذي-يميز-idea2paper">ما الذي يميز idea2paper</h2>
 <table>
@@ -727,7 +723,7 @@ ark run myproject
 
 <h3 id="استضافة-idea2paper-للآخرين؟">استضافة Idea2Paper للآخرين؟</h3>
 <p>إعداد نسخة Idea2Paper <strong>مستضافة ومتعددة المستأجرين</strong> — إعداد الخادم وتطبيق الويب، والنشر الجماعي عبر prod المشترك، وإعداد مشغّل GCP/AWS الذي يتيح للعملاء تشغيل الحوسبة السحابية في حساباتهم الخاصة — موثّق بالكامل في دليل المشغّل (بالإنجليزية):</p>
-<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong></p>
+<p><strong>→ docs/DEPLOYMENT.md</strong></p>
 <details>
 <summary><strong>الاستدعاء المباشر للمنسق</strong></summary>
 
@@ -792,7 +788,7 @@ docker compose -f docker/docker-compose.yml up --build -d
 <ol>
 <li>افتح لوحة <strong>Settings</strong> (أيقونة ⚙️ في شريط التنقل العلوي).</li>
 <li>افتح تبويب <strong>Compute</strong>.</li>
-<li>أدخل <strong>GCP Project ID</strong> الخاص بك، وامنح حساب الخدمة المعروض <code>ark-launcher</code> الأدوار المطلوبة على مشروعك، ثم انقر <strong>Verify access</strong>. (لا يتم رفع أي مفتاح لحساب خدمة — بل تفوّض الوصول إلى مشروعك عبر IAM. للمشغّلين: راجع <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md"><code>docs/DEPLOYMENT.md</code></a> §4.)</li>
+<li>أدخل <strong>GCP Project ID</strong> الخاص بك، وامنح حساب الخدمة المعروض <code>ark-launcher</code> الأدوار المطلوبة على مشروعك، ثم انقر <strong>Verify access</strong>. (لا يتم رفع أي مفتاح لحساب خدمة — بل تفوّض الوصول إلى مشروعك عبر IAM. للمشغّلين: راجع <code>docs/DEPLOYMENT.md</code> §4.)</li>
 <li>انقر <strong>Save</strong>.</li>
 </ol>
 <p>عند إنشاء مشروع جديد يمكنك الآن الاختيار بشكل مستقل:
@@ -827,7 +823,7 @@ docker compose -f docker/docker-compose.yml up --build -d
 <p>إعداد مشغّل GCP / AWS / SkyPilot — بناء الصورة المخبوزة، وإنشاء هوية <code>ark-launcher</code>
 المركزية، وضبط <code>webapp.env</code> — هو مهمة <strong>مشغّل</strong> تُنفَّذ مرة واحدة لكل نسخة مستضافة.
 وهي موثّقة خطوة بخطوة لكل سحابة في دليل النشر (بالإنجليزية):</p>
-<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong> — §4 GCP · §5 AWS · §6 إعداد العملاء · §8.4 مرجع <code>config.yaml</code>.</p>
+<p><strong>→ docs/DEPLOYMENT.md</strong> — §4 GCP · §5 AWS · §6 إعداد العملاء · §8.4 مرجع <code>config.yaml</code>.</p>
 <p>إن كنت <em>تستخدم</em> نسخة مستضافة، فلا حاجة لتشغيل أيٍّ من ذلك — افتح فقط
 <strong>Settings → Compute</strong>، أدخل مشروع GCP / حساب AWS الخاص بك، وانقر <strong>Verify access</strong>
 (أعلاه). التشغيل على <strong>Azure أو Kubernetes</strong>؟ يدعم SkyPilot ذلك أيضاً؛ اضبط بيانات
@@ -887,7 +883,7 @@ docker compose -f docker/docker-compose.yml up --build -d
       Idea2Paper
     </div>
     <div class="footer-links">
-      <a href="https://github.com/kaust-ark/ARK/blob/main/LICENSE" target="_blank" rel="noopener">رخصة Apache 2.0</a>
+      <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener">رخصة Apache 2.0</a>
     </div>
     <p class="footer-note">بُني باستخدام <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">Claude Code</a></p>
     <a class="footer-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="../assets/kaust-logo.svg" alt="KAUST" /></a>

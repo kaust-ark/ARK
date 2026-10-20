@@ -270,7 +270,7 @@ ark new myproject   # 交互式项目向导
 ark run  myproject
 ark monitor myproject
 </code></pre>
-<p>随时跑 <code>ark webapp login &lt;email&gt;</code> 获取新的登录链接。完整脚本参数见 <a href="https://github.com/kaust-ark/ARK/blob/main/website/homepage/install.sh"><code>website/homepage/install.sh --help</code></a>。</p>
+<p>随时跑 <code>ark webapp login &lt;email&gt;</code> 获取新的登录链接。完整脚本参数见 <a href="/install.sh"><code>website/homepage/install.sh --help</code></a>。</p>
 <h3 id="从现有-pdf-开始">从现有 PDF 开始</h3>
 <pre><code class="language-bash">ark new myproject --from-pdf proposal.pdf
 </code></pre>
@@ -418,7 +418,7 @@ ark doctor
 <li><strong>AI 使用声明。</strong> 每篇论文都自动附带一段致谢，说明它由 Idea2Paper 生成并经作者审阅——对所有会议一视同仁。</li>
 <li><strong>两层强制机制。</strong> Shadow-PATH 包装器在危险命令<em>运行前</em>拦截；熔断器兜底任何绕过它的行为。编排器自身的云开通 / git push / 花费动作同样受管控——但你亲手触发的命令（<code>ark clear</code>、删除、停止）不受限制。</li>
 </ul>
-<p>以上都在 <a href="https://github.com/kaust-ark/ARK/blob/main/config.example.yaml"><code>config.example.yaml</code></a> 的 <code>intervention:</code> 块中配置；默认的自主级别（<code>standard</code>）只在真正高风险的操作上打断你。</p>
+<p>以上都在 <code>config.example.yaml</code> 的 <code>intervention:</code> 块中配置；默认的自主级别（<code>standard</code>）只在真正高风险的操作上打断你。</p>
 <hr />
 <h2 id="idea2paper-的独特之处">idea2paper 的独特之处</h2>
 <table>
@@ -679,7 +679,7 @@ ark run myproject
 
 <h3 id="为他人托管-idea2paper">为他人托管 Idea2Paper？</h3>
 <p>搭建一个<strong>托管的、多租户</strong>的 Idea2Paper 实例——主机与 Web 应用配置、共享 prod 的团队发布，以及让客户在各自云账号中运行云端计算的 GCP/AWS 启动器设置——在运维手册中有完整的分步说明（英文）：</p>
-<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong></p>
+<p><strong>→ docs/DEPLOYMENT.md</strong></p>
 <details>
 <summary><strong>直接调用编排器</strong></summary>
 
@@ -762,7 +762,7 @@ idea2paper 为云端计算使用三层配置模型：
 <ol>
 <li>打开<strong>设置</strong>面板 (顶部导航栏中的 ⚙️ 图标)。</li>
 <li>打开 <strong>Compute</strong> 标签页。</li>
-<li>输入您的 <strong>GCP Project ID</strong>，为显示的 <code>ark-launcher</code> 服务账号授予您项目上所需的角色，然后点击 <strong>Verify access</strong>。（不会上传任何服务账号密钥 &mdash; 您通过 IAM 将访问权限委托给您自己的项目。运维者请参见 <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md"><code>docs/DEPLOYMENT.md</code></a> §4。）</li>
+<li>输入您的 <strong>GCP Project ID</strong>，为显示的 <code>ark-launcher</code> 服务账号授予您项目上所需的角色，然后点击 <strong>Verify access</strong>。（不会上传任何服务账号密钥 &mdash; 您通过 IAM 将访问权限委托给您自己的项目。运维者请参见 <code>docs/DEPLOYMENT.md</code> §4。）</li>
 <li>点击<strong>保存</strong>。</li>
 </ol>
 <p>创建新项目时，您现在可以独立选择：
@@ -795,7 +795,7 @@ idea2paper 为云端计算使用三层配置模型：
 <hr />
 <h3 id="云端提供商设置">云端提供商设置</h3>
 <p>配置 GCP / AWS / SkyPilot 启动器——构建预烘焙镜像、创建中央 <code>ark-launcher</code> 身份、写入 <code>webapp.env</code>——是每个托管实例只需做一次的<strong>运维</strong>任务。它按云分步记录在部署指南中（英文）：</p>
-<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong> — §4 GCP · §5 AWS · §6 客户接入 · §8.4 <code>config.yaml</code> 参考。</p>
+<p><strong>→ docs/DEPLOYMENT.md</strong> — §4 GCP · §5 AWS · §6 客户接入 · §8.4 <code>config.yaml</code> 参考。</p>
 <p>如果您只是<em>使用</em>托管实例，则无需运行上述任何步骤——只需打开 <strong>Settings → Compute</strong>，输入您的 GCP 项目 / AWS 账号，然后点击 <strong>Verify access</strong>（见上）。在 <strong>Azure 或 Kubernetes</strong> 上运行？SkyPilot 同样支持；请按 <a href="https://docs.skypilot.co">SkyPilot 文档</a> 配置该云的凭据。</p>
 <hr />
 <details>
@@ -853,7 +853,7 @@ idea2paper 为云端计算使用三层配置模型：
       Idea2Paper
     </div>
     <div class="footer-links">
-      <a href="https://github.com/kaust-ark/ARK/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0 许可证</a>
+      <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener">Apache 2.0 许可证</a>
     </div>
     <p class="footer-note">使用 <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">Claude Code</a> 构建</p>
     <a class="footer-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="../assets/kaust-logo.svg" alt="KAUST" /></a>

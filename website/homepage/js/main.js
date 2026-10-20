@@ -219,24 +219,6 @@ const qsObserver = new IntersectionObserver((entries) => {
 const qsTerminal = document.querySelector('.quickstart-terminal');
 if (qsTerminal) qsObserver.observe(qsTerminal);
 
-/* ===== Copy Button with Animated Checkmark ===== */
-const copyBtn = document.getElementById('copyBtn');
-if (copyBtn) {
-  copyBtn.addEventListener('click', () => {
-    const commands = `git clone https://github.com/kaust-ark/ARK.git && cd ARK\npip install -e .\nark new mma\nark run mma\nark monitor mma`;
-    navigator.clipboard.writeText(commands).then(() => {
-      copyBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline class="checkmark-path" points="20 6 9 17 4 12"/></svg> Copied!`;
-      copyBtn.style.color = '#2dd4bf';
-      copyBtn.style.borderColor = '#2dd4bf';
-      setTimeout(() => {
-        copyBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" fill="none" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy`;
-        copyBtn.style.color = '';
-        copyBtn.style.borderColor = '';
-      }, 2000);
-    });
-  });
-}
-
 /* ===== Roadmap Timeline Drawing ===== */
 function animateRoadmap() {
   const timeline = document.getElementById('roadmapTimeline');

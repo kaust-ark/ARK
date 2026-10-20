@@ -266,7 +266,7 @@ ark new myproject   # interactive project wizard
 ark run  myproject
 ark monitor myproject
 </code></pre>
-<p>Re-run <code>ark webapp login &lt;email&gt;</code> anytime for a fresh sign-in link. Full installer flags: <a href="https://github.com/kaust-ark/ARK/blob/main/website/homepage/install.sh"><code>website/homepage/install.sh --help</code></a>.</p>
+<p>Re-run <code>ark webapp login &lt;email&gt;</code> anytime for a fresh sign-in link. Full installer flags: <a href="/install.sh"><code>website/homepage/install.sh --help</code></a>.</p>
 <h3 id="start-from-an-existing-pdf">Start from an Existing PDF</h3>
 <pre><code class="language-bash">ark new myproject --from-pdf proposal.pdf
 </code></pre>
@@ -426,7 +426,7 @@ The loop repeats until the score reaches the acceptance threshold &mdash; or you
   gated too — but commands you trigger yourself (<code>ark clear</code>, delete, stop) are not.</li>
 </ul>
 <p>Configure it all under the <code>intervention:</code> block in
-<a href="https://github.com/kaust-ark/ARK/blob/main/config.example.yaml"><code>config.example.yaml</code></a>; the default autonomy level
+<code>config.example.yaml</code>; the default autonomy level
 (<code>standard</code>) only interrupts you for genuinely high-stakes actions.</p>
 <hr />
 <h2 id="what-sets-idea2paper-apart">What Sets idea2paper Apart</h2>
@@ -679,7 +679,7 @@ Skills live in `skills/builtin/` and are auto-installed during pipeline bootstra
 shared-prod team releases, and the GCP/AWS launcher setup that lets clients run
 cloud compute in their own accounts — is covered end-to-end in the operator
 runbook:</p>
-<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong></p>
+<p><strong>→ docs/DEPLOYMENT.md</strong></p>
 <details>
 <summary><strong>Direct orchestrator invocation</strong></summary>
 
@@ -814,7 +814,7 @@ This hierarchy lets you define standard defaults once, while easily swapping to 
 <ol>
 <li>Open the <strong>Settings</strong> panel (⚙️ icon in the top navigation bar).</li>
 <li>Open the <strong>Compute</strong> tab.</li>
-<li>Enter your <strong>GCP Project ID</strong>, grant the shown <code>ark-launcher</code> service account the required roles on your project, then click <strong>Verify access</strong>. (No service-account key is uploaded — you delegate access to your own project via IAM. Operators: see <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md"><code>docs/DEPLOYMENT.md</code></a> §4.)</li>
+<li>Enter your <strong>GCP Project ID</strong>, grant the shown <code>ark-launcher</code> service account the required roles on your project, then click <strong>Verify access</strong>. (No service-account key is uploaded — you delegate access to your own project via IAM. Operators: see <code>docs/DEPLOYMENT.md</code> §4.)</li>
 <li>Click <strong>Save</strong>.</li>
 </ol>
 <p>When creating a new project you can now independently select:
@@ -850,7 +850,7 @@ You can inspect or hand-edit this file at any time (e.g., to tune instance type 
 creating the central <code>ark-launcher</code> identity, and wiring <code>webapp.env</code> — is an
 <strong>operator</strong> task done once per hosted instance. It's documented step-by-step,
 per cloud, in the deployment guide:</p>
-<p><strong>→ <a href="https://github.com/kaust-ark/ARK/blob/main/docs/DEPLOYMENT.md">docs/DEPLOYMENT.md</a></strong> — §4 GCP · §5 AWS · §6 client onboarding · §8.4 <code>config.yaml</code> reference.</p>
+<p><strong>→ docs/DEPLOYMENT.md</strong> — §4 GCP · §5 AWS · §6 client onboarding · §8.4 <code>config.yaml</code> reference.</p>
 <p>If you're <em>using</em> a hosted instance, you don't run any of that — just open
 <strong>Settings → Compute</strong>, enter your GCP project / AWS account, and click
 <strong>Verify access</strong> (above). Running on <strong>Azure or Kubernetes</strong>? SkyPilot handles
@@ -920,7 +920,7 @@ What you get:
       Idea2Paper
     </div>
     <div class="footer-links">
-      <a href="https://github.com/kaust-ark/ARK/blob/main/LICENSE" target="_blank" rel="noopener">Apache 2.0 License</a>
+      <a href="https://www.apache.org/licenses/LICENSE-2.0" target="_blank" rel="noopener">Apache 2.0 License</a>
     </div>
     <p class="footer-note">Built with <a href="https://claude.ai/claude-code" target="_blank" rel="noopener">Claude Code</a></p>
     <a class="footer-kaust" href="https://www.kaust.edu.sa" target="_blank" rel="noopener" title="KAUST" aria-label="KAUST"><img src="assets/kaust-logo.svg" alt="KAUST" /></a>
