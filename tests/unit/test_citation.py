@@ -277,3 +277,31 @@ class TestFormatCandidates:
         assert "No papers found" in text
 
 
+
+
+class TestSamePaperAuthorCheck:
+    """The first-author veto must compare people, not encodings."""
+
+    TITLE = "Scaling Laws for Sparse Mixture of Experts Routing"
+
+    def _pick(self, bib_author, api_authors, year=2024):
+        from ark.citation import Paper, _same_paper
+        cand = Paper(title=self.TITLE, authors=api_authors, year=year)
+        return _same_paper(self.TITLE, {"author": bib_author, "year": str(year)}, [cand])
+
+    def test_dblp_homonym_number_is_not_the_surname(self):
+        assert self._pick("Wang, Wei and Li, Bo", ["Wei Wang 0001", "Bo Li"]) is not None
+
+    def test_bibtex_accents_match_unicode(self):
+        assert self._pick('M{\\"u}ller, Thomas', ["Thomas Müller"]) is not None
+
+    def test_braced_surname_matches(self):
+        assert self._pick("{Vaswani}, Ashish", ["Ashish Vaswani"]) is not None
+
+    def test_a_one_letter_misspelling_of_a_long_surname_resolves(self):
+        assert self._pick("Vaswany, Ashish", ["Ashish Vaswani"]) is not None
+
+    @pytest.mark.parametrize("bib, api", [("Li, Wei", "Wei Liu"), ("Chen, Yu", "Yu Cheng"),
+                                          ("Huang, Lei", "Lei Hung"), ("Smith, John", "John Doe")])
+    def test_a_different_person_is_still_vetoed(self, bib, api):
+        assert self._pick(bib, [api]) is None

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -392,8 +393,42 @@ def _first_author_surname(authors: list) -> str:
     name = authors[0] if isinstance(authors[0], str) else str(authors[0])
     if "," in name:
         name = name.split(",", 1)[0]
-    parts = name.split()
-    return parts[-1].lower() if parts else ""
+    # Tokens that are not the surname: DBLP's homonym number ("Wei Wang 0001")
+    # and generational suffixes. Taking the last token blindly compared "0001"
+    # against "wang" and vetoed the right paper.
+    parts = [t for t in name.split()
+             if not t.isdigit() and t.strip(".").lower() not in _NAME_SUFFIXES]
+    return _plain_name(parts[-1]) if parts else ""
+
+
+_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv"})
+
+
+def _plain_name(token: str) -> str:
+    """A surname reduced to lowercase ASCII letters.
+
+    BibTeX spells accents as commands inside braces (``M{\\"u}ller``,
+    ``{Vaswani}``) where the APIs return Unicode ("Müller"). Both reduce to
+    "muller" here, so the comparison is about the person, not the encoding.
+    """
+    t = re.sub(r"\\[a-zA-Z]+\s*|\\.", "", token)       # \ss, \", \', \^ ...
+    t = unicodedata.normalize("NFKD", t)
+    return "".join(c for c in t if c.isalpha() and c.isascii()).lower()
+
+
+def _same_author(want: str, got: str) -> bool:
+    """Same first-author surname, allowing an LLM's one-letter misspelling.
+
+    Exact after normalisation, or, for longer names, close enough to read as a
+    typo ("vaswany" for "vaswani", ratio 0.86). Short surnames must match
+    exactly: "li" / "liu", "chen" / "cheng" and "huang" / "hung" are different
+    people who all score 0.8 or more.
+    """
+    if want == got:
+        return True
+    if min(len(want), len(got)) < 6:
+        return False
+    return SequenceMatcher(None, want, got).ratio() >= 0.8
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1341,8 +1376,9 @@ def _same_paper(title: str, fields: dict, candidates) -> "Paper | None":
     author cited.
 
     The entry we are replacing already carries a year and an author list. Use
-    them: require agreement where the field exists, and fall back to year-only
-    agreement so an LLM's misspelled author name still resolves. When nothing
+    them: require agreement where the field exists. Author agreement survives
+    encoding differences (BibTeX accents, DBLP homonym numbers) and a one-letter
+    misspelling of the surname, but not a different person. When nothing
     agrees we return None and the caller leaves the entry unresolved — a marked
     or dropped citation is recoverable, a confidently wrong one is not.
     """
@@ -1365,7 +1401,7 @@ def _same_paper(title: str, fields: dict, candidates) -> "Paper | None":
         got_author = _first_author_surname(getattr(p, "authors", None) or [])
         if want_year and got_year and abs(got_year - want_year) > 1:
             continue
-        if want_author and got_author and want_author != got_author:
+        if want_author and got_author and not _same_author(want_author, got_author):
             continue
         # Positive agreement on both wins outright; anything merely
         # uncontradicted is held as a fallback behind it.
