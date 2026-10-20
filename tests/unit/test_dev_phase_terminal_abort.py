@@ -273,7 +273,9 @@ class TestReviewIsTheFileNotTheClaim:
     with a perfectly good paper on disk.
     """
 
-    def _step(self, tmp_path, file_text, answer, corrective_writes=None):
+    def _step(self, tmp_path, file_text, answer, corrective_writes=None, prior_text=None):
+        """Run the review step. `prior_text` is last iteration's file, already on
+        disk; `file_text` is what this reviewer writes on its first call."""
         from unittest.mock import patch
         import ark.pipeline as pl
         p = PipelineMixin.__new__(PipelineMixin)
@@ -292,12 +294,14 @@ class TestReviewIsTheFileNotTheClaim:
         p.send_notification = lambda *a, **k: None
         p.parse_review_score = PipelineMixin.parse_review_score.__get__(p) \
             if hasattr(PipelineMixin, "parse_review_score") else (lambda t: 7.0 if "Overall Score" in (t or "") else 0.0)
-        if file_text is not None:
-            (tmp_path / "latest_review.md").write_text(file_text)
+        if prior_text is not None:
+            (tmp_path / "latest_review.md").write_text(prior_text)
 
         calls = []
         def fake_agent(agent_type, task, timeout=None, **kw):
             calls.append(task[:60])
+            if len(calls) == 1 and file_text is not None:
+                (tmp_path / "latest_review.md").write_text(file_text)
             if len(calls) > 1 and corrective_writes is not None:
                 (tmp_path / "latest_review.md").write_text(corrective_writes)
             return answer
@@ -327,3 +331,152 @@ class TestReviewIsTheFileNotTheClaim:
                                        corrective_writes=body)
         assert len(calls) == 2                     # corrective fired
         assert "Overall Score" in out
+
+    def test_last_iterations_file_is_not_this_iterations_review(self, tmp_path):
+        """The archive copies latest_review.md, it does not move it. A reviewer
+        that saved nothing must not inherit the previous review and its score."""
+        old = "Old review. Overall Score: 4/10\n" + "o" * 300
+        out, score, calls = self._step(tmp_path, None, "Review saved.", prior_text=old)
+        assert len(calls) == 2                     # the stale file did not pass as fresh
+        assert "Old review" not in out
+        assert score != 4.0
+
+    def test_a_full_answer_replaces_an_inherited_file(self, tmp_path):
+        """When the answer is the review, downstream readers of the file
+        (issue extraction, the next planner) must see it, not last round's."""
+        old = "Old review. Overall Score: 4/10\n" + "o" * 300
+        answer = "New review. Overall Score: 8/10\n" + "n" * 500
+        out, score, calls = self._step(tmp_path, None, answer, prior_text=old)
+        assert len(calls) == 1
+        assert out == answer
+        assert (tmp_path / "latest_review.md").read_text() == answer
+
+    def test_a_rewritten_file_wins_over_the_inherited_one(self, tmp_path):
+        old = "Old review. Overall Score: 4/10\n" + "o" * 300
+        new = "New review. Overall Score: 7/10\n" + "n" * 400
+        out, score, calls = self._step(tmp_path, new, "saved", prior_text=old)
+        assert len(calls) == 1
+        assert out == new
+
+
+class TestSetupReportsAreNotEvidence:
+    """The experimenter task asks for results/environment_setup.json BEFORE any
+    experiment, and setup_failure.json INSTEAD of one. Neither is a result: an
+    agent that installed deps and stopped would otherwise skip both the
+    corrective pass and the abort, and the run would draft a paper on nothing."""
+
+    def _pipe(self, tmp_path):
+        p = PipelineMixin.__new__(PipelineMixin)
+        p.code_dir = tmp_path
+        p.config = {}
+        p.logs = []
+        p.log = lambda msg, level="INFO": p.logs.append((level, msg))
+        (tmp_path / "results").mkdir()
+        return p
+
+    @pytest.mark.parametrize("name", ["environment_setup.json", "setup_failure.json",
+                                      "credentials_needed.json"])
+    def test_a_setup_report_alone_is_no_evidence(self, tmp_path, name):
+        p = self._pipe(tmp_path)
+        (tmp_path / "results" / name).write_text('{"systems": []}')
+        assert p._experiment_evidence_files() == []
+
+    def test_a_real_result_next_to_the_setup_report_still_counts(self, tmp_path):
+        p = self._pipe(tmp_path)
+        (tmp_path / "results" / "environment_setup.json").write_text('{"systems": []}')
+        (tmp_path / "results" / "exp1_results.json").write_text('{"acc": 0.91}')
+        assert [f.name for f in p._experiment_evidence_files()] == ["exp1_results.json"]
+
+    def test_a_setup_failure_is_named_as_the_cause(self, tmp_path):
+        p = self._pipe(tmp_path)
+        p._terminal_error = None
+        (tmp_path / "results" / "setup_failure.json").write_text('{"system": "picoquic", "error": "cmake missing"}')
+        p._require_experiment_evidence()
+        assert "setup failed" in p._terminal_error and "picoquic" in p._terminal_error
+
+    def test_an_earlier_terminal_error_is_never_overwritten(self, tmp_path):
+        """A 401 is the cause; "wrote nothing to results/" is only its symptom."""
+        p = self._pipe(tmp_path)
+        p._terminal_error = "AuthenticationError: 401 invalid key"
+        p._require_experiment_evidence()
+        assert p._terminal_error == "AuthenticationError: 401 invalid key"
+
+
+class TestExperimentCorrectivePass:
+    """The second chance must not run on a dead key, and must run on a live backend."""
+
+    def _run(self, tmp_path, first_call_error=None, retry_writes=False):
+        from types import SimpleNamespace
+        p = PipelineMixin.__new__(PipelineMixin)
+        p.code_dir = tmp_path
+        p.state_dir = tmp_path
+        p.config = {}
+        p.logs, p.events = [], []
+        p.log = lambda msg, level="INFO": p.logs.append((level, msg))
+        p.log_step = lambda *a, **k: None
+        p.log_step_header = lambda *a, **k: None
+        p._send_dev_phase_telegram = lambda *a, **k: None
+        p._check_human_intervention = lambda **k: False
+        p._terminal_error = None
+        ev = p.events
+
+        def rec(name, ret=None):
+            def _f(*a, **k):
+                ev.append(name)
+                return ret
+            return _f
+        p._compute_backend = SimpleNamespace(
+            setup=rec("setup", {"work_dir": "/remote/w"}),
+            sync_to_backend=rec("push"), get_agent_instructions=rec("instr", ""),
+            wait_for_completion=rec("wait", True), sync_from_backend=rec("pull"),
+            teardown=rec("teardown"))
+
+        def agent(agent_type, task, timeout=None, **kw):
+            ev.append("agent")
+            if ev.count("agent") == 1 and first_call_error:
+                p._terminal_error = first_call_error
+            if ev.count("agent") == 2 and retry_writes:
+                (tmp_path / "results" / "exp1_results.json").write_text('{"acc": 0.9}')
+            return "done"
+        p.run_agent = agent
+        p._run_experiments(1, 1)
+        return p
+
+    def test_no_retry_after_a_terminal_error(self, tmp_path):
+        p = self._run(tmp_path, first_call_error="AuthenticationError: 401")
+        assert p.events.count("agent") == 1
+        assert p._terminal_error == "AuthenticationError: 401"
+
+    def test_the_retry_gets_its_own_backend_and_its_results_pulled_back(self, tmp_path):
+        p = self._run(tmp_path, retry_writes=True)
+        first_teardown = p.events.index("teardown")
+        retry = p.events[first_teardown + 1:]
+        # set up again, push, run, wait, pull, then tear down — in that order
+        assert retry == ["setup", "push", "instr", "agent", "wait", "pull", "teardown"]
+        assert p._terminal_error is None
+
+
+class TestDevAbortKeepsTheIterationCounter:
+    """A dev-phase abort never started a paper iteration. Rolling the counter
+    back anyway saved iteration=-1, and a resumed run started from there."""
+
+    def _pipe(self):
+        p = PipelineMixin.__new__(PipelineMixin)
+        p.iteration = 0
+        p._terminal_error = "AuthenticationError: 401"
+        p.log = lambda *a, **k: None
+        p.log_summary_box = lambda *a, **k: None
+        p.saved = []
+        p.save_checkpoint = lambda: p.saved.append(p.iteration)
+        return p
+
+    def test_dev_abort_leaves_the_counter_alone(self):
+        p = self._pipe()
+        assert p._handle_terminal_error(0.0, rollback_iteration=False) is False
+        assert p.iteration == 0 and p.saved == [0]
+
+    def test_a_paper_iteration_abort_still_rolls_back(self):
+        p = self._pipe()
+        p.iteration = 3
+        p._handle_terminal_error(5.0)
+        assert p.iteration == 2

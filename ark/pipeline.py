@@ -41,6 +41,12 @@ from ark.hitl import (
 from ark.quality_gate import extract_json, gate, has_fields
 
 
+# Reports the experimenter task asks for before (or instead of) any experiment.
+# They describe the environment, not an outcome, so they are never evidence.
+_SETUP_REPORTS = frozenset({"environment_setup.json", "setup_failure.json",
+                            "credentials_needed.json"})
+
+
 class PipelineMixin:
     """Mixin providing the top-level pipeline orchestration.
 
@@ -246,6 +252,11 @@ class PipelineMixin:
         # access to "what I said last time" so it can do absolute-scale
         # calibration instead of arbitrarily ratcheting bar each iter.
         prior_review_section = self._archive_and_load_prior_review()
+        # latest_review.md still holds LAST iteration's review at this point
+        # (the archive copies it, it does not move it). Stamp it, so the checks
+        # below can tell a file this reviewer wrote from one it inherited.
+        review_file = self.state_dir / "latest_review.md"
+        prior_stamp = self._file_stamp(review_file)
 
         visual_review = self._build_visual_review_section()
         try:
@@ -273,9 +284,11 @@ class PipelineMixin:
         # reviewer claimed the save and wrote nothing). Same contract as
         # experiments and idea.md: the artifact, not the claim, is the output —
         # give one corrective pass before accepting a scoreless review.
-        review_file = self.state_dir / "latest_review.md"
-        review_written = review_file.exists() and review_file.stat().st_size > 200
-        if not review_written and len((review_output or "").strip()) < 400:
+        def _fresh_review() -> bool:
+            stamp = self._file_stamp(review_file)
+            return stamp is not None and stamp != prior_stamp and stamp[1] > 200
+
+        if not _fresh_review() and len((review_output or "").strip()) < 400:
             self.log("Reviewer produced no report file — one corrective pass",
                      "WARN")
             try:
@@ -292,9 +305,14 @@ class PipelineMixin:
                 )
             except Exception as e:
                 self.log(f"Review corrective pass failed: {e}", "WARN")
-        if review_file.exists() and review_file.stat().st_size > 200:
+        if _fresh_review():
             # The file is the review of record; the chat answer may be a stub.
             review_output = review_file.read_text(errors="replace")
+        elif len((review_output or "").strip()) >= 400:
+            # The answer IS the review and the file is last iteration's. Write
+            # it through, so issue extraction and the next planner read this
+            # iteration's review rather than the one before it.
+            review_file.write_text(review_output)
 
         score = self.parse_review_score(review_output)
         if score == 0.0 and review_output and len(review_output.strip()) > 100:
@@ -318,6 +336,15 @@ class PipelineMixin:
         self.save_step_checkpoint(step_num, "Review Paper")
         self.log_step_header(step_num, total_steps, "Review Paper", "end")
         return review_output, score, issue_ids
+
+    @staticmethod
+    def _file_stamp(path):
+        """(mtime_ns, size) of a file, or None when it does not exist."""
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
 
     def _archive_and_load_prior_review(self) -> str:
         """Snapshot the prior iter's review and build the cross-iter
@@ -657,12 +684,15 @@ class PipelineMixin:
         except Exception as e:
             self.log(f"figures-referenced gate failed (non-fatal): {e}", "WARN")
 
-    def _handle_terminal_error(self, score: float) -> bool:
+    def _handle_terminal_error(self, score: float, rollback_iteration: bool = True) -> bool:
         """Abort the run fast on a non-retryable agent error (bad key / model /
         permission). No quota-style wait — the error won't fix itself."""
         # This iteration didn't complete; roll the counter back so a re-run
         # (once the user fixes the key/model) redoes it instead of skipping it.
-        self.iteration -= 1
+        # A dev-phase abort never started a paper iteration, so there is
+        # nothing to roll back (doing it anyway saved iteration=-1).
+        if rollback_iteration:
+            self.iteration -= 1
         detail = getattr(self, "_terminal_error", "") or "non-retryable agent error"
         # STICKY run-fatal marker. `_terminal_error` is attempt-scoped and gets
         # reset by `_iteration_prep()` at the top of every iteration — a later
@@ -2774,8 +2804,11 @@ system or it fails with a clear report of what is needed.
         # agent declares itself finished. Everything it needed was in place;
         # what it lacked was being told to continue. So tell it, once, with the
         # evidence attached. If the retry also produces nothing, the normal
-        # abort stands.
-        if not self._experiment_evidence_files():
+        # abort stands. Not after a terminal error, though: a bad key or a spent
+        # balance kills the retry the same way, and the retry's "wrote nothing"
+        # would then bury the real cause.
+        if (not self._experiment_evidence_files()
+                and not getattr(self, "_terminal_error", None)):
             self.log("Experiments left no usable results — giving the "
                      "experimenter one corrective pass", "WARN")
             results_dir = self.code_dir / "results"
@@ -2785,6 +2818,25 @@ system or it fails with a clear report of what is needed.
                        if results_dir.exists() else [])
             hint = (f"Empty files from the crashed attempt: {', '.join(empties)}. "
                     if empties else "")
+            self._experimenter_corrective_pass(hint)
+
+        self._require_experiment_evidence()
+
+        self.log_step_header(2, 4, "Run Experiments", "end")
+        return exp_output
+
+    def _experimenter_corrective_pass(self, hint: str) -> None:
+        """Re-run the experimenter once, on a backend set up for this pass.
+
+        The first pass's backend is already torn down here (on SkyPilot the
+        cluster is down), so this pass brings its own: set up, push the code,
+        run, wait, pull results/ back, tear down. Without the pull, a retry
+        that succeeded on a remote backend would still look empty locally.
+        """
+        compute_ctx = self._compute_backend.setup()
+        remote_work_dir = compute_ctx.get("work_dir", str(self.code_dir))
+        self._compute_backend.sync_to_backend(str(self.code_dir), remote_work_dir)
+        try:
             self.run_agent("experimenter", f"""
 Your previous experiment attempt did NOT finish: `results/` contains no file
 with actual content. {hint}Your scripts are still in `scripts/`.
@@ -2793,13 +2845,14 @@ Diagnose the failure (run the script and read its error output), fix it, and
 rerun until the result files contain real numbers. Before you finish, print the
 result files (`cat results/*.json`) to confirm they are non-empty. Do not
 report success without that confirmation.
+
+{self._compute_backend.get_agent_instructions()}
 """, timeout=defaults.TIMEOUT_EXPERIMENTER)
             self._compute_backend.wait_for_completion(max_wait_hours=1)
-
-        self._require_experiment_evidence()
-
-        self.log_step_header(2, 4, "Run Experiments", "end")
-        return exp_output
+            self._compute_backend.sync_from_backend(
+                f"{remote_work_dir}/results", str(self.code_dir / "results"))
+        finally:
+            self._compute_backend.teardown()
 
     def _experiment_plan_digest(self, limit: int = 12) -> str:
         """A few lines naming what has to run, inlined into the task.
@@ -2860,7 +2913,11 @@ report success without that confirmation.
                 # An escalation report is a request for help, not a result;
                 # counting it as evidence sent a run into analysis with nothing
                 # to analyse but its own cry for help (9df9e778).
-                and not f.name.startswith("needs_human")]
+                and not f.name.startswith("needs_human")
+                # Likewise the setup reports the task asks for BEFORE any
+                # experiment runs: an agent that installed deps and stopped
+                # has a non-empty results/ and no results.
+                and f.name not in _SETUP_REPORTS]
 
     def _require_experiment_evidence(self) -> None:
         """An experiment step that produced nothing did not succeed.
@@ -2879,14 +2936,23 @@ report success without that confirmation.
         """
         if self._experiment_evidence_files():
             return
+        if getattr(self, "_terminal_error", None):
+            return          # already failing, and that error is the real cause
         if os.environ.get("ARK_ALLOW_EMPTY_EXPERIMENTS", "").strip() == "1":
             self.log("Experiments produced no result files — continuing anyway "
                      "(ARK_ALLOW_EMPTY_EXPERIMENTS=1)", "WARN")
             return
-        self._terminal_error = (
-            "Experiments produced no result files. The experimenter reported "
-            "success but wrote nothing to results/ — there is no evidence to "
-            "write a paper from.")
+        failure = self.code_dir / "results" / "setup_failure.json"
+        if failure.is_file() and failure.stat().st_size > 0:
+            self._terminal_error = (
+                "Experiments never ran: environment setup failed (see "
+                "results/setup_failure.json): "
+                + failure.read_text(errors="replace")[:240].replace("\n", " "))
+        else:
+            self._terminal_error = (
+                "Experiments produced no result files. The experimenter reported "
+                "success but wrote nothing to results/ — there is no evidence to "
+                "write a paper from.")
         self.log(self._terminal_error, "ERROR")
 
     def _analyze_results(self) -> str:
@@ -4384,7 +4450,7 @@ provide the title.
                 # same second).
                 if getattr(self, "_terminal_error", None):
                     # No score exists yet — the dev phase never reached review.
-                    self._handle_terminal_error(0.0)
+                    self._handle_terminal_error(0.0, rollback_iteration=False)
                     dev_failed = True
 
             while (
