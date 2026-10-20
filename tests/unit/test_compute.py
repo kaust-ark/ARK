@@ -111,6 +111,23 @@ class TestCloudBackendRequiresConfiguration:
         self._reject("local", configured=False)
         self._reject("slurm", configured=False)
 
+    @pytest.mark.parametrize("field", ["cloud_gcp_project", "cloud_launcher_role_arn",
+                                       "cloud_launcher_aws_credential_source"])
+    def test_the_real_signal_reads_the_settings(self, field):
+        """The tests above patch the helper away, which is how it shipped reading
+        a module-level `settings` that does not exist: every SkyPilot request was
+        a NameError → 500. Call the real body."""
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from website.dashboard import routes
+        none = dict(cloud_gcp_project="", cloud_launcher_role_arn="",
+                    cloud_launcher_aws_credential_source="")
+        with patch.object(routes, "get_settings", return_value=SimpleNamespace(**none)):
+            assert routes._any_cloud_configured() is False
+        with patch.object(routes, "get_settings",
+                          return_value=SimpleNamespace(**{**none, field: "x"})):
+            assert routes._any_cloud_configured() is True
+
 
 class TestLocalInstructionsMatchTheExecutionReality:
     """The agent's compute instructions must describe where its shell IS.

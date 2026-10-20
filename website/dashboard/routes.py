@@ -761,6 +761,7 @@ def _any_cloud_configured() -> bool:
     Same signal ``/api/system`` hands the UI, kept in one place so the button
     the user sees and the check that admits the request cannot disagree.
     """
+    settings = get_settings()
     return bool(settings.cloud_gcp_project
                 or settings.cloud_launcher_role_arn
                 or settings.cloud_launcher_aws_credential_source)
