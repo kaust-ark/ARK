@@ -59,6 +59,121 @@ AGENT_CONTEXT_PROFILES = {
 _DEFAULT_PROFILE = {"memory": True, "deep_research": True, "prior_context": True, "context_files": True, "user_instructions": False}
 
 
+# Agent errors that clear on their own. OpenHands' LLM layer already retried
+# these per request; a surfaced one gets a single bounded wait-and-retry here.
+_TRANSIENT = (
+    "RateLimitError", "ServiceUnavailableError", "TimeoutError",
+    "InternalServerError", "APIConnectionError",
+    # 502/504 from the provider's gateway/proxy (Cloudflare etc.,
+    # often returns an HTML error page instead of JSON) — purely
+    # transient, so retry instead of hard-aborting the run.
+    "BadGatewayError", "GatewayTimeoutError",
+    # OpenHands renders agent/tool output through Rich. Tool
+    # output containing Rich-markup-like text with a backslash
+    # (e.g. a grep hit on LaTeX such as "[strat\\...]") makes
+    # Rich's style parser raise MissingStyle / StyleSyntaxError.
+    # That's a cosmetic runtime glitch, NOT a provider error —
+    # the agent's real work usually completed. Retry once
+    # instead of hard-aborting an otherwise-healthy run.
+    "MissingStyle", "StyleSyntaxError",
+)
+# Mid-stream network disconnects surface as a generic
+# APIError whose *code* isn't in _TRANSIENT — but the upstream
+# simply dropped the stream, so a retry usually completes.
+# Match these on the error *detail* text. This is the failure
+# that truncated a writer run into a 0.3-page stub on a
+# MiniMax/OpenRouter paper (incomplete chunked read).
+_TRANSIENT_DETAIL = (
+    "incomplete chunked read", "peer closed connection",
+    "connection reset", "connection aborted",
+    "connection broken", "server disconnected",
+    "eof occurred", "remoteprotocolerror",
+    "bad gateway", "gateway timeout",
+    # An upstream provider 5xx relayed by the gateway. The
+    # code is a generic APIError; only the detail names the
+    # real cause ("Upstream error from Nvidia: Internal
+    # server error"). This killed a run that had already
+    # produced a clean 7.6/10 paper — one hiccup at the
+    # review step discarded the whole thing. Any provider
+    # can 5xx, so this is not a free-tier concern.
+    "upstream error", "internal server error",
+    "service unavailable", "temporarily unavailable",
+    "overloaded",
+    # A 429 is transient BY DEFINITION, but litellm does not
+    # always say RateLimitError: Gemini's quota 429 comes
+    # wrapped as BadRequestError, whose "check your plan and
+    # billing details" text then reads like a billing-cap
+    # message and was classified terminal. That combination
+    # killed run 382656fd in its review pass, minutes after
+    # the dev phase had delivered a complete paper on the
+    # free tier. If it is really a DAILY cap, the bounded
+    # retries below exhaust and the run still fails — this
+    # only stops a minute-window 429 from being lethal.
+    '"code": 429', "resource_exhausted",
+    "exceeded your current quota",
+    # The SDK's loop detector ("Remote conversation got
+    # stuck") means the agent wedged on a repeated action —
+    # a fresh conversation with the RETRY NOTE below is the
+    # remedy, not an abort. Wiring the note without adding
+    # this pattern was a half-fix: 4906d1a2 died on its
+    # first stuck verdict with zero retries, because the
+    # note lived in a branch this error never reached.
+    "got stuck",
+    # Empty/truncated provider body: litellm fails to parse a
+    # JSON response because OpenRouter (or its upstream) returned
+    # blank/non-JSON bytes mid-request. Same transient class as
+    # "incomplete chunked read" — a bounded retry clears it. This
+    # is the failure that aborted a whole run after an hour of
+    # planning+experiments on a deepseek/OpenRouter paper.
+    "unable to get json response", "expecting value",
+    # Rich style-parser crash on markup-like tool output (see
+    # MissingStyle note above) — match by message text too, in
+    # case the surfaced error_code is generic.
+    "is not a valid color", "failed to get style",
+)
+
+
+def _is_transient_agent_error(code: str, detail: str) -> bool:
+    """Whether a surfaced agent error is worth a bounded wait-and-retry.
+
+    One exclusion comes first. OpenAI's ``insufficient_quota`` is a billing
+    state, not a window: it arrives as a 429 RateLimitError with the same "You
+    exceeded your current quota" text that Gemini's free-tier 429 uses, so both
+    the code list and the detail list matched it and a run with an unpaid
+    OpenAI account sat through four 65-180s waits before failing. Only the
+    error type tells them apart, and Gemini's body never carries it.
+    """
+    d = (detail or "").lower()
+    if "insufficient_quota" in d:
+        return False
+    return (any((code or "").endswith(t) for t in _TRANSIENT)
+            or any(s in d for s in _TRANSIENT_DETAIL))
+
+
+_STUCK_RETRY_NOTE = (
+    "\n\n## RETRY NOTE — your previous attempt was "
+    "terminated for looping\n"
+    "It repeated an identical failing tool call "
+    "(often a str_replace whose old_str did not "
+    "match) until the loop detector stopped it. On "
+    "this attempt: NEVER re-issue a tool call that "
+    "just failed with the same arguments. If a "
+    "str_replace fails once, do not adjust it — "
+    "re-read the file and REWRITE THE WHOLE FILE "
+    "with the file editor's create command instead. "
+    "If a command fails twice, move on and note it "
+    "in your summary.\n"
+)
+
+
+def _with_stuck_retry_note(prompt: str) -> str:
+    """The prompt with the loop-detector note appended, at most once.
+
+    Appending on every "got stuck" retry stacked one copy per attempt.
+    """
+    return prompt if _STUCK_RETRY_NOTE in prompt else prompt + _STUCK_RETRY_NOTE
+
+
 class AgentMixin:
     """Mixin providing agent execution capabilities.
 
@@ -546,82 +661,10 @@ Execute the task and update the corresponding files.
                     # the detail IS the correct message (bad key, usage/spend cap,
                     # bad model, context overflow, …). The ONE exception is a
                     # clearly-transient code (rate limit / 5xx / timeout): give it
-                    # a single bounded wait-and-retry in case the window reopened.
-                    _TRANSIENT = (
-                        "RateLimitError", "ServiceUnavailableError", "TimeoutError",
-                        "InternalServerError", "APIConnectionError",
-                        # 502/504 from the provider's gateway/proxy (Cloudflare etc.,
-                        # often returns an HTML error page instead of JSON) — purely
-                        # transient, so retry instead of hard-aborting the run.
-                        "BadGatewayError", "GatewayTimeoutError",
-                        # OpenHands renders agent/tool output through Rich. Tool
-                        # output containing Rich-markup-like text with a backslash
-                        # (e.g. a grep hit on LaTeX such as "[strat\\...]") makes
-                        # Rich's style parser raise MissingStyle / StyleSyntaxError.
-                        # That's a cosmetic runtime glitch, NOT a provider error —
-                        # the agent's real work usually completed. Retry once
-                        # instead of hard-aborting an otherwise-healthy run.
-                        "MissingStyle", "StyleSyntaxError",
-                    )
-                    # Mid-stream network disconnects surface as a generic
-                    # APIError whose *code* isn't in _TRANSIENT — but the upstream
-                    # simply dropped the stream, so a retry usually completes.
-                    # Match these on the error *detail* text. This is the failure
-                    # that truncated a writer run into a 0.3-page stub on a
-                    # MiniMax/OpenRouter paper (incomplete chunked read).
-                    _TRANSIENT_DETAIL = (
-                        "incomplete chunked read", "peer closed connection",
-                        "connection reset", "connection aborted",
-                        "connection broken", "server disconnected",
-                        "eof occurred", "remoteprotocolerror",
-                        "bad gateway", "gateway timeout",
-                        # An upstream provider 5xx relayed by the gateway. The
-                        # code is a generic APIError; only the detail names the
-                        # real cause ("Upstream error from Nvidia: Internal
-                        # server error"). This killed a run that had already
-                        # produced a clean 7.6/10 paper — one hiccup at the
-                        # review step discarded the whole thing. Any provider
-                        # can 5xx, so this is not a free-tier concern.
-                        "upstream error", "internal server error",
-                        "service unavailable", "temporarily unavailable",
-                        "overloaded",
-                        # A 429 is transient BY DEFINITION, but litellm does not
-                        # always say RateLimitError: Gemini's quota 429 comes
-                        # wrapped as BadRequestError, whose "check your plan and
-                        # billing details" text then reads like a billing-cap
-                        # message and was classified terminal. That combination
-                        # killed run 382656fd in its review pass, minutes after
-                        # the dev phase had delivered a complete paper on the
-                        # free tier. If it is really a DAILY cap, the bounded
-                        # retries below exhaust and the run still fails — this
-                        # only stops a minute-window 429 from being lethal.
-                        '"code": 429', "resource_exhausted",
-                        "exceeded your current quota",
-                        # The SDK's loop detector ("Remote conversation got
-                        # stuck") means the agent wedged on a repeated action —
-                        # a fresh conversation with the RETRY NOTE below is the
-                        # remedy, not an abort. Wiring the note without adding
-                        # this pattern was a half-fix: 4906d1a2 died on its
-                        # first stuck verdict with zero retries, because the
-                        # note lived in a branch this error never reached.
-                        "got stuck",
-                        # Empty/truncated provider body: litellm fails to parse a
-                        # JSON response because OpenRouter (or its upstream) returned
-                        # blank/non-JSON bytes mid-request. Same transient class as
-                        # "incomplete chunked read" — a bounded retry clears it. This
-                        # is the failure that aborted a whole run after an hour of
-                        # planning+experiments on a deepseek/OpenRouter paper.
-                        "unable to get json response", "expecting value",
-                        # Rich style-parser crash on markup-like tool output (see
-                        # MissingStyle note above) — match by message text too, in
-                        # case the surfaced error_code is generic.
-                        "is not a valid color", "failed to get style",
-                    )
+                    # a single bounded wait-and-retry in case the window reopened
+                    # (classification: _is_transient_agent_error above).
                     _detail_l = (oh_error_detail or "").lower()
-                    _is_transient = (
-                        any(oh_error_code.endswith(t) for t in _TRANSIENT)
-                        or any(s in _detail_l for s in _TRANSIENT_DETAIL)
-                    )
+                    _is_transient = _is_transient_agent_error(oh_error_code, oh_error_detail)
                     if _is_transient and attempt < MAX_RETRIES:
                         # Network/stream disconnects clear immediately — retry
                         # promptly; rate-limit codes honour the server's wait.
@@ -666,19 +709,7 @@ Execute the task and update the corresponding files.
                         # matched). Tell the retry what happened and take the
                         # brittle move off the table.
                         if "got stuck" in _detail_l:
-                            full_prompt += (
-                                "\n\n## RETRY NOTE — your previous attempt was "
-                                "terminated for looping\n"
-                                "It repeated an identical failing tool call "
-                                "(often a str_replace whose old_str did not "
-                                "match) until the loop detector stopped it. On "
-                                "this attempt: NEVER re-issue a tool call that "
-                                "just failed with the same arguments. If a "
-                                "str_replace fails once, do not adjust it — "
-                                "re-read the file and REWRITE THE WHOLE FILE "
-                                "with the file editor's create command instead. "
-                                "If a command fails twice, move on and note it "
-                                "in your summary.\n")
+                            full_prompt = _with_stuck_retry_note(full_prompt)
                         start_time = time.time()
                         continue  # one bounded transient retry
                     # Not transient (or transient retries exhausted): surface the

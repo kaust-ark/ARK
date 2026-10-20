@@ -65,3 +65,35 @@ def test_a_stuck_conversation_is_retried_not_aborted():
     assert _is_transient(
         "ConversationRunError: Conversation run failed for id=x: "
         "Remote conversation got stuck")
+
+
+class TestQuotaIsTransientOnlyWhereItResets:
+    """Gemini's free-tier 429 and OpenAI's unpaid-account error share the text
+    "You exceeded your current quota". One resets in a minute, the other never."""
+
+    def test_gemini_quota_429_is_retried(self):
+        from ark.engines import _is_transient_agent_error
+        assert _is_transient_agent_error(
+            "BadRequestError",
+            '{"error": {"code": 429, "message": "You exceeded your current quota, please '
+            'check your plan and billing details.", "status": "RESOURCE_EXHAUSTED"}}')
+
+    def test_openai_insufficient_quota_fails_fast(self):
+        from ark.engines import _is_transient_agent_error
+        assert not _is_transient_agent_error(
+            "RateLimitError",
+            "Error code: 429 - {'error': {'message': 'You exceeded your current quota, "
+            "please check your plan and billing details.', 'type': 'insufficient_quota', "
+            "'code': 'insufficient_quota'}}")
+
+    def test_an_auth_error_is_terminal(self):
+        from ark.engines import _is_transient_agent_error
+        assert not _is_transient_agent_error("AuthenticationError", "401 invalid api key")
+
+
+def test_the_stuck_note_is_added_once():
+    from ark.engines import _with_stuck_retry_note
+    once = _with_stuck_retry_note("task")
+    twice = _with_stuck_retry_note(once)
+    assert once != "task" and twice == once
+    assert twice.count("## RETRY NOTE") == 1
