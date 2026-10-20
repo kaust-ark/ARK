@@ -31,20 +31,32 @@ def _bare_orchestrator(config):
 
 
 class TestMailBodyIsPlainText:
+    # The fallback no longer shells out to `mail` (absent on our hosts); it goes
+    # through the dashboard's SMTP mailer. These pin the same two properties on
+    # that transport: tags stripped, and no recipient means no email.
+    @staticmethod
+    def _mailer():
+        return (mock.patch("website.dashboard.config.get_settings", return_value=mock.Mock()),
+                mock.patch("website.dashboard.notify.send_admin_notice", return_value=True))
+
     def test_html_tags_stripped_from_email(self):
         o = _bare_orchestrator({"notification_email": "someone@example.com"})
-        with mock.patch.object(subprocess, "run") as run:
+        cfg, mailer = self._mailer()
+        with cfg, mailer as send:
             o.send_notification("DEMO Finished", "Score: 8.6/10", priority="critical")
-        assert run.called
-        body = run.call_args.kwargs.get("input") or run.call_args.args[1]
+        assert send.called
+        _settings, to, _subject, body = send.call_args.args
+        assert to == "someone@example.com"
         assert "<b>" not in body and "</b>" not in body
         assert "FINISHED" in body            # banner text survives
         assert "Score: 8.6/10" in body       # payload survives
 
     def test_opt_in_gate_still_holds(self):
         o = _bare_orchestrator({})           # no notification_email
-        with mock.patch.object(subprocess, "run") as run:
+        cfg, mailer = self._mailer()
+        with cfg, mailer as send, mock.patch.object(subprocess, "run") as run:
             o.send_notification("DEMO Finished", "Score: 8.6/10", priority="critical")
+        send.assert_not_called()
         run.assert_not_called()
 
 
