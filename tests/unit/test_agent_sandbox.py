@@ -96,6 +96,76 @@ class TestWorkspaceConfig:
         assert cfg["sif_file"] == str(structural)
         assert cfg["kind"] == "apptainer"
 
+    def test_config_carries_the_binary_the_status_check_found(self, structural, tmp_path):
+        """ApptainerWorkspace runs a bare `apptainer`; the driver needs the
+        resolved path to put on PATH, or a site-path-only node falls to the host."""
+        assert sb.structural_sandbox_config(tmp_path)["apptainer"] == "/usr/bin/apptainer"
+
+    @pytest.mark.parametrize("gpu", [True, False])
+    def test_config_says_whether_to_pass_gpus(self, structural, tmp_path, gpu):
+        with patch.object(sb, "host_has_gpu", return_value=gpu):
+            assert sb.structural_sandbox_config(tmp_path)["gpu"] is gpu
+
+
+class TestDriverStartsTheRightContainer:
+    """What _open_sandbox hands ApptainerWorkspace, checked without openhands."""
+
+    def _open(self, sb_cfg):
+        import sys
+        import types
+        from ark.engines import sdk_driver
+        seen = {}
+
+        class FakeWorkspace:
+            def __init__(self, **kw):
+                seen["kw"] = kw
+                seen["PATH"] = os.environ.get("PATH", "")
+                seen["NV"] = os.environ.get("APPTAINER_NV")
+
+        mod = types.ModuleType("openhands.workspace")
+        mod.ApptainerWorkspace = FakeWorkspace
+        keep = {k: os.environ.get(k) for k in
+                ("PATH", "APPTAINER_NV", "APPTAINER_BIND", "SESSION_API_KEY",
+                 "APPTAINERENV_SESSION_API_KEY")}
+        try:
+            with patch.dict(sys.modules, {"openhands": types.ModuleType("openhands"),
+                                          "openhands.workspace": mod}):
+                os.environ.pop("APPTAINER_NV", None)
+                sdk_driver._open_sandbox(sb_cfg)
+        finally:
+            for k, v in keep.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        return seen
+
+    def _cfg(self, **extra):
+        return {"sif_file": "/x.sif", "bind": "/p:/p", "working_dir": "/p", **extra}
+
+    def test_the_resolved_binary_comes_first_on_path(self):
+        seen = self._open(self._cfg(apptainer="/data/secure/bin/apptainer"))
+        assert seen["PATH"].split(os.pathsep)[0] == "/data/secure/bin"
+
+    def test_gpus_are_passed_through(self):
+        """--compat hides host devices and the workspace has no --nv option;
+        APPTAINER_NV=1 is the same switch (checked on a P100 node)."""
+        assert self._open(self._cfg(gpu=True))["NV"] == "1"
+
+    def test_no_gpu_flag_on_a_cpu_node(self):
+        assert self._open(self._cfg(gpu=False))["NV"] is None
+
+
+def test_in_container_instructions_name_the_gpus(structural, tmp_path):
+    from ark.compute.local import LocalBackend
+    b = LocalBackend.__new__(LocalBackend)
+    b.config = {"compute_backend": {"type": "local", "gpu_count": 2}}
+    b.code_dir = tmp_path
+    b.project_name = "p"
+    with patch.object(sb, "structural_sandbox_status", return_value=(True, "")):
+        text = b.get_agent_instructions()
+    assert "Inside the Project Container" in text and "Available GPUs: 2" in text
+
     def test_image_tag_is_pinned_not_floating(self):
         """Client and server are two halves of one event protocol. On
         `:latest-python` the newer server sent an Event.parent_id our

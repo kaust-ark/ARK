@@ -196,6 +196,20 @@ def _open_sandbox(sb: dict):
     # apptainer reads directly.
     os.environ["APPTAINER_BIND"] = sb["bind"]
 
+    # ApptainerWorkspace runs a bare `apptainer` from PATH. The parent resolved
+    # the real binary (it may live only at the site path, off PATH on a compute
+    # node); put that directory first so the workspace runs the binary the
+    # status check found, instead of failing and dropping the run to the host.
+    binary = sb.get("apptainer") or ""
+    if binary:
+        os.environ["PATH"] = os.path.dirname(binary) + os.pathsep + os.environ.get("PATH", "")
+    # GPUs. The workspace passes --compat, which hides the host's devices and
+    # driver libraries, and it has no --nv option. APPTAINER_NV=1 is the same
+    # switch (verified on a P100 node: nvidia-smi absent inside without it,
+    # GPU listed with it).
+    if sb.get("gpu"):
+        os.environ["APPTAINER_NV"] = "1"
+
     # detach_logs stays on: the workspace pipes the container's output and only
     # drains that pipe from the logging thread, so turning it off deadlocks the
     # server at the first 64 KB of logs. Its "[APPTAINER] " prefix keeps those
@@ -326,8 +340,10 @@ def main() -> int:
     def _callback(event) -> None:
         kind = type(event).__name__
         text = _event_text(event)
-        _emit({"kind": kind, "text": text[:4000]})
         source = str(getattr(event, "source", ""))
+        # The source rides along so the parent can tell the agent's words from
+        # the task and the nudge, which arrive as MessageEvents too.
+        _emit({"kind": kind, "text": text[:4000], "source": source})
         if kind == "MessageEvent" and "agent" in source:
             if text.strip():
                 state["last_agent_message"] = text

@@ -116,8 +116,26 @@ class TestOutputContract:
         assert out["error_code"] is None
 
     def test_last_agent_message_is_the_fallback(self):
-        stdout = json.dumps({"kind": "MessageEvent", "text": "partial answer"})
+        stdout = json.dumps({"kind": "MessageEvent", "text": "partial answer",
+                             "source": "agent"})
         assert self._runtime().parse_output(stdout)["result"] == "partial answer"
+
+    def test_the_task_and_the_nudge_are_never_the_answer(self):
+        """The task prompt and the continue nudge are MessageEvents too. A run
+        killed before __result__ returned the prompt as the agent's answer,
+        long enough to pass the reviewer's 400-character check."""
+        stdout = "\n".join([
+            json.dumps({"kind": "MessageEvent", "text": "Please review the paper " + "x" * 500,
+                        "source": "user"}),
+            json.dumps({"kind": "ActionEvent", "text": "editing", "source": "agent"}),
+            json.dumps({"kind": "MessageEvent", "text": "You wrote a plan but executed none of it.",
+                        "source": "user"}),
+        ])
+        assert self._runtime().parse_output(stdout)["result"] == ""
+
+    def test_an_untagged_message_is_not_trusted(self):
+        stdout = json.dumps({"kind": "MessageEvent", "text": "who said this?"})
+        assert self._runtime().parse_output(stdout)["result"] == ""
 
     def test_errors_are_surfaced_for_the_terminal_classifier(self):
         stdout = json.dumps({"kind": "__result__", "result": "", "usage": None,

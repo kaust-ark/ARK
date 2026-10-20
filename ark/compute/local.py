@@ -69,7 +69,9 @@ is mounted at its usual path and `results/` is shared with the host.
 - Do NOT use `nohup` or background processes, and do NOT exit expecting the
   system to wait for anything: nothing runs after you stop. Before finishing,
   verify your result files actually exist in `results/` (e.g. `ls results/`).
-- Do NOT use sbatch/srun — Slurm is not reachable from in here."""
+- Do NOT use sbatch/srun — Slurm is not reachable from in here.""" + (
+                f"\n- Available GPUs: {self.gpu_count} (passed into the container; "
+                f"check with `nvidia-smi`)" if self.gpu_count > 0 else "")
 
         gpu_section = ""
         if self.gpu_count > 0:

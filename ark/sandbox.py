@@ -172,7 +172,15 @@ def structural_sandbox_config(code_dir) -> Optional[dict]:
         # Same trick the advisory helper has always used (`--bind $PROJ:$PROJ`).
         "bind": f"{code_dir}:{code_dir}",
         "working_dir": str(code_dir),
+        # The binary the status check found, which may be off PATH.
+        "apptainer": apptainer_bin() or "",
+        "gpu": host_has_gpu(),
     }
+
+
+def host_has_gpu() -> bool:
+    """Whether this node has an NVIDIA device to pass into the container."""
+    return any(Path("/dev").glob("nvidia[0-9]*"))
 
 
 _HELPER = r'''#!/bin/bash

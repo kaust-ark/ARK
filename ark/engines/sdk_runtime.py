@@ -259,7 +259,12 @@ class OpenHandsSDK(OpenHandsCLI):
                 # it, so a run could degrade to unconfined execution with the
                 # banner still claiming otherwise.
                 out["sandbox"] = evt.get("text") or ""
-            elif evt.get("kind") == "MessageEvent" and evt.get("text"):
+            elif (evt.get("kind") == "MessageEvent" and evt.get("text")
+                  and "agent" in str(evt.get("source") or "")):
+                # Only the agent's own words. The task prompt and the continue
+                # nudge are MessageEvents too; a run that ended without a reply
+                # (or was killed before __result__) used to return the prompt
+                # as the agent's answer, long enough to pass as a review.
                 last_agent_msg = evt["text"]
         if not out["result"]:
             out["result"] = last_agent_msg
