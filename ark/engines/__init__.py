@@ -150,6 +150,23 @@ def _is_transient_agent_error(code: str, detail: str) -> bool:
             or any(s in d for s in _TRANSIENT_DETAIL))
 
 
+def _used_its_step_budget(code: str, detail: str = "") -> bool:
+    """Whether a surfaced agent error is the SDK's own per-call step cap.
+
+    It arrives as a ConversationErrorEvent like a provider failure, but it is
+    neither transient nor terminal: the agent worked until its 500 steps ran
+    out and its work is on disk. It ends THIS call, the same way the
+    wall-clock timeout does. Read as terminal, one experimenter that polled
+    SLURM too often aborted 954d7885 seven hours later, after the writer had
+    already finished the paper. Retrying is no better: a fresh conversation
+    reruns the whole task and resubmits the jobs the first one queued.
+    A sandboxed call can surface it wrapped (ConversationRunError carrying the
+    cap's message), so the detail counts too.
+    """
+    return ((code or "").endswith("MaxIterationsReached")
+            or "maximum iterations limit" in (detail or "").lower())
+
+
 _STUCK_RETRY_NOTE = (
     "\n\n## RETRY NOTE — your previous attempt was "
     "terminated for looping\n"
@@ -712,6 +729,16 @@ Execute the task and update the corresponding files.
                             full_prompt = _with_stuck_retry_note(full_prompt)
                         start_time = time.time()
                         continue  # one bounded transient retry
+                    # Out of steps: keep what it did and move on. The break
+                    # matters, since falling through to the empty-run retry
+                    # below would rerun the same task (_used_its_step_budget).
+                    if _used_its_step_budget(oh_error_code, oh_error_detail):
+                        self.log(
+                            f"  [{agent_type}] used its full step budget — "
+                            f"keeping its work, the phase's own checks judge it",
+                            "WARN",
+                        )
+                        break
                     # Not transient (or transient retries exhausted): surface the
                     # provider's real error and abort. No guessing, no 30min wait.
                     self._terminal_error = (

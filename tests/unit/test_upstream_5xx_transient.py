@@ -97,3 +97,74 @@ def test_the_stuck_note_is_added_once():
     twice = _with_stuck_retry_note(once)
     assert once != "task" and twice == once
     assert twice.count("## RETRY NOTE") == 1
+
+
+class TestStepBudgetEndsTheCallNotTheRun:
+    """The SDK's 500-step cap arrives as a ConversationErrorEvent. Read as a
+    provider error it aborted 954d7885 seven hours after one experimenter ran
+    out of steps, with the writer already done. Driven through the real
+    run_agent with a fake runner, so the branch order is what is tested."""
+
+    DETAIL = "Agent reached maximum iterations limit (500)."
+
+    def _run(self, tmp_path, code, detail, result="partial summary"):
+        from types import SimpleNamespace
+        from unittest import mock
+        import ark.engines as eng
+
+        calls = []
+
+        class Runner:
+            def execute(self, **kw):
+                calls.append(kw)
+                return 0, "{}", "", 42, False
+
+            def parse_output(self, stdout):
+                return {"result": result, "usage": None,
+                        "error_code": code, "error_detail": detail}
+
+        (tmp_path / "experimenter.prompt").write_text("You run experiments.")
+        o = eng.AgentMixin()
+        noop = lambda *a, **k: None
+        for name, val in dict(
+                agents_dir=tmp_path, state_dir=tmp_path, code_dir=tmp_path,
+                model="m", memory=SimpleNamespace(get_context_for_agent=lambda a: ""),
+                _agent_stats=[], _agent_empty_count=0, _rate_limit_notified=False,
+                _terminal_error=None, log=noop, log_step=noop, log_summary_box=noop,
+                send_notification=noop, save_checkpoint=noop, _write_cost_report=noop,
+                _cleanup_cli_state=noop, _build_path_boundary=lambda: "",
+                _summarize_agent_output=lambda a, r: []).items():
+            setattr(o, name, val)
+        with mock.patch.object(eng, "get_cli_for_model", lambda m: Runner()), \
+                mock.patch.object(eng.time, "sleep", noop), \
+                mock.patch.object(eng, "RateLimitCountdown",
+                                  lambda s: SimpleNamespace(run=noop)):
+            out = o.run_agent("experimenter", "run E1", timeout=60)
+        return o, out, calls
+
+    def test_running_out_of_steps_is_not_terminal(self, tmp_path):
+        o, out, calls = self._run(tmp_path, "MaxIterationsReached", self.DETAIL)
+        assert o._terminal_error is None
+        assert out == "partial summary"
+
+    def test_the_sandboxed_wrapper_counts_too(self, tmp_path):
+        o, out, _ = self._run(tmp_path, "ConversationRunError",
+                              "Conversation run failed for id=x: " + self.DETAIL)
+        assert o._terminal_error is None and out == "partial summary"
+
+    def test_running_out_of_steps_is_not_retried(self, tmp_path):
+        _, _, calls = self._run(tmp_path, "MaxIterationsReached", self.DETAIL, result="")
+        assert len(calls) == 1
+
+    def test_a_real_terminal_error_still_aborts(self, tmp_path):
+        o, out, calls = self._run(tmp_path, "AuthenticationError", "401 invalid api key")
+        assert o._terminal_error.startswith("AuthenticationError")
+        assert out == "" and len(calls) == 1
+
+    def test_a_transient_error_is_still_retried(self, tmp_path):
+        _, _, calls = self._run(tmp_path, "InternalServerError", "upstream 500")
+        assert len(calls) == 4
+
+    def test_the_step_cap_is_not_classified_transient(self):
+        from ark.engines import _is_transient_agent_error
+        assert not _is_transient_agent_error("MaxIterationsReached", self.DETAIL)
