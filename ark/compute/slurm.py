@@ -1,8 +1,8 @@
 import os
 import subprocess
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from ark import shutting_down
 from .base import ComputeBackend
 
 
@@ -321,11 +321,16 @@ Save all results to the `results/` directory.{cluster_section}{template_section}
         extension = timedelta(hours=max_wait_hours)
 
         while datetime.now() < hard_deadline:
+            # The waits below end early on a Stop. This only stops the
+            # waiting. Cancelling the jobs is the launcher's call.
+            if shutting_down.is_set():
+                self.log(f"Run stopping: no longer waiting on {self.job_prefix}* jobs")
+                return False
             try:
                 target_jobs, other_count = self._query_target_jobs()
             except Exception as e:
                 self.log(f"Error checking Slurm: {e}")
-                time.sleep(60)
+                shutting_down.wait(60)
                 continue
 
             if not target_jobs:
@@ -370,7 +375,7 @@ Save all results to the `results/` directory.{cluster_section}{template_section}
                     f"{len(target_jobs)} {self.job_prefix}* jobs running, "
                     f"waiting {interval}s..."
                 )
-            time.sleep(interval)
+            shutting_down.wait(interval)
 
         hard_hours = max_wait_hours * _HARD_CEILING_MULTIPLIER
         self.log(f"Slurm wait hard ceiling reached after {hard_hours} hours")

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List
 
+from ark import shutting_down
 from ark.quality import raw_log_sanity, format_for_prompt
 from ark.findings_schema import (
     validate_findings,
@@ -398,7 +399,7 @@ Please read auto_research/state/latest_review.md and regenerate.
                 bootstrap_citations, append_papers_to_bib,
             )
 
-            if self._quota_exhausted:
+            if self._quota_exhausted or shutting_down.is_set():
                 return
 
             self.log_step(f"Literature: {issue.get('id')} - {issue.get('title', '')[:30]}", "progress")
@@ -420,7 +421,7 @@ Please read auto_research/state/latest_review.md and regenerate.
 
         def _run_experiment_issue(issue):
             """Execute a single experiment issue."""
-            if self._quota_exhausted:
+            if self._quota_exhausted or shutting_down.is_set():
                 return
             self.log_step(f"Experiment: {issue.get('id')} - {issue.get('title', '')[:30]}", "progress")
             try:
@@ -607,6 +608,19 @@ After running the experiment:
 
         finally:
             self._compute_backend.teardown()
+
+        # Interrupted by a Stop: its output is not a result. Filed "failed"
+        # (empty output) or "completed" it would mislead the next planner,
+        # and "completed" went on to generate figures during the stop.
+        if shutting_down.is_set():
+            issue["status"] = "pending"
+            if lock:
+                with lock:
+                    self._save_action_plan(action_plan)
+            else:
+                self._save_action_plan(action_plan)
+            self.log(f"Experiment {issue.get('id')} interrupted by the stop, left pending", "WARN")
+            return
 
         # Gate B (post-run): re-scan results after the new run, validate
         # findings.yaml against the augmented schema (source / construct).

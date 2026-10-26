@@ -4226,7 +4226,12 @@ provide the title.
             self._chat("agent", f"Hit an error: {str(e)[:200]}", kind="message")
             return
         self._set_activity("")
-        self._chat("agent", answer or "Done.", kind="message")
+        # No answer means the agent stopped early (provider error, timeout),
+        # not that it finished. "Done." here told 954d7885's owner their audit
+        # request ran when DeepSeek had refused the very first call.
+        self._chat("agent", answer or (
+            "This request did not finish. The agent stopped before it could "
+            "reply. Any error it hit is shown above."), kind="message")
         # Budget sync: fold this turn's LLM cost into cost_report.yaml + the DB.
         try:
             from ark.chat_agent import read_conversation_usage

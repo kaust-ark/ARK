@@ -261,15 +261,16 @@ class RateLimitCountdown:
         self._wait = wait_seconds
 
     def run(self):
-        """Block and show countdown."""
+        """Block and show countdown. A Stop (ark.shutting_down) ends it early."""
+        from ark import shutting_down
         if not _isatty():
-            time.sleep(self._wait)
+            shutting_down.wait(self._wait)
             return
 
         end_time = time.time() + self._wait
         while True:
             remaining = end_time - time.time()
-            if remaining <= 0:
+            if remaining <= 0 or shutting_down.is_set():
                 break
             m, s = divmod(int(remaining), 60)
             sys.stderr.write(f"\r  {Icons.RATELIMIT} Rate limited: resuming in {m}m {s:02d}s  ")

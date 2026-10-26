@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .cli import get_cli_for_model
+from ark import shutting_down
 
 
 def _fmt_tok(n: int) -> str:
@@ -553,16 +554,23 @@ Execute the task and update the corresponding files.
         task_brief = task.split("\n")[0][:50].strip()
         if len(task.split("\n")[0]) > 50:
             task_brief += "..."
+        if shutting_down.is_set():
+            self.log(f"  [{agent_type}] not started, the run is stopping", "WARN")
+            return ""
         self.log_step(f"{Icons.for_agent(agent_type)} Agent [{agent_type}] → {task_brief}", "progress")
 
         start_time = time.time()
         timer = ElapsedTimer(agent_type)
+        result, usage_record, elapsed = "", None, 0
 
         # 1 initial + 3 retries. OpenRouter endpoints drop streams under load
         # (peer closed / incomplete chunked read) — a single retry proved too
         # thin on flaky evenings (observed 10 drops in one run).
         MAX_RETRIES = 4
         for attempt in range(1, MAX_RETRIES + 1):
+            if attempt > 1 and shutting_down.is_set():
+                self.log(f"  [{agent_type}] retry dropped, the run is stopping", "WARN")
+                break
             try:
                 # self.model is the full LiteLLM string (e.g.
                 # "gemini/gemini-3.5-flash"), already resolved from --model →
@@ -655,6 +663,15 @@ Execute the task and update the corresponding files.
                                  "INFO" if held else "WARN")
                 else:
                     result = stdout
+
+                # Stopped mid-call: the Stop's SIGTERM hit this CLI too. Keep
+                # what it produced and judge nothing. Read as an empty run, it
+                # restarted the agent on the owner's key after a Stop
+                # (954d7885), and an error event here is the stop, not the
+                # provider.
+                if shutting_down.is_set():
+                    self.log(f"  [{agent_type}] stopped with the run", "WARN")
+                    break
 
                 # Minimal error guard (Q4=A): OpenHands/LiteLLM already retry rate
                 # limits per-request; here we only classify terminal vs transient.
@@ -840,7 +857,7 @@ Execute the task and update the corresponding files.
                         timer.stop()
                         backoff = 30 * attempt
                         self.log(f"  Empty-run retry: waiting {backoff}s before retry (attempt {attempt + 1}/{MAX_RETRIES})...", "INFO")
-                        time.sleep(backoff)
+                        shutting_down.wait(backoff)  # a Stop cuts the wait short
                         start_time = time.time()  # reset for next attempt
                         continue  # retry
                     else:
@@ -863,7 +880,7 @@ Execute the task and update the corresponding files.
                 self.log(f"Agent {agent_type} error (attempt {attempt}/{MAX_RETRIES}): {e}", "ERROR")
                 if attempt < MAX_RETRIES:
                     self.log(f"  Retrying...", "INFO")
-                    time.sleep(30)
+                    shutting_down.wait(30)
                     start_time = time.time()
                     continue
                 self.send_notification("Agent Error Failed", f"{agent_type}: {e}", priority="critical")
@@ -947,7 +964,7 @@ Execute the task and update the corresponding files.
         # pipeline aborts at its next checkpoint (same mechanism as other terminal
         # errors); otherwise the "ask at cap" guard would be toothless.
         _mgr = getattr(self, "_intervention", None)
-        if _mgr is not None:
+        if _mgr is not None and not shutting_down.is_set():  # no asking during a Stop
             try:
                 total = sum(float(s.get("cost_usd") or 0.0) for s in self._agent_stats)
                 if not _mgr.check_action("spend", total_usd=total):

@@ -32,6 +32,7 @@ ARK_ROOT = Path(__file__).parent.parent.parent.absolute()
 # PROJECT_DIR: legacy global, kept for backward compatibility
 PROJECT_DIR = None
 
+from ark import shutting_down
 from ark.memory import get_memory, SimpleMemory
 from ark.engines import AgentMixin
 from ark.latex import CompilerMixin
@@ -3083,6 +3084,10 @@ _EXIT_GRACE_DEFAULT = 120.0
 # Room for the run's wrap-up (the bounded final results publish is up to
 # ten minutes) before the guard treats the process as hung.
 _FINALIZE_GRACE_SECONDS = 15 * 60.0
+# After a Stop (SIGTERM), the most the wrap-up may take. systemd SIGKILLs the
+# launch unit 90 s after the SIGTERM (its default TimeoutStopSec), and the
+# dashboard's Stop request waits on the unit all that time.
+_STOP_GRACE_SECONDS = 60.0
 
 
 def _child_pids() -> list[int]:
@@ -3145,6 +3150,22 @@ def _arm_exit_guard(code: int, grace: float = None, log=None,
     return t
 
 
+def _on_stop_signal(sig, frame):
+    """SIGTERM (the dashboard's Stop): wind the run down and end the process.
+
+    The signal reaches the main thread only. The parallel experimenters kept
+    going after a Stop (954d7885: one waited on SLURM, one restarted its agent
+    on the owner's key) and held the process until systemd's SIGKILL 90 s
+    later. Tell them, and make sure the process ends before that.
+    """
+    if shutting_down.is_set():
+        return  # already stopping: a second SIGTERM must not cut the wrap-up short
+    print(f"\nTermination signal {sig} received. cleaning up...", file=sys.stderr)
+    shutting_down.set()
+    _arm_exit_guard(0, grace=_STOP_GRACE_SECONDS)
+    sys.exit(0)
+
+
 def main():
     parser = argparse.ArgumentParser(description="ARK Automated Research Orchestrator")
     # `--mode` accepted for backward compatibility with existing slurm
@@ -3188,10 +3209,7 @@ def main():
     args = parser.parse_args()
     
     # Handle termination signals
-    def signal_handler(sig, frame):
-        print(f"\nTermination signal {sig} received. cleaning up...", file=sys.stderr)
-        sys.exit(0)
-    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGTERM, _on_stop_signal)
 
     # Two boundary transports (see CONTROL_PLANE_BOUNDARY.md):
     #  • --control-plane-url  → remote HTTP path; no local DB. project_id must be
