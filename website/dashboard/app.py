@@ -58,6 +58,46 @@ def _handle_process_alive(handle: str) -> bool:
         return False
 
 
+# How long an "initializing" project is left alone before it counts as a launch
+# that died with its webapp process (a release mid-launch).
+_INIT_GRACE_S = 15 * 60
+_init_first_seen: dict[str, float] = {}
+
+
+def _leave_initializing_alone(session, p, pdir) -> bool:
+    """True while the poll loop must not judge an "initializing" project.
+
+    Its handle is still the PREVIOUS run's: a launch writes the new one
+    together with the new status. Judging it by that handle gave an old
+    outcome. 954d7885, 2026-10-26: a chat on the stopped project left it
+    failed, and a Continue showed failed while it was being launched.
+
+    A side turn (routes._begin_side_turn) ends when its helper exits. A
+    project still initializing after _INIT_GRACE_S with no live helper is a
+    launch that died with its webapp: it gets the old handle's verdict, as
+    before, so it cannot hang in a state the page offers no button for.
+    """
+    from .routes import _end_side_turn, _launches_in_flight, _read_side_turn
+    try:
+        rec = _read_side_turn(pdir)
+        if rec and rec.get("helper"):
+            if not _handle_process_alive(rec["helper"]):
+                _end_side_turn(session, p, pdir)
+            return True
+        if p.id in _launches_in_flight:
+            return True  # however long it takes, this process is launching it
+        first = _init_first_seen.setdefault(p.id, time.monotonic())
+        if time.monotonic() - first < _INIT_GRACE_S:
+            return True
+        if rec:  # a side turn whose helper never started
+            _end_side_turn(session, p, pdir)
+            return True
+    except Exception as e:
+        logger.warning(f"initializing check failed for {p.id}: {e}")
+        return True
+    return False
+
+
 def _gc_project_env(pdir, project_id: str = ""):
     """Reclaim disk by deleting the per-project conda env once terminal.
 
@@ -428,11 +468,16 @@ async def _poll_jobs(app: FastAPI):
                 pass
             with get_session(settings.db_path) as session:
                 projects = get_running_projects(session)
+                initializing = {p.id for p in projects if p.status == "initializing"}
+                for pid in set(_init_first_seen) - initializing:
+                    del _init_first_seen[pid]
                 for p in projects:
+                    pdir = settings.projects_root / p.user_id / p.id
+                    if p.status == "initializing" and _leave_initializing_alone(session, p, pdir):
+                        continue
                     if not p.slurm_job_id:
                         continue
 
-                    pdir = settings.projects_root / p.user_id / p.id
                     from .constants import DASHBOARD_PREFIX
                     url = f"{settings.base_url}{DASHBOARD_PREFIX}/#project/{p.id}"
 

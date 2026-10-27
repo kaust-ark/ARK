@@ -1695,6 +1695,48 @@ async def _start_project_async(
         )
 
 
+# A side turn (a chat message, a content question or a one-shot apply on a
+# finished project) shows as "initializing" while its helper works, so the page
+# keeps streaming and a second message waits. The helper never writes the
+# project's status (see _try_submit_or_pending), so this record holds the status
+# the turn interrupted and the helper's handle. The poll loop puts the status
+# back once the helper is gone (app._leave_initializing_alone). Before, the poll
+# loop judged the project by its previous run's handle: a chat on 954d7885,
+# stopped by its owner, left it failed (2026-10-26).
+# Projects whose launch (_restart_project_async) is running in this process
+# right now. A launch can block for many minutes (env provisioning, a cloud
+# VM), and while it does the project must not be judged by its old handle.
+_launches_in_flight: set[str] = set()
+
+
+def _side_turn_file(pdir: Path) -> Path:
+    return Path(pdir) / "logs" / "side_turn.json"
+
+
+def _begin_side_turn(project, pdir: Path) -> None:
+    f = _side_turn_file(pdir)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"prior": project.status}))
+    project.status = "initializing"
+
+
+def _read_side_turn(pdir: Path) -> dict | None:
+    try:
+        return json.loads(_side_turn_file(pdir).read_text())
+    except Exception:
+        return None
+
+
+def _end_side_turn(session, project, pdir: Path) -> None:
+    """Give the project back the status the side turn interrupted."""
+    rec = _read_side_turn(pdir)
+    # Drop the record first: a stale one could later undo a real launch.
+    _side_turn_file(pdir).unlink(missing_ok=True)
+    session.refresh(project)
+    if rec and rec.get("prior") and project.status == "initializing":
+        update_project(session, project, status=rec["prior"])
+
+
 async def _restart_project_async(
     project_id: str,
     pdir: Path,
@@ -1713,6 +1755,13 @@ async def _restart_project_async(
     side_channel = bool(apply_instruction or chat_message)
 
     def _blocking_submit():
+        _launches_in_flight.add(project_id)
+        try:
+            return _submit()
+        finally:
+            _launches_in_flight.discard(project_id)
+
+    def _submit():
         with get_session(settings.db_path) as session:
             project = get_project(session, project_id)
             if not project:
@@ -1724,7 +1773,9 @@ async def _restart_project_async(
                 return final_status, _pname(project), None
             except Exception as e:
                 logger.error(f"Restart failed for {project_id}: {e}", exc_info=True)
-                if not side_channel:
+                if side_channel:
+                    _end_side_turn(session, project, pdir)
+                else:
                     update_project(session, project, status="failed", error_message=str(e))
                 return None, _pname(project), str(e)
 
@@ -1793,6 +1844,9 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
     # it is not a run.
     side_channel = bool(apply_instruction or chat_message)
     if not side_channel:
+        # A real launch owns the status from here. A side-turn record left by
+        # a Stop mid-turn must not put an old status back over it.
+        _side_turn_file(pdir).unlink(missing_ok=True)
         admin_ids = _admin_user_ids(session)
         owner_is_admin = project.user_id in admin_ids
         if owner_is_admin:
@@ -1832,12 +1886,20 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
         logger.error(f"Failed to launch orchestrator for {project.id}: {e}", exc_info=True)
         if side_channel:
             # A failed chat/apply helper is the helper's problem, not the run's.
+            _end_side_turn(session, project, pdir)
+            add_message(session, project.id, "agent",
+                        f"Could not start on this request: {str(e)[:200]}", kind="message")
             return project.status
         update_project(session, project, status="failed",
                        error_message=f"Launch failed: {str(e)[:400]}")
         return "failed"
     if side_channel:
         # Leave status and the job handle exactly as the main run set them.
+        # The helper's own handle goes in the side-turn record instead.
+        rec = _read_side_turn(pdir)
+        if rec is not None:
+            rec["helper"] = job_id
+            _side_turn_file(pdir).write_text(json.dumps(rec))
         return project.status
     update_project(session, project, status=launcher.initial_status, slurm_job_id=job_id)
     return launcher.initial_status
@@ -2912,9 +2974,17 @@ async def api_stop_project(project_id: str, request: Request):
         project = get_project(session, project_id)
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
+        pdir = _project_dir(settings, project.user_id, project_id)
+        turn = _read_side_turn(pdir) if project.status == "initializing" else None
+        if turn and turn.get("helper"):
+            # Stopping a side turn stops its helper. The run it would otherwise
+            # cancel is already over, and the project goes back to how the
+            # turn found it: a Stop on a chat must not turn "done" into "stopped".
+            launcher_from_handle(turn["helper"], log_fn=logger.info).cancel(turn["helper"], pdir)
+            _end_side_turn(session, project, pdir)
+            return JSONResponse({"ok": True})
         if project.slurm_job_id:
             # Dispatch cancel off the persisted handle (local:/skypilot:/slurm).
-            pdir = _project_dir(settings, project.user_id, project_id)
             launcher_from_handle(project.slurm_job_id, log_fn=logger.info).cancel(
                 project.slurm_job_id, pdir
             )
@@ -3081,7 +3151,7 @@ async def api_post_message(project_id: str, request: Request):
             _write_config_yaml(pdir, project, _owner, settings, model=model)
             tg_token = project.telegram_token
             tg_chat = project.telegram_chat_id
-            project.status = "initializing"
+            _begin_side_turn(project, pdir)
             session.add(project)
             session.commit()
             session.refresh(project)
@@ -3105,31 +3175,11 @@ async def api_post_message(project_id: str, request: Request):
     intent = await asyncio.to_thread(sideband.classify_message, text, keys)
 
     if intent == "ask":
-        # A status/progress question → instant snapshot answer. A CONTENT question
-        # (page count, what a section says, are the citations real) on a FINISHED
-        # project → a read-only Claude agent that reads the real files and answers
-        # (Claude-Code-level). Running projects always use the snapshot (don't spawn
-        # a second agent over a live run).
-        depth = "status" if running else sideband.classify_ask_depth(text)
-        if depth == "content":
-            with get_session(settings.db_path) as session:
-                project = get_project(session, project_id)
-                add_message(session, project_id, "user", text, kind="ask")
-                pdir = _project_dir(settings, project.user_id, project_id)
-                model = _read_project_model(pdir, project=project) or DEFAULT_MODEL
-                _owner = get_user(session, project.user_id) or user
-                _write_config_yaml(pdir, project, _owner, settings, model=model)
-                tg_token = project.telegram_token
-                tg_chat = project.telegram_chat_id
-                project.status = "initializing"
-                session.add(project)
-                session.commit()
-                session.refresh(project)
-            asyncio.create_task(_restart_project_async(
-                project_id=project_id, pdir=pdir, is_admin=_is_admin(user),
-                token=tg_token, chat_id=tg_chat,
-                apply_instruction=text, apply_scope="answer"))
-            return JSONResponse({"ok": True, "routed": "ask", "depth": "content", "launching": True})
+        # A question → instant snapshot answer. Finished projects never get here
+        # (the chat agent above takes their messages, content questions too),
+        # so this is a project that is running, queued or being set up, and a
+        # second agent would race the run or the turn in progress. A content
+        # agent used to start here for a project mid-launch or mid-turn.
         answer = await asyncio.to_thread(sideband.answer_from_state, text, state_text, keys)
         with get_session(settings.db_path) as session:
             add_message(session, project_id, "user", text, kind="ask")
@@ -3457,7 +3507,7 @@ async def api_apply_change(project_id: str, request: Request):
         _write_config_yaml(pdir, project, _owner, settings, model=model)
         tg_token = project.telegram_token
         tg_chat = project.telegram_chat_id
-        project.status = "initializing"
+        _begin_side_turn(project, pdir)
         session.add(project)
         session.commit()
         session.refresh(project)
