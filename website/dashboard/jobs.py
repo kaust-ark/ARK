@@ -796,20 +796,31 @@ def slurm_state_to_status(slurm_state: str) -> str:
 
 # ── Local subprocess runner ────────────────────────────────────────────────────
 
-def _conda_env_exists(conda_bin: str, env_name: str) -> bool:
-    """Return True if a named conda environment actually exists on this machine."""
+def _conda_env_exists(conda_bin: str, env_name: str) -> bool | None:
+    """True if the named conda env exists, False if it does not, None if
+    conda could not say (it failed or timed out).
+
+    None is not False. The answer decides whether the env gets created, and
+    on 2026-10-26 a timed-out listing read the shared ark-base as missing: it
+    was created again from environment.yml, which put seven platform packages
+    back to older versions for every run.
+    """
+    # Where named envs live by default, read from disk: nothing to time out.
+    root = Path(conda_bin).resolve().parent.parent
+    if (root / "envs" / env_name / "conda-meta").is_dir():
+        return True
     try:
         result = subprocess.run(
             [conda_bin, "env", "list", "--json"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=60,
         )
         if result.returncode != 0:
-            return False
+            return None
         import json as _json
         envs = _json.loads(result.stdout).get("envs", [])
         return any(Path(e).name == env_name for e in envs)
     except Exception:
-        return False
+        return None
 
 
 def _ensure_named_conda_env(conda_bin: str, env_name: str, log_path: Path) -> tuple[bool, str]:
@@ -821,8 +832,13 @@ def _ensure_named_conda_env(conda_bin: str, env_name: str, log_path: Path) -> tu
     the PYTHONPATH that ``launch_local_job`` injects, so the named env stays
     a clean research-stack template that can be safely cloned per-project.
     """
-    if _conda_env_exists(conda_bin, env_name):
+    exists = _conda_env_exists(conda_bin, env_name)
+    if exists:
         return True, f"env '{env_name}' already exists"
+    if exists is None:
+        # Run on the env as it is. If it really is missing, `conda run` says
+        # so, which beats creating it over one that is there.
+        return True, f"conda could not list its envs; using '{env_name}' as is"
 
     ark_root = Path(__file__).resolve().parents[2]
     yml_file = ark_root / ("environment-macos.yml" if sys.platform == "darwin" else "environment.yml")
@@ -830,19 +846,24 @@ def _ensure_named_conda_env(conda_bin: str, env_name: str, log_path: Path) -> tu
         return False, f"environment file not found: {yml_file}"
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [conda_bin, "env", "create", "-f", str(yml_file), "-n", env_name, "--yes"]
+    # No --yes: with it, an existing env is removed and built again, which is
+    # how a wrong "missing" wiped the shared ark-base. Without it conda keeps
+    # the env but still moves its packages to the yml's pins, so the checks
+    # above are what must keep an existing env from getting here.
+    cmd = [conda_bin, "env", "create", "-f", str(yml_file), "-n", env_name]
     started = time.time()
     try:
         with open(log_path, "w") as lf:
             _accept_conda_tos(conda_bin, log_file=lf)
             lf.write(f"$ {' '.join(cmd)}\n")
             lf.flush()
-            proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT)
+            proc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT,
+                                  stdin=subprocess.DEVNULL)
         elapsed = time.time() - started
         if proc.returncode != 0:
             return False, f"conda env create failed (rc={proc.returncode}); see {log_path}"
 
-        if not _conda_env_exists(conda_bin, env_name):
+        if _conda_env_exists(conda_bin, env_name) is False:
             return False, f"conda env create exited 0 but env '{env_name}' not found"
 
         return True, f"created env '{env_name}' from {yml_file.name} in {elapsed:.1f}s"
