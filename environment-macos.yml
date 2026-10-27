@@ -7,7 +7,7 @@ dependencies:
   - pip
   - pip:
       - annotated-types==0.7.0
-      - anthropic==0.94.1
+      - anthropic==0.121.0
       - anyio==4.13.0
       - certifi==2026.2.25
       - cffi==2.0.0
@@ -28,7 +28,7 @@ dependencies:
       - kiwisolver==1.5.0
       - matplotlib==3.10.8
       - numpy==2.4.4
-      - openai==2.31.0
+      - openai==2.53.0
       - pandas==3.0.2
       - pillow==12.2.0
       - pyasn1==0.6.3
@@ -36,7 +36,7 @@ dependencies:
       - pycparser==3.0
       - pydantic==2.13.0
       - pydantic-core==2.46.0
-      - pymupdf==1.27.2.2
+      - pymupdf==1.28.2
       - pyparsing==3.3.2
       - pypdf==6.10.0
       - python-dateutil==2.9.0.post0
@@ -49,9 +49,9 @@ dependencies:
       - itsdangerous==2.2.0
       - jinja2==3.1.6
       - python-multipart==0.0.26
-      - sqlalchemy==2.0.49
-      - sqlmodel==0.0.38
-      - starlette==1.0.0
+      - sqlalchemy==2.0.51
+      - sqlmodel==0.0.39
+      - starlette==1.6.0
       - uvicorn==0.44.0
       - tenacity==9.1.4
       - tqdm==4.67.3
