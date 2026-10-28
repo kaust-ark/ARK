@@ -1821,7 +1821,19 @@ a {{ color: #0d9488; }}
             self.iteration = checkpoint.get("iteration", 0)
             self.total_input_tokens = checkpoint.get("total_input_tokens", 0)
             self.total_output_tokens = checkpoint.get("total_output_tokens", 0)
-            self.log(f"Resumed from checkpoint: iteration={self.iteration}", "INFO")
+            step = checkpoint.get("completed_step") or 0
+            if 0 < step < 5:
+                # A step checkpoint names the iteration IN PROGRESS, and
+                # _iteration_prep() increments before any step runs. Loaded
+                # as is, that skipped past the unfinished iteration, so
+                # get_resume_step() never matched and every Continue redid
+                # review + plan on an unchanged paper (954d7885: twice, ~5%
+                # of the run). Step back one so prep re-enters it.
+                self.iteration -= 1
+                self.log(f"Resumed from checkpoint: iteration {self.iteration + 1}, "
+                         f"step {step}/5 done", "INFO")
+            else:
+                self.log(f"Resumed from checkpoint: iteration={self.iteration}", "INFO")
             return True
 
         try:

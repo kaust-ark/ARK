@@ -553,6 +553,17 @@ class PipelineMixin:
             return
 
         self.log_step_header(step_num, total_steps, "Execute")
+        if 0 < resume_step == step_num - 1 and isinstance(action_plan, dict):
+            # Resumed into Execute. An "in_progress" task was cut off by the
+            # stop or crash that ended the last run, and only "pending" tasks
+            # are scheduled. Nothing is running now, so it is pending again.
+            cut = [i for i in action_plan.get("issues") or []
+                   if i.get("status") == "in_progress"]
+            for i in cut:
+                i["status"] = "pending"
+            if cut:
+                self._save_action_plan(action_plan)
+                self.log(f"Resuming Execute: {len(cut)} interrupted task(s) back to pending", "INFO")
         execute_ok = False
         try:
             if action_plan:
@@ -691,6 +702,7 @@ class PipelineMixin:
         # (once the user fixes the key/model) redoes it instead of skipping it.
         # A dev-phase abort never started a paper iteration, so there is
         # nothing to roll back (doing it anyway saved iteration=-1).
+        steps_done = self.get_resume_step() if rollback_iteration else 0
         if rollback_iteration:
             self.iteration -= 1
         detail = getattr(self, "_terminal_error", "") or "non-retryable agent error"
@@ -708,14 +720,33 @@ class PipelineMixin:
              "or context overflow. Fix it (or switch provider) and re-run."],
             inside_phase=False,
         )
-        self.save_checkpoint()
+        self._checkpoint_unfinished_iteration(steps_done)
         return False  # stop the run; do NOT wait
 
+    def _checkpoint_unfinished_iteration(self, steps_done: int):
+        """Checkpoint an iteration that stopped part way through.
+
+        With steps already done, their step checkpoint is the resume pointer:
+        resume_from_checkpoint() re-enters the iteration after them. Saving
+        the rolled-back iteration here instead wiped it, so 954d7885's Continue
+        after its balance ran out re-reviewed and re-planned an unchanged paper.
+        """
+        if not steps_done:
+            self.save_checkpoint()
+            return
+        self.log(f"Checkpoint kept: iteration {self.iteration + 1}, step {steps_done}/5 "
+                 "done, a re-run continues from there", "INFO")
+        try:
+            self._publish_state_docs()
+        except Exception as e:
+            self.log(f"state doc projection failed (non-fatal): {e}", "WARN")
+
     def _handle_quota_exhausted(self, score: float, detail: str = "") -> bool:
+        steps_done = self.get_resume_step()
         self.iteration -= 1
         self.log("", "RAW")
         self.log_summary_box("Iteration ABORTED (quota exhausted)", [f"Score: {score}/10 (unchanged)", detail or "API quota exhausted"], inside_phase=False)
-        self.save_checkpoint()
+        self._checkpoint_unfinished_iteration(steps_done)
         wait_time = 1800
         self.log(f"Pausing {wait_time}s waiting for API quota reset...", "ERROR")
         self.send_notification("Quota Exhausted", f"Pausing {wait_time // 60}min before retry")

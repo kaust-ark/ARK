@@ -468,6 +468,7 @@ class TestDevAbortKeepsTheIterationCounter:
         p.log_summary_box = lambda *a, **k: None
         p.saved = []
         p.save_checkpoint = lambda: p.saved.append(p.iteration)
+        p.get_resume_step = lambda: 0  # no step of the iteration finished yet
         return p
 
     def test_dev_abort_leaves_the_counter_alone(self):
