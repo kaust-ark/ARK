@@ -162,3 +162,19 @@ class TestDeadlineNote:
         _run(o, Runner, timeout=600)
         assert "## Time limit" in calls[0]["prompt"]
         assert "## Time limit" not in calls[1]["prompt"]
+
+
+class TestStreamFiles:
+    def test_two_agents_ending_in_the_same_second_keep_both_streams(self, tmp_path):
+        o, _, Runner = _agent(tmp_path, [
+            (0, _stream(3) + "first\n", 60, False, {"result": "done", "usage": None}),
+            (0, _stream(4) + "second\n", 60, False, {"result": "done", "usage": None}),
+        ])
+        with mock.patch.object(eng.time, "strftime", lambda *a: "20261025_132359"):
+            _run(o, Runner)
+            _run(o, Runner)
+        files = sorted((tmp_path / "agent_streams").iterdir())
+        assert [f.name for f in files] == ["20261025_132359_experimenter.jsonl",
+                                           "20261025_132359_experimenter_2.jsonl"]
+        assert files[0].read_text().endswith("first\n")
+        assert files[1].read_text().endswith("second\n")

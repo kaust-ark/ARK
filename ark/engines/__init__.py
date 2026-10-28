@@ -706,10 +706,20 @@ Execute the task and update the corresponding files.
                 try:
                     _ld = getattr(self, "log_dir", None)
                     if _ld and stdout:
-                        _f = (Path(_ld) / "agent_streams" /
-                              f"{time.strftime('%Y%m%d_%H%M%S')}_{agent_type}.jsonl")
-                        _f.parent.mkdir(parents=True, exist_ok=True)
-                        _f.write_text(stdout)
+                        _dir = Path(_ld) / "agent_streams"
+                        _dir.mkdir(parents=True, exist_ok=True)
+                        _stem = f"{time.strftime('%Y%m%d_%H%M%S')}_{agent_type}"
+                        # Exclusive create: two parallel agents ending in the
+                        # same second used to share a name, and one record
+                        # overwrote the other (954d7885 lost two that way).
+                        for _n in range(1, 100):
+                            _f = _dir / (f"{_stem}.jsonl" if _n == 1 else f"{_stem}_{_n}.jsonl")
+                            try:
+                                with open(_f, "x", encoding="utf-8") as _fh:
+                                    _fh.write(stdout)
+                                break
+                            except FileExistsError:
+                                continue
                 except Exception:
                     pass
 
