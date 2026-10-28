@@ -192,6 +192,47 @@ def _with_stuck_retry_note(prompt: str) -> str:
     return prompt if _STUCK_RETRY_NOTE in prompt else prompt + _STUCK_RETRY_NOTE
 
 
+def _count_llm_requests(stdout: str) -> int:
+    """Distinct model responses in an OpenHands JSON event stream.
+
+    Every action and condensation names the response it came from, so this
+    equals the request count OpenHands saves when a session ends (it matched on
+    all 32 saved sessions of 954d7885). Unlike that saved count, it survives
+    the session being killed.
+    """
+    ids = set()
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not (line.startswith("{") and line.endswith("}")):
+            continue
+        try:
+            rid = json.loads(line).get("llm_response_id")
+        except (ValueError, AttributeError):
+            continue
+        if rid:
+            ids.add(rid)
+    return len(ids)
+
+
+_USAGE_SUMS = ("input_tokens", "output_tokens", "cache_read_tokens",
+               "cache_creation_tokens", "cost_usd", "duration_api_ms", "requests")
+
+
+def _add_usage(total: dict | None, rec: dict | None) -> dict | None:
+    """Two usage records as one. Each retry attempt is billed, so none is dropped."""
+    if not rec:
+        return total
+    if not total:
+        return dict(rec)
+    out = dict(total)
+    for k in _USAGE_SUMS:
+        out[k] = (total.get(k) or 0) + (rec.get(k) or 0)
+    out["model"] = rec.get("model") or total.get("model", "")
+    if total.get("estimated") or rec.get("estimated"):
+        out["estimated"] = True
+    return out
+
+
 class AgentMixin:
     """Mixin providing agent execution capabilities.
 
@@ -385,6 +426,31 @@ class AgentMixin:
 
         return summary_lines
 
+    def _estimate_usage(self, agent_type: str, requests: int) -> dict:
+        """Usage of a session killed before OpenHands saved it.
+
+        The requests are counted, the tokens and cost per request are this
+        run's measured average: the same agent type when it has one, else any
+        agent, else nothing (requests only). Flagged ``estimated``.
+        """
+        keys = ("input_tokens", "output_tokens", "cache_read_tokens",
+                "cache_creation_tokens", "cost_usd")
+        measured = [s for s in getattr(self, "_agent_stats", [])
+                    if s.get("requests") and not s.get("estimated")]
+
+        def per_request(pool):
+            n = sum(s["requests"] for s in pool)
+            return {k: sum(s.get(k) or 0 for s in pool) / n for k in keys} if n else None
+
+        per = (per_request([s for s in measured if s.get("agent_type") == agent_type])
+               or per_request(measured))
+        rec = {"model": getattr(self, "model", "") or "", "requests": requests,
+               "estimated": True, "duration_api_ms": 0}
+        for k in keys:
+            v = per[k] * requests if per else 0
+            rec[k] = round(v, 6) if k == "cost_usd" else int(v)
+        return rec
+
     def run_agent(self, agent_type: str, task: str, timeout: int = 1800,
                   prior_context: str = "") -> str:
         """Run an agent of the specified type, returning its output.
@@ -562,6 +628,7 @@ Execute the task and update the corresponding files.
         start_time = time.time()
         timer = ElapsedTimer(agent_type)
         result, usage_record, elapsed = "", None, 0
+        spent = None  # usage of every attempt, retries included
 
         # 1 initial + 3 retries. OpenRouter endpoints drop streams under load
         # (peer closed / incomplete chunked read) — a single retry proved too
@@ -639,6 +706,14 @@ Execute the task and update the corresponding files.
                     parsed = cli_runner.parse_output(stdout)
                     result = parsed.get("result", "") or ""
                     usage_record = parsed.get("usage")
+                    # OpenHands saves usage only when a session ends on its
+                    # own. Killed at the wall clock it saves nothing, and
+                    # 954d7885's ledger missed 1,602 billed requests that way.
+                    if not usage_record:
+                        n_req = _count_llm_requests(stdout)
+                        if n_req:
+                            usage_record = self._estimate_usage(agent_type, n_req)
+                    spent = _add_usage(spent, usage_record)
                     oh_error_code = parsed.get("error_code")
                     oh_error_detail = parsed.get("error_detail")
                     # Tool calls the environment REJECTED. Not fatal — the agent
@@ -900,6 +975,8 @@ Execute the task and update the corresponding files.
                     "cost_usd": 0.0,
                     "duration_api_ms": 0,
                 }
+                if spent:
+                    err_stat.update(spent)  # earlier attempts were still billed
                 self._agent_stats.append(err_stat)
                 try:
                     self._write_cost_report()
@@ -907,6 +984,7 @@ Execute the task and update the corresponding files.
                     pass
                 return ""
 
+        usage_record = spent
         timer.stop()
         self.log_step(f"{Icons.for_agent(agent_type)} {agent_styled(agent_type, f'[{agent_type}]')} completed ({elapsed}s)", "success")
 
@@ -922,7 +1000,10 @@ Execute the task and update the corresponding files.
             self.log_step(
                 f"  💰 ${usage_record['cost_usd']:.4f}  "
                 f"in:{_fmt_tok(in_tok)}  out:{_fmt_tok(out_tok)}  "
-                f"cache:{_fmt_tok(cached_in)}({hit_pct}% hit)",
+                f"cache:{_fmt_tok(cached_in)}({hit_pct}% hit)"
+                + (f"  (estimated from {usage_record.get('requests', 0)} requests, "
+                   "the session ended before its usage was saved)"
+                   if usage_record.get("estimated") else ""),
                 "info"
             )
 

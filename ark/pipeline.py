@@ -4018,6 +4018,10 @@ provide the title.
             "total_output_tokens": total_output_tokens,
             "total_cache_read_tokens": total_cache_read_tokens,
             "total_cache_creation_tokens": total_cache_creation_tokens,
+            # Sessions killed before OpenHands saved their usage are counted
+            # by request and priced at the run's average (estimated: true).
+            "estimated_cost_usd": round(sum(float(s.get("cost_usd") or 0.0)
+                                            for s in merged_stats if s.get("estimated")), 6),
             "per_agent": by_type,
             "raw_stats": merged_stats[-100:],  # Keep last 100 entries
         }

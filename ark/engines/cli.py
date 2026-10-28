@@ -445,10 +445,11 @@ class OpenHandsCLI(AgentCLI):
             data = json.loads(bs.read_text())
             metrics = (data.get("stats") or {}).get("usage_to_metrics") or {}
             cost = 0.0
-            in_tok = out_tok = cache_read = cache_write = 0
+            in_tok = out_tok = cache_read = cache_write = requests = 0
             model = ""
             for m in metrics.values():
                 cost += float(m.get("accumulated_cost") or 0.0)
+                requests += len(m.get("token_usages") or [])
                 tu = m.get("accumulated_token_usage") or {}
                 in_tok += int(tu.get("prompt_tokens") or 0)
                 out_tok += int(tu.get("completion_tokens") or 0)
@@ -463,6 +464,9 @@ class OpenHandsCLI(AgentCLI):
                 "cache_creation_tokens": cache_write,
                 "cost_usd": cost,
                 "duration_api_ms": 0,
+                # One entry per model response; the estimate for killed
+                # sessions divides by this (engines._estimate_usage).
+                "requests": requests,
             }
         except Exception:
             return None
