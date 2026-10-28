@@ -192,6 +192,30 @@ def _with_stuck_retry_note(prompt: str) -> str:
     return prompt if _STUCK_RETRY_NOTE in prompt else prompt + _STUCK_RETRY_NOTE
 
 
+def _deadline_note(timeout: int, now: float) -> str:
+    """Tell a long session when it will be stopped.
+
+    The wall clock kills the CLI with no warning, so the agent's final summary
+    and its last unsaved work go with it. 954d7885 lost five two-hour
+    experimenter sessions that way, all still working at the cut. Whether the
+    model watches the clock is up to the model; this is the only place it can
+    learn the time exists.
+    """
+    if timeout < 1800:
+        return ""
+    end = time.gmtime(now + timeout)
+    margin = min(600, timeout // 6)
+    wrap = time.gmtime(now + timeout - margin)
+    return (
+        "\n\n## Time limit\n"
+        f"This session is stopped at {time.strftime('%H:%M', end)} UTC, "
+        f"{timeout // 60} minutes after it starts. Anything not saved to a file "
+        "by then is lost, and so is your final summary. Check the time with "
+        f"`date -u` now and then. From {time.strftime('%H:%M', wrap)} UTC on, "
+        "start nothing new: save your results and write your final summary.\n"
+    )
+
+
 def _count_llm_requests(stdout: str) -> int:
     """Distinct model responses in an OpenHands JSON event stream.
 
@@ -663,7 +687,7 @@ Execute the task and update the corresponding files.
                         self.log(f"  [intervention] setup skipped: {e}", "WARN")
 
                 returncode, stdout, stderr, elapsed, timeout_expired = cli_runner.execute(
-                    prompt=full_prompt,
+                    prompt=full_prompt + _deadline_note(timeout, time.time()),
                     path_boundary=self._build_path_boundary(),
                     code_dir=self.code_dir,
                     timeout=timeout,

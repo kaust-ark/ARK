@@ -144,3 +144,21 @@ class TestKilledSessionIsOnTheLedger:
         assert rec["requests"] == 523
         assert rec["input_tokens"] == 42_000_000
         assert rec["cost_usd"] == pytest.approx(1.30)
+
+
+class TestDeadlineNote:
+    def test_a_long_session_is_told_when_it_stops(self):
+        t0 = calendar.timegm((2026, 10, 25, 11, 24, 0))
+        note = eng._deadline_note(7200, t0)
+        assert "13:24 UTC" in note and "13:14 UTC" in note and "120 minutes" in note
+
+    def test_a_short_session_gets_no_note(self):
+        assert eng._deadline_note(600, time.time()) == ""
+
+    def test_the_note_reaches_the_agent(self, tmp_path):
+        o, calls, Runner = _agent(
+            tmp_path, [(0, _stream(3), 60, False, {"result": "done", "usage": None})] * 2)
+        _run(o, Runner, timeout=7200)
+        _run(o, Runner, timeout=600)
+        assert "## Time limit" in calls[0]["prompt"]
+        assert "## Time limit" not in calls[1]["prompt"]
