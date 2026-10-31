@@ -81,8 +81,10 @@ def test_the_access_log_never_carries_a_token(logging_restored):
     rec = lg.makeRecord("uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
                         ("1.2.3.4:0", "GET", "/dashboard/auth/verify?token=abc.DEF-1_x&n=2",
                          "1.1", 307), None)
-    for f in lg.filters:
-        f.filter(rec)
+    # Only ours: newer litellm attaches its own scrubber to uvicorn.access on
+    # import, which rewrites the same span differently. Prod must not rely on it.
+    ours = next(f for f in lg.filters if isinstance(f, cli._RedactLoginTokens))
+    ours.filter(rec)
     line = rec.getMessage()
     assert "abc.DEF-1_x" not in line
     assert "token=[redacted]&n=2" in line and line.endswith("307")
