@@ -79,3 +79,23 @@ def test_cheapest_preset_is_haiku_5_5_and_routes_for_openrouter_users():
     m = R._cheapest_model_for({"openrouter": "x"})
     assert R._maybe_route_via_openrouter(R._to_litellm_model(m), {"openrouter": "x"}) \
         == "openrouter/anthropic/claude-haiku-5.5"
+
+
+@pytest.mark.parametrize("keys, model", [
+    ({"gemini": "g-x"}, "gemini-3.8-flash"),
+    ({"gemini": "g-x"}, "gemini-3.1-pro-preview"),
+    ({"openai": "sk-x"}, "gpt-5.5"),
+    ({"openai": "sk-x"}, "gpt-5.4-mini"),
+    ({"anthropic": "sk-ant"}, "claude-sonnet-5-5"),
+])
+def test_vendor_rows_send_bare_names_and_their_own_key_covers_them(keys, model):
+    """The Gemini and OpenAI rows post bare names and the create endpoint stores
+    them bare. Reading the provider off the raw string called every one of them
+    Anthropic, so a Gemini-only or OpenAI-only account was refused its own chips."""
+    assert f'value="{model}"' in APP
+    R._require_model_key(keys, model)
+
+
+def test_a_bare_name_still_needs_its_own_vendor_key():
+    msg = _msg({"gemini": "g-x"}, "gpt-5.5")
+    assert "OpenAI" in msg

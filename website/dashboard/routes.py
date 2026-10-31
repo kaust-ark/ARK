@@ -415,7 +415,11 @@ def _require_model_key(keys: dict, model_variant: str) -> None:
     Used by create AND restart/continue (a restart re-runs the stored model, so
     it dies the same way unless the owner added the matching key).
     """
-    prov = (model_variant.split("/", 1)[0] if "/" in (model_variant or "") else "anthropic").lower()
+    # The vendor rows store bare names ("gemini-3.8-flash", "gpt-5.5"), so read
+    # the provider off the LiteLLM form. Splitting the raw string defaulted every
+    # bare name to Anthropic and refused Gemini- and OpenAI-only accounts their
+    # own vendor's chips.
+    prov = _to_litellm_model(model_variant).split("/", 1)[0].lower()
     ok = bool(keys.get(prov)) or (
         prov == "anthropic" and keys.get("claude_oauth_token")) or (
         prov == "gemini" and keys.get("gemini_oauth_json")) or (
