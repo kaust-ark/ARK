@@ -11,7 +11,12 @@ def make_token(email: str, secret: str) -> str:
     return URLSafeTimedSerializer(secret).dumps(email, salt="magic-link")
 
 
-def verify_token(token: str, secret: str, max_age: int = 2592000) -> str | None:
+# The login email says the link expires in 1 hour. It used to work for 30 days,
+# and a link is not single-use, so every one that reached a log stayed a login.
+MAGIC_LINK_MAX_AGE = 3600
+
+
+def verify_token(token: str, secret: str, max_age: int = MAGIC_LINK_MAX_AGE) -> str | None:
     try:
         return URLSafeTimedSerializer(secret).loads(token, salt="magic-link", max_age=max_age)
     except (SignatureExpired, BadSignature):

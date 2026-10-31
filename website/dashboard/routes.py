@@ -2098,10 +2098,11 @@ async def auth_send_link(request: Request):
     # would produce http://localhost:9527/... (wrong host behind proxy).
     link = _absolute_url(f"/auth/verify?token={token}")
 
-    print(f"\n  *** MAGIC LINK for {email} ***\n  {link}\n", flush=True)
-
     ok = send_magic_link_email(settings, email, link)
     if not ok:
+        # The console is the fallback only. A delivered link printed here sat in
+        # the journal for anyone who can read it, and it signs its holder in.
+        print(f"\n  *** MAGIC LINK for {email} ***\n  {link}\n", flush=True)
         logger.warning(f"Email delivery failed — magic link printed to server console only")
     return JSONResponse({"ok": True})
 

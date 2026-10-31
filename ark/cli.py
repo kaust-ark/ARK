@@ -15,6 +15,7 @@ Commands:
 """
 
 import argparse
+import logging
 import os
 import re
 import signal
@@ -3088,6 +3089,27 @@ def _configure_app_logging():
             lg.addHandler(h)
         lg.propagate = False
 
+    # A login link is a credential, and uvicorn logs every request line with
+    # its query string. A logger filter survives the dictConfig uvicorn runs
+    # later (dictConfig replaces handlers, not filters).
+    access = _logging.getLogger("uvicorn.access")
+    if not any(isinstance(f, _RedactLoginTokens) for f in access.filters):
+        access.addFilter(_RedactLoginTokens())
+
+
+class _RedactLoginTokens(logging.Filter):
+    """Blank ``token=`` query values in uvicorn's access-log lines."""
+
+    _QS_TOKEN = re.compile(r"([?&]token=)[^&\s]+")
+
+    def filter(self, record):
+        args = record.args
+        # uvicorn.access: (client, method, path_with_query, http_version, status)
+        if (isinstance(args, tuple) and len(args) > 2 and isinstance(args[2], str)
+                and "token=" in args[2]):
+            record.args = args[:2] + (self._QS_TOKEN.sub(r"\1[redacted]", args[2]),) + args[3:]
+        return True
+
 
 def _cmd_webapp_install(host: str, port: int, dev: bool = False):
     """Install and start ARK webapp as a systemd user service."""
@@ -3320,7 +3342,7 @@ def _cmd_webapp_login(email: str, host: str = "0.0.0.0", port: int = None) -> No
     print(f"  {_c(url, Colors.GREEN)}")
     print()
     print(f"  {_c('Open this URL once to sign in', Colors.DIM)} (no email round-trip needed).")
-    print(f"  Token is valid for 30 days.")
+    print(f"  Token is valid for 1 hour.")
     print()
 
 
