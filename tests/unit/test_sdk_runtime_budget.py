@@ -262,3 +262,129 @@ class TestSandboxIsRecordedPerCall:
         stdout = json.dumps({"kind": "__result__", "result": "ok", "usage": None,
                              "error_code": None, "error_detail": None})
         assert not self._runtime().parse_output(stdout).get("sandbox")
+
+
+class TestLocalServerWindow:
+    """litellm knows no hosted_vllm/ slug, so the window cap meant for small
+    local models never applied: they got the 200k fallback and a 90k budget."""
+
+    def _serve(self, payload):
+        class _R:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self): return json.dumps(payload).encode()
+        return patch("urllib.request.urlopen", return_value=_R())
+
+    def setup_method(self):
+        sr._SERVED_WINDOWS.clear()
+
+    def test_the_server_reports_the_window(self):
+        data = {"data": [{"id": "other", "max_model_len": 8192},
+                         {"id": "qwen2.5-32b-awq", "max_model_len": 32768}]}
+        with patch.dict(os.environ, {"LLM_BASE_URL": "http://n:8078/v1/"}), self._serve(data):
+            assert sr._context_window("hosted_vllm/qwen2.5-32b-awq") == 32768
+            budget = sr.history_token_budget("hosted_vllm/qwen2.5-32b-awq")
+        assert budget < 32768
+
+    def test_asked_once_per_process(self):
+        data = {"data": [{"id": "m", "max_model_len": 16384}]}
+        with patch.dict(os.environ, {"LLM_BASE_URL": "http://n:1/v1"}), self._serve(data) as u:
+            sr._context_window("hosted_vllm/m"); sr._context_window("hosted_vllm/m")
+        assert u.call_count == 1
+
+    def test_an_unreachable_server_keeps_the_fallback(self):
+        with patch.dict(os.environ, {"LLM_BASE_URL": "http://n:1/v1"}), \
+             patch("urllib.request.urlopen", side_effect=OSError("down")):
+            assert sr._context_window("hosted_vllm/m") == sr._FALLBACK_CONTEXT_TOKENS
+
+    def test_hosted_models_never_ask(self):
+        with patch.dict(os.environ, {"LLM_BASE_URL": "http://n:1/v1"}), \
+             patch("urllib.request.urlopen") as u:
+            sr._context_window("openrouter/some/unknown-model")
+        u.assert_not_called()
+
+
+class TestNudgeOnlyForRolesThatAct:
+    """A planner or reviewer answering in text did its job. The nudge told it
+    "you executed none of it" and its reply replaced the answer."""
+
+    def _cfg(self, tmp_path, agent_type):
+        rt = sr.OpenHandsSDK("openrouter/x", "openrouter/x")
+        if agent_type:
+            rt.agent_type = agent_type
+        with patch.object(sr, "openhands_python", return_value="/usr/bin/python3"), \
+             patch.object(sr, "history_token_budget", return_value=90_000):
+            cmd = rt.build_command("do it", "stay here", tmp_path)
+        try:
+            return json.loads(Path(cmd[2]).read_text())
+        finally:
+            Path(cmd[2]).unlink(missing_ok=True)
+
+    @pytest.mark.parametrize("role", ["planner", "researcher", "reviewer"])
+    def test_answer_roles_get_no_nudge(self, tmp_path, role):
+        assert self._cfg(tmp_path, role)["nudge"] is False
+
+    @pytest.mark.parametrize("role", ["experimenter", "coder", "writer", None])
+    def test_acting_roles_keep_it(self, tmp_path, role):
+        assert self._cfg(tmp_path, role)["nudge"] is True
+
+    def test_the_driver_honours_the_flag(self):
+        src = (Path(sr.__file__).parent / "sdk_driver.py").read_text()
+        assert 'cfg.get("nudge", True) and state["actions"] == 0' in src
+
+    def test_run_agent_names_the_role_on_the_runner(self):
+        src = (Path(sr.__file__).parent / "__init__.py").read_text()
+        assert "cli_runner = get_cli_for_model(self.model)\n" \
+               "                cli_runner.agent_type = agent_type" in src
+
+
+class TestCliFallbackParsesCliOutput:
+    def test_fallback_output_is_read_by_the_cli_parser(self, tmp_path):
+        rt = sr.OpenHandsSDK("openrouter/x", "openrouter/x")
+        with patch.object(sr, "openhands_python", return_value=None):
+            rt.build_command("do it", "stay here", tmp_path)
+        cli_out = "\n".join([
+            json.dumps({"kind": "MessageEvent", "source": "agent",
+                        "llm_message": {"content": [{"type": "text", "text": "all done"}]}}),
+            json.dumps({"kind": "ConversationErrorEvent", "code": "AuthenticationError",
+                        "detail": "401 bad key"}),
+        ])
+        out = rt.parse_output(cli_out)
+        assert out["result"] == "all done"
+        assert out["error_code"] == "AuthenticationError"
+
+    def test_the_sdk_path_keeps_the_driver_parser(self, tmp_path):
+        rt = sr.OpenHandsSDK("openrouter/x", "openrouter/x")
+        with patch.object(sr, "openhands_python", return_value="/usr/bin/python3"), \
+             patch.object(sr, "history_token_budget", return_value=90_000):
+            cmd = rt.build_command("do it", "stay here", tmp_path)
+        Path(cmd[2]).unlink(missing_ok=True)
+        line = json.dumps({"kind": "__result__", "result": "r", "usage": None})
+        assert rt.parse_output(line)["result"] == "r"
+
+
+class TestUsageIsThisConversations:
+    """OpenHands names the state directory by the id's hex. The dashed id never
+    matched, so usage came from the newest base_state.json in the project."""
+
+    def _state(self, root, name, tokens):
+        d = root / name
+        d.mkdir(parents=True)
+        (d / "base_state.json").write_text(json.dumps({"stats": {"usage_to_metrics": {
+            "agent": {"accumulated_cost": 0.01,
+                      "accumulated_token_usage": {"prompt_tokens": tokens,
+                                                  "completion_tokens": 1}}}}}))
+
+    def test_the_hex_directory_is_found(self, tmp_path):
+        from ark.engines import sdk_driver
+        cid = "049d3f93-239e-4401-b188-e347cca70e45"
+        self._state(tmp_path, cid.replace("-", ""), 111)
+        self._state(tmp_path, "ffffffffffffffffffffffffffffffff", 999)  # newer, someone else's
+        u = sdk_driver._collect_usage(str(tmp_path), cid, "m")
+        assert u["input_tokens"] == 111
+
+    def test_no_state_of_its_own_means_no_usage(self, tmp_path):
+        from ark.engines import sdk_driver
+        self._state(tmp_path, "ffffffffffffffffffffffffffffffff", 999)
+        assert sdk_driver._collect_usage(
+            str(tmp_path), "049d3f93-239e-4401-b188-e347cca70e45", "m") is None

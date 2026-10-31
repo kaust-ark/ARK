@@ -49,6 +49,9 @@ from ark.engines.cli import OpenHandsCLI
 
 _DRIVER = Path(__file__).parent / "sdk_driver.py"
 
+# Roles whose answer is the text they return, so they get no nudge to act.
+_ANSWER_ROLES = frozenset({"planner", "researcher", "reviewer", "meta_debugger"})
+
 # How much conversation history may accumulate before compaction.
 #
 # MEASURED, and the measurement overturned the idea this runtime was built
@@ -125,6 +128,35 @@ def openhands_python() -> Optional[str]:
     return None
 
 
+_SERVED_WINDOWS: dict = {}
+
+
+def _served_window(model: str) -> Optional[int]:
+    """``max_model_len`` a local vLLM server reports for ``model``, or None.
+
+    litellm knows no ``hosted_vllm/`` slug, and the length is whatever the
+    server was started with (``--max-model-len``), so ask the server. One
+    request per process: the answer cannot change while the server is up.
+    """
+    base = (os.environ.get("LLM_BASE_URL") or "").rstrip("/")
+    if not (base and model.startswith("hosted_vllm/")):
+        return None
+    key = (base, model)
+    if key not in _SERVED_WINDOWS:
+        window = None
+        try:
+            import urllib.request
+            with urllib.request.urlopen(f"{base}/models", timeout=3) as r:
+                data = json.loads(r.read()).get("data") or []
+            name = model.split("/", 1)[1]
+            hit = next((d for d in data if d.get("id") == name), data[0] if data else {})
+            window = int(hit.get("max_model_len") or 0) or None
+        except Exception:
+            window = None
+        _SERVED_WINDOWS[key] = window
+    return _SERVED_WINDOWS[key]
+
+
 def _context_window(model: str) -> int:
     """Input-token window for ``model``, or a conservative fallback."""
     try:
@@ -135,7 +167,7 @@ def _context_window(model: str) -> int:
             return int(window)
     except Exception:
         pass
-    return _FALLBACK_CONTEXT_TOKENS
+    return _served_window(model) or _FALLBACK_CONTEXT_TOKENS
 
 
 def history_token_budget(model: str) -> int:
@@ -180,10 +212,11 @@ class OpenHandsSDK(OpenHandsCLI):
 
     def build_command(self, prompt: str, path_boundary: str, code_dir: Path) -> list:
         py = openhands_python()
+        # No SDK interpreter: fall back to the stock CLI command rather than
+        # failing the phase. The budget is an optimisation, not a correctness
+        # requirement. The output then needs the CLI's parser too.
+        self._cli_fallback = not py
         if not py:
-            # No SDK interpreter: fall back to the stock CLI command rather
-            # than failing the phase. The budget is an optimisation, not a
-            # correctness requirement.
             return super().build_command(prompt, path_boundary, code_dir)
 
         model = self._llm_model()
@@ -212,6 +245,10 @@ class OpenHandsSDK(OpenHandsCLI):
             # minutes and every call 429s until blobs expire. Cache stays on
             # for every other provider — it is 80% of our input tokens.
             "caching_prompt": not model.startswith("gemini/"),
+            # The plan-without-action nudge is for roles that must change
+            # files. Planner, researcher and reviewer calls are often answered
+            # in text by design, and the nudge's reply replaced that answer.
+            "nudge": getattr(self, "agent_type", None) not in _ANSWER_ROLES,
         }
         # 0600 so the API key never sits world-readable; removed by execute().
         fd, path = tempfile.mkstemp(prefix="ark-sdk-", suffix=".json")
@@ -233,6 +270,8 @@ class OpenHandsSDK(OpenHandsCLI):
 
     def parse_output(self, stdout: str) -> dict:
         """Read the driver's JSON lines; the last __result__ wins."""
+        if getattr(self, "_cli_fallback", False):
+            return super().parse_output(stdout)
         out = {"result": "", "usage": None, "error_code": None, "error_detail": None}
         last_agent_msg = ""
         for line in (stdout or "").splitlines():

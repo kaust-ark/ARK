@@ -107,13 +107,16 @@ def _collect_usage(persistence_dir: str, conversation_id: str, model: str):
     in-memory objects silently yielded nothing.
     """
     try:
-        base = Path(persistence_dir) / conversation_id / "base_state.json"
-        if not base.exists():
-            hits = sorted(Path(persistence_dir).glob("*/base_state.json"),
-                          key=lambda p: p.stat().st_mtime)
-            if not hits:
-                return None
-            base = hits[-1]
+        # OpenHands names the directory by the id's hex, with no dashes. The
+        # dashed form never matched, so this used to fall back to the newest
+        # base_state.json in the project, which can be a parallel agent's or the
+        # previous call's when this one saved nothing. No number beats a wrong one.
+        cid = str(conversation_id or "")
+        found = [Path(persistence_dir) / d / "base_state.json"
+                 for d in (cid, cid.replace("-", "")) if d]
+        base = next((p for p in found if p.exists()), None)
+        if base is None:
+            return None
         metrics = (json.loads(base.read_text()).get("stats") or {}).get(
             "usage_to_metrics") or {}
         cost = 0.0
@@ -427,7 +430,8 @@ def main() -> int:
             # tokens out, zero actions). Escalations are exempt — an agent
             # that wrote a needs_human report finished on purpose. A model
             # that acted at least once never triggers this.
-            if (state["actions"] == 0 and not state["error_code"]
+            if (cfg.get("nudge", True) and state["actions"] == 0
+                    and not state["error_code"]
                     and "needs_human" not in (state["last_agent_message"]
                                               + state["finish_message"])):
                 _emit({"kind": "__nudge__",

@@ -671,6 +671,7 @@ Execute the task and update the corresponding files.
                 self.log(f"Model: {self.model}", "INFO")
 
                 cli_runner = get_cli_for_model(self.model)
+                cli_runner.agent_type = agent_type
                 timer.start()
 
                 # Live step log + intervention sandbox. No-op unless the
