@@ -136,6 +136,7 @@ def complete(
     model: str,
     system: Optional[str] = None,
     api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
     timeout: int = 60,
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
@@ -145,6 +146,11 @@ def complete(
     ``model`` is a LiteLLM model string, e.g. ``anthropic/claude-haiku-4-5`` /
     ``gemini/gemini-2.5-flash`` / ``openai/gpt-4o-mini``. The provider prefix
     selects which API key env var to use unless ``api_key`` is given.
+
+    ``base_url`` defaults to ``LLM_BASE_URL``, matching the agent runtime. Pass
+    an empty string to ignore that override. For a custom endpoint only,
+    ``LLM_API_KEY`` is a fallback when neither an explicit nor provider key is
+    available. No alternate endpoint is tried when a request fails.
 
     Fail-soft by design (returns ""): these helpers are non-critical UX touches;
     callers already handle an empty result gracefully.
@@ -158,12 +164,17 @@ def complete(
 
     try:
         kwargs = {}
+        endpoint = os.environ.get("LLM_BASE_URL") if base_url is None else base_url
+        key = resolve_key(model, api_key)
+        if endpoint:
+            kwargs["base_url"] = endpoint
+            key = key or os.environ.get("LLM_API_KEY") or None
         if temperature is not None:
             kwargs["temperature"] = temperature
         resp = litellm.completion(
             model=model,
             messages=messages,
-            api_key=resolve_key(model, api_key),
+            api_key=key,
             timeout=timeout,
             max_tokens=max_tokens,
             **kwargs,

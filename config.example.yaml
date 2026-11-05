@@ -41,6 +41,13 @@ gemini_api_key:    ""     # required if model / bot_model uses  gemini/*
                           #   (optional feature, not an error).
 # For any other provider, add  <provider>_api_key  — e.g. deepseek_api_key,
 # xai_api_key, mistral_api_key. It is bridged to <PROVIDER>_API_KEY automatically.
+# For a custom gateway, set LLM_BASE_URL in the process environment. Agent and
+# light-helper calls both use it. For an OpenAI-compatible gateway, select
+# openai/<gateway-model-id> and set OPENAI_API_KEY. With a custom URL, light
+# helpers also accept LLM_API_KEY when no explicit or provider key is present.
+# Configure ARK_UTILITY_MODEL for standalone helpers if the gateway does not
+# offer the default bot_model. Native Deep Research/image integrations are
+# separate and are not redirected by this setting.
 
 # ── Step log verbosity ───────────────────────────────────────────────────────
 # How much of each agent's per-action stream (bash commands, file edits,

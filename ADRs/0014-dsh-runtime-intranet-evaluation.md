@@ -24,22 +24,47 @@ Current seams worth extending:
 - `ark/engines/cli.py`: `AgentCLI`, `get_cli_for_model`, subprocess supervision.
 - `ark/engines/sdk_runtime.py` and `sdk_driver.py`: optional OpenHands SDK adapter.
 - `ark/engines/__init__.py`: role prompts, context, retry policy, usage accounting.
-- `ark/llm_lite.py`: separate utility-model calls. Its `complete()` currently
-  does not explicitly forward a custom base URL; changing only the main agent
-  endpoint is insufficient for an intranet-only run.
+- `ark/llm_lite.py`: separate utility-model calls. Its `complete()` now honors
+  `LLM_BASE_URL` with an optional per-call override. Changing only the main
+  agent endpoint would be insufficient for an intranet-only run.
 - `ark/pipeline.py`, `execution.py`, `orchestrator/state.py`: task execution,
   step checkpoints and evidence checks.
 - `ark/controlplane/`: existing product/runtime boundary.
 
 ## Decision
 
-We will develop and evaluate the DSH migration in an isolated checkout inside
-will, using the intranet model API there. Transfer source changes and reviewable
-evaluation summaries between environments. mcnode15 remains the production and
-deployment environment; no cross-network API proxy is required by this design.
+Develop the migration in isolated feature checkouts, with integration and offline
+regression testing on mcnode15 and intranet API adaptation and model evaluation
+inside will. Transfer source changes and reviewable evaluation summaries only
+where permitted. Do not assume intranet source, traces or results may be exported.
+mcnode15 remains the production and deployment environment; no cross-network API
+proxy is required by this design.
 
-The current change is a source and implementation handoff. It does **not** add a
-DSH adapter, migrate production, install DSH, or run model evaluations yet.
+The current implementation covers utility-call endpoint routing and offline
+gateway tests. It does **not** yet add a DSH adapter, migrate production, install
+DSH, or run model evaluations.
+
+### Coordination between existing Codex sessions
+
+The will session can send messages to this ARK session through the application's
+cross-session tools. The maintainer also relayed will's successful check reading
+ARK's latest reply. ARK has no equivalent tool available: a local `codex queue`
+attempt cannot resolve will's remote thread. Use will-initiated messages and
+explicit reads of ARK's replies, not SSH or an assumed shared filesystem.
+
+- ARK: `01a1a687-c07e-78f3-b5c1-dbec78e70004`, mcnode15.
+- will: `01a1a98c-9aa3-7943-95fc-cd57d3dfd7d1`, WSL2 on SH-WILL-XINJIHAO.
+- ARK owns integration, utility routing and offline regression checks.
+- will's first task is to report the API protocol, usable model capabilities,
+  allowed budget and permitted scope of result sharing, without secrets or
+  internal addresses. Wait for its acknowledgement before treating this task as
+  accepted. Paid model calls have not started.
+
+Use milestone messages rather than a continuous model polling loop. Session
+messages are also data transfers; a working relay does not establish permission
+to export intranet code or data. Keep work ownership explicit to avoid overlapping
+edits. A source branch or archive must actually be received before will is assumed
+to have the integration checkout.
 
 ### Model-independent integration
 
