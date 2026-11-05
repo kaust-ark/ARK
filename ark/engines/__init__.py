@@ -134,6 +134,27 @@ _TRANSIENT_DETAIL = (
 )
 
 
+# Statuses a bounded retry can clear: request timeouts, locks, rate limits,
+# and every 5xx. Read BEFORE the wording lists above, because the wording is
+# the provider's and changes without notice: each of the three runs those
+# lists were grown for died on a 5xx that was phrased in a way the list of
+# the day did not carry. The status is in the body.
+_TRANSIENT_STATUS = frozenset({408, 409, 425, 429}) | frozenset(range(500, 600))
+_STATUS_IN_BODY = (
+    re.compile(r"""["']?code["']?\s*[:=]\s*["']?(\d{3})\b""", re.I),
+    re.compile(r"""["']?status(?:_code)?["']?\s*[:=]\s*["']?(\d{3})\b""", re.I),
+    re.compile(r"\bhttp[/ ](?:\d\.\d\s+)?(\d{3})\b", re.I),
+)
+
+
+def _statuses_in(detail: str) -> set:
+    """HTTP statuses a provider error body names, ignoring bare numbers."""
+    found = set()
+    for pattern in _STATUS_IN_BODY:
+        found.update(int(m) for m in pattern.findall(detail or ""))
+    return found
+
+
 def _is_transient_agent_error(code: str, detail: str) -> bool:
     """Whether a surfaced agent error is worth a bounded wait-and-retry.
 
@@ -143,10 +164,17 @@ def _is_transient_agent_error(code: str, detail: str) -> bool:
     the code list and the detail list matched it and a run with an unpaid
     OpenAI account sat through four 65-180s waits before failing. Only the
     error type tells them apart, and Gemini's body never carries it.
+
+    Then the status the body names, then the code and wording lists. A status
+    the body states is what the provider actually answered; the lists are
+    there for the bodies that state none (a dropped connection, a parser
+    crash, a wedged conversation).
     """
     d = (detail or "").lower()
     if "insufficient_quota" in d:
         return False
+    if _statuses_in(d) & _TRANSIENT_STATUS:
+        return True
     return (any((code or "").endswith(t) for t in _TRANSIENT)
             or any(s in d for s in _TRANSIENT_DETAIL))
 
@@ -730,6 +758,7 @@ Execute the task and update the corresponding files.
         resume = ({"resume_session_id": continue_session, "next_turn": True}
                   if continue_session else {})
         cli_runner = None
+        failed_here = False
         for attempt in range(1, MAX_RETRIES + 1):
             if attempt > 1 and shutting_down.is_set():
                 self.log(f"  [{agent_type}] retry dropped, the run is stopping", "WARN")
@@ -959,6 +988,7 @@ Execute the task and update the corresponding files.
                     self._terminal_error = (
                         f"{oh_error_code}: {(oh_error_detail or '')[:300]}"
                     )
+                    failed_here = True
                     self.send_notification(
                         "Agent Error",
                         f"{agent_type}: {oh_error_code} — {(oh_error_detail or '')[:160]}",
@@ -1111,6 +1141,14 @@ Execute the task and update the corresponding files.
                 return ""
 
         usage_record = spent
+        # The flag means "the last agent call failed non-retryably": the dev
+        # phase and the review loop abort on it. It was never cleared by a
+        # later success, so an error from an earlier phase stayed lethal. On
+        # 2026-11-05 an Nvidia 502 misread as terminal during the research
+        # phase aborted the first dev iteration twenty minutes later, after
+        # the research phase itself had recovered and finished.
+        if result and not failed_here:
+            self._terminal_error = None
         timer.stop()
         self.log_step(f"{Icons.for_agent(agent_type)} {agent_styled(agent_type, f'[{agent_type}]')} completed ({elapsed}s)", "success")
 

@@ -168,3 +168,49 @@ class TestStepBudgetEndsTheCallNotTheRun:
     def test_the_step_cap_is_not_classified_transient(self):
         from ark.engines import _is_transient_agent_error
         assert not _is_transient_agent_error("MaxIterationsReached", self.DETAIL)
+
+
+class TestTheStatusTheBodyNamesDecides:
+    """The wording lists above were grown three times, once per run they let
+    die, and each time for a 5xx phrased in a way that day's list missed. The
+    third was 2026-11-05: OpenRouter relayed an Nvidia 502 as a generic
+    APIError whose message is just "Provider returned error", so no entry
+    matched and a run that had completed its research phase was aborted as
+    non-retryable. The status is in the body; read it instead of the prose."""
+
+    OPENROUTER_502 = (
+        'litellm.APIError: APIError: OpenrouterException - {"error":{"message":'
+        '"Provider returned error","code":502,"metadata":{"raw":"error code: 502\\n",'
+        '"provider_name":"Nvidia","is_byok":false}},"user_id":"user_x"}')
+
+    def test_the_502_that_aborted_the_run(self):
+        from ark.engines import _is_transient_agent_error
+        assert _is_transient_agent_error("APIError", self.OPENROUTER_502)
+
+    def test_a_5xx_is_transient_however_it_is_worded(self):
+        from ark.engines import _is_transient_agent_error
+        for d in ('{"code":500}', "'code': 503", 'status_code=504',
+                  "received HTTP 502 from the gateway", '{"status": 529}'):
+            assert _is_transient_agent_error("APIError", d), d
+
+    def test_billing_and_auth_statuses_stay_terminal(self):
+        """A retry loop that eats these is worse than the bug it fixes."""
+        from ark.engines import _is_transient_agent_error
+        for d in ('{"error":{"message":"This request requires more credits, or fewer '
+                  'max_tokens","code":402,"metadata":{"previous_errors":[{"code":402}]}}}',
+                  '{"error":{"message":"model foo/bar not found","code":404}}',
+                  '{"error":{"message":"No auth credentials found","code":401}}',
+                  '{"error":{"message":"moderation","code":403}}'):
+            assert not _is_transient_agent_error("APIError", d), d
+
+    def test_a_bare_number_in_prose_is_not_a_status(self):
+        from ark.engines import _statuses_in
+        assert _statuses_in("401 invalid api key") == set()
+        assert _statuses_in("expected 500 tokens, got 2") == set()
+
+    def test_insufficient_quota_still_wins_over_its_own_429(self):
+        from ark.engines import _is_transient_agent_error
+        assert not _is_transient_agent_error(
+            "RateLimitError",
+            "Error code: 429 - {'error': {'message': 'You exceeded your current quota', "
+            "'type': 'insufficient_quota', 'code': 'insufficient_quota'}}")

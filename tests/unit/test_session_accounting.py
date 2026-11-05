@@ -256,3 +256,34 @@ def test_execute_keeps_what_a_stopped_runtime_prints_while_it_closes(tmp_path):
         runner.execute("p", "b", tmp_path, 60, on_event=stop)
     assert "started" in runner.partial_stdout and '"final"' in runner.partial_stdout
     assert time.time() - t0 < 15
+
+
+class TestATerminalErrorDoesNotOutliveItsCall:
+    """`_terminal_error` means "the last agent call failed non-retryably", and
+    the dev phase aborts the whole run on it. Nothing cleared it, so an error
+    from an earlier phase stayed lethal: on 2026-11-05 an Nvidia 502 misread
+    as terminal during the research phase aborted the first dev iteration
+    twenty minutes later, after the research phase had recovered."""
+
+    def test_a_later_success_clears_an_earlier_phases_error(self, tmp_path):
+        o, _, Runner = _agent(tmp_path, [(0, _stream(3), 30, False,
+                                          {"result": "context written", "usage": None})])
+        o._terminal_error = "APIError: a 502 from an earlier phase"
+        assert _run(o, Runner) == "context written"
+        assert o._terminal_error is None
+
+    def test_this_calls_own_failure_survives(self, tmp_path):
+        o, _, Runner = _agent(tmp_path, [
+            (0, _stream(2), 10, False,
+             {"result": "", "error_code": "AuthenticationError",
+              "error_detail": "401 invalid api key", "usage": None})])
+        _run(o, Runner)
+        assert "AuthenticationError" in (o._terminal_error or "")
+
+    def test_an_empty_result_clears_nothing(self, tmp_path):
+        """A dead agent logged "completed" with nothing to show must not look
+        like a recovery."""
+        o, _, Runner = _agent(tmp_path, [(0, "", 5, False, {"result": "", "usage": None})] * 4)
+        o._terminal_error = "APIError: still broken"
+        _run(o, Runner)
+        assert o._terminal_error == "APIError: still broken"
