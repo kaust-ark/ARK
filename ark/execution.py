@@ -20,6 +20,33 @@ from ark.findings_schema import (
 from ark.config import defaults
 
 
+_STRUCTURE = {
+    "labels": re.compile(r"\\label\{([^}]*)\}"),
+    "figures": re.compile(r"\\includegraphics"),
+    "tables": re.compile(r"\\begin\{table\*?\}"),
+    "sections": re.compile(r"\\(?:sub)*section\{"),
+}
+
+
+def _structure_lost(before: str, after: str) -> list:
+    """What a rewrite of main.tex removed: labels by name, the rest by count.
+
+    Starred sections are left out because the end-matter pass adds one
+    (Acknowledgments) on purpose.
+    """
+    lost = []
+    for name, pat in _STRUCTURE.items():
+        if name == "labels":
+            gone = sorted(set(pat.findall(before)) - set(pat.findall(after)))
+            if gone:
+                lost.append(f"labels {', '.join(gone[:5])}")
+        else:
+            n0, n1 = len(pat.findall(before)), len(pat.findall(after))
+            if n1 < n0:
+                lost.append(f"{n0 - n1} {name}")
+    return lost
+
+
 class QuotaExhaustedError(Exception):
     """Raised when page count enforcement fails due to quota exhaustion."""
 
@@ -1076,7 +1103,15 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             if end_doc_pos < 0:
                 return
 
-            appendix_pos = content.find(r'\appendix')
+            # IEEEtran spells it \appendices and the appendix package uses an
+            # environment. A bare find(r'\appendix') misses both, and 527e
+            # lost its whole appendix: shape (c) below kept nothing after the
+            # bibliography, so 602 lines became 233.
+            appendix_m = _re.search(
+                r'\\appendi(?:x|ces)\b|\\begin\{appendices\}', content)
+            appendix_pos = appendix_m.start() if appendix_m else -1
+            # Whatever follows the bibliography stays, appendix or not.
+            after_bib = content[bib_match.end():end_doc_pos].strip()
 
             # Three input shapes to handle:
             #   (a) appendix BEFORE bib  → reorder to bib then appendix
@@ -1085,14 +1120,12 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             #   (c) no appendix          → body + bib, drop in marker
             if appendix_pos != -1 and appendix_pos < bib_match.start():
                 appendix_block = content[appendix_pos:bib_match.start()]
+                if after_bib:
+                    appendix_block = appendix_block.rstrip() + "\n\n" + after_bib
                 body_section = content[:appendix_pos]
                 reordered = True
-            elif appendix_pos != -1 and appendix_pos > bib_match.end():
-                appendix_block = content[appendix_pos:end_doc_pos]
-                body_section = content[:bib_match.start()]
-                reordered = False
             else:
-                appendix_block = ""
+                appendix_block = after_bib
                 body_section = content[:bib_match.start()]
                 reordered = False
 
@@ -1113,7 +1146,8 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             endmatter_pattern = _re.compile(
                 r'\\section\*?\{\s*(?:' + '|'.join(ENDMATTER_TITLES) + r')\s*\}'
                 r'.*?'
-                r'(?=\\section\b|\\appendix\b|\\bibliography\b|\Z)',
+                r'(?=\\section\b|\\appendix\b|\\appendices\b'
+                r'|\\begin\{appendices\}|\\bibliography\b|\Z)',
                 _re.DOTALL,
             )
             endmatter_blocks = []
@@ -1194,6 +1228,14 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 ])
             parts.extend(["", tail, ""])
             new_content = "\n".join(parts)
+
+            # A layout pass only moves text. If anything the paper defines
+            # would vanish, the rewrite is wrong: keep the file as it is.
+            lost = _structure_lost(content, new_content)
+            if lost:
+                self.log("Skipped end-matter reorder: it would have dropped "
+                         + ", ".join(lost), "WARN")
+                return
 
             if new_content != content:
                 main_tex.write_text(new_content)

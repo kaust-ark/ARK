@@ -154,3 +154,88 @@ Body, no refs yet.
     stub._ensure_clearpage_before_bibliography()
     out = _read_main(stub)
     assert out == src  # untouched
+
+
+# IEEEtran's \appendices after the bibliography (project 527e). The old
+# find(r'\appendix') missed it, took the no-appendix branch and kept nothing
+# past \bibliography: the whole appendix and every label in it were deleted.
+_IEEE_APPENDICES = r"""\documentclass[conference]{IEEEtran}
+\begin{document}
+\section{Intro}
+See Appendix~\ref{app:sweep}.
+\section{Conclusion}
+Words.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\clearpage
+\appendices
+\section{Sweep}\label{app:sweep}
+\begin{table}[t]\caption{Full map}\label{tab:map}\end{table}
+\section{Proofs}\label{app:proofs}
+Proof text.
+
+\end{document}
+"""
+
+
+def test_ieeetran_appendices_survive(stub):
+    _write_main(stub, _IEEE_APPENDICES)
+    stub._ensure_clearpage_before_bibliography()
+    out = _read_main(stub)
+    for needle in (r"\appendices", r"\label{app:sweep}", r"\label{tab:map}",
+                   r"\label{app:proofs}", "Proof text."):
+        assert needle in out
+    assert out.find(r"\bibliography{") < out.find(r"\appendices")
+
+
+def test_ieeetran_appendices_before_bib_are_moved_after(stub):
+    src = _IEEE_APPENDICES.replace(
+        "\\bibliographystyle{IEEEtran}\n\\bibliography{references}\n\n", ""
+    ).replace("Proof text.\n", "Proof text.\n\n\\bibliographystyle{IEEEtran}\n"
+              "\\bibliography{references}\n")
+    assert src.find(r"\appendices") < src.find(r"\bibliography{")
+    _write_main(stub, src)
+    stub._ensure_clearpage_before_bibliography()
+    out = _read_main(stub)
+    assert "Proof text." in out and r"\label{tab:map}" in out
+    assert out.find(r"\bibliography{") < out.find(r"\appendices")
+
+
+def test_appendices_environment_survives(stub):
+    src = _IEEE_APPENDICES.replace(
+        "\\appendices\n", "\\begin{appendices}\n").replace(
+        "Proof text.\n", "Proof text.\n\\end{appendices}\n")
+    _write_main(stub, src)
+    stub._ensure_clearpage_before_bibliography()
+    out = _read_main(stub)
+    assert r"\begin{appendices}" in out and r"\end{appendices}" in out
+    assert "Proof text." in out
+
+
+def test_non_appendix_content_after_bib_survives(stub):
+    src = _IEEE_APPENDICES.replace("\\appendices\n", "\\onecolumn\n")
+    _write_main(stub, src)
+    stub._ensure_clearpage_before_bibliography()
+    out = _read_main(stub)
+    assert r"\onecolumn" in out and r"\label{app:proofs}" in out
+
+
+def test_appendices_rewrite_is_idempotent(stub):
+    _write_main(stub, _IEEE_APPENDICES)
+    stub._ensure_clearpage_before_bibliography()
+    pass1 = _read_main(stub)
+    stub._ensure_clearpage_before_bibliography()
+    assert _read_main(stub) == pass1
+
+
+def test_structure_guard_reports_losses():
+    from ark.execution import _structure_lost
+    before = (r"\section{A}\label{s:a}\includegraphics{f}"
+              r"\begin{table}\end{table}\section*{Acknowledgments}")
+    assert _structure_lost(before, before) == []
+    assert _structure_lost(before, before + r"\section*{X}") == []
+    lost = _structure_lost(before, r"\section*{Acknowledgments}")
+    assert any("s:a" in x for x in lost)
+    assert "1 figures" in lost and "1 tables" in lost and "1 sections" in lost
