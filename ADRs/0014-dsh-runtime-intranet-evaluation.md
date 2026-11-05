@@ -73,28 +73,60 @@ with the existing provider/model notation. Set the corresponding provider API ke
 or `LLM_API_KEY` locally; unrelated provider/cloud keys are removed from the agent
 environment. No key is written into the launch config or command line.
 
-`ARK_DSH_CONTEXT_WINDOW` (default 65536) must fit the actual model's context window.
-`ARK_DSH_MAX_TOKENS` (default 8192) caps each response and must be smaller than the
-context window. These are initial integration settings, not measured optima. The
-existing outer execution timeout remains active; these settings alone are not a
-total token/spend budget. Real evaluation needs its separately declared allowance.
+The adapter runs DSH's `sdk` profile with a generated per-call patch
+(`ark/engines/dsh_profile.py`). `sdk-minimal` lacked background jobs, spill of
+oversized tool output, tool-result pruning and skills. The patch switches off every
+row that sends data off the machine (session-log and plugin-inventory upload,
+OpenTelemetry export, feedback, DeepSeek account and web search), `web_fetch`,
+project `AGENTS.md`/`CLAUDE.md` injection, workflows, goals, plan mode and
+sub-agents. The persona names the ARK role. A project's `.claude/skills` is the
+only skills root, so ARK's installed skills reach the model for the first time.
+
+Settings: `ARK_DSH_CONTEXT_WINDOW` (default: the litellm window, else 200k) is the
+model's real window. `ARK_DSH_MAX_TOKENS` (default 16384) caps each response;
+reasoning counts toward it on DeepSeek V4. Compaction triggers at the same history
+budget the SDK runtime measured (0.45 of the window, 60k-150k). DSH's catalogued
+native models (`deepseek-v4-pro`, `deepseek-flash`) keep a 1M window that the
+adapter cannot override, so their threshold is set as a ratio of 1M.
+`ARK_DSH_SANDBOX` selects `danger-full-access` (default, production parity),
+`workspace-write` or `read-only`; the sandbox needs bwrap on PATH or a Landlock
+kernel. `ARK_DSH_RETRIES` (default 3) sets DSH's own retry of rate limits and
+5xx. `ARK_DSH_EFFORT` sets the native route's reasoning effort.
+`ARK_DSH_PKG_CACHE` holds the ~70 MB the runtime unpacks on first start. Prime it
+once per install, because a cold start can exceed short call timeouts. These
+settings alone are not a total token or spend budget.
+
+The driver stays attached until the session is idle with no background job open,
+so a job started with `run_in_background` finishes and the turn it wakes is the
+answer. It stops itself shortly before the outer wall clock and reports open
+jobs. Each DSH outcome maps onto a class `run_agent` already has. Rate limits,
+5xx, transport and empty responses are transient, and the retry resumes the
+same session with a recovery note instead of rerunning the task. The wall clock,
+two output-token stops in a row and context overflow count as a used budget:
+the work is kept and not retried. Quota is terminal with the provider's message,
+and so are authentication and invalid requests. A breaker or host cancellation
+keeps the work without a retry. An answer that ends with no text gets one
+in-session follow-up: a nudge if an acting role made no tool call, otherwise a
+request for a summary.
 
 Each call records its identity before startup under `.dsh/<session-id>/run.json`
-in the project, with a private SDK home and patch. The temporary prompt config is
-removed after execution. Session logs remain local; exclude `.dsh/` from project
-exports. Session-log contribution and plugin-inventory contribution are disabled.
-The adapter's explicit `resume_session_id` restores SDK history after checking the
-workspace, model and endpoint. The orchestrator does not yet automatically bind
-checkpoint continuations to these session ids, and external jobs are not restored.
+in the project, with a private SDK home and patch; the runtime's temporary files
+go to `.dsh/tmp`. Project exports are an allowlist and do not include `.dsh/`.
+Resume checks workspace, model, endpoint and SDK version. Usage counts every
+billed request, attempts the runtime discarded included; unavailable USD cost
+is null and the cost ledger marks the known subtotal as incomplete.
 
-The initial profile executes tools locally, without filesystem confinement.
-Selecting the existing Apptainer option with DSH is rejected rather than silently
-ignoring it. Production sandbox parity remains unfinished. Tool actions and errors
-feed the existing step log/circuit breaker. Missing final results, unsuccessful
-finish reasons and nonzero exits are errors even if partial text exists. Usage
-survives in emitted events; unavailable USD cost is null, and the cost ledger marks
-the known subtotal as incomplete. Dashboard presentation of partial costs still
-needs review before production cutover.
+Selecting the existing Apptainer option with DSH is still rejected rather than
+silently ignored. Read confinement needs the whole runtime inside Apptainer, which
+works with the existing SIF but is not wired.
+
+Evidence so far (will network, `ext/deepseek-v4.1-flash`, native route):
+E0 passed a fresh turn plus a resumed turn that recalled a codeword held only in
+history (6.8k tokens). E1 passed: a background job ran 25 s with no model request
+between the turn's end and the wake-up, and a 75 s foreground command was promoted
+to a job at the 60 s limit. In the promoted case the model blocked on
+`job_output` instead of ending its turn, hence the runtime note now added to every
+DSH task. Effort `off` and `high` were indistinguishable on a trivial question.
 
 Run the optional real-SDK, loopback-only tests alongside the standard suite:
 
@@ -107,6 +139,11 @@ These tests exercise real SDK tools and persisted history with synthetic model
 responses. They do not measure model reasoning or research quality. OpenAI
 Responses compatibility still needs a dedicated protocol fixture before a real
 evaluation uses it.
+
+`scripts/runtime_case.py` runs one role through the real `run_agent` on a fixed
+task with a checker the agent cannot satisfy by narration (recomputed metrics,
+text outside the edited region byte-identical), for either runtime, and reports
+usage in one normalized form.
 
 ### Coordination between existing Codex sessions
 
