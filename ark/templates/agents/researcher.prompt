@@ -38,7 +38,7 @@ When asked to analyze a project proposal:
 
 ### 2. Project Specialization
 When asked to specialize the project:
-- Read idea.md and deep_research.md
+- Read `auto_research/state/idea.md` and `auto_research/state/deep_research.md`
 - Search the web to verify every external system mentioned (do NOT guess from name alone)
 - Generate project_context.md with verified install commands, experiment guidance, credentials, and an Experimental Protocol section (see 2.1)
 - Determine the project title if not set

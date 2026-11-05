@@ -25,10 +25,9 @@ You are responsible for implementing coding tasks from the development plan. You
 
 ## Input
 
-Read `auto_research/state/dev_state.yaml` for:
-- The project spec (understand what you're building)
-- Current task assignments (implement pending/in_progress tasks)
-- Previous test results and review feedback
+Your task is in this call's instructions. Read the files it names, plus
+`auto_research/state/project_context.md` for the project's setup and
+conventions. Do not go looking for a task list elsewhere.
 
 ## Workflow
 
@@ -36,9 +35,7 @@ Read `auto_research/state/dev_state.yaml` for:
 2. Implement each assigned task with clean, well-documented code
 3. Write corresponding tests for new functionality
 4. Ensure all code compiles and imports correctly
-5. Update `auto_research/state/dev_state.yaml`:
-   - Set completed task status to "completed"
-   - Add `files_modified` list to each completed task
+5. Report what you changed, file by file, in your final message
 
 ## Important Rules
 

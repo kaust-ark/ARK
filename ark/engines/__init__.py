@@ -155,6 +155,47 @@ def _statuses_in(detail: str) -> set:
     return found
 
 
+_CONTEXT_FILES = (
+    ("auto_research/state/research_state.yaml", "Current research state"),
+    ("auto_research/state/findings.yaml", "Existing findings"),
+    ("auto_research/state/project_context.md", "Project requirements and setup"),
+    ("report.md", "Research report"),
+    ("results/", "Experiment results"),
+)
+
+_DEEP_RESEARCH_LINE = (
+    "- auto_research/state/deep_research.md - Gemini Deep Research "
+    "background report (Read in full when researching related work,\n"
+    "  baselines, or technical background — do not skim)"
+)
+
+
+def context_files_section(code_dir, deep_research: bool) -> str:
+    """The "Context Files" block, naming only files that are actually there.
+
+    The list used to be fixed and hedged with "(if they exist)". Two of its
+    entries never exist in a paper run: ``research_state.yaml`` is written
+    only by ``StateManager.load_state()``, which paper mode never calls, and
+    ``report.md`` is left from the old dev mode. The hedge did not save us —
+    measured across one DSH and one OpenHands run of the same project,
+    chasing those two was the single most common refused tool call, 8 of 67.
+    A weak model reads the miss as a dead end rather than a missing optional.
+    """
+    lines = []
+    for rel, what in _CONTEXT_FILES:
+        try:
+            if (Path(code_dir) / rel).exists():
+                lines.append(f"- {rel} - {what}")
+        except OSError:
+            pass
+    if deep_research and (Path(code_dir) / "auto_research/state/deep_research.md").exists():
+        lines.insert(min(2, len(lines)), _DEEP_RESEARCH_LINE)
+    if not lines:
+        return ""
+    return ("## Context Files\n\n"
+            "Please read the following files for context:\n" + "\n".join(lines))
+
+
 def _is_transient_agent_error(code: str, detail: str) -> bool:
     """Whether a surfaced agent error is worth a bounded wait-and-retry.
 
@@ -654,23 +695,9 @@ class AgentMixin:
 
         # Context file references
         if profile["context_files"] or profile["deep_research"]:
-            dr_line = ""
-            if profile["deep_research"]:
-                dr_line = (
-                    "- auto_research/state/deep_research.md - Gemini Deep Research "
-                    "background report (Read in full when researching related work,\n"
-                    "  baselines, or technical background — do not skim)\n"
-                )
-            context_sections.append(
-                "## Context Files\n\n"
-                "Please read the following files for context (if they exist):\n"
-                "- auto_research/state/research_state.yaml - Current research state\n"
-                "- auto_research/state/findings.yaml - Existing findings\n"
-                f"{dr_line}"
-                "- auto_research/state/project_context.md - Project requirements and setup\n"
-                "- report.md - Research report\n"
-                "- results/ directory - Experiment results"
-            )
+            section = context_files_section(self.code_dir, profile["deep_research"])
+            if section:
+                context_sections.append(section)
 
         # Assemble full prompt
         context_block = "\n\n".join(context_sections) if context_sections else ""
