@@ -1041,7 +1041,8 @@ class CompilerMixin:
 
     def _run_citation_verification(self):
         """Verify references.bib, fix errors, mark NEEDS-CHECK, clean unused."""
-        from ark.citation import verify_bib, fix_bib, cleanup_unused
+        from ark.citation import (verify_bib, fix_bib, cleanup_unused,
+                                  reset_source_health, unavailable_sources)
 
         bib_path = self.latex_dir / "references.bib"
         if not bib_path.exists():
@@ -1074,6 +1075,7 @@ class CompilerMixin:
 
         try:
             # 1. Verify each entry against DBLP/CrossRef
+            reset_source_health()
             results = verify_bib(bib_str)
 
             if results:
@@ -1104,7 +1106,15 @@ class CompilerMixin:
                         self.log("Citation loop: replaced "
                                  f"{len(replaced_keys)} unverified entr{'y' if len(replaced_keys)==1 else 'ies'} "
                                  f"with API-verified BibTeX: {', '.join(replaced_keys)}", "INFO")
-                    if unresolved_keys and (verified or corrected or replaced_keys):
+                    down = unavailable_sources()
+                    if unresolved_keys and down:
+                        # Unconfirmed is not the same as nonexistent. With a
+                        # source silent, keep the entries (marked) and the text.
+                        self.log("Citation loop: kept "
+                                 f"{len(unresolved_keys)} unconfirmed reference(s) "
+                                 f"because {', '.join(down)} did not answer; "
+                                 "nothing dropped", "WARN")
+                    elif unresolved_keys and (verified or corrected or replaced_keys):
                         removed_keys = remove_entries(bib_str, unresolved_keys)
                         if removed_keys:
                             pruned = self._prune_undefined_citations()

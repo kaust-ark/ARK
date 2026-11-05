@@ -343,6 +343,27 @@ def search_queries_from_topic(prose: str, title: str = "", limit: int = 4) -> li
 #  HTTP helper
 # ═══════════════════════════════════════════════════════════
 
+# Hosts that did not answer since the last reset_source_health(): an HTTP
+# error, a timeout, or a page that is not the API's JSON. A search that got no
+# answer says nothing about whether the paper exists. Measured from mcnode15 on
+# 2026-11-05: DBLP served a bot-challenge page to every API call, arXiv timed
+# out, Semantic Scholar and OpenAlex returned 429. Each looked like "no hits",
+# and the citation loop deleted LoRA, T5 and EWC from a paper as unconfirmable.
+_UNAVAILABLE: set[str] = set()
+
+
+def reset_source_health() -> None:
+    _UNAVAILABLE.clear()
+
+
+def unavailable_sources() -> list[str]:
+    return sorted(_UNAVAILABLE)
+
+
+def _host(url: str) -> str:
+    return urllib.parse.urlsplit(url).hostname or url
+
+
 def _http_get(url: str, headers: dict | None = None, timeout: int = _REQUEST_TIMEOUT) -> str | None:
     """Simple HTTP GET, returns response body or None on error."""
     req = urllib.request.Request(url, headers=headers or {})
@@ -351,6 +372,7 @@ def _http_get(url: str, headers: dict | None = None, timeout: int = _REQUEST_TIM
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read().decode("utf-8", errors="replace")
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError):
+        _UNAVAILABLE.add(_host(url))
         return None
 
 
@@ -361,6 +383,7 @@ def _http_get_json(url: str, timeout: int = _REQUEST_TIMEOUT) -> dict | None:
     try:
         return json.loads(body)
     except json.JSONDecodeError:
+        _UNAVAILABLE.add(_host(url))
         return None
 
 
