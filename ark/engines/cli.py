@@ -165,13 +165,15 @@ class _BlockingCommandWatchdog:
 
 def kill_process_tree(pid: int):
     """Kill a process and all its descendants (including the process itself)."""
+    # Snapshot before killing the parent: children in their own process groups
+    # may otherwise be reparented before pgrep can find them.
+    descendants = _get_descendant_pids(pid)
     # First try to kill the entire process group
     try:
         os.killpg(pid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError, OSError):
         pass
     # Also kill individual descendants in case pgid differs
-    descendants = _get_descendant_pids(pid)
     for child_pid in reversed(descendants):
         try:
             os.kill(child_pid, signal.SIGKILL)
@@ -473,8 +475,10 @@ class OpenHandsCLI(AgentCLI):
 
 
 def get_cli_for_model(model: str, variant: Optional[str] = None) -> AgentCLI:
-    """Return the agent runtime. Everything runs through OpenHands now; ``model``
-    / ``variant`` is the LiteLLM model string (e.g. ``anthropic/claude-sonnet-4-6``).
+    """Return the selected agent runtime for a provider/model identifier.
+
+    ``ARK_AGENT_RUNTIME=dsh`` explicitly selects the isolated DSH SDK. It never
+    falls back to another runtime when configuration or dependencies fail.
 
     ``ARK_AGENT_RUNTIME=sdk`` swaps the subprocess CLI for the in-process SDK
     runtime, which is the only place we can bound what the conversation
@@ -482,6 +486,9 @@ def get_cli_for_model(model: str, variant: Optional[str] = None) -> AgentCLI:
     same interface, so they can be A/B compared on the same project. The CLI
     remains the default until the SDK path has been measured against it.
     """
+    if os.environ.get("ARK_AGENT_RUNTIME", "").strip().lower() == "dsh":
+        from ark.engines.dsh_runtime import DSHRuntime
+        return DSHRuntime(model, variant or model)
     try:
         from ark.engines.sdk_runtime import OpenHandsSDK, sdk_runtime_enabled
         if sdk_runtime_enabled():

@@ -251,6 +251,8 @@ def _add_usage(total: dict | None, rec: dict | None) -> dict | None:
     out = dict(total)
     for k in _USAGE_SUMS:
         out[k] = (total.get(k) or 0) + (rec.get(k) or 0)
+    if total.get("cost_usd") is None or rec.get("cost_usd") is None:
+        out["cost_usd"] = None
     out["model"] = rec.get("model") or total.get("model", "")
     if total.get("estimated") or rec.get("estimated"):
         out["estimated"] = True
@@ -460,7 +462,7 @@ class AgentMixin:
         keys = ("input_tokens", "output_tokens", "cache_read_tokens",
                 "cache_creation_tokens", "cost_usd")
         measured = [s for s in getattr(self, "_agent_stats", [])
-                    if s.get("requests") and not s.get("estimated")]
+                    if s.get("requests") and not s.get("estimated") and s.get("cost_usd") is not None]
 
         def per_request(pool):
             n = sum(s["requests"] for s in pool)
@@ -790,7 +792,7 @@ Execute the task and update the corresponding files.
                 # empty-run retry below.
                 if oh_error_code:
                     self.log(
-                        f"  [{agent_type}] OpenHands error: {oh_error_code} — "
+                        f"  [{agent_type}] Agent error: {oh_error_code} — "
                         f"{(oh_error_detail or '')[:200]}",
                         "WARN",
                     )
@@ -1032,8 +1034,10 @@ Execute the task and update the corresponding files.
             cached_in = cr + cc
             total_in = in_tok + cached_in
             hit_pct = int(100 * cr / total_in) if total_in else 0
+            cost = usage_record.get("cost_usd")
+            cost_text = f"${cost:.4f}" if cost is not None else "cost unknown"
             self.log_step(
-                f"  💰 ${usage_record['cost_usd']:.4f}  "
+                f"  💰 {cost_text}  "
                 f"in:{_fmt_tok(in_tok)}  out:{_fmt_tok(out_tok)}  "
                 f"cache:{_fmt_tok(cached_in)}({hit_pct}% hit)"
                 + (f"  (estimated from {usage_record.get('requests', 0)} requests, "

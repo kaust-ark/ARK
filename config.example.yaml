@@ -28,6 +28,11 @@ model: anthropic/claude-sonnet-4-6
 # agent loop) — a cheap model is plenty.
 bot_model: anthropic/claude-haiku-4-5
 
+# Experimental DSH runtime: set ARK_AGENT_RUNTIME=dsh and ARK_DSH_PYTHON to a
+# separate Python environment with deepseek-harness-sdk==0.2.1rc2 installed.
+# See ADRs/0014-dsh-runtime-intranet-evaluation.md for protocol selection,
+# per-request limits, local-execution constraints and the offline test command.
+
 # ── API keys ─────────────────────────────────────────────────────────────────
 # Fill the key(s) for the provider(s) you use. Only the SELECTED model's key is
 # strictly required — but filling all three lets you switch models freely

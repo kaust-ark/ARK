@@ -125,6 +125,14 @@ def pipeline_stub(tmp_path):
 
 
 class TestCostReportMerge:
+    def test_unknown_provider_cost_is_not_recorded_as_free(self, pipeline_stub):
+        pipeline_stub._agent_stats = [_make_stat("planner", "2026-11-05T03:00:00", cost=None)]
+        pipeline_stub._write_cost_report()
+        report = yaml.safe_load((pipeline_stub.state_dir / "cost_report.yaml").read_text())
+        assert report["raw_stats"][0]["cost_usd"] is None
+        assert report["cost_complete"] is False
+        assert report["unknown_cost_calls"] == 1
+
     def test_first_write_creates_file(self, pipeline_stub):
         pipeline_stub._agent_stats = [_make_stat("planner", "2026-04-22T08:54:36")]
         pipeline_stub._write_cost_report()

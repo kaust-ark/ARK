@@ -1,6 +1,6 @@
 # ADR-0014 — DSH runtime migration with evaluation inside the will network
 
-- **Status:** Proposed (implementation requested; production cutover not yet approved)
+- **Status:** Adapter implementation in progress (production cutover not yet approved)
 - **Date:** 2026-11-05
 - **Deciders:** Idea2Paper maintainer
 - **Related:** [ADR-0003](0003-http-v1-control-plane-boundary.md), [ADR-0009](0009-apptainer-experiment-sandbox.md), [boundary tests](../tests/e2e/README.md)
@@ -33,16 +33,80 @@ Current seams worth extending:
 
 ## Decision
 
-Develop the migration in isolated feature checkouts, with integration and offline
-regression testing on mcnode15 and intranet API adaptation and model evaluation
-inside will. Transfer source changes and reviewable evaluation summaries only
+The ARK session on mcnode15 leads the refactor: architecture, runtime adapter,
+capability improvements, integration, offline validation and acceptance criteria
+stay here. The will session is an on-demand experiment executor. It configures
+the local intranet API and runs specific, bounded evaluation tasks against a
+fixed source revision when real model calls are necessary. It does not own or
+independently redirect the refactor. Transfer source and evaluation summaries only
 where permitted. Do not assume intranet source, traces or results may be exported.
 mcnode15 remains the production and deployment environment; no cross-network API
 proxy is required by this design.
 
-The current implementation covers utility-call endpoint routing and offline
-gateway tests. It does **not** yet add a DSH adapter, migrate production, install
-DSH, or run model evaluations.
+The implementation now includes utility-call endpoint routing and an opt-in DSH
+adapter. SDK/runtime `0.2.1rc2` is installed in an isolated development environment.
+Validation uses deterministic local API fixtures, not paid model requests. No
+production migration or research-quality evaluation has taken place.
+
+### Adapter configuration and current limits
+
+Install the pinned SDK in its own environment, outside the shared platform env:
+
+```sh
+python -m venv /path/to/dsh-venv
+/path/to/dsh-venv/bin/python -m pip install deepseek-harness-sdk==0.2.1rc2
+export ARK_AGENT_RUNTIME=dsh
+export ARK_DSH_PYTHON=/path/to/dsh-venv/bin/python
+```
+
+The SDK pins the matching runtime wheel. The driver checks both versions before
+starting. An unavailable interpreter, missing dependency or invalid configuration
+is a terminal error. The default OpenHands runtime remains unchanged.
+
+For custom gateways, set `LLM_BASE_URL` and `ARK_DSH_API` to the protocol served by
+that endpoint: `openai-completions`, `openai-responses` or `anthropic-messages`.
+An `openai/` model defaults to `openai-completions`. The native `deepseek/` route
+uses DSH's DeepSeek Messages adapter; to use an older Chat Completions endpoint,
+explicitly set `ARK_DSH_API=openai-completions`. Chat base URLs normally include
+`/v1`; the Anthropic client appends `/v1/messages` to its base URL. Select the model
+with the existing provider/model notation. Set the corresponding provider API key
+or `LLM_API_KEY` locally; unrelated provider/cloud keys are removed from the agent
+environment. No key is written into the launch config or command line.
+
+`ARK_DSH_CONTEXT_WINDOW` (default 65536) must fit the actual model's context window.
+`ARK_DSH_MAX_TOKENS` (default 8192) caps each response and must be smaller than the
+context window. These are initial integration settings, not measured optima. The
+existing outer execution timeout remains active; these settings alone are not a
+total token/spend budget. Real evaluation needs its separately declared allowance.
+
+Each call records its identity before startup under `.dsh/<session-id>/run.json`
+in the project, with a private SDK home and patch. The temporary prompt config is
+removed after execution. Session logs remain local; exclude `.dsh/` from project
+exports. Session-log contribution and plugin-inventory contribution are disabled.
+The adapter's explicit `resume_session_id` restores SDK history after checking the
+workspace, model and endpoint. The orchestrator does not yet automatically bind
+checkpoint continuations to these session ids, and external jobs are not restored.
+
+The initial profile executes tools locally, without filesystem confinement.
+Selecting the existing Apptainer option with DSH is rejected rather than silently
+ignoring it. Production sandbox parity remains unfinished. Tool actions and errors
+feed the existing step log/circuit breaker. Missing final results, unsuccessful
+finish reasons and nonzero exits are errors even if partial text exists. Usage
+survives in emitted events; unavailable USD cost is null, and the cost ledger marks
+the known subtotal as incomplete. Dashboard presentation of partial costs still
+needs review before production cutover.
+
+Run the optional real-SDK, loopback-only tests alongside the standard suite:
+
+```sh
+ARK_DSH_TEST_PYTHON=/path/to/dsh-venv/bin/python \
+  python -m pytest tests/ -x -q -m 'not network and not gcp and not skypilot'
+```
+
+These tests exercise real SDK tools and persisted history with synthetic model
+responses. They do not measure model reasoning or research quality. OpenAI
+Responses compatibility still needs a dedicated protocol fixture before a real
+evaluation uses it.
 
 ### Coordination between existing Codex sessions
 
@@ -54,11 +118,15 @@ explicit reads of ARK's replies, not SSH or an assumed shared filesystem.
 
 - ARK: `01a1a687-c07e-78f3-b5c1-dbec78e70004`, mcnode15.
 - will: `01a1a98c-9aa3-7943-95fc-cd57d3dfd7d1`, WSL2 on SH-WILL-XINJIHAO.
-- ARK owns integration, utility routing and offline regression checks.
-- will's first task is to report the API protocol, usable model capabilities,
-  allowed budget and permitted scope of result sharing, without secrets or
-  internal addresses. Wait for its acknowledgement before treating this task as
-  accepted. Paid model calls have not started.
+- ARK leads implementation and review, defines each experiment and accepts its
+  results. Development here continues independently of intranet model access.
+- will owns local endpoint configuration and execution of explicitly handed-off
+  experiments. It reports results to ARK and reads the response; its ability to
+  initiate messages does not make it the project lead.
+- Before the first model experiment, will reports the API protocol, usable model
+  capabilities, allowed budget and permitted scope of result sharing, without
+  secrets or internal addresses. Wait for its acknowledgement before treating a
+  handed-off task as accepted. Paid model calls have not started.
 
 Use milestone messages rather than a continuous model polling loop. Session
 messages are also data transfers; a working relay does not establish permission
@@ -128,10 +196,15 @@ database, generic workflow platform or mandatory multi-agent fan-out. Research
 completion remains grounded in actual artifacts, reproducible measurements,
 references and user requirements, not only a reviewer score or an agent's claim.
 
-## Execution handoff for the intranet checkout
+## Implementation and experiment handoff
 
-The maintainer has asked for implementation. Continue the work from this record;
-do not stop at producing another architecture proposal.
+The maintainer has asked for implementation led by the ARK session. Implement the
+runtime and offline tests here. Hand off only the inner environment checks and
+bounded real-model experiments to will, rather than moving the entire project.
+Each experiment request specifies the source commit, fixture, command, model
+requirements, request/token/time limits, expected evidence and pass/fail criteria.
+The will reply identifies the revision actually run, exit status, permitted
+artifact checks and observed usage, including failures and missing metrics.
 
 1. Read applicable `AGENTS.md` instructions. Use a feature checkout and an isolated
    test DB/projects directory. Never point an intranet development instance at

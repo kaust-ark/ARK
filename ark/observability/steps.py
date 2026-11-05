@@ -69,6 +69,34 @@ def parse_line(line: str) -> Optional[StepEvent]:
         return None
     kind = evt.get("kind")
 
+    if kind == "DSHEvent":
+        event = (evt.get("payload") or {}).get("event") or {}
+        data = event.get("data") or {}
+        event_type = event.get("type")
+        if event_type == "tool/call":
+            arguments = data.get("arguments") or {}
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except ValueError:
+                    arguments = {"thought": arguments}
+            return _parse_action({"tool_name": data.get("name"), "action": arguments})
+        if event_type in {"assistant/message", "tool/result"}:
+            message = data.get("message") or {}
+            text = "".join(str(p.get("text") or "") for p in message.get("content", [])
+                           if isinstance(p, dict) and p.get("type") == "text")
+            if not text.strip():
+                return None
+            category = ("error" if message.get("isError") else
+                        "thought" if event_type == "assistant/message" else "result")
+            return StepEvent(category, _truncate(text), detail=text, raw_kind=event_type)
+        if event_type == "turn/end":
+            reason = data.get("reason") or {}
+            if reason.get("kind") != "completed":
+                detail = json.dumps(reason)
+                return StepEvent("error", _truncate(detail), detail=detail, raw_kind=event_type)
+        return None
+
     if kind == "ActionEvent":
         return _parse_action(evt)
     if kind == "ObservationEvent":

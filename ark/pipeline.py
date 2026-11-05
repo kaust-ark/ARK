@@ -3989,6 +3989,7 @@ provide the title.
                     "total_cache_read_tokens": 0,
                     "total_cache_creation_tokens": 0,
                     "total_cost_usd": 0.0,
+                    "unknown_cost_calls": 0,
                 }
             b = by_type[atype]
             b["calls"] += 1
@@ -4000,6 +4001,8 @@ provide the title.
             b["total_cache_read_tokens"] += stat.get("cache_read_tokens", 0)
             b["total_cache_creation_tokens"] += stat.get("cache_creation_tokens", 0)
             b["total_cost_usd"] += float(stat.get("cost_usd", 0.0) or 0.0)
+            if "cost_usd" in stat and stat["cost_usd"] is None:
+                b["unknown_cost_calls"] += 1
 
         total_calls = sum(d["calls"] for d in by_type.values())
         total_time = sum(d["total_seconds"] for d in by_type.values())
@@ -4014,6 +4017,10 @@ provide the title.
             "total_agent_calls": total_calls,
             "total_agent_seconds": total_time,
             "total_cost_usd": round(total_cost_usd, 6),
+            # Total is a known subtotal when a provider exposes no pricing.
+            # Keep unknown costs explicit in raw_stats and mark incompleteness.
+            "cost_complete": not any(d["unknown_cost_calls"] for d in by_type.values()),
+            "unknown_cost_calls": sum(d["unknown_cost_calls"] for d in by_type.values()),
             "total_input_tokens": total_input_tokens,
             "total_output_tokens": total_output_tokens,
             "total_cache_read_tokens": total_cache_read_tokens,
