@@ -844,6 +844,14 @@ class PipelineMixin:
                     "ERROR",
                 )
                 sys.exit(1)
+            from ark.engines.dsh_runtime import route
+            for role, m in [("model", self.model or "")] + list(
+                    (self.config.get("agent_models") or {}).items()):
+                try:
+                    route(m)
+                except ValueError as e:
+                    self.log(f"Error: ARK_AGENT_RUNTIME=dsh cannot run {role} '{m}': {e}.", "ERROR")
+                    sys.exit(1)
         elif not shutil.which("openhands"):
             self.log(
                 "Error: 'openhands' command not found. Install with: "

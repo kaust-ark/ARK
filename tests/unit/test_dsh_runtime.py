@@ -88,6 +88,36 @@ def test_invalid_gateway_is_terminal_without_spawn(tmp_path, monkeypatch):
     assert runner.parse_output(out)["error_code"] == "DSHConfigurationError"
 
 
+def test_providers_the_webapp_offers_route_without_a_base_url(monkeypatch):
+    # The webapp sets no LLM_BASE_URL; OpenHands leaves the endpoint to litellm.
+    from ark.engines.dsh_runtime import route
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("ARK_DSH_API", raising=False)
+    assert route("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free") == (
+        "openai-completions", "https://openrouter.ai/api/v1")
+    assert route("deepseek/deepseek-v4-pro") == ("", "")
+    with pytest.raises(ValueError, match="ARK_DSH_API"):
+        route("anthropic/claude-sonnet-5-5")
+    with pytest.raises(ValueError, match="LLM_BASE_URL"):
+        route("openai/ext/model")
+    monkeypatch.setenv("LLM_BASE_URL", "http://gw.invalid/v1")
+    assert route("openai/ext/model") == ("openai-completions", "http://gw.invalid/v1")
+    assert route("openrouter/vendor/m") == ("openai-completions", "http://gw.invalid/v1")
+    assert route("deepseek/deepseek-v4-pro") == ("", "http://gw.invalid/v1")
+
+
+def test_openrouter_models_get_the_window_and_output_cap_openrouter_lists(monkeypatch):
+    import ark.engines.dsh_runtime as dr
+    monkeypatch.delenv("ARK_DSH_CONTEXT_WINDOW", raising=False)
+    monkeypatch.delenv("ARK_DSH_MAX_TOKENS", raising=False)
+    monkeypatch.setattr(dr, "_LISTED", {"small/m:free": (65536, 8192), "big/m": (1_000_000, 65536)})
+    assert dr._window("openrouter/small/m:free") == 65536
+    assert dr._max_tokens("openrouter/small/m:free") == 8192
+    assert dr._max_tokens("openrouter/big/m") == 16384
+    monkeypatch.setenv("ARK_DSH_CONTEXT_WINDOW", "131072")
+    assert dr._window("openrouter/small/m:free") == 131072
+
+
 def test_sandbox_request_is_not_silently_ignored(tmp_path, monkeypatch):
     monkeypatch.setenv("ARK_AGENT_SANDBOX", "apptainer")
     runner = DSHRuntime("openai/fixture")

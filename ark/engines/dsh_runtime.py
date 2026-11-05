@@ -66,12 +66,79 @@ def price(model: str, usage: dict):
         return None, None
 
 
+# Providers reached with no LLM_BASE_URL set, at the URL pi-ai's own catalogue
+# gives them (the webapp sets no base URL; OpenHands leaves it to litellm).
+# DeepSeek has its native route. Any other provider needs ARK_DSH_API and
+# LLM_BASE_URL.
+_ROUTES = {"openrouter": ("openai-completions", "https://openrouter.ai/api/v1")}
+_PROTOCOLS = ("openai-completions", "openai-responses", "anthropic-messages")
+
+
+def route(model: str) -> tuple:
+    """(protocol, endpoint) DSH reaches `model` by. No protocol is DeepSeek's native route.
+
+    Raises ValueError when there is none, so preflight and the call agree.
+    """
+    prefix, sep, model_id = model.partition("/")
+    if not sep or not model_id:
+        raise ValueError("DSH requires a provider/model identifier")
+    protocol = os.environ.get("ARK_DSH_API", "").strip()
+    endpoint = os.environ.get("LLM_BASE_URL", "").strip()
+    if not protocol and prefix == "deepseek":
+        return "", endpoint
+    if not protocol and prefix in _ROUTES:
+        protocol, default = _ROUTES[prefix]
+        endpoint = endpoint or default
+    protocol = protocol or ("openai-completions" if prefix == "openai" else "")
+    if protocol not in _PROTOCOLS:
+        raise ValueError(f"DSH has no route for '{prefix}' models; set ARK_DSH_API to the "
+                         f"gateway's API protocol ({', '.join(_PROTOCOLS)})")
+    if not endpoint:
+        raise ValueError(f"DSH has no endpoint for '{prefix}' models; set LLM_BASE_URL")
+    return protocol, endpoint
+
+
+_LISTED: dict = {}
+
+
+def _listed_limits(model: str) -> tuple:
+    """(context window, max output) OpenRouter lists for `model`, else (None, None).
+
+    litellm knows few OpenRouter ids (the :free ones not at all), and its
+    fallback window can exceed the model's. One catalogue request per process.
+    """
+    prefix, _, model_id = model.partition("/")
+    if prefix != "openrouter":
+        return None, None
+    if not _LISTED:
+        try:
+            import urllib.request
+            with urllib.request.urlopen(_ROUTES["openrouter"][1] + "/models", timeout=10) as r:
+                for m in json.loads(r.read()).get("data") or []:
+                    top = m.get("top_provider") or {}
+                    _LISTED[m.get("id")] = (m.get("context_length") or top.get("context_length"),
+                                            top.get("max_completion_tokens"))
+        except Exception:
+            _LISTED[None] = (None, None)
+    window, out = _LISTED.get(model_id, (None, None))
+    return (int(window) if window else None), (int(out) if out else None)
+
+
 def _window(model: str) -> int:
     explicit = os.environ.get("ARK_DSH_CONTEXT_WINDOW", "").strip()
     if explicit:
         return int(explicit)
+    listed, _ = _listed_limits(model)
+    if listed:
+        return listed
     from .sdk_runtime import _context_window
     return _context_window(model)
+
+
+def _max_tokens(model: str) -> int:
+    asked = int(os.environ.get("ARK_DSH_MAX_TOKENS", "16384"))
+    _, listed = _listed_limits(model)
+    return min(asked, listed) if listed else asked
 
 
 class DSHRuntime(AgentCLI):
@@ -121,22 +188,13 @@ class DSHRuntime(AgentCLI):
         # It contains no API key, and is private even when prompts are sensitive.
         workdir = Path(code_dir).resolve()
         model = self.model_variant or self.model_name
-        prefix, sep, model_id = model.partition("/")
-        if not sep or not model_id:
-            raise ValueError("DSH requires a provider/model identifier")
         if os.environ.get("ARK_AGENT_SANDBOX", "").strip().lower() == "apptainer":
             raise ValueError("DSH Apptainer execution is not implemented; use the existing SDK runtime")
-        protocol = os.environ.get("ARK_DSH_API", "").strip()
-        endpoint = os.environ.get("LLM_BASE_URL", "").strip()
-        custom = bool(protocol) or prefix != "deepseek"
-        if custom:
-            protocol = protocol or ("openai-completions" if prefix == "openai" else "")
-            if protocol not in {"openai-completions", "openai-responses", "anthropic-messages"}:
-                raise ValueError("Set ARK_DSH_API to the gateway's supported API protocol")
-            if not endpoint:
-                raise ValueError("DSH custom providers require an explicit LLM_BASE_URL")
+        protocol, endpoint = route(model)
+        custom = bool(protocol)
+        model_id = model.partition("/")[2]
         window = _window(model)
-        max_tokens = int(os.environ.get("ARK_DSH_MAX_TOKENS", "16384"))
+        max_tokens = _max_tokens(model)
         if not 0 < max_tokens < window:
             raise ValueError("DSH requires 0 < ARK_DSH_MAX_TOKENS < the context window")
 

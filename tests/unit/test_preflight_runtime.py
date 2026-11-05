@@ -20,7 +20,8 @@ def _pipe(model="openai/ext/model"):
 
 @pytest.fixture
 def clean_env(monkeypatch):
-    for k in ("ARK_AGENT_RUNTIME", "ARK_DSH_PYTHON", "OPENAI_API_KEY", "LLM_API_KEY", "LLM_BASE_URL"):
+    for k in ("ARK_AGENT_RUNTIME", "ARK_DSH_PYTHON", "ARK_DSH_API", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
+              "ANTHROPIC_API_KEY", "LLM_API_KEY", "LLM_BASE_URL"):
         monkeypatch.delenv(k, raising=False)
     # Only the OpenHands CLI is missing; the LaTeX tools checked later exist.
     monkeypatch.setattr("shutil.which", lambda name: None if name == "openhands" else f"/usr/bin/{name}")
@@ -43,8 +44,20 @@ def test_openhands_runtime_still_requires_the_cli(clean_env):
 def test_a_dsh_host_needs_no_openhands(clean_env, tmp_path):
     clean_env.setenv("ARK_AGENT_RUNTIME", "dsh")
     clean_env.setenv("ARK_DSH_PYTHON", _fake_sdk(tmp_path, "0.2.1rc2 0.2.1rc2"))
-    clean_env.setenv("OPENAI_API_KEY", "k")
-    _pipe().check_dependencies()  # no exit
+    clean_env.setenv("OPENROUTER_API_KEY", "k")
+    _pipe("openrouter/vendor/model").check_dependencies()  # no exit
+
+
+def test_a_model_dsh_cannot_reach_stops_the_run_at_startup(clean_env, tmp_path):
+    # It used to start, then fail its first agent call on DSHConfigurationError.
+    clean_env.setenv("ARK_AGENT_RUNTIME", "dsh")
+    clean_env.setenv("ARK_DSH_PYTHON", _fake_sdk(tmp_path, "0.2.1rc2 0.2.1rc2"))
+    clean_env.delenv("ARK_DSH_API", raising=False)
+    clean_env.setenv("ANTHROPIC_API_KEY", "k")
+    p = _pipe("anthropic/claude-sonnet-5-5")
+    with pytest.raises(SystemExit):
+        p.check_dependencies()
+    assert any("cannot run model" in m and "ARK_DSH_API" in m for _, m in p.logs)
 
 
 def test_a_wrong_dsh_version_is_refused(clean_env, tmp_path):
@@ -69,12 +82,13 @@ def test_a_per_role_model_needs_its_own_key(clean_env, tmp_path):
     clean_env.setenv("ARK_AGENT_RUNTIME", "dsh")
     clean_env.setenv("ARK_DSH_PYTHON", _fake_sdk(tmp_path, "0.2.1rc2 0.2.1rc2"))
     clean_env.setenv("OPENAI_API_KEY", "k")
+    clean_env.setenv("LLM_BASE_URL", "http://gw.invalid/v1")
     p = _pipe()
-    p.config = {"agent_models": {"reviewer": "anthropic/claude-sonnet-5-5"}}
+    p.config = {"agent_models": {"reviewer": "openrouter/anthropic/claude-sonnet-5-5"}}
     with pytest.raises(SystemExit):
         p.check_dependencies()
     assert any("agent_models.reviewer" in m for _, m in p.logs)
-    clean_env.setenv("ANTHROPIC_API_KEY", "k2")
+    clean_env.setenv("OPENROUTER_API_KEY", "k2")
     p.logs.clear()
     p.check_dependencies()  # no exit
 
