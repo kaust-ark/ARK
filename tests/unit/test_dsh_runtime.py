@@ -29,7 +29,7 @@ def test_partial_output_is_not_success_and_retains_usage():
     record = event("assistant/message", {"message": {"content": [{"type": "text", "text": "done"}]},
                                          "usage": {"inputTokens": 10, "outputTokens": 5}})
     parsed = DSHRuntime("openai/fixture").parse_output(json.dumps(record))
-    assert parsed["error_code"] == "DSHIncompleteRun"
+    assert parsed["error_code"] == "DSH.ServiceUnavailableError"
     assert parsed["result"] == ""
     assert parsed["usage"]["input_tokens"] == 10
     assert parsed["usage"]["cost_usd"] is None
@@ -63,7 +63,7 @@ def test_nonzero_exit_cannot_keep_a_successful_final_record(tmp_path, monkeypatc
         1, json.dumps({"kind": "__result__", "result": "done"}), "", 0, False))
     runner = DSHRuntime("openai/fixture")
     _, out, _, _, _ = runner.execute("test", "boundary", tmp_path, 10)
-    assert runner.parse_output(out)["error_code"] == "DSHProcessError"
+    assert runner.parse_output(out)["error_code"] == "DSH.ServiceUnavailableError"
     assert runner.parse_output(out)["result"] == ""
 
 
@@ -119,12 +119,14 @@ def real_gateway(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "synthetic-gateway-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-gateway-key")
     monkeypatch.setenv("ARK_DSH_MAX_TOKENS", "1024")
+    monkeypatch.setenv("ARK_DSH_RETRIES", "0")
     monkeypatch.setenv("ARK_DSH_CONTEXT_WINDOW", "32768")
     monkeypatch.delenv("ARK_DSH_API", raising=False)
     monkeypatch.delenv("ARK_AGENT_SANDBOX", raising=False)
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
     monkeypatch.setenv("no_proxy", "127.0.0.1")
-    state = {"requests": [], "mode": "success", "command": "printf verified > fixture.txt"}
+    state = {"requests": [], "mode": "success", "command": "printf verified > fixture.txt",
+             "background": False}
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -141,11 +143,18 @@ def real_gateway(monkeypatch):
                 self.wfile.write(payload)
                 return
             assert len(state["requests"]) <= 3, "unexpected repeat model call"
+            # The sdk profile's bash requires a description; a background run
+            # first ends its turn, then answers in the turn the job wakes.
+            args = {"command": state["command"], "description": "fixture"}
+            if state["background"]:
+                args["run_in_background"] = True
             if len(state["requests"]) == 1:
                 delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "call-fixture",
-                    "type": "function", "function": {"name": "bash", "arguments": json.dumps({
-                        "command": state["command"]})}}]}
+                    "type": "function", "function": {"name": "bash", "arguments": json.dumps(args)}}]}
                 reason = "tool_calls"
+            elif state["background"] and len(state["requests"]) == 2:
+                delta = {"role": "assistant", "content": "Started; waiting for the job."}
+                reason = "stop"
             else:
                 delta = {"role": "assistant", "content": "Fixture complete."}
                 reason = "stop"
@@ -164,8 +173,8 @@ def real_gateway(monkeypatch):
                         {"type": "tool_use", "id": "call-fixture", "name": "bash", "input": {}} if tool
                         else {"type": "text", "text": ""}},
                     {"type": "content_block_delta", "index": 0, "delta":
-                        {"type": "input_json_delta", "partial_json": json.dumps({"command": state["command"]})} if tool
-                        else {"type": "text_delta", "text": "Fixture complete."}},
+                        {"type": "input_json_delta", "partial_json": json.dumps(args)} if tool
+                        else {"type": "text_delta", "text": delta["content"]}},
                     {"type": "content_block_stop", "index": 0},
                     {"type": "message_delta", "delta": {"stop_reason": "tool_use" if tool else "end_turn",
                         "stop_sequence": None}, "usage": {"output_tokens": 5}},
@@ -251,9 +260,9 @@ def test_real_sdk_timeout_stops_owned_shell(real_gateway, tmp_path):
     real_gateway["command"] = "echo $$ > child.pid; sleep 60"
     runner = DSHRuntime("openai/fixture")
     rc, out, _, _, timed_out = runner.execute("Run the command.", "Stay here.", tmp_path, 15)
-    assert timed_out
-    assert rc != 0
-    assert runner.parse_output(out)["error_code"] == "DSHTimeout"
+    # The driver stops itself before the hard kill and reports a used budget:
+    # keep the work, no retry. Either way the owned shell must be gone.
+    assert runner.parse_output(out)["error_code"] == "DSH.MaxIterationsReached"
     assert len(real_gateway["requests"]) == 1
     pid = int((tmp_path / "child.pid").read_text())
     proc = Path(f"/proc/{pid}/stat")
@@ -274,5 +283,166 @@ def test_real_sdk_intervention_abort_is_cancelled(real_gateway, tmp_path):
                                               on_event=stop_before_action)
     assert not timed_out
     assert rc != 0
-    assert runner.parse_output(out)["error_code"] == "DSHCancelled"
+    assert runner.parse_output(out)["error_code"] == "DSH.Cancelled"
     assert len(real_gateway["requests"]) == 1
+
+
+def test_real_sdk_background_job_is_waited_for(real_gateway, tmp_path):
+    """Session.run() returns at the first idle; the job it started must not die
+    with the harness, and the turn its completion wakes must be the answer."""
+    real_gateway["background"] = True
+    real_gateway["command"] = "sleep 3; printf woke > bg.txt"
+    runner = DSHRuntime("openai/fixture")
+    rc, out, err, _, _ = runner.execute("Start the job.", "Stay here.", tmp_path, 60)
+    parsed = runner.parse_output(out)
+    assert rc == 0, (parsed, err[-2000:])
+    assert (tmp_path / "bg.txt").read_text() == "woke"
+    assert parsed["result"] == "Fixture complete."
+    assert parsed["open_jobs"] == [] and parsed["stop_reason"] == "quiescent"
+    assert len(real_gateway["requests"]) == 3
+
+
+# ── outcome mapping, profile and retry behaviour (no SDK needed) ────────────
+
+from ark.engines.dsh_driver import classify  # noqa: E402
+from ark.engines.dsh_profile import compaction, effective_window, role_patch  # noqa: E402
+
+
+@pytest.mark.parametrize("reason,code", [
+    ({"kind": "completed"}, None),
+    ({"kind": "max-tokens"}, "DSH.MaxIterationsReached"),
+    ({"kind": "error", "error": {"code": "RATE_LIMIT", "status": 429}}, "DSH.RateLimitError"),
+    ({"kind": "error", "error": {"code": "SERVER", "status": 503}}, "DSH.ServiceUnavailableError"),
+    ({"kind": "error", "error": {"code": "TRANSPORT"}}, "DSH.ServiceUnavailableError"),
+    ({"kind": "error", "error": {"code": "CONTEXT_WINDOW_EXCEEDED"}}, "DSH.MaxIterationsReached"),
+    ({"kind": "error", "error": {"code": "QUOTA", "status": 402}}, "DSH.QuotaExceeded"),
+    ({"kind": "error", "error": {"code": "AUTH", "status": 401}}, "DSH.AUTH"),
+    ({"kind": "aborted", "reason": {"kind": "host"}}, "DSH.Cancelled"),
+])
+def test_turn_endings_map_onto_arks_existing_classes(reason, code):
+    from ark.engines import _is_transient_agent_error, _used_its_step_budget, _was_cancelled
+    got, detail = classify(reason)
+    assert got == code
+    if code in ("DSH.RateLimitError", "DSH.ServiceUnavailableError"):
+        assert _is_transient_agent_error(got, detail)
+    if code == "DSH.MaxIterationsReached":
+        assert _used_its_step_budget(got, detail) and not _is_transient_agent_error(got, detail)
+    if code in ("DSH.QuotaExceeded", "DSH.AUTH"):
+        assert not _is_transient_agent_error(got, detail) and not _used_its_step_budget(got, detail)
+    if code == "DSH.Cancelled":
+        assert _was_cancelled(got)
+
+
+@pytest.mark.parametrize("window,max_tokens", [(131072, 16384), (1_000_000, 16384), (32768, 1024)])
+def test_compaction_always_has_a_pressure_budget(window, max_tokens):
+    c = compaction(window, max_tokens, 90_000)
+    threshold = int(window * c["thresholdRatio"])
+    assert 0 < c["retainTokens"] < threshold <= window - max_tokens - c["headroomTokens"]
+    assert threshold <= 90_000
+
+
+def test_catalogued_native_models_compact_near_the_budget_not_at_800k():
+    w = effective_window(True, "deepseek-v4-pro", 131072)
+    assert w == 1_000_000
+    assert int(w * compaction(w, 16384, 90_000)["thresholdRatio"]) <= 90_000
+    assert effective_window(False, "deepseek-v4-pro", 131072) == 131072
+
+
+def test_role_patch_switches_off_phone_home_and_injection(tmp_path):
+    rows = role_patch(role="writer", workdir=tmp_path, provider="deepseek-official",
+                      model_id="deepseek-v4-pro", window=131072, max_tokens=16384,
+                      history_budget=90_000, sandbox="workspace-write")
+    off = {r["id"] for r in rows if r.get("disabled")}
+    assert {"session-log-deepseek", "plugin-package-inventory-deepseek", "session-telemetry-otel",
+            "agent-instructions", "tool-web", "tool-subagent"} <= off
+    by_id = {r["id"]: r for r in rows if "id" in r}
+    assert by_id["sandbox-policy"]["config"] == {"mode": "workspace-write", "workspaceRoot": str(tmp_path)}
+    assert by_id["llm-deepseek"]["config"]["streamIdleTimeoutMs"] == 600_000
+    assert "writer" in by_id["system-prompt"]["config"]["personaPrefix"]
+    with pytest.raises(ValueError):
+        role_patch(role="w", workdir=tmp_path, provider="deepseek-official", model_id="m",
+                   window=131072, max_tokens=1024, history_budget=1, sandbox="yolo")
+
+
+def test_a_resumed_call_sends_a_recovery_note_not_the_whole_task(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLM_BASE_URL", "http://127.0.0.1:9/v1")
+    monkeypatch.setenv("ARK_DSH_CONTEXT_WINDOW", "131072")
+    first = DSHRuntime("openai/fixture")
+    first.build_command("THE FULL TASK", "boundary", tmp_path)
+    again = DSHRuntime("openai/fixture", resume_session_id=first.session_id,
+                       resume_reason="DSH.ServiceUnavailableError: 503")
+    again.build_command("THE FULL TASK\n\n## Time limit\nstop at 12:00", "boundary", tmp_path)
+    task = json.loads(again._config_path.read_text())["task"]
+    assert "THE FULL TASK" not in task and "[Resumed]" in task and "503" in task
+    assert "## Time limit" in task
+    assert json.loads(again._config_path.read_text())["resume"] is True
+
+
+class TestRunAgentWithDSHOutcomes:
+    """run_agent decides retry, keep-work or abort from the driver's code."""
+
+    def _run(self, tmp_path, outcomes):
+        from types import SimpleNamespace
+        from unittest import mock
+        import ark
+        import ark.engines as eng
+        made = []
+
+        class Runner:
+            supports_resume = True
+
+            def __init__(self, **kw):
+                self.kw, self.session_id = kw, "a" * 32
+                made.append(self)
+
+            def execute(self, **kw):
+                return 0, "", "", 1, False
+
+            def parse_output(self, stdout):
+                code, text = outcomes[len(made) - 1]
+                return {"result": text, "usage": None, "error_code": code, "error_detail": "x"}
+
+        (tmp_path / "experimenter.prompt").write_text("You run experiments.")
+        o = eng.AgentMixin()
+        noop = lambda *a, **k: None
+        for name, val in dict(
+                agents_dir=tmp_path, state_dir=tmp_path, code_dir=tmp_path, log_dir=tmp_path,
+                model="deepseek/deepseek-v4-pro",
+                memory=SimpleNamespace(get_context_for_agent=lambda a: ""),
+                _agent_stats=[], _agent_empty_count=0, _rate_limit_notified=False,
+                _terminal_error=None, log=noop, log_step=noop, log_summary_box=noop,
+                send_notification=noop, save_checkpoint=noop, _write_cost_report=noop,
+                _cleanup_cli_state=noop, _build_path_boundary=lambda: "",
+                _summarize_agent_output=lambda a, r: []).items():
+            setattr(o, name, val)
+        with mock.patch.object(eng, "get_cli_for_model", lambda m, **kw: Runner(**kw)), \
+                mock.patch.object(eng, "RateLimitCountdown", lambda s: SimpleNamespace(run=noop)), \
+                mock.patch.object(ark.shutting_down, "wait", lambda t=None: False):
+            out = o.run_agent("experimenter", "run E1", timeout=600)
+        return out, made, o
+
+    def test_a_transient_failure_resumes_the_same_session(self, tmp_path):
+        out, made, o = self._run(tmp_path, [("DSH.ServiceUnavailableError", ""), (None, "done")])
+        assert out == "done" and len(made) == 2
+        assert made[0].kw == {}
+        assert made[1].kw["resume_session_id"] == "a" * 32
+        assert o._terminal_error is None
+
+    def test_a_breaker_cancel_keeps_the_work_and_does_not_retry(self, tmp_path):
+        out, made, o = self._run(tmp_path, [("DSH.Cancelled", "partial")])
+        assert len(made) == 1 and o._terminal_error is None
+
+    def test_a_used_budget_keeps_the_work_and_does_not_retry(self, tmp_path):
+        out, made, o = self._run(tmp_path, [("DSH.MaxIterationsReached", "half done")])
+        assert len(made) == 1 and o._terminal_error is None and out == "half done"
+
+    def test_an_exhausted_balance_ends_the_run(self, tmp_path):
+        out, made, o = self._run(tmp_path, [("DSH.QuotaExceeded", "")])
+        assert len(made) == 1 and o._terminal_error.startswith("DSH.QuotaExceeded")
+
+
+def test_dsh_read_is_logged_as_a_read_not_an_edit():
+    step = parse_line(json.dumps(event("tool/call", {"name": "read", "arguments": '{"path": "paper/main.tex"}'})))
+    assert step.type == "read" and step.detail == "paper/main.tex"
+    step = parse_line(json.dumps(event("tool/call", {"name": "edit", "arguments": {"path": "a.tex"}})))
+    assert step.type == "edit"

@@ -80,7 +80,20 @@ def parse_line(line: str) -> Optional[StepEvent]:
                     arguments = json.loads(arguments)
                 except ValueError:
                     arguments = {"thought": arguments}
-            return _parse_action({"tool_name": data.get("name"), "action": arguments})
+            if not isinstance(arguments, dict):
+                arguments = {"thought": str(arguments)}
+            name = data.get("name") or ""
+            # DSH names its tools plainly; the generic parser below reads any
+            # call with a path as an edit, which logged every `read` as one.
+            path = str(arguments.get("path") or arguments.get("file_path") or "")
+            if name in ("read", "glob", "grep"):
+                target = path or str(arguments.get("pattern") or "")
+                return StepEvent("read", f"{name} {target}".strip(), detail=target, raw_kind=name)
+            if name in ("write", "edit"):
+                return StepEvent("edit", f"{name} {path}".strip(), detail=path, raw_kind=name)
+            if name.startswith("job_"):
+                return StepEvent("action", name, detail=json.dumps(arguments)[:200], raw_kind=name)
+            return _parse_action({"tool_name": name, "action": arguments})
         if event_type in {"assistant/message", "tool/result"}:
             message = data.get("message") or {}
             text = "".join(str(p.get("text") or "") for p in message.get("content", [])

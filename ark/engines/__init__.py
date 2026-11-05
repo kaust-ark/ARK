@@ -151,6 +151,16 @@ def _is_transient_agent_error(code: str, detail: str) -> bool:
             or any(s in d for s in _TRANSIENT_DETAIL))
 
 
+def _was_cancelled(code: str) -> bool:
+    """The call was stopped on purpose (the intervention breaker), not broken.
+
+    Retrying replays the plan the breaker just stopped, and treating it as
+    terminal ends the whole run over one refused action. Keep what the agent
+    did and let the phase's own checks judge it.
+    """
+    return (code or "").endswith("Cancelled")
+
+
 def _used_its_step_budget(code: str, detail: str = "") -> bool:
     """Whether a surfaced agent error is the SDK's own per-call step cap.
 
@@ -660,6 +670,7 @@ Execute the task and update the corresponding files.
         # (peer closed / incomplete chunked read) — a single retry proved too
         # thin on flaky evenings (observed 10 drops in one run).
         MAX_RETRIES = 4
+        resume = {}  # a runtime that can resume continues its own session on retry
         for attempt in range(1, MAX_RETRIES + 1):
             if attempt > 1 and shutting_down.is_set():
                 self.log(f"  [{agent_type}] retry dropped, the run is stopping", "WARN")
@@ -672,7 +683,7 @@ Execute the task and update the corresponding files.
                 # silently revert a --model override back to the config model.
                 self.log(f"Model: {self.model}", "INFO")
 
-                cli_runner = get_cli_for_model(self.model)
+                cli_runner = get_cli_for_model(self.model, **resume)
                 cli_runner.agent_type = agent_type
                 timer.start()
 
@@ -812,6 +823,11 @@ Execute the task and update the corresponding files.
                     _detail_l = (oh_error_detail or "").lower()
                     _is_transient = _is_transient_agent_error(oh_error_code, oh_error_detail)
                     if _is_transient and attempt < MAX_RETRIES:
+                        if getattr(cli_runner, "supports_resume", False) and cli_runner.session_id:
+                            # Carry on where it stopped. A fresh session reruns
+                            # the task from scratch and can resubmit its jobs.
+                            resume = {"resume_session_id": cli_runner.session_id,
+                                      "resume_reason": f"{oh_error_code}: {(oh_error_detail or '')[:120]}"}
                         # Network/stream disconnects clear immediately — retry
                         # promptly; rate-limit codes honour the server's wait.
                         # QUOTA hits are neither: a minute-window 429 stays
@@ -861,6 +877,10 @@ Execute the task and update the corresponding files.
                     # Out of steps: keep what it did and move on. The break
                     # matters, since falling through to the empty-run retry
                     # below would rerun the same task (_used_its_step_budget).
+                    if _was_cancelled(oh_error_code):
+                        self.log(f"  [{agent_type}] stopped by the intervention layer — "
+                                 f"keeping its work, no retry", "WARN")
+                        break
                     if _used_its_step_budget(oh_error_code, oh_error_detail):
                         self.log(
                             f"  [{agent_type}] used its full step budget — "
@@ -967,6 +987,9 @@ Execute the task and update the corresponding files.
 
                     if attempt < MAX_RETRIES:
                         timer.stop()
+                        if getattr(cli_runner, "supports_resume", False) and cli_runner.session_id:
+                            resume = {"resume_session_id": cli_runner.session_id,
+                                      "resume_reason": "it ended with no result"}
                         backoff = 30 * attempt
                         self.log(f"  Empty-run retry: waiting {backoff}s before retry (attempt {attempt + 1}/{MAX_RETRIES})...", "INFO")
                         shutting_down.wait(backoff)  # a Stop cuts the wait short

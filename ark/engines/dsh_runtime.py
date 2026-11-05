@@ -10,14 +10,56 @@ from pathlib import Path
 
 from .cli import AgentCLI
 from .dsh_driver import SDK_VERSION, summarize
+from .dsh_profile import PROFILE, role_patch
 from ark.llm_lite import resolve_key
+
+# Roles whose job is an answer, not an action on files (sdk_runtime.py keeps
+# the same list): an answer with no tool calls is not "did nothing".
+_ANSWER_ROLES = frozenset({"planner", "researcher", "reviewer", "meta_debugger"})
+
+# DSH-specific working rule, added to the task. The model learns about jobs
+# from DSH's own tool guidance, but in E1 it still blocked on job_output after
+# a promoted command instead of ending its turn, which turns a long wait into
+# one request every ten minutes.
+_RUNTIME_NOTE = (
+    "\n\n## Long-running commands\n"
+    "Start anything that takes more than a few minutes with the bash tool's "
+    "`run_in_background` option, note the job id, and end your turn. You are woken "
+    "when the job finishes. Do not poll, sleep, or block on `job_output` to wait."
+)
+
+_RESUME_NOTE = (
+    "[Resumed] Your previous attempt at this task was interrupted ({why}). The task "
+    "itself is unchanged and is earlier in this conversation. Check what is already "
+    "done on disk before redoing anything, then continue it."
+)
+
+
+def _history_budget(model: str, window: int) -> int:
+    from .sdk_runtime import _BUDGET_CEILING, _BUDGET_FLOOR, _BUDGET_FRACTION, history_token_budget
+    if os.environ.get("ARK_DSH_CONTEXT_WINDOW"):
+        return max(_BUDGET_FLOOR, min(int(window * _BUDGET_FRACTION), _BUDGET_CEILING))
+    return history_token_budget(model)
+
+
+def _window(model: str) -> int:
+    explicit = os.environ.get("ARK_DSH_CONTEXT_WINDOW", "").strip()
+    if explicit:
+        return int(explicit)
+    from .sdk_runtime import _context_window
+    return _context_window(model)
 
 
 class DSHRuntime(AgentCLI):
-    def __init__(self, model_name, model_variant=None, *, resume_session_id=None):
+    def __init__(self, model_name, model_variant=None, *, resume_session_id=None, resume_reason=""):
         super().__init__(model_name, model_variant)
         self.resume_session_id = resume_session_id
+        self.resume_reason = resume_reason
         self.session_id = None
+        self._timeout = None
+
+    # A retry can carry on in the same session instead of starting over.
+    supports_resume = True
 
     def build_env(self, code_dir=None):
         env = super().build_env(code_dir)
@@ -31,6 +73,17 @@ class DSHRuntime(AgentCLI):
                 env.pop(name, None)
         if key:
             env["ARK_DSH_API_KEY"] = key
+        # The runtime is a single-file executable that unpacks ~70 MB of native
+        # modules under $HOME/.cache, and HOME is the project directory. One
+        # shared, versioned cache instead of a copy in every project.
+        env["PKG_NATIVE_CACHE_PATH"] = os.environ.get("ARK_DSH_PKG_CACHE") or str(
+            Path.home() / ".cache" / "idea2paper" / f"dsh-pkg-{SDK_VERSION}")
+        # TMPDIR is the project in production. The runtime puts spill files
+        # and native-loader dirs there, so give it a corner of its own.
+        if code_dir is not None:
+            tmp = Path(code_dir).resolve() / ".dsh" / "tmp"
+            tmp.mkdir(parents=True, exist_ok=True)
+            env["TMPDIR"] = str(tmp)
         return env
 
     def build_command(self, prompt, path_boundary, code_dir):
@@ -52,10 +105,10 @@ class DSHRuntime(AgentCLI):
                 raise ValueError("Set ARK_DSH_API to the gateway's supported API protocol")
             if not endpoint:
                 raise ValueError("DSH custom providers require an explicit LLM_BASE_URL")
-        context = int(os.environ.get("ARK_DSH_CONTEXT_WINDOW", "65536"))
-        max_tokens = int(os.environ.get("ARK_DSH_MAX_TOKENS", "8192"))
-        if not 0 < max_tokens < context:
-            raise ValueError("DSH requires 0 < ARK_DSH_MAX_TOKENS < ARK_DSH_CONTEXT_WINDOW")
+        window = _window(model)
+        max_tokens = int(os.environ.get("ARK_DSH_MAX_TOKENS", "16384"))
+        if not 0 < max_tokens < window:
+            raise ValueError("DSH requires 0 < ARK_DSH_MAX_TOKENS < the context window")
 
         sid = self.resume_session_id or uuid.uuid4().hex
         if not re.fullmatch(r"[a-f0-9]{32}", sid):
@@ -69,42 +122,43 @@ class DSHRuntime(AgentCLI):
                 raise ValueError("DSH resume requires the original workspace and model")
             if saved.get("endpoint") != endpoint or saved.get("protocol") != protocol:
                 raise ValueError("DSH resume requires the original provider configuration")
+            if saved.get("sdk_version") != SDK_VERSION:
+                raise ValueError("DSH resume requires the SDK version that wrote the session")
         else:
             root.mkdir(parents=True, mode=0o700, exist_ok=False)
             _write_private(manifest, {"session_id": sid, "workdir": str(workdir),
                                      "model": model, "endpoint": endpoint, "protocol": protocol,
                                      "sdk_version": SDK_VERSION})
         self.session_id = sid
-        patch = [
-            {"id": "session-log-deepseek", "disabled": True},
-            {"id": "plugin-package-inventory-deepseek", "disabled": True},
-            {"id": "tool-fs", "config": {"read": True, "readImage": True, "write": True, "edit": True}},
-        ]
-        provider = "deepseek-official"
-        if custom:
-            provider = "ark-gateway"
-            route = {"api": protocol, "baseURL": endpoint, "apiKeyEnv": "ARK_DSH_API_KEY",
-                     "models": [{"id": model_id, "contextWindow": context, "maxTokens": max_tokens}],
-                     "retryPolicy": {"mode": "normal", "maxRetries": 0}}
-            # Most chat gateways implement system + max_tokens, not OpenAI's
-            # newer developer role and max_completion_tokens fields.
-            if protocol == "openai-completions":
-                route["compat"] = {"supportsDeveloperRole": False, "maxTokensField": "max_tokens"}
-            patch.extend([
-                {"id": "llm-deepseek", "disabled": True},
-                {"insert": [{"id": "llm-pi-ai", "name": "@deepseek-ai/dsh-llm-pi-ai",
-                             "config": {"providers": {provider: route}}}]},
-            ])
-        else:
-            patch.append({"id": "llm-deepseek", "config": {
-                "apiKeyEnv": "ARK_DSH_API_KEY", "defaultContextWindow": context,
-                "retryPolicy": {"mode": "normal", "maxRetries": 0}}})
+        provider = "ark-gateway" if custom else "deepseek-official"
+        role = getattr(self, "agent_type", None) or "research"
+        skills = workdir / ".claude" / "skills"
+        patch = role_patch(
+            role=role, workdir=workdir, provider=provider, model_id=model_id, window=window,
+            max_tokens=max_tokens, history_budget=_history_budget(model, window),
+            api=protocol, endpoint=endpoint,
+            sandbox=os.environ.get("ARK_DSH_SANDBOX", "danger-full-access").strip(),
+            skills_dir=skills, retries=int(os.environ.get("ARK_DSH_RETRIES", "3")))
         _write_private(root / "runtime.patch.yml", patch)
+        if self.resume_session_id:
+            task = _RESUME_NOTE.format(why=self.resume_reason or "unknown cause")
+            deadline = prompt.rfind("\n\n## Time limit\n")
+            if deadline >= 0:
+                task += prompt[deadline:]
+        else:
+            task = f"[SYSTEM RULE] {path_boundary}\n\n{prompt}{_RUNTIME_NOTE}"
+        timeout = self._timeout or 0
         config = {"session_id": sid, "resume": bool(self.resume_session_id),
-                  "model": model, "model_id": model_id, "provider": provider,
+                  "model": model, "model_id": model_id, "provider": provider, "profile": PROFILE,
                   "workdir": str(workdir), "dsh_home": str(root / "home"),
-                  "patch": str(root / "runtime.patch.yml"), "base_url": endpoint,
-                  "max_tokens": max_tokens, "task": f"[SYSTEM RULE] {path_boundary}\n\n{prompt}"}
+                  "patches": [str(root / "runtime.patch.yml")], "base_url": endpoint,
+                  "max_tokens": max_tokens,
+                  "reasoning_effort": os.environ.get("ARK_DSH_EFFORT", "").strip() or None,
+                  "acts": role not in _ANSWER_ROLES,
+                  # Stop on our own a little before the hard kill, so the
+                  # result, the usage and the open jobs are reported.
+                  "wall_s": timeout - min(120, max(2, timeout // 10)) if timeout else None,
+                  "task": task}
         self._config_path = root / "request.json"
         _write_private(self._config_path, config)
         return [os.environ.get("ARK_DSH_PYTHON") or sys.executable,
@@ -112,6 +166,7 @@ class DSHRuntime(AgentCLI):
 
     def execute(self, prompt, path_boundary, code_dir, timeout, log_fn=None, on_event=None, env=None):
         aborted = False
+        self._timeout = timeout
 
         def observe(line):
             nonlocal aborted
@@ -124,13 +179,17 @@ class DSHRuntime(AgentCLI):
             result = super().execute(prompt, path_boundary, code_dir, timeout, log_fn=log_fn,
                                      on_event=observe if on_event else None, env=env)
             rc, stdout, stderr, elapsed, timed_out = result
-            if timed_out or rc:
-                # A partial assistant message cannot turn an interrupted run
-                # into success. Events before the interruption retain usage.
-                code = "DSHTimeout" if timed_out else "DSHCancelled" if aborted else "DSHProcessError"
-                if timed_out or aborted or not self.parse_output(stdout).get("error_code") or "__result__" not in stdout:
-                    stdout += "\n" + json.dumps({"kind": "__result__", "error_code": code,
-                                                  "error_detail": f"DSH process exited with code {rc}"}) + "\n"
+            reported = "__result__" in stdout
+            if not reported or (rc not in (0, None) and not self.parse_output(stdout).get("error_code")):
+                # Killed before the driver could report, or a success report
+                # from a process that then failed. The hard wall clock is a used
+                # budget (keep the work, no retry), a breaker abort is a
+                # cancellation, and anything else is a crashed runtime, which a
+                # retry resumes. A partial message never counts as done.
+                code = ("DSH.MaxIterationsReached" if timed_out else
+                        "DSH.Cancelled" if aborted else "DSH.ServiceUnavailableError")
+                stdout += "\n" + json.dumps({"kind": "__result__", "error_code": code,
+                                              "error_detail": f"DSH process exited with code {rc}"}) + "\n"
             return rc, stdout, stderr, elapsed, timed_out
         except (OSError, ValueError, KeyError) as exc:
             # Return a terminal structured error so the orchestrator does not

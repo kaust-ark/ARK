@@ -474,7 +474,9 @@ class OpenHandsCLI(AgentCLI):
             return None
 
 
-def get_cli_for_model(model: str, variant: Optional[str] = None) -> AgentCLI:
+def get_cli_for_model(model: str, variant: Optional[str] = None, *,
+                      resume_session_id: Optional[str] = None,
+                      resume_reason: str = "") -> AgentCLI:
     """Return the selected agent runtime for a provider/model identifier.
 
     ``ARK_AGENT_RUNTIME=dsh`` explicitly selects the isolated DSH SDK. It never
@@ -485,10 +487,14 @@ def get_cli_for_model(model: str, variant: Optional[str] = None) -> AgentCLI:
     history costs (see ark/engines/sdk_runtime.py). Both paths present the
     same interface, so they can be A/B compared on the same project. The CLI
     remains the default until the SDK path has been measured against it.
+
+    ``resume_session_id`` continues an interrupted call in its own session.
+    Only DSH supports it; the other runtimes ignore it and start fresh.
     """
     if os.environ.get("ARK_AGENT_RUNTIME", "").strip().lower() == "dsh":
         from ark.engines.dsh_runtime import DSHRuntime
-        return DSHRuntime(model, variant or model)
+        return DSHRuntime(model, variant or model, resume_session_id=resume_session_id,
+                          resume_reason=resume_reason)
     try:
         from ark.engines.sdk_runtime import OpenHandsSDK, sdk_runtime_enabled
         if sdk_runtime_enabled():
