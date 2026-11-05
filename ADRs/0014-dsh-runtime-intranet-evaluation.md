@@ -116,6 +116,16 @@ Resume checks workspace, model, endpoint and SDK version. Usage counts every
 billed request, attempts the runtime discarded included; unavailable USD cost
 is null and the cost ledger marks the known subtotal as incomplete.
 
+Usage is priced with `ARK_DSH_PRICE_PER_M` ("input,cache_read,output" USD per
+million) when set, otherwise from litellm's table as on the OpenHands path. Only
+when neither knows the model is the cost null. Preflight checks the selected
+runtime: a DSH host needs no `openhands` binary, and `LLM_API_KEY` counts for a
+gateway. Dashboard chat follows the runtime. On DSH each message is the next turn
+of one per-project session, and its tokens reach the ledger even when unpriced.
+A stopped or timed-out DSH call gets SIGTERM and five seconds to close its
+session and report before the process tree is killed. OpenHands keeps the
+immediate kill.
+
 Selecting the existing Apptainer option with DSH is still rejected rather than
 silently ignored. Read confinement needs the whole runtime inside Apptainer, which
 works with the existing SIF but is not wired.

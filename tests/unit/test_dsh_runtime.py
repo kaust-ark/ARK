@@ -217,8 +217,9 @@ def test_real_sdk_writes_artifact_and_restores_history(real_gateway, tmp_path, m
         # Anthropic's client appends /v1/messages to its root base URL.
         monkeypatch.setenv("LLM_BASE_URL", os.environ["LLM_BASE_URL"].removesuffix("/v1"))
     runner = DSHRuntime(f"{provider}/fixture")
+    # The first runtime start in a process can take ~30 s (module cache checks).
     rc, out, err, _, timed_out = runner.execute("Create fixture.txt then report completion.",
-                                               "Stay in this workspace.", tmp_path, 35)
+                                               "Stay in this workspace.", tmp_path, 90)
     parsed = runner.parse_output(out)
     assert rc == 0, (parsed, err[-2000:])
     assert not timed_out
@@ -283,7 +284,10 @@ def test_real_sdk_intervention_abort_is_cancelled(real_gateway, tmp_path):
                                               on_event=stop_before_action)
     assert not timed_out
     assert rc != 0
-    assert runner.parse_output(out)["error_code"] == "DSH.Cancelled"
+    parsed = runner.parse_output(out)
+    assert parsed["error_code"] == "DSH.Cancelled"
+    # SIGTERM first: the driver closed the session and reported for itself.
+    assert parsed["error_detail"] == "DSH execution was cancelled"
     assert len(real_gateway["requests"]) == 1
 
 
@@ -293,7 +297,7 @@ def test_real_sdk_background_job_is_waited_for(real_gateway, tmp_path):
     real_gateway["background"] = True
     real_gateway["command"] = "sleep 3; printf woke > bg.txt"
     runner = DSHRuntime("openai/fixture")
-    rc, out, err, _, _ = runner.execute("Start the job.", "Stay here.", tmp_path, 60)
+    rc, out, err, _, _ = runner.execute("Start the job.", "Stay here.", tmp_path, 90)
     parsed = runner.parse_output(out)
     assert rc == 0, (parsed, err[-2000:])
     assert (tmp_path / "bg.txt").read_text() == "woke"
@@ -446,3 +450,22 @@ def test_dsh_read_is_logged_as_a_read_not_an_edit():
     assert step.type == "read" and step.detail == "paper/main.tex"
     step = parse_line(json.dumps(event("tool/call", {"name": "edit", "arguments": {"path": "a.tex"}})))
     assert step.type == "edit"
+
+
+def test_dsh_usage_is_priced_explicitly_or_left_unknown(monkeypatch):
+    from ark.engines.dsh_runtime import price
+    usage = {"input_tokens": 1_000_000, "cache_read_tokens": 2_000_000, "output_tokens": 100_000}
+    monkeypatch.setenv("ARK_DSH_PRICE_PER_M", "0.137,0.00274,0.548")
+    cost, source = price("openai/ext/deepseek-v4.1-flash", usage)
+    assert source == "ARK_DSH_PRICE_PER_M"
+    assert cost == pytest.approx(0.137 + 2 * 0.00274 + 0.0548)
+    monkeypatch.delenv("ARK_DSH_PRICE_PER_M")
+    assert price("openai/no-such-model-anywhere", usage) == (None, None)
+
+
+def test_parsed_usage_carries_the_price(monkeypatch):
+    monkeypatch.setenv("ARK_DSH_PRICE_PER_M", "1,0,0")
+    record = event("assistant/message", {"usage": {"inputTokens": 500_000}})
+    parsed = DSHRuntime("openai/fixture").parse_output(json.dumps(record))
+    assert parsed["usage"]["cost_usd"] == pytest.approx(0.5)
+    assert parsed["usage"]["priced_by"] == "ARK_DSH_PRICE_PER_M"

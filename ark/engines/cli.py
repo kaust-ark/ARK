@@ -187,10 +187,36 @@ def kill_process_tree(pid: int):
 
 
 class AgentCLI(ABC):
+    # Seconds a stopped runtime gets to close its session after SIGTERM before
+    # the tree is killed. 0 keeps the immediate SIGKILL.
+    graceful_stop_s = 0
+
     def __init__(self, model_name: str, model_variant: Optional[str] = None):
         self.model_name = model_name
         self.model_variant = model_variant
-        
+
+    def _stop(self, process) -> None:
+        """End the agent process: SIGTERM and a grace period, then the tree kill.
+
+        The descendants are listed first, because a runtime that exits on the
+        SIGTERM leaves its children to be reparented, out of the tree's reach.
+        """
+        grace = self.graceful_stop_s
+        if grace and process.poll() is None:
+            descendants = _get_descendant_pids(process.pid)
+            try:
+                process.send_signal(signal.SIGTERM)
+                process.wait(timeout=grace)
+            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                pass
+            for pid in reversed(descendants):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+        if process.poll() is None:
+            kill_process_tree(process.pid)
+
     @abstractmethod
     def build_command(self, prompt: str, path_boundary: str, code_dir: Path) -> list:
         pass
@@ -243,7 +269,7 @@ class AgentCLI(ABC):
             if finished.wait(timeout=timeout):
                 return
             timeout_expired["v"] = True
-            kill_process_tree(process.pid)
+            self._stop(process)
 
         killer = threading.Thread(target=_deadline_killer, daemon=True)
 
@@ -264,6 +290,7 @@ class AgentCLI(ABC):
 
         err_thread = threading.Thread(target=_drain_stderr, daemon=True)
         stdout_lines: list = []
+        aborting = False
         try:
             watchdog.start()
             killer.start()
@@ -273,11 +300,17 @@ class AgentCLI(ABC):
                     for raw in process.stdout:
                         line = _to_str(raw)
                         stdout_lines.append(line)
-                        if on_event:
+                        if on_event and not aborting:
                             try:
                                 if on_event(line) == "ABORT":
-                                    kill_process_tree(process.pid)
-                                    break
+                                    if not self.graceful_stop_s:
+                                        kill_process_tree(process.pid)
+                                        break
+                                    # Keep reading: the runtime reports its
+                                    # result and usage while it closes.
+                                    aborting = True
+                                    threading.Thread(target=self._stop, args=(process,),
+                                                     daemon=True).start()
                             except Exception:
                                 pass
             except Exception:
@@ -296,7 +329,7 @@ class AgentCLI(ABC):
                 killer.join(timeout=2)
             watchdog.stop()
             if process.poll() is None:
-                kill_process_tree(process.pid)
+                self._stop(process)
                 process.wait(timeout=10)
             if err_thread.ident is not None:
                 err_thread.join(timeout=2)

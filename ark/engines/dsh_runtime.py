@@ -42,6 +42,30 @@ def _history_budget(model: str, window: int) -> int:
     return history_token_budget(model)
 
 
+def price(model: str, usage: dict):
+    """(USD, source) for one call's DSH usage, or (None, None) when unknown.
+
+    DSH reports tokens only. The explicit ARK_DSH_PRICE_PER_M ("input,
+    cache_read,output", USD per million) wins; otherwise litellm's table, the
+    same source the OpenHands path prices with, so the two runtimes compare.
+    """
+    uncached = int(usage.get("input_tokens") or 0)
+    cached = int(usage.get("cache_read_tokens") or 0) + int(usage.get("cache_creation_tokens") or 0)
+    out = int(usage.get("output_tokens") or 0)
+    explicit = os.environ.get("ARK_DSH_PRICE_PER_M", "").strip()
+    if explicit:
+        p_in, p_cache, p_out = (float(x) for x in explicit.split(","))
+        return (uncached * p_in + cached * p_cache + out * p_out) / 1e6, "ARK_DSH_PRICE_PER_M"
+    try:
+        import litellm
+        prompt, completion = litellm.cost_per_token(
+            model=model, prompt_tokens=uncached + cached, completion_tokens=out,
+            cache_read_input_tokens=int(usage.get("cache_read_tokens") or 0))
+        return prompt + completion, "litellm"
+    except Exception:
+        return None, None
+
+
 def _window(model: str) -> int:
     explicit = os.environ.get("ARK_DSH_CONTEXT_WINDOW", "").strip()
     if explicit:
@@ -63,6 +87,9 @@ class DSHRuntime(AgentCLI):
 
     # A retry can carry on in the same session instead of starting over.
     supports_resume = True
+    # On SIGTERM the driver closes the session, which ends its shells, and
+    # reports what the call used. Killed outright it reports nothing.
+    graceful_stop_s = 5
 
     def build_env(self, code_dir=None):
         env = super().build_env(code_dir)
@@ -219,7 +246,12 @@ class DSHRuntime(AgentCLI):
                 events.append(record)
             elif record.get("kind") == "__result__":
                 result = record
-        return summarize(events, result, self.model_variant or self.model_name)
+        out = summarize(events, result, self.model_variant or self.model_name)
+        if out["usage"]["requests"]:
+            cost, source = price(self.model_variant or self.model_name, out["usage"])
+            out["usage"]["cost_usd"] = cost
+            out["usage"]["priced_by"] = source
+        return out
 
 
 def _write_private(path, value):
