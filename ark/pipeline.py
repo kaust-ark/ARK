@@ -4360,7 +4360,9 @@ provide the title.
         which also _sync_db's total_cost_usd, so the webapp Budget card updates
         right after the turn.
         """
-        if not usage or float(usage.get("cost_usd") or 0) <= 0:
+        # DSH has no price list, so a turn can carry tokens with no cost.
+        if not usage or (float(usage.get("cost_usd") or 0) <= 0
+                         and not any(usage.get(k) for k in ("input_tokens", "output_tokens"))):
             return
         import json as _json
         keys = ("cost_usd", "input_tokens", "output_tokens",
@@ -4372,8 +4374,9 @@ provide the title.
         except Exception:
             pass
         delta = {k: (usage.get(k) or 0) - (prev.get(k) or 0) for k in keys}
-        if delta["cost_usd"] <= 0:
+        if delta["cost_usd"] <= 0 and delta["input_tokens"] + delta["output_tokens"] <= 0:
             return  # nothing new (e.g. turn failed before any LLM call)
+        unpriced = usage.get("cost_usd") is None
         self._agent_stats.append({
             "agent_type": "chat",
             "timestamp": datetime.now().isoformat(),
@@ -4384,14 +4387,15 @@ provide the title.
             "output_tokens": int(delta["output_tokens"]),
             "cache_read_tokens": int(delta["cache_read_tokens"]),
             "cache_creation_tokens": int(delta["cache_creation_tokens"]),
-            "cost_usd": round(float(delta["cost_usd"]), 6),
+            "cost_usd": None if unpriced else round(float(delta["cost_usd"]), 6),
         })
         try:
             marker.write_text(_json.dumps({k: usage.get(k) or 0 for k in keys}))
         except Exception:
             pass
         self._write_cost_report()
-        self.log(f"Chat turn cost ${delta['cost_usd']:.4f} — added to project budget", "INFO")
+        spent = ("tokens only, cost unknown" if unpriced else f"${delta['cost_usd']:.4f}")
+        self.log(f"Chat turn {spent} — added to project budget", "INFO")
 
     def _apply_context(self) -> str:
         title = self.config.get("title", "") or self.project_name

@@ -23,6 +23,10 @@ from ark.observability.steps import parse_line
 
 # conversation id is stored here, inside the project workspace
 CONV_FILE = ".ark_chat_conversation"
+# DSH reports usage per turn, not cumulatively; the running total lives here
+DSH_USAGE_FILE = ".ark_chat_usage.json"
+_DSH = "dsh:"
+_USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
 
 
 class _ChatCLI(OpenHandsCLI):
@@ -65,6 +69,11 @@ def read_conversation_usage(workspace, conversation_id: Optional[str]) -> Option
     """
     if not conversation_id:
         return None
+    if conversation_id.startswith(_DSH):
+        try:
+            return json.loads((Path(workspace) / DSH_USAGE_FILE).read_text()).get(conversation_id)
+        except (OSError, ValueError):
+            return None
     try:
         bs = (Path(workspace) / ".openhands" / "conversations"
               / conversation_id / "base_state.json")
@@ -133,6 +142,17 @@ def run_chat_turn(*, workspace, message: str, model: str,
         if step and on_step and step.type != "finish":
             on_step(step)
 
+    if os.environ.get("ARK_AGENT_RUNTIME", "").strip().lower() == "dsh":
+        answer, conv_id = _dsh_turn(workspace, message, model, conversation_id, on_event, log, timeout)
+        if conv_id:
+            save_conversation_id(workspace, conv_id)
+        if on_answer:
+            try:
+                on_answer(answer)
+            except Exception:
+                pass
+        return answer, conv_id, bool(answer)
+
     runner = _ChatCLI(model, conversation_id)
     conv_id = conversation_id
     answer = ""
@@ -156,3 +176,49 @@ def run_chat_turn(*, workspace, message: str, model: str,
         except Exception:
             pass
     return answer, conv_id, bool(answer)
+
+
+def _dsh_turn(workspace: Path, message: str, model: str, conversation_id: Optional[str],
+              on_event: Callable, log: Callable, timeout: int) -> tuple[str, Optional[str]]:
+    """One chat turn as the next message of the project's DSH session.
+
+    The session id is stored with a "dsh:" prefix, so an OpenHands id left from
+    before a runtime switch starts a new conversation instead of failing.
+    """
+    from ark.engines.dsh_runtime import DSHRuntime
+    sid = conversation_id[len(_DSH):] if conversation_id and conversation_id.startswith(_DSH) else None
+    runner = DSHRuntime(model, resume_session_id=sid, next_turn=True)
+    runner.agent_type = "chat"
+    log(f"[chat] dsh {'resume ' + sid if sid else 'new'} model={model} ws={workspace}")
+    try:
+        _, stdout, _, _, timed_out = runner.execute(
+            message, "", workspace, timeout, on_event=on_event, log_fn=lambda msg, level: log(msg))
+    except Exception as e:
+        log(f"[chat] error: {e}")
+        return "", conversation_id
+    if timed_out:
+        log("[chat] timed out")
+    parsed = runner.parse_output(stdout)
+    if parsed.get("error_code"):
+        log(f"[chat] {parsed['error_code']}: {(parsed.get('error_detail') or '')[:200]}")
+    conv_id = _DSH + runner.session_id if runner.session_id else conversation_id
+    if conv_id:
+        _add_turn_usage(workspace, conv_id, parsed.get("usage") or {})
+    return (parsed.get("result") or "").strip(), conv_id
+
+
+def _add_turn_usage(workspace: Path, conv_id: str, usage: dict) -> None:
+    """Keep a cumulative total per conversation, the shape OpenHands' file has."""
+    path = Path(workspace) / DSH_USAGE_FILE
+    try:
+        totals = json.loads(path.read_text())
+    except (OSError, ValueError):
+        totals = {}
+    cur = totals.get(conv_id) or {k: 0 for k in _USAGE_KEYS} | {"cost_usd": None}
+    for k in _USAGE_KEYS:
+        cur[k] = int(cur.get(k) or 0) + int(usage.get(k) or 0)
+    totals[conv_id] = cur
+    try:
+        path.write_text(json.dumps(totals))
+    except OSError:
+        pass

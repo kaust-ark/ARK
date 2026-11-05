@@ -51,10 +51,13 @@ def _window(model: str) -> int:
 
 
 class DSHRuntime(AgentCLI):
-    def __init__(self, model_name, model_variant=None, *, resume_session_id=None, resume_reason=""):
+    def __init__(self, model_name, model_variant=None, *, resume_session_id=None, resume_reason="",
+                 next_turn=False):
         super().__init__(model_name, model_variant)
         self.resume_session_id = resume_session_id
         self.resume_reason = resume_reason
+        # A conversation's next message (chat), not a recovery of a cut task.
+        self.next_turn = next_turn
         self.session_id = None
         self._timeout = None
 
@@ -140,7 +143,9 @@ class DSHRuntime(AgentCLI):
             sandbox=os.environ.get("ARK_DSH_SANDBOX", "danger-full-access").strip(),
             skills_dir=skills, retries=int(os.environ.get("ARK_DSH_RETRIES", "3")))
         _write_private(root / "runtime.patch.yml", patch)
-        if self.resume_session_id:
+        if self.resume_session_id and self.next_turn:
+            task = prompt
+        elif self.resume_session_id:
             task = _RESUME_NOTE.format(why=self.resume_reason or "unknown cause")
             deadline = prompt.rfind("\n\n## Time limit\n")
             if deadline >= 0:
