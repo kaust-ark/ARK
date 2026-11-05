@@ -83,6 +83,11 @@ def _removals_the_review_asked_for(before: str, after: str, review: str) -> dict
     return explained
 
 MIN_PDF_BYTES = 50_000       # below this a "paper" is a stub/template skeleton
+# Bytes alone cannot see a skeleton: acmart embeds its fonts, so a document
+# with nothing but section headings still weighs 221 KB and sailed past the
+# byte floor. Measured on three cheap-test runs — two finished papers at 6553
+# and 6942 extractable characters, one skeleton a rate limit cut short at 473.
+MIN_PDF_TEXT_CHARS = 1_500
 MIN_FIG_BYTES = 5_000        # ignore icons/empty plot files
 PAGE_SLACK = 3               # refs/appendix allowance past the venue body budget
 
@@ -164,14 +169,20 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
             "pdf_exists", "violated", "hard",
             f"main.pdf missing or stub ({pdf.stat().st_size if pdf.exists() else 0} bytes)"))
         return rep  # nothing else is checkable
-    rep.findings.append(Finding("pdf_exists", "pass", "hard"))
-
     text = _pdf_text(pdf)
     tex = tex_path.read_text(errors="replace") if tex_path.exists() else ""
     if text is None:
+        rep.findings.append(Finding("pdf_exists", "pass", "hard"))
         rep.findings.append(Finding("pdf_readable", "violated", "hard",
                                     "PDF could not be parsed"))
         return rep
+    if len(text.strip()) < MIN_PDF_TEXT_CHARS:
+        rep.findings.append(Finding(
+            "pdf_exists", "violated", "hard",
+            f"main.pdf is a template skeleton: {len(text.strip())} characters of "
+            f"text in {pdf.stat().st_size} bytes"))
+        return rep
+    rep.findings.append(Finding("pdf_exists", "pass", "hard"))
 
     # ── required disclosure ───────────────────────────────────────────────
     # Whitespace-normalized haystack: PDF extraction inserts line breaks that

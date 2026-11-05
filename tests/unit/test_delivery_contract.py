@@ -43,12 +43,21 @@ def _make_pdf(path: Path, text: str, pages: int = 2):
         f.write(b"%" + b"x" * 60_000)
 
 
-def _project(tmp_path: Path, tex: str, pdf_text: str, bib: str = "@article{a, title={t}}"):
+# Enough prose that the fixture is a paper rather than a template skeleton,
+# which the contract now rejects outright. Deliberately bland: no "?", no
+# vendor names, nothing any check keys on.
+_BODY = ("We measure how standardizing input features changes the number of "
+         "iterations a quasi-Newton solver needs to converge, holding the "
+         "dataset, the split, the seed and every hyperparameter fixed. ") * 12
+
+
+def _project(tmp_path: Path, tex: str, pdf_text: str, bib: str = "@article{a, title={t}}",
+             body: str = _BODY):
     paper = tmp_path / "paper"
     (paper / "figures").mkdir(parents=True)
     (paper / "main.tex").write_text(tex)
     (paper / "references.bib").write_text(bib)
-    _make_pdf(paper / "main.pdf", pdf_text)
+    _make_pdf(paper / "main.pdf", pdf_text + " " + body)
     return tmp_path
 
 
@@ -305,3 +314,27 @@ def test_the_review_merely_discussing_a_figure_still_excuses_only_removals(tmp_p
     f = _finding(evaluate(p), "no_loss_since_review")
     assert f.status == "pass"
     assert "asked to remove" not in f.detail
+
+
+# ── a skeleton is a stub however much it weighs ────────────────────────────
+
+def test_a_pdf_with_only_headings_is_a_stub(tmp_path):
+    """acmart embeds its fonts, so an empty paper still clears the byte floor.
+
+    Measured: a run a rate limit cut short mid-draft shipped section headings
+    and nothing else — 473 characters of text in 221 KB, and every content
+    check downstream read it as a healthy paper.
+    """
+    p = _project(tmp_path, GOOD_TEX,
+                 "Introduction Related Work Method Experiments Conclusion",
+                 body="")                    # headings, no prose — as shipped
+
+    f = _finding(evaluate(p, venue_pages=2), "pdf_exists")
+    assert f.status == "violated"
+    assert "skeleton" in f.detail
+
+
+def test_a_real_paper_is_not_mistaken_for_a_skeleton(tmp_path):
+    p = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
+
+    assert _finding(evaluate(p, venue_pages=2), "pdf_exists").status == "pass"
