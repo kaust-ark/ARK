@@ -15,7 +15,15 @@ final papers traced 96-100%.
 
 Numbers with fewer than three significant digits (0.7, 72%) are counted but do
 not decide anything: with thousands of values in results/, they match by
-chance. The walk over results/ is bounded, because some projects keep tens of
+chance.
+
+The check has power only when it runs against the results that exist when the
+paper is written or reviewed. Run afterwards against a dense results/, numbers
+shifted by 2-3 in their last digit still "trace" at a median rate of 0.91 over
+67 production papers, so a pass then is weak evidence. A time-anchored replay
+over 158 review-time snapshots flagged 9, of which 7 were synthetic or
+unbacked by the reviewers' own account (false-positive rate about 1.3%). It
+cannot see synthetic data that code wrote into results/. The walk over results/ is bounded, because some projects keep tens of
 thousands of files there on a shared filesystem.
 """
 from __future__ import annotations

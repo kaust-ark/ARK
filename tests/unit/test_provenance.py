@@ -81,3 +81,16 @@ def test_the_walk_over_results_is_bounded(tmp_path):
         (root / "results" / f"f{i:03d}.txt").write_text("1")
     r = audit(PAPER, root)
     assert r["strong_traced"] == 0      # neither the deep file nor file #401+ was read
+
+
+def test_the_review_time_audit_is_kept_for_delivery(tmp_path):
+    from ark.pipeline import PipelineMixin
+    root = _project(tmp_path)          # results/ empty, as when b5fe was reviewed
+    (root / "auto_research" / "state").mkdir(parents=True)
+    p = PipelineMixin.__new__(PipelineMixin)
+    p.code_dir, p.state_dir, p.iteration, p.logs = root, root / "auto_research" / "state", 1, []
+    p.log = lambda m, l="INFO": p.logs.append((l, m))
+    p._audit_numbers_at_review(PAPER.replace("0.9012.", "0.9012, 0.1111, 0.2222, 0.3333, 0.4444."))
+    rec = json.loads((p.state_dir / "provenance_at_review.json").read_text())
+    assert rec["ok"] is False and rec["iteration"] == 1
+    assert any(l == "WARN" and "provenance" in m for l, m in p.logs)

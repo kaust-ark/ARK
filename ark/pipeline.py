@@ -195,6 +195,28 @@ class PipelineMixin:
         self.notify_progress("Compile", "PDF generated", level="done")
         return True
 
+    def _audit_numbers_at_review(self, tex: str) -> None:
+        """Trace the paper's numbers against the results that exist right now.
+
+        This is the moment the check has power: both fabricated drafts in
+        production were scored while results/ was empty or nearly so. Run
+        after the fact against dense results, invented numbers match by
+        chance. Observe-only: the verdict is logged and kept for delivery.
+        """
+        try:
+            import json as _json
+            from ark.provenance import audit, verdict
+            result = audit(tex, self.code_dir)
+            ok, detail = verdict(result)
+            record = {"iteration": getattr(self, "iteration", None), "time": time.time(),
+                      "ok": ok, "detail": detail, "strong": result["strong"],
+                      "strong_traced": result["strong_traced"]}
+            (self.state_dir / "provenance_at_review.json").write_text(_json.dumps(record))
+            if not ok:
+                self.log(f"Number provenance before review: {detail}", "WARN")
+        except Exception as e:
+            self.log(f"Number provenance check skipped: {e}", "WARN")
+
     def _build_latex_fix_prompt(self, attempt: int, errors: str) -> str:
         if attempt <= 1:
             return f"LaTeX compilation failed. Fix the syntax errors below and ensure it compiles.\n\n{errors}"
@@ -263,7 +285,9 @@ class PipelineMixin:
         try:
             reviewed = Path(getattr(self, "latex_dir", "") or ".") / "main.tex"
             if getattr(self, "latex_dir", None) and reviewed.exists():
-                (self.state_dir / "reviewed_main.tex").write_text(reviewed.read_text(errors="replace"))
+                tex = reviewed.read_text(errors="replace")
+                (self.state_dir / "reviewed_main.tex").write_text(tex)
+                self._audit_numbers_at_review(tex)
         except OSError:
             pass
 
