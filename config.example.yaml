@@ -23,6 +23,11 @@ model: anthropic/claude-sonnet-4-6
 #   mistral/… , groq/… , bedrock/… , ollama/… — the three above are just
 #   the common ones. (exact model ids: see the LiteLLM provider docs)
 
+# Optional: a different model for individual roles. Unset roles use `model`.
+# A reviewer from another model family does not grade its own family's prose.
+# agent_models:
+#   reviewer: anthropic/claude-sonnet-5-5
+
 # Light helpers (paper title, iteration summary, Telegram bot replies, message
 # classification). These are simple one-shot LLM calls (via LiteLLM, NOT the
 # agent loop) — a cheap model is plenty.

@@ -334,7 +334,7 @@ class TestNudgeOnlyForRolesThatAct:
 
     def test_run_agent_names_the_role_on_the_runner(self):
         src = (Path(sr.__file__).parent / "__init__.py").read_text()
-        assert "cli_runner = get_cli_for_model(self.model, **resume)\n" \
+        assert "cli_runner = get_cli_for_model(model, **resume)\n" \
                "                cli_runner.agent_type = agent_type" in src
 
 

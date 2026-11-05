@@ -487,6 +487,17 @@ class AgentMixin:
             rec[k] = round(v, 6) if k == "cost_usd" else int(v)
         return rec
 
+    def _model_for(self, agent_type: str) -> str:
+        """The model a role runs on: `agent_models.<role>` in config, else the run's model.
+
+        One model for every role means the reviewer judges its own family's
+        writing, and LLM judges favour their own generations. A per-role entry
+        lets the reviewer (or any role) run elsewhere. Its provider key must be
+        set like the main model's.
+        """
+        per_role = (getattr(self, "config", None) or {}).get("agent_models") or {}
+        return per_role.get(agent_type) or self.model
+
     def run_agent_chain(self, chain: list, agent_type: str, task: str, timeout: int = 1800) -> str:
         """One round of a fix-and-check loop (compile errors, overfull boxes, page fit).
 
@@ -700,9 +711,10 @@ Execute the task and update the corresponding files.
                 # config → default. Do NOT pass the legacy config `model_variant`
                 # as an override: OpenHandsCLI prefers the variant, which would
                 # silently revert a --model override back to the config model.
-                self.log(f"Model: {self.model}", "INFO")
+                model = self._model_for(agent_type)
+                self.log(f"Model: {model}", "INFO")
 
-                cli_runner = get_cli_for_model(self.model, **resume)
+                cli_runner = get_cli_for_model(model, **resume)
                 cli_runner.agent_type = agent_type
                 timer.start()
 

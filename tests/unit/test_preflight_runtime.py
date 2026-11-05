@@ -63,3 +63,27 @@ def test_a_gateway_key_counts_as_the_provider_key(clean_env, tmp_path):
     clean_env.setenv("LLM_BASE_URL", "http://gw.invalid/v1")
     clean_env.setenv("LLM_API_KEY", "k")
     _pipe().check_dependencies()  # no exit
+
+
+def test_a_per_role_model_needs_its_own_key(clean_env, tmp_path):
+    clean_env.setenv("ARK_AGENT_RUNTIME", "dsh")
+    clean_env.setenv("ARK_DSH_PYTHON", _fake_sdk(tmp_path, "0.2.1rc2 0.2.1rc2"))
+    clean_env.setenv("OPENAI_API_KEY", "k")
+    p = _pipe()
+    p.config = {"agent_models": {"reviewer": "anthropic/claude-sonnet-5-5"}}
+    with pytest.raises(SystemExit):
+        p.check_dependencies()
+    assert any("agent_models.reviewer" in m for _, m in p.logs)
+    clean_env.setenv("ANTHROPIC_API_KEY", "k2")
+    p.logs.clear()
+    p.check_dependencies()  # no exit
+
+
+def test_roles_run_on_their_configured_model():
+    from ark.engines import AgentMixin
+    o = AgentMixin()
+    o.model, o.config = "deepseek/deepseek-v4-pro", {"agent_models": {"reviewer": "anthropic/claude-sonnet-5-5"}}
+    assert o._model_for("reviewer") == "anthropic/claude-sonnet-5-5"
+    assert o._model_for("writer") == "deepseek/deepseek-v4-pro"
+    o.config = {}
+    assert o._model_for("reviewer") == "deepseek/deepseek-v4-pro"

@@ -833,6 +833,15 @@ class PipelineMixin:
                 "ERROR",
             )
             sys.exit(1)
+        # Every model the run will call needs its key: the main one and any
+        # per-role override (agent_models).
+        for role, other in (self.config.get("agent_models") or {}).items():
+            p = other.split("/", 1)[0] if "/" in (other or "") else ""
+            if not p or not (self.config.get(f"{p}_api_key") or os.environ.get(provider_key_env(p))
+                             or (os.environ.get("LLM_BASE_URL") and os.environ.get("LLM_API_KEY"))):
+                self.log(f"Error: agent_models.{role} is '{other}' but no key for it is set "
+                         f"({provider_key_env(p) if p else 'not a <provider>/<model> string'}).", "ERROR")
+                sys.exit(1)
         cfg_field = f"{provider}_api_key"
         env_var = provider_key_env(provider)
         # A custom gateway (LLM_BASE_URL) is reached with LLM_API_KEY, the same
