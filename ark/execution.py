@@ -47,6 +47,27 @@ def _structure_lost(before: str, after: str) -> list:
     return lost
 
 
+def _experiment_writeup_task(issue: dict) -> str:
+    """Writer task that carries a finished (or failed) experiment into the paper."""
+    what = issue.get("description") or issue.get("title") or ""
+    if issue.get("status") == "failed":
+        return (
+            "The experiment planned for this issue is recorded as failed. Check "
+            "`results/` for any output it left (a session can be cut off while "
+            "its jobs still finish). Report only what those files show. Where "
+            "nothing exists, make sure the paper claims nothing that depended on "
+            "it: remove or qualify those claims and state the gap plainly, for "
+            "example in Limitations. Do not fill in numbers.\n\n"
+            f"Issue: {what}")
+    return (
+        "The experiment for this issue has finished. Read its outputs under "
+        "`results/` and the matching entries in `auto_research/state/findings.yaml`, "
+        "then update the paper: tables, figure captions and the claims in the "
+        "text. Use only numbers that appear in those files. If the outcome is null "
+        "or contradicts the current text, change the text to match the result.\n\n"
+        f"Issue: {what}")
+
+
 class QuotaExhaustedError(Exception):
     """Raised when page count enforcement fails due to quota exhaustion."""
 
@@ -1421,14 +1442,10 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
         if remaining:
             self.log(f"[{context}] {remaining} overfull warnings remain after {MAX_ATTEMPTS} attempts", "WARN")
 
-    def _run_writing_phase(self, action_plan: dict, prior_context: str = ""):
-        """Execute writing phase for all writing tasks."""
-        issues = action_plan.get("issues", [])
-        issues = [i for i in issues if i is not None and isinstance(i, dict)]
-
-        latex_dir_name = self.config.get("latex_dir", "paper")
+    def _collect_writing_tasks(self, issues: list) -> list:
+        """Writer tasks for this plan: WRITING_ONLY issues, plus one write-up
+        per finished experiment or literature issue."""
         writing_tasks = []
-
         for issue in issues:
             if issue.get("type") == "WRITING_ONLY":
                 writing_tasks.append({
@@ -1438,26 +1455,50 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
                     "actions": issue.get("actions") or [],
                 })
                 issue["status"] = "in_progress"
-            elif issue.get("type") == "EXPERIMENT_REQUIRED" and issue.get("status") == "completed":
-                for action in issue.get("actions", []):
-                    if action.get("agent") == "writer":
-                        writing_tasks.append({
-                            "id": issue.get("id"),
-                            "title": f"Integrate experiment results for {issue.get('title')}",
-                            "description": action.get("task", ""),
-                            "actions": [action],
-                            "_from_experiment": True,
-                        })
+            elif issue.get("type") == "EXPERIMENT_REQUIRED" and issue.get("status") in ("completed", "failed"):
+                actions = [a for a in (issue.get("actions") or [])
+                           if isinstance(a, dict) and a.get("agent") == "writer"]
+                # The planner's schema has no `actions` key, so in production
+                # 0 of 143 issues carried one and no finished experiment ever
+                # reached the paper. The integration task is the pipeline's
+                # job, not something the planner has to remember to ask for.
+                if not actions:
+                    actions = [{"agent": "writer",
+                                "task": _experiment_writeup_task(issue)}]
+                for action in actions:
+                    writing_tasks.append({
+                        "id": issue.get("id"),
+                        "title": f"Integrate experiment results for {issue.get('title')}",
+                        "description": action.get("task", ""),
+                        "actions": [action],
+                        "_from_experiment": True,
+                    })
             elif issue.get("type") == "LITERATURE_REQUIRED" and issue.get("status") == "completed":
-                for action in issue.get("actions", []):
-                    if action.get("agent") == "writer":
-                        writing_tasks.append({
-                            "id": issue.get("id"),
-                            "title": f"Update {issue.get('title')} based on literature survey",
-                            "description": action.get("task", ""),
-                            "actions": [action],
-                        })
-                        self.log(f"  Added literature writing task: {issue.get('id')} - write literature content into LaTeX", "INFO")
+                actions = [a for a in (issue.get("actions") or [])
+                           if isinstance(a, dict) and a.get("agent") == "writer"]
+                if not actions:
+                    actions = [{"agent": "writer", "task": (
+                        "The literature task for this issue is done; its notes are in "
+                        f"`auto_research/state/literature.yaml`. Address the issue in the "
+                        f"paper using only references that are in references.bib.\n\n"
+                        f"Issue: {issue.get('description') or issue.get('title') or ''}")}]
+                for action in actions:
+                    writing_tasks.append({
+                        "id": issue.get("id"),
+                        "title": f"Update {issue.get('title')} based on literature survey",
+                        "description": action.get("task", ""),
+                        "actions": [action],
+                    })
+                    self.log(f"  Added literature writing task: {issue.get('id')} - write literature content into LaTeX", "INFO")
+        return writing_tasks
+
+    def _run_writing_phase(self, action_plan: dict, prior_context: str = ""):
+        """Execute writing phase for all writing tasks."""
+        issues = action_plan.get("issues", [])
+        issues = [i for i in issues if i is not None and isinstance(i, dict)]
+
+        latex_dir_name = self.config.get("latex_dir", "paper")
+        writing_tasks = self._collect_writing_tasks(issues)
 
         if not writing_tasks:
             self.log_step("No writing tasks to execute", "info")
