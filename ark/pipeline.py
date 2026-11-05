@@ -792,8 +792,25 @@ class PipelineMixin:
         import shutil
         from ark.llm_lite import provider_key_env
 
-        # 1. The OpenHands CLI must be installed.
-        if not shutil.which("openhands"):
+        # 1. The selected agent runtime must be installed: the OpenHands CLI by
+        #    default, or the pinned DSH SDK interpreter when ARK_AGENT_RUNTIME=dsh
+        #    (a DSH host need not have OpenHands at all).
+        if os.environ.get("ARK_AGENT_RUNTIME", "").strip().lower() == "dsh":
+            from ark.engines.dsh_driver import SDK_VERSION
+            interp = os.environ.get("ARK_DSH_PYTHON") or sys.executable
+            probe = subprocess.run(
+                [interp, "-c", "import importlib.metadata as m;"
+                 "print(m.version('deepseek-harness-sdk'), m.version('deepseek-harness-runtime-bin'))"],
+                capture_output=True, text=True)
+            if probe.stdout.split() != [SDK_VERSION, SDK_VERSION]:
+                self.log(
+                    f"Error: ARK_AGENT_RUNTIME=dsh needs deepseek-harness-sdk=={SDK_VERSION} "
+                    f"and its runtime in {interp} (set ARK_DSH_PYTHON); found "
+                    f"{probe.stdout.strip() or probe.stderr.strip()[-200:] or 'nothing'}.",
+                    "ERROR",
+                )
+                sys.exit(1)
+        elif not shutil.which("openhands"):
             self.log(
                 "Error: 'openhands' command not found. Install with: "
                 "uv tool install --python 3.12 openhands",
@@ -817,7 +834,10 @@ class PipelineMixin:
             sys.exit(1)
         cfg_field = f"{provider}_api_key"
         env_var = provider_key_env(provider)
-        if not (self.config.get(cfg_field) or os.environ.get(env_var)):
+        # A custom gateway (LLM_BASE_URL) is reached with LLM_API_KEY, the same
+        # fallback llm_lite and both runtimes use.
+        if not (self.config.get(cfg_field) or os.environ.get(env_var)
+                or (os.environ.get("LLM_BASE_URL") and os.environ.get("LLM_API_KEY"))):
             self.log(
                 f"Error: model is '{model}' but no key found — set {cfg_field} in "
                 f"config.yaml (or {env_var} in the environment).",
