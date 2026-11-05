@@ -572,7 +572,7 @@ def _cap_output_tokens(env: dict, code_dir: Path, model: str) -> None:
 
 def get_cli_for_model(model: str, variant: Optional[str] = None, *,
                       resume_session_id: Optional[str] = None,
-                      resume_reason: str = "") -> AgentCLI:
+                      resume_reason: str = "", next_turn: bool = False) -> AgentCLI:
     """Return the selected agent runtime for a provider/model identifier.
 
     ``ARK_AGENT_RUNTIME=dsh`` explicitly selects the isolated DSH SDK. It never
@@ -590,7 +590,7 @@ def get_cli_for_model(model: str, variant: Optional[str] = None, *,
     if os.environ.get("ARK_AGENT_RUNTIME", "").strip().lower() == "dsh":
         from ark.engines.dsh_runtime import DSHRuntime
         return DSHRuntime(model, variant or model, resume_session_id=resume_session_id,
-                          resume_reason=resume_reason)
+                          resume_reason=resume_reason, next_turn=next_turn)
     try:
         from ark.engines.sdk_runtime import OpenHandsSDK, sdk_runtime_enabled
         if sdk_runtime_enabled():

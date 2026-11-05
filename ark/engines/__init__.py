@@ -488,7 +488,8 @@ class AgentMixin:
         return rec
 
     def run_agent(self, agent_type: str, task: str, timeout: int = 1800,
-                  prior_context: str = "") -> str:
+                  prior_context: str = "", *, continue_session: Optional[str] = None,
+                  session_out: Optional[list] = None) -> str:
         """Run an agent of the specified type, returning its output.
 
         Args:
@@ -497,6 +498,10 @@ class AgentMixin:
             timeout: Max execution time in seconds.
             prior_context: Output from the previous agent in the pipeline chain.
                            Only included if the agent's context profile allows it.
+            continue_session: Send ``task`` as the next turn of this earlier
+                           session (runtimes that can resume; others start fresh).
+            session_out: If given, receives the session id of a runtime that
+                           can resume, so a later call can continue it.
         """
         import json
 
@@ -670,7 +675,10 @@ Execute the task and update the corresponding files.
         # (peer closed / incomplete chunked read) — a single retry proved too
         # thin on flaky evenings (observed 10 drops in one run).
         MAX_RETRIES = 4
-        resume = {}  # a runtime that can resume continues its own session on retry
+        # A runtime that can resume continues its own session on retry.
+        resume = ({"resume_session_id": continue_session, "next_turn": True}
+                  if continue_session else {})
+        cli_runner = None
         for attempt in range(1, MAX_RETRIES + 1):
             if attempt > 1 and shutting_down.is_set():
                 self.log(f"  [{agent_type}] retry dropped, the run is stopping", "WARN")
@@ -1119,4 +1127,7 @@ Execute the task and update the corresponding files.
             except Exception:
                 pass
 
+        if (session_out is not None and cli_runner is not None
+                and getattr(cli_runner, "supports_resume", False) and cli_runner.session_id):
+            session_out.append(cli_runner.session_id)
         return result

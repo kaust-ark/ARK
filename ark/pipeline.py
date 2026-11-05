@@ -12,7 +12,7 @@ import time
 import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
-from ark.execution import QuotaExhaustedError
+from ark.execution import QuotaExhaustedError, collect_after_jobs
 from ark.ui import RateLimitCountdown
 from ark.latex import utils as latex_utils
 # Re-bind public names from latex.utils into this module's namespace under
@@ -2859,6 +2859,7 @@ results already exist.
 
         compute_instructions = self._compute_backend.get_agent_instructions()
 
+        sessions = []
         try:
             exp_output = self.run_agent("experimenter", f"""
 Execute ALL planned experiments for this dev iteration.
@@ -2916,11 +2917,15 @@ system or it fails with a clear report of what is needed.
 - Use clear naming: results/exp1_results.json, results/exp2_results.json, etc.
 - Handle errors gracefully (log failures, continue with remaining experiments)
 - Keep experiments small enough to finish within the agent budget
-""", timeout=defaults.TIMEOUT_EXPERIMENTER)
+""", timeout=defaults.TIMEOUT_EXPERIMENTER, session_out=sessions)
 
             self.log_step("Waiting for all experiments to complete...", "progress")
+            waited = time.time()
             self._compute_backend.wait_for_completion(max_wait_hours=4)
             self._compute_backend.sync_from_backend(f"{remote_work_dir}/results", str(self.code_dir / "results"))
+            collected = collect_after_jobs(self, sessions, time.time() - waited)
+            if collected:
+                exp_output = collected
         finally:
             self._compute_backend.teardown()
 

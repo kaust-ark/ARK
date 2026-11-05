@@ -47,6 +47,30 @@ def _structure_lost(before: str, after: str) -> list:
     return lost
 
 
+_COLLECT_RESULTS = (
+    "The jobs you started have finished: the orchestrator waited for them and copied their "
+    "output into results/. Check each job's output and exit status, verify the numbers against "
+    "the files, and update auto_research/state/findings.json with what the results actually "
+    "show. If a job failed or produced nothing, say so plainly and do not fill in its results. "
+    "Reply with a short summary.")
+
+
+def collect_after_jobs(host, sessions: list, waited_s: float):
+    """Resume the experimenter that submitted the jobs, now that they are done.
+
+    It knows what it submitted and why. A fresh session first re-reads the
+    project (10-19 actions in production traces, each at a 60-90k context),
+    and the review-loop experimenter was asked to analyse before its jobs had
+    even finished. Only runtimes that can resume hand back a session, and a
+    wait under a minute means nothing was running.
+    """
+    if not sessions or waited_s < 60 or shutting_down.is_set():
+        return None
+    host.log_step("Jobs finished, resuming the experimenter to collect the results", "progress")
+    return host.run_agent("experimenter", _COLLECT_RESULTS, timeout=1800,
+                          continue_session=sessions[-1])
+
+
 def _experiment_writeup_task(issue: dict) -> str:
     """Writer task that carries a finished (or failed) experiment into the paper."""
     what = issue.get("description") or issue.get("title") or ""
@@ -626,6 +650,7 @@ Please read auto_research/state/latest_review.md and regenerate.
                 "warning" if block_count else "info",
             )
 
+        sessions = []
         try:
             # 2. Experimenter runs the experiment (includes result analysis)
             exp_output = self.run_agent("experimenter", f"""
@@ -645,14 +670,18 @@ After running the experiment:
 3. Evaluate whether the data supports the paper's arguments
 4. Write auto_research/state/findings.json with your findings (JSON, not YAML —
    ARK converts it to findings.yaml; do NOT hand-write YAML)
-""", timeout=defaults.TIMEOUT_EXPERIMENTER)
+""", timeout=defaults.TIMEOUT_EXPERIMENTER, session_out=sessions)
 
             # 3. Wait for jobs
             self.log_step("Waiting for experiment completion...", "info")
+            waited = time.time()
             self._compute_backend.wait_for_completion(max_wait_hours=defaults.MAX_COMPUTE_WAIT_HOURS)
 
             # 4. Collect results
             self._compute_backend.sync_from_backend(f"{remote_work_dir}/results", str(self.code_dir / "results"))
+            collected = collect_after_jobs(self, sessions, time.time() - waited)
+            if collected:
+                exp_output = collected
 
         finally:
             self._compute_backend.teardown()

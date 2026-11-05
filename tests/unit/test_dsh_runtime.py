@@ -385,7 +385,7 @@ def test_a_resumed_call_sends_a_recovery_note_not_the_whole_task(tmp_path, monke
 class TestRunAgentWithDSHOutcomes:
     """run_agent decides retry, keep-work or abort from the driver's code."""
 
-    def _run(self, tmp_path, outcomes):
+    def _run(self, tmp_path, outcomes, **kw):
         from types import SimpleNamespace
         from unittest import mock
         import ark
@@ -422,7 +422,7 @@ class TestRunAgentWithDSHOutcomes:
         with mock.patch.object(eng, "get_cli_for_model", lambda m, **kw: Runner(**kw)), \
                 mock.patch.object(eng, "RateLimitCountdown", lambda s: SimpleNamespace(run=noop)), \
                 mock.patch.object(ark.shutting_down, "wait", lambda t=None: False):
-            out = o.run_agent("experimenter", "run E1", timeout=600)
+            out = o.run_agent("experimenter", "run E1", timeout=600, **kw)
         return out, made, o
 
     def test_a_transient_failure_resumes_the_same_session(self, tmp_path):
@@ -439,6 +439,13 @@ class TestRunAgentWithDSHOutcomes:
     def test_a_used_budget_keeps_the_work_and_does_not_retry(self, tmp_path):
         out, made, o = self._run(tmp_path, [("DSH.MaxIterationsReached", "half done")])
         assert len(made) == 1 and o._terminal_error is None and out == "half done"
+
+    def test_a_call_hands_back_its_session_and_a_later_one_continues_it(self, tmp_path):
+        got = []
+        self._run(tmp_path, [(None, "submitted")], session_out=got)
+        assert got == ["a" * 32]
+        _, made, _ = self._run(tmp_path, [(None, "collected")], continue_session="c" * 32)
+        assert made[0].kw == {"resume_session_id": "c" * 32, "next_turn": True}
 
     def test_an_exhausted_balance_ends_the_run(self, tmp_path):
         out, made, o = self._run(tmp_path, [("DSH.QuotaExceeded", "")])
