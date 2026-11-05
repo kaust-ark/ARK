@@ -430,6 +430,7 @@ class OpenHandsCLI(AgentCLI):
         error_detail = None
         last_agent_msg = ""
         finish_msg = ""
+        failed_tools = []
         for line in (stdout or "").splitlines():
             line = line.strip()
             if not line:
@@ -466,12 +467,30 @@ class OpenHandsCLI(AgentCLI):
                     fm = action.get("message")
                     if isinstance(fm, str) and fm.strip():
                         finish_msg = fm
+            elif kind == "ObservationEvent":
+                # Tool calls the environment REFUSED. The caller logs these
+                # because the failure they precede is silent: the agent
+                # summarises a rejected edit as if it had landed. Both other
+                # runtimes have always reported them; this one, the production
+                # default, dropped every one. Measured on a free-model run:
+                # 52 refused file_editor calls, none of them logged.
+                obs = evt.get("observation") or {}
+                if isinstance(obs, dict) and obs.get("is_error"):
+                    text = "".join(
+                        p.get("text", "") for p in (obs.get("content") or [])
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    )
+                    tool = str(evt.get("tool_name") or "tool")
+                    failed_tools.append(f"{tool}: {text.strip()[:240]}")
         return {
             "result": last_agent_msg or finish_msg,
             "usage": self._read_usage(conv_id) if conv_id else None,
             "error_code": error_code,
             "error_detail": error_detail,
             "conversation_id": conv_id,
+            # Bounded as the SDK driver bounds it: a loop that fails the same
+            # edit fifty times would otherwise push the real result out of view.
+            "failed_tools": failed_tools[-10:],
         }
 
     @staticmethod

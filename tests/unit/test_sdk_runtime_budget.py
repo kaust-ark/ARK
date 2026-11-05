@@ -363,6 +363,56 @@ class TestCliFallbackParsesCliOutput:
         assert rt.parse_output(line)["result"] == "r"
 
 
+class TestTheCliReportsRejectedToolCallsToo:
+    """The same guarantee TestOutputContract makes for the SDK driver.
+
+    Both other runtimes have always returned ``failed_tools``; the CLI, which
+    is the default, returned nothing, so the caller's warning loop had no rows
+    to print. Measured on a free-model cheap test: 52 refused ``file_editor``
+    calls in one run, none of them logged, while the DSH lane logged its own.
+    """
+
+    def _events(self, *observations):
+        lines = []
+        for tool, is_error, text in observations:
+            lines.append(json.dumps({
+                "kind": "ObservationEvent", "tool_name": tool,
+                "observation": {"is_error": is_error,
+                                "content": [{"type": "text", "text": text}]},
+            }))
+        lines.append(json.dumps({
+            "kind": "MessageEvent", "source": "agent",
+            "llm_message": {"content": [{"type": "text",
+                                         "text": "The section has been rewritten."}]}}))
+        return "\n".join(lines)
+
+    def test_a_refused_edit_survives_a_run_that_reports_success(self):
+        out = OpenHandsCLI("openrouter/x").parse_output(self._events(
+            ("file_editor", False, "Here's the result of running `cat -n` on main.tex"),
+            ("file_editor", True, "Invalid `path` parameter: "
+                                  "auto_research/state/dev_state.yaml does not exist."),
+        ))
+        # The agent says it worked and nothing failed the run. This list is the
+        # only trace that the file it claims to have touched was never there.
+        assert out["result"] == "The section has been rewritten."
+        assert out["error_code"] is None
+        assert len(out["failed_tools"]) == 1
+        assert "dev_state.yaml" in out["failed_tools"][0]
+        assert out["failed_tools"][0].startswith("file_editor: ")
+
+    def test_a_clean_run_reports_no_rejected_calls(self):
+        out = OpenHandsCLI("openrouter/x").parse_output(self._events(
+            ("file_editor", False, "ok"), ("execute_bash", False, "ok")))
+        assert out["failed_tools"] == []
+
+    def test_a_loop_that_fails_the_same_edit_cannot_flood_the_log(self):
+        out = OpenHandsCLI("openrouter/x").parse_output(self._events(
+            *[("file_editor", True, f"Invalid `new_str` parameter: attempt {i}")
+              for i in range(25)]))
+        assert len(out["failed_tools"]) == 10
+        assert "attempt 24" in out["failed_tools"][-1]
+
+
 class TestUsageIsThisConversations:
     """OpenHands names the state directory by the id's hex. The dashed id never
     matched, so usage came from the newest base_state.json in the project."""
