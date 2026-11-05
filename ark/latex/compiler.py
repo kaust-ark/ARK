@@ -976,7 +976,20 @@ class CompilerMixin:
                 pix = page.get_pixmap(dpi=150)
                 pix.save(str(img_path))
                 image_paths.append(str(img_path))
+            n = doc.page_count
             doc.close()
+            # A paper that just lost a page leaves the image of the page it no
+            # longer has. Nothing else removes it, and the up-to-date shortcut
+            # below globs the directory, so the next review would be shown a
+            # phantom page — usually the near-empty one that compression cut,
+            # which is exactly the kind of thing a reviewer files an issue
+            # about. Measured on a cheap test: 4 images, then a 3-page PDF.
+            for stale in self.latex_dir.glob("page_*.png"):
+                try:
+                    if int(stale.stem.split("_")[1]) > n:
+                        stale.unlink()
+                except (ValueError, IndexError, OSError):
+                    pass
             self.log(f"Generated {len(image_paths)} page images", "INFO")
             return image_paths
         except ImportError:
