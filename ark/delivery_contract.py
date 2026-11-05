@@ -104,6 +104,13 @@ def _ack_block(tex: str) -> str:
     return m.group(1) if m else ""
 
 
+def _dangling_refs(tex: str) -> set:
+    labels = set(re.findall(r"\\label\{([^}]*)\}", tex))
+    refs = {k.strip() for m in re.findall(r"\\(?:ref|eqref|autoref|cref|Cref|pageref)\{([^}]*)\}", tex)
+            for k in m.split(",")}
+    return refs - labels
+
+
 def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     """Run every acceptance check over the project's final artifacts."""
     project_dir = Path(project_dir)
@@ -295,6 +302,26 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
             f"use figure* or regenerate simpler"))
     else:
         rep.findings.append(Finding("figures_not_crushed", "pass", "soft"))
+
+    # ── nothing lost after the last review ────────────────────────────────
+    # The last iteration's edits are never reviewed (8 of 10 production runs
+    # shipped such edits). They deleted 527e025d's appendix and left dangling
+    # references and missing packages elsewhere.
+    reviewed = project_dir / "auto_research" / "state" / "reviewed_main.tex"
+    if reviewed.exists() and tex:
+        from ark.execution import _structure_lost
+        before = reviewed.read_text(errors="replace")
+        lost = _structure_lost(before, tex)
+        grew = len(_dangling_refs(tex)) - len(_dangling_refs(before))
+        if grew > 0:
+            lost.append(f"{grew} more references to undefined labels")
+        if lost:
+            rep.findings.append(Finding("no_loss_since_review", "violated", "soft",
+                                        "since the last review: " + "; ".join(lost)))
+        else:
+            rep.findings.append(Finding("no_loss_since_review", "pass", "soft",
+                                        "unchanged since review" if before == tex else
+                                        "edited after the last review, nothing lost"))
 
     # ── result numbers come from result files ─────────────────────────────
     try:

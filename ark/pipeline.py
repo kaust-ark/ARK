@@ -259,6 +259,15 @@ class PipelineMixin:
         review_file = self.state_dir / "latest_review.md"
         prior_stamp = self._file_stamp(review_file)
 
+        # The version this review scores. Edits made after it (plan, execute,
+        # finalize) are never reviewed, so delivery compares against it.
+        try:
+            reviewed = Path(getattr(self, "latex_dir", "") or ".") / "main.tex"
+            if getattr(self, "latex_dir", None) and reviewed.exists():
+                (self.state_dir / "reviewed_main.tex").write_text(reviewed.read_text(errors="replace"))
+        except OSError:
+            pass
+
         visual_review = self._build_visual_review_section()
         try:
             venue_name = self.config.get('venue', 'top venue')
