@@ -150,6 +150,8 @@ def main():
     ap.add_argument("--price-in", type=float, default=0.0, help="USD per 1M uncached input tokens")
     ap.add_argument("--price-cache", type=float, default=0.0, help="USD per 1M cache-read tokens")
     ap.add_argument("--price-out", type=float, default=0.0, help="USD per 1M output tokens")
+    ap.add_argument("--stop-after", type=float, default=0.0,
+                    help="send the run a Stop (SIGTERM, as the dashboard does) after this many seconds")
     a = ap.parse_args()
 
     if a.runtime == "dsh":
@@ -193,27 +195,48 @@ def main():
     os.environ.setdefault("ARK_DSH_PKG_CACHE", str(Path.home() / ".cache" / "idea2paper" / "dsh-pkg"))
     os.environ["HOME"] = os.environ["TMPDIR"] = str(root)
     os.chdir(root)
+    stopped_at = None
+    if a.stop_after:
+        import signal
+        import threading
+
+        def on_stop(sig, frame):          # what the orchestrator's handler does
+            ark.shutting_down.set()
+            raise SystemExit(0)
+
+        signal.signal(signal.SIGTERM, on_stop)
+        threading.Timer(a.stop_after, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
     t0 = time.time()
     try:
         answer = h.run_agent(role, task, timeout=timeout)
         crashed = None
+    except SystemExit:
+        answer, crashed, stopped_at = "", None, round(time.time() - t0, 1)
     except Exception as e:
         answer, crashed = "", f"{type(e).__name__}: {e}"
     wall = round(time.time() - t0, 1)
+    leftovers = []
+    if a.stop_after:
+        time.sleep(10)                     # the grace period, then look
+        import subprocess as sp
+        ps = sp.run(["ps", "-eo", "pid,args"], capture_output=True, text=True).stdout.splitlines()
+        leftovers = [l.strip()[:160] for l in ps if str(root) in l and str(os.getpid()) not in l.split()[0]]
     usage = normalized(h._agent_stats, a.runtime)
     cost = (usage["uncached_input"] * a.price_in + usage["cache_read"] * a.price_cache
             + usage["output"] * a.price_out) / 1e6
     report = {"case": a.case, "runtime": a.runtime, "model": a.model, "role": role,
               "timeout": timeout, "wall_s": wall, "answer": (answer or "")[:600],
               "terminal_error": h._terminal_error, "crashed": crashed,
+              "stopped_at_s": stopped_at, "processes_left_after_stop": leftovers,
               "checks": check(a.case, root), "usage": usage, "cost_usd": round(cost, 5),
               "calls": [{k: s.get(k) for k in ("requests", "input_tokens", "cache_read_tokens",
                                                 "output_tokens", "estimated", "cost_usd")}
                         for s in h._agent_stats]}
     (run / "report.json").write_text(json.dumps(report, indent=1))
     (run / "harness.log").write_text("\n".join(lines) + "\n")
-    print(json.dumps({k: report[k] for k in ("case", "runtime", "wall_s", "terminal_error",
-                                             "crashed", "checks", "usage", "cost_usd")}, indent=1))
+    print(json.dumps({k: report[k] for k in ("case", "runtime", "wall_s", "terminal_error", "crashed",
+                                             "stopped_at_s", "processes_left_after_stop",
+                                             "checks", "usage", "cost_usd")}, indent=1))
 
 
 if __name__ == "__main__":
