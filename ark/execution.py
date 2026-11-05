@@ -956,6 +956,7 @@ After making all changes, you MUST verify the page count:
         cur_max = max_pages
         history = []  # list of {"before", "after", "action"} for feedback to LLM
 
+        chain = []  # later rounds continue the first round's session
         while attempt < MAX_PAGE_ATTEMPTS:
             in_range = cur_min <= page_count <= cur_max
             if in_range:
@@ -1020,7 +1021,7 @@ After making all changes, you MUST verify the page count:
             if page_count > cur_max:
                 action = "compress"
                 self.log(f"[{context}] Over limit ({page_count:.1f} > {cur_max:.1f}), compressing (attempt {attempt})...", "WARN")
-                self.run_agent("writer", f"""{hist_block}## PAGE ADJUSTMENT — compress (attempt {attempt})
+                self.run_agent_chain(chain, "writer", f"""{hist_block}## PAGE ADJUSTMENT — compress (attempt {attempt})
 
 Current: {page_count:.2f} body pages ({gap:+.2f} over limit, {columns}-column).
 Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
@@ -1032,7 +1033,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             elif page_count < cur_min:
                 action = "expand"
                 self.log(f"[{context}] Under target ({page_count:.1f} < {cur_min:.2f}), expanding (attempt {attempt})...", "WARN")
-                self.run_agent("writer", f"""{hist_block}## PAGE ADJUSTMENT — expand (attempt {attempt})
+                self.run_agent_chain(chain, "writer", f"""{hist_block}## PAGE ADJUSTMENT — expand (attempt {attempt})
 
 Current: {page_count:.2f} body pages ({-gap:+.2f} short of target, {columns}-column).
 Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
@@ -1392,6 +1393,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
         MAX_ATTEMPTS = 3
         latex_dir = self.config.get("latex_dir", "paper")
 
+        chain = []  # later rounds continue the first round's session
         for attempt in range(MAX_ATTEMPTS):
             # Parse overfull from log
             log_path = self.latex_dir / "main.log"
@@ -1448,7 +1450,7 @@ Do NOT change any numeric values, drop data rows, or fabricate cells.
                 if has_table else ""
             )
 
-            self.run_agent("writer", f"""## FIX OVERFULL HBOX (attempt {attempt + 1})
+            self.run_agent_chain(chain, "writer", f"""## FIX OVERFULL HBOX (attempt {attempt + 1})
 
 The paper has {len(significant)} overfull \\hbox warnings (content extending past column margin):
 

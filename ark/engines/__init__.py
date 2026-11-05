@@ -487,6 +487,17 @@ class AgentMixin:
             rec[k] = round(v, 6) if k == "cost_usd" else int(v)
         return rec
 
+    def run_agent_chain(self, chain: list, agent_type: str, task: str, timeout: int = 1800) -> str:
+        """One round of a fix-and-check loop (compile errors, overfull boxes, page fit).
+
+        Every round used to be a cold session that re-read the project before
+        touching the one thing the checker named. On a runtime that can resume,
+        later rounds continue the first round's session, so the agent keeps what
+        it already read and what it already tried. Elsewhere this is run_agent.
+        """
+        return self.run_agent(agent_type, task, timeout=timeout,
+                              continue_session=chain[-1] if chain else None, session_out=chain)
+
     def run_agent(self, agent_type: str, task: str, timeout: int = 1800,
                   prior_context: str = "", *, continue_session: Optional[str] = None,
                   session_out: Optional[list] = None) -> str:

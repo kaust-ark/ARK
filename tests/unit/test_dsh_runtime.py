@@ -385,7 +385,14 @@ def test_a_resumed_call_sends_a_recovery_note_not_the_whole_task(tmp_path, monke
 class TestRunAgentWithDSHOutcomes:
     """run_agent decides retry, keep-work or abort from the driver's code."""
 
-    def _run(self, tmp_path, outcomes, **kw):
+    def test_fix_rounds_continue_one_session(self, tmp_path):
+        chain = []
+        self._run(tmp_path, [(None, "fixed brace")], chain=chain)
+        assert chain == ["a" * 32]
+        _, made, _ = self._run(tmp_path, [(None, "fixed ref")], chain=chain)
+        assert made[0].kw == {"resume_session_id": "a" * 32, "next_turn": True}
+
+    def _run(self, tmp_path, outcomes, chain=None, **kw):
         from types import SimpleNamespace
         from unittest import mock
         import ark
@@ -422,7 +429,8 @@ class TestRunAgentWithDSHOutcomes:
         with mock.patch.object(eng, "get_cli_for_model", lambda m, **kw: Runner(**kw)), \
                 mock.patch.object(eng, "RateLimitCountdown", lambda s: SimpleNamespace(run=noop)), \
                 mock.patch.object(ark.shutting_down, "wait", lambda t=None: False):
-            out = o.run_agent("experimenter", "run E1", timeout=600, **kw)
+            out = (o.run_agent_chain(chain, "experimenter", "fix it", timeout=600) if chain is not None
+                   else o.run_agent("experimenter", "run E1", timeout=600, **kw))
         return out, made, o
 
     def test_a_transient_failure_resumes_the_same_session(self, tmp_path):

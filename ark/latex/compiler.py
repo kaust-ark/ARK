@@ -78,6 +78,7 @@ class CompilerMixin:
         """
         MAX_ATTEMPTS = 10
         last_errors = ""
+        chain = []  # later rounds continue the first round's session
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             success, errors = self.compile_latex_with_errors()
@@ -92,7 +93,7 @@ class CompilerMixin:
 
             # Strategy 1 (attempts 1-3): normal writer fix
             if attempt <= 3:
-                self.run_agent("writer",
+                self.run_agent_chain(chain, "writer",
                     f"LaTeX compilation failed. Read paper/main.tex carefully, find and fix "
                     f"the syntax errors below. Do NOT remove content — fix the LaTeX syntax.\n\n{errors}")
 
@@ -105,13 +106,13 @@ class CompilerMixin:
                 if success:
                     self.log_step("Programmatic fix worked", "success")
                     return True
-                self.run_agent("writer",
+                self.run_agent_chain(chain, "writer",
                     f"After programmatic cleanup, LaTeX still fails. Fix these remaining errors:\n\n{errors}")
 
             # Strategy 3 (attempts 5-7): aggressive — comment out broken parts
             elif attempt <= 7:
                 same_error = errors[:200] == last_errors[:200]
-                self.run_agent("writer",
+                self.run_agent_chain(chain, "writer",
                     f"LaTeX has failed {attempt} times{' with the same error' if same_error else ''}. "
                     f"Take aggressive action: COMMENT OUT the broken section entirely and replace "
                     f"with a brief placeholder like '% TODO: fix this section'. "
@@ -119,7 +120,7 @@ class CompilerMixin:
 
             # Strategy 4 (attempt 8+): nuclear — rewrite from scratch
             else:
-                self.run_agent("writer",
+                self.run_agent_chain(chain, "writer",
                     f"LaTeX has failed {attempt} times. Read the ENTIRE main.tex file, identify ALL "
                     f"syntax errors, and rewrite any broken sections from scratch. Remove any "
                     f"non-standard packages or commands that might cause issues. "

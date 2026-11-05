@@ -175,6 +175,7 @@ class PipelineMixin:
         self.log_step_header(step_num, total_steps, "Compile LaTeX")
         compiled = False
         errors = ""
+        chain = []  # later rounds continue the first round's session
         for attempt in range(1, MAX_COMPILE_RETRIES + 1):
             self.log_step(f"Compiling LaTeX (attempt {attempt}/{MAX_COMPILE_RETRIES})...", "progress")
             success, errors = self.compile_latex_with_errors()
@@ -184,7 +185,7 @@ class PipelineMixin:
 
             self.log_step(f"Attempt {attempt} failed, sending errors to writer...", "warning")
             fix_prompt = self._build_latex_fix_prompt(attempt, errors)
-            self.run_agent("writer", fix_prompt)
+            self.run_agent_chain(chain, "writer", fix_prompt)
 
         if not compiled:
             return self._handle_compile_failure(step_num, total_steps, MAX_COMPILE_RETRIES, errors)
