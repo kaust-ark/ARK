@@ -324,12 +324,24 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
                                         "edited after the last review, nothing lost"))
 
     # ── result numbers come from result files ─────────────────────────────
+    # At delivery the evidence is everything results/ holds by then, which in a
+    # dense project lets invented numbers match by chance. The check run when
+    # the last review started is the stronger one, so both are reported.
     try:
         from ark.provenance import audit, verdict
         ok, detail = verdict(audit(tex, project_dir))
         rep.findings.append(Finding("numbers_traced", "pass" if ok else "violated", "hard", detail))
     except Exception as e:
         rep.findings.append(Finding("numbers_traced", "skipped", "hard", f"audit failed: {e}"))
+    at_review = project_dir / "auto_research" / "state" / "provenance_at_review.json"
+    if at_review.exists():
+        try:
+            import json as _json
+            rec = _json.loads(at_review.read_text())
+            rep.findings.append(Finding("numbers_traced_at_review", "pass" if rec.get("ok") else "violated",
+                                        "hard", f"iteration {rec.get('iteration')}: {rec.get('detail', '')}"))
+        except Exception:
+            pass
 
     # ── no internal-stack credits in the acknowledgments ─────────────────
     ack = _ack_block(tex)
