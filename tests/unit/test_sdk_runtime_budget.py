@@ -297,6 +297,20 @@ class TestLocalServerWindow:
              patch("urllib.request.urlopen", side_effect=OSError("down")):
             assert sr._context_window("hosted_vllm/m") == sr._FALLBACK_CONTEXT_TOKENS
 
+    def test_a_server_still_loading_is_asked_again(self):
+        """A 32B takes minutes to load; the first call can arrive before it.
+
+        The miss used to be cached, so one unreachable moment pinned the 200k
+        fallback for the whole run and every request after it overflowed a 32k
+        server.
+        """
+        data = {"data": [{"id": "m", "max_model_len": 32768}]}
+        with patch.dict(os.environ, {"LLM_BASE_URL": "http://n:1/v1"}), \
+             patch("urllib.request.urlopen", side_effect=OSError("still loading")):
+            assert sr._context_window("hosted_vllm/m") == sr._FALLBACK_CONTEXT_TOKENS
+        with patch.dict(os.environ, {"LLM_BASE_URL": "http://n:1/v1"}), self._serve(data):
+            assert sr._context_window("hosted_vllm/m") == 32768
+
     def test_hosted_models_never_ask(self):
         with patch.dict(os.environ, {"LLM_BASE_URL": "http://n:1/v1"}), \
              patch("urllib.request.urlopen") as u:

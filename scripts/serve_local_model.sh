@@ -99,6 +99,16 @@ if [ -n "${ARK_VLLM_COMPAT:-}" ] && [ -d "${ARK_VLLM_COMPAT}" ]; then
   export LD_LIBRARY_PATH="${ARK_VLLM_COMPAT}:$LD_LIBRARY_PATH"
 fi
 
+# 5. FLASHINFER JIT-COMPILES, AND THE NODES HAVE NO nvcc. A 2026-era vLLM
+#    picks FlashInfer for top-k/top-p sampling on its own. It then tries to
+#    build a kernel and dies AFTER loading the weights — three and a half
+#    minutes in, with "Could not find nvcc and default cuda_home=
+#    '/usr/local/cuda' doesn't exist", which names CUDA and so reads like a
+#    driver problem rather than a sampler one. The compat shim does not help:
+#    it ships a runtime libcuda, not a compiler. Turn the sampler off unless
+#    the caller has already chosen.
+export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
+
 echo "NODE=$(hostname)  PORT=$PORT  MODEL=$MODEL"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 

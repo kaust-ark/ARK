@@ -142,19 +142,24 @@ def _served_window(model: str) -> Optional[int]:
     if not (base and model.startswith("hosted_vllm/")):
         return None
     key = (base, model)
-    if key not in _SERVED_WINDOWS:
+    if key in _SERVED_WINDOWS:
+        return _SERVED_WINDOWS[key]
+    try:
+        import urllib.request
+        with urllib.request.urlopen(f"{base}/models", timeout=3) as r:
+            data = json.loads(r.read()).get("data") or []
+        name = model.split("/", 1)[1]
+        hit = next((d for d in data if d.get("id") == name), data[0] if data else {})
+        window = int(hit.get("max_model_len") or 0) or None
+    except Exception:
         window = None
-        try:
-            import urllib.request
-            with urllib.request.urlopen(f"{base}/models", timeout=3) as r:
-                data = json.loads(r.read()).get("data") or []
-            name = model.split("/", 1)[1]
-            hit = next((d for d in data if d.get("id") == name), data[0] if data else {})
-            window = int(hit.get("max_model_len") or 0) or None
-        except Exception:
-            window = None
+    # Only an answer is cached. Caching the miss meant one unreachable moment —
+    # the server still loading when the first call asked — pinned the fallback
+    # 200k window for the whole run, and every request after that overflowed a
+    # 32k server. A retry costs one request against a server on our own network.
+    if window:
         _SERVED_WINDOWS[key] = window
-    return _SERVED_WINDOWS[key]
+    return window
 
 
 def _context_window(model: str) -> int:
