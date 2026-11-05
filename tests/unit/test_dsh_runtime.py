@@ -526,3 +526,18 @@ def test_parsed_usage_carries_the_price(monkeypatch):
     parsed = DSHRuntime("openai/fixture").parse_output(json.dumps(record))
     assert parsed["usage"]["cost_usd"] == pytest.approx(0.5)
     assert parsed["usage"]["priced_by"] == "ARK_DSH_PRICE_PER_M"
+
+
+def test_a_stopped_session_still_reports_what_its_requests_cost():
+    """What `_record_stopped_call` actually parses: a stream of events and no
+    final result, because the Stop ended the driver before it printed one.
+    E3-S1 lost the usage of 5 billed requests this way."""
+    stream = "\n".join(json.dumps(event("assistant/message", {"usage": {
+        "inputTokens": 30_000, "outputTokens": 900, "cacheReadTokens": 21_000}}, seq=n))
+        for n in (1, 2, 3))
+    out = DSHRuntime("openrouter/vendor/m:free").parse_output(stream)
+    assert out["usage"]["requests"] == 3
+    assert out["usage"]["input_tokens"] == 90_000
+    assert out["usage"]["cost_usd"] == 0.0 and out["usage"]["priced_by"] == "free tier"
+    # Nothing reported a result, so the call is not a success.
+    assert out["error_code"] == "DSH.ServiceUnavailableError"
