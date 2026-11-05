@@ -28,22 +28,29 @@ _STRUCTURE = {
 }
 
 
-def _structure_lost(before: str, after: str) -> list:
+def _structure_lost(before: str, after: str, ignore_labels=(), ignore_counts=None) -> list:
     """What a rewrite of main.tex removed: labels by name, the rest by count.
 
     Starred sections are left out because the end-matter pass adds one
     (Acknowledgments) on purpose.
+
+    ``ignore_labels`` and ``ignore_counts`` carry removals already accounted
+    for — the delivery contract passes the ones the review itself asked for,
+    so obeying a reviewer is not reported as a loss.
     """
+    ignore_labels = set(ignore_labels)
+    ignore_counts = ignore_counts or {}
     lost = []
     for name, pat in _STRUCTURE.items():
         if name == "labels":
-            gone = sorted(set(pat.findall(before)) - set(pat.findall(after)))
+            gone = sorted(set(pat.findall(before)) - set(pat.findall(after)) - ignore_labels)
             if gone:
                 lost.append(f"labels {', '.join(gone[:5])}")
         else:
             n0, n1 = len(pat.findall(before)), len(pat.findall(after))
-            if n1 < n0:
-                lost.append(f"{n0 - n1} {name}")
+            dropped = n0 - n1 - ignore_counts.get(name, 0)
+            if dropped > 0:
+                lost.append(f"{dropped} {name}")
     return lost
 
 

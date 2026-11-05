@@ -223,3 +223,85 @@ def test_edits_after_review_that_keep_everything_pass(tmp_path):
 def test_no_review_snapshot_means_no_regression_check(tmp_path):
     rep = evaluate(_project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT))
     assert not any(f.check == "no_loss_since_review" for f in rep.findings)
+
+
+# ── a deletion the review asked for is not an unreviewed loss ───────────────
+
+def _review(p, text):
+    state = p / "auto_research" / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "latest_review.md").write_text(text)
+
+
+FIG_TEX = GOOD_TEX.replace(
+    "Body \\cite{a}.",
+    "Body \\cite{a}, see Fig.~\\ref{fig:ablation}.\n"
+    "\\begin{figure}\\includegraphics{figures/fig_ablation.pdf}"
+    "\\caption{c}\\label{fig:ablation}\\end{figure}")
+NO_FIG_TEX = GOOD_TEX
+
+
+def test_a_deletion_nobody_reviewed_is_still_reported(tmp_path):
+    p = _project(tmp_path, NO_FIG_TEX, GOOD_PDF_TEXT)
+    _reviewed(p, FIG_TEX)
+    _review(p, "### M1. The introduction is too long\nTrim the second paragraph.")
+
+    f = _finding(evaluate(p), "no_loss_since_review")
+    assert f.status == "violated"
+    assert "fig:ablation" in f.detail
+
+
+def test_a_deletion_the_review_asked_for_by_label_passes(tmp_path):
+    p = _project(tmp_path, NO_FIG_TEX, GOOD_PDF_TEXT)
+    _reviewed(p, FIG_TEX)
+    _review(p, "### M1. Ad-hoc ablation figure violates the protocol\n"
+               "**Target**: `fig:ablation`\n**Action**: Remove Figure 2.")
+
+    f = _finding(evaluate(p), "no_loss_since_review")
+    assert f.status == "pass"
+    assert "fig:ablation" in f.detail          # says what it accounted for
+
+
+def test_a_deletion_the_review_named_by_graphics_file_passes(tmp_path):
+    """The real M1 named the file, not the label."""
+    p = _project(tmp_path, NO_FIG_TEX, GOOD_PDF_TEXT)
+    _reviewed(p, FIG_TEX)
+    _review(p, "**Target**: `paper/main.tex` (lines 87-94), "
+               "`paper/figures/fig_ablation.pdf`\n**Action**: Remove Figure 2.")
+
+    assert _finding(evaluate(p), "no_loss_since_review").status == "pass"
+
+
+def test_only_what_the_review_named_is_excused(tmp_path):
+    """Obeying M1 does not license dropping something else in the same edit."""
+    two = FIG_TEX.replace(
+        "\\end{document}",
+        "\\begin{table}\\caption{t}\\label{tab:main}\\end{table}\\end{document}")
+    p = _project(tmp_path, NO_FIG_TEX, GOOD_PDF_TEXT)
+    _reviewed(p, two)
+    _review(p, "**Target**: `paper/figures/fig_ablation.pdf`\n**Action**: Remove Figure 2.")
+
+    f = _finding(evaluate(p), "no_loss_since_review")
+    assert f.status == "violated"
+    assert "tab:main" in f.detail
+    assert "fig:ablation" not in f.detail
+    assert "1 tables" in f.detail
+    assert "figures" not in f.detail           # the excused one is subtracted
+
+
+def test_without_a_review_file_nothing_is_excused(tmp_path):
+    p = _project(tmp_path, NO_FIG_TEX, GOOD_PDF_TEXT)
+    _reviewed(p, FIG_TEX)                      # snapshot, but no review text
+
+    assert _finding(evaluate(p), "no_loss_since_review").status == "violated"
+
+
+def test_the_review_merely_discussing_a_figure_still_excuses_only_removals(tmp_path):
+    """Nothing removed, so nothing to excuse — and no false pass detail."""
+    p = _project(tmp_path, FIG_TEX, GOOD_PDF_TEXT)
+    _reviewed(p, FIG_TEX)
+    _review(p, "**Target**: `paper/figures/fig_ablation.pdf`\n**Action**: Remove Figure 2.")
+
+    f = _finding(evaluate(p), "no_loss_since_review")
+    assert f.status == "pass"
+    assert "asked to remove" not in f.detail

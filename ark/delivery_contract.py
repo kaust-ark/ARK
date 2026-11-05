@@ -43,6 +43,45 @@ _STACK_LEAK_RE = re.compile(
 # puts one between spaces/brackets (same pattern as compiler.ensure_resolved_citations).
 _UNRESOLVED_CITE_RE = re.compile(r"[\s(\[]\?[\s,.;)\]]")
 
+_LABEL_RE = re.compile(r"\\label\{([^}]*)\}")
+_FLOAT_RE = re.compile(r"\\begin\{(figure|table)\*?\}(.*?)\\end\{\1\*?\}", re.S)
+_GRAPHIC_RE = re.compile(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]*)\}")
+
+
+def _removals_the_review_asked_for(before: str, after: str, review: str) -> dict:
+    """Floats this edit removed that the review itself named, by label.
+
+    The point of ``no_loss_since_review`` is to catch deletions nobody
+    reviewed. A reviewer that says "Remove Figure 2" and names
+    ``paper/figures/fig_ablation.pdf`` has reviewed that one, so reporting the
+    writer for obeying is noise — and noise is how a real loss gets waved
+    through. Measured on a cheap-test run: one violation, and it was the
+    writer doing exactly what issue M1 asked.
+
+    The match is on an exact identifier: the label, or a graphics file inside
+    the same float. Never on the review's prose, which would make this a guess.
+    Returns ``{label: {"figures": n, "tables": n}}`` for the removed floats the
+    review named, so the caller can subtract what it explains from the counts.
+    """
+    if not review:
+        return {}
+    gone = set(_LABEL_RE.findall(before)) - set(_LABEL_RE.findall(after))
+    if not gone:
+        return {}
+    explained = {}
+    for kind, body in ((m.group(1), m.group(2)) for m in _FLOAT_RE.finditer(before)):
+        labels = [lab for lab in _LABEL_RE.findall(body) if lab in gone]
+        if not labels:
+            continue
+        graphics = _GRAPHIC_RE.findall(body)
+        names = set(labels) | {Path(g).name for g in graphics} | {Path(g).stem for g in graphics}
+        if not any(n and n in review for n in names):
+            continue
+        for lab in labels:
+            explained[lab] = {"figures": len(graphics) if kind == "figure" else 0,
+                              "tables": 1 if kind == "table" else 0}
+    return explained
+
 MIN_PDF_BYTES = 50_000       # below this a "paper" is a stub/template skeleton
 MIN_FIG_BYTES = 5_000        # ignore icons/empty plot files
 PAGE_SLACK = 3               # refs/appendix allowance past the venue body budget
@@ -311,7 +350,13 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     if reviewed.exists() and tex:
         from ark.execution import _structure_lost
         before = reviewed.read_text(errors="replace")
-        lost = _structure_lost(before, tex)
+        review_path = project_dir / "auto_research" / "state" / "latest_review.md"
+        review = review_path.read_text(errors="replace") if review_path.exists() else ""
+        asked = _removals_the_review_asked_for(before, tex, review)
+        lost = _structure_lost(before, tex, ignore_labels=set(asked),
+                               ignore_counts={
+                                   "figures": sum(v["figures"] for v in asked.values()),
+                                   "tables": sum(v["tables"] for v in asked.values())})
         grew = len(_dangling_refs(tex)) - len(_dangling_refs(before))
         if grew > 0:
             lost.append(f"{grew} more references to undefined labels")
@@ -319,9 +364,11 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
             rep.findings.append(Finding("no_loss_since_review", "violated", "soft",
                                         "since the last review: " + "; ".join(lost)))
         else:
-            rep.findings.append(Finding("no_loss_since_review", "pass", "soft",
-                                        "unchanged since review" if before == tex else
-                                        "edited after the last review, nothing lost"))
+            detail = ("unchanged since review" if before == tex else
+                      "edited after the last review, nothing lost")
+            if asked:
+                detail += f" (the review asked to remove {', '.join(sorted(asked))})"
+            rep.findings.append(Finding("no_loss_since_review", "pass", "soft", detail))
 
     # ── result numbers come from result files ─────────────────────────────
     # At delivery the evidence is everything results/ holds by then, which in a
