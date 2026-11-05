@@ -189,3 +189,37 @@ def test_a_spare_figure_is_tolerated(tmp_path):
     _figures(p, "fig_a", "fig_b", "fig_spare")
     rep = evaluate(p)
     assert not [f for f in rep.violations if f.check == "figures_referenced"]
+
+
+def _reviewed(p, tex):
+    state = p / "auto_research" / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "reviewed_main.tex").write_text(tex)
+
+
+def _finding(rep, check):
+    return next(f for f in rep.findings if f.check == check)
+
+
+def test_content_lost_after_the_last_review_is_reported(tmp_path):
+    """527e025d: reviewed with its appendix, delivered without it."""
+    reviewed = GOOD_TEX.replace("\\end{document}", "\\appendix\\section{Extra}\\label{app:x}"
+                                "\\begin{table}\\end{table}\\end{document}")
+    shipped = GOOD_TEX.replace("Body \\cite{a}.", "Body \\cite{a}, see Appendix~\\ref{app:x}.")
+    p = _project(tmp_path, shipped, GOOD_PDF_TEXT)
+    _reviewed(p, reviewed)
+    f = _finding(evaluate(p), "no_loss_since_review")
+    assert f.status == "violated"
+    assert "app:x" in f.detail and "1 tables" in f.detail and "undefined labels" in f.detail
+
+
+def test_edits_after_review_that_keep_everything_pass(tmp_path):
+    p = _project(tmp_path, GOOD_TEX.replace("Body", "Body, reworded"), GOOD_PDF_TEXT)
+    _reviewed(p, GOOD_TEX)
+    f = _finding(evaluate(p), "no_loss_since_review")
+    assert f.status == "pass" and "edited after the last review" in f.detail
+
+
+def test_no_review_snapshot_means_no_regression_check(tmp_path):
+    rep = evaluate(_project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT))
+    assert not any(f.check == "no_loss_since_review" for f in rep.findings)
