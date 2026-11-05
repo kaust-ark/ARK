@@ -739,56 +739,84 @@ async def _poll_template_links(settings):
                     )
 
 
+def _legacy_sqlite_fixup(db_path: str) -> bool:
+    """Patch an OLD single-node sqlite DB in place. Returns whether it ran.
+
+    Adds a few columns and normalizes user display names on databases built
+    before the ORM. It is sqlite-only and works on a bare file path, so it is
+    skipped for a DSN backend (Postgres), where a DSN string must never reach
+    ``sqlite3.connect()``. Alembic (``_ensure_schema``) is the schema source of
+    truth for both backends.
+
+    It runs ONLY against a database that already carries the legacy schema.
+    It used to run on anything, and on a brand-new file its
+    ``CREATE TABLE IF NOT EXISTS feedback`` landed before Alembic had done
+    anything — leaving a database with one table and no ``project``.
+    ``_ensure_schema`` reads that as "managed, needs upgrade" rather than
+    "pre-Alembic, adopt", so the baseline migration tried to create
+    ``feedback`` a second time and the webapp never finished starting. No
+    fresh sqlite deployment could come up.
+    """
+    import os.path as _osp
+    import sqlite3 as _sq3
+
+    if "://" in db_path or not _osp.exists(db_path):
+        return False
+    try:
+        with _sq3.connect(db_path) as _probe:
+            if not _probe.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='project'"
+            ).fetchone():
+                return False
+    except Exception:
+        return False
+
+    try:
+        _c = _sq3.connect(db_path)
+        for col in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''",
+                    "max_dev_iterations INTEGER DEFAULT 3"):
+            try:
+                _c.execute(f"ALTER TABLE project ADD COLUMN {col}")
+            except Exception:
+                pass
+        try:
+            _c.execute("ALTER TABLE user ADD COLUMN welcome_sent BOOLEAN DEFAULT 0")
+        except Exception:
+            pass
+        for ucol in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''"):
+            try:
+                _c.execute(f"ALTER TABLE user ADD COLUMN {ucol}")
+            except Exception:
+                pass
+        # Feedback table
+        _c.execute("""CREATE TABLE IF NOT EXISTS feedback (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            project_id TEXT DEFAULT '',
+            message TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
+        _c.commit()
+        # Fix existing user display names (first.last@domain → First)
+        try:
+            rows = _c.execute("SELECT id, email, name FROM user").fetchall()
+            for uid, email, old_name in rows:
+                correct = email.split("@")[0].split(".")[0].capitalize()
+                if old_name != correct:
+                    _c.execute("UPDATE user SET name=? WHERE id=?", (correct, uid))
+            _c.commit()
+        except Exception:
+            pass
+        _c.close()
+        return True
+    except Exception:
+        return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    # Legacy pre-ORM sqlite fixup: adds a few columns + a one-time user-name
-    # normalization on old single-node dev DBs. This is sqlite-only and runs
-    # against a bare file path — it is SKIPPED for a DSN backend (Postgres),
-    # where Alembic owns the schema and a DSN string must never be handed to
-    # sqlite3.connect(). Alembic (_ensure_schema in get_engine) is the schema
-    # source of truth for both backends.
-    import sqlite3 as _sq3
-    if "://" not in settings.db_path:
-        try:
-            _c = _sq3.connect(settings.db_path)
-            for col in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''",
-                        "max_dev_iterations INTEGER DEFAULT 3"):
-                try:
-                    _c.execute(f"ALTER TABLE project ADD COLUMN {col}")
-                except Exception:
-                    pass
-            try:
-                _c.execute("ALTER TABLE user ADD COLUMN welcome_sent BOOLEAN DEFAULT 0")
-            except Exception:
-                pass
-            for ucol in ("telegram_token TEXT DEFAULT ''", "telegram_chat_id TEXT DEFAULT ''"):
-                try:
-                    _c.execute(f"ALTER TABLE user ADD COLUMN {ucol}")
-                except Exception:
-                    pass
-            # Feedback table
-            _c.execute("""CREATE TABLE IF NOT EXISTS feedback (
-                id TEXT PRIMARY KEY,
-                user_id TEXT NOT NULL,
-                project_id TEXT DEFAULT '',
-                message TEXT DEFAULT '',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )""")
-            _c.commit()
-            # Fix existing user display names (first.last@domain → First)
-            try:
-                rows = _c.execute("SELECT id, email, name FROM user").fetchall()
-                for uid, email, old_name in rows:
-                    correct = email.split("@")[0].split(".")[0].capitalize()
-                    if old_name != correct:
-                        _c.execute("UPDATE user SET name=? WHERE id=?", (correct, uid))
-                _c.commit()
-            except Exception:
-                pass
-            _c.close()
-        except Exception:
-            pass
+    _legacy_sqlite_fixup(settings.db_path)
     # Create engine + bring schema to head via Alembic (sqlite dev + postgres).
     get_engine(settings.db_path)
 

@@ -15,6 +15,7 @@ the offline suite stays green.
 
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
@@ -109,6 +110,50 @@ def test_legacy_db_is_adopted_not_rebuilt(tmp_path):
     assert ver == _alembic_head()
     with db.get_session(db_path) as s:
         assert db.get_user(s, legacy_uid) is not None  # data preserved (stamp, not rebuild)
+
+
+# ── A first start must not half-create the DB ───────────────────────────────
+
+def test_the_legacy_fixup_does_not_run_against_a_brand_new_database(tmp_path):
+    """The webapp's first start on a fresh sqlite file.
+
+    The lifespan runs a legacy pre-ORM fixup before Alembic. It used to create
+    `feedback` unconditionally, so a brand-new file reached _ensure_schema with
+    one table and no `project`. That reads as "managed, needs upgrade" rather
+    than "pre-Alembic, adopt", the baseline migration tried to create
+    `feedback` again, and the webapp never finished starting — no fresh sqlite
+    deployment could come up.
+    """
+    from website.dashboard import app as webapp
+
+    db_path = str(tmp_path / "first-start.db")
+    assert not Path(db_path).exists()
+    assert webapp._legacy_sqlite_fixup(db_path) is False     # nothing to fix
+    assert not Path(db_path).exists()                        # and nothing created
+
+    eng = db.get_engine(db_path)                             # Alembic owns it
+    assert {"user", "project", "feedback"} <= set(inspect(eng).get_table_names())
+
+
+def test_the_legacy_fixup_still_runs_against_an_old_database(tmp_path):
+    from website.dashboard import app as webapp
+
+    db_path = str(tmp_path / "old.db")
+    legacy = create_engine(f"sqlite:///{db_path}")
+    SQLModel.metadata.create_all(legacy)
+    legacy.dispose()
+
+    assert webapp._legacy_sqlite_fixup(db_path) is True
+    with create_engine(f"sqlite:///{db_path}").connect() as c:
+        assert c.execute(text(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='feedback'"
+        )).scalar() == 1
+
+
+def test_a_dsn_backend_is_never_handed_to_sqlite3():
+    from website.dashboard import app as webapp
+
+    assert webapp._legacy_sqlite_fixup("postgresql+psycopg://u@h/db") is False
 
 
 # ── Postgres concurrency / load test (gated) ────────────────────────────────
