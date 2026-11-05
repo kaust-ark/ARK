@@ -1338,7 +1338,9 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
 
         source_lines = [f"Paper title: {title}", f"Venue: {venue}", "",
                         "## Source Material (MANDATORY — Read in full before planning)"]
-        source_lines.append("- `idea.md` — research idea")
+        idea_file = self.state_dir / "idea.md" if hasattr(self, 'state_dir') else None
+        if idea_file and idea_file.exists():
+            source_lines.append("- `auto_research/state/idea.md` — research idea")
         if dr_file and dr_file.exists():
             source_lines.append("- `auto_research/state/deep_research.md` — background research")
         if findings_file and findings_file.exists():

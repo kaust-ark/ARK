@@ -1313,7 +1313,8 @@ Be thorough and faithful to the proposal.
             dr_note = (
                 "Use your Read tool to load BOTH files in full."
                 if dr_exists else
-                "Use your Read tool to load `idea.md` in full. NOTE: no Deep "
+                "Use your Read tool to load `auto_research/state/idea.md` in "
+                "full. NOTE: no Deep "
                 "Research report is available for this run — assess novelty "
                 "conservatively from the idea alone and do not over-claim prior art."
             )
@@ -1322,7 +1323,7 @@ Read the idea summary and deep research report, then generate a verified
 project context document.
 
 ## Source Material (MANDATORY — Read in full before writing)
-- `idea.md` — the research idea (user-authored)
+- `auto_research/state/idea.md` — the research idea (user-authored)
 - `auto_research/state/deep_research.md` — the Gemini Deep Research report{" (MAY BE ABSENT — see note)" if not dr_exists else ""}
 
 {dr_note} Do NOT skim or guess their contents — writing the context document
@@ -1423,7 +1424,7 @@ in this session.
 
 ## Source Material (MANDATORY — Read before selecting)
 - `auto_research/state/project_context.md` — verified external systems, env setup, experiment guidance
-- `idea.md` — the raw research idea
+- `auto_research/state/idea.md` — the raw research idea
 
 Read both files to understand what this project will actually build, run, and
 write about. Selection must be grounded in those files, not in the catalog.
