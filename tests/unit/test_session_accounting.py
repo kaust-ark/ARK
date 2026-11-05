@@ -178,3 +178,81 @@ class TestStreamFiles:
                                            "20261025_132359_experimenter_2.jsonl"]
         assert files[0].read_text().endswith("first\n")
         assert files[1].read_text().endswith("second\n")
+
+
+class TestStoppedSessionIsOnTheLedger:
+    """E3 (2026-11-05): a session ended by a Stop billed 5 (DSH) and 6
+    (OpenHands) requests and left none on the ledger. The Stop's SystemExit is
+    raised inside the call, so the record after it never ran."""
+
+    def _stopping(self, tmp_path, partial, parsed, stats=()):
+        o, calls, _ = _agent(tmp_path, [], stats=stats)
+
+        class Runner:
+            def execute(self, **kw):
+                calls.append(kw)
+                self.partial_stdout = partial
+                raise SystemExit(0)
+
+            def parse_output(self, stdout):
+                assert stdout == partial
+                return parsed
+
+        return o, Runner
+
+    def test_a_dsh_session_is_billed_what_it_reported(self, tmp_path):
+        usage = {"model": "m", "requests": 5, "input_tokens": 30_000, "output_tokens": 900,
+                 "cache_read_tokens": 21_000, "cache_creation_tokens": 0, "cost_usd": 0.004,
+                 "duration_api_ms": 0}
+        o, Runner = self._stopping(tmp_path, '{"kind": "DSHEvent"}\n', {"result": "", "usage": usage})
+        with pytest.raises(SystemExit):
+            _run(o, Runner)
+        rec = o._agent_stats[-1]
+        assert rec["stopped"] is True and rec["requests"] == 5 and rec["input_tokens"] == 30_000
+        assert "estimated" not in rec
+
+    def test_an_openhands_session_is_estimated_from_its_stream(self, tmp_path):
+        o, Runner = self._stopping(tmp_path, _stream(6), {"result": "", "usage": None},
+                                   stats=[MEASURED])
+        with pytest.raises(SystemExit):
+            _run(o, Runner)
+        rec = o._agent_stats[-1]
+        assert rec["stopped"] is True and rec["estimated"] is True and rec["requests"] == 6
+
+    def test_a_stop_before_any_request_adds_nothing(self, tmp_path):
+        o, Runner = self._stopping(tmp_path, "", {"result": "", "usage": None})
+        with pytest.raises(SystemExit):
+            _run(o, Runner)
+        assert o._agent_stats == []
+
+
+def test_execute_keeps_what_a_stopped_runtime_prints_while_it_closes(tmp_path):
+    """The read loop is cut by SystemExit; the runtime's closing report still arrives."""
+    import sys
+    from ark.engines.cli import AgentCLI
+
+    child = ("import signal, sys, time\n"
+             "def bye(*a):\n"
+             "    print('{\"final\": \"usage\"}', flush=True); sys.exit(0)\n"
+             "signal.signal(signal.SIGTERM, bye)\n"
+             "print('started', flush=True)\n"
+             "time.sleep(30)\n")
+
+    class Fake(AgentCLI):
+        graceful_stop_s = 5
+
+        def build_command(self, prompt, path_boundary, code_dir):
+            return [sys.executable, "-c", child]
+
+        def build_env(self, code_dir=None):
+            return {"PATH": "/usr/bin:/bin"}
+
+    def stop(line):
+        raise SystemExit(0)
+
+    runner = Fake("m")
+    t0 = time.time()
+    with pytest.raises(SystemExit):
+        runner.execute("p", "b", tmp_path, 60, on_event=stop)
+    assert "started" in runner.partial_stdout and '"final"' in runner.partial_stdout
+    assert time.time() - t0 < 15

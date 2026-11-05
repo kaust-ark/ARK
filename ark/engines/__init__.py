@@ -487,6 +487,35 @@ class AgentMixin:
             rec[k] = round(v, 6) if k == "cost_usd" else int(v)
         return rec
 
+    def _record_stopped_call(self, agent_type, cli_runner, spent, prompt_len, elapsed):
+        """Put a call a Stop cut short on the ledger before the stop goes on.
+
+        The Stop's SystemExit is raised in the main thread, inside the call, so
+        the record after it never ran. In E3 a stopped session's 5 (DSH) and 6
+        (OpenHands) billed requests never reached the ledger. DSH reports the
+        usage of every request in its stream; for OpenHands the requests are
+        counted and the tokens estimated, as for a session killed at its timeout.
+        """
+        try:
+            stdout = getattr(cli_runner, "partial_stdout", None) or ""
+            usage = (cli_runner.parse_output(stdout) or {}).get("usage") if stdout else None
+            if not (usage and usage.get("requests")):
+                n = _count_llm_requests(stdout)
+                usage = self._estimate_usage(agent_type, n) if n else None
+            usage = _add_usage(spent, usage)
+            if not usage:
+                return
+            stat = {"agent_type": agent_type, "elapsed_seconds": elapsed, "prompt_len": prompt_len,
+                    "output_len": 0, "timestamp": datetime.now().isoformat(), "model": "",
+                    "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0,
+                    "cache_creation_tokens": 0, "cost_usd": 0.0, "duration_api_ms": 0,
+                    "stopped": True}
+            stat.update(usage)
+            self._agent_stats.append(stat)
+            self._write_cost_report()
+        except Exception:
+            pass
+
     def _model_for(self, agent_type: str) -> str:
         """The model a role runs on: `agent_models.<role>` in config, else the run's model.
 
@@ -731,15 +760,21 @@ Execute the task and update the corresponding files.
                     except Exception as e:
                         self.log(f"  [intervention] setup skipped: {e}", "WARN")
 
-                returncode, stdout, stderr, elapsed, timeout_expired = cli_runner.execute(
-                    prompt=full_prompt + _deadline_note(timeout, time.time()),
-                    path_boundary=self._build_path_boundary(),
-                    code_dir=self.code_dir,
-                    timeout=timeout,
-                    log_fn=self.log,
-                    on_event=_on_event,
-                    env=_exec_env,
-                )
+                _call_start = time.time()
+                try:
+                    returncode, stdout, stderr, elapsed, timeout_expired = cli_runner.execute(
+                        prompt=full_prompt + _deadline_note(timeout, time.time()),
+                        path_boundary=self._build_path_boundary(),
+                        code_dir=self.code_dir,
+                        timeout=timeout,
+                        log_fn=self.log,
+                        on_event=_on_event,
+                        env=_exec_env,
+                    )
+                except (SystemExit, KeyboardInterrupt):
+                    self._record_stopped_call(agent_type, cli_runner, spent, len(full_prompt),
+                                              int(time.time() - _call_start))
+                    raise
                 timer.stop()
 
                 # Keep the runner's raw event stream. It is the ONLY record of

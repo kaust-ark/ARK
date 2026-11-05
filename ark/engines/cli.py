@@ -292,6 +292,10 @@ class AgentCLI(ABC):
         err_thread = threading.Thread(target=_drain_stderr, daemon=True)
         stdout_lines: list = []
         aborting = False
+        # What the call printed when a Stop's SystemExit unwound through it, so
+        # the caller can still bill it. None when the call returned normally.
+        self.partial_stdout = None
+        unwinding = True
         try:
             watchdog.start()
             killer.start()
@@ -319,8 +323,9 @@ class AgentCLI(ABC):
 
             # stdout closed → process is ending (or the deadline killed it).
             process.wait(timeout=10)
+            unwinding = False
         except subprocess.TimeoutExpired:
-            pass
+            unwinding = False
         finally:
             # Also runs for KeyboardInterrupt/SystemExit (orchestrator SIGTERM).
             # Stop/reap the CLI before releasing its tmux server, otherwise a
@@ -334,6 +339,16 @@ class AgentCLI(ABC):
                 process.wait(timeout=10)
             if err_thread.ident is not None:
                 err_thread.join(timeout=2)
+            if unwinding and process.stdout:
+                # The runtime may have reported its usage while it closed. A
+                # leftover grandchild can hold the pipe open, so read on a side
+                # thread and give up after a few seconds.
+                reader = threading.Thread(
+                    target=lambda: stdout_lines.append(_to_str(process.stdout.read() or "")),
+                    daemon=True)
+                reader.start()
+                reader.join(timeout=5)
+                self.partial_stdout = "".join(stdout_lines)
             if process.stdout:
                 process.stdout.close()
             if process.stderr and not err_thread.is_alive():
