@@ -2576,6 +2576,18 @@ Rules:
         max_dev_iters = self.config.get("max_dev_iterations", 3)
         dev_state = self._load_dev_phase_state()
         start_iter = dev_state.get("iteration", 0)
+        # `iteration` is saved when an iteration STARTS. A run cut off inside
+        # it used to resume at the next one, and past the cap that meant
+        # drafting at once: f028f3ba, 5c0e44f1 and b5fedacd wrote papers on
+        # experiments that never finished. Re-enter the cut iteration; its
+        # finished steps are skipped (_run_experiment_loop).
+        if (dev_state.get("status") == "in_progress" and start_iter > 0
+                and "evaluate" not in (dev_state.get("steps_done") or [])):
+            start_iter -= 1
+            self.log(f"Resuming dev iteration {start_iter + 1}: it was cut off "
+                     f"before its completeness check", "WARN")
+        elif dev_state.get("sufficient"):
+            start_iter = max_dev_iters  # the last check already said enough
 
         self.log("", "RAW")
         self.log_section(f"Dev Phase  |  Building experiments & data  |  max {max_dev_iters} iterations")
@@ -2638,38 +2650,58 @@ Rules:
         findings_summary = self._load_findings_summary()
 
         for dev_iter in range(start_iter + 1, max_dev_iters + 1):
+            # Re-entering a cut iteration (see _run_dev_phase): keep the steps
+            # it finished, so a plan the user approved is not redone and jobs
+            # that already ran are not resubmitted.
+            resumed = (dev_state.get("iteration") == dev_iter
+                       and dev_state.get("status") == "in_progress")
+            done = list(dev_state.get("steps_done") or []) if resumed else []
             dev_state["iteration"] = dev_iter
             dev_state["status"] = "in_progress"
+            dev_state["steps_done"] = done
+            dev_state.pop("sufficient", None)
             self._save_dev_phase_state(dev_state)
+
+            def finished(step):
+                done.append(step)
+                self._save_dev_phase_state(dev_state)
 
             self.log("", "RAW")
             self.log_section(f"Dev Phase: Iteration {dev_iter}/{max_dev_iters}")
             self._send_dev_phase_telegram("iteration", dev_iter, max_dev_iters)
 
             # Step 1: Plan experiments
-            self._plan_experiments(dev_iter, max_dev_iters, research_idea,
-                                   findings_summary)
-            if self._abort_dev_on_terminal_error("planning experiments"):
-                return
+            if "plan" not in done:
+                self._plan_experiments(dev_iter, max_dev_iters, research_idea,
+                                       findings_summary)
+                if self._abort_dev_on_terminal_error("planning experiments"):
+                    return
 
-            # HITL gate: on the first dev iteration, let the user approve or
-            # steer the experiment plan before spending compute (大实验前把关).
-            if dev_iter == start_iter + 1:
-                self._experiment_approval_gate()
+                # HITL gate: on the first dev iteration, let the user approve or
+                # steer the experiment plan before spending compute (大实验前把关).
+                if dev_iter == start_iter + 1:
+                    self._experiment_approval_gate()
+                finished("plan")
 
             # Step 2: Run experiments
-            self._run_experiments(dev_iter, max_dev_iters)
-            if self._abort_dev_on_terminal_error("running experiments"):
-                return
+            if "run" not in done:
+                self._run_experiments(dev_iter, max_dev_iters, resumed=resumed)
+                if self._abort_dev_on_terminal_error("running experiments"):
+                    return
+                finished("run")
 
             # Step 3: Analyze results
-            self._analyze_results()
-            if self._abort_dev_on_terminal_error("analyzing results"):
-                return
+            if "analyze" not in done:
+                self._analyze_results()
+                if self._abort_dev_on_terminal_error("analyzing results"):
+                    return
+                finished("analyze")
 
             # Step 4: Evaluate completeness
             findings_summary = self._load_findings_summary()
             sufficient = self._evaluate_completeness(research_idea, findings_summary)
+            dev_state["sufficient"] = bool(sufficient)
+            finished("evaluate")
 
             # Project-specific post-dev-iteration hook (snapanchor uses this
             # for drift measurement and per-condition anchor management).
@@ -2767,10 +2799,28 @@ IMPORTANT: If the research idea describes a specific platform, framework, or sys
         self.log_step_header(1, 4, "Plan Experiments", "end")
         return output
 
-    def _run_experiments(self, dev_iter: int, max_dev_iters: int) -> str:
+    def _run_experiments(self, dev_iter: int, max_dev_iters: int,
+                         resumed: bool = False) -> str:
         """Step 2: Run experiments using experimenter agent + compute backend."""
         self.log_step_header(2, 4, "Run Experiments")
         self._send_dev_phase_telegram("experiments", dev_iter, max_dev_iters)
+
+        resume_note = ""
+        if resumed:
+            # The cut attempt may have left jobs queued or running. Let them
+            # finish first, so the new session finds their output instead of
+            # submitting the same experiments a second time.
+            try:
+                self._compute_backend.wait_for_completion(max_wait_hours=4)
+            except Exception as e:
+                self.log(f"Could not check jobs from the interrupted attempt: {e}", "WARN")
+            resume_note = """
+## Resuming an interrupted attempt
+An earlier session ran this iteration and was cut off. `results/` and
+`scripts/` may already hold finished outputs. Check them first, keep what is
+complete, and run only what is missing or failed. Do not resubmit a job whose
+results already exist.
+"""
 
         compute_ctx = self._compute_backend.setup()
 
@@ -2792,7 +2842,7 @@ IMPORTANT: If the research idea describes a specific platform, framework, or sys
         try:
             exp_output = self.run_agent("experimenter", f"""
 Execute ALL planned experiments for this dev iteration.
-
+{resume_note}
 ## Experiment Plan (MANDATORY — Read before running)
 Use Read to load `auto_research/state/experiment_plan.yaml` in full. It
 contains the required_systems and every experiment definition. Do NOT
