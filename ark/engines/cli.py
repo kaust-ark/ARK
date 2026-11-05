@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -359,6 +360,8 @@ class OpenHandsCLI(AgentCLI):
         if os.environ.get("LLM_BASE_URL"):
             env["LLM_BASE_URL"] = os.environ["LLM_BASE_URL"]
         env["OPENHANDS_SUPPRESS_BANNER"] = "1"
+        if type(self) is OpenHandsCLI and code_dir is not None:
+            _cap_output_tokens(env, Path(code_dir), model)
         return env
 
     def parse_output(self, stdout: str) -> dict:
@@ -470,6 +473,66 @@ class OpenHandsCLI(AgentCLI):
             }
         except Exception:
             return None
+
+
+_GEN_SETTINGS = """
+import sys
+from openhands.sdk import LLM
+from openhands_cli.utils import get_default_cli_agent
+llm = LLM(model=sys.argv[1], api_key="set-by-env", usage_id="agent", max_output_tokens=int(sys.argv[2]))
+print(get_default_cli_agent(llm).model_dump_json())
+"""
+
+
+def _cap_output_tokens(env: dict, code_dir: Path, model: str) -> None:
+    """Give the headless CLI an output-token cap it has no env var for.
+
+    The CLI reads only LLM_MODEL, LLM_API_KEY and LLM_BASE_URL from the
+    environment and otherwise builds its LLM afresh, taking max_output_tokens
+    from litellm's model table, which litellm downloads at run time. Since
+    August that table gives deepseek-v4-pro 393,216. OpenRouter reserves credit
+    for the whole cap before it answers, so d5db85a2's writer was refused about
+    120 times with "requested up to 393216 tokens, can only afford 168958",
+    while the account could still pay for ordinary replies.
+
+    The CLI does load a persisted agent from its persistence directory and then
+    applies the env overrides to it, so a spec carrying the cap is written there
+    once per project and model. The directory is the project's own .openhands
+    (where it already is when HOME is the project), so a run never reads or
+    writes the user's personal OpenHands settings. Conversations stay where
+    ARK reads their usage. Any failure leaves the CLI as it was, uncapped.
+    """
+    cap = int(os.environ.get("ARK_MAX_OUTPUT_TOKENS", "32768") or 0)
+    if cap <= 0:
+        return
+    persist = code_dir.resolve() / ".openhands"
+    home = Path(env.get("HOME") or Path.home())
+    env["OPENHANDS_PERSISTENCE_DIR"] = str(persist)
+    env.setdefault("OPENHANDS_CONVERSATIONS_DIR", str(home / ".openhands" / "conversations"))
+    settings, marker = persist / "agent_settings.json", persist / ".ark_output_cap"
+    stamp = f"{model}|{cap}"
+    try:
+        if settings.exists() and marker.read_text() == stamp:
+            return
+    except OSError:
+        pass
+    from ark.engines.sdk_runtime import openhands_python
+    interp = openhands_python()
+    if not interp:
+        return
+    try:
+        out = subprocess.run([interp, "-I", "-c", _GEN_SETTINGS, model, str(cap)],
+                             capture_output=True, text=True, timeout=180,
+                             env={**{k: v for k, v in env.items() if k != "LLM_API_KEY"},
+                                  "OPENHANDS_SUPPRESS_BANNER": "1"})
+        spec = json.loads(out.stdout)
+        if (spec.get("llm") or {}).get("max_output_tokens") != cap:
+            return
+        persist.mkdir(parents=True, exist_ok=True)
+        settings.write_text(json.dumps(spec))
+        marker.write_text(stamp)
+    except Exception:
+        return
 
 
 def get_cli_for_model(model: str, variant: Optional[str] = None) -> AgentCLI:
