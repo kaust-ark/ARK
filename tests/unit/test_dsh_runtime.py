@@ -93,17 +93,26 @@ def test_providers_the_webapp_offers_route_without_a_base_url(monkeypatch):
     from ark.engines.dsh_runtime import route
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.delenv("ARK_DSH_API", raising=False)
+    # Only the OpenRouter route is verified against a live endpoint; the other
+    # three are pi-ai's documented protocol for that provider.
     assert route("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free") == (
         "openai-completions", "https://openrouter.ai/api/v1")
+    assert route("anthropic/claude-sonnet-5-5") == (
+        "anthropic-messages", "https://api.anthropic.com")
+    assert route("gemini/gemini-2.5-flash") == (
+        "openai-completions", "https://generativelanguage.googleapis.com/v1beta/openai")
     assert route("deepseek/deepseek-v4-pro") == ("", "")
+    # A provider with no route says which variable to set, instead of failing
+    # the first agent call minutes into the run.
     with pytest.raises(ValueError, match="ARK_DSH_API"):
-        route("anthropic/claude-sonnet-5-5")
-    with pytest.raises(ValueError, match="LLM_BASE_URL"):
-        route("openai/ext/model")
+        route("hosted_vllm/qwen3-32b")
+    with pytest.raises(ValueError, match="provider/model"):
+        route("bare-model-name")
     monkeypatch.setenv("LLM_BASE_URL", "http://gw.invalid/v1")
-    assert route("openai/ext/model") == ("openai-completions", "http://gw.invalid/v1")
     assert route("openrouter/vendor/m") == ("openai-completions", "http://gw.invalid/v1")
     assert route("deepseek/deepseek-v4-pro") == ("", "http://gw.invalid/v1")
+    monkeypatch.setenv("ARK_DSH_API", "openai-completions")
+    assert route("hosted_vllm/qwen3-32b") == ("openai-completions", "http://gw.invalid/v1")
 
 
 def test_openrouter_models_get_the_window_and_output_cap_openrouter_lists(monkeypatch):
@@ -506,6 +515,9 @@ def test_dsh_usage_is_priced_explicitly_or_left_unknown(monkeypatch):
     assert cost == pytest.approx(0.137 + 2 * 0.00274 + 0.0548)
     monkeypatch.delenv("ARK_DSH_PRICE_PER_M")
     assert price("openai/no-such-model-anywhere", usage) == (None, None)
+    # A free run used to read "cost unknown" on every call: litellm knows no
+    # ':free' id, and the answer for one is not unknown.
+    assert price("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", usage) == (0.0, "free tier")
 
 
 def test_parsed_usage_carries_the_price(monkeypatch):

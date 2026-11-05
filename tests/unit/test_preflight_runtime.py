@@ -21,7 +21,7 @@ def _pipe(model="openai/ext/model"):
 @pytest.fixture
 def clean_env(monkeypatch):
     for k in ("ARK_AGENT_RUNTIME", "ARK_DSH_PYTHON", "ARK_DSH_API", "OPENAI_API_KEY", "OPENROUTER_API_KEY",
-              "ANTHROPIC_API_KEY", "LLM_API_KEY", "LLM_BASE_URL"):
+              "ANTHROPIC_API_KEY", "HOSTED_VLLM_API_KEY", "LLM_API_KEY", "LLM_BASE_URL"):
         monkeypatch.delenv(k, raising=False)
     # Only the OpenHands CLI is missing; the LaTeX tools checked later exist.
     monkeypatch.setattr("shutil.which", lambda name: None if name == "openhands" else f"/usr/bin/{name}")
@@ -53,8 +53,8 @@ def test_a_model_dsh_cannot_reach_stops_the_run_at_startup(clean_env, tmp_path):
     clean_env.setenv("ARK_AGENT_RUNTIME", "dsh")
     clean_env.setenv("ARK_DSH_PYTHON", _fake_sdk(tmp_path, "0.2.1rc2 0.2.1rc2"))
     clean_env.delenv("ARK_DSH_API", raising=False)
-    clean_env.setenv("ANTHROPIC_API_KEY", "k")
-    p = _pipe("anthropic/claude-sonnet-5-5")
+    clean_env.setenv("HOSTED_VLLM_API_KEY", "k")
+    p = _pipe("hosted_vllm/qwen3-32b")
     with pytest.raises(SystemExit):
         p.check_dependencies()
     assert any("cannot run model" in m and "ARK_DSH_API" in m for _, m in p.logs)

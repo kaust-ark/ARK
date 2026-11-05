@@ -56,6 +56,10 @@ def price(model: str, usage: dict):
     if explicit:
         p_in, p_cache, p_out = (float(x) for x in explicit.split(","))
         return (uncached * p_in + cached * p_cache + out * p_out) / 1e6, "ARK_DSH_PRICE_PER_M"
+    # A ':free' OpenRouter slug bills nothing. litellm does not know these ids,
+    # so every call of a free run read "cost unknown" instead of $0.0000.
+    if model.startswith("openrouter/") and model.endswith(":free"):
+        return 0.0, "free tier"
     try:
         import litellm
         prompt, completion = litellm.cost_per_token(
@@ -66,11 +70,17 @@ def price(model: str, usage: dict):
         return None, None
 
 
-# Providers reached with no LLM_BASE_URL set, at the URL pi-ai's own catalogue
-# gives them (the webapp sets no base URL; OpenHands leaves it to litellm).
-# DeepSeek has its native route. Any other provider needs ARK_DSH_API and
-# LLM_BASE_URL.
-_ROUTES = {"openrouter": ("openai-completions", "https://openrouter.ai/api/v1")}
+# Providers reached with no LLM_BASE_URL set (the webapp sets none; OpenHands
+# leaves the endpoint to litellm). DeepSeek has its native route; any provider
+# not listed here needs ARK_DSH_API and LLM_BASE_URL. pi-ai speaks only the
+# three protocols in _PROTOCOLS, so Gemini is reached through Google's
+# OpenAI-compatible endpoint rather than its own API.
+_ROUTES = {
+    "openrouter": ("openai-completions", "https://openrouter.ai/api/v1"),
+    "anthropic": ("anthropic-messages", "https://api.anthropic.com"),
+    "openai": ("openai-completions", "https://api.openai.com/v1"),
+    "gemini": ("openai-completions", "https://generativelanguage.googleapis.com/v1beta/openai"),
+}
 _PROTOCOLS = ("openai-completions", "openai-responses", "anthropic-messages")
 
 
@@ -89,7 +99,6 @@ def route(model: str) -> tuple:
     if not protocol and prefix in _ROUTES:
         protocol, default = _ROUTES[prefix]
         endpoint = endpoint or default
-    protocol = protocol or ("openai-completions" if prefix == "openai" else "")
     if protocol not in _PROTOCOLS:
         raise ValueError(f"DSH has no route for '{prefix}' models; set ARK_DSH_API to the "
                          f"gateway's API protocol ({', '.join(_PROTOCOLS)})")
