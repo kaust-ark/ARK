@@ -296,6 +296,14 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     else:
         rep.findings.append(Finding("figures_not_crushed", "pass", "soft"))
 
+    # ── result numbers come from result files ─────────────────────────────
+    try:
+        from ark.provenance import audit, verdict
+        ok, detail = verdict(audit(tex, project_dir))
+        rep.findings.append(Finding("numbers_traced", "pass" if ok else "violated", "hard", detail))
+    except Exception as e:
+        rep.findings.append(Finding("numbers_traced", "skipped", "hard", f"audit failed: {e}"))
+
     # ── no internal-stack credits in the acknowledgments ─────────────────
     ack = _ack_block(tex)
     m = _STACK_LEAK_RE.search(ack) if ack else None
