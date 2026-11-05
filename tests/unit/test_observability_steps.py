@@ -181,3 +181,40 @@ def test_steplogger_redacts_human_line(tmp_path):
                      "action": {"kind": "ExecuteBashAction", "command": "curl -H sk-leakme123 x"}}))
     assert seen and "sk-leakme123" not in seen[0][0]
     assert "***" in seen[0][0]
+
+
+# ── the status icon is not printed twice ───────────────────────────
+
+def test_an_error_step_is_not_prefixed_with_two_crosses(tmp_path):
+    """log_step already renders the status icon; ✗ came out twice.
+
+    Measured on two cheap-test runs: 14 lines on DSH and 18 on OpenHands read
+    "✗ ✗ Error: cannot read ...". Every refused tool call, on the one surface
+    the user watches.
+    """
+    from ark.ui import Icons
+    lines = []
+    log = StepLogger(steps_path=tmp_path / "steps.jsonl",
+                     log_step_fn=lambda msg, status: lines.append((msg, status)))
+    log.emit(parse_line(ev({"kind": "DSHEvent", "payload": {"event": {
+        "type": "tool/result",
+        "data": {"message": {"isError": True,
+                             "content": [{"type": "text",
+                                          "text": 'Error: cannot read "idea.md": not found'}]}},
+    }}})))
+    assert len(lines) == 1
+    msg, status = lines[0]
+    assert status == "error"
+    assert not msg.startswith(Icons.ERROR)
+    assert msg.startswith("Error: cannot read")
+
+
+def test_a_command_step_keeps_its_own_glyph(tmp_path):
+    lines = []
+    log = StepLogger(steps_path=tmp_path / "steps.jsonl",
+                     log_step_fn=lambda msg, status: lines.append((msg, status)))
+    log.emit(parse_line(ev({"kind": "ActionEvent",
+                            "action": {"kind": "ExecuteBashAction", "command": "ls"}})))
+    msg, status = lines[0]
+    assert status == "progress"
+    assert msg.startswith("$ ")      # the arrow comes from the caller

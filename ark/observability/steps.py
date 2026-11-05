@@ -249,7 +249,12 @@ class StepLogger:
             status = "error" if evt.type == "error" else (
                 "success" if evt.type == "finish" else "progress")
             if self.log_step_fn:
-                self.log_step_fn(f"{icon} {summary}", status)
+                # The caller prefixes the status icon. For an error that is the
+                # same ✗, so every refused tool call read "✗ ✗ Error: ...".
+                from ark.ui import Icons
+                if icon == Icons.for_step(status):
+                    icon = ""
+                self.log_step_fn(f"{icon} {summary}".lstrip(), status)
 
     def _should_show(self, step_type: str) -> bool:
         return step_type in _VERBOSITY_TYPES.get(self.verbosity, _VERBOSITY_TYPES["normal"])
