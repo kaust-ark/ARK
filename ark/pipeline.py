@@ -4017,9 +4017,22 @@ provide the title.
             else:
                 tag_prefix = "matplotlib statistical plot"
 
+            # Legibility: a vector figure whose own labels overprint is
+            # unreadable on the page, and no structural check sees it. Say so
+            # here, where the agent that can regenerate the plot is looking.
+            overprint = ""
+            if f.suffix == ".pdf":
+                try:
+                    from ark.figure_legibility import describe
+                    what = describe(f)
+                    if what:
+                        overprint = f"; ⚠ {what} — REGENERATE with room for them"
+                except Exception:
+                    pass
+
             lines.append(
                 f"- {f.name} ({size_kb}KB, {tag_prefix}; "
-                f"placement={placement} → use {latex_env}; {scale_note})"
+                f"placement={placement} → use {latex_env}; {scale_note}{overprint})"
             )
 
         if missing_ai_figs:

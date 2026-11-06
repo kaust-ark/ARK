@@ -338,3 +338,40 @@ def test_a_real_paper_is_not_mistaken_for_a_skeleton(tmp_path):
     p = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
 
     assert _finding(evaluate(p, venue_pages=2), "pdf_exists").status == "pass"
+
+
+def _chart(path: Path, labels):
+    doc = fitz.open()
+    page = doc.new_page(width=240, height=160)
+    for text, x, y in labels:
+        page.insert_text((x, y), text, fontsize=9)
+    doc.save(str(path))
+    doc.close()
+
+
+CHART_TEX = GOOD_TEX.replace("Body \\cite{a}.",
+                           "Body \\cite{a}.\\includegraphics{figures/chart.pdf}")
+
+
+def test_a_figure_whose_labels_overprint_is_reported_at_delivery(tmp_path):
+    """Two charts shipped reading "RaStandardized"; every other check passed.
+
+    This is the only check that runs after the last review, which is when the
+    writer's reply to a review comment regenerated them.
+    """
+    p = _project(tmp_path, CHART_TEX, GOOD_PDF_TEXT)
+    _chart(p / "paper" / "figures" / "chart.pdf",
+           [("Raw", 40, 150), ("Standardized", 44, 150)])
+
+    f = _finding(evaluate(p), "figures_legible")
+
+    assert f.status == "violated" and f.severity == "soft"
+    assert "chart.pdf" in f.detail and "Standardized" in f.detail
+
+
+def test_a_figure_whose_labels_have_room_passes(tmp_path):
+    p = _project(tmp_path, CHART_TEX, GOOD_PDF_TEXT)
+    _chart(p / "paper" / "figures" / "chart.pdf",
+           [("Raw", 40, 150), ("Standardized", 110, 150)])
+
+    assert _finding(evaluate(p), "figures_legible").status == "pass"

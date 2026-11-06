@@ -1776,6 +1776,19 @@ writer agent will pick those up in a later task.
 
                 if result.returncode == 0:
                     self.log_step("Figures regenerated successfully", "success")
+                    # This is the last time anything touches the figures, and
+                    # on a single-iteration run no reviewer sees them again.
+                    # Say it in the live log rather than let it reach the PDF
+                    # silently; the same note reaches the next agent through
+                    # the Available Figures block.
+                    try:
+                        from ark.figure_legibility import describe
+                        for fig in sorted(self.figures_dir.glob("*.pdf")):
+                            what = describe(fig)
+                            if what:
+                                self.log_step(f"{fig.name}: {what}", "warning")
+                    except Exception:
+                        pass
                     self.compile_latex()
                 else:
                     self.log_step(f"Figure generation failed: {result.stderr[:200]}", "error")

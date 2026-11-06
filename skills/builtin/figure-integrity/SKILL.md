@@ -72,6 +72,40 @@ Figures and tables are **protected zones** during page compression or expansion:
 - You must NOT **regenerate the figure with different values**
 - You must NOT **remove data points, bars, or table rows** to make it smaller
 
+## Labels Must Not Overprint
+
+A figure saved at its intended print size is roughly **3.3 inches wide** in a
+two-column template. matplotlib will happily draw labels on top of one another
+at that width and report no error, so the script has to leave them room. A
+real paper shipped two charts whose x-axis read `RaStandardized` and
+`PlannAdtualActual max_iter max_iter` — both were the right size, inserted at
+natural width, and traced to the data. They were simply unreadable.
+
+When writing or regenerating a plotting script:
+
+- **Count the characters before you choose a figsize.** Category labels on a
+  shared axis need about 0.09 in per character at 9 pt. Three labels of
+  "Actual max_iter (scaled)" will not fit across 3.3 in — the script must
+  shorten them, rotate them, or ask for a wider figure.
+- **Prefer shorter text to smaller fonts.** `Raw` / `Scaled` beats
+  `Actual max_iter (raw)` / `Actual max_iter (scaled)` at 6 pt; never go below
+  the template's minimum font size to make words fit.
+- **Rotate rather than shrink** when the text genuinely cannot be shortened:
+  `plt.xticks(rotation=30, ha="right")`.
+- **Give a wide chart the full page**: set `placement` to `full_width` and use
+  `\begin{figure*}` instead of squeezing it into one column.
+- **Use `constrained_layout=True`** (or call `fig.tight_layout()`) so axis
+  titles and value labels are not clipped at the figure edge.
+- **Value labels need headroom.** A bar annotated at its own top is clipped by
+  the axes; raise the y-limit or place the label inside the bar.
+- On a log axis, consecutive decade ticks (`10⁰`, `10²`) collide on a narrow
+  panel. Thin them with `ax.xaxis.set_major_locator(LogLocator(numticks=3))`.
+
+This is checked automatically: `figures_legible` in the delivery contract
+measures the overlap of the figure's own text boxes, and the
+`## Available Figures` block in your task marks any figure whose labels
+overprint. A figure flagged there must be regenerated, not resized in LaTeX.
+
 ## After Any Figure Modification
 
 1. **Spot-check values.** Pick 2-3 numbers from the figure and verify them against the source file.

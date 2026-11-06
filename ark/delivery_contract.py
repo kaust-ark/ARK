@@ -353,6 +353,33 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     else:
         rep.findings.append(Finding("figures_not_crushed", "pass", "soft"))
 
+    # ── a figure's own labels do not overprint ────────────────────────────
+    # Size and placement were already checked; legibility was not. A run
+    # delivered two charts reading "RaStandardized" and
+    # "PlannAdtualActual max_iter max_iter", and every other figure check
+    # passed on them. This runs at pre-delivery, which is the only moment
+    # after the last review that still sees the figures the reader will get:
+    # the writer's reply to a review comment regenerated both of those 19
+    # minutes after the last page image anyone looked at.
+    illegible = []
+    try:
+        from ark.figure_legibility import describe
+        for name in sorted({Path(g).name for g in _GRAPHIC_RE.findall(tex)}):
+            fp = figs_dir / name
+            if fp.suffix == ".pdf" and fp.exists():
+                what = describe(fp)
+                if what:
+                    illegible.append(f"{name} ({what})")
+    except Exception:
+        pass
+    if illegible:
+        rep.findings.append(Finding(
+            "figures_legible", "violated", "soft",
+            f"{'; '.join(illegible[:3])} — give the labels room "
+            f"(larger figsize, shorter text, or rotate them)"))
+    else:
+        rep.findings.append(Finding("figures_legible", "pass", "soft"))
+
     # ── nothing lost after the last review ────────────────────────────────
     # The last iteration's edits are never reviewed (8 of 10 production runs
     # shipped such edits). They deleted 527e025d's appendix and left dangling
