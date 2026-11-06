@@ -35,6 +35,18 @@ from pathlib import Path
 # overprint. Measured, not guessed: see the calibration in the module docstring.
 OVERLAP_RATIO = 0.25
 
+# Two labels sharing a baseline collide as soon as they overlap horizontally at
+# all, long before either covers a quarter of the other. "Standardized" and
+# "Raw (uncensored)" ran into each other by 2.8 pt — 5% of an area, invisible
+# to the ratio, plainly broken on the page. Measured over the same figures:
+#
+#     touching   -19.49  -2.98  -2.76        (three defective tick rows)
+#     fine        +0.08  +6.40  +20.28       (two clean figures)
+#
+# and every +0.08 is a log tick's mantissa beside its own exponent, which is
+# why the rule is "overlapping", not "close". Zero is inside the gap.
+SHARED_BASELINE = 0.6   # vertical overlap, as a fraction of the shorter box
+
 # How many colliding pairs to name. Four is enough to recognise the figure.
 MAX_REPORTED = 4
 
@@ -77,7 +89,13 @@ def collisions(pdf: Path, ratio: float = OVERLAP_RATIO) -> list:
         if smaller <= 0:
             continue
         share = inter.get_area() / smaller
-        if share >= ratio:
+        # Two labels on one baseline — a tick row, a legend — are broken the
+        # moment they overlap sideways, whatever fraction of an area that is.
+        side_by_side = (
+            inter.height > SHARED_BASELINE * min(r1.height, r2.height)
+            and inter.width > 0
+        )
+        if share >= ratio or side_by_side:
             found.append((t1, t2, round(share, 2)))
     found.sort(key=lambda row: -row[2])
     return found

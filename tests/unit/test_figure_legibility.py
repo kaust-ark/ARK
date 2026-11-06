@@ -82,3 +82,44 @@ def test_the_description_names_the_labels_and_counts_the_rest(tmp_path):
     text = describe(f)
 
     assert "label0" in text and "more)" in text
+
+
+def test_tick_labels_that_run_into_each_other_sideways_are_caught(tmp_path):
+    """"Standardized" and "Raw (uncensored)" overlapped by 2.8 pt on one row.
+
+    That is 5% of either box, far under the area threshold, and plainly broken
+    on the page. Two labels sharing a baseline collide as soon as they meet.
+    """
+    # The sizes differ only to keep these two as separate spans: PyMuPDF
+    # merges same-size neighbours on one baseline into a single run, while
+    # matplotlib emits a text object per tick, which is what the real figure
+    # had.
+    doc = fitz.open()
+    page = doc.new_page(width=240, height=160)
+    page.insert_text((20, 150), "Standardized", fontsize=9)
+    page.insert_text((66, 150), "Raw (uncensored)", fontsize=8)
+    doc.save(str(tmp_path / "touch.pdf"))
+    doc.close()
+
+    rows = collisions(tmp_path / "touch.pdf")
+
+    assert rows, "labels running into each other were not reported"
+    assert {rows[0][0], rows[0][1]} == {"Standardized", "Raw (uncensored)"}
+    assert rows[0][2] < 0.25, "this pair is below the area threshold by design"
+
+
+def test_a_log_tick_beside_its_own_exponent_is_not_a_collision(tmp_path):
+    """`10` and its superscript `2` sit 0.08 pt apart in every clean figure.
+
+    They share a baseline band, so the shared-baseline rule has to leave them
+    alone — which it does, because adjacent is not overlapping.
+    """
+    doc = fitz.open()
+    page = doc.new_page(width=240, height=160)
+    page.insert_text((40, 150), "10", fontsize=9)
+    # x = the mantissa's right edge + the 0.08 pt measured in the real figures
+    page.insert_text((50.09, 145), "2", fontsize=6)
+    doc.save(str(tmp_path / "log.pdf"))
+    doc.close()
+
+    assert collisions(tmp_path / "log.pdf") == []
