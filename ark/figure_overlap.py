@@ -65,6 +65,11 @@ def detect_overlaps_from_script(script_path: Path, figures_dir: Path,
     report_path = figures_dir / "overlap_report.json"
     wrapper = _build_detection_wrapper(script_path, report_path, figure_config)
 
+    # A report left by an earlier attempt must not be read as this one's
+    # result. The retry loop in `check_and_fix_figures` calls this function
+    # up to four times on the same figures_dir.
+    report_path.unlink(missing_ok=True)
+
     # Write wrapper to a temp file (avoids shell arg length limits)
     import tempfile
     wrapper_file = Path(tempfile.mktemp(suffix="_overlap_check.py"))
@@ -76,8 +81,9 @@ def detect_overlaps_from_script(script_path: Path, figures_dir: Path,
             cwd=str(script_path.parent),
             env={**__import__("os").environ, "MPLBACKEND": "Agg"},
         )
-        # Only treat as hard failure if no report was generated
-        # (warnings on stderr are normal for matplotlib)
+        # Warnings on stderr are normal for matplotlib, so the wrapper's exit
+        # code alone is not the verdict — the report is. But a run that wrote
+        # no report checked nothing, and has to say so: see below.
     except subprocess.TimeoutExpired:
         return {"figures": [], "summary": {"total": 0, "with_overlaps": 0},
                 "error": "Script timed out"}
@@ -87,12 +93,25 @@ def detect_overlaps_from_script(script_path: Path, figures_dir: Path,
     # Read the generated report
     if report_path.exists():
         try:
-            report = json.loads(report_path.read_text())
-            return report
-        except json.JSONDecodeError:
-            pass
+            return json.loads(report_path.read_text())
+        except json.JSONDecodeError as e:
+            return {"figures": [], "summary": {"total": 0, "with_overlaps": 0},
+                    "error": f"Unreadable overlap report: {e}"}
 
-    return {"figures": [], "summary": {"total": 0, "with_overlaps": 0}}
+    # No report: the wrapper died before savefig, so NOTHING was examined.
+    # Reporting that as zero figures with zero overlaps is how a gate that
+    # never ran came to read as a gate that passed — dsh6 ended on
+    # "No overlaps detected in 0 figures" one minute before delivery, and the
+    # cause (the script resolves its data paths against the project root, this
+    # wrapper runs it from scripts/) sat in the discarded stderr.
+    # Traceback caret rows ("     ^^^^^^") carry no information once the source
+    # line they point at is gone, and they are the last line more often than not.
+    said = [ln.strip() for ln in (result.stderr or "").splitlines()
+            if ln.strip() and set(ln.strip()) != {"^"}]
+    tail = " | ".join(said[-2:])
+    return {"figures": [], "summary": {"total": 0, "with_overlaps": 0},
+            "error": f"Detection wrapper wrote no report (exit {result.returncode})"
+                     + (f": {tail}" if tail else "")}
 
 
 def _build_detection_wrapper(script_path: Path, report_path: Path,
