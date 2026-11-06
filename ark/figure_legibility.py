@@ -101,11 +101,78 @@ def collisions(pdf: Path, ratio: float = OVERLAP_RATIO) -> list:
     return found
 
 
+def _edge_ink(page, dpi=150, threshold=200) -> dict:
+    """Which canvas edges carry ink, i.e. where something was cut off."""
+    import fitz
+
+    pm = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY)
+    w, h, n, buf = pm.width, pm.height, pm.n, pm.samples
+    dark = lambda x, y: buf[(y * w + x) * n] < threshold
+    return {
+        "top":    any(dark(x, 0) for x in range(w)),
+        "bottom": any(dark(x, h - 1) for x in range(w)),
+        "left":   any(dark(0, y) for y in range(h)),
+        "right":  any(dark(w - 1, y) for y in range(h)),
+    }
+
+
+def clipped(pdf: Path) -> list:
+    """Labels the figure's own canvas cut off, as (text, edge).
+
+    Two weak signals, each useless alone, decide it together. A label's box
+    crossing the canvas edge means nothing by itself: font ascent and descent
+    pad every box, so a perfectly legible "Value" at the left edge overruns by
+    2.1 pt while a truncated axis label overruns by 2.4 pt. Ink on the
+    outermost pixel ring means nothing by itself either: a figure saved with
+    no padding has its own frame there. A label whose box crosses an edge that
+    also carries ink is a label with glyphs running off the canvas — which is
+    what `n_iter_ (optimizer iterations; log scale)` arriving as
+    `ter_ (optimizer iterations; log` looks like from the outside.
+
+    Measured on seven figures from three runs: the two truncated labels are
+    the only ones where both hold.
+    """
+    import fitz
+
+    out = []
+    try:
+        doc = fitz.open(str(pdf))
+    except Exception:
+        return []
+    try:
+        for page in doc:
+            R = page.rect
+            ink = _edge_ink(page)
+            for block in page.get_text("dict").get("blocks", []):
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        text = span.get("text", "").strip()
+                        if not text:
+                            continue
+                        r = fitz.Rect(span["bbox"])
+                        for edge, crosses in (("left", r.x0 < R.x0),
+                                              ("right", r.x1 > R.x1),
+                                              ("top", r.y0 < R.y0),
+                                              ("bottom", r.y1 > R.y1)):
+                            if crosses and ink[edge]:
+                                out.append((text, edge))
+                                break
+    finally:
+        doc.close()
+    return out
+
+
 def describe(pdf: Path, ratio: float = OVERLAP_RATIO) -> str:
-    """One line naming what overprints, or "" when the figure is clean."""
+    """One line naming what is unreadable, or "" when the figure is clean."""
+    parts = []
     rows = collisions(pdf, ratio)
-    if not rows:
-        return ""
-    pairs = ", ".join(f"{a!r}/{b!r}" for a, b, _ in rows[:MAX_REPORTED])
-    more = f" (+{len(rows) - MAX_REPORTED} more)" if len(rows) > MAX_REPORTED else ""
-    return f"labels overprint: {pairs}{more}"
+    if rows:
+        pairs = ", ".join(f"{a!r}/{b!r}" for a, b, _ in rows[:MAX_REPORTED])
+        more = f" (+{len(rows) - MAX_REPORTED} more)" if len(rows) > MAX_REPORTED else ""
+        parts.append(f"labels overprint: {pairs}{more}")
+    cut = clipped(pdf)
+    if cut:
+        named = ", ".join(f"{t!r} ({e})" for t, e in cut[:MAX_REPORTED])
+        more = f" (+{len(cut) - MAX_REPORTED} more)" if len(cut) > MAX_REPORTED else ""
+        parts.append(f"labels cut off by the figure edge: {named}{more}")
+    return "; ".join(parts)

@@ -16,7 +16,7 @@ import pytest
 
 fitz = pytest.importorskip("fitz")
 
-from ark.figure_legibility import collisions, describe
+from ark.figure_legibility import clipped, collisions, describe
 
 
 def _figure(path: Path, labels, rotate=0):
@@ -123,3 +123,54 @@ def test_a_log_tick_beside_its_own_exponent_is_not_a_collision(tmp_path):
     doc.close()
 
     assert collisions(tmp_path / "log.pdf") == []
+
+
+def _edge_figure(path, text, x, y, size=9):
+    """A figure whose label is placed so its glyphs run off the canvas."""
+    doc = fitz.open()
+    page = doc.new_page(width=120, height=60)
+    page.insert_text((x, y), text, fontsize=size)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+def test_a_label_whose_glyphs_run_off_the_canvas_is_caught(tmp_path):
+    """`n_iter_ (optimizer iterations; log scale)` arrived as `ter_ (optimizer…`.
+
+    matplotlib drew it, the canvas cut it, and nothing downstream noticed:
+    the paper shipped with a y-axis nobody can read.
+    """
+    f = _edge_figure(tmp_path / "cut.pdf", "optimizer iterations; log scale", -40, 30)
+
+    cut = clipped(f)
+
+    assert cut, "a label running off the canvas was not reported"
+    assert cut[0][1] == "left"
+    assert "cut off by the figure edge" in describe(f)
+
+
+def test_a_label_that_merely_sits_at_the_edge_is_left_alone(tmp_path):
+    """"Value" overran its canvas box by 2.1 pt in a figure that is fine.
+
+    Font ascent and descent pad every box, so the box crossing an edge proves
+    nothing on its own — only ink on that same edge does.
+    """
+    f = _edge_figure(tmp_path / "edge.pdf", "Value", 2, 30)
+
+    assert clipped(f) == []
+    assert describe(f) == ""
+
+
+def test_both_kinds_of_unreadable_label_are_named_together(tmp_path):
+    doc = fitz.open()
+    page = doc.new_page(width=120, height=60)
+    page.insert_text((-40, 20), "optimizer iterations; log scale", fontsize=9)
+    page.insert_text((20, 50), "Standardized", fontsize=9)
+    page.insert_text((60, 50), "Raw (uncensored)", fontsize=8)
+    doc.save(str(tmp_path / "both.pdf"))
+    doc.close()
+
+    text = describe(tmp_path / "both.pdf")
+
+    assert "labels overprint" in text and "cut off by the figure edge" in text
