@@ -67,6 +67,25 @@ def test_files_newer_than_the_draft_are_not_evidence(tmp_path):
     assert audit(PAPER, root)["ratio"] == 1.0
 
 
+def test_a_number_printed_to_five_decimals_traces_to_the_file_holding_it(tmp_path):
+    # dsh4 printed accuracies as 0.93706/0.95804, both sitting in
+    # results/raw_results.jsonl, and the audit called them untraced: the
+    # evidence index stopped at four decimals while the lookup asked for five.
+    paper = PAPER.replace("recall is 0.9012.",
+                          "accuracies are 0.93706 and 0.95804, recall 0.9012.")
+    values = dict(REAL, acc_a=0.93706, acc_b=0.95804)
+    r = audit(paper, _project(tmp_path, values))
+    assert [u["number"] for u in r["untraced"]] == []
+    assert r["ratio"] == 1.0 and verdict(r)[0]
+
+
+def test_a_precision_the_paper_never_prints_cannot_excuse_a_number(tmp_path):
+    # The widened index must not become a wildcard: a rounded figure still has
+    # to appear in the evidence at the precision it was printed at.
+    r = audit(PAPER.replace("0.9012.", "0.9012, 0.93706."), _project(tmp_path, REAL))
+    assert "0.93706" in [u["number"] for u in r["untraced"]]
+
+
 def test_a_paper_without_numbers_has_nothing_to_trace(tmp_path):
     ok, detail = verdict(audit(r"\section{Results}A taxonomy, no measurements.", _project(tmp_path)))
     assert ok and "no result numbers" in detail

@@ -39,6 +39,10 @@ _STATE_FILES = ("auto_research/state/findings.yaml", "auto_research/state/findin
 
 MIN_STRONG = 5          # fewer strong numbers than this decides nothing
 MIN_TRACED = 0.8        # traced share of strong numbers below this is a finding
+# A number printed at more decimals than this is matched at this many. Both
+# sides of the lookup are clamped together, so the clamp can only excuse a
+# number, never accuse one.
+MAX_PLACES = 8
 
 
 def _strip(t: str) -> str:
@@ -112,7 +116,12 @@ def _files(root: Path, before, max_files=400, max_depth=3, max_bytes=2_000_000) 
     return out
 
 
-def _index(root: Path, before, budget=40_000_000) -> set:
+def _places(s: str) -> int:
+    """How many decimals the paper printed, which is the precision to match at."""
+    return min(len(s.split(".")[1]), MAX_PLACES) if "." in s else 0
+
+
+def _index(root: Path, before, places=(0, 1, 2, 3, 4), budget=40_000_000) -> set:
     idx, read = set(), 0
     for p in _files(root, before):
         try:
@@ -127,18 +136,25 @@ def _index(root: Path, before, budget=40_000_000) -> set:
                 v = float(m.group())
             except ValueError:
                 continue
-            for places in range(5):
-                idx.add(f"{v:.{places}f}")
-                idx.add(f"{v * 100:.{places}f}")
+            for n in places:
+                idx.add(f"{v:.{n}f}")
+                idx.add(f"{v * 100:.{n}f}")
     return idx
 
 
 def audit(tex: str, project_dir: Path, before: float | None = None) -> dict:
     """Trace the paper's numbers; `before` limits the evidence to older files."""
-    index = _index(Path(project_dir), before)
+    found = claims(tex)
+    # The index must hold the evidence at the precisions the paper prints at, or
+    # a number that IS in results/ cannot be found: dsh4 printed an accuracy as
+    # 0.93706 while the index stopped at four decimals, so a value sitting in
+    # results/raw_results.jsonl was reported as fabricated. The coarse places
+    # stay in: a figure rounded for the table still has to trace.
+    index = _index(Path(project_dir), before,
+                   sorted({0, 1, 2, 3, 4} | {_places(s) for _, s, _, _ in found}))
     rows = []
-    for where, s, pct, ctx in claims(tex):
-        places = len(s.split(".")[1]) if "." in s else 0
+    for where, s, pct, ctx in found:
+        places = _places(s)
         rows.append({"where": where, "number": s + ("%" if pct else ""), "context": ctx,
                      "strong": _strong(s), "traced": f"{float(s):.{places}f}" in index})
     strong = [r for r in rows if r["strong"]]
