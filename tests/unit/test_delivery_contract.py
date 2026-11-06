@@ -375,3 +375,32 @@ def test_a_figure_whose_labels_have_room_passes(tmp_path):
            [("Raw", 40, 150), ("Standardized", 110, 150)])
 
     assert _finding(evaluate(p), "figures_legible").status == "pass"
+
+
+PNG_TEX = GOOD_TEX.replace("Body \\cite{a}.",
+                           "Body \\cite{a}.\\includegraphics{figures/chart.png}")
+
+
+def test_a_defective_figure_included_as_a_bitmap_is_still_caught(tmp_path):
+    """matplotlib writes chart.pdf and chart.png; the paper may include either.
+
+    A real run included the .png. The raster has no text layer, so the check
+    skipped it and passed a figure whose labels overprint — the live log had
+    already said so. The vector twin beside it is the same figure.
+    """
+    p = _project(tmp_path, PNG_TEX, GOOD_PDF_TEXT)
+    figs = p / "paper" / "figures"
+    _chart(figs / "chart.pdf", [("Raw", 40, 150), ("Standardized", 44, 150)])
+    (figs / "chart.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 2000)
+
+    f = _finding(evaluate(p), "figures_legible")
+
+    assert f.status == "violated"
+    assert "chart.png" in f.detail and "Standardized" in f.detail
+
+
+def test_a_bitmap_with_no_vector_twin_is_not_an_error(tmp_path):
+    p = _project(tmp_path, PNG_TEX, GOOD_PDF_TEXT)
+    (p / "paper" / "figures" / "chart.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 2000)
+
+    assert _finding(evaluate(p), "figures_legible").status == "pass"

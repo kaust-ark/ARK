@@ -366,6 +366,14 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
         from ark.figure_legibility import describe
         for name in sorted({Path(g).name for g in _GRAPHIC_RE.findall(tex)}):
             fp = figs_dir / name
+            if fp.suffix != ".pdf":
+                # matplotlib writes the same figure as .pdf and .png, and the
+                # paper may include either. A raster has no text to measure,
+                # so fall back to its vector twin — otherwise including the
+                # .png hides the defect completely, which is how a figure
+                # whose labels overprint passed this check.
+                twin = figs_dir / (fp.stem + ".pdf")
+                fp = twin if twin.exists() else fp
             if fp.suffix == ".pdf" and fp.exists():
                 what = describe(fp)
                 if what:
