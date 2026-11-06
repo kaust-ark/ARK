@@ -1,14 +1,15 @@
-"""A figure whose own labels overprint is caught before it is delivered.
+"""A figure whose own labels are unreadable is caught before it is delivered.
 
-From a real run: two delivered charts read "RaStandardized" and
-"PlannAdtualActual max_iter max_iter", and every existing figure check passed
-on them — they were the right size, inserted at natural width, and every
-float was referenced. The reviewer was shown a page image carrying the first
-one and called the layout clean.
+From real runs: delivered charts read "RaStandardized",
+"PlannAdtualActual max_iter max_iter", "10⁰10²", and a y-axis title that
+arrived as "ter_ (optimizer iterations; log". Every existing figure check
+passed on them — they were the right size, inserted at natural width, and
+every float was referenced. The reviewer was shown a page image carrying one
+of them and called the layout clean.
 
-Thresholds here are the measured ones. Across four figures from two runs of
-the same project the overprinted pairs covered 0.31-0.72 of the smaller
-label and the clean ones never exceeded 0.14.
+Thresholds here are the measured ones, from fifteen figures across six runs of
+the same project, each one rendered and read by eye before being labelled.
+See the calibration table in `ark.figure_legibility`.
 """
 from pathlib import Path
 
@@ -16,7 +17,7 @@ import pytest
 
 fitz = pytest.importorskip("fitz")
 
-from ark.figure_legibility import clipped, collisions, describe
+from ark.figure_legibility import OVERLAP_RATIO, clipped, collisions, describe
 
 
 def _figure(path: Path, labels, rotate=0):
@@ -84,28 +85,36 @@ def test_the_description_names_the_labels_and_counts_the_rest(tmp_path):
     assert "label0" in text and "more)" in text
 
 
-def test_tick_labels_that_run_into_each_other_sideways_are_caught(tmp_path):
-    """"Standardized" and "Raw (uncensored)" overlapped by 2.8 pt on one row.
+def test_tick_labels_in_one_font_that_run_into_each_other_are_caught(tmp_path):
+    """The exact shape that escaped: one row, one font, one size, touching.
 
-    That is 5% of either box, far under the area threshold, and plainly broken
-    on the page. Two labels sharing a baseline collide as soon as they meet.
+    fig_n_iter_bar's x-axis reads "Raw featuresStandardized" — the two tick
+    labels overlap by 2.6 pt, which is 5% of either box and far under the area
+    threshold. Two labels sharing a baseline collide as soon as they meet, so
+    the shared-baseline rule is what has to catch this one.
+
+    It is also why this module reads text with `get_texttrace`. `get_text`
+    merges neighbours that share a baseline, a font and a size into a single
+    span, and two tick labels merge precisely when they have run together and
+    nothing separates them any more: the page plainly read
+    "Raw featuresStandardized" and `get_text` returned it as one span, so there
+    was no pair to measure and the worst collision in the corpus scored zero.
+    The earlier version of this test used two different font sizes, which kept
+    the spans apart and hid that for a full run.
     """
-    # The sizes differ only to keep these two as separate spans: PyMuPDF
-    # merges same-size neighbours on one baseline into a single run, while
-    # matplotlib emits a text object per tick, which is what the real figure
-    # had.
     doc = fitz.open()
     page = doc.new_page(width=240, height=160)
-    page.insert_text((20, 150), "Standardized", fontsize=9)
-    page.insert_text((66, 150), "Raw (uncensored)", fontsize=8)
+    page.insert_text((20, 150), "Raw features", fontsize=9)
+    # 2.6 pt into its neighbour, the overlap measured on the real figure
+    page.insert_text((70.4, 150), "Standardized", fontsize=9)
     doc.save(str(tmp_path / "touch.pdf"))
     doc.close()
 
     rows = collisions(tmp_path / "touch.pdf")
 
     assert rows, "labels running into each other were not reported"
-    assert {rows[0][0], rows[0][1]} == {"Standardized", "Raw (uncensored)"}
-    assert rows[0][2] < 0.25, "this pair is below the area threshold by design"
+    assert {rows[0][0], rows[0][1]} == {"Raw features", "Standardized"}
+    assert rows[0][2] < OVERLAP_RATIO, "this pair is below the area threshold by design"
 
 
 def test_a_log_tick_beside_its_own_exponent_is_not_a_collision(tmp_path):
@@ -151,10 +160,14 @@ def test_a_label_whose_glyphs_run_off_the_canvas_is_caught(tmp_path):
 
 
 def test_a_label_that_merely_sits_at_the_edge_is_left_alone(tmp_path):
-    """"Value" overran its canvas box by 2.1 pt in a figure that is fine.
+    """"Value" sitting against the left edge is legible, and must stay quiet.
 
-    Font ascent and descent pad every box, so the box crossing an edge proves
-    nothing on its own — only ink on that same edge does.
+    Under `get_text` its box overran the canvas by 2.1 pt against a truncated
+    label's 2.4 pt — indistinguishable, which is why this check once had to
+    corroborate clipping by rasterising the page and looking for ink on the
+    outermost pixel ring. `get_texttrace` reports the glyphs' own extent with
+    no ascent/descent padding, so this label does not leave the canvas at all
+    and the raster step is gone.
     """
     f = _edge_figure(tmp_path / "edge.pdf", "Value", 2, 30)
 
