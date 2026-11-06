@@ -229,9 +229,9 @@ reviewers notice. Size each figure to its content:
 
 ## Figure Placement
 
-The authoritative source for how a figure should be placed is
-`{FIGURES_DIR}/figure_manifest.json`. Each entry carries two fields the
-writer must honor:
+The authoritative source for how a figure should be placed is the
+**Available Figures** block included with your task. Each entry carries two
+fields the writer must honor:
 
 - `placement`:
   - `single_column` → `\begin{figure}[!htbp]`
@@ -256,10 +256,13 @@ writer must honor:
   figures in `\begin{figure*}` at `width=\textwidth`, or ask for a simpler
   regeneration; never solve density by shrinking harder.
 
-**Before writing any `\includegraphics`, read the manifest entry for
-that file and use the matching environment.** The `_list_available_figures`
-output included with your task already surfaces `placement` and
-`scalable` for every figure — use it rather than guessing.
+**Before writing any `\includegraphics`, find that file in the Available
+Figures block above and use the matching environment.** It surfaces
+`placement` and `scalable` for every figure — use it rather than guessing.
+Do not go looking for a manifest file: the block is built from
+`figure_manifest.json`, which the compile step writes only after the first
+draft exists, so reading it directly is a dead end on the draft you are
+writing now.
 
 Float placement options:
 - Single-column `figure`/`table`: use `[!htbp]` (here → top → bottom → float page)

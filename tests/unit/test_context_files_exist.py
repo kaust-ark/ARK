@@ -74,3 +74,26 @@ def test_the_results_directory_counts(tmp_path):
 
 def test_an_unreadable_project_dir_does_not_raise(tmp_path):
     assert context_files_section(tmp_path / "gone", deep_research=True) == ""
+
+
+def test_the_writer_is_pointed_at_the_block_its_task_carries_not_a_file_written_later():
+    """`figure_manifest.json` does not exist yet when the first draft is written.
+
+    The compile step registers the figures and writes it, and the compile step
+    runs after the writer. The prompt still called the file "the authoritative
+    source for how a figure should be placed", so the writer opened it and got
+    `not found` — 1 of the 12 refused tool calls in the post-fix DSH run. The
+    same `placement`/`scalable` data is inlined under `## Available Figures`
+    in every writer call, so the prompt names the block instead. Hedging the
+    sentence with "if it exists" was not an option: this file's own history
+    says a weak model reads the miss as a dead end either way.
+    """
+    import ark
+    root = Path(ark.__file__).parent
+    prompt = (root / "templates" / "agents" / "writer.prompt").read_text()
+
+    assert "Available Figures" in prompt
+    assert "{FIGURES_DIR}/figure_manifest.json" not in prompt
+
+    # The header the prompt names is the header the writer's task really has.
+    assert (root / "execution.py").read_text().count("## Available Figures") >= 2
