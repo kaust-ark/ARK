@@ -410,10 +410,11 @@ def test_a_bitmap_with_no_vector_twin_is_not_an_error(tmp_path):
     p = _project(tmp_path, PNG_TEX, GOOD_PDF_TEXT)
     (p / "paper" / "figures" / "chart.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 2000)
 
-    f = _finding(evaluate(p), "figures_legible")
+    rep = evaluate(p)                       # one report: `f` must be IN rep
+    f = _finding(rep, "figures_legible")
 
     assert f.status == "skipped"
-    assert f not in evaluate(p).violations
+    assert f not in rep.violations
 
 
 def test_a_legibility_scan_that_crashed_is_not_reported_as_clean(tmp_path, monkeypatch):
