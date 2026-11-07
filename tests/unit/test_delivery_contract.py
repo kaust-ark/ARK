@@ -400,7 +400,83 @@ def test_a_defective_figure_included_as_a_bitmap_is_still_caught(tmp_path):
 
 
 def test_a_bitmap_with_no_vector_twin_is_not_an_error(tmp_path):
+    """Still not an error — but not a pass either.
+
+    A raster with no vector twin has no text this check can measure, so nothing
+    was examined. Reporting "pass" there is a clean verdict on a figure nobody
+    looked at; `skipped` is what was earned. Not a violation, so it does not
+    change "all checks passed".
+    """
     p = _project(tmp_path, PNG_TEX, GOOD_PDF_TEXT)
     (p / "paper" / "figures" / "chart.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 2000)
 
-    assert _finding(evaluate(p), "figures_legible").status == "pass"
+    f = _finding(evaluate(p), "figures_legible")
+
+    assert f.status == "skipped"
+    assert f not in evaluate(p).violations
+
+
+def test_a_legibility_scan_that_crashed_is_not_reported_as_clean(tmp_path, monkeypatch):
+    """The whole scan sat inside one `except Exception: pass`.
+
+    A `describe()` that threw aborted the loop, left the collected list empty,
+    and this check reported `pass` — a clean verdict on figures nothing had
+    examined. Same hole `8b380e0` closed in the overlap gate.
+    """
+    p = _project(tmp_path, CHART_TEX, GOOD_PDF_TEXT)
+    _chart(p / "paper" / "figures" / "chart.pdf", [("Raw", 40, 150)])
+    import ark.figure_legibility as fl
+    monkeypatch.setattr(fl, "describe",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    f = _finding(evaluate(p), "figures_legible")
+
+    assert f.status != "pass", "a check that could not run claimed a clean result"
+    assert "NOT a clean result" in f.detail and "boom" in f.detail
+
+
+def test_one_figure_that_throws_does_not_blind_the_others(tmp_path, monkeypatch):
+    """Per figure, not per scan.
+
+    `bad.pdf` sorts before `chart.pdf`, so under the old single try/except it
+    aborted the loop and chart.pdf's overprint was never looked at — reported
+    as `pass`.
+    """
+    p = _project(tmp_path, CHART_TEX.replace(
+        "\\includegraphics{figures/chart.pdf}",
+        "\\includegraphics{figures/chart.pdf}\\includegraphics{figures/bad.pdf}"),
+        GOOD_PDF_TEXT)
+    _chart(p / "paper" / "figures" / "chart.pdf",
+           [("Raw", 40, 150), ("Standardized", 44, 150)])     # overprinted
+    _chart(p / "paper" / "figures" / "bad.pdf", [("x", 10, 10)])
+
+    import ark.figure_legibility as fl
+    real = fl.describe
+
+    def flaky(path, *a, **k):
+        if Path(path).name == "bad.pdf":
+            raise RuntimeError("boom")
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(fl, "describe", flaky)
+
+    f = _finding(evaluate(p), "figures_legible")
+
+    assert f.status == "violated"
+    assert "chart.pdf" in f.detail, "the other figure's defect was still found"
+
+
+def test_a_clean_result_says_what_was_actually_measured(tmp_path):
+    """`figures_legible: pass` with an empty detail reads as "the figures are
+    legible". What it earns is narrower, and dsh9 shipped a panel label struck
+    through by a legend handle that every part of this check passed."""
+    p = _project(tmp_path, CHART_TEX, GOOD_PDF_TEXT)
+    _chart(p / "paper" / "figures" / "chart.pdf",
+           [("Raw", 40, 150), ("Standardized", 110, 150)])
+
+    f = _finding(evaluate(p), "figures_legible")
+
+    assert f.status == "pass"
+    assert "1 figure(s)" in f.detail
+    # the blind spot is named in the finding itself, not only in a commit message
+    assert "text-vs-text only" in f.detail and "legend handle" in f.detail

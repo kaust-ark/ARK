@@ -361,9 +361,12 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     # after the last review that still sees the figures the reader will get:
     # the writer's reply to a review comment regenerated both of those 19
     # minutes after the last page image anyone looked at.
-    illegible = []
+    illegible, examined, failed = [], 0, []
     try:
         from ark.figure_legibility import describe
+    except Exception as e:                      # the scan never ran at all
+        describe, failed = None, [f"import: {e}"]
+    if describe is not None:
         for name in sorted({Path(g).name for g in _GRAPHIC_RE.findall(tex)}):
             fp = figs_dir / name
             if fp.suffix != ".pdf":
@@ -375,18 +378,41 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
                 twin = figs_dir / (fp.stem + ".pdf")
                 fp = twin if twin.exists() else fp
             if fp.suffix == ".pdf" and fp.exists():
-                what = describe(fp)
+                # Per figure, not per scan: one unreadable PDF used to abort
+                # the loop and leave `illegible` empty, which this check then
+                # reported as "pass". That is the same hole 8b380e0 closed in
+                # the overlap gate — a check that could not run claiming a
+                # clean result.
+                try:
+                    what = describe(fp)
+                except Exception as e:
+                    failed.append(f"{name}: {e}")
+                    continue
+                examined += 1
                 if what:
                     illegible.append(f"{name} ({what})")
-    except Exception:
-        pass
     if illegible:
         rep.findings.append(Finding(
             "figures_legible", "violated", "soft",
             f"{'; '.join(illegible[:3])} — give the labels room "
             f"(larger figsize, shorter text, or rotate them)"))
+    elif failed:
+        rep.findings.append(Finding(
+            "figures_legible", "violated", "soft",
+            f"could not be checked, so this is NOT a clean result: "
+            f"{'; '.join(failed[:3])}"
+            + (f" ({examined} other figure(s) examined and clean)" if examined else "")))
     else:
-        rep.findings.append(Finding("figures_legible", "pass", "soft"))
+        # Say what was measured. "figures_legible: pass" with an empty detail
+        # reads as "the figures are legible"; what this earns is narrower, and
+        # dsh9 shipped a panel label struck through by a legend handle that
+        # every part of it passed.
+        rep.findings.append(Finding(
+            "figures_legible", "pass" if examined else "skipped", "soft",
+            f"{examined} figure(s): no overlapping or clipped labels "
+            f"(text-vs-text only — a label struck through by a legend handle, "
+            f"data line or marker is not detected)" if examined
+            else "no vector figure included to check"))
 
     # ── nothing lost after the last review ────────────────────────────────
     # The last iteration's edits are never reviewed (8 of 10 production runs
