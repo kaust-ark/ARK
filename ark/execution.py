@@ -28,6 +28,26 @@ _STRUCTURE = {
 }
 
 
+def _digests(root: Path, rel_paths) -> dict:
+    """sha256 of each file, or None where it does not exist.
+
+    Used to tell whether an agent actually edited the files it was sent to
+    edit. Content, not mtime: a tool that rewrites a file byte-identically
+    has not changed it, and a tool that touches it without writing has not
+    either.
+    """
+    import hashlib
+
+    out = {}
+    for rel in rel_paths:
+        p = Path(root) / rel
+        try:
+            out[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+        except Exception:
+            out[rel] = None
+    return out
+
+
 def _structure_lost(before: str, after: str, ignore_labels=(), ignore_counts=None) -> list:
     """What a rewrite of main.tex removed: labels by name, the rest by count.
 
@@ -1480,6 +1500,89 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
         if remaining:
             self.log(f"[{context}] {remaining} overfull warnings remain after {MAX_ATTEMPTS} attempts", "WARN")
 
+    def _script_that_draws(self, fig_name: str) -> str:
+        """The plotting script that mentions this figure, else the default one.
+
+        A project may have more than one: dsh6's coder answered a figure task by
+        writing `scripts/plot_n_iter_bar.py` beside `create_paper_figures.py`,
+        and sending the coder at the wrong file wastes the attempt — its own
+        rules tell it to stop when the target function is not there.
+        """
+        default = self.config.get("create_figures_script", "scripts/create_paper_figures.py")
+        stem = Path(fig_name).stem
+        try:
+            for s in sorted((Path(self.code_dir) / "scripts").glob("*.py")):
+                if stem in s.read_text(errors="replace"):
+                    return f"scripts/{s.name}"
+        except Exception:
+            pass
+        return default
+
+    def _fix_illegible_figures(self, context: str = "pre-delivery") -> None:
+        """One attempt at a figure whose own labels cannot be read.
+
+        dsh8 delivered `fig_main_results` with the value label
+        `1000  (hit max_iter=1000)` printed across the `10³` y-tick. Everything
+        upstream worked: the overlap was found, Layer-1 tried and failed to fix
+        it, and the escalation file was written — addressed to *"the next
+        planner iteration"*, on a run with `--iterations 1`. Nothing read it,
+        the contract reported the violation, and the paper shipped with it.
+
+        So the last actor before delivery is here. One attempt: the coder knows
+        which labels collide and which script draws them, the figures are
+        regenerated and the paper recompiled. If the figure is still unreadable
+        afterwards, say so and deliver anyway — the contract is observe-only and
+        a second attempt on a model that just failed one is a worse use of the
+        run than an honest log line.
+        """
+        from ark.figure_legibility import describe
+
+        if getattr(self, "_quota_exhausted", False):
+            return
+        try:
+            broken = [(f.name, describe(f)) for f in sorted(self.figures_dir.glob("*.pdf"))]
+            broken = [(n, w) for n, w in broken if w]
+        except Exception as e:
+            self.log(f"Figure legibility check failed ({context}): {e}", "WARN")
+            return
+        if not broken:
+            return
+
+        self.log_step(f"[{context}] {len(broken)} figure(s) with unreadable labels — "
+                      f"sending the coder once", "progress")
+        tasks = []
+        for i, (name, what) in enumerate(broken, 1):
+            tasks.append({
+                "id": f"FIGLEG{i}",
+                "type": "FIGURE_CODE_REQUIRED",
+                "title": f"{name}: labels are unreadable on the page",
+                "description": (
+                    f"{name} is drawn at its print size and its own labels are "
+                    f"unreadable: {what}.\n\n"
+                    f"Give the labels room. Shorten the text, raise the y-limit so a "
+                    f"value label clears the data, rotate a crowded tick row "
+                    f"(`rotation=30, ha=\"right\"`), thin decade ticks with "
+                    f"`LogLocator(numticks=3)`, or widen the figure. Do not shrink the "
+                    f"font below the template minimum, and do not change any plotted "
+                    f"value — only the layout of the text."),
+                "actions": [{"agent": "coder",
+                             "target_file": self._script_that_draws(name),
+                             "modification": what}],
+            })
+        self._run_figure_code_tasks(tasks)
+
+        try:
+            still = [(f.name, describe(f)) for f in sorted(self.figures_dir.glob("*.pdf"))]
+            still = [(n, w) for n, w in still if w]
+        except Exception:
+            return
+        fixed = len(broken) - len(still)
+        if still:
+            self.log_step(f"[{context}] {fixed} fixed, {len(still)} still unreadable: "
+                          + "; ".join(f"{n} ({w})" for n, w in still), "warning")
+        else:
+            self.log_step(f"[{context}] all {fixed} figure(s) now legible", "success")
+
     def _collect_writing_tasks(self, issues: list) -> list:
         """Writer tasks for this plan: WRITING_ONLY issues, plus one write-up
         per finished experiment or literature issue."""
@@ -1530,58 +1633,14 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
                     self.log(f"  Added literature writing task: {issue.get('id')} - write literature content into LaTeX", "INFO")
         return writing_tasks
 
-    def _run_writing_phase(self, action_plan: dict, prior_context: str = ""):
-        """Execute writing phase for all writing tasks."""
-        issues = action_plan.get("issues", [])
-        issues = [i for i in issues if i is not None and isinstance(i, dict)]
+    def _run_figure_code_tasks(self, figure_tasks: list, prior_context: str = "") -> None:
+        """Send the coder at the plotting scripts, then regenerate and recompile.
 
-        latex_dir_name = self.config.get("latex_dir", "paper")
-        writing_tasks = self._collect_writing_tasks(issues)
-
-        if not writing_tasks:
-            self.log_step("No writing tasks to execute", "info")
-            return True
-
-        writing_tasks = [t for t in writing_tasks if t is not None]
-        task_list = []
-        for i, task in enumerate(writing_tasks, 1):
-            task_list.append(f"""
-### Task {i}: {task.get('id') or '?'} - {task.get('title') or ''}
-{task.get('description') or ''}
-""")
-
-        # Classify: FIGURE_CODE_REQUIRED vs WRITING_ONLY
-        figure_tasks = [i for i in issues if i.get("type") == "FIGURE_CODE_REQUIRED"]
-
-        # Phase 0.5: Nano Banana concept figures (if enabled)
-        if figure_tasks and self.config.get("figure_generation") == "nano_banana":
-            concept_tasks = []
-            matplotlib_tasks = []
-            for task in figure_tasks:
-                title = (task.get("title") or "").lower()
-                desc = (task.get("description") or "").lower()
-                is_concept = any(kw in title + " " + desc for kw in [
-                    "concept", "architecture", "overview", "mechanism",
-                    "illustration", "diagram", "workflow", "pipeline",
-                ])
-                if is_concept:
-                    concept_tasks.append(task)
-                else:
-                    matplotlib_tasks.append(task)
-
-            if concept_tasks:
-                self.log_step(f"Routing {len(concept_tasks)} concept figure tasks to Nano Banana", "progress")
-                n_generated = self._generate_nano_banana_figures()
-                if n_generated > 0:
-                    for task in concept_tasks:
-                        task["status"] = "completed"
-                else:
-                    self.log("Concept figure generation produced 0 figures, tasks remain pending", "WARN")
-                self._save_action_plan(action_plan)
-
-            # Only keep matplotlib tasks for the standard figure code path
-            figure_tasks = matplotlib_tasks
-
+        Phase 1 of the writing phase, and also the pre-delivery gate for a
+        figure whose labels are unreadable. It lives on its own because
+        `_run_writing_phase` returns early when there is no prose to write,
+        so the only way to run a figure task by itself was not to run it.
+        """
         # Phase 1: FIGURE_CODE_REQUIRED tasks
         if figure_tasks:
             self.log_step(f"Processing {len(figure_tasks)} FIGURE_CODE_REQUIRED tasks (modifying Python code)", "progress")
@@ -1690,6 +1749,8 @@ fall back to the guide's defaults.
                 else ""
             )
 
+            before = _digests(self.code_dir, target_files_all)
+
             self.run_agent("coder", f"""
 ## Task: Modify existing Python plotting scripts
 
@@ -1734,15 +1795,18 @@ writer agent will pick those up in a later task.
                 return False
 
             # Verify Python scripts were modified — across ALL target files,
-            # not just the last one from the loop.
+            # not just the last one from the loop. Compare the files' own
+            # contents: this used to ask `git diff --name-only`, which lists
+            # tracked files only, and the pipeline tracks `auto_research/state/*`
+            # and nothing else. `scripts/create_paper_figures.py` is untracked,
+            # so the answer was always "not modified" — on dsh6 and dsh8 the
+            # coder edited the script, compiled it and grepped the result, and
+            # was told it had changed nothing.
             self.log_step("Verifying Python code changes...", "progress")
             try:
-                result = subprocess.run(
-                    ["git", "diff", "--name-only"],
-                    capture_output=True, text=True, cwd=self.code_dir
-                )
-                changed = set(result.stdout.splitlines())
-                touched = sorted(target_files_all & changed)
+                after = _digests(self.code_dir, target_files_all)
+                touched = sorted(p for p in target_files_all
+                                 if before.get(p) != after.get(p))
                 if touched:
                     self.log_step(f"Python code modified: {', '.join(touched)}", "success")
                 else:
@@ -1794,6 +1858,61 @@ writer agent will pick those up in a later task.
                     self.log_step(f"Figure generation failed: {result.stderr[:200]}", "error")
             except Exception as e:
                 self.log_step(f"Figure generation error: {e}", "error")
+
+    def _run_writing_phase(self, action_plan: dict, prior_context: str = ""):
+        """Execute writing phase for all writing tasks."""
+        issues = action_plan.get("issues", [])
+        issues = [i for i in issues if i is not None and isinstance(i, dict)]
+
+        latex_dir_name = self.config.get("latex_dir", "paper")
+        writing_tasks = self._collect_writing_tasks(issues)
+
+        if not writing_tasks:
+            self.log_step("No writing tasks to execute", "info")
+            return True
+
+        writing_tasks = [t for t in writing_tasks if t is not None]
+        task_list = []
+        for i, task in enumerate(writing_tasks, 1):
+            task_list.append(f"""
+### Task {i}: {task.get('id') or '?'} - {task.get('title') or ''}
+{task.get('description') or ''}
+""")
+
+        # Classify: FIGURE_CODE_REQUIRED vs WRITING_ONLY
+        figure_tasks = [i for i in issues if i.get("type") == "FIGURE_CODE_REQUIRED"]
+
+        # Phase 0.5: Nano Banana concept figures (if enabled)
+        if figure_tasks and self.config.get("figure_generation") == "nano_banana":
+            concept_tasks = []
+            matplotlib_tasks = []
+            for task in figure_tasks:
+                title = (task.get("title") or "").lower()
+                desc = (task.get("description") or "").lower()
+                is_concept = any(kw in title + " " + desc for kw in [
+                    "concept", "architecture", "overview", "mechanism",
+                    "illustration", "diagram", "workflow", "pipeline",
+                ])
+                if is_concept:
+                    concept_tasks.append(task)
+                else:
+                    matplotlib_tasks.append(task)
+
+            if concept_tasks:
+                self.log_step(f"Routing {len(concept_tasks)} concept figure tasks to Nano Banana", "progress")
+                n_generated = self._generate_nano_banana_figures()
+                if n_generated > 0:
+                    for task in concept_tasks:
+                        task["status"] = "completed"
+                else:
+                    self.log("Concept figure generation produced 0 figures, tasks remain pending", "WARN")
+                self._save_action_plan(action_plan)
+
+            # Only keep matplotlib tasks for the standard figure code path
+            figure_tasks = matplotlib_tasks
+
+        # Phase 1: FIGURE_CODE_REQUIRED tasks
+        self._run_figure_code_tasks(figure_tasks, prior_context)
 
         # Phase 2: Writing tasks (split by priority)
         high_priority_tasks = []

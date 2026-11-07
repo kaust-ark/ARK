@@ -639,6 +639,11 @@ class PipelineMixin:
         # Before page fitting: integrating forgotten figures changes the page
         # count, so this must precede _enforce_page_count.
         self._ensure_figures_referenced()
+        # Before page fitting and before _fix_overfull: regenerating a figure
+        # changes its size, which changes the page count and can create a new
+        # overfull box. This is the last actor before delivery — nothing after
+        # it reads a figure.
+        self._fix_illegible_figures(context="pre-delivery")
         self._fix_overfull(context="pre-delivery")
         self._run_citation_verification()
         try:
