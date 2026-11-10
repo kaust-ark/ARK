@@ -1313,6 +1313,19 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             if lost:
                 self.log("Skipped end-matter reorder: it would have dropped "
                          + ", ".join(lost), "WARN")
+                # This function is the only place a pipeline run inserts the
+                # required Idea2Paper disclosure (`ensure_disclosure_in_tex`
+                # otherwise runs only from `ark audit --repair`), so returning
+                # here traded a soft layout violation for a hard missing-
+                # disclosure one. Apply the disclosure on its own.
+                try:
+                    from ark.delivery_contract import ensure_disclosure_in_tex
+                    if ensure_disclosure_in_tex(main_tex):
+                        self.log("Inserted the required Idea2Paper disclosure "
+                                 "without reordering", "INFO")
+                except Exception as e:
+                    self.log(f"Could not insert the Idea2Paper disclosure: {e}",
+                             "ERROR")
                 return
 
             if new_content != content:
@@ -1587,7 +1600,10 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
                              "target_file": self._script_that_draws(name),
                              "modification": what}],
             })
-        self._run_figure_code_tasks(tasks)
+        if self._run_figure_code_tasks(tasks) is False:
+            self.log_step(f"[{context}] quota exhausted during the figure repair — "
+                          f"{len(broken)} figure(s) left unreadable", "warning")
+            return
 
         still, unreadable = _scan()
         # "still unreadable" and "could not be re-checked" are the two things
@@ -1656,7 +1672,7 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
                     self.log(f"  Added literature writing task: {issue.get('id')} - write literature content into LaTeX", "INFO")
         return writing_tasks
 
-    def _run_figure_code_tasks(self, figure_tasks: list, prior_context: str = "") -> None:
+    def _run_figure_code_tasks(self, figure_tasks: list, prior_context: str = "") -> bool:
         """Send the coder at the plotting scripts, then regenerate and recompile.
 
         Phase 1 of the writing phase, and also the pre-delivery gate for a
@@ -1852,17 +1868,33 @@ writer agent will pick those up in a later task.
                 manifest = load_manifest(self.figures_dir)
                 backups = backup_protected(self.figures_dir, manifest)
 
-                result = subprocess.run(
-                    ["python", target_file],
-                    capture_output=True, text=True, timeout=120,
-                    cwd=self.code_dir
-                )
+                # Every script the coder was sent at, not `target_file` — the
+                # loop variable left over from the task loop above, i.e. the
+                # last task's script. That was harmless while every task
+                # defaulted to create_paper_figures.py; `_script_that_draws()`
+                # now returns a different script per figure, so two illegible
+                # figures drawn by two scripts meant one was edited and never
+                # re-run, then reported as "still unreadable".
+                ran, failures = [], []
+                for tf in sorted(target_files_all):
+                    r = subprocess.run(
+                        ["python", tf],
+                        capture_output=True, text=True, timeout=120,
+                        cwd=self.code_dir
+                    )
+                    (ran if r.returncode == 0 else failures).append(
+                        (tf, (r.stderr or "")[:200]))
 
                 # Restore any AI-generated figures overwritten by the script
                 restore_protected(self.figures_dir, backups, log_fn=self.log)
 
-                if result.returncode == 0:
-                    self.log_step("Figures regenerated successfully", "success")
+                for tf, err in failures:
+                    self.log_step(f"Figure generation failed for {tf}: {err}", "error")
+
+                if ran:
+                    self.log_step(
+                        f"Figures regenerated from {len(ran)}/{len(target_files_all)} "
+                        f"script(s)", "success" if not failures else "warning")
                     # This is the last time anything touches the figures, and
                     # on a single-iteration run no reviewer sees them again.
                     # Say it in the live log rather than let it reach the PDF
@@ -1880,9 +1912,14 @@ writer agent will pick those up in a later task.
                             self.log_step(f"{fig.name}: {what}", "warning")
                     self.compile_latex()
                 else:
-                    self.log_step(f"Figure generation failed: {result.stderr[:200]}", "error")
+                    # Each failure was already named above with its stderr.
+                    self.log_step(f"No figure script regenerated: all "
+                                  f"{len(failures)} failed", "error")
             except Exception as e:
                 self.log_step(f"Figure generation error: {e}", "error")
+        # True = "the quota did not stop us", not "every figure came out right";
+        # the caller's only decision is whether to spend the next writer call.
+        return True
 
     def _run_writing_phase(self, action_plan: dict, prior_context: str = ""):
         """Execute writing phase for all writing tasks."""
@@ -1936,8 +1973,12 @@ writer agent will pick those up in a later task.
             # Only keep matplotlib tasks for the standard figure code path
             figure_tasks = matplotlib_tasks
 
-        # Phase 1: FIGURE_CODE_REQUIRED tasks
-        self._run_figure_code_tasks(figure_tasks, prior_context)
+        # Phase 1: FIGURE_CODE_REQUIRED tasks. Its quota abort is this phase's
+        # abort: extracting Phase 1 into the helper left the `return False`
+        # inside it, so an exhausted quota logged "Aborting writing phase" and
+        # then fell through to Phase 2 and spent another writer call anyway.
+        if self._run_figure_code_tasks(figure_tasks, prior_context) is False:
+            return False
 
         # Phase 2: Writing tasks (split by priority)
         high_priority_tasks = []

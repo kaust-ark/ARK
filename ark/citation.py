@@ -371,7 +371,18 @@ def _http_get(url: str, headers: dict | None = None, timeout: int = _REQUEST_TIM
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError, TimeoutError):
+    except urllib.error.HTTPError as e:
+        # A status code is an answer: the host is up and said no. Only "come
+        # back later" (429) and a server-side fault (5xx) mean we could not
+        # ask. Treating a 404 as an outage let one hallucinated DOI or DBLP
+        # key — `doi.org/{doi}` and `dblp.org/rec/{key}.bib` are both plain
+        # GETs — put its host in `unavailable_sources()`, and the compiler
+        # then keeps the WHOLE bibliography as "unconfirmed, nothing dropped".
+        # A fabricated entry suppressed the step that exists to delete it.
+        if e.code == 429 or e.code >= 500:
+            _UNAVAILABLE.add(_host(url))
+        return None
+    except (urllib.error.URLError, OSError, TimeoutError):
         _UNAVAILABLE.add(_host(url))
         return None
 

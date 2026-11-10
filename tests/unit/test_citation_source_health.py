@@ -92,3 +92,40 @@ def test_nothing_is_dropped_while_a_source_is_silent(tmp_path, monkeypatch):
 def test_unconfirmable_entries_are_still_dropped_when_every_source_answered(tmp_path, monkeypatch):
     removed, _ = _verifier(tmp_path, monkeypatch, down=set())
     assert removed == ["lora"]
+
+
+def test_a_404_is_an_answer_not_an_outage(monkeypatch):
+    """One hallucinated DOI used to put doi.org in `unavailable_sources()`.
+
+    `_fetch_bibtex_from_doi` GETs `https://doi.org/{doi}` and
+    `_fetch_bibtex_from_dblp` GETs `dblp.org/rec/{key}.bib`. `_http_get`
+    marked the host down on any HTTPError, so a single bad identifier made
+    `unavailable_sources()` non-empty, and the compiler then kept the WHOLE
+    bibliography as "unconfirmed because the source did not answer, nothing
+    dropped" — a fabricated entry suppressing the step meant to delete it.
+    """
+    import urllib.error
+    from ark import citation as c
+
+    c._UNAVAILABLE.clear()
+
+    def raise_status(code):
+        def _open(req, timeout=None):
+            raise urllib.error.HTTPError(
+                req.full_url if hasattr(req, "full_url") else "u",
+                code, "no", {}, None)
+        return _open
+
+    monkeypatch.setattr(c.urllib.request, "urlopen", raise_status(404))
+    assert c._http_get("https://doi.org/10.1/nope") is None
+    assert c.unavailable_sources() == [], "a 404 must not mark the host down"
+
+    monkeypatch.setattr(c.urllib.request, "urlopen", raise_status(503))
+    assert c._http_get("https://doi.org/10.1/nope") is None
+    assert "doi.org" in c.unavailable_sources(), "a 5xx IS an outage"
+
+    c._UNAVAILABLE.clear()
+    monkeypatch.setattr(c.urllib.request, "urlopen", raise_status(429))
+    c._http_get("https://dblp.org/rec/x.bib")
+    assert "dblp.org" in c.unavailable_sources(), "429 means come back later"
+    c._UNAVAILABLE.clear()

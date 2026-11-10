@@ -180,5 +180,17 @@ def complete(
             **kwargs,
         )
         return (resp.choices[0].message.content or "").strip()
-    except Exception:
+    except Exception as e:
+        # Fail-soft, but not silent. `LLM_BASE_URL` is documented as applying
+        # to agent and light-helper calls alike, so a host that sets it for a
+        # local gateway without also setting ARK_UTILITY_MODEL posts the
+        # default utility model (e.g. `anthropic/...`) at that gateway; it is
+        # rejected, every helper returns "", and the reason was unrecoverable.
+        # Callers decide what an empty result means — this only records why.
+        import logging
+        logging.getLogger(__name__).warning(
+            "llm_lite.complete(%s) returned nothing: %s%s", model, e,
+            " [LLM_BASE_URL is set — if the gateway does not serve this model,"
+            " set ARK_UTILITY_MODEL to one it does]"
+            if os.environ.get("LLM_BASE_URL") and base_url is None else "")
         return ""

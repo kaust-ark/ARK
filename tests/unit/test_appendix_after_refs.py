@@ -239,3 +239,32 @@ def test_structure_guard_reports_losses():
     lost = _structure_lost(before, r"\section*{Acknowledgments}")
     assert any("s:a" in x for x in lost)
     assert "1 figures" in lost and "1 tables" in lost and "1 sections" in lost
+
+
+def test_the_disclosure_survives_a_skipped_reorder(stub, monkeypatch):
+    """The structure guard must not cost the paper its required disclosure.
+
+    `_ensure_clearpage_before_bibliography` is the only place a pipeline run
+    inserts the Idea2Paper disclosure — `ensure_disclosure_in_tex` otherwise
+    runs only from `ark audit --repair`. The guard added here returns before
+    `main_tex.write_text(...)`, so on any paper where the reorder would drop
+    structure the run shipped with no disclosure at all: a `hard` contract
+    violation traded for the `soft` one the guard was avoiding.
+    """
+    from ark.template_preprocess import ARK_ACK_TEXT
+
+    # A paper with endmatter to move but no disclosure yet.
+    _write_main(stub, _IEEE_APPENDICES)
+    assert "idea2paper.org" not in _read_main(stub)
+
+    # Force the guard: pretend the rewrite would drop something.
+    import ark.execution as ex
+    monkeypatch.setattr(ex, "_structure_lost", lambda a, b: ["1 sections"])
+
+    stub._ensure_clearpage_before_bibliography()
+
+    out = _read_main(stub)
+    assert "idea2paper.org" in out, "the reorder was skipped AND the disclosure lost"
+    assert ARK_ACK_TEXT in out
+    said = " ".join(str(c) for c in stub.log.call_args_list)
+    assert "Skipped end-matter reorder" in said

@@ -139,3 +139,68 @@ def test_a_project_with_no_figures_is_quiet(tmp_path):
 
     s._run_figure_code_tasks.assert_not_called()
     s.log_step.assert_not_called()
+
+
+def test_every_script_the_coder_edited_is_re_run(tmp_path):
+    """dsh6 had two plotting scripts; `_script_that_draws` returns one per
+    figure, and the regeneration ran only the LAST task's script.
+
+    `target_file` was the loop variable left over from the task loop, so with
+    two illegible figures drawn by two scripts the coder edited both and one
+    was never re-executed — then reported as "still unreadable", blaming the
+    model for a script that was never run.
+    """
+    figures = tmp_path / "paper" / "figures"
+    figures.mkdir(parents=True)
+    _figure(figures / "fig_a.pdf", OVERPRINTED)
+    _figure(figures / "fig_b.pdf", OVERPRINTED)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "plot_a.py").write_text(
+        "fig.savefig('paper/figures/fig_a.pdf')\n")
+    (tmp_path / "scripts" / "plot_b.py").write_text(
+        "fig.savefig('paper/figures/fig_b.pdf')\n")
+
+    s = _stub(figures, tmp_path)
+    s._script_that_draws = ExecutionMixin._script_that_draws.__get__(s)
+    s.run_agent = MagicMock(return_value="edited both scripts")
+    s.compile_latex = MagicMock()
+
+    ran = []
+
+    def fake_run(argv, **kw):
+        ran.append(argv[1])
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    import ark.execution as ex
+    orig = ex.subprocess.run
+    ex.subprocess.run = fake_run
+    try:
+        ExecutionMixin._run_figure_code_tasks.__get__(s)([
+            {"id": "F1", "type": "FIGURE_CODE_REQUIRED", "title": "a",
+             "description": "a", "actions": [
+                 {"agent": "coder", "target_file": "scripts/plot_a.py"}]},
+            {"id": "F2", "type": "FIGURE_CODE_REQUIRED", "title": "b",
+             "description": "b", "actions": [
+                 {"agent": "coder", "target_file": "scripts/plot_b.py"}]},
+        ])
+    finally:
+        ex.subprocess.run = orig
+
+    assert sorted(ran) == ["scripts/plot_a.py", "scripts/plot_b.py"], (
+        f"only re-ran {ran}")
+
+
+def test_an_exhausted_quota_in_phase_1_stops_the_writing_phase(tmp_path):
+    """Extracting Phase 1 into the helper left its `return False` inside, and
+    both callers discarded it: the log said "Aborting writing phase" and the
+    code went on to Phase 2 and spent another writer call."""
+    s, _ = _pipeline(tmp_path, OVERPRINTED)
+
+    assert ExecutionMixin._run_figure_code_tasks.__get__(s)([]) is True
+
+    s2, _ = _pipeline(tmp_path / "second", OVERPRINTED)
+    s2._quota_exhausted = True
+    _run(s2)
+    # the repair must not claim anything about legibility after a quota abort
+    said = " ".join(str(c) for c in s2.log_step.call_args_list)
+    assert "now legible" not in said
