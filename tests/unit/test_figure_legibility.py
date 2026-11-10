@@ -69,11 +69,24 @@ def test_a_figure_with_no_text_at_all_is_not_a_collision(tmp_path):
     assert collisions(f) == [] and describe(f) == ""
 
 
-def test_an_unreadable_file_is_not_this_check_s_call(tmp_path):
+def test_an_unreadable_file_is_reported_as_unreadable_not_as_clean(tmp_path):
+    """It is still not this check's call — which is why it must propagate.
+
+    This used to assert `collisions(broken) == []`, and the name said that an
+    unreadable file was "not this check's call". The return value could not
+    carry that distinction: every caller read `[]` as "no overlapping labels",
+    and `describe()` returned "" for a figure nobody had managed to open. The
+    only way to leave the decision to the caller is to let the caller see it.
+    """
     broken = tmp_path / "notapdf.pdf"
     broken.write_text("this is not a PDF")
 
-    assert collisions(broken) == []
+    with pytest.raises(Exception):
+        collisions(broken)
+    with pytest.raises(Exception):
+        clipped(broken)
+    with pytest.raises(Exception):
+        describe(broken)
 
 
 def test_the_description_names_the_labels_and_counts_the_rest(tmp_path):

@@ -500,6 +500,17 @@ def check_and_fix_figures(script_path: Path, figures_dir: Path,
             break
         _log("Auto-fixes applied, re-running script...")
         current_report = detect_overlaps_from_script(script_path, figures_dir, figure_config)
+        if current_report.get("error"):
+            # An error report carries no `summary`, so `with_overlaps` read 0
+            # and the next branch logged "All overlaps resolved". `apply_auto_fixes`
+            # is a regex rewriter measured making figures worse, so a script it
+            # breaks is the likely way in. Escalate: the coder must look,
+            # because this check no longer can.
+            _log(f"Re-run after auto-fix attempt {attempt} did not report "
+                 f"({current_report['error']}) — overlaps are UNKNOWN, not resolved",
+                 "WARN")
+            current_report["escalation_needed"] = True
+            return current_report
         remaining = current_report.get("summary", {}).get("with_overlaps", 0)
         if remaining == 0:
             _log(f"All overlaps resolved after auto-fix on attempt {attempt}")

@@ -1539,12 +1539,30 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
 
         if getattr(self, "_quota_exhausted", False):
             return
-        try:
-            broken = [(f.name, describe(f)) for f in sorted(self.figures_dir.glob("*.pdf"))]
-            broken = [(n, w) for n, w in broken if w]
-        except Exception as e:
-            self.log(f"Figure legibility check failed ({context}): {e}", "WARN")
-            return
+
+        def _scan():
+            """(illegible, unreadable) — per figure, never per scan.
+
+            One figure PyMuPDF cannot open used to abort the comprehension and
+            return, so a single bad file meant no figure got repaired and the
+            log said only that "the check failed". A file we could not read is
+            reported as exactly that, and the rest are still examined.
+            """
+            bad, unreadable = [], []
+            for f in sorted(self.figures_dir.glob("*.pdf")):
+                try:
+                    what = describe(f)
+                except Exception as e:
+                    unreadable.append((f.name, f"could not be read: {e}"))
+                    continue
+                if what:
+                    bad.append((f.name, what))
+            return bad, unreadable
+
+        broken, unreadable = _scan()
+        for name, why in unreadable:
+            self.log_step(f"[{context}] {name}: {why} — NOT checked for legibility",
+                          "warning")
         if not broken:
             return
 
@@ -1571,15 +1589,20 @@ After fixing, compile: cd {latex_dir} && pdflatex -interaction=nonstopmode main.
             })
         self._run_figure_code_tasks(tasks)
 
-        try:
-            still = [(f.name, describe(f)) for f in sorted(self.figures_dir.glob("*.pdf"))]
-            still = [(n, w) for n, w in still if w]
-        except Exception:
-            return
-        fixed = len(broken) - len(still)
+        still, unreadable = _scan()
+        # "still unreadable" and "could not be re-checked" are the two things
+        # this whole gate exists to tell apart, so they stay apart in the log.
+        outstanding = {n for n, _ in still} | {n for n, _ in unreadable}
+        fixed = len([n for n, _ in broken if n not in outstanding])
+        parts = []
         if still:
-            self.log_step(f"[{context}] {fixed} fixed, {len(still)} still unreadable: "
-                          + "; ".join(f"{n} ({w})" for n, w in still), "warning")
+            parts.append(f"{len(still)} still unreadable: "
+                         + "; ".join(f"{n} ({w})" for n, w in still))
+        if unreadable:
+            parts.append(f"{len(unreadable)} could NOT be re-checked: "
+                         + "; ".join(f"{n} ({w})" for n, w in unreadable))
+        if parts:
+            self.log_step(f"[{context}] {fixed} fixed, " + ", ".join(parts), "warning")
         else:
             self.log_step(f"[{context}] all {fixed} figure(s) now legible", "success")
 
@@ -1845,14 +1868,16 @@ writer agent will pick those up in a later task.
                     # Say it in the live log rather than let it reach the PDF
                     # silently; the same note reaches the next agent through
                     # the Available Figures block.
-                    try:
-                        from ark.figure_legibility import describe
-                        for fig in sorted(self.figures_dir.glob("*.pdf")):
+                    from ark.figure_legibility import describe
+                    for fig in sorted(self.figures_dir.glob("*.pdf")):
+                        # Per figure: a file that cannot be opened must not
+                        # silence the warning for the ones that can.
+                        try:
                             what = describe(fig)
-                            if what:
-                                self.log_step(f"{fig.name}: {what}", "warning")
-                    except Exception:
-                        pass
+                        except Exception as e:
+                            what = f"could not be read, so NOT checked: {e}"
+                        if what:
+                            self.log_step(f"{fig.name}: {what}", "warning")
                     self.compile_latex()
                 else:
                     self.log_step(f"Figure generation failed: {result.stderr[:200]}", "error")

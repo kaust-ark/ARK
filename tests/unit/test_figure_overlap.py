@@ -111,3 +111,45 @@ def test_a_script_that_does_plot_is_reported_without_an_error(tmp_path):
 
     assert "error" not in report, report.get("error")
     assert report["summary"]["total"] == 1
+
+
+def test_a_rerun_that_did_not_report_is_not_resolved_overlaps(tmp_path, monkeypatch):
+    """The in-loop re-run never checked `error`, so a broken re-run read clean.
+
+    The first detection checks `report["error"]` and bails. The re-run after
+    `apply_auto_fixes` did not: an error report carries no `summary`, so
+    `with_overlaps` defaulted to 0 and the very next line logged "All overlaps
+    resolved after auto-fix on attempt 1" and returned
+    `escalation_needed=False`. `apply_auto_fixes` is a regex rewriter this
+    branch documents as having turned one broken figure into two, so a script
+    it breaks is the realistic way in — the gate reports success precisely when
+    its own fixer destroyed the thing it was measuring.
+    """
+    from ark import figure_overlap as fo
+
+    script = tmp_path / "plot.py"
+    script.write_text("# plotting script\n")
+    figures = tmp_path / "figures"
+    figures.mkdir()
+
+    calls = []
+
+    def fake_detect(*a, **k):
+        calls.append(1)
+        if len(calls) == 1:                      # first pass: a real overlap
+            return {"summary": {"total": 1, "with_overlaps": 1},
+                    "figures": [{"name": "f.pdf", "has_overlaps": True,
+                                 "overlap_count": 1, "density": 0.3,
+                                 "suggestions": ["widen"]}]}
+        return {"error": "script failed: SyntaxError"}   # the fixer broke it
+
+    monkeypatch.setattr(fo, "detect_overlaps_from_script", fake_detect)
+    monkeypatch.setattr(fo, "apply_auto_fixes", lambda *a, **k: True)
+
+    said = []
+    report = fo.check_and_fix_figures(script, figures, log_fn=lambda m, l="INFO": said.append(m))
+
+    joined = " ".join(said)
+    assert "All overlaps resolved" not in joined
+    assert "UNKNOWN, not resolved" in joined
+    assert report["escalation_needed"] is True

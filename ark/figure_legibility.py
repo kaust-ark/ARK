@@ -125,11 +125,14 @@ def _drawn(pdf: Path) -> list:
 
 
 def collisions(pdf: Path, ratio: float = OVERLAP_RATIO) -> list:
-    """Label pairs that overprint, worst first, as (text, text, fraction)."""
-    try:
-        runs = _drawn(Path(pdf))
-    except Exception:
-        return []                      # unreadable figure is not this check's call
+    """Label pairs that overprint, worst first, as (text, text, fraction).
+
+    Raises whatever PyMuPDF raises for a file it cannot open. A figure this
+    check could not read is not a figure it found clean, and the only way to
+    leave that call to the caller is to let it see the failure: this used to
+    `return []`, which every caller then reported as "no overlapping labels".
+    """
+    runs = _drawn(Path(pdf))
     upright = [(t, r) for t, r, direction in runs if direction == (1, 0)]
     found = []
     for (t1, r1), (t2, r2) in itertools.combinations(upright, 2):
@@ -155,14 +158,13 @@ def clipped(pdf: Path, tolerance: float = EDGE_TOLERANCE) -> list:
     glyphs outside the canvas are simply never shown. What gives it away is the
     box: it starts 28 pt above the top edge and ends 14 pt below the bottom.
     """
+    runs = _drawn(Path(pdf))           # propagates, as in collisions()
+    import fitz
+    doc = fitz.open(str(pdf))
     try:
-        runs = _drawn(Path(pdf))
-        import fitz
-        doc = fitz.open(str(pdf))
         page_rect = doc[0].rect
+    finally:
         doc.close()
-    except Exception:
-        return []
     out = []
     for text, r, _ in runs:
         for edge, escape in (("left", page_rect.x0 - r.x0),

@@ -4027,13 +4027,15 @@ provide the title.
             # here, where the agent that can regenerate the plot is looking.
             overprint = ""
             if f.suffix == ".pdf":
+                from ark.figure_legibility import describe
                 try:
-                    from ark.figure_legibility import describe
                     what = describe(f)
-                    if what:
-                        overprint = f"; ⚠ {what} — REGENERATE with room for them"
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Not "clean": say the check could not run, so the agent
+                    # does not read silence as a pass.
+                    what = f"could not be read ({e}), so its labels are UNCHECKED"
+                if what:
+                    overprint = f"; ⚠ {what} — REGENERATE with room for them"
 
             lines.append(
                 f"- {f.name} ({size_kb}KB, {tag_prefix}; "

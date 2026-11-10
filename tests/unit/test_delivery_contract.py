@@ -481,3 +481,46 @@ def test_a_clean_result_says_what_was_actually_measured(tmp_path):
     assert "1 figure(s)" in f.detail
     # the blind spot is named in the finding itself, not only in a commit message
     assert "text-vs-text only" in f.detail and "legend handle" in f.detail
+
+
+def test_a_figure_pymupdf_cannot_open_is_not_reported_as_legible(tmp_path):
+    """The case 6576fa0's per-figure guard was written for, which could not
+    reach it.
+
+    That commit wrapped `describe(fp)` in try/except and added a `failed` list,
+    on the belief that an unopenable figure made `describe` raise. It did not:
+    `collisions()` and `clipped()` each swallowed the error and returned [], so
+    `describe()` returned "". The broken figure incremented `examined` and the
+    contract reported `figures_legible: pass — "1 figure(s): no overlapping or
+    clipped labels"`. The guard was dead code above a swallow.
+    """
+    p = _project(tmp_path, CHART_TEX, GOOD_PDF_TEXT)
+    (p / "paper" / "figures" / "chart.pdf").write_bytes(b"%PDF-1.4\ntruncated\n")
+
+    rep = evaluate(p)
+    f = _finding(rep, "figures_legible")
+
+    assert f.status == "violated"
+    assert "NOT a clean result" in f.detail
+    assert "chart.pdf" in f.detail
+    assert f in rep.violations
+
+
+def test_one_unopenable_figure_does_not_make_the_others_read_as_clean(tmp_path):
+    """Two figures, one unopenable: the readable one is still examined and the
+    report must not imply the unopenable one was checked."""
+    tex = GOOD_TEX.replace(
+        "Body \\cite{a}.",
+        "Body \\cite{a}.\\includegraphics{figures/aaa_broken.pdf}"
+        "\\includegraphics{figures/chart.pdf}")
+    p = _project(tmp_path, tex, GOOD_PDF_TEXT)
+    figs = p / "paper" / "figures"
+    (figs / "aaa_broken.pdf").write_bytes(b"%PDF-1.4\ntruncated\n")
+    _chart(figs / "chart.pdf", [("Raw", 40, 150), ("Standardized", 110, 150)])
+
+    f = _finding(evaluate(p), "figures_legible")
+
+    assert f.status == "violated"
+    assert "aaa_broken.pdf" in f.detail
+    # the clean one was still looked at, so the run gets credit for it
+    assert "1 other figure(s) examined and clean" in f.detail
