@@ -179,6 +179,14 @@ def audit(tex: str, project_dir: Path, before: float | None = None) -> dict:
 def verdict(result: dict) -> tuple[bool, str]:
     """(ok, detail) for the delivery contract."""
     if result["numbers"] >= 10 and result["evidence_values"] == 0:
+        if result.get("evidence_partial"):
+            # Read nothing because we declined to open it, not because there
+            # was nothing there: the caps can skip every result file a project
+            # has (one 3 MB jsonl is enough). Same rule as below.
+            result["unverified"] = True
+            return True, (f"{result['numbers']} result-like numbers in the paper, and the "
+                          f"evidence index was CUT SHORT before reading any value, so they "
+                          f"are UNVERIFIED rather than unsupported")
         return False, (f"{result['numbers']} result-like numbers in the paper, but results/ "
                        "and findings hold no readable values")
     if result["strong"] >= MIN_STRONG and result["ratio"] < MIN_TRACED:
@@ -188,6 +196,12 @@ def verdict(result: dict) -> tuple[bool, str]:
             # index was cut short — too many result files, one too large, or a
             # directory below the depth limit — a number we did not find is a
             # number we did not look for.
+            #
+            # `unverified` is NOT the same as ok: the contract must report this
+            # as "skipped", because "numbers_traced: pass" would put a paper
+            # whose evidence was never opened under "all checks passed" — the
+            # hole 6576fa0 closed in figures_legible.
+            result["unverified"] = True
             return True, (f"{result['strong_traced']}/{result['strong']} numbers traced, and the "
                           f"evidence index was CUT SHORT, so the rest is UNVERIFIED rather than "
                           f"untraced. Not checked against every result file: {examples}")

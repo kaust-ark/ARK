@@ -545,3 +545,31 @@ def test_a_review_word_that_merely_contains_the_name_excuses_nothing(tmp_path):
     f = _finding(evaluate(p), "no_loss_since_review")
     assert f.status == "violated", "a longer word excused the real figure"
     assert "fig:ablation" in f.detail
+
+
+def test_a_cut_short_evidence_index_is_skipped_not_passed(tmp_path):
+    """`numbers_traced: pass` would put a paper whose evidence was never opened
+    under "Delivery contract: all checks passed" — the hole 6576fa0 closed in
+    figures_legible, reintroduced by the provenance fix if the status word is
+    wrong. It is "skipped": not a clean trace, and not an accusation either."""
+    import json as _json
+    from ark.provenance import audit
+
+    numbers = (r"\section{Results}" "\n"
+               r"Accuracy 82.31\%, baseline 74.89\%, oracle 91.07, gap 7.42, "
+               r"error 0.1234, std 0.0456, recall 0.9012, f1 0.8765, auc 0.9345, "
+               r"prec 0.8123." "\n")
+    tex = GOOD_TEX.replace("Body \\cite{a}.", "Body \\cite{a}." + numbers)
+    p = _project(tmp_path, tex, GOOD_PDF_TEXT)
+    (p / "results").mkdir(exist_ok=True)
+    # the evidence exists, in a file past the per-file byte cap
+    (p / "results" / "raw.json").write_text(
+        _json.dumps({"acc": 0.82312, "base": 0.74889}) + "\n"
+        + ("# padding\n" * 300_000))
+
+    assert audit(tex, p)["evidence_partial"] is True
+    f = _finding(evaluate(p), "numbers_traced")
+    assert f.status == "skipped", f"status {f.status!r}: {f.detail[:90]}"
+    assert f not in evaluate(p).violations
+    assert "CUT SHORT" in f.detail
+

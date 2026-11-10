@@ -454,8 +454,16 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     # the last review started is the stronger one, so both are reported.
     try:
         from ark.provenance import audit, verdict
-        ok, detail = verdict(audit(tex, project_dir))
-        rep.findings.append(Finding("numbers_traced", "pass" if ok else "violated", "hard", detail))
+        _audit = audit(tex, project_dir)
+        ok, detail = verdict(_audit)
+        # "skipped", not "pass", when the evidence index was cut short: the
+        # check did not measure what its name claims, so it must not count
+        # toward "all checks passed". It is still not a violation — the clamp
+        # may excuse a number, never accuse one.
+        rep.findings.append(Finding(
+            "numbers_traced",
+            "skipped" if _audit.get("unverified") else ("pass" if ok else "violated"),
+            "hard", detail))
     except Exception as e:
         rep.findings.append(Finding("numbers_traced", "skipped", "hard", f"audit failed: {e}"))
     at_review = project_dir / "auto_research" / "state" / "provenance_at_review.json"
