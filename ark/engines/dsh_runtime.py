@@ -128,7 +128,11 @@ def _listed_limits(model: str) -> tuple:
                     _LISTED[m.get("id")] = (m.get("context_length") or top.get("context_length"),
                                             top.get("max_completion_tokens"))
         except Exception:
-            _LISTED[None] = (None, None)
+            # Only an answer is cached. Writing the failure in pinned every
+            # model's window and max_tokens to the litellm fallback for the
+            # rest of the process because one moment was unreachable — the
+            # same bug `sdk_runtime._served_window` fixes in this PR.
+            pass
     window, out = _LISTED.get(model_id, (None, None))
     return (int(window) if window else None), (int(out) if out else None)
 

@@ -541,3 +541,41 @@ def test_a_stopped_session_still_reports_what_its_requests_cost():
     assert out["usage"]["cost_usd"] == 0.0 and out["usage"]["priced_by"] == "free tier"
     # Nothing reported a result, so the call is not a success.
     assert out["error_code"] == "DSH.ServiceUnavailableError"
+
+
+def test_one_unreachable_moment_does_not_pin_the_window_for_the_run(monkeypatch):
+    """`_listed_limits` cached its own failure as `_LISTED[None]`.
+
+    A single unreachable moment put a sentinel in the cache that made `if not
+    _LISTED` false forever, so every later call skipped the fetch and every
+    model fell back to litellm's window and max_tokens for the rest of the
+    process. Only an answer is cacheable — the rule this PR applies in
+    `sdk_runtime._served_window`.
+    """
+    import json as _json
+    from ark.engines import dsh_runtime as dr
+
+    dr._LISTED.clear()
+    calls = []
+
+    class _Resp:
+        def __init__(self, payload): self._p = payload
+        def read(self): return _json.dumps(self._p).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def flaky(url, timeout=None):
+        calls.append(url)
+        if len(calls) == 1:
+            raise OSError("connection reset")
+        # the catalogue lists ids without the `openrouter/` prefix
+        return _Resp({"data": [{"id": "m", "context_length": 123456,
+                                "top_provider": {"max_completion_tokens": 4096}}]})
+
+    import urllib.request as _ur
+    monkeypatch.setattr(_ur, "urlopen", flaky)
+
+    assert dr._listed_limits("openrouter/m") == (None, None)   # the bad moment
+    assert dr._listed_limits("openrouter/m") == (123456, 4096), (
+        "the failure was cached, so the retry never happened")
+    dr._LISTED.clear()

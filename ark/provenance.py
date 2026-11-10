@@ -85,8 +85,12 @@ def _strong(s: str) -> bool:
     return len(s.lstrip("-").replace(".", "").lstrip("0")) >= 3
 
 
-def _files(root: Path, before, max_files=400, max_depth=3, max_bytes=2_000_000) -> list:
-    out, frontier = [], [(root / "results", 0)]
+def _files(root: Path, before, max_files=400, max_depth=3, max_bytes=2_000_000) -> tuple:
+    """(files, partial). `partial` means coverage was cut short, not that the
+    project is clean: the module's own docstring says projects keep tens of
+    thousands of files under results/, and a number living in a file past the
+    cap would otherwise be reported as fabricated."""
+    out, frontier, partial = [], [(root / "results", 0)], False
     while frontier and len(out) < max_files:
         d, depth = frontier.pop(0)
         try:
@@ -95,14 +99,19 @@ def _files(root: Path, before, max_files=400, max_depth=3, max_bytes=2_000_000) 
             continue
         for e in entries:
             if len(out) >= max_files:
+                partial = True
                 break
             try:
                 if e.is_dir(follow_symlinks=False):
                     if depth < max_depth:
                         frontier.append((Path(e.path), depth + 1))
+                    else:
+                        partial = True          # deeper results never looked at
                 elif e.is_file(follow_symlinks=False) and Path(e.name).suffix.lower() in _SUFFIXES:
                     st = e.stat()
-                    if st.st_size <= max_bytes and (before is None or st.st_mtime < before):
+                    if st.st_size > max_bytes:
+                        partial = True          # a big results file, unread
+                    elif before is None or st.st_mtime < before:
                         out.append(Path(e.path))
             except OSError:
                 continue
@@ -113,7 +122,7 @@ def _files(root: Path, before, max_files=400, max_depth=3, max_bytes=2_000_000) 
                 out.append(f)
         except OSError:
             pass
-    return out
+    return out, (partial or bool(frontier))
 
 
 def _places(s: str) -> int:
@@ -121,15 +130,17 @@ def _places(s: str) -> int:
     return min(len(s.split(".")[1]), MAX_PLACES) if "." in s else 0
 
 
-def _index(root: Path, before, places=(0, 1, 2, 3, 4), budget=40_000_000) -> set:
+def _index(root: Path, before, places=(0, 1, 2, 3, 4), budget=40_000_000) -> tuple:
     idx, read = set(), 0
-    for p in _files(root, before):
+    files, partial = _files(root, before)
+    for p in files:
         try:
             text = p.read_text(errors="replace")
         except OSError:
             continue
         read += len(text)
         if read > budget:
+            partial = True
             break
         for m in re.finditer(r"-?\d+\.\d+(?:[eE]-?\d+)?|-?\d+", text):
             try:
@@ -139,7 +150,7 @@ def _index(root: Path, before, places=(0, 1, 2, 3, 4), budget=40_000_000) -> set
             for n in places:
                 idx.add(f"{v:.{n}f}")
                 idx.add(f"{v * 100:.{n}f}")
-    return idx
+    return idx, partial
 
 
 def audit(tex: str, project_dir: Path, before: float | None = None) -> dict:
@@ -150,8 +161,8 @@ def audit(tex: str, project_dir: Path, before: float | None = None) -> dict:
     # 0.93706 while the index stopped at four decimals, so a value sitting in
     # results/raw_results.jsonl was reported as fabricated. The coarse places
     # stay in: a figure rounded for the table still has to trace.
-    index = _index(Path(project_dir), before,
-                   sorted({0, 1, 2, 3, 4} | {_places(s) for _, s, _, _ in found}))
+    index, partial = _index(Path(project_dir), before,
+                            sorted({0, 1, 2, 3, 4} | {_places(s) for _, s, _, _ in found}))
     rows = []
     for where, s, pct, ctx in found:
         places = _places(s)
@@ -161,7 +172,7 @@ def audit(tex: str, project_dir: Path, before: float | None = None) -> dict:
     traced = sum(r["traced"] for r in strong)
     return {"numbers": len(rows), "strong": len(strong), "strong_traced": traced,
             "ratio": round(traced / len(strong), 2) if strong else None,
-            "evidence_values": len(index),
+            "evidence_values": len(index), "evidence_partial": partial,
             "untraced": [r for r in strong if not r["traced"]][:10]}
 
 
@@ -172,6 +183,14 @@ def verdict(result: dict) -> tuple[bool, str]:
                        "and findings hold no readable values")
     if result["strong"] >= MIN_STRONG and result["ratio"] < MIN_TRACED:
         examples = "; ".join(f"{r['number']} ({r['context'][:50]})" for r in result["untraced"][:3])
+        if result.get("evidence_partial"):
+            # The clamp may excuse a number; it must never accuse one. When the
+            # index was cut short — too many result files, one too large, or a
+            # directory below the depth limit — a number we did not find is a
+            # number we did not look for.
+            return True, (f"{result['strong_traced']}/{result['strong']} numbers traced, and the "
+                          f"evidence index was CUT SHORT, so the rest is UNVERIFIED rather than "
+                          f"untraced. Not checked against every result file: {examples}")
         return False, (f"only {result['strong_traced']}/{result['strong']} of the paper's numbers "
                        f"appear in results/ or findings. Untraced: {examples}")
     if result["strong"]:

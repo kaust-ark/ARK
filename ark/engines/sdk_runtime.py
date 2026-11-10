@@ -197,6 +197,10 @@ class OpenHandsSDK(OpenHandsCLI):
     assembles the conversation.
     """
 
+    # No `openhands` subprocess to cap, and `_served_window` already sizes the
+    # history from the server's own max_model_len.
+    _caps_output_tokens = False
+
     def _resolve_api_key(self, model: str) -> str:
         """The provider key for ``model``, by the same rule as ``build_env``.
 

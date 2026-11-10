@@ -113,3 +113,33 @@ def test_the_review_time_audit_is_kept_for_delivery(tmp_path):
     rec = json.loads((p.state_dir / "provenance_at_review.json").read_text())
     assert rec["ok"] is False and rec["iteration"] == 1
     assert any(l == "WARN" and "provenance" in m for l, m in p.logs)
+
+
+def test_evidence_the_index_never_read_is_unverified_not_untraced(tmp_path):
+    """The clamp may excuse a number; it must never accuse one.
+
+    `_files` skips a result file over 2 MB and stops after 400 files, and
+    `_index` stops at a 40 MB read budget — none of which was visible in the
+    result. A paper whose numbers sit in a large results file therefore read as
+    fabricated and `numbers_traced` emitted a HARD violation, on evidence the
+    checker had declined to open.
+    """
+    root = _project(tmp_path)
+    # the real evidence, in a file past the per-file byte cap
+    big = root / "results" / "raw.json"
+    big.write_text(json.dumps(REAL) + "\n" + ("# padding\n" * 300_000))
+    assert big.stat().st_size > 2_000_000
+
+    r = audit(PAPER, root)
+    assert r["evidence_partial"] is True
+    ok, detail = verdict(r)
+    assert ok is True, f"accused the paper on evidence it never read: {detail}"
+    assert "CUT SHORT" in detail and "UNVERIFIED" in detail
+
+
+def test_a_fully_read_project_still_fails_on_untraced_numbers(tmp_path):
+    """The escape hatch must not swallow the check it guards."""
+    r = audit(PAPER, _project(tmp_path, {"unrelated": 1.5}))
+    assert r["evidence_partial"] is False
+    ok, detail = verdict(r)
+    assert ok is False and "appear in results/" in detail

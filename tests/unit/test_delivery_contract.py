@@ -524,3 +524,24 @@ def test_one_unopenable_figure_does_not_make_the_others_read_as_clean(tmp_path):
     assert "aaa_broken.pdf" in f.detail
     # the clean one was still looked at, so the run gets credit for it
     assert "1 other figure(s) examined and clean" in f.detail
+
+
+def test_a_review_word_that_merely_contains_the_name_excuses_nothing(tmp_path):
+    """The docstring promises an exact identifier, "never ... the review's prose".
+
+    The test was `n in review` — a plain substring over the review text, and
+    `names` carries graphics *stems*. So a figure drawn from
+    `figures/fig_ablation.pdf` was excused by any review sentence containing
+    that stem as part of a longer word, and a short stem by any word containing
+    it. The reviewer discussing "fig_ablation_v2" or "the ablationary design"
+    silently licensed deleting the real figure.
+    """
+    p = _project(tmp_path, NO_FIG_TEX, GOOD_PDF_TEXT)
+    _reviewed(p, FIG_TEX)
+    # names the figure only as part of a LONGER token — not the figure itself
+    _review(p, "**Target**: `paper/figures/fig_ablation_v2.pdf`\n"
+               "**Action**: Remove the duplicate.")
+
+    f = _finding(evaluate(p), "no_loss_since_review")
+    assert f.status == "violated", "a longer word excused the real figure"
+    assert "fig:ablation" in f.detail

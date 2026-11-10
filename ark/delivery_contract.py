@@ -75,7 +75,13 @@ def _removals_the_review_asked_for(before: str, after: str, review: str) -> dict
             continue
         graphics = _GRAPHIC_RE.findall(body)
         names = set(labels) | {Path(g).name for g in graphics} | {Path(g).stem for g in graphics}
-        if not any(n and n in review for n in names):
+        # On a whole word, not a substring. `n in review` let a figure named
+        # `figures/overview.pdf` be excused by any review sentence containing
+        # "overview", and a short stem by any longer word containing it —
+        # while the docstring promises a match on an exact identifier and
+        # "never on the review's prose".
+        if not any(n and re.search(rf"(?<!\w){re.escape(n)}(?!\w)", review)
+                   for n in names):
             continue
         for lab in labels:
             explained[lab] = {"figures": len(graphics) if kind == "figure" else 0,

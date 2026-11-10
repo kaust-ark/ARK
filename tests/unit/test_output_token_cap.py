@@ -104,3 +104,20 @@ def test_the_real_openhands_builds_a_loadable_capped_spec(tmp_path, monkeypatch)
                              env={"HOME": str(tmp_path), "OPENHANDS_SUPPRESS_BANNER": "1",
                                   "LITELLM_LOCAL_MODEL_COST_MAP": "True", "PATH": "/usr/bin:/bin"})
     assert out.stdout.split() == ["32768", "32768"], out.stderr[-500:]
+
+
+def test_the_chat_runtime_caps_its_output_tokens_too():
+    """`type(self) is OpenHandsCLI` excluded every subclass.
+
+    `_ChatCLI` spawns the same `openhands` CLI, so dashboard chat — the surface
+    users touch most — kept asking litellm for the full 393k that d5523d4 exists
+    to cap. `OpenHandsSDK` is the subclass that genuinely must not: it never
+    shells out and sizes its own history from the server's max_model_len.
+    """
+    from ark.chat_agent import _ChatCLI
+    from ark.engines.cli import OpenHandsCLI
+    from ark.engines.sdk_runtime import OpenHandsSDK
+
+    assert OpenHandsCLI._caps_output_tokens is True
+    assert _ChatCLI._caps_output_tokens is True, "chat still asks for 393k"
+    assert OpenHandsSDK._caps_output_tokens is False

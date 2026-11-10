@@ -371,6 +371,14 @@ class OpenHandsCLI(AgentCLI):
     ``openai/gpt-5``. The prefix selects which API key env var to forward.
     """
 
+    # Whether build_env writes the `openhands` output-token cap. True for
+    # anything that actually spawns that CLI, including `_ChatCLI`, which
+    # inherits it: the gate used to be `type(self) is OpenHandsCLI`, which
+    # excluded every subclass and so left dashboard chat — the surface users
+    # touch most — asking litellm for the full 393k. `OpenHandsSDK` sets it
+    # False because it never shells out and sizes its own window.
+    _caps_output_tokens = True
+
     def _llm_model(self) -> str:
         return self.model_variant or self.model_name
 
@@ -410,7 +418,7 @@ class OpenHandsCLI(AgentCLI):
         if os.environ.get("LLM_BASE_URL"):
             env["LLM_BASE_URL"] = os.environ["LLM_BASE_URL"]
         env["OPENHANDS_SUPPRESS_BANNER"] = "1"
-        if type(self) is OpenHandsCLI and code_dir is not None:
+        if self._caps_output_tokens and code_dir is not None:
             _cap_output_tokens(env, Path(code_dir), model)
         return env
 
@@ -579,6 +587,14 @@ def _cap_output_tokens(env: dict, code_dir: Path, model: str) -> None:
     env["OPENHANDS_PERSISTENCE_DIR"] = str(persist)
     env.setdefault("OPENHANDS_CONVERSATIONS_DIR", str(home / ".openhands" / "conversations"))
     settings, marker = persist / "agent_settings.json", persist / ".ark_output_cap"
+    # One marker for one `agent_settings.json`, deliberately. With per-role
+    # `agent_models`, alternating models do invalidate each other's stamp and
+    # re-run the generator on every call — but that is required, not wasteful:
+    # the settings file is written per model and OpenHands dictates its path,
+    # so a model switch MUST rewrite it. Keying the marker alone would skip a
+    # regeneration and hand model A the settings generated for model B. Making
+    # it genuinely cheap means a per-model persistence dir, which also moves
+    # conversation state, so it is not worth doing inside this change.
     stamp = f"{model}|{cap}"
     try:
         if settings.exists() and marker.read_text() == stamp:
