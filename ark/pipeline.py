@@ -2887,9 +2887,6 @@ IMPORTANT: If the research idea describes a specific platform, framework, or sys
             if not jobs_settled:
                 self._terminal_error = "Could not reconcile existing experiment jobs. Check the scheduler before resuming."
                 return ""
-            checkpoint = session_args.get("session_checkpoint")
-            if checkpoint is not None and checkpoint.is_file():
-                session_args["interrupted_session"] = checkpoint.read_text().strip()
             resume_note = """
 ## Resuming an interrupted attempt
 An earlier session ran this iteration and was cut off. `results/` and
@@ -2897,6 +2894,10 @@ An earlier session ran this iteration and was cut off. `results/` and
 complete, and run only what is missing or failed. Do not resubmit a job whose
 results already exist.
 """
+            checkpoint = session_args.get("session_checkpoint")
+            if checkpoint is not None and checkpoint.is_file():
+                session_args["interrupted_session"] = checkpoint.read_text().strip()
+                session_args["resume_instructions"] = resume_note.strip()
 
         compute_ctx = self._compute_backend.setup()
 

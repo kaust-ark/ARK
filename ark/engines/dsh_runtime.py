@@ -215,6 +215,7 @@ class DSHRuntime(AgentCLI):
         self.next_turn = next_turn
         self.session_id = None
         self.session_checkpoint = None
+        self.resume_instructions = ""
         self._timeout = None
 
     # A retry can carry on in the same session instead of starting over.
@@ -296,6 +297,8 @@ class DSHRuntime(AgentCLI):
             task = prompt
         elif self.resume_session_id:
             task = _RESUME_NOTE.format(why=self.resume_reason or "unknown cause")
+            if self.resume_instructions:
+                task += "\n\n" + self.resume_instructions
             deadline = prompt.rfind("\n\n## Time limit\n")
             if deadline >= 0:
                 task += prompt[deadline:]

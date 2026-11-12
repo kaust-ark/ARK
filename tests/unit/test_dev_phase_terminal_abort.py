@@ -460,6 +460,7 @@ class TestExperimentCorrectivePass:
         p = self._run(tmp_path, resume_session=sid)
         assert p.events[:5] == ["wait", "setup", "pull", "push", "instr"]
         assert p.agent_args[0]["interrupted_session"] == sid
+        assert "Do not resubmit a job" in p.agent_args[0]["resume_instructions"]
         assert p.events.count("agent") == 1
 
     def test_no_retry_after_a_terminal_error(self, tmp_path):

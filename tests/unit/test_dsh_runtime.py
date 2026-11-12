@@ -312,10 +312,12 @@ def test_real_sdk_writes_artifact_and_restores_history(real_gateway, tmp_path, m
             assert b"synthetic-gateway-key" not in file.read_bytes()
 
     resumed = DSHRuntime(f"{provider}/fixture", resume_session_id=runner.session_id)
+    resumed.resume_instructions = "Do not resubmit a job whose results already exist."
     rc, out, err, _, _ = resumed.execute("Report the earlier result.", "Stay here.", tmp_path, 25)
     assert rc == 0, (resumed.parse_output(out), err[-2000:])
     messages = real_gateway["requests"][-1]["body"]["messages"]
     assert any(m.get("role") == "tool" for m in messages) or "tool_result" in json.dumps(messages)
+    assert resumed.resume_instructions in json.dumps(messages)
 
 
 def test_real_sdk_sends_rendered_page_to_vision_model(real_gateway, tmp_path, monkeypatch):

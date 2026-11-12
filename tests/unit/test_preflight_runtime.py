@@ -36,9 +36,12 @@ def _fake_sdk(tmp_path, versions):
 
 
 def test_openhands_runtime_still_requires_the_cli(clean_env):
+    clean_env.setenv("ARK_AGENT_RUNTIME", "cli")
     clean_env.setenv("OPENAI_API_KEY", "k")
+    p = _pipe()
     with pytest.raises(SystemExit):
-        _pipe().check_dependencies()
+        p.check_dependencies()
+    assert any("'openhands' command not found" in message for _, message in p.logs)
 
 
 def test_a_dsh_host_needs_no_openhands(clean_env, tmp_path):

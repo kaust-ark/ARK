@@ -611,7 +611,8 @@ class AgentMixin:
                   prior_context: str = "", *, continue_session: Optional[str] = None,
                   session_out: Optional[list] = None, outcome_out: Optional[dict] = None,
                   session_checkpoint: Optional[Path] = None,
-                  interrupted_session: Optional[str] = None) -> str:
+                  interrupted_session: Optional[str] = None,
+                  resume_instructions: str = "") -> str:
         """Run an agent of the specified type, returning its output.
 
         Args:
@@ -813,6 +814,8 @@ Execute the task and update the corresponding files.
                 cli_runner.agent_type = agent_type
                 if session_checkpoint is not None and getattr(cli_runner, "supports_resume", False):
                     cli_runner.session_checkpoint = session_checkpoint
+                if interrupted_session and getattr(cli_runner, "supports_resume", False):
+                    cli_runner.resume_instructions = resume_instructions
                 timer.start()
 
                 # Live step log + intervention sandbox. No-op unless the
