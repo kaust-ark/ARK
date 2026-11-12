@@ -408,6 +408,8 @@ from ark.engines.dsh_profile import compaction, effective_window, role_patch  # 
     ({"kind": "error", "error": {"code": "TRANSPORT"}}, "DSH.ServiceUnavailableError"),
     ({"kind": "error", "error": {"code": "CONTEXT_WINDOW_EXCEEDED"}}, "DSH.MaxIterationsReached"),
     ({"kind": "error", "error": {"code": "QUOTA", "status": 402}}, "DSH.QuotaExceeded"),
+    ({"kind": "error", "error": {"code": "PI_AI_ERROR", "message": "402: insufficient_balance_error"}},
+     "DSH.QuotaExceeded"),
     ({"kind": "error", "error": {"code": "AUTH", "status": 401}}, "DSH.AUTH"),
     ({"kind": "aborted", "reason": {"kind": "host"}}, "DSH.Cancelled"),
 ])

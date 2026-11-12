@@ -108,8 +108,14 @@ def test_continue_after_an_abort_keeps_the_step_pointer(tmp_path):
     """The 03:50 case: the balance runs out mid-Execute, the run aborts."""
     ck = {"iteration": 1, "completed_step": 3, "completed_step_name": "Plan"}
     o = _orch(tmp_path, ck)
-    o.iteration = 1
-    assert o._handle_terminal_error(6.2) is False
+    o.resume_from_checkpoint()
+
+    def interrupted_execute(*args):
+        o._terminal_error = "DSH.QuotaExceeded"
+        return False
+
+    o._run_execute_phase = interrupted_execute
+    assert o.run_paper_iteration() is False
     assert ck["completed_step"] == 3, "the abort wiped the resume pointer"
     fresh = _orch(tmp_path, ck)
     fresh.resume_from_checkpoint()

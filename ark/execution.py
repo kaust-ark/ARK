@@ -585,7 +585,10 @@ Please read auto_research/state/latest_review.md and regenerate.
                 "warning",
             )
 
-        # Step 3: Always run the writing phase, even if some experiments are
+        if self._quota_exhausted or getattr(self, "_terminal_error", None) or shutting_down.is_set():
+            return False
+
+        # Step 3: Run the writing phase, even if some experiments are
         # still pending or failed. Reasoning:
         #   - _run_writing_phase only emits writer tasks for EXPERIMENT_REQUIRED
         #     issues whose status == "completed" (see _run_writing_phase:900),
@@ -1837,8 +1840,7 @@ writer agent will pick those up in a later task.
   single function body.
 """, timeout=defaults.TIMEOUT_WRITER, prior_context=prior_context)
 
-            if self._quota_exhausted:
-                self.log("Aborting writing phase: API quota exhausted", "ERROR")
+            if self._quota_exhausted or getattr(self, "_terminal_error", None):
                 return False
 
             # Verify Python scripts were modified — across ALL target files,
@@ -2091,6 +2093,9 @@ Please update the paper {latex_dir_name}/main.tex according to the following rev
 - auto_research/state/latest_review.md - Review report
 - auto_research/state/action_plan.yaml - Complete task list
 """, timeout=defaults.TIMEOUT_WRITER, prior_context=prior_context)
+
+        if self._quota_exhausted or getattr(self, "_terminal_error", None):
+            return False
 
         # Verify total modifications
         total_added = 0

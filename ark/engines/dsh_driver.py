@@ -99,13 +99,15 @@ def classify(reason):
     if kind == "error":
         err = reason.get("error") or {}
         code = str(err.get("code") or "UNKNOWN")
-        detail = f"{code} (HTTP {err.get('status')}): {err.get('message') or ''}"
+        status = err.get("status")
+        message = str(err.get("message") or "")
+        detail = f"{code} (HTTP {status}): {message}"
+        if code in _QUOTA_CODES or str(status) == "402" or message.lstrip().startswith("402:"):
+            return "DSH.QuotaExceeded", detail
         if code in _TRANSIENT_CODES:
             return _TRANSIENT_CODES[code], detail
         if code in _BUDGET_CODES:
             return "DSH.MaxIterationsReached", detail
-        if code in _QUOTA_CODES:
-            return "DSH.QuotaExceeded", detail
         return f"DSH.{code}", detail
     return f"DSH.{kind}", json.dumps(reason)
 

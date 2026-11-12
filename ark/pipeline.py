@@ -612,7 +612,8 @@ class PipelineMixin:
                 self._check_human_intervention(stage="Execute")
         except Exception as e: self.log(f"Execute phase failed: {e}", "ERROR")
 
-        self.save_step_checkpoint(step_num, "Execute")
+        if not (self._quota_exhausted or getattr(self, "_terminal_error", None)):
+            self.save_step_checkpoint(step_num, "Execute")
         self.log_step_header(step_num, total_steps, "Execute", "end")
         self.notify_progress("Execute", "completed" if execute_ok else "incomplete", level="done" if execute_ok else "warn")
 
