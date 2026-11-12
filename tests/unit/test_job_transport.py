@@ -7,6 +7,8 @@ for each, keeping the token in an env export (never on argv).
 """
 
 import shlex
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -63,3 +65,25 @@ def test_slurm_template_http_uses_url_and_token_env():
     assert "--control-plane-url https://cp.example.com/v1" in out
     assert "export ARK_CONTROL_PLANE_TOKEN=tok.en-value" in out
     assert "--db-path" not in out
+
+
+def test_slurm_submission_uses_the_webapp_python_for_dsh(tmp_path, monkeypatch):
+    from website.dashboard import jobs
+
+    monkeypatch.setattr(sys, "executable", "/shared/ark prod/bin/python")
+    monkeypatch.setattr("website.dashboard.db.resolve_db_path", lambda: "/data/webapp.db")
+
+    def sbatch(args):
+        assert args[0] == "sbatch"
+        script = Path(args[1]).read_text()
+        assert 'if [ -z "${ARK_DSH_PYTHON:-}" ]; then' in script
+        assert "export ARK_DSH_PYTHON='/shared/ark prod/bin/python'" in script
+        assert "python -m ark.orchestrator" in script
+        return SimpleNamespace(returncode=0, stdout="Submitted batch job 123")
+
+    monkeypatch.setattr(jobs, "_run", sbatch)
+    settings = SimpleNamespace(
+        slurm_partition="cpu", slurm_account="ark", slurm_gres="",
+        slurm_cpus_per_task=1, slurm_conda_env="ark-base",
+    )
+    assert jobs.submit_job("p1", "paper", 1, tmp_path, tmp_path / "logs", settings) == "123"

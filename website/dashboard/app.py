@@ -452,6 +452,7 @@ def _stuck_watchdog(p, launcher, pdir, session=None):
 async def _poll_jobs(app: FastAPI):
     """Background task: poll SLURM job states every 60 s."""
     from .db import get_running_projects, get_session, update_project, get_user
+    from .routes import _get_user_keys
     settings = get_settings()
 
     while True:
@@ -538,12 +539,14 @@ async def _poll_jobs(app: FastAPI):
                             # sets the DB to "stopped" synchronously, so those never reach
                             # here as "running" → no false trigger.
                             if new_status == STOPPED:
-                                spec = LaunchSpec(
-                                    project_id=p.id, mode=p.mode,
-                                    max_iterations=p.max_iterations,
-                                    project_dir=pdir, log_dir=pdir / "logs", settings=settings,
-                                )
                                 try:
+                                    owner = get_user(session, p.user_id)
+                                    spec = LaunchSpec(
+                                        project_id=p.id, mode=p.mode,
+                                        max_iterations=p.max_iterations,
+                                        project_dir=pdir, log_dir=pdir / "logs", settings=settings,
+                                        api_keys=_get_user_keys(owner) if owner else {},
+                                    )
                                     restart = launcher.maybe_restart(p.slurm_job_id, spec)
                                 except Exception as e:
                                     logger.error(f"Auto-restart failed for {p.id}: {e}")

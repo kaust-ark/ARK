@@ -675,6 +675,7 @@ def submit_job(
         control_plane_url=shlex.quote(cp_url) if cp_url else "",
         control_plane_token=shlex.quote(cp_token) if cp_token else "",
         ark_code_root=str(Path(__file__).resolve().parents[2]),
+        ark_python=shlex.quote(sys.executable),
     )
 
     if api_keys:

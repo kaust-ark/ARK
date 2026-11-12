@@ -137,8 +137,14 @@ def test_slurm_restart_under_limit(tmp_path, monkeypatch):
     logs.mkdir()
     (logs / "slurm_1.out").write_text("")
     (logs / "slurm_2.out").write_text("")
-    monkeypatch.setattr(jobs, "submit_job", lambda *a, **k: "555")
-    r = SlurmJobLauncher().maybe_restart("111", _spec(tmp_path))
+    api_keys = {"openai_api_key": "synthetic-owner-key"}
+
+    def submit_job(*args, **kwargs):
+        assert kwargs["api_keys"] == api_keys
+        return "555"
+
+    monkeypatch.setattr(jobs, "submit_job", submit_job)
+    r = SlurmJobLauncher().maybe_restart("111", _spec(tmp_path, api_keys=api_keys))
     assert isinstance(r, RestartResult) and r.handle == "555" and r.attempt == 2
 
 

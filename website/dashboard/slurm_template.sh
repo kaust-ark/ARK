@@ -53,6 +53,13 @@ export PYTHONNOUSERSITE=1
 # ark even though the cloned project env (and ark-base) deliberately omit it.
 # This mirrors what launch_local_job sets in jobs.py.
 export PYTHONPATH="{{ ark_code_root }}${PYTHONPATH:+:$PYTHONPATH}"
+{% if ark_python %}
+# The webapp's shared environment holds the pinned DSH SDK. The worker's
+# conda environment continues to supply the project's experiment packages.
+if [ -z "${ARK_DSH_PYTHON:-}" ]; then
+    export ARK_DSH_PYTHON={{ ark_python }}
+fi
+{% endif %}
 
 cd {{ project_dir }}
 python -m ark.orchestrator \

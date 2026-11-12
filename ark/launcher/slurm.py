@@ -65,13 +65,8 @@ class SlurmJobLauncher(JobLauncher):
     def maybe_restart(self, handle: str, spec: LaunchSpec) -> Optional[RestartResult]:
         """Resubmit a job the cluster cancelled out from under us, up to
         ``MAX_AUTO_RESTARTS`` times (counted by ``slurm_*.out`` log files)."""
-        from website.dashboard.jobs import submit_job
-
         log_files = list((Path(spec.project_dir) / "logs").glob("slurm_*.out"))
         if len(log_files) >= MAX_AUTO_RESTARTS:
             return None
-        new_handle = submit_job(
-            spec.project_id, spec.mode, spec.max_iterations,
-            spec.project_dir, spec.log_dir, spec.settings,
-        )
+        new_handle = self.launch(spec)
         return RestartResult(new_handle, attempt=len(log_files))
