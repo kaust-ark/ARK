@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import os
 import re
 import shlex
@@ -625,9 +626,12 @@ def _auto_partition() -> str:
 
 
 def _auto_account() -> str:
-    """Try to detect default account from sacctmgr."""
+    """Read the Slurm default account of the user submitting the job."""
     try:
-        r = _run(["sacctmgr", "-n", "show", "user", "-s", "format=defaultaccount"])
+        r = _run(["sacctmgr", "-nP", "show", "user", "where",
+                  f"name={getpass.getuser()}", "format=DefaultAccount"])
+        if r.returncode != 0:
+            return ""
         accounts = r.stdout.split()
         return accounts[0] if accounts else ""
     except Exception:

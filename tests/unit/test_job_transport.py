@@ -67,23 +67,31 @@ def test_slurm_template_http_uses_url_and_token_env():
     assert "--db-path" not in out
 
 
-def test_slurm_submission_uses_the_webapp_python_for_dsh(tmp_path, monkeypatch):
+@pytest.mark.parametrize("configured_account", ["ark", ""])
+def test_slurm_submission_uses_the_webapp_python_for_dsh(tmp_path, monkeypatch, configured_account):
     from website.dashboard import jobs
 
     monkeypatch.setattr(sys, "executable", "/shared/ark prod/bin/python")
     monkeypatch.setattr("website.dashboard.db.resolve_db_path", lambda: "/data/webapp.db")
+    monkeypatch.setattr(jobs.getpass, "getuser", lambda: "submitter")
 
-    def sbatch(args):
+    def run(args):
+        if args[0] == "sacctmgr":
+            assert configured_account == ""
+            assert args == ["sacctmgr", "-nP", "show", "user", "where",
+                            "name=submitter", "format=DefaultAccount"]
+            return SimpleNamespace(returncode=0, stdout="submitter-account\n")
         assert args[0] == "sbatch"
         script = Path(args[1]).read_text()
+        assert f"#SBATCH --account={configured_account or 'submitter-account'}" in script
         assert 'if [ -z "${ARK_DSH_PYTHON:-}" ]; then' in script
         assert "export ARK_DSH_PYTHON='/shared/ark prod/bin/python'" in script
         assert "python -m ark.orchestrator" in script
         return SimpleNamespace(returncode=0, stdout="Submitted batch job 123")
 
-    monkeypatch.setattr(jobs, "_run", sbatch)
+    monkeypatch.setattr(jobs, "_run", run)
     settings = SimpleNamespace(
-        slurm_partition="cpu", slurm_account="ark", slurm_gres="",
+        slurm_partition="cpu", slurm_account=configured_account, slurm_gres="",
         slurm_cpus_per_task=1, slurm_conda_env="ark-base",
     )
     assert jobs.submit_job("p1", "paper", 1, tmp_path, tmp_path / "logs", settings) == "123"
