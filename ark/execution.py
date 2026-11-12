@@ -82,7 +82,7 @@ _COLLECT_RESULTS = (
     "Reply with a short summary.")
 
 
-def collect_after_jobs(host, sessions: list, waited_s: float):
+def collect_after_jobs(host, sessions: list, waited_s: float, *, outcome_out: dict | None = None):
     """Resume the experimenter that submitted the jobs, now that they are done.
 
     It knows what it submitted and why. A fresh session first re-reads the
@@ -91,11 +91,11 @@ def collect_after_jobs(host, sessions: list, waited_s: float):
     even finished. Only runtimes that can resume hand back a session, and a
     wait under a minute means nothing was running.
     """
-    if not sessions or waited_s < 60 or shutting_down.is_set():
+    if not sessions or waited_s < 60 or shutting_down.is_set() or getattr(host, "_terminal_error", None):
         return None
     host.log_step("Jobs finished, resuming the experimenter to collect the results", "progress")
     return host.run_agent("experimenter", _COLLECT_RESULTS, timeout=1800,
-                          continue_session=sessions[-1])
+                          continue_session=sessions[-1], outcome_out=outcome_out)
 
 
 def _experiment_writeup_task(issue: dict) -> str:
@@ -678,6 +678,7 @@ Please read auto_research/state/latest_review.md and regenerate.
             )
 
         sessions = []
+        outcome = {}
         try:
             # 2. Experimenter runs the experiment (includes result analysis)
             exp_output = self.run_agent("experimenter", f"""
@@ -697,17 +698,20 @@ After running the experiment:
 3. Evaluate whether the data supports the paper's arguments
 4. Write auto_research/state/findings.json with your findings (JSON, not YAML —
    ARK converts it to findings.yaml; do NOT hand-write YAML)
-""", timeout=defaults.TIMEOUT_EXPERIMENTER, session_out=sessions)
+""", timeout=defaults.TIMEOUT_EXPERIMENTER, session_out=sessions, outcome_out=outcome)
 
             # 3. Wait for jobs
             self.log_step("Waiting for experiment completion...", "info")
             waited = time.time()
-            self._compute_backend.wait_for_completion(max_wait_hours=defaults.MAX_COMPUTE_WAIT_HOURS)
+            jobs_complete = self._compute_backend.wait_for_completion(max_wait_hours=defaults.MAX_COMPUTE_WAIT_HOURS)
 
             # 4. Collect results
-            self._compute_backend.sync_from_backend(f"{remote_work_dir}/results", str(self.code_dir / "results"))
-            collected = collect_after_jobs(self, sessions, time.time() - waited)
-            if collected:
+            results_synced = self._compute_backend.sync_from_backend(
+                f"{remote_work_dir}/results", str(self.code_dir / "results"))
+            collected = None
+            if jobs_complete and results_synced:
+                collected = collect_after_jobs(self, sessions, time.time() - waited, outcome_out=outcome)
+            if collected is not None:
                 exp_output = collected
 
         finally:
@@ -763,15 +767,22 @@ After running the experiment:
         #    this is the exact path that caused E3 on safeclaw-v2 to claim success
         #    after 2 hours of silence. Treat empty output as a hard failure; next
         #    review iteration's planner can decide whether to reschedule.
-        if not (exp_output or "").strip():
+        incomplete = bool(sessions) and (
+            not outcome.get("completed") or not jobs_complete or not results_synced
+            or not self._experiment_evidence_files()
+        )
+        has_output = bool((exp_output or "").strip())
+        human_responded = has_output and self._check_human_intervention(
+            stage=f"Experiment {issue.get('id')}"
+        )
+        if not human_responded and (incomplete or not has_output):
             self.log_step(
-                f"Experimenter produced no output for {issue.get('id')} — marking failed",
+                f"Experiment {issue.get('id')} did not complete with evidence",
                 "error",
             )
             issue["status"] = "failed"
-            issue["failure_reason"] = (
-                "experimenter returned empty output (timeout / API failure / crash)"
-            )
+            issue["failure_reason"] = ("experimenter or backend did not complete with result evidence"
+                                       if incomplete else "experimenter returned empty output")
             if lock:
                 with lock:
                     self._save_action_plan(action_plan)
@@ -780,9 +791,6 @@ After running the experiment:
             return
 
         # 6. Check if experimenter requested human intervention
-        human_responded = self._check_human_intervention(
-            stage=f"Experiment {issue.get('id')}"
-        )
         if human_responded:
             self.log_step(f"Human responded for {issue.get('id')}, re-running experiment", "info")
             # Re-run the experiment with the user's input

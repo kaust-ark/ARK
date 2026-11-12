@@ -147,6 +147,12 @@ class CompilerMixin:
         self.log("Compiling LaTeX...")
         self._last_compile_stderr = ""
         self._last_compile_errors = []
+        source_path = self.latex_dir / "main.tex"
+        if not source_path.is_file():
+            self._last_compile_errors = ["main.tex is missing"]
+            self.log("LaTeX compilation failed: main.tex is missing", "ERROR")
+            return False
+        pdf_path = self.latex_dir / "main.pdf"
         # Strip phantom citations (cite keys that don't exist in
         # references.bib) before invoking pdflatex/bibtex. Without this,
         # writer agents that name a non-existent key produce "[?]" markers
@@ -157,6 +163,7 @@ class CompilerMixin:
         # re-stripped).
         self._prune_undefined_citations()
         try:
+            previous_pdf = pdf_path.stat() if pdf_path.is_file() else None
             for cmd in [
                 ["pdflatex", "-interaction=nonstopmode", "main.tex"],
                 ["bibtex", "main"],
@@ -197,8 +204,10 @@ class CompilerMixin:
                 if bib_errors:
                     self._last_compile_errors.extend(bib_errors[:10])
 
-            pdf_path = self.latex_dir / "main.pdf"
-            if pdf_path.exists() and pdf_path.stat().st_size > 0:
+            current_pdf = pdf_path.stat() if pdf_path.is_file() else None
+            if (source_path.is_file() and current_pdf and current_pdf.st_size > 0
+                    and (previous_pdf is None or current_pdf.st_mtime_ns != previous_pdf.st_mtime_ns
+                         or current_pdf.st_ino != previous_pdf.st_ino)):
                 self._latest_pdf = pdf_path
                 self._pdf_page_count = self._count_pdf_pages(pdf_path)
                 self._body_page_count = self._count_body_pages(pdf_path)
@@ -212,7 +221,7 @@ class CompilerMixin:
                         self.log(f"  Compile issue: {err[:120]}", "WARN")
                 return True
             else:
-                self.log("LaTeX compilation failed: PDF not generated")
+                self.log("LaTeX compilation failed: no new PDF was generated")
                 if self._last_compile_errors:
                     for err in self._last_compile_errors[:5]:
                         self.log(f"  Error: {err[:120]}", "ERROR")

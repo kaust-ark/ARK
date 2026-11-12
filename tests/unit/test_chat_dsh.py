@@ -57,6 +57,31 @@ def test_an_openhands_conversation_id_starts_a_new_dsh_session(monkeypatch, tmp_
     assert FakeDSH.made[-1].resume_session_id is None
 
 
+def test_runtime_switch_preserves_both_chat_conversations(monkeypatch, tmp_path):
+    chat.save_conversation_id(tmp_path, "original-openhands")
+    _, dsh_id, _ = _turn(monkeypatch, tmp_path, "original-openhands")
+    monkeypatch.setenv("ARK_AGENT_RUNTIME", "cli")
+    assert chat.load_conversation_id(tmp_path) == "original-openhands"
+    monkeypatch.delenv("ARK_AGENT_RUNTIME")
+    assert chat.load_conversation_id(tmp_path) == dsh_id
+
+
+def test_chat_cost_deltas_are_scoped_to_the_conversation(tmp_path):
+    p = PipelineMixin.__new__(PipelineMixin)
+    p.code_dir, p._agent_stats = tmp_path, []
+    p.log = lambda *a, **k: None
+    p._write_cost_report = lambda: None
+    chat.save_conversation_id(tmp_path, "old")
+    (tmp_path / ".ark_chat_cost.json").write_text(json.dumps({
+        "input_tokens": 100, "cost_usd": 1.0,
+    }))
+    dsh_id = "dsh:" + "b" * 32
+    chat._add_turn_usage(tmp_path, dsh_id, {"input_tokens": 5, "cost_usd": 0.25})
+    p._record_chat_cost(chat.read_conversation_usage(tmp_path, dsh_id), dsh_id)
+    p._record_chat_cost({"input_tokens": 101, "cost_usd": 1.5}, "old")
+    assert [x["input_tokens"] for x in p._agent_stats] == [5, 1]
+    assert [x["cost_usd"] for x in p._agent_stats] == [0.25, 0.5]
+
 def test_unpriced_chat_tokens_reach_the_ledger(tmp_path):
     p = PipelineMixin.__new__(PipelineMixin)
     p.code_dir, p._agent_stats, p.logs = tmp_path, [], []

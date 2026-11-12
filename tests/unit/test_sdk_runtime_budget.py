@@ -21,9 +21,8 @@ from ark.engines.cli import OpenHandsCLI, get_cli_for_model
 
 
 class TestRuntimeSelection:
-    def test_cli_is_the_default(self):
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("ARK_AGENT_RUNTIME", None)
+    def test_flag_selects_the_openhands_cli(self):
+        with patch.dict(os.environ, {"ARK_AGENT_RUNTIME": "cli"}):
             assert type(get_cli_for_model("m")) is OpenHandsCLI
 
     def test_flag_selects_the_sdk_runtime(self):

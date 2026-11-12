@@ -1,9 +1,10 @@
-"""Opt-in DSH runner, using an independently installed, pinned SDK interpreter."""
+"""DSH runner, using a pinned SDK and runtime."""
 from __future__ import annotations
 
 import json
 import os
 import re
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -16,6 +17,18 @@ from ark.llm_lite import resolve_key
 # Roles whose job is an answer, not an action on files (sdk_runtime.py keeps
 # the same list): an answer with no tool calls is not "did nothing".
 _ANSWER_ROLES = frozenset({"planner", "researcher", "reviewer", "meta_debugger"})
+
+# Inherit the execution environment and proxy/CA settings, without passing
+# unrelated application configuration such as DATABASE_URL to agent tools.
+_DSH_ENV = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TZ", "TERM",
+    "TMPDIR", "TEMP", "TMP", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    "CONDA_EXE", "CONDA_PREFIX", "CONDA_DEFAULT_ENV",
+    "CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES", "SLURM_JOB_ID",
+    "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+})
 
 # DSH-specific working rule, added to the task. The model learns about jobs
 # from DSH's own tool guidance, but in E1 it still blocked on job_output after
@@ -84,6 +97,44 @@ _ROUTES = {
 _PROTOCOLS = ("openai-completions", "openai-responses", "anthropic-messages")
 
 
+def dsh_interpreter() -> str:
+    return os.environ.get("ARK_DSH_PYTHON") or sys.executable
+
+
+def dsh_installation_error() -> str | None:
+    interpreter = dsh_interpreter()
+    try:
+        probe = subprocess.run(
+            [interpreter, "-c", "import importlib.metadata as m;"
+             "print(m.version('deepseek-harness-sdk'), m.version('deepseek-harness-runtime-bin'))"],
+            capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"Cannot check the DSH interpreter {interpreter}: {exc}"
+    if probe.returncode == 0 and probe.stdout.split() == [SDK_VERSION, SDK_VERSION]:
+        return None
+    found = probe.stdout.strip() or probe.stderr.strip()[-200:] or "nothing"
+    return (f"DSH needs deepseek-harness-sdk=={SDK_VERSION} and its runtime in "
+            f"{interpreter} (set ARK_DSH_PYTHON). Found {found}.")
+
+
+def dsh_key(model: str) -> str | None:
+    """A generic gateway key is usable only with an explicit base URL."""
+    return resolve_key(model) or (
+        os.environ.get("LLM_API_KEY") if os.environ.get("LLM_BASE_URL", "").strip() else None
+    )
+
+
+def supports_images(model: str) -> bool:
+    protocol, _ = route(model)
+    if not protocol:
+        return False
+    try:
+        from litellm import supports_vision
+        return bool(supports_vision(model=model))
+    except Exception:
+        return False
+
+
 def route(model: str) -> tuple:
     """(protocol, endpoint) DSH reaches `model` by. No protocol is DeepSeek's native route.
 
@@ -117,7 +168,7 @@ def _listed_limits(model: str) -> tuple:
     fallback window can exceed the model's. One catalogue request per process.
     """
     prefix, _, model_id = model.partition("/")
-    if prefix != "openrouter":
+    if prefix != "openrouter" or os.environ.get("LLM_BASE_URL", "").strip():
         return None, None
     if not _LISTED:
         try:
@@ -163,6 +214,7 @@ class DSHRuntime(AgentCLI):
         # A conversation's next message (chat), not a recovery of a cut task.
         self.next_turn = next_turn
         self.session_id = None
+        self.session_checkpoint = None
         self._timeout = None
 
     # A retry can carry on in the same session instead of starting over.
@@ -172,15 +224,10 @@ class DSHRuntime(AgentCLI):
     graceful_stop_s = 5
 
     def build_env(self, code_dir=None):
-        env = super().build_env(code_dir)
+        env = {name: value for name, value in os.environ.items()
+               if name.upper() in _DSH_ENV or name.startswith("LC_")}
         model = self.model_variant or self.model_name
-        key = resolve_key(model) or os.environ.get("LLM_API_KEY")
-        # Only the selected model's credential crosses into the agent process.
-        for name in list(env):
-            if (any(part in name.upper() for part in ("KEY", "TOKEN", "SECRET", "PASSWORD"))
-                    or name.startswith(("AWS_", "AZURE_", "DSH_"))
-                    or name in {"SSH_AUTH_SOCK", "GOOGLE_APPLICATION_CREDENTIALS"}):
-                env.pop(name, None)
+        key = dsh_key(model)
         if key:
             env["ARK_DSH_API_KEY"] = key
         # The runtime is a single-file executable that unpacks ~70 MB of native
@@ -191,7 +238,10 @@ class DSHRuntime(AgentCLI):
         # TMPDIR is the project in production. The runtime puts spill files
         # and native-loader dirs there, so give it a corner of its own.
         if code_dir is not None:
-            tmp = Path(code_dir).resolve() / ".dsh" / "tmp"
+            workdir = Path(code_dir).resolve()
+            env["HOME"] = str(workdir)
+            env["XDG_CONFIG_HOME"] = str(workdir / ".config")
+            tmp = workdir / ".dsh" / "tmp"
             tmp.mkdir(parents=True, exist_ok=True)
             env["TMPDIR"] = str(tmp)
         return env
@@ -239,7 +289,8 @@ class DSHRuntime(AgentCLI):
             max_tokens=max_tokens, history_budget=_history_budget(model, window),
             api=protocol, endpoint=endpoint,
             sandbox=os.environ.get("ARK_DSH_SANDBOX", "danger-full-access").strip(),
-            skills_dir=skills, retries=int(os.environ.get("ARK_DSH_RETRIES", "3")))
+            skills_dir=skills, image_input=supports_images(model),
+            retries=int(os.environ.get("ARK_DSH_RETRIES", "0")))
         _write_private(root / "runtime.patch.yml", patch)
         if self.resume_session_id and self.next_turn:
             task = prompt
@@ -264,7 +315,10 @@ class DSHRuntime(AgentCLI):
                   "task": task}
         self._config_path = root / "request.json"
         _write_private(self._config_path, config)
-        return [os.environ.get("ARK_DSH_PYTHON") or sys.executable,
+        if self.session_checkpoint is not None:
+            from ark.orchestrator.state import _atomic_write_text
+            _atomic_write_text(self.session_checkpoint, sid + "\n")
+        return [dsh_interpreter(),
                 str(Path(__file__).with_name("dsh_driver.py")), str(self._config_path)]
 
     def execute(self, prompt, path_boundary, code_dir, timeout, log_fn=None, on_event=None, env=None):

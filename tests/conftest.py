@@ -271,7 +271,8 @@ def mock_integration_project_factory(tmp_path):
             patch("subprocess.Popen", side_effect=controller.subprocess_popen),
             patch.dict("sys.modules", {"fitz": mock_fitz}),
             patch("time.sleep", return_value=None),
-            patch.dict("os.environ", {"ARK_OPENHANDS_CONV_DIR": str(tmp_path / "_oh_conv")}),
+            patch.dict("os.environ", {"ARK_AGENT_RUNTIME": "cli",
+                                     "ARK_OPENHANDS_CONV_DIR": str(tmp_path / "_oh_conv")}),
         ]
         for p in p_list:
             p.start()

@@ -182,7 +182,7 @@ class _Turn:
                         self.turn_ends.append(data.get("reason") or {})
                 elif n.method == "session.status" and p.get("sessionId") == self.sid and received:
                     if p.get("status") == "idle":
-                        self.text = text.strip() or self.text
+                        self.text = text.strip()
                         self.tool_calls += calls
                         if not self.open_jobs:
                             return "quiescent"

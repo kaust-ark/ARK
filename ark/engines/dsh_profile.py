@@ -66,7 +66,7 @@ def compaction(window: int, max_tokens: int, history_budget: int) -> dict:
 def role_patch(*, role: str, workdir: Path, provider: str, model_id: str, window: int,
                max_tokens: int, history_budget: int, api: str = "", endpoint: str = "",
                sandbox: str = "danger-full-access", skills_dir: Path | None = None,
-               retries: int = 3) -> list:
+               retries: int = 0, image_input: bool = False) -> list:
     if sandbox not in _MODES:
         raise ValueError(f"ARK_DSH_SANDBOX must be one of {', '.join(_MODES)}")
     rows = [{"id": i, "disabled": True} for i in _OFF]
@@ -84,6 +84,8 @@ def role_patch(*, role: str, workdir: Path, provider: str, model_id: str, window
         route = {"api": api, "baseURL": endpoint, "apiKeyEnv": "ARK_DSH_API_KEY",
                  "models": [{"id": model_id, "contextWindow": window, "maxTokens": max_tokens}],
                  "retryPolicy": retry}
+        if image_input:
+            route["models"][0]["input"] = ["text", "image"]
         # Most chat gateways implement system + max_tokens, not OpenAI's
         # newer developer role and max_completion_tokens fields.
         if api == "openai-completions":
@@ -99,7 +101,7 @@ def role_patch(*, role: str, workdir: Path, provider: str, model_id: str, window
         # SDK, so an escalation request can only fail; say so up front.
         {"id": "sandbox-policy", "config": {"mode": sandbox, "workspaceRoot": str(workdir)}},
         {"id": "approval", "config": {"policy": "never"}},
-        {"id": "tool-fs", "config": {"read": True, "write": True, "edit": True, "readImage": False}},
+        {"id": "tool-fs", "config": {"read": True, "write": True, "edit": True, "readImage": image_input}},
         {"id": "system-prompt", "config": {
             "includeHarnessIdentity": False,
             "personaPrefix": f"You are the Idea2Paper {role} agent, running {{{{model}}}}."}},

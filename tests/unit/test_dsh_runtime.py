@@ -9,9 +9,9 @@ from urllib.parse import urlsplit
 
 import pytest
 
-from ark.engines import _add_usage
-from ark.engines.cli import AgentCLI, get_cli_for_model
-from ark.engines.dsh_runtime import DSHRuntime
+from ark.engines import _add_usage, _is_transient_agent_error
+from ark.engines.cli import AgentCLI, OpenHandsCLI, get_cli_for_model
+from ark.engines.dsh_runtime import DSHRuntime, dsh_installation_error
 from ark.observability.steps import parse_line
 
 
@@ -23,6 +23,19 @@ def event(kind, data, seq=1, sid="fixture"):
 def test_explicit_dsh_selection(monkeypatch):
     monkeypatch.setenv("ARK_AGENT_RUNTIME", " DSH ")
     assert isinstance(get_cli_for_model("openai/fixture"), DSHRuntime)
+
+
+def test_default_dsh_and_explicit_openhands(monkeypatch):
+    monkeypatch.delenv("ARK_AGENT_RUNTIME", raising=False)
+    assert isinstance(get_cli_for_model("openai/fixture"), DSHRuntime)
+    monkeypatch.setenv("ARK_AGENT_RUNTIME", "cli")
+    assert type(get_cli_for_model("openai/fixture")) is OpenHandsCLI
+
+
+@pytest.mark.parametrize("status", [402, 429])
+def test_structured_quota_is_terminal(status):
+    assert not _is_transient_agent_error(
+        "DSH.QuotaExceeded", f"QUOTA (HTTP {status}): exceeded your current quota")
 
 
 def test_partial_output_is_not_success_and_retains_usage():
@@ -69,7 +82,8 @@ def test_nonzero_exit_cannot_keep_a_successful_final_record(tmp_path, monkeypatc
 
 def test_dsh_environment_only_contains_selected_key(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "synthetic-selected")
-    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "ARK_GITHUB_PAT", "GH_TOKEN", "AWS_ACCESS_KEY_ID"):
+    for k in ("ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "ARK_GITHUB_PAT", "GH_TOKEN",
+              "AWS_ACCESS_KEY_ID", "DATABASE_URL"):
         monkeypatch.setenv(k, "synthetic-unrelated")
     monkeypatch.setenv("DSH_HOME", "/unrelated/personal/home")
     env = DSHRuntime("openai/fixture").build_env()
@@ -82,11 +96,22 @@ def test_dsh_environment_only_contains_selected_key(monkeypatch):
 def test_invalid_gateway_is_terminal_without_spawn(tmp_path, monkeypatch):
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.delenv("ARK_DSH_API", raising=False)
-    runner = DSHRuntime("openai/fixture")
+    monkeypatch.setattr("ark.engines.cli.subprocess.Popen",
+                        lambda *a, **k: pytest.fail("invalid route spawned a process"))
+    runner = DSHRuntime("hosted_vllm/fixture")
     rc, out, _, _, _ = runner.execute("test", "test boundary", tmp_path, 2)
     assert rc == 1
     assert runner.parse_output(out)["error_code"] == "DSHConfigurationError"
 
+
+def test_generic_gateway_key_requires_a_gateway(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "synthetic-gateway")
+    runner = DSHRuntime("openai/fixture")
+    assert "ARK_DSH_API_KEY" not in runner.build_env()
+    monkeypatch.setenv("LLM_BASE_URL", "http://gateway.invalid/v1")
+    assert runner.build_env()["ARK_DSH_API_KEY"] == "synthetic-gateway"
 
 def test_providers_the_webapp_offers_route_without_a_base_url(monkeypatch):
     # The webapp sets no LLM_BASE_URL; OpenHands leaves the endpoint to litellm.
@@ -151,10 +176,10 @@ def test_missing_sdk_is_terminal_and_never_uses_other_runtime(tmp_path, monkeypa
 
 @pytest.fixture
 def real_gateway(monkeypatch):
-    python = os.environ.get("ARK_DSH_TEST_PYTHON")
-    if not python:
-        pytest.skip("set ARK_DSH_TEST_PYTHON to the pinned, isolated SDK interpreter")
+    python = os.environ.get("ARK_DSH_TEST_PYTHON") or sys.executable
     monkeypatch.setenv("ARK_DSH_PYTHON", python)
+    if error := dsh_installation_error():
+        pytest.skip(error)
     monkeypatch.setenv("OPENAI_API_KEY", "synthetic-gateway-key")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "synthetic-gateway-key")
     monkeypatch.setenv("ARK_DSH_MAX_TOKENS", "1024")
@@ -184,12 +209,13 @@ def real_gateway(monkeypatch):
             assert len(state["requests"]) <= 3, "unexpected repeat model call"
             # The sdk profile's bash requires a description; a background run
             # first ends its turn, then answers in the turn the job wakes.
-            args = {"command": state["command"], "description": "fixture"}
+            tool_name = state.get("tool_name", "bash")
+            args = state.get("tool_args") or {"command": state["command"], "description": "fixture"}
             if state["background"]:
                 args["run_in_background"] = True
             if len(state["requests"]) == 1:
                 delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "call-fixture",
-                    "type": "function", "function": {"name": "bash", "arguments": json.dumps(args)}}]}
+                    "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}]}
                 reason = "tool_calls"
             elif state["background"] and len(state["requests"]) == 2:
                 delta = {"role": "assistant", "content": "Started; waiting for the job."}
@@ -209,7 +235,7 @@ def real_gateway(monkeypatch):
                         "type": "message", "role": "assistant", "model": "fixture", "content": [],
                         "stop_reason": None, "usage": {"input_tokens": 10, "output_tokens": 0}}},
                     {"type": "content_block_start", "index": 0, "content_block":
-                        {"type": "tool_use", "id": "call-fixture", "name": "bash", "input": {}} if tool
+                        {"type": "tool_use", "id": "call-fixture", "name": tool_name, "input": {}} if tool
                         else {"type": "text", "text": ""}},
                     {"type": "content_block_delta", "index": 0, "delta":
                         {"type": "input_json_delta", "partial_json": json.dumps(args)} if tool
@@ -255,12 +281,19 @@ def test_real_sdk_writes_artifact_and_restores_history(real_gateway, tmp_path, m
         monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-gateway-key")
         # Anthropic's client appends /v1/messages to its root base URL.
         monkeypatch.setenv("LLM_BASE_URL", os.environ["LLM_BASE_URL"].removesuffix("/v1"))
+    monkeypatch.setenv("DATABASE_URL", "synthetic-unrelated")
+    real_gateway["command"] = (
+        'test -z "${ARK_DSH_API_KEY+x}${DEEPSEEK_API_KEY+x}${DATABASE_URL+x}" '
+        '&& printf verified > fixture.txt'
+    )
     runner = DSHRuntime(f"{provider}/fixture")
+    runner.session_checkpoint = tmp_path / "dsh-session"
     # The first runtime start in a process can take ~30 s (module cache checks).
     rc, out, err, _, timed_out = runner.execute("Create fixture.txt then report completion.",
                                                "Stay in this workspace.", tmp_path, 90)
     parsed = runner.parse_output(out)
     assert rc == 0, (parsed, err[-2000:])
+    assert runner.session_checkpoint.read_text().strip() == runner.session_id
     assert not timed_out
     assert (tmp_path / "fixture.txt").read_text() == "verified"
     assert parsed["result"] == "Fixture complete."
@@ -283,6 +316,20 @@ def test_real_sdk_writes_artifact_and_restores_history(real_gateway, tmp_path, m
     assert rc == 0, (resumed.parse_output(out), err[-2000:])
     messages = real_gateway["requests"][-1]["body"]["messages"]
     assert any(m.get("role") == "tool" for m in messages) or "tool_result" in json.dumps(messages)
+
+
+def test_real_sdk_sends_rendered_page_to_vision_model(real_gateway, tmp_path, monkeypatch):
+    from PIL import Image
+
+    Image.new("RGB", (2, 2), "white").save(tmp_path / "page.png")
+    monkeypatch.setattr("ark.engines.dsh_runtime.supports_images", lambda model: True)
+    real_gateway.update(tool_name="read_image", tool_args={"file_path": "page.png"})
+    runner = DSHRuntime("openai/fixture")
+    runner.agent_type = "reviewer"
+    rc, out, err, _, _ = runner.execute("Review page.png.", "", tmp_path, 60)
+    assert rc == 0, (runner.parse_output(out), err[-2000:])
+    messages = real_gateway["requests"][-1]["body"]["messages"]
+    assert "data:image/png;base64," in json.dumps(messages)
 
 
 def test_real_sdk_balance_failure_is_terminal(real_gateway, tmp_path):

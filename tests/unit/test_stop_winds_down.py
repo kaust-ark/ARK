@@ -12,6 +12,7 @@ import subprocess
 import sys
 import textwrap
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -20,6 +21,7 @@ import pytest
 
 import ark
 import ark.engines as eng
+from ark.engines.cli import AgentCLI
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -29,6 +31,27 @@ def _clear_stop_flag():
     ark.shutting_down.clear()
     yield
     ark.shutting_down.clear()
+
+
+def test_stop_reaches_a_silent_worker_runtime(tmp_path):
+    class SilentRunner(AgentCLI):
+        def build_command(self, prompt, path_boundary, code_dir):
+            return [sys.executable, "-c", (
+                "import os, time; from pathlib import Path; "
+                "Path('worker.pid').write_text(str(os.getpid())); time.sleep(15)")]
+
+    runner = SilentRunner("fixture/model")
+    marker = tmp_path / "worker.pid"
+    with ThreadPoolExecutor() as pool:
+        future = pool.submit(runner.execute, "test", "", tmp_path, 15)
+        deadline = time.monotonic() + 4
+        while not marker.is_file() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        ark.shutting_down.set()
+        rc, _, _, _, timed_out = future.result(timeout=4)
+    assert marker.is_file()
+    assert rc != 0 and not timed_out
+    assert not Path(f"/proc/{marker.read_text()}").exists()
 
 
 def _agent(tmp_path, execute, parse):

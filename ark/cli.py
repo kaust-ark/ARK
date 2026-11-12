@@ -4496,13 +4496,18 @@ def cmd_doctor(args):
                   else "create with `conda create -n ark python=3.11 && pip install -e .[webapp]`"
             line("WARN", f"conda env: {env}", msg)
 
-    # 4. Agent runtime (OpenHands — every agent runs through it)
-    openhands_cli = shutil.which("openhands")
-    if openhands_cli:
-        line("PASS", "agent runtime", f"openhands={openhands_cli}")
+    # 4. Selected agent runtime
+    from ark.engines.cli import selected_agent_runtime
+    if selected_agent_runtime() == "dsh":
+        from ark.engines.dsh_runtime import SDK_VERSION, dsh_installation_error
+        error = dsh_installation_error()
+        line("WARN" if error else "PASS", "agent runtime", error or f"DSH {SDK_VERSION}")
     else:
-        line("WARN", "agent runtime",
-             "install with `uv tool install --python 3.12 openhands` — needed to run agents")
+        openhands_cli = shutil.which("openhands")
+        if openhands_cli:
+            line("PASS", "agent runtime", f"openhands={openhands_cli}")
+        else:
+            line("WARN", "agent runtime", "install with `uv tool install --python 3.12 openhands`")
 
     # 5. API keys (any LiteLLM provider works; the mainstream three are checked
     #    explicitly — the model prefix in config.yaml picks which one is used)

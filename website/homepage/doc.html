@@ -255,7 +255,7 @@
 </code></pre>
 <p>The script:</p>
 <ol>
-<li>Detects your OS, installs miniforge if missing, builds the <code>ark-base</code> and <code>ark</code> conda envs, pip-installs idea2paper editable into <code>~/ARK</code>, and installs the OpenHands CLI (the agent runtime, via <code>uv</code> — it bundles its own Python 3.12).</li>
+<li>Detects your OS, installs miniforge if missing, builds the <code>ark-base</code> and <code>ark</code> conda envs, and installs idea2paper editable into <code>~/ARK</code> with the pinned DSH SDK.</li>
 <li>Asks for your API keys and an <strong>email for dashboard login</strong>. One <strong>OpenRouter</strong> key is the recommended setup — it unlocks every model plus deep research and figure generation; direct Anthropic / OpenAI / Gemini / DeepSeek keys also work. Press Enter to skip any.</li>
 <li>Installs the dashboard as a <code>systemd --user</code> service on port <code>9527</code> (use <code>--no-webapp</code> to opt out).</li>
 <li>Prints a one-time <strong>magic-link URL</strong> for your email — click it once and you're logged into the local dashboard. No SMTP, no Google OAuth.</li>
@@ -275,7 +275,7 @@ ark monitor myproject
 <h2 id="requirements">Requirements</h2>
 <ul>
 <li><strong>Python 3.10+</strong> with <code>pyyaml</code> and <code>PyMuPDF</code></li>
-<li><strong>Agent runtime</strong>: <a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a> (installed via <code>uv</code>, bundles its own Python 3.12) &mdash; one runtime that drives Claude / GPT / Gemini / any <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a> model, selected per project via <code>model</code> in <code>config.yaml</code></li>
+<li><strong>Agent runtime</strong> runs on DeepSeek Harness (DSH) by default. Set <code>ARK_AGENT_RUNTIME=cli</code> to use the OpenHands CLI. Apptainer requires <code>ARK_AGENT_RUNTIME=sdk</code>.</li>
 <li><strong>API key</strong>: one <a href="https://openrouter.ai/keys">OpenRouter</a> key covers every model, deep research (Perplexity), and AI figures; single-vendor keys (Anthropic / OpenAI / Gemini / DeepSeek / …) work too but lose the pieces their vendor doesn't serve</li>
 <li><strong>Optional</strong>: LaTeX (<code>pdflatex</code> + <code>bibtex</code>), Slurm</li>
 </ul>
@@ -298,12 +298,10 @@ pip install -e .                    # Core
 pip install -e &quot;.[research]&quot;       # + Gemini Deep Research &amp; Nano Banana
 pip install -e &quot;.[webapp]&quot;         # + dashboard / systemd service support
 
-# 3. Install the OpenHands CLI (the agent runtime). It is a standalone `uv`
-#    tool with its OWN bundled Python 3.12 — NOT a pip dependency — and must be
-#    on PATH for the orchestrator subprocess to find it.
+# 3. Optional OpenHands rollback runtime.
 pip install uv &amp;&amp; uv tool install --python 3.12 openhands
 
-# 4. Verify (checks the openhands runtime is on PATH, keys are present, etc.)
+# 4. Verify the selected runtime and API keys.
 ark doctor
 </code></pre>
 

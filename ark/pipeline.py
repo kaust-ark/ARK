@@ -12,6 +12,7 @@ import time
 import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
+from ark.engines.cli import selected_agent_runtime
 from ark.execution import QuotaExhaustedError, collect_after_jobs
 from ark.ui import RateLimitCountdown
 from ark.latex import utils as latex_utils
@@ -481,6 +482,12 @@ class PipelineMixin:
         )
 
     def _build_visual_review_section(self) -> str:
+        if selected_agent_runtime() == "dsh":
+            from ark.engines.dsh_runtime import supports_images
+            if not supports_images(self._model_for("reviewer")):
+                return ("\n\n## Visual Review\n"
+                        "This model accepts text only. Review the LaTeX and label "
+                        "the rendered page layout as unreviewed.\n")
         page_images = self._maybe_generate_page_images()
         if not page_images: return ""
         
@@ -820,36 +827,18 @@ class PipelineMixin:
         self._asked_this_iteration = True
 
     def check_dependencies(self):
-        """Check the OpenHands CLI is installed and the selected model + key are valid.
-
-        All agents run through OpenHands, which routes to ANY LiteLLM provider, so
-        the only required binary is ``openhands``. We fail fast on a model with no
-        provider prefix or a missing API key — a clear message beats a cryptic
-        mid-run error.
-        """
-        import os
-        import shutil
+        """Check the selected runtime, model routes and credentials."""
         from ark.llm_lite import provider_key_env
 
-        # 1. The selected agent runtime must be installed: the OpenHands CLI by
-        #    default, or the pinned DSH SDK interpreter when ARK_AGENT_RUNTIME=dsh
-        #    (a DSH host need not have OpenHands at all).
-        if os.environ.get("ARK_AGENT_RUNTIME", "").strip().lower() == "dsh":
-            from ark.engines.dsh_driver import SDK_VERSION
-            interp = os.environ.get("ARK_DSH_PYTHON") or sys.executable
-            probe = subprocess.run(
-                [interp, "-c", "import importlib.metadata as m;"
-                 "print(m.version('deepseek-harness-sdk'), m.version('deepseek-harness-runtime-bin'))"],
-                capture_output=True, text=True)
-            if probe.stdout.split() != [SDK_VERSION, SDK_VERSION]:
-                self.log(
-                    f"Error: ARK_AGENT_RUNTIME=dsh needs deepseek-harness-sdk=={SDK_VERSION} "
-                    f"and its runtime in {interp} (set ARK_DSH_PYTHON); found "
-                    f"{probe.stdout.strip() or probe.stderr.strip()[-200:] or 'nothing'}.",
-                    "ERROR",
-                )
+        if selected_agent_runtime() == "dsh":
+            from ark.engines.dsh_runtime import dsh_installation_error, route
+            error = dsh_installation_error()
+            if error:
+                self.log(error, "ERROR")
                 sys.exit(1)
-            from ark.engines.dsh_runtime import route
+            if os.environ.get("ARK_AGENT_SANDBOX", "").strip().lower() == "apptainer":
+                self.log("Error: Apptainer requires ARK_AGENT_RUNTIME=sdk.", "ERROR")
+                sys.exit(1)
             for role, m in [("model", self.model or "")] + list(
                     (self.config.get("agent_models") or {}).items()):
                 try:
@@ -2883,14 +2872,24 @@ IMPORTANT: If the research idea describes a specific platform, framework, or sys
         self._send_dev_phase_telegram("experiments", dev_iter, max_dev_iters)
 
         resume_note = ""
+        session_args = {}
+        if selected_agent_runtime() == "dsh":
+            session_args["session_checkpoint"] = self.state_dir / f"dev-experiment-{dev_iter}.dsh-session"
         if resumed:
             # The cut attempt may have left jobs queued or running. Let them
             # finish first, so the new session finds their output instead of
             # submitting the same experiments a second time.
             try:
-                self._compute_backend.wait_for_completion(max_wait_hours=4)
+                jobs_settled = self._compute_backend.wait_for_completion(max_wait_hours=4)
             except Exception as e:
                 self.log(f"Could not check jobs from the interrupted attempt: {e}", "WARN")
+                jobs_settled = False
+            if not jobs_settled:
+                self._terminal_error = "Could not reconcile existing experiment jobs. Check the scheduler before resuming."
+                return ""
+            checkpoint = session_args.get("session_checkpoint")
+            if checkpoint is not None and checkpoint.is_file():
+                session_args["interrupted_session"] = checkpoint.read_text().strip()
             resume_note = """
 ## Resuming an interrupted attempt
 An earlier session ran this iteration and was cut off. `results/` and
@@ -2910,14 +2909,17 @@ results already exist.
         (self.code_dir / "results").mkdir(exist_ok=True)
         (self.code_dir / self.config.get("scripts_dir", "scripts")).mkdir(exist_ok=True)
 
-        # Sync project code to backend
         remote_work_dir = compute_ctx.get("work_dir", str(self.code_dir))
-        self._compute_backend.sync_to_backend(str(self.code_dir), remote_work_dir)
-
-        compute_instructions = self._compute_backend.get_agent_instructions()
+        local_results = str(self.code_dir / "results")
+        remote_results = f"{remote_work_dir}/results"
 
         sessions = []
         try:
+            if resumed and not self._compute_backend.sync_from_backend(remote_results, local_results):
+                self._terminal_error = "Could not retrieve prior experiment results. Check the backend before resuming."
+                return ""
+            self._compute_backend.sync_to_backend(str(self.code_dir), remote_work_dir)
+            compute_instructions = self._compute_backend.get_agent_instructions()
             exp_output = self.run_agent("experimenter", f"""
 Execute ALL planned experiments for this dev iteration.
 {resume_note}
@@ -2974,12 +2976,18 @@ system or it fails with a clear report of what is needed.
 - Use clear naming: results/exp1_results.json, results/exp2_results.json, etc.
 - Handle errors gracefully (log failures, continue with remaining experiments)
 - Keep experiments small enough to finish within the agent budget
-""", timeout=defaults.TIMEOUT_EXPERIMENTER, session_out=sessions)
+""", timeout=defaults.TIMEOUT_EXPERIMENTER, session_out=sessions, **session_args)
 
             self.log_step("Waiting for all experiments to complete...", "progress")
             waited = time.time()
-            self._compute_backend.wait_for_completion(max_wait_hours=4)
-            self._compute_backend.sync_from_backend(f"{remote_work_dir}/results", str(self.code_dir / "results"))
+            if not self._compute_backend.wait_for_completion(max_wait_hours=4):
+                if not shutting_down.is_set() and not getattr(self, "_terminal_error", None):
+                    self._terminal_error = "Experiment jobs did not settle. Check the scheduler before resuming."
+                return ""
+            if not self._compute_backend.sync_from_backend(remote_results, local_results):
+                if not getattr(self, "_terminal_error", None):
+                    self._terminal_error = "Could not retrieve experiment results. Check the backend before resuming."
+                return ""
             collected = collect_after_jobs(self, sessions, time.time() - waited)
             if collected:
                 exp_output = collected
@@ -4424,11 +4432,11 @@ provide the title.
         # Budget sync: fold this turn's LLM cost into cost_report.yaml + the DB.
         try:
             from ark.chat_agent import read_conversation_usage
-            self._record_chat_cost(read_conversation_usage(self.code_dir, _conv_id))
+            self._record_chat_cost(read_conversation_usage(self.code_dir, _conv_id), _conv_id)
         except Exception as e:
             self.log(f"chat cost sync skipped: {e}", "WARN")
 
-    def _record_chat_cost(self, usage: dict | None):
+    def _record_chat_cost(self, usage: dict | None, conversation_id: str | None = None):
         """Fold a chat turn's cost into the project Budget.
 
         OpenHands persists the conversation's CUMULATIVE cost; we keep the last
@@ -4438,22 +4446,33 @@ provide the title.
         right after the turn.
         """
         # DSH has no price list, so a turn can carry tokens with no cost.
-        if not usage or (float(usage.get("cost_usd") or 0) <= 0
-                         and not any(usage.get(k) for k in ("input_tokens", "output_tokens"))):
+        if not usage:
             return
         import json as _json
-        keys = ("cost_usd", "input_tokens", "output_tokens",
-                "cache_read_tokens", "cache_creation_tokens")
+        keys = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
         marker = Path(self.code_dir) / ".ark_chat_cost.json"
-        prev = {}
+        stored = {}
         try:
-            prev = _json.loads(marker.read_text())
+            stored = _json.loads(marker.read_text())
         except Exception:
             pass
+        markers = stored.get("conversations")
+        if not isinstance(markers, dict):
+            from ark.chat_agent import CONV_FILE
+            legacy_file = Path(self.code_dir) / CONV_FILE
+            legacy_id = legacy_file.read_text().strip() if legacy_file.is_file() else ""
+            markers = {legacy_id: stored} if stored else {}
+        key = conversation_id or ""
+        prev = markers.get(key, {})
         delta = {k: (usage.get(k) or 0) - (prev.get(k) or 0) for k in keys}
-        if delta["cost_usd"] <= 0 and delta["input_tokens"] + delta["output_tokens"] <= 0:
+        cost = float(usage.get("known_cost_usd", usage.get("cost_usd")) or 0)
+        cost_delta = cost - float(prev.get("known_cost_usd", prev.get("cost_usd")) or 0)
+        if cost_delta <= 0 and not any(value > 0 for value in delta.values()):
             return  # nothing new (e.g. turn failed before any LLM call)
-        unpriced = usage.get("cost_usd") is None
+        if "unpriced_turns" in usage:
+            unpriced = usage["unpriced_turns"] > prev.get("unpriced_turns", 0)
+        else:
+            unpriced = usage.get("cost_usd") is None
         self._agent_stats.append({
             "agent_type": "chat",
             "timestamp": datetime.now().isoformat(),
@@ -4464,14 +4483,17 @@ provide the title.
             "output_tokens": int(delta["output_tokens"]),
             "cache_read_tokens": int(delta["cache_read_tokens"]),
             "cache_creation_tokens": int(delta["cache_creation_tokens"]),
-            "cost_usd": None if unpriced else round(float(delta["cost_usd"]), 6),
+            "cost_usd": None if unpriced else round(cost_delta, 6),
         })
         try:
-            marker.write_text(_json.dumps({k: usage.get(k) or 0 for k in keys}))
+            from ark.orchestrator.state import _atomic_write_text
+            markers[key] = {k: usage.get(k) or 0 for k in keys}
+            markers[key].update(known_cost_usd=cost, unpriced_turns=usage.get("unpriced_turns", 0))
+            _atomic_write_text(marker, _json.dumps({"conversations": markers}))
         except Exception:
             pass
         self._write_cost_report()
-        spent = ("tokens only, cost unknown" if unpriced else f"${delta['cost_usd']:.4f}")
+        spent = ("tokens only, cost unknown" if unpriced else f"${cost_delta:.4f}")
         self.log(f"Chat turn {spent} — added to project budget", "INFO")
 
     def _apply_context(self) -> str:

@@ -176,7 +176,7 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
             f"main.pdf missing or stub ({pdf.stat().st_size if pdf.exists() else 0} bytes)"))
         return rep  # nothing else is checkable
     text = _pdf_text(pdf)
-    tex = tex_path.read_text(errors="replace") if tex_path.exists() else ""
+    tex = tex_path.read_text(errors="replace") if tex_path.is_file() else ""
     if text is None:
         rep.findings.append(Finding("pdf_exists", "pass", "hard"))
         rep.findings.append(Finding("pdf_readable", "violated", "hard",
@@ -189,6 +189,9 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
             f"text in {pdf.stat().st_size} bytes"))
         return rep
     rep.findings.append(Finding("pdf_exists", "pass", "hard"))
+    if not tex.strip():
+        rep.findings.append(Finding("source_exists", "violated", "hard",
+                                    "paper/main.tex is missing or empty"))
 
     # ── required disclosure ───────────────────────────────────────────────
     # Whitespace-normalized haystack: PDF extraction inserts line breaks that

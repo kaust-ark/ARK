@@ -80,7 +80,7 @@ curl -fsSL https://idea2paper.org/install.sh | bash
 
 السكربت سيقوم بـ:
 
-1. كشف النظام، تثبيت miniforge عند الحاجة، إنشاء بيئتي `ark-base` و `ark`، تثبيت idea2paper بصيغة `pip install -e` داخل `~/ARK`، وتثبيت OpenHands CLI (بيئة تشغيل الوكلاء، عبر `uv` — وهي تأتي مع نسخة Python 3.12 خاصة بها).
+1. كشف النظام، وتثبيت miniforge عند الحاجة، وإنشاء بيئتي `ark-base` و `ark`، وتثبيت idea2paper بصيغة `pip install -e` داخل `~/ARK` مع الإصدار المثبّت من DSH SDK.
 2. سؤالك عن مفاتيح API و**بريد إلكتروني لتسجيل الدخول إلى لوحة التحكم**. الإعداد الموصى به هو مفتاح **OpenRouter** واحد — فهو يفتح كل النماذج إضافةً إلى البحث العميق وتوليد الأشكال؛ كما تعمل المفاتيح المباشرة من Anthropic / OpenAI / Gemini / DeepSeek أيضاً. اضغط Enter لتخطّي أي حقل.
 3. تثبيت لوحة التحكم كخدمة `systemd --user` على المنفذ `9527` (استخدم `--no-webapp` للتخطّي).
 4. طباعة **رابط سحري لمرة واحدة** للبريد المُدخل — انقر عليه مرة واحدة وستدخل لوحة التحكم المحلية. لا حاجة لـ SMTP أو Google OAuth.
@@ -109,7 +109,7 @@ ark new myproject --from-pdf proposal.pdf
 ## المتطلبات
 
 - **Python 3.10+** مع `pyyaml` و `PyMuPDF`
-- **بيئة تشغيل الوكلاء**: [OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI) (تُثبَّت عبر `uv` وتأتي مع Python 3.12 خاص بها) &mdash; بيئة تشغيل واحدة تدير Claude / GPT / Gemini / أي نموذج يدعمه [LiteLLM](https://docs.litellm.ai/docs/providers)، ويُختار النموذج لكل مشروع عبر `model` في `config.yaml`.
+- **بيئة تشغيل الوكلاء** تستخدم DeepSeek Harness (DSH) افتراضيًا. لاستخدام OpenHands CLI، اضبط `ARK_AGENT_RUNTIME=cli`. يتطلب Apptainer ضبط `ARK_AGENT_RUNTIME=sdk`.
 - **مفتاح API**: مفتاح [OpenRouter](https://openrouter.ai/keys) واحد يغطي كل النماذج، والبحث العميق (Perplexity)، والأشكال المولَّدة بالذكاء الاصطناعي؛ وتعمل مفاتيح المزوّد الواحد (Anthropic / OpenAI / Gemini / DeepSeek / …) أيضاً لكنها تفقد ما لا يقدّمه ذلك المزوّد.
 - **اختياري**: LaTeX (`pdflatex` + `bibtex`)، Slurm.
 
@@ -131,12 +131,10 @@ pip install -e .                    # النواة الأساسية
 pip install -e ".[research]"       # + Gemini Deep Research و Nano Banana
 pip install -e ".[webapp]"         # + دعم لوحة التحكم وخدمة systemd
 
-# 3. ثبّت OpenHands CLI (بيئة تشغيل الوكلاء). وهي أداة `uv` مستقلة
-#    تأتي مع Python 3.12 خاص بها — وليست اعتمادية pip — ويجب أن تكون
-#    على PATH كي تعثر عليها عملية المنسق الفرعية.
+# 3. ثبّت OpenHands CLI اختياريًا لاستخدامه عند الرجوع إليه.
 pip install uv && uv tool install --python 3.12 openhands
 
-# 4. تحقّق (يفحص وجود openhands على PATH، وتوفر المفاتيح، وغير ذلك)
+# 4. تحقّق من بيئة التشغيل المختارة ومفاتيح API.
 ark doctor
 ```
 

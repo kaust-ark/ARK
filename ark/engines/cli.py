@@ -13,6 +13,13 @@ from contextlib import contextmanager
 from typing import Optional, Tuple
 from pathlib import Path
 
+from ark import shutting_down
+
+
+def selected_agent_runtime() -> str:
+    """Resolve the runtime used by pipeline agents and project chat."""
+    return os.environ.get("ARK_AGENT_RUNTIME", "").strip().lower() or "dsh"
+
 
 @contextmanager
 def _openhands_tmux_env(env: dict):
@@ -261,16 +268,26 @@ class AgentCLI(ABC):
 
         watchdog = _BlockingCommandWatchdog(process.pid, log_fn=log_fn)
 
-        # Hard-timeout killer: fires even if the process emits no output at all
-        # (a plain read loop could otherwise block forever on a silent hang).
-        timeout_expired = {"v": False}
+        # A worker blocked on stdout still needs to observe the orchestrator's
+        # Stop event. Signals handled in the main thread cannot unwind a worker.
+        timed_out = False
         finished = threading.Event()
+        stop_lock = threading.Lock()
+        deadline = time.monotonic() + timeout
+
+        def stop_once():
+            with stop_lock:
+                if process.poll() is None:
+                    self._stop(process)
 
         def _deadline_killer():
-            if finished.wait(timeout=timeout):
-                return
-            timeout_expired["v"] = True
-            self._stop(process)
+            nonlocal timed_out
+            while not finished.wait(min(0.1, max(0, deadline - time.monotonic()))):
+                stopping = shutting_down.is_set()
+                if stopping or time.monotonic() >= deadline:
+                    timed_out = not stopping
+                    stop_once()
+                    return
 
         killer = threading.Thread(target=_deadline_killer, daemon=True)
 
@@ -314,8 +331,7 @@ class AgentCLI(ABC):
                                     # Keep reading: the runtime reports its
                                     # result and usage while it closes.
                                     aborting = True
-                                    threading.Thread(target=self._stop, args=(process,),
-                                                     daemon=True).start()
+                                    threading.Thread(target=stop_once, daemon=True).start()
                             except Exception:
                                 pass
             except Exception:
@@ -335,7 +351,7 @@ class AgentCLI(ABC):
                 killer.join(timeout=2)
             watchdog.stop()
             if process.poll() is None:
-                self._stop(process)
+                stop_once()
                 process.wait(timeout=10)
             if err_thread.ident is not None:
                 err_thread.join(timeout=2)
@@ -356,7 +372,7 @@ class AgentCLI(ABC):
 
         elapsed = int(time.time() - start_time)
         rc = process.returncode if process.returncode is not None else -1
-        return rc, "".join(stdout_lines), "".join(stderr_chunks), elapsed, timeout_expired["v"]
+        return rc, "".join(stdout_lines), "".join(stderr_chunks), elapsed, timed_out
 
 class OpenHandsCLI(AgentCLI):
     """Drive the official OpenHands headless CLI (`openhands --headless --json`).
@@ -625,19 +641,15 @@ def get_cli_for_model(model: str, variant: Optional[str] = None, *,
                       resume_reason: str = "", next_turn: bool = False) -> AgentCLI:
     """Return the selected agent runtime for a provider/model identifier.
 
-    ``ARK_AGENT_RUNTIME=dsh`` explicitly selects the isolated DSH SDK. It never
-    falls back to another runtime when configuration or dependencies fail.
+    DSH is the default. ``ARK_AGENT_RUNTIME=cli`` selects OpenHands.
 
-    ``ARK_AGENT_RUNTIME=sdk`` swaps the subprocess CLI for the in-process SDK
-    runtime, which is the only place we can bound what the conversation
-    history costs (see ark/engines/sdk_runtime.py). Both paths present the
-    same interface, so they can be A/B compared on the same project. The CLI
-    remains the default until the SDK path has been measured against it.
+    ``ARK_AGENT_RUNTIME=sdk`` selects the OpenHands SDK driver, which sets a
+    history budget and supports the Apptainer sandbox.
 
     ``resume_session_id`` continues an interrupted call in its own session.
     Only DSH supports it; the other runtimes ignore it and start fresh.
     """
-    if os.environ.get("ARK_AGENT_RUNTIME", "").strip().lower() == "dsh":
+    if selected_agent_runtime() == "dsh":
         from ark.engines.dsh_runtime import DSHRuntime
         return DSHRuntime(model, variant or model, resume_session_id=resume_session_id,
                           resume_reason=resume_reason, next_turn=next_turn)

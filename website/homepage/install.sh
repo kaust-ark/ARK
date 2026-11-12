@@ -213,11 +213,9 @@ extras="webapp"
 run "$ARK_PY" -m pip install --upgrade pip
 run "$ARK_PY" -m pip install -e "$PREFIX[$extras]"
 
-# ─── 4b. Agent runtime (OpenHands CLI) ────────────────────────────────
-# ARK runs every agent through the OpenHands CLI (`openhands --headless`),
-# which routes to Anthropic / OpenAI / Google via LiteLLM. It ships its own
-# Python 3.12 (installed as an isolated `uv` tool, independent of the ark
-# conda envs). Skip if it's already on $PATH.
+# ─── 4b. OpenHands CLI for rollback ───────────────────────────────────
+# The ARK package installs DSH. Keep the OpenHands CLI available for
+# ARK_AGENT_RUNTIME=cli. uv installs it with its own Python 3.12.
 if [ "$DRY_RUN" -eq 0 ]; then
   if command -v openhands >/dev/null 2>&1; then
     note "OpenHands CLI already on PATH"

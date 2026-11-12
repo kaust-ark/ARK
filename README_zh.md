@@ -80,7 +80,7 @@ curl -fsSL https://idea2paper.org/install.sh | bash
 
 脚本会：
 
-1. 检测系统、按需安装 miniforge、创建 `ark-base` 与 `ark` 两个 conda env、以可编辑模式将 idea2paper 装到 `~/ARK`，并安装 OpenHands CLI（智能体运行时，经 `uv` 安装——自带独立的 Python 3.12）。
+1. 检测系统、按需安装 miniforge、创建 `ark-base` 与 `ark` 两个 conda env，以可编辑模式将 idea2paper 装到 `~/ARK`，同时安装固定版本的 DSH SDK。
 2. 询问你的 API key 和**仪表板登录邮箱**。推荐只配一个 **OpenRouter** key——它解锁全部模型，外加深度研究和图表生成；直接填 Anthropic / OpenAI / Gemini / DeepSeek 的官方 key 也可以。回车跳过任意一项。
 3. 把仪表板装成 `systemd --user` 服务（端口 `9527`，用 `--no-webapp` 退出）。
 4. 打印一个一次性的 **magic-link URL** 到你输入的邮箱地址——点一次链接就登录本地仪表板。**不需要 SMTP，也不需要 Google OAuth**。
@@ -109,7 +109,7 @@ idea2paper 通过 PyMuPDF + Claude Haiku 解析 PDF，自动填写向导信息�
 ## 环境要求
 
 - **Python 3.10+** (需安装 `pyyaml` 和 `PyMuPDF`)
-- **智能体运行时**：[OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI)（经 `uv` 安装，自带 Python 3.12）&mdash; 一个运行时即可驱动 Claude / GPT / Gemini / 任何 [LiteLLM](https://docs.litellm.ai/docs/providers) 支持的模型，通过 `config.yaml` 里的 `model` 字段按项目选择。
+- **智能体运行时**默认使用 DeepSeek Harness（DSH）。设置 `ARK_AGENT_RUNTIME=cli` 可使用 OpenHands CLI。Apptainer 需要 `ARK_AGENT_RUNTIME=sdk`。
 - **API key**：一个 [OpenRouter](https://openrouter.ai/keys) key 即可覆盖全部模型、深度研究（Perplexity）和 AI 绘图；单一厂商的 key（Anthropic / OpenAI / Gemini / DeepSeek 等）也能用，只是会缺少该厂商不提供的那部分能力。
 - **可选**: LaTeX (`pdflatex` + `bibtex`)、Slurm。
 
@@ -131,12 +131,10 @@ pip install -e .                    # 核心库
 pip install -e ".[research]"       # + Gemini 深度研究与 Nano Banana
 pip install -e ".[webapp]"         # + 仪表板 / systemd 服务支持
 
-# 3. 安装 OpenHands CLI（智能体运行时）。它是一个独立的 `uv` 工具，
-#    自带专属的 Python 3.12——不是 pip 依赖——且必须位于 PATH 上，
-#    编排器子进程才能找到它。
+# 3. 可选，安装用于回切的 OpenHands CLI。
 pip install uv && uv tool install --python 3.12 openhands
 
-# 4. 验证（检查 openhands 运行时是否在 PATH 上、密钥是否就位等）
+# 4. 检查所选运行时和 API 密钥。
 ark doctor
 ```
 

@@ -33,8 +33,9 @@ model: anthropic/claude-sonnet-4-6
 # agent loop) — a cheap model is plenty.
 bot_model: anthropic/claude-haiku-4-5
 
-# Experimental DSH runtime: set ARK_AGENT_RUNTIME=dsh and ARK_DSH_PYTHON to a
-# separate Python environment with deepseek-harness-sdk==0.2.1rc2 installed.
+# DSH is the default runtime and its SDK is installed with ARK. Set
+# ARK_AGENT_RUNTIME=cli for OpenHands CLI, or ARK_AGENT_RUNTIME=sdk for Apptainer.
+# ARK_DSH_PYTHON can point at another interpreter with the pinned DSH SDK.
 # See ADRs/0014-dsh-runtime-intranet-evaluation.md for protocol selection,
 # per-request limits, local-execution constraints and the offline test command.
 
@@ -53,8 +54,8 @@ gemini_api_key:    ""     # required if model / bot_model uses  gemini/*
 # xai_api_key, mistral_api_key. It is bridged to <PROVIDER>_API_KEY automatically.
 # For a custom gateway, set LLM_BASE_URL in the process environment. Agent and
 # light-helper calls both use it. For an OpenAI-compatible gateway, select
-# openai/<gateway-model-id> and set OPENAI_API_KEY. With a custom URL, light
-# helpers also accept LLM_API_KEY when no explicit or provider key is present.
+# openai/<gateway-model-id> and set OPENAI_API_KEY. With a custom URL, DSH and
+# light helpers also accept LLM_API_KEY when no provider key is present.
 # Configure ARK_UTILITY_MODEL for standalone helpers if the gateway does not
 # offer the default bot_model. Native Deep Research/image integrations are
 # separate and are not redirected by this setting.

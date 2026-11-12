@@ -25,11 +25,10 @@ platform twice before. A subprocess we fully control gives the same control
 point with none of that risk, and reuses the streaming/timeout/kill
 plumbing that already works.
 
-Selection is by env var so both paths stay runnable and comparable on the
-same project:
+Select an OpenHands runtime with an environment variable:
 
     ARK_AGENT_RUNTIME=sdk   → this runtime
-    ARK_AGENT_RUNTIME=cli   → the stock headless CLI (default)
+    ARK_AGENT_RUNTIME=cli   → the stock headless CLI
 
 Assembling the Conversation ourselves also gives us somewhere to put a
 workspace, which is what the structural Apptainer sandbox needs

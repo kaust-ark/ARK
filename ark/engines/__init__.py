@@ -212,7 +212,7 @@ def _is_transient_agent_error(code: str, detail: str) -> bool:
     crash, a wedged conversation).
     """
     d = (detail or "").lower()
-    if "insufficient_quota" in d:
+    if code == "DSH.QuotaExceeded" or "insufficient_quota" in d:
         return False
     if _statuses_in(d) & _TRANSIENT_STATUS:
         return True
@@ -609,7 +609,9 @@ class AgentMixin:
 
     def run_agent(self, agent_type: str, task: str, timeout: int = 1800,
                   prior_context: str = "", *, continue_session: Optional[str] = None,
-                  session_out: Optional[list] = None) -> str:
+                  session_out: Optional[list] = None, outcome_out: Optional[dict] = None,
+                  session_checkpoint: Optional[Path] = None,
+                  interrupted_session: Optional[str] = None) -> str:
         """Run an agent of the specified type, returning its output.
 
         Args:
@@ -624,6 +626,9 @@ class AgentMixin:
                            can resume, so a later call can continue it.
         """
         import json
+
+        if outcome_out is not None:
+            outcome_out["completed"] = False
 
         prompt_file = self.agents_dir / f"{agent_type}.prompt"
         if not prompt_file.exists():
@@ -784,9 +789,14 @@ Execute the task and update the corresponding files.
         # A runtime that can resume continues its own session on retry.
         resume = ({"resume_session_id": continue_session, "next_turn": True}
                   if continue_session else {})
+        if interrupted_session:
+            resume = {"resume_session_id": interrupted_session,
+                      "resume_reason": "the orchestrator stopped during this experiment"}
         cli_runner = None
         failed_here = False
+        completed = False
         for attempt in range(1, MAX_RETRIES + 1):
+            completed = False
             if attempt > 1 and shutting_down.is_set():
                 self.log(f"  [{agent_type}] retry dropped, the run is stopping", "WARN")
                 break
@@ -801,6 +811,8 @@ Execute the task and update the corresponding files.
 
                 cli_runner = get_cli_for_model(model, **resume)
                 cli_runner.agent_type = agent_type
+                if session_checkpoint is not None and getattr(cli_runner, "supports_resume", False):
+                    cli_runner.session_checkpoint = session_checkpoint
                 timer.start()
 
                 # Live step log + intervention sandbox. No-op unless the
@@ -908,6 +920,7 @@ Execute the task and update the corresponding files.
                                  "INFO" if held else "WARN")
                 else:
                     result = stdout
+                completed = returncode == 0 and not timeout_expired and not oh_error_code
 
                 # Stopped mid-call: the Stop's SIGTERM hit this CLI too. Keep
                 # what it produced and judge nothing. Read as an empty run, it
@@ -1253,4 +1266,6 @@ Execute the task and update the corresponding files.
         if (session_out is not None and cli_runner is not None
                 and getattr(cli_runner, "supports_resume", False) and cli_runner.session_id):
             session_out.append(cli_runner.session_id)
+        if outcome_out is not None:
+            outcome_out["completed"] = completed and bool(result.strip()) and not shutting_down.is_set()
         return result

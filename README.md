@@ -80,7 +80,7 @@ curl -fsSL https://idea2paper.org/install.sh | bash
 
 The script:
 
-1. Detects your OS, installs miniforge if missing, builds the `ark-base` and `ark` conda envs, pip-installs idea2paper editable into `~/ARK`, and installs the OpenHands CLI (the agent runtime, via `uv` — it bundles its own Python 3.12).
+1. Detects your OS, installs miniforge if missing, builds the `ark-base` and `ark` conda envs, and installs idea2paper editable into `~/ARK` with the pinned DSH SDK.
 2. Asks for your API keys and an **email for dashboard login**. One **OpenRouter** key is the recommended setup — it unlocks every model plus deep research and figure generation; direct Anthropic / OpenAI / Gemini / DeepSeek keys also work. Press Enter to skip any.
 3. Installs the dashboard as a `systemd --user` service on port `9527` (use `--no-webapp` to opt out).
 4. Prints a one-time **magic-link URL** for your email — click it once and you're logged into the local dashboard. No SMTP, no Google OAuth.
@@ -109,7 +109,7 @@ idea2paper parses the PDF with PyMuPDF + Claude Haiku, pre-fills the wizard, and
 ## Requirements
 
 - **Python 3.10+** with `pyyaml` and `PyMuPDF`
-- **Agent runtime**: [OpenHands CLI](https://github.com/OpenHands/OpenHands-CLI) (installed via `uv`, bundles its own Python 3.12) &mdash; one runtime that drives Claude / GPT / Gemini / any [LiteLLM](https://docs.litellm.ai/docs/providers) model, selected per project via `model` in `config.yaml`
+- **Agent runtime** runs on DeepSeek Harness (DSH) by default. Set `ARK_AGENT_RUNTIME=cli` to use the OpenHands CLI. Apptainer requires `ARK_AGENT_RUNTIME=sdk`.
 - **API key**: one [OpenRouter](https://openrouter.ai/keys) key covers every model, deep research (Perplexity), and AI figures; single-vendor keys (Anthropic / OpenAI / Gemini / DeepSeek / …) work too but lose the pieces their vendor doesn't serve
 - **Optional**: LaTeX (`pdflatex` + `bibtex`), Slurm
 
@@ -132,12 +132,10 @@ pip install -e .                    # Core
 pip install -e ".[research]"       # + Gemini Deep Research & Nano Banana
 pip install -e ".[webapp]"         # + dashboard / systemd service support
 
-# 3. Install the OpenHands CLI (the agent runtime). It is a standalone `uv`
-#    tool with its OWN bundled Python 3.12 — NOT a pip dependency — and must be
-#    on PATH for the orchestrator subprocess to find it.
+# 3. Optional OpenHands rollback runtime.
 pip install uv && uv tool install --python 3.12 openhands
 
-# 4. Verify (checks the openhands runtime is on PATH, keys are present, etc.)
+# 4. Verify the selected runtime and API keys.
 ark doctor
 ```
 

@@ -157,7 +157,7 @@ def main():
     if a.runtime == "dsh":
         os.environ["ARK_AGENT_RUNTIME"] = "dsh"
     else:
-        os.environ.pop("ARK_AGENT_RUNTIME", None)
+        os.environ["ARK_AGENT_RUNTIME"] = "cli"
     import ark
     import ark.engines as eng
 

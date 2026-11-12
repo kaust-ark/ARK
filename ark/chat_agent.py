@@ -1,12 +1,7 @@
-"""Persistent, streaming OpenHands chat agent for out-of-band project management.
+"""Persistent, streaming chat agent for out-of-band project management.
 
-This is the Claude-Code-level chat backend: instead of classifying each message
-and spawning a fresh one-shot agent, we keep ONE OpenHands conversation per
-project and resume it for every message (``openhands --resume <id> -t <msg>``),
-so the agent has full conversational memory + file access and decides for itself
-whether to answer, read, edit, or run. Its tool steps stream to the chat live.
-
-Validated: OpenHands ``--resume`` preserves conversation memory across turns.
+Each runtime keeps its own conversation so projects can switch runtimes and
+later resume their earlier conversation. Tool steps stream to the chat live.
 
 Used by the orchestrator's chat mode (see core.main --chat-message). Kept as a
 plain function so it can be unit-tested directly against a project directory.
@@ -18,11 +13,12 @@ import os
 from pathlib import Path
 from typing import Callable, Optional
 
-from ark.engines.cli import OpenHandsCLI
+from ark.engines.cli import OpenHandsCLI, selected_agent_runtime
 from ark.observability.steps import parse_line
 
 # conversation id is stored here, inside the project workspace
 CONV_FILE = ".ark_chat_conversation"
+DSH_CONV_FILE = ".ark_chat_dsh_conversation"
 # DSH reports usage per turn, not cumulatively; the running total lives here
 DSH_USAGE_FILE = ".ark_chat_usage.json"
 _DSH = "dsh:"
@@ -43,17 +39,26 @@ class _ChatCLI(OpenHandsCLI):
         return cmd + ["-t", prompt]
 
 
-def load_conversation_id(workspace: Path) -> Optional[str]:
-    f = Path(workspace) / CONV_FILE
+def _read_conversation_file(path: Path) -> Optional[str]:
     try:
-        return f.read_text().strip() or None
+        return path.read_text().strip() or None
     except OSError:
         return None
 
 
+def load_conversation_id(workspace: Path) -> Optional[str]:
+    workspace = Path(workspace)
+    legacy = _read_conversation_file(workspace / CONV_FILE)
+    if selected_agent_runtime() == "dsh":
+        return (_read_conversation_file(workspace / DSH_CONV_FILE)
+                or (legacy if legacy and legacy.startswith(_DSH) else None))
+    return legacy if legacy and not legacy.startswith(_DSH) else None
+
+
 def save_conversation_id(workspace: Path, conv_id: str) -> None:
+    file_name = DSH_CONV_FILE if conv_id.startswith(_DSH) else CONV_FILE
     try:
-        (Path(workspace) / CONV_FILE).write_text(conv_id.strip())
+        (Path(workspace) / file_name).write_text(conv_id.strip())
     except OSError:
         pass
 
@@ -123,18 +128,13 @@ def run_chat_turn(*, workspace, message: str, model: str,
                   on_answer: Optional[Callable[[str], None]] = None,
                   log: Callable = print,
                   timeout: int = 1800) -> tuple[str, Optional[str], bool]:
-    """Run ONE chat turn in ``workspace`` via a persistent OpenHands conversation.
+    """Run one chat turn in ``workspace`` via the selected runtime.
 
     Resumes ``conversation_id`` if given (full memory); otherwise starts a new
     conversation. Streams tool steps via ``on_step(StepEvent)`` as they happen and
     delivers the final agent message via ``on_answer(text)``. Returns
     ``(answer, conversation_id, ok)``."""
     workspace = Path(workspace)
-    env = _build_env(model)
-    env["HOME"] = str(workspace)  # conversations persist under workspace/.openhands
-
-    log(f"[chat] openhands {'resume '+conversation_id if conversation_id else 'new'} "
-        f"model={model} ws={workspace}")
 
     def on_event(line):
         # Skip 'finish': the full answer is delivered below.
@@ -142,7 +142,9 @@ def run_chat_turn(*, workspace, message: str, model: str,
         if step and on_step and step.type != "finish":
             on_step(step)
 
-    if os.environ.get("ARK_AGENT_RUNTIME", "").strip().lower() == "dsh":
+    if selected_agent_runtime() == "dsh":
+        if not conversation_id or not conversation_id.startswith(_DSH):
+            conversation_id = load_conversation_id(workspace)
         answer, conv_id = _dsh_turn(workspace, message, model, conversation_id, on_event, log, timeout)
         if conv_id:
             save_conversation_id(workspace, conv_id)
@@ -153,6 +155,12 @@ def run_chat_turn(*, workspace, message: str, model: str,
                 pass
         return answer, conv_id, bool(answer)
 
+    if not conversation_id or conversation_id.startswith(_DSH):
+        conversation_id = load_conversation_id(workspace)
+    env = _build_env(model)
+    env["HOME"] = str(workspace)
+    log(f"[chat] openhands {'resume '+conversation_id if conversation_id else 'new'} "
+        f"model={model} ws={workspace}")
     runner = _ChatCLI(model, conversation_id)
     conv_id = conversation_id
     answer = ""
@@ -191,7 +199,7 @@ def _dsh_turn(workspace: Path, message: str, model: str, conversation_id: Option
     runner.agent_type = "chat"
     log(f"[chat] dsh {'resume ' + sid if sid else 'new'} model={model} ws={workspace}")
     try:
-        _, stdout, _, _, timed_out = runner.execute(
+        rc, stdout, _, _, timed_out = runner.execute(
             message, "", workspace, timeout, on_event=on_event, log_fn=lambda msg, level: log(msg))
     except Exception as e:
         log(f"[chat] error: {e}")
@@ -201,10 +209,14 @@ def _dsh_turn(workspace: Path, message: str, model: str, conversation_id: Option
     parsed = runner.parse_output(stdout)
     if parsed.get("error_code"):
         log(f"[chat] {parsed['error_code']}: {(parsed.get('error_detail') or '')[:200]}")
-    conv_id = _DSH + runner.session_id if runner.session_id else conversation_id
+    success = rc == 0 and not timed_out and not parsed.get("error_code")
+    usage = parsed.get("usage") or {}
+    conv_id = conversation_id
+    if runner.session_id and (success or usage.get("requests")):
+        conv_id = _DSH + runner.session_id
     if conv_id:
-        _add_turn_usage(workspace, conv_id, parsed.get("usage") or {})
-    return (parsed.get("result") or "").strip(), conv_id
+        _add_turn_usage(workspace, conv_id, usage)
+    return ((parsed.get("result") or "").strip() if success else ""), conv_id
 
 
 def _add_turn_usage(workspace: Path, conv_id: str, usage: dict) -> None:
@@ -214,7 +226,14 @@ def _add_turn_usage(workspace: Path, conv_id: str, usage: dict) -> None:
         totals = json.loads(path.read_text())
     except (OSError, ValueError):
         totals = {}
-    cur = totals.get(conv_id) or {k: 0 for k in _USAGE_KEYS} | {"cost_usd": None}
+    cur = totals.get(conv_id) or {k: 0 for k in _USAGE_KEYS} | {"cost_usd": 0.0}
+    prior_unpriced = cur.get("unpriced_turns", int(cur.get("cost_usd") is None))
+    priced = usage.get("cost_usd")
+    cur["known_cost_usd"] = (cur.get("known_cost_usd", cur.get("cost_usd") or 0)
+                             + (priced or 0))
+    cur["unpriced_turns"] = prior_unpriced + int(
+        priced is None and any(usage.get(k) for k in _USAGE_KEYS))
+    cur["cost_usd"] = None if cur["unpriced_turns"] else cur["known_cost_usd"]
     for k in _USAGE_KEYS:
         cur[k] = int(cur.get(k) or 0) + int(usage.get(k) or 0)
     totals[conv_id] = cur

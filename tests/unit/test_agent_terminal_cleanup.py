@@ -160,6 +160,7 @@ def test_parallel_invocations_do_not_clean_up_each_other(cli_stub, tmp_path):
 def test_chat_uses_managed_terminal(cli_stub, tmp_path, monkeypatch, conversation_id, mode):
     from ark.chat_agent import _ChatCLI
 
+    monkeypatch.setenv("ARK_AGENT_RUNTIME", "cli")
     build_command = _ChatCLI.build_command
 
     def stub_command(self, prompt, path_boundary, code_dir):

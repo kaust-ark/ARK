@@ -405,13 +405,14 @@ class TestSetupReportsAreNotEvidence:
 class TestExperimentCorrectivePass:
     """The second chance must not run on a dead key, and must run on a live backend."""
 
-    def _run(self, tmp_path, first_call_error=None, retry_writes=False):
+    def _run(self, tmp_path, first_call_error=None, retry_writes=False,
+             resume_session=None, jobs_settled=True):
         from types import SimpleNamespace
         p = PipelineMixin.__new__(PipelineMixin)
         p.code_dir = tmp_path
         p.state_dir = tmp_path
         p.config = {}
-        p.logs, p.events = [], []
+        p.logs, p.events, p.agent_args = [], [], []
         p.log = lambda msg, level="INFO": p.logs.append((level, msg))
         p.log_step = lambda *a, **k: None
         p.log_step_header = lambda *a, **k: None
@@ -428,19 +429,38 @@ class TestExperimentCorrectivePass:
         p._compute_backend = SimpleNamespace(
             setup=rec("setup", {"work_dir": "/remote/w"}),
             sync_to_backend=rec("push"), get_agent_instructions=rec("instr", ""),
-            wait_for_completion=rec("wait", True), sync_from_backend=rec("pull"),
+            wait_for_completion=rec("wait", jobs_settled), sync_from_backend=rec("pull", True),
             teardown=rec("teardown"))
 
         def agent(agent_type, task, timeout=None, **kw):
             ev.append("agent")
+            p.agent_args.append(kw)
             if ev.count("agent") == 1 and first_call_error:
                 p._terminal_error = first_call_error
             if ev.count("agent") == 2 and retry_writes:
                 (tmp_path / "results" / "exp1_results.json").write_text('{"acc": 0.9}')
             return "done"
         p.run_agent = agent
-        p._run_experiments(1, 1)
+        if resume_session:
+            (tmp_path / "dev-experiment-1.dsh-session").write_text(resume_session)
+            (tmp_path / "results").mkdir()
+            (tmp_path / "results" / "previous.json").write_text('{"acc": 0.9}')
+        p._run_experiments(1, 1, resumed=bool(resume_session))
         return p
+
+    def test_restart_with_unsettled_jobs_does_not_start_an_agent(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ARK_AGENT_RUNTIME", "dsh")
+        p = self._run(tmp_path, resume_session="a" * 32, jobs_settled=False)
+        assert p.events == ["wait"]
+        assert "reconcile" in p._terminal_error
+
+    def test_restart_pulls_results_before_resuming_the_dsh_session(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ARK_AGENT_RUNTIME", "dsh")
+        sid = "a" * 32
+        p = self._run(tmp_path, resume_session=sid)
+        assert p.events[:5] == ["wait", "setup", "pull", "push", "instr"]
+        assert p.agent_args[0]["interrupted_session"] == sid
+        assert p.events.count("agent") == 1
 
     def test_no_retry_after_a_terminal_error(self, tmp_path):
         p = self._run(tmp_path, first_call_error="AuthenticationError: 401")

@@ -50,18 +50,19 @@ production migration or research-quality evaluation has taken place.
 
 ### Adapter configuration and current limits
 
-Install the pinned SDK in its own environment, outside the shared platform env:
+ARK installs the pinned DSH SDK as a dependency and selects it by default.
+Set `ARK_AGENT_RUNTIME=cli` to select OpenHands CLI. To run DSH under a
+separate interpreter:
 
 ```sh
 python -m venv /path/to/dsh-venv
 /path/to/dsh-venv/bin/python -m pip install deepseek-harness-sdk==0.2.1rc2
-export ARK_AGENT_RUNTIME=dsh
 export ARK_DSH_PYTHON=/path/to/dsh-venv/bin/python
 ```
 
 The SDK pins the matching runtime wheel. The driver checks both versions before
 starting. An unavailable interpreter, missing dependency or invalid configuration
-is a terminal error. The default OpenHands runtime remains unchanged.
+is a terminal error.
 
 For custom gateways, set `LLM_BASE_URL` and `ARK_DSH_API` to the protocol served by
 that endpoint: `openai-completions`, `openai-responses` or `anthropic-messages`.
@@ -90,8 +91,9 @@ native models (`deepseek-v4-pro`, `deepseek-flash`) keep a 1M window that the
 adapter cannot override, so their threshold is set as a ratio of 1M.
 `ARK_DSH_SANDBOX` selects `danger-full-access` (default, production parity),
 `workspace-write` or `read-only`; the sandbox needs bwrap on PATH or a Landlock
-kernel. `ARK_DSH_RETRIES` (default 3) sets DSH's own retry of rate limits and
-5xx. `ARK_DSH_EFFORT` sets the native route's reasoning effort.
+kernel. `ARK_DSH_RETRIES` (default 0) sets DSH's own retry of rate limits and
+5xx. ARK handles retries by default. `ARK_DSH_EFFORT` sets the native route's
+reasoning effort.
 `ARK_DSH_PKG_CACHE` holds the ~70 MB the runtime unpacks on first start. Prime it
 once per install, because a cold start can exceed short call timeouts. These
 settings alone are not a total token or spend budget.
@@ -138,7 +140,8 @@ to a job at the 60 s limit. In the promoted case the model blocked on
 `job_output` instead of ending its turn, hence the runtime note now added to every
 DSH task. Effort `off` and `high` were indistinguishable on a trivial question.
 
-Run the optional real-SDK, loopback-only tests alongside the standard suite:
+The standard suite runs the real-SDK tests against a loopback fixture when
+the pinned SDK is installed. To use a separate SDK interpreter:
 
 ```sh
 ARK_DSH_TEST_PYTHON=/path/to/dsh-venv/bin/python \

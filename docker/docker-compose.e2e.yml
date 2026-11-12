@@ -59,6 +59,7 @@ services:
       # HTTP transport → HttpControlPlaneClient (no shared DB). The per-run token
       # is injected by the runner via `docker compose run -e ARK_CONTROL_PLANE_TOKEN=…`.
       ARK_CONTROL_PLANE_URL: "http://webapp:9527/v1"
+      ARK_AGENT_RUNTIME: "cli"
       # A dummy key so any light llm_lite path has a provider key present (it
       # fail-softs to "" on the real call). The fake openhands ignores it.
       ANTHROPIC_API_KEY: "sk-ant-e2e-dummy"

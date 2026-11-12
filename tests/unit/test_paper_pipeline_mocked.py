@@ -7,6 +7,7 @@ state files, scores, agent call sequence, and cost tracking.
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -42,6 +43,14 @@ class TestIntegration:
         orch, controller = mock_integration_project
         assert orch.compile_latex() is True
         assert (orch.latex_dir / "main.pdf").exists()
+
+    def test_compile_does_not_reuse_a_stale_pdf(self, mock_integration_project):
+        orch, _ = mock_integration_project
+        pdf = orch.latex_dir / "main.pdf"
+        pdf.write_bytes(b"previous PDF")
+        with patch("subprocess.run", return_value=subprocess.CompletedProcess([], 1, b"", b"failed")):
+            assert orch.compile_latex() is False
+        assert pdf.read_bytes() == b"previous PDF"
 
     def test_full_paper_iteration(self, mock_integration_project):
         """Run one full paper iteration and verify all state files."""

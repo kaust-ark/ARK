@@ -303,7 +303,7 @@
 </code></pre>
 <p>السكربت سيقوم بـ:</p>
 <ol>
-<li>كشف النظام، تثبيت miniforge عند الحاجة، إنشاء بيئتي <code>ark-base</code> و <code>ark</code>، تثبيت idea2paper بصيغة <code>pip install -e</code> داخل <code>~/ARK</code>، وتثبيت OpenHands CLI (بيئة تشغيل الوكلاء، عبر <code>uv</code> — وهي تأتي مع نسخة Python 3.12 خاصة بها).</li>
+<li>كشف النظام، وتثبيت miniforge عند الحاجة، وإنشاء بيئتي <code>ark-base</code> و <code>ark</code>، وتثبيت idea2paper بصيغة <code>pip install -e</code> داخل <code>~/ARK</code> مع الإصدار المثبّت من DSH SDK.</li>
 <li>سؤالك عن مفاتيح API و<strong>بريد إلكتروني لتسجيل الدخول إلى لوحة التحكم</strong>. الإعداد الموصى به هو مفتاح <strong>OpenRouter</strong> واحد — فهو يفتح كل النماذج إضافةً إلى البحث العميق وتوليد الأشكال؛ كما تعمل المفاتيح المباشرة من Anthropic / OpenAI / Gemini / DeepSeek أيضاً. اضغط Enter لتخطّي أي حقل.</li>
 <li>تثبيت لوحة التحكم كخدمة <code>systemd --user</code> على المنفذ <code>9527</code> (استخدم <code>--no-webapp</code> للتخطّي).</li>
 <li>طباعة <strong>رابط سحري لمرة واحدة</strong> للبريد المُدخل — انقر عليه مرة واحدة وستدخل لوحة التحكم المحلية. لا حاجة لـ SMTP أو Google OAuth.</li>
@@ -323,7 +323,7 @@ ark monitor myproject
 <h2 id="المتطلبات">المتطلبات</h2>
 <ul>
 <li><strong>Python 3.10+</strong> مع <code>pyyaml</code> و <code>PyMuPDF</code></li>
-<li><strong>بيئة تشغيل الوكلاء</strong>: <a href="https://github.com/OpenHands/OpenHands-CLI">OpenHands CLI</a> (تُثبَّت عبر <code>uv</code> وتأتي مع Python 3.12 خاص بها) &mdash; بيئة تشغيل واحدة تدير Claude / GPT / Gemini / أي نموذج يدعمه <a href="https://docs.litellm.ai/docs/providers">LiteLLM</a>، ويُختار النموذج لكل مشروع عبر <code>model</code> في <code>config.yaml</code>.</li>
+<li><strong>بيئة تشغيل الوكلاء</strong> تستخدم DeepSeek Harness (DSH) افتراضيًا. لاستخدام OpenHands CLI، اضبط <code>ARK_AGENT_RUNTIME=cli</code>. يتطلب Apptainer ضبط <code>ARK_AGENT_RUNTIME=sdk</code>.</li>
 <li><strong>مفتاح API</strong>: مفتاح <a href="https://openrouter.ai/keys">OpenRouter</a> واحد يغطي كل النماذج، والبحث العميق (Perplexity)، والأشكال المولَّدة بالذكاء الاصطناعي؛ وتعمل مفاتيح المزوّد الواحد (Anthropic / OpenAI / Gemini / DeepSeek / …) أيضاً لكنها تفقد ما لا يقدّمه ذلك المزوّد.</li>
 <li><strong>اختياري</strong>: LaTeX (<code>pdflatex</code> + <code>bibtex</code>)، Slurm.</li>
 </ul>
@@ -342,12 +342,10 @@ pip install -e .                    # النواة الأساسية
 pip install -e &quot;.[research]&quot;       # + Gemini Deep Research و Nano Banana
 pip install -e &quot;.[webapp]&quot;         # + دعم لوحة التحكم وخدمة systemd
 
-# 3. ثبّت OpenHands CLI (بيئة تشغيل الوكلاء). وهي أداة `uv` مستقلة
-#    تأتي مع Python 3.12 خاص بها — وليست اعتمادية pip — ويجب أن تكون
-#    على PATH كي تعثر عليها عملية المنسق الفرعية.
+# 3. ثبّت OpenHands CLI اختياريًا لاستخدامه عند الرجوع إليه.
 pip install uv &amp;&amp; uv tool install --python 3.12 openhands
 
-# 4. تحقّق (يفحص وجود openhands على PATH، وتوفر المفاتيح، وغير ذلك)
+# 4. تحقّق من بيئة التشغيل المختارة ومفاتيح API.
 ark doctor
 </code></pre>
 <hr />
