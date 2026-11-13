@@ -1,16 +1,17 @@
 # Install into a dedicated base-backed Idea2Paper profile.
 - id: hmr
-  disabled: true
+  disabled: !!js "!ctx.get('profileContext') || ctx.get('profileContext').name === 'idea2paper'"
 - id: session-log-deepseek
-  disabled: true
+  disabled: !!js "ctx.get('profileContext')?.name === 'idea2paper'"
 - id: plugin-package-inventory-deepseek
-  disabled: true
+  disabled: !!js "ctx.get('profileContext')?.name === 'idea2paper'"
 - id: session-telemetry-otel
-  disabled: true
+  disabled: !!js "ctx.get('profileContext')?.name === 'idea2paper'"
 - id: llm-retry
-  disabled: true
+  disabled: !!js "ctx.get('profileContext')?.name === 'idea2paper'"
 - id: session-title-llm
-  disabled: true
+  disabled: !!js "ctx.get('profileContext')?.name === 'idea2paper'"
 - insert:
     - id: idea2paper
       name: idea2paper-dsh
+      disabled: !!js "ctx.get('profileContext')?.name !== 'idea2paper'"

@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process'
-import { lstat, mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { copyFile, lstat, mkdir, mkdtemp, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { checkExperimentRunner, removeExperiment, runExperiment } from './experiment.js'
 
-const steps = ['plan', 'experiment', 'writer', 'reviewer', 'delivery']
-const question = 'Compare the number of key comparisons in linear and binary search over sorted arrays.'
+const steps = ['plan', 'code', 'experiment', 'writer', 'reviewer', 'revision', 'final-review', 'delivery']
+const formatVersion = 2
 const python = process.env.IDEA2PAPER_PYTHON || 'python3'
 
 async function readJson(path) {
@@ -48,54 +50,54 @@ function text(value, label, min, max) {
 }
 
 function validatePlan(data) {
-  const sizes = data?.sizes
-  if (!Array.isArray(sizes) || sizes.length < 2 || sizes.length > 4 ||
-      sizes.some(n => !Number.isSafeInteger(n) || n < 16 || n > 8192) ||
-      new Set(sizes).size !== sizes.length) {
-    throw new Error('Plan must give two to four distinct input sizes between 16 and 8192')
+  return {
+    question: text(data?.question, 'research question', 8, 350),
+    hypothesis: text(data?.hypothesis, 'hypothesis', 8, 500),
+    method: text(data?.method, 'experimental method', 40, 1800),
+    metric: plainText(data?.metric, 'metric description', 3, 100),
   }
-  return { hypothesis: text(data.hypothesis, 'hypothesis', 8, 500), sizes }
 }
 
-function measure(sizes) {
-  return sizes.map(size => {
-    const values = Array.from({ length: size }, (_, i) => i * 2)
-    const targets = [values[0], values[Math.floor(size / 2)], values.at(-1), -1, values.at(-1) + 1]
-    const trials = targets.map(target => {
-      let linear = 0
-      for (const value of values) {
-        linear++
-        if (value === target) break
-      }
-      let binary = 0
-      let lo = 0
-      let hi = values.length - 1
-      while (lo <= hi) {
-        const mid = Math.floor((lo + hi) / 2)
-        binary++
-        if (values[mid] === target) break
-        if (values[mid] < target) lo = mid + 1
-        else hi = mid - 1
-      }
-      return { target, linear, binary }
-    })
-    return { size, trials }
-  })
+function validateResults(data) {
+  const rows = data?.rows
+  if (!Array.isArray(rows) || !rows.length || rows.length > 12 ||
+      rows.some(row => !Number.isFinite(row?.baseline) || !Number.isFinite(row?.proposed))) {
+    throw new Error('Experiment must return 1–12 rows with finite baseline and proposed numbers')
+  }
+  return { rows: rows.map(row => ({
+    label: plainText(row.label, 'trial label', 1, 70),
+    baseline: row.baseline,
+    proposed: row.proposed,
+  })) }
+}
+
+function plainText(input, label, min, max) {
+  const value = text(typeof input === 'string' ? input
+    .replace(/[‘’]/gu, "'")
+    .replace(/[“”]/gu, '"')
+    .replace(/[‐‑–—−]/gu, '-')
+    .replace(/≤/gu, '<=').replace(/≥/gu, '>=').replace(/≈/gu, '~').replace(/×/gu, '*')
+    .replace(/\u00a0/gu, ' ') : input, label, min, max)
+  if (/[^\x20-\x7e\n\t]/u.test(value)) throw new Error(`Use plain ASCII for ${label}`)
+  return value
 }
 
 function validateDraft(data) {
-  const fields = { title: [8, 130], abstract: [140, 650], method: [420, 1600],
-    interpretation: [420, 1600], limitations: [360, 1600] }
-  return Object.fromEntries(Object.entries(fields).map(([field, [min, max]]) => {
-    const value = text(data?.[field], field, min, max)
-    if (/[^\x20-\x7e\n\t]/u.test(value)) throw new Error(`Use plain ASCII for ${field}`)
-    return [field, value]
-  }))
+  const fields = { title: [8, 160], abstract: [140, 1800], method: [240, 2800],
+    interpretation: [240, 2800], limitations: [180, 2200] }
+  return Object.fromEntries(Object.entries(fields).map(([field, [min, max]]) => [
+    field, plainText(data?.[field], field, min, max),
+  ]))
 }
 
 function validateReview(data) {
-  if (typeof data?.accepted !== 'boolean') throw new Error('Review must explicitly accept or reject the draft')
-  return { accepted: data.accepted, feedback: text(data.feedback, 'review feedback', 12, 2000) }
+  if (typeof data?.accepted !== 'boolean' || !Array.isArray(data.unsupported_claims) ||
+      data.unsupported_claims.length > 8) {
+    throw new Error('Review must include a boolean acceptance and an array of unsupported claims')
+  }
+  const unsupported = data.unsupported_claims.map(claim => text(claim, 'unsupported claim', 6, 300))
+  const feedback = text(data.feedback, 'review feedback', 12, 2000)
+  return { accepted: data.accepted && unsupported.length === 0, feedback, unsupported }
 }
 
 const escapes = {
@@ -107,9 +109,10 @@ function latex(value) {
   return value.replace(/[\\{}$&#%_~^]/g, char => escapes[char])
 }
 
-function render(draft, results) {
-  const rows = results.flatMap(({ size, trials }) =>
-    trials.map(({ target, linear, binary }) => `${size} & ${target} & ${linear} & ${binary} \\\\\n`)).join('')
+function render(draft, plan, results) {
+  const rowEnd = ' \\\\' + '\n'
+  const rows = results.rows.map(({ label, baseline, proposed }) =>
+    [latex(label), baseline, proposed].join(' & ') + rowEnd).join('')
   return `\\documentclass{article}
 \\usepackage[T1]{fontenc}
 \\title{${latex(draft.title)}}
@@ -120,10 +123,11 @@ function render(draft, results) {
 \\begin{abstract}${latex(draft.abstract)}\\end{abstract}
 \\section{Method}
 ${latex(draft.method)}
-\\section{Measured comparisons}
-\\begin{tabular}{rrrr}
-Input size & Target & Linear & Binary \\\\
-${rows}\\end{tabular}
+\\section{Measured results}
+Metric: ${latex(plan.metric)}.
+
+\\begin{tabular}{lrr}
+${'Trial & Baseline & Proposed' + rowEnd}${rows}\\end{tabular}
 \\section{Interpretation}
 ${latex(draft.interpretation)}
 \\section{Limitations}
@@ -137,28 +141,32 @@ This draft was generated with Idea2Paper (idea2paper.org).
 async function deliver(directory, state, signal) {
   const paper = join(directory, 'paper')
   await mkdir(paper, { recursive: true })
-  const build = await mkdtemp(join(paper, '.build-'))
+  const build = await mkdtemp(join(directory, '.paper-build-'))
   try {
-    await writeFile(join(build, 'main.tex'), render(state.draft, state.results), { mode: 0o600 })
-    await execute('pdflatex', ['-no-shell-escape', '-halt-on-error', '-interaction=batchmode', 'main.tex'], build, signal)
+    const stagedPaper = join(build, 'paper')
+    await mkdir(stagedPaper)
+    await mkdir(join(build, 'results'))
+    await copyFile(join(directory, 'results', 'experiment.json'), join(build, 'results', 'experiment.json'))
+    await writeFile(join(stagedPaper, 'main.tex'), render(state.draft, state.plan, state.results), { mode: 0o600 })
+    await execute('pdflatex', ['-no-shell-escape', '-halt-on-error', '-interaction=batchmode', 'main.tex'],
+      stagedPaper, AbortSignal.any([signal, AbortSignal.timeout(60_000)]))
+    await execute(python, ['-c', `
+import sys
+from pathlib import Path
+from ark.delivery_contract import evaluate, write_report
+report = evaluate(Path(sys.argv[1]))
+if write_report(Path(sys.argv[2]), report) is None:
+    raise SystemExit("Could not write the delivery report")
+if report.hard_violations:
+    raise SystemExit(", ".join(f.check for f in report.hard_violations))
+`, build, directory], directory, AbortSignal.any([signal, AbortSignal.timeout(60_000)]))
     signal.throwIfAborted()
     for (const artifact of ['main.tex', 'main.pdf']) {
-      await rename(join(build, artifact), join(paper, artifact))
+      await rename(join(stagedPaper, artifact), join(paper, artifact))
     }
   } finally {
     await rm(build, { recursive: true, force: true })
   }
-  await execute(python, ['-c', `
-import sys
-from pathlib import Path
-from ark.delivery_contract import evaluate, write_report
-root = Path(sys.argv[1])
-report = evaluate(root)
-if write_report(root, report) is None:
-    raise SystemExit("Could not write the delivery report")
-if report.hard_violations:
-    raise SystemExit(", ".join(f.check for f in report.hard_violations))
-`, directory], directory, signal)
 }
 
 export async function runWorkflow({ directory, idea, selection, signal, runRole }) {
@@ -181,59 +189,115 @@ export async function runWorkflow({ directory, idea, selection, signal, runRole 
     if (idea !== undefined && state) throw new Error('Project already exists; use resume')
     if (idea === undefined && !state) throw new Error('Project checkpoint does not exist')
     if (!state) {
-      state = { version: 1, idea, selection, completed: [], sessions: {} }
+      state = { version: formatVersion, id: randomUUID(), idea, selection, completed: [], sessions: {} }
       await writeJson(path, state)
     }
-    if (state.version !== 1 ||
+    if (state.version === 1) {
+      throw new Error('This project was created by 0.1.0-alpha.0. Resume it with that bundle version.')
+    }
+    if (state.version !== formatVersion || !/^[a-f0-9-]{36}$/.test(state.id) ||
         !Array.isArray(state.completed) ||
         state.completed.some((step, i) => steps[i] !== step) ||
         state.selection?.provider !== selection.provider || state.selection?.model !== selection.model) {
       throw new Error('Incompatible checkpoint or model selection')
     }
     if (state.completed.length < steps.length) {
-      await execute('pdflatex', ['--version'], directory, signal)
-      await execute(python, ['-c', 'import fitz, yaml, ark.delivery_contract'], directory, signal)
+      const deadline = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+      await execute('pdflatex', ['--version'], directory, deadline)
+      await execute(python, ['-c', 'import fitz, yaml, ark.delivery_contract'], directory, deadline)
+      if (!state.completed.includes('experiment')) await checkExperimentRunner(deadline)
     }
+
+    async function ask(role, prompt, validate) {
+      const parse = response => {
+        if (response.truncated) throw new Error('Response reached the output limit')
+        let data
+        try {
+          data = JSON.parse(response.output)
+        } catch {
+          throw new Error('Expected a complete JSON response')
+        }
+        return validate(data)
+      }
+      let response = await runRole(role, prompt)
+      let validated
+      try {
+        validated = parse(response)
+      } catch (error) {
+        response = await runRole(role, `${prompt}\nThe last response failed validation: ${error.message}. Return only a concise, corrected JSON object.`)
+        validated = parse(response)
+      }
+      state.sessions[role] = response.sessionId
+      return validated
+    }
+
+    async function writeDraft(role, review) {
+      return ask(role, `Write an English mini paper about the measured experiment below.
+Research plan: ${JSON.stringify(state.plan)}
+Executed Python code: ${JSON.stringify(state.code)}
+Measured data: ${JSON.stringify(state.results)}
+${review ? `Prior draft: ${JSON.stringify(state.draft)}\nReview to address: ${JSON.stringify(review)}` : ''}
+The renderer supplies the exact result table. Return a JSON object with title (one short line),
+abstract (2–4 sentences), method, interpretation, and limitations (one short paragraph each).
+Describe the executed code where it differs from the plan. Check every trial for exceptions before
+generalizing. Only claim measured quantities and trends supported by the table. If wall time, memory
+usage, or similar metrics were not collected, report them as unmeasured. Use plain ASCII prose.`,
+      validateDraft)
+    }
+
+    async function review(role) {
+      return ask(role, `Independently review whether the draft answers the question and whether
+its claims are supported by the measured experiment. Inspect all sections. List each unsupported
+claim (at most eight short strings), including plausible but unmeasured quantities and overstated
+trends. Reject if that list is non-empty or the baseline is weak.
+Plan: ${JSON.stringify(state.plan)}
+Experiment code: ${state.code}
+Measured data: ${JSON.stringify(state.results)}
+Draft: ${JSON.stringify(state.draft)}
+Return a JSON object with accepted (boolean), unsupported_claims (array, empty only if none),
+and feedback (string).`, validateReview)
+    }
+
     const stages = {
       async plan() {
-        const { data, sessionId } = await runRole('plan',
-          `Study: ${question}\nUser framing: ${state.idea}\nGive a JSON object with a hypothesis string and sizes array. Use two to four distinct integer sizes between 16 and 8192.`)
-        state.plan = validatePlan(data)
-        state.sessions.plan = sessionId
+        state.plan = await ask('plan', `User idea: ${JSON.stringify(state.idea)}
+Design a small reproducible CPU experiment on this idea. Use a synthetic input or data generated
+by the experiment itself, with a meaningful baseline and proposed comparison. The experiment
+has Python standard library only, no network or writable filesystem, 128 MiB of memory, and
+60 seconds of runtime. Use at most twelve trial rows. Choose a numerical tolerance that the
+implementation can reach at the chosen scales. Return a JSON object with question (8–350 chars),
+hypothesis (8–500), method (40–1800), and metric (3–100, short ASCII table label only).
+If the idea is too broad, propose a measurable subquestion and make the limitation explicit.`, validatePlan)
+      },
+      async code() {
+        state.code = await ask('code', `Implement this experiment in standard-library Python:
+${JSON.stringify(state.plan)}
+Return a JSON object with a code string, at most 12000 characters. The program must compute its
+results using deterministic inputs and print exactly one JSON object, with a rows array of 1–12
+objects. Each row has a short label, a finite baseline number, and a finite proposed number.
+Use stdout for the result, with no files, installations, or external datasets.`,
+        data => text(data?.code, 'experiment code', 12, 12_000))
       },
       async experiment() {
         const existing = await readJson(resultPath)
-        if (existing && JSON.stringify(existing.sizes) !== JSON.stringify(state.plan.sizes)) {
-          throw new Error('Existing experiment result has different inputs')
-        }
+        state.results = existing ? validateResults(existing) :
+          validateResults(await runExperiment({ id: state.id, code: state.code, signal }))
         if (!existing) {
           await mkdir(join(directory, 'results'), { recursive: true })
-          await writeJson(resultPath, { sizes: state.plan.sizes, results: measure(state.plan.sizes) })
+          await writeJson(resultPath, state.results)
         }
-        const evidence = await readJson(resultPath)
-        state.results = evidence.results
       },
       async writer() {
-        const { data, sessionId } = await runRole('writer',
-          `Write an English mini paper for this study: ${question}
-User framing: ${state.idea}
-Plan: ${JSON.stringify(state.plan)}
-Measured data: ${JSON.stringify(state.results)}
-Each trial records one count per inspected element. The renderer supplies the exact result table.
-Return fields title (8–130 chars), abstract (140–650), method (420–1600), interpretation (420–1600), limitations (360–1600).
-Use plain prose and ASCII. Do not invent citations, performance claims, measurements, or numbers.`)
-        state.draft = validateDraft(data)
-        state.sessions.writer = sessionId
+        state.draft = await writeDraft('writer')
       },
       async reviewer() {
-        const { data, sessionId } = await runRole('reviewer',
-          `Review whether this draft is supported by these measured comparison counts.
-Study: ${question}
-Results: ${JSON.stringify(state.results)}
-Draft: ${JSON.stringify(state.draft)}
-Return accepted (boolean) and feedback (string). Reject unsupported claims.`)
-        state.review = validateReview(data)
-        state.sessions.reviewer = sessionId
+        state.review = await review('reviewer')
+      },
+      async revision() {
+        if (!state.review.accepted) state.draft = await writeDraft('revision', state.review)
+      },
+      async 'final-review'() {
+        if (!state.review.accepted) state.review = await review('final-review')
       },
       async delivery() {
         if (!state.review.accepted) throw new Error(`Independent review rejected the draft: ${state.review.feedback}`)
@@ -247,6 +311,13 @@ Return accepted (boolean) and feedback (string). Reject unsupported claims.`)
       state.completed.push(step)
       await writeJson(path, state)
       console.log(`Completed ${step}`)
+      if (step === 'experiment') {
+        try {
+          await removeExperiment(state.id, state.code, signal)
+        } catch (error) {
+          console.error(`Saved results. Container cleanup failed: ${error.message}`)
+        }
+      }
     }
     const pdf = join(directory, 'paper', 'main.pdf')
     if (!(await lstat(pdf)).isFile()) throw new Error('Expected a PDF at the recorded delivery path')

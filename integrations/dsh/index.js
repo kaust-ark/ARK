@@ -48,7 +48,7 @@ async function runRole(ctx, selection, project, role, prompt, signal) {
   const handle = await ctx.agents.create({
     sessionId,
     meta: { cwd: project },
-    agentOptions: { provider: selection.provider, model: selection.model, maxTokens: 4096 },
+    agentOptions: { provider: selection.provider, model: selection.model, maxTokens: 8192 },
     signal,
     setup(scope) {
       installModelSelection(scope, { current: selection, assembled: undefined })
@@ -76,10 +76,11 @@ async function runRole(ctx, selection, project, role, prompt, signal) {
     await agent.whenIdle()
     await ctx.sessions.flush(agent.session)
     signal.throwIfAborted()
-    if (reason?.kind !== 'completed' || !text.trim()) {
+    if (reason?.kind !== 'completed' && reason?.kind !== 'max-tokens') {
       throw new Error(`${role} session ${sessionId} failed: ${reason?.error?.message ?? reason?.kind ?? 'missing turn result'}`)
     }
-    return { sessionId, data: JSON.parse(text.trim().replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi, '')) }
+    const output = text.trim().replace(/^\x60\x60\x60(?:json)?\s*|\s*\x60\x60\x60$/gi, '')
+    return { sessionId, output, truncated: reason.kind === 'max-tokens' }
   } finally {
     signal.removeEventListener('abort', cancel)
     unsubscribe()
