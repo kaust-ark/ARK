@@ -1063,6 +1063,10 @@ def launch_local_job(
 
     # Prepare environment with user keys and home isolation
     env = os.environ.copy()
+    # The webapp interpreter supplies DSH when the orchestrator uses a conda
+    # environment that only has the project's research dependencies.
+    if not env.get("ARK_DSH_PYTHON"):
+        env["ARK_DSH_PYTHON"] = sys.executable
     # The webapp's own environ may carry server-side credentials: ``ark.cli
     # main()`` loads the operator's global ~/.ark config keys into os.environ
     # at startup (GOOGLE_API_KEY alias included), and /proc-invisible runtime

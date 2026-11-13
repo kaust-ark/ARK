@@ -89,12 +89,14 @@ def test_generated_unit_is_pinned_to_the_installing_host(tmp_path):
     assert unit.index("ConditionHost=") < unit.index("[Service]")
 
 
-def _launch(tmp_path, monkeypatch, **kw):
+def _launch(tmp_path, monkeypatch, *, check_env=None, **kw):
     from website.dashboard import db, jobs
     captured = {}
 
     def fake_detached(wrapper, env, log_file, project_dir, project_id):
         captured["wrapper"] = wrapper
+        if check_env is not None:
+            check_env(env)
         return 4242
 
     monkeypatch.setattr(jobs, "find_conda_binary", lambda: None)
@@ -113,6 +115,21 @@ def test_launch_returns_a_host_qualified_handle(tmp_path, monkeypatch):
     handle, wrapper = _launch(tmp_path, monkeypatch)
     assert handle == f"local:{HOST}:4242"
     assert "local_exit.txt" in wrapper          # the run records its own outcome
+
+
+@pytest.mark.parametrize("override", [None, "/custom/dsh/bin/python"])
+def test_local_launch_supplies_the_dsh_interpreter(tmp_path, monkeypatch, override):
+    import sys
+
+    if override is None:
+        monkeypatch.delenv("ARK_DSH_PYTHON", raising=False)
+    else:
+        monkeypatch.setenv("ARK_DSH_PYTHON", override)
+
+    def check_env(env):
+        assert env["ARK_DSH_PYTHON"] == (override or sys.executable)
+
+    _launch(tmp_path, monkeypatch, check_env=check_env)
 
 
 def test_side_channel_leaves_the_runs_exit_sentinel_alone(tmp_path, monkeypatch):

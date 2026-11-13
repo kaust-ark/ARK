@@ -1899,6 +1899,8 @@ def cmd_run(args):
 
     # Strip CLAUDECODE so orchestrator can call claude CLI freely
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    if not env.get("ARK_DSH_PYTHON"):
+        env["ARK_DSH_PYTHON"] = sys.executable
     # Control-plane bearer token via env (never argv), matching the webapp launcher.
     if cp_token:
         env["ARK_CONTROL_PLANE_TOKEN"] = cp_token
