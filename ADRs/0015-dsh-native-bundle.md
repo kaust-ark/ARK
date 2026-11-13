@@ -1,0 +1,11 @@
+# ADR-0015: Run an installable Idea2Paper workflow in DSH
+
+Status: Proposed
+
+The Idea2Paper bundle is a local DSH application. Its plugin owns project step transitions and uses the DSH Agent registry for model turns. The hosted application has a separate lifecycle with accounts, quotas, and remote workers. Evaluate a shared workflow after the local bundle demonstrates equivalent recovery behavior.
+
+1. Pin DSH `0.2.1-rc.2`. Install a packed bundle into a fresh profile and prove the CLI can start the application and drive DSH role sessions. Give model stages structured outputs and a bounded number of calls. Keep model and project credentials out of the checkpoint.
+2. Run one narrow but complete local workflow. The first experiment compares linear and binary search on deterministic sorted inputs. The plan supplies input sizes and a hypothesis. Measured comparison counts feed the writer and an independent reviewer. A renderer compiles the structured draft to PDF and uses the existing Idea2Paper delivery contract. A rejected draft is checkpointed for inspection.
+3. Checkpoint completed stages in an atomic project file. DSH session logs retain individual model turns for inspection. The pinned DSH API reserves its experimental custom session records for in-tree packages, so project state lives in the workspace. Use a single writer lock. Commit experiment output before marking the step complete and reuse that output if a process dies in between. A resumed run starts at the first unfinished step.
+4. Install the package tarball in a clean DSH home, use a deterministic loopback model endpoint and check the actual PDF, audit, stage artifacts, and DSH request trace. Interrupt after the experiment and before draft completion, then resume. Check that completed model stages and experiment output are reused. Exercise a rejected review and a provider error.
+5. Before public distribution, run a bounded real-model pilot with an approved provider, test clean dependency installation and document supported platforms, model configuration, and recovery. Distribute the built npm bundle and optionally add an entry to a Discover index. Treat Slurm as a separate follow-up with scheduler-backed job identity, an idempotent submission protocol, and cancellation and resume tests on real short jobs. Verify hosted parity before adopting the bundle there.

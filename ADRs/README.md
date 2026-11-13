@@ -47,3 +47,4 @@ cross-link — the docs carry the full detail; the ADRs carry the *decision*:
 | [0012](0012-artifact-store-seam.md) | Artifact blobs via an `ArtifactStore` seam (proxy now, presigned later) | Proposed |
 | [0013](0013-state-db-projection.md) | Control-plane state as a DB projection of orchestrator-local files | Proposed |
 | [0014](0014-dsh-runtime-intranet-evaluation.md) | DSH runtime migration with evaluation inside the will network | Proposed |
+| [0015](0015-dsh-native-bundle.md) | Run an installable Idea2Paper workflow in DSH | Proposed |

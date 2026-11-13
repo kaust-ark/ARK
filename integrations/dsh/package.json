@@ -1,0 +1,17 @@
+{
+  "name": "idea2paper-dsh",
+  "version": "0.1.0-alpha.0",
+  "description": "A local Idea2Paper workflow for DeepSeek Harness",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": "./index.js",
+  "files": ["index.js", "workflow.js", "cordis.patch.yml"],
+  "engines": { "node": ">=22.12.0", "dsh": "0.2.1-rc.2" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } },
+  "dependencies": { "commander": "15.0.0" },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-cmdline": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2"
+  }
+}

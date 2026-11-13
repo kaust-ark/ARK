@@ -1,0 +1,16 @@
+# Install into a dedicated base-backed Idea2Paper profile.
+- id: hmr
+  disabled: true
+- id: session-log-deepseek
+  disabled: true
+- id: plugin-package-inventory-deepseek
+  disabled: true
+- id: session-telemetry-otel
+  disabled: true
+- id: llm-retry
+  disabled: true
+- id: session-title-llm
+  disabled: true
+- insert:
+    - id: idea2paper
+      name: idea2paper-dsh
