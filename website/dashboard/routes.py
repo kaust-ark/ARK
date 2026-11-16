@@ -2990,9 +2990,13 @@ async def api_stop_project(project_id: str, request: Request):
             return JSONResponse({"ok": True})
         if project.slurm_job_id:
             # Dispatch cancel off the persisted handle (local:/skypilot:/slurm).
-            launcher_from_handle(project.slurm_job_id, log_fn=logger.info).cancel(
-                project.slurm_job_id, pdir
-            )
+            handle = project.slurm_job_id
+            await asyncio.to_thread(launcher_from_handle(handle, log_fn=logger.info).cancel, handle, pdir)
+            if handle.startswith("local:"):
+                from .jobs import cancel_project_sub_jobs
+                cancelled = await asyncio.to_thread(cancel_project_sub_jobs, pdir)
+                if cancelled:
+                    logger.info("Stop cascade: cancelled local project's Slurm jobs: %s", ",".join(cancelled))
         update_project(session, project, status="stopped")
         return JSONResponse({"ok": True})
 

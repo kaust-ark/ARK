@@ -753,7 +753,7 @@ def cancel_project_sub_jobs(project_dir: Path) -> list[str]:
     Returns the list of cancelled job IDs for logging.
     """
     cancelled: list[str] = []
-    project_path = str(Path(project_dir).resolve())
+    project_path = Path(project_dir).resolve()
     try:
         user = os.environ.get("USER", "")
         if not user:
@@ -771,10 +771,8 @@ def cancel_project_sub_jobs(project_dir: Path) -> list[str]:
                 m = re.search(r"WorkDir=(\S+)", info.stdout)
                 if not m:
                     continue
-                workdir = m.group(1)
-                # Match by prefix so sub-directories (experiment dirs,
-                # .cache, etc.) all count as "belonging to" the project.
-                if workdir.startswith(project_path):
+                workdir = Path(m.group(1))
+                if workdir.is_relative_to(project_path):
                     if cancel_job(jobid):
                         cancelled.append(jobid)
             except Exception:

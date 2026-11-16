@@ -3311,7 +3311,8 @@ def main():
     final_status = None
     final_error = ""
     try:
-        orchestrator.run()
+        from .dsh_workflow import hosted_workflow_enabled
+        orchestrator.run(dsh_workflow=hosted_workflow_enabled(project_id))
         # Derive the terminal status from the run's own outcome signals. run()
         # returns normally even when it aborted early: a non-retryable agent error
         # stops the loop via `return False`/`break`, not an exception.

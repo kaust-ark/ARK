@@ -1,5 +1,6 @@
 """ExecutionMixin: planner cycle, experiment loop, writing phase, meta-debug, self-repair."""
 
+import hashlib
 import json
 import os
 import re
@@ -18,6 +19,7 @@ from ark.findings_schema import (
     sync_findings_from_json,
 )
 from ark.config import defaults
+from ark.engines.cli import selected_agent_runtime
 
 
 _STRUCTURE = {
@@ -36,8 +38,6 @@ def _digests(root: Path, rel_paths) -> dict:
     has not changed it, and a tool that touches it without writing has not
     either.
     """
-    import hashlib
-
     out = {}
     for rel in rel_paths:
         p = Path(root) / rel
@@ -126,6 +126,25 @@ class QuotaExhaustedError(Exception):
         self.page_count = page_count
         self.venue_pages = venue_pages
         super().__init__(f"Quota exhausted with {page_count:.1f}/{venue_pages} body pages")
+
+
+EXPERIMENT_RESUME_NOTE = (
+    "\n## Resuming an interrupted attempt\n"
+    "An earlier session was cut off. Check existing scripts, scheduler jobs, and results first. "
+    "Keep completed work and run only what is missing or failed. "
+    "Do not resubmit a job whose results already exist."
+)
+
+
+def settle_interrupted_experiments(project):
+    try:
+        if project._compute_backend.wait_for_completion(max_wait_hours=4):
+            return True
+    except Exception as exc:
+        project.log(f"Could not check jobs from the interrupted attempt: {exc}", "WARN")
+    if not shutting_down.is_set():
+        project._terminal_error = "Could not reconcile existing experiment jobs. Check the scheduler before resuming."
+    return False
 
 
 class ExecutionMixin:
@@ -639,6 +658,20 @@ Please read auto_research/state/latest_review.md and regenerate.
         # Determine remote working directory
         # Remote backends (e.g. SkyPilot) provide 'work_dir' in compute_ctx. Slurm/Local fallback to code_dir.
         remote_work_dir = compute_ctx.get("work_dir", str(self.code_dir))
+
+        session_args = {}
+        issue_id = issue.get("id")
+        interrupted = issue_id in getattr(self, "_interrupted_review_experiments", set())
+        if interrupted:
+            # Multi-round scheduling may revisit this issue after a human reply.
+            self._interrupted_review_experiments.discard(issue_id)
+        if issue_id and issue.get("type") == "EXPERIMENT_REQUIRED" and selected_agent_runtime() == "dsh":
+            digest = hashlib.sha256(str(issue_id).encode()).hexdigest()[:16]
+            checkpoint = self.state_dir / f"review-experiment-{self.iteration}-{digest}.dsh-session"
+            session_args["session_checkpoint"] = checkpoint
+            if interrupted and checkpoint.is_file():
+                session_args["interrupted_session"] = checkpoint.read_text().strip()
+                session_args["resume_instructions"] = EXPERIMENT_RESUME_NOTE
         
         # Sync project code to backend
         self._compute_backend.sync_to_backend(str(self.code_dir), remote_work_dir)
@@ -683,6 +716,11 @@ Please read auto_research/state/latest_review.md and regenerate.
         sessions = []
         outcome = {}
         try:
+            if interrupted and not self._compute_backend.sync_from_backend(
+                f"{remote_work_dir}/results", str(self.code_dir / "results"),
+            ):
+                self._terminal_error = "Could not retrieve prior experiment results. Check the backend before resuming."
+                return
             # 2. Experimenter runs the experiment (includes result analysis)
             exp_output = self.run_agent("experimenter", f"""
 Task: {exp_task}
@@ -694,6 +732,7 @@ Issue context:
 {file_existence_warning}
 {compute_instructions}
 {prior_anomaly_section}
+{EXPERIMENT_RESUME_NOTE if interrupted else ""}
 
 After running the experiment:
 1. Check whether the experiment completed successfully (no OOM, no errors)
@@ -701,7 +740,7 @@ After running the experiment:
 3. Evaluate whether the data supports the paper's arguments
 4. Write auto_research/state/findings.json with your findings (JSON, not YAML —
    ARK converts it to findings.yaml; do NOT hand-write YAML)
-""", timeout=defaults.TIMEOUT_EXPERIMENTER, session_out=sessions, outcome_out=outcome)
+""", timeout=defaults.TIMEOUT_EXPERIMENTER, session_out=sessions, outcome_out=outcome, **session_args)
 
             # 3. Wait for jobs
             self.log_step("Waiting for experiment completion...", "info")

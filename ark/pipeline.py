@@ -13,9 +13,12 @@ import yaml
 from datetime import datetime, timedelta
 from pathlib import Path
 from ark.engines.cli import selected_agent_runtime
-from ark.execution import QuotaExhaustedError, collect_after_jobs
+from ark.execution import (
+    EXPERIMENT_RESUME_NOTE, QuotaExhaustedError, collect_after_jobs, settle_interrupted_experiments,
+)
 from ark.ui import RateLimitCountdown
 from ark.latex import utils as latex_utils
+from ark.workflow import ExperimentIteration, PaperIteration
 # Re-bind public names from latex.utils into this module's namespace under
 # their historical underscore-prefixed names. Two reasons:
 #   1. ``_update_title_from_idea`` below was written when these helpers
@@ -71,71 +74,11 @@ class PipelineMixin:
 
     def run_paper_iteration(self) -> bool:
         """Execute one paper review iteration. Returns whether to continue."""
-        self._iteration_prep()
-
-        paper_state = self.load_paper_state()
-        current_score = paper_state.get("current_score", 0)
-
-        # Step-level resume: skip already-completed steps
-        resume_step = self.get_resume_step() if not self._asked_this_iteration else 0
-        total_steps = 5
-
-        # Iteration header
-        self.log("", "RAW")
-        self.log_section(f"Review Phase: Iteration {self.iteration}/{self.max_iterations}  |  Score: {current_score}/10 → ?  |  Target: {self.paper_accept_threshold}/10")
-
-        # 1. Compile
-        if not self._step_compile(1, total_steps, resume_step):
-            return True # Continue to next iteration (skip current)
-
-        # 2. Review
-        review_output, score, issue_ids = self._step_review(2, total_steps, resume_step, paper_state, current_score)
-        # A terminal agent error (bad key/model/permission) during review must
-        # abort NOW. Otherwise the empty-review branch below reads it as a
-        # transient error and returns True, so the outer loop retries the whole
-        # iteration forever (each retry re-clears the flag) instead of stopping.
-        if getattr(self, "_terminal_error", None):
-            return self._handle_terminal_error(score)
-        if not review_output and score == current_score and not issue_ids:
-            return True # Error in review, retry
-
-        # Acceptance Check
-        stop, post_accept_cleanup, stop_after_cleanup = self._check_acceptance(score, issue_ids, paper_state)
-        if stop:
-            return False
-
-        # 3. Plan
-        action_plan, planner_output = self._step_plan(3, total_steps, resume_step, review_output)
-        # Same fast-abort after planning (the planner is the next agent call).
-        if getattr(self, "_terminal_error", None):
-            return self._handle_terminal_error(score)
-
-        # 4. Execute
-        self._step_execute(4, total_steps, resume_step, action_plan, planner_output)
-
-        # Non-retryable agent error (bad key / model) → abort fast, no waiting.
-        if getattr(self, "_terminal_error", None):
-            return self._handle_terminal_error(score)
-
-        # Quota exhaustion check (set by _step_execute if it calls run_agent)
-        if self._quota_exhausted:
-            return self._handle_quota_exhausted(score)
-
-        # 5. Validate
-        self._step_validate(5, total_steps, resume_step)
-
-        result = self._iteration_finalize(score, current_score, paper_state, review_output, post_accept_cleanup, stop_after_cleanup)
-
-        # Project-specific post-iteration hook (snapanchor uses this for drift
-        # measurement and per-condition anchor management). Optional; only
-        # invoked if hooks.py defines `run_paper_iter_end(orch)`.
-        if self.hooks and hasattr(self.hooks, "run_paper_iter_end"):
-            try:
-                self.hooks.run_paper_iter_end(self)
-            except Exception as e:
-                self.log(f"hooks.run_paper_iter_end raised: {e}", "WARN")
-
-        return result
+        paper = PaperIteration(self)
+        for step in (paper.compile, paper.review, paper.plan, paper.execute, paper.validate, paper.finalize):
+            decision = step()
+            if decision != "next":
+                return decision == "repeat"
 
     def _iteration_prep(self):
         """Prepare for a new iteration: increment counters, reset flags, load instructions."""
@@ -600,6 +543,10 @@ class PipelineMixin:
             # are scheduled. Nothing is running now, so it is pending again.
             cut = [i for i in action_plan.get("issues") or []
                    if i.get("status") == "in_progress"]
+            experiments = {i.get("id") for i in cut if i.get("type") == "EXPERIMENT_REQUIRED"}
+            if experiments and not settle_interrupted_experiments(self):
+                return
+            self._interrupted_review_experiments = experiments
             for i in cut:
                 i["status"] = "pending"
             if cut:
@@ -2640,6 +2587,17 @@ Rules:
           6. Write initial draft (writer)
           7. Deliver (compile, verify, notify)
         """
+        dev_state, start_iter, max_dev_iters = self._begin_dev_phase()
+        research_idea = self._research_idea
+        self._run_experiment_loop(dev_state, start_iter, max_dev_iters, research_idea)
+        if getattr(self, "_terminal_error", None):
+            return
+        self._start_initial_draft()
+        self._generate_all_figures()
+        self._write_initial_draft(research_idea)
+        self._deliver_dev_phase(dev_state, max_dev_iters)
+
+    def _begin_dev_phase(self):
         max_dev_iters = self.config.get("max_dev_iterations", 3)
         dev_state = self._load_dev_phase_state()
         start_iter = dev_state.get("iteration", 0)
@@ -2660,27 +2618,12 @@ Rules:
         self.log_section(f"Dev Phase  |  Building experiments & data  |  max {max_dev_iters} iterations")
         self._send_dev_phase_telegram("start", 0, max_dev_iters)
 
-        research_idea = self._research_idea
+        return dev_state, start_iter, max_dev_iters
 
-        # Steps 1-4: Iterative experiment loop
-        self._run_experiment_loop(dev_state, start_iter, max_dev_iters, research_idea)
-
-        # The loop returning is not the same as the loop succeeding. Leaving it
-        # early on a terminal error only skipped the remaining experiment steps
-        # — control still fell straight into drafting below, so the run kept
-        # writing the paper the abort was meant to prevent (seen on e2f643ab:
-        # "Dev phase aborted" at 02:02:40, writer editing main.tex at 02:05:31).
-        if getattr(self, "_terminal_error", None):
-            return
-
-        # Steps 5-7: Generate figures, write draft, deliver
+    def _start_initial_draft(self):
         self.log("", "RAW")
         self.log_section("✏️ Writing Initial Paper Draft")
         self._send_dev_phase_telegram("writing", 0, 0)
-
-        self._generate_all_figures()
-        self._write_initial_draft(research_idea)
-        self._deliver_dev_phase(dev_state, max_dev_iters)
 
     def _abort_dev_on_terminal_error(self, during: str) -> bool:
         """Stop the dev phase when an agent hit a non-retryable error.
@@ -2717,73 +2660,15 @@ Rules:
         findings_summary = self._load_findings_summary()
 
         for dev_iter in range(start_iter + 1, max_dev_iters + 1):
-            # Re-entering a cut iteration (see _run_dev_phase): keep the steps
-            # it finished, so a plan the user approved is not redone and jobs
-            # that already ran are not resubmitted.
-            resumed = (dev_state.get("iteration") == dev_iter
-                       and dev_state.get("status") == "in_progress")
-            done = list(dev_state.get("steps_done") or []) if resumed else []
-            dev_state["iteration"] = dev_iter
-            dev_state["status"] = "in_progress"
-            dev_state["steps_done"] = done
-            dev_state.pop("sufficient", None)
-            self._save_dev_phase_state(dev_state)
-
-            def finished(step):
-                done.append(step)
-                self._save_dev_phase_state(dev_state)
-
-            self.log("", "RAW")
-            self.log_section(f"Dev Phase: Iteration {dev_iter}/{max_dev_iters}")
-            self._send_dev_phase_telegram("iteration", dev_iter, max_dev_iters)
-
-            # Step 1: Plan experiments
-            if "plan" not in done:
-                self._plan_experiments(dev_iter, max_dev_iters, research_idea,
-                                       findings_summary)
-                if self._abort_dev_on_terminal_error("planning experiments"):
+            experiment = ExperimentIteration(self, dev_state, dev_iter, max_dev_iters,
+                                             dev_iter == start_iter + 1, research_idea, findings_summary)
+            for name, step in (("plan", experiment.plan), ("run", experiment.run),
+                               ("analyze", experiment.analyze)):
+                if name not in experiment.done and not step():
                     return
-
-                # HITL gate: on the first dev iteration, let the user approve or
-                # steer the experiment plan before spending compute (大实验前把关).
-                if dev_iter == start_iter + 1:
-                    self._experiment_approval_gate()
-                finished("plan")
-
-            # Step 2: Run experiments
-            if "run" not in done:
-                self._run_experiments(dev_iter, max_dev_iters, resumed=resumed)
-                if self._abort_dev_on_terminal_error("running experiments"):
-                    return
-                finished("run")
-
-            # Step 3: Analyze results
-            if "analyze" not in done:
-                self._analyze_results()
-                if self._abort_dev_on_terminal_error("analyzing results"):
-                    return
-                finished("analyze")
-
-            # Step 4: Evaluate completeness
-            findings_summary = self._load_findings_summary()
-            sufficient = self._evaluate_completeness(research_idea, findings_summary)
-            dev_state["sufficient"] = bool(sufficient)
-            finished("evaluate")
-
-            # Project-specific post-dev-iteration hook (snapanchor uses this
-            # for drift measurement and per-condition anchor management).
-            # Optional; only invoked if hooks.py defines `run_dev_iter_end`.
-            if self.hooks and hasattr(self.hooks, "run_dev_iter_end"):
-                try:
-                    self.hooks.run_dev_iter_end(self, dev_iter=dev_iter)
-                except Exception as e:
-                    self.log(f"hooks.run_dev_iter_end raised: {e}", "WARN")
-
-            if sufficient:
-                self.log_step("Experiments sufficient, proceeding to initial draft", "success")
+            if experiment.evaluate():
                 break
-
-            self.log_step(f"Dev iter {dev_iter}: more experiments needed", "warning")
+            findings_summary = experiment.findings
 
     def _plan_experiments(self, dev_iter: int, max_dev_iters: int,
                           research_idea: str, findings_summary: str) -> str:
@@ -2880,21 +2765,9 @@ IMPORTANT: If the research idea describes a specific platform, framework, or sys
             # The cut attempt may have left jobs queued or running. Let them
             # finish first, so the new session finds their output instead of
             # submitting the same experiments a second time.
-            try:
-                jobs_settled = self._compute_backend.wait_for_completion(max_wait_hours=4)
-            except Exception as e:
-                self.log(f"Could not check jobs from the interrupted attempt: {e}", "WARN")
-                jobs_settled = False
-            if not jobs_settled:
-                self._terminal_error = "Could not reconcile existing experiment jobs. Check the scheduler before resuming."
+            if not settle_interrupted_experiments(self):
                 return ""
-            resume_note = """
-## Resuming an interrupted attempt
-An earlier session ran this iteration and was cut off. `results/` and
-`scripts/` may already hold finished outputs. Check them first, keep what is
-complete, and run only what is missing or failed. Do not resubmit a job whose
-results already exist.
-"""
+            resume_note = EXPERIMENT_RESUME_NOTE
             checkpoint = session_args.get("session_checkpoint")
             if checkpoint is not None and checkpoint.is_file():
                 session_args["interrupted_session"] = checkpoint.read_text().strip()
@@ -4616,8 +4489,8 @@ provide the title.
         self._ensure_clearpage_before_bibliography()
         self.compile_latex()
 
-    def run(self):
-        """Main loop."""
+    def run(self, *, dsh_workflow=False):
+        """Run the workflow and maintain the worker lifecycle."""
         self.check_dependencies()
 
         # Provider-billed baseline: sample the OpenRouter key's lifetime usage
@@ -4654,66 +4527,15 @@ provide the title.
         self.log(f"Log: {self.log_file}", "RAW")
         self.log("", "RAW")
 
-        # Pre-launch ethical review (cached on first pass; skipped on resume)
-        if not self._run_ethical_review():
-            return
-
-        # Start background Telegram listener for bidirectional communication
-        self.start_telegram_listener()
-
-        # Send session banner (replaces verbose "Started" notification)
-        self._send_session_banner()
-
-        # Ensure the per-project conda env + sandbox helper exist on EVERY run.
-        # continue/restart skip the research phase (where this used to live), so
-        # without this a GC-reclaimed env would not be rebuilt → experiments fail.
-        self._ensure_project_env()
-
-        # Research Phase: understand project, gather background, extract requirements
-        if self._should_run_research_phase():
-            self._run_research_phase()
-
-        # max_iterations is the CUMULATIVE cap across the project's
-        # lifetime (that's what the webapp's Continue API stores: it
-        # adds the user's requested +N to the project's existing total
-        # and writes the sum back to DB).  Treat it as the absolute
-        # upper bound on self.iteration — not an increment.
-        #
-        # Bug that motivated this: treating max_iterations as per-run
-        # meant a user who asked "continue +3" after iter=5 actually
-        # got +8 iterations (target = 5 + 8 = 13) because DB already
-        # held the cumulative total. Display ("Iteration 11/8") was
-        # the visible tell.
-        max_iteration_target = self._get_max_iteration_target()
         iterations_at_start = self.iteration
-
         try:
-            # Dev Phase first, if not already done in a prior run.
-            dev_failed = False
-            if self._should_run_dev_phase():
-                self._run_dev_phase()
-                # A dev phase that aborted produced no experiments. Entering the
-                # paper loop here would review, plan and write around results
-                # that were never generated — the failure would come out the
-                # far end as a finished-looking PDF. Calling the handler is not
-                # enough: it RETURNS the stop decision rather than raising, and
-                # ignoring that return let the loop run anyway (25e4fb90 aborted
-                # the dev phase at 02:17:23 and began compiling LaTeX in the
-                # same second).
-                if getattr(self, "_terminal_error", None):
-                    # No score exists yet — the dev phase never reached review.
-                    self._handle_terminal_error(0.0, rollback_iteration=False)
-                    dev_failed = True
-
-            while (
-                not dev_failed
-                and datetime.now() < self.max_end_time
-                and self.iteration < max_iteration_target
-                and not self._stop_requested
-            ):
-                should_continue = self.run_paper_iteration()
-                if not should_continue:
-                    break
+            if dsh_workflow:
+                from ark.orchestrator.dsh_workflow import run_workflow
+                iterations_at_start = run_workflow(self)
+            else:
+                iterations_at_start = self._run_python_workflow()
+            if iterations_at_start is None:
+                return
 
         except KeyboardInterrupt:
             self.log("", "RAW")
@@ -4746,6 +4568,34 @@ provide the title.
             self.log("End summary: no new iterations this run — not notifying "
                      "(a rerun without added budget changes nothing to report)", "INFO")
         self.log(f"Total iterations: {self.iteration}", "RAW")
+
+    def _prepare_research_workspace(self):
+        if not self._run_ethical_review():
+            return False
+        self.start_telegram_listener()
+        self._send_session_banner()
+        # Continue may skip research after the idle environment was reclaimed.
+        self._ensure_project_env()
+        return True
+
+    def _run_python_workflow(self):
+        if not self._prepare_research_workspace():
+            return None
+        if self._should_run_research_phase():
+            self._run_research_phase()
+        # The webapp's Continue API stores the cumulative iteration cap.
+        target = self._get_max_iteration_target()
+        iterations_at_start = self.iteration
+        if self._should_run_dev_phase():
+            self._run_dev_phase()
+            if getattr(self, "_terminal_error", None):
+                self._handle_terminal_error(0.0, rollback_iteration=False)
+                return iterations_at_start
+        while datetime.now() < self.max_end_time and self.iteration < target and not self._stop_requested:
+            if not self.run_paper_iteration():
+                break
+        return iterations_at_start
+
     @staticmethod
     def _should_send_end_summary(status: str, iterations_this_run: int) -> bool:
         """Whether the end-of-run summary deserves a notification.

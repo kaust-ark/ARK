@@ -60,6 +60,7 @@ def _orch(tmp_path, ck):
             max_iterations=5, paper_accept_threshold=8.0,
             total_input_tokens=0, total_output_tokens=0, hooks=None,
             _terminal_error=None, _quota_exhausted=False,
+            _compute_backend=SimpleNamespace(wait_for_completion=lambda **_: True),
             memory=SimpleNamespace(stagnation_count=0),
             log=noop, log_section=noop, log_step=noop, log_step_header=noop,
             log_summary_box=noop, notify_progress=noop, send_notification=noop,

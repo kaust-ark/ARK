@@ -92,7 +92,7 @@ markers = [
 include = ["ark*", "website*"]
 
 [tool.setuptools.package-data]
-ark = ["templates/**/*"]
+ark = ["templates/**/*", "orchestrator/*.mjs"]
 website = ["dashboard/static/**/*", "dashboard/templates/**/*", "dashboard/slurm_template.sh"]
 
 [tool.ark]
