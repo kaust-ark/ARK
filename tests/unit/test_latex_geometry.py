@@ -34,7 +34,7 @@ class TestGetGeometry:
 
     def test_case_insensitive(self):
         geo = get_geometry("IEEE")
-        assert geo["columnwidth_in"] == 3.5
+        assert geo == get_geometry("ieee")
 
     def test_returns_copy(self):
         """get_geometry should return a copy, not a reference to the preset."""

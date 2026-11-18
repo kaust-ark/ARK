@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 # Venue presets: measured from actual template .cls files
-# All lengths in inches unless noted; 1pt = 1/72 inch
+# TeX lengths measured via \the\columnwidth and \the\textwidth (72.27 TeX pt/in).
 VENUE_PRESETS = {
     # ACM sigplan (acmart.cls format #6): 2-column, 10pt
     "acmart-sigplan": {
@@ -40,9 +40,9 @@ VENUE_PRESETS = {
     },
     # IEEE conference: 2-column, 10pt
     "ieee": {
-        "columnwidth_in": 3.5,
-        "textwidth_in": 7.25,
-        "columnsep_in": 0.25,
+        "columnwidth_in": 3.4869,
+        "textwidth_in": 7.13989,
+        "columnsep_in": 0.16604,
         "font_size_pt": 10,
         "font_family": "serif",
         "columns": 2,
@@ -85,9 +85,9 @@ VENUE_PRESETS = {
     },
     # AAAI: 2-column, 10pt
     "aaai": {
-        "columnwidth_in": 3.3,
-        "textwidth_in": 6.85,
-        "columnsep_in": 0.25,
+        "columnwidth_in": 3.3125,
+        "textwidth_in": 7.0,
+        "columnsep_in": 0.375,
         "font_size_pt": 10,
         "font_family": "serif",
         "columns": 2,
@@ -103,30 +103,39 @@ VENUE_PRESETS = {
     },
     # USENIX (OSDI/ATC/FAST): 2-column, 10pt, letter paper
     "usenix": {
-        "columnwidth_in": 3.375,
+        "columnwidth_in": 3.335,
         "textwidth_in": 7.0,
-        "columnsep_in": 0.25,
+        "columnsep_in": 0.33,
         "font_size_pt": 10,
         "font_family": "serif",
         "columns": 2,
     },
-    # *ACL (ACL/EMNLP/NAACL via acl.sty): 2-column, 10pt
+    # *ACL (ACL/EMNLP/NAACL via acl.sty): 2-column, 11pt
     "acl": {
-        "columnwidth_in": 3.05,
-        "textwidth_in": 6.3,
-        "columnsep_in": 0.2,
-        "font_size_pt": 10,
+        "columnwidth_in": 3.03149,
+        "textwidth_in": 6.29921,
+        "columnsep_in": 0.23622,
+        "font_size_pt": 11,
         "font_family": "serif",
         "columns": 2,
     },
     # CVF (CVPR/ICCV/WACV via cvpr.sty): 2-column, 10pt
     "cvpr": {
-        "columnwidth_in": 3.25,
+        "columnwidth_in": 3.28125,
         "textwidth_in": 6.875,
         "columnsep_in": 0.3125,
         "font_size_pt": 10,
         "font_family": "serif",
         "columns": 2,
+    },
+    # Bundled workshop/technical-report article: letter paper, 1-inch margins.
+    "article": {
+        "columnwidth_in": 6.5,
+        "textwidth_in": 6.5,
+        "columnsep_in": 0,
+        "font_size_pt": 11,
+        "font_family": "serif",
+        "columns": 1,
     },
     # TMLR (Transactions on ML Research, JMLR-style): 1-column, 10pt
     "tmlr": {
@@ -139,24 +148,35 @@ VENUE_PRESETS = {
     },
 }
 
-# Aliases for common names
+# Historical venue formats accepted by both template copying and plot sizing.
+BUNDLED_VENUE_ALIASES = {
+    # *ACL family → acl.sty
+    "emnlp": "acl", "naacl": "acl", "eacl": "acl", "aacl": "acl", "coling": "acl",
+    # All these bundled formats use the sigplan template.
+    "euromlsys": "acmart", "sigplan": "acmart", "sosp": "acmart",
+    "eurosys": "acmart", "asplos": "acmart", "acm": "acmart",
+    # IEEEtran
+    "infocom": "ieee",
+    # USENIX systems/security
+    "osdi": "usenix", "nsdi": "usenix", "atc": "usenix", "fast": "usenix",
+    # CVF
+    "iccv": "cvpr", "wacv": "cvpr",
+}
+
+# Geometry names for document classes and custom template detection.
 VENUE_ALIASES = {
     "acmart": "acmart-sigplan",   # consolidated acmart engine ships [sigplan] main.tex (SOSP/EuroSys/ASPLOS/EuroMLSys)
-    "sigplan": "acmart-sigplan",
     "acmsmall": "acmart-small",
     "acmlarge": "acmart-large",
-    "acm": "sigconf",
-    "euromlsys": "acmart-sigplan",
     "pldi": "acmart-sigplan",
-    "asplos": "acmart-large",
-    "sosp": "acmart-large",
-    "eurosys": "acmart-large",
-    "osdi": "usenix",
-    "nsdi": "usenix",
-    "atc": "usenix",
     "iclr": "neurips",
-    "infocom": "ieee",
 }
+
+
+def _preset_key(venue_format: str) -> str:
+    key = (venue_format or "").lower().strip()
+    engine = BUNDLED_VENUE_ALIASES.get(key, key)
+    return VENUE_ALIASES.get(engine, engine)
 
 
 def get_geometry(venue_format: str, paper_dir=None) -> dict:
@@ -173,8 +193,7 @@ def get_geometry(venue_format: str, paper_dir=None) -> dict:
     Returns:
         Dict with columnwidth_in, textwidth_in, font_size_pt, etc.
     """
-    key = (venue_format or "").lower().strip()
-    key = VENUE_ALIASES.get(key, key)
+    key = _preset_key(venue_format)
     if key in VENUE_PRESETS:
         return dict(VENUE_PRESETS[key])
 
@@ -185,8 +204,7 @@ def get_geometry(venue_format: str, paper_dir=None) -> dict:
             manifest_path = Path(paper_dir) / "template_manifest.yaml"
             if manifest_path.exists():
                 data = yaml.safe_load(manifest_path.read_text()) or {}
-                detected = (data.get("detected_venue_format") or "").lower().strip()
-                detected = VENUE_ALIASES.get(detected, detected)
+                detected = _preset_key(data.get("detected_venue_format"))
                 if detected in VENUE_PRESETS:
                     return dict(VENUE_PRESETS[detected])
         except Exception:

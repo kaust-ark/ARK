@@ -28,6 +28,7 @@ from website.dashboard.templates import (
     has_venue_template,
     copy_venue_template,
     _resolve_venue_format,
+    _VENUE_FORMAT_ALIASES,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -72,9 +73,11 @@ def test_cli_venue_formats_resolve():
 
 
 def test_legacy_keys_resolve_to_engine_dirs():
-    for key in _LEGACY_KEYS:
+    for key in set(_LEGACY_KEYS) | set(_VENUE_FORMAT_ALIASES):
         assert has_venue_template(key), f"legacy key {key!r} no longer resolves"
-        assert _resolve_venue_format(key) in _ENGINE_DIRS
+        engine = _resolve_venue_format(key)
+        assert engine in _ENGINE_DIRS
+        assert get_geometry(key) == get_geometry(engine), key
 
 
 def test_geometry_resolves_for_all_formats():
@@ -145,6 +148,11 @@ def test_bundled_template_compiles(venue_format, tmp_path):
         "@article{x, author={A. B.}, title={Cited Work}, journal={J}, year={2025}}\n"
     )
     src = re.sub(r"(\\bibliography\{references\})", r"\\nocite{*}\n\1", src)
+    # Floats in the body see the actual column dimensions after \maketitle.
+    src = src.replace(r"\section{Experiments}", r"""\section{Experiments}
+\makeatletter
+\typeout{ARKCOL=\the\columnwidth;ARKTEXT=\the\textwidth;ARKCOLS=\if@twocolumn2\else1\fi}
+\makeatother""")
     main_tex.write_text(src)
 
     env = {**os.environ, "TEXMFVAR": str(tmp_path / "texmfvar")}
@@ -158,6 +166,14 @@ def test_bundled_template_compiles(venue_format, tmp_path):
     run(["pdflatex", "-interaction=nonstopmode", "main.tex"])
     last = run(["pdflatex", "-interaction=nonstopmode", "main.tex"])
 
+    assert last.returncode == 0, last.stdout[-1500:]
+    match = re.search(r"ARKCOL=([.0-9]+)pt;ARKTEXT=([.0-9]+)pt;ARKCOLS=([12])", last.stdout)
+    assert match is not None, f"{venue_format}: no document geometry in compile log"
+    geometry = get_geometry(venue_format)
+    assert geometry["columns"] == int(match[3])
+    # 72.27 TeX points per inch; the presets are rounded in inches.
+    assert abs(geometry["columnwidth_in"] * 72.27 - float(match[1])) < 0.2
+    assert abs(geometry["textwidth_in"] * 72.27 - float(match[2])) < 0.2
     pdf = pdir / "main.pdf"
     assert pdf.exists() and pdf.stat().st_size > 0, (
         f"{venue_format}: no PDF produced\n{last.stdout[-1500:]}"

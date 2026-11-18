@@ -10,28 +10,10 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from ark.latex_geometry import BUNDLED_VENUE_ALIASES as _VENUE_FORMAT_ALIASES
+
 # venue_templates/ lives at the ARK repo root
 _TEMPLATES_ROOT = Path(__file__).parent.parent.parent / "venue_templates"
-
-# Back-compat: pre-consolidation venue_format keys → the engine dir that now
-# holds the shared template files. The venue_templates/ tree was consolidated
-# to one directory per LaTeX engine (acl/acmart/usenix/ieee/cvpr/...), but
-# existing projects' saved venue_format, and the webapp's hardcoded "Test"
-# venue (data-format="euromlsys"), still pass the old per-venue keys. Resolve
-# them here so copy/has lookups keep working. A literal dir match always wins.
-_VENUE_FORMAT_ALIASES = {
-    # *ACL family → acl.sty
-    "emnlp": "acl", "naacl": "acl", "eacl": "acl", "aacl": "acl", "coling": "acl",
-    # ACM acmart family (different \documentclass options, one .cls)
-    "euromlsys": "acmart", "sigplan": "acmart", "sosp": "acmart",
-    "eurosys": "acmart", "asplos": "acmart", "acm": "acmart",
-    # IEEEtran
-    "infocom": "ieee",
-    # USENIX systems/security
-    "osdi": "usenix", "nsdi": "usenix", "atc": "usenix", "fast": "usenix",
-    # CVF
-    "iccv": "cvpr", "wacv": "cvpr",
-}
 
 
 def _resolve_venue_format(venue_format: str) -> str:
