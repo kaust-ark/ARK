@@ -22,9 +22,11 @@ import re
 import stat
 import tempfile
 from dataclasses import dataclass, asdict
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from functools import lru_cache
 from itertools import islice
+from math import floor
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
@@ -536,14 +538,14 @@ def _read_result(path: Path):
         return None, ("warn", "exceeds the exact-check size limit; cite a smaller result summary.")
     except FileNotFoundError:
         return None, ("block", "does not exist.")
-    except (ValueError, RecursionError):
+    except (ValueError, InvalidOperation, RecursionError):
         return None, ("block", "could not be parsed as a JSON result.")
     except OSError:
         return None, ("warn", "could not be read for an exact check.")
 
 
 def _json_pointer(document, pointer):
-    for token in unquote(pointer, errors="strict")[1:].split("/"):
+    for token in pointer[1:].split("/"):
         if re.search(r"~(?![01])", token):
             raise ValueError("invalid JSON Pointer escape")
         key = token.replace("~1", "/").replace("~0", "~")
@@ -558,9 +560,8 @@ def _json_pointer(document, pointer):
     return document
 
 
-def _check_metric_source(key, ref, metrics, project_root, read_result):
-    if not isinstance(metrics, dict) or type(metrics.get(key)) not in (str, bool, int, float):
-        return "block", "Reference a scalar value from the same finding's metrics."
+def _locate_metric_source(ref, project_root):
+    """Return the resolved file and decoded JSON Pointer, or an audit issue."""
     filename, _, pointer = ref.partition("#") if isinstance(ref, str) else ("", "", "")
     # Projects may cite CSV rows and scheduler diagnostics as supporting
     # provenance. Existence can be checked; mark the value as unverified.
@@ -568,30 +569,46 @@ def _check_metric_source(key, ref, metrics, project_root, read_result):
                             r"(?:\s*\(?line\s+\d+.*|:\d+.*)", filename, re.IGNORECASE)
     relative = Path(line_ref[1] if line_ref else filename)
     if relative.parts[:1] != ("results",) or ".." in relative.parts:
-        return "block", "Use a project-relative results/file.json#/field JSON Pointer."
+        return None, ("block", "Use a project-relative results/file.json#/field JSON Pointer.")
     if not line_ref and (relative.suffix.lower() != ".json" or not pointer.startswith("/")):
-        return "block", "Use a project-relative results/file.json#/field JSON Pointer."
+        return None, ("block", "Use a project-relative results/file.json#/field JSON Pointer.")
     if project_root is None:
-        return None
+        return None, None
     try:
         root = project_root.resolve()
         path = (root / relative).resolve()
         if not path.is_relative_to(root / "results"):
-            return "block", "The referenced file is outside the project's results directory."
+            return None, ("block", "The referenced file is outside the project's results directory.")
         if line_ref:
             if not path.is_file():
-                return "block", f"{relative} does not exist as a regular file."
-            return "warn", f"{ref} cites a text artifact; the scalar value was not independently verified."
+                return None, ("block", f"{relative} does not exist as a regular file.")
+            return None, ("warn", f"{ref} cites a text artifact; the scalar value was not independently verified.")
+        return (path, unquote(pointer, errors="strict")), None
     except (OSError, RuntimeError, ValueError):
-        return "block", "Provide a valid path inside the project's results directory."
+        return None, ("block", "Provide a valid path inside the project's results directory.")
+
+
+def _read_metric_source(location, ref, read_result):
+    path, pointer = location
     document, problem = read_result(path)
     if problem:
         severity, detail = problem
-        return severity, f"{filename} {detail}"
+        return None, (severity, f"{ref} {detail}")
     try:
-        actual = _json_pointer(document, pointer)
+        return _json_pointer(document, pointer), None
     except (KeyError, IndexError, ValueError):
-        return "block", f"JSON Pointer {pointer} was not found in {filename}."
+        return None, ("block", f"JSON Pointer {ref} was not found.")
+
+
+def _check_metric_source(key, ref, metrics, project_root, read_result):
+    if not isinstance(metrics, dict) or type(metrics.get(key)) not in (str, bool, int, float, Decimal):
+        return "block", "Reference a scalar value from the same finding's metrics."
+    location, problem = _locate_metric_source(ref, project_root)
+    if problem or location is None:
+        return problem
+    actual, problem = _read_metric_source(location, ref, read_result)
+    if problem:
+        return problem
     reported = metrics[key]
     if type(reported) in (str, bool):
         if type(actual) is type(reported) and actual == reported:
@@ -604,9 +621,84 @@ def _check_metric_source(key, ref, metrics, project_root, read_result):
     return None
 
 
+def _comparison_number(value):
+    if type(value) not in (int, float, Decimal):
+        return None
+    number = Decimal(str(value)) if type(value) is float else Decimal(value)
+    if not number.is_finite():
+        return None
+    # Fraction expands decimal exponents into integers. A short JSON token
+    # such as 1e999999999 must not allocate hundreds of MB to check a claim.
+    parts = number.as_tuple()
+    if abs(parts.exponent) > 4096 or len(parts.digits) > 4096:
+        return None
+    return Fraction(number)
+
+
+def _check_derived_prediction(check, project_root):
+    if not isinstance(check.get("claim"), str) or not check["claim"].strip():
+        return "block", "Identify the finding and comparison that the two operands are intended to check."
+    operation = check.get("operation")
+    if operation not in ("difference", "relative_change_pct", "ratio"):
+        return "block", "A derived check requires operation difference, relative_change_pct, or ratio."
+    if "observed_source" in check:
+        return "block", "Cite both raw operands separately for this comparison; remove observed_source."
+    predicted = _comparison_number(check.get("predicted"))
+    if predicted is None:
+        return "block", "A derived check requires a finite numeric predicted value within the exact-check limit."
+    places = check.get("decimal_places")
+    if "decimal_places" in check and (type(places) is not int or not 0 <= places <= 100):
+        return "block", "decimal_places must be an integer from 0 through 100 for a rounded claim."
+
+    read_result = lru_cache(maxsize=1)(_read_result)
+    operands = []
+    locations = []
+    for field in ("reference_source", "treatment_source"):
+        ref = check.get(field)
+        location, problem = _locate_metric_source(ref, project_root)
+        if location is None:
+            return "block", f"{field}: {problem[1] if problem else 'Cannot resolve the result file.'}"
+        if location in locations:
+            return "block", "Reference and treatment must cite distinct raw observations."
+        value, problem = _read_metric_source(location, ref, read_result)
+        if problem:
+            return "block", f"{field}: {problem[1]}"
+        operand = _comparison_number(value)
+        if operand is None:
+            return "block", f"{field} {ref} must point to a finite numeric measurement within the exact-check limit."
+        operands.append(operand)
+        locations.append(location)
+
+    reference, treatment = operands
+    if operation == "difference":
+        observed = treatment - reference
+    elif reference == 0:
+        return "block", f"{operation} is undefined for a zero reference measurement."
+    elif operation == "relative_change_pct":
+        observed = 100 * (treatment - reference) / reference
+    else:
+        observed = treatment / reference
+
+    if places is not None:
+        # Round the exact fraction to the stated decimal place, ties away
+        # from zero, including for negative changes and recurring ratios.
+        scale = 10 ** places
+        rounded = floor(abs(observed) * scale + Fraction(1, 2))
+        observed = Fraction(-rounded if observed < 0 else rounded, scale)
+    if observed != predicted:
+        display = Decimal(observed.numerator) / Decimal(observed.denominator)
+        approximation = "approximately " if Fraction(display) != observed else ""
+        return "block", (f"Recomputed {operation} gives {approximation}{display} "
+                         f"but the claim reports {check['predicted']}. "
+                         f"Reference {check['reference_source']}, treatment {check['treatment_source']}.")
+    return None
+
+
 def check_claim_prediction(check: dict, project_root: Path):
-    """Compare a reviewer's predicted value to a cited raw observation."""
-    if type(check.get("predicted")) not in (int, float):
+    """Compare a predicted scalar or directional comparison with the cited raw results."""
+    if any(key in check for key in ("operation", "reference_source", "treatment_source", "decimal_places")):
+        return _check_derived_prediction(check, project_root)
+    if type(check.get("predicted")) not in (int, float, Decimal):
         return "warn", "Only numeric predictions can be checked against an exact scalar."
     return _check_metric_source("predicted", check.get("observed_source"),
                                 {"predicted": check.get("predicted")}, project_root, _read_result)
@@ -631,3 +723,134 @@ def format_violations_for_log(violations: List[Violation]) -> str:
     for v in violations:
         lines.append(f"  [{v.severity}] {v.finding_id}.{v.field}: {v.message}")
     return "\n".join(lines)
+
+
+_MAX_COMPARISON_CONTROLS = 16
+_CONTROL_FIELDS = ("label", "reference_source", "treatment_source")
+
+
+def _control_locations(control, project_root):
+    """Validate a declaration even if the two planned records do not yet exist."""
+    if not isinstance(control, dict):
+        raise ValueError("Each comparison control must name a label and two result pointers.")
+    label = control.get("label")
+    if not isinstance(label, str) or not label.strip() or not label.isprintable() or len(label) > 120:
+        raise ValueError("Give each comparison control a short, nonempty, single-line label.")
+    locations = []
+    for field in ("reference_source", "treatment_source"):
+        ref = control.get(field)
+        if not isinstance(ref, str) or len(ref) > 512 or not ref.isprintable():
+            raise ValueError(f"For '{label}', {field} must be a results/file.json#/field pointer.")
+        location, problem = _locate_metric_source(ref, project_root)
+        if location is None or problem or re.search(r"~(?![01])", location[1]):
+            raise ValueError(f"For '{label}', {field} must be a valid JSON Pointer within the project's results directory.")
+        locations.append(location)
+    if locations[0] == locations[1]:
+        raise ValueError(f"For '{label}', reference and treatment must cite distinct raw metadata fields.")
+    return locations
+
+
+def freeze_comparison_controls(plan_path, previous, project_root):
+    """Copy bounded pre-run declarations into the existing iteration checkpoint."""
+    if (not isinstance(previous, list) or len(previous) > _MAX_COMPARISON_CONTROLS
+            or any(not isinstance(c, dict) or not all(k in c for k in _CONTROL_FIELDS) for c in previous)):
+        raise ValueError("Invalid saved comparison_controls in the experiment checkpoint.")
+    if plan_path is None:
+        return list(previous)
+    try:
+        if (plan_path.resolve().parent != plan_path.parent.resolve()
+                or not stat.S_ISREG(plan_path.stat().st_mode)):
+            raise ValueError("experiment_plan.yaml must be a regular file in the state directory.")
+        with plan_path.open("rb") as stream:
+            payload = stream.read(256 * 1024 + 1)
+        if len(payload) > 256 * 1024:
+            raise ValueError("The experiment plan exceeds the 256 KiB pre-run inspection limit.")
+        plan = yaml.safe_load(payload)
+    except FileNotFoundError:
+        return list(previous)  # Legacy Markdown plans have no structured declarations.
+    except (yaml.YAMLError, UnicodeError, OSError, RuntimeError) as exc:
+        raise ValueError("Cannot read experiment_plan.yaml to freeze the comparison controls.") from exc
+    declared = plan.get("comparison_controls", []) if isinstance(plan, dict) else []
+    if not isinstance(declared, list) or len(declared) > _MAX_COMPARISON_CONTROLS:
+        raise ValueError(f"comparison_controls must be a list of at most {_MAX_COMPARISON_CONTROLS} comparisons.")
+    controls = list(previous)
+    for control in declared:
+        locations = _control_locations(control, project_root)
+        entry = {key: control[key] for key in _CONTROL_FIELDS}
+        existing = next((c for c in controls if all(c.get(k) == v for k, v in entry.items())), None)
+        if "replaces" in control:
+            old_pair = control["replaces"]
+            if not isinstance(old_pair, dict) or set(old_pair) != {"reference_source", "treatment_source"}:
+                raise ValueError("replaces must specify the exact previous reference_source and treatment_source.")
+            if existing and existing.get("replaces") == old_pair:
+                continue  # The planner carried an already approved replacement forward.
+            old = {"label": entry["label"], **old_pair}
+            old_locations = _control_locations(old, project_root)
+            if not any(all(c.get(k) == v for k, v in old.items()) for c in previous):
+                raise ValueError("A replacement must identify the previously approved pair with the same label.")
+            if any(c["label"] == entry["label"] and c.get("replaces") == old_pair for c in controls):
+                raise ValueError("This comparison has already been replaced. Reference its current pair.")
+            if existing or set(old_locations) == set(locations):
+                raise ValueError("A replacement must declare a new pair before the follow-up experiment.")
+            entry["replaces"] = dict(old_pair)
+            # Preserve what was observed before collecting the replacement.
+            # Later file changes cannot retroactively qualify the old pair.
+            prior_gaps = comparison_control_gaps([old], project_root)
+            if prior_gaps:
+                entry["prior_limitation"] = prior_gaps[0]
+        if not existing:
+            controls.append(entry)
+    if len(controls) > _MAX_COMPARISON_CONTROLS:
+        raise ValueError(f"The experiment checkpoint supports up to {_MAX_COMPARISON_CONTROLS} declared controls.")
+    return controls
+
+
+def _control_metadata_present(value):
+    if isinstance(value, str):
+        return bool(value.strip()) and value.strip().casefold() not in {
+            "unknown", "n/a", "missing", "not recorded", "unrecorded", "unspecified",
+        }
+    return type(value) in (int, bool) or (isinstance(value, Decimal) and value.is_finite())
+
+
+def comparison_control_gaps(controls, project_root, *, include_replaced=False):
+    """Check equality of recorded metadata. This cannot authenticate the experiment."""
+    if not isinstance(controls, list) or len(controls) > _MAX_COMPARISON_CONTROLS:
+        return ["The saved comparison controls are invalid. Omit conclusions requiring a matched comparison."]
+    replaced = [{"label": c.get("label"), **c["replaces"]} for c in controls
+                if isinstance(c, dict) and isinstance(c.get("replaces"), dict)]
+    gaps = []
+    read_result = lru_cache(maxsize=1)(_read_result)
+    for control in controls:
+        if isinstance(control, dict):
+            if not include_replaced and {k: control.get(k) for k in _CONTROL_FIELDS} in replaced:
+                continue
+            if include_replaced and isinstance(control.get("prior_limitation"), str):
+                gaps.append(control["prior_limitation"])
+        try:
+            reference, treatment = _control_locations(control, project_root)
+        except ValueError as exc:
+            gaps.append(f"Invalid saved comparison control. {exc} Omit conclusions requiring this match.")
+            continue
+        refs = [control["reference_source"], control["treatment_source"]]
+        try:
+            if reference[1] == treatment[1] and reference[0].is_file() and treatment[0].is_file():
+                if reference[0].samefile(treatment[0]):
+                    raise ValueError("Both metadata pointers identify the same raw field.")
+            values = []
+            for ref, location in zip(refs, (reference, treatment)):
+                value, problem = _read_metric_source(location, ref, read_result)
+                if problem:
+                    raise ValueError(problem[1])
+                if not _control_metadata_present(value):
+                    raise ValueError(f"{ref} has no recorded scalar metadata value.")
+                values.append(value)
+            first, second = values
+            if first == second and isinstance(first, bool) == isinstance(second, bool):
+                continue
+            reason = "The recorded metadata values differ."
+        except (ValueError, OSError) as exc:
+            reason = str(exc)[:250]
+        gaps.append(f"Unverified matched control '{control['label']}' ({' and '.join(refs)}). {reason} "
+                    "Report these observations separately and omit any attribution that requires this match.")
+    return list(dict.fromkeys(gaps))

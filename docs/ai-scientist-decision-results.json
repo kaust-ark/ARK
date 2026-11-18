@@ -1,0 +1,482 @@
+{
+  "tested_on": "2026-11-18",
+  "model": "gemini/gemini-4-hydrogen",
+  "runtime": "DSH 0.2.1rc2",
+  "production": "330a6401fd68f631b950cb9384f7c11f27ab6e53",
+  "transfer_cases": [
+    "transport",
+    "order",
+    "power"
+  ],
+  "interpretation": "Original groups have three arms on the first six tasks. Final groups reuse the original release and generic responses on those tasks at the same cap. At 6144 all arms have fresh responses on three transfer tasks. A case marked incomplete consumed its budget or failed before a complete accepted verdict.",
+  "groups": {
+    "original-1800": {
+      "candidate": {
+        "accuracy": {
+          "expected": "repair",
+          "action": "incomplete",
+          "turns": 1,
+          "tools": 5,
+          "error": "DSH.MaxIterationsReached"
+        },
+        "gain": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "null": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "percentile": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "rate": {
+          "expected": "repair",
+          "action": "incomplete",
+          "turns": 1,
+          "tools": 5,
+          "error": "DSH.MaxIterationsReached"
+        },
+        "unobserved": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        }
+      },
+      "generic": {
+        "accuracy": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "gain": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "null": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "percentile": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "rate": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "unobserved": {
+          "expected": "collect",
+          "action": "incomplete",
+          "turns": 1,
+          "tools": 5,
+          "error": "DSH.MaxIterationsReached"
+        }
+      },
+      "release": {
+        "accuracy": {
+          "expected": "repair",
+          "action": "incomplete",
+          "turns": 1,
+          "tools": 7,
+          "error": "DSH.MaxIterationsReached"
+        },
+        "gain": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "null": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 7,
+          "error": null
+        },
+        "percentile": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "rate": {
+          "expected": "repair",
+          "action": "incomplete",
+          "turns": 1,
+          "tools": 6,
+          "error": "DSH.MaxIterationsReached"
+        },
+        "unobserved": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 7,
+          "error": null
+        }
+      }
+    },
+    "original-6144": {
+      "candidate": {
+        "accuracy": {
+          "expected": "repair",
+          "action": "incomplete",
+          "turns": 1,
+          "tools": 5,
+          "error": "DSH.MaxIterationsReached"
+        },
+        "gain": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "null": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "percentile": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "rate": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "unobserved": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        }
+      },
+      "generic": {
+        "accuracy": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "gain": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "null": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "percentile": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "rate": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "unobserved": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        }
+      },
+      "release": {
+        "accuracy": {
+          "expected": "repair",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "gain": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "null": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 7,
+          "error": null
+        },
+        "percentile": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 7,
+          "error": null
+        },
+        "rate": {
+          "expected": "repair",
+          "action": "collect",
+          "turns": 1,
+          "tools": 6,
+          "error": null
+        },
+        "unobserved": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 7,
+          "error": null
+        }
+      }
+    },
+    "final-1800": {
+      "candidate": {
+        "accuracy": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "gain": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "null": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "percentile": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 6,
+          "error": null
+        },
+        "rate": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "unobserved": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        }
+      }
+    },
+    "final-6144": {
+      "candidate": {
+        "accuracy": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 6,
+          "error": null
+        },
+        "gain": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "null": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "order": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "percentile": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "power": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "rate": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 6,
+          "error": null
+        },
+        "transport": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 6,
+          "error": null
+        },
+        "unobserved": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 6,
+          "error": null
+        }
+      },
+      "generic": {
+        "order": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "power": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "transport": {
+          "expected": "repair",
+          "action": "repair",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        }
+      },
+      "release": {
+        "order": {
+          "expected": "write",
+          "action": "write",
+          "turns": 1,
+          "tools": 5,
+          "error": null
+        },
+        "power": {
+          "expected": "collect",
+          "action": "collect",
+          "turns": 1,
+          "tools": 7,
+          "error": null
+        },
+        "transport": {
+          "expected": "repair",
+          "action": "collect",
+          "turns": 1,
+          "tools": 7,
+          "error": null
+        }
+      }
+    }
+  },
+  "slurm": {
+    "job_id": 88939,
+    "exit_code": 0,
+    "seed": 713,
+    "mode": {
+      "mismatched": {
+        "measurements": {
+          "reference": {
+            "input_sha256": "6c6697e02f2f819ab1746827c8a1b9691980c2644d450740859f7a2a933815ec",
+            "mean_absolute_error": 15.96875,
+            "n": 32
+          },
+          "variant": {
+            "input_sha256": "10593f1e4434d5cee2a2c95b5039a94716d578434db9509e94aca8da5dbf086b",
+            "mean_absolute_error": 0.0,
+            "n": 32
+          }
+        },
+        "fixed_reviewer_sufficient": true,
+        "host_action": "need_more_experiments",
+        "writer_excerpt": "Relative to exact rational summation over 32 archived vectors per arm, the sequential reference recorded a mean absolute error (MAE) of 15.96875 (`input_sha256` `6c6697e0...`), whereas the blocked variant recorded an MAE of 0.0 (`input_sha256` `10593f1e...`). Because the recorded `input_sha256` digests differ, the matched control for the same ordered input bytes is unverified; these observations are reported separately without attributing the lower MAE to blockwise summation or establishing performance on the same cancellation workload. Spread, vector sizes, runtime, and replication are undocumented, leaving repeatability and untested sizes open."
+      },
+      "matched": {
+        "measurements": {
+          "reference": {
+            "input_sha256": "6c6697e02f2f819ab1746827c8a1b9691980c2644d450740859f7a2a933815ec",
+            "mean_absolute_error": 15.96875,
+            "n": 32
+          },
+          "variant": {
+            "input_sha256": "6c6697e02f2f819ab1746827c8a1b9691980c2644d450740859f7a2a933815ec",
+            "mean_absolute_error": 15.96875,
+            "n": 32
+          }
+        },
+        "fixed_reviewer_sufficient": true,
+        "host_action": "proceed_to_writing",
+        "writer_excerpt": "Across n=32 archived vectors per arm, the reference (sequential) and variant (blocked) arms both recorded `mean_absolute_error` = 15.96875 relative to exact rational summation (`results/measurements.json`), establishing no observed MAE reduction on this workload. Matching `input_sha256` values confirm agreement on that hash field only. Because per-vector errors, spread metrics, units, replication logs, execution code, and block or vector-size parameters are unrecorded, per-vector differences, run-to-run variance and repeatability, execution attribution, and behavior on untested workloads or sizes remain open."
+      }
+    }
+  }
+}

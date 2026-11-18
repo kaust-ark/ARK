@@ -11,6 +11,7 @@ import sys
 import time
 import yaml
 from datetime import datetime, timedelta
+from itertools import islice
 from pathlib import Path
 from ark.engines.cli import selected_agent_runtime
 from ark.execution import (
@@ -2674,9 +2675,8 @@ Rules:
         # experimenter agent can finish within its timeout budget.
         if venue_pages <= 2:
             max_exps = 1
-            scope_note = ("This is a very short paper ({}p). Plan exactly ONE focused, fast "
-                          "experiment that can run in under 5 minutes. Use small parameter "
-                          "sweeps and small datasets.").format(venue_pages)
+            scope_note = ("This is a very short paper ({}p). Any new measurement must fit "
+                          "in one focused experiment under 5 minutes.").format(venue_pages)
         elif venue_pages <= 4:
             max_exps = 2
             scope_note = ("This is a short paper ({}p). Plan AT MOST 2 experiments, each "
@@ -2687,6 +2687,9 @@ Rules:
         else:
             max_exps = 5
             scope_note = "Plan a comprehensive set of AT MOST 5 experiments."
+        saved_results = [os.path.relpath(path, self.code_dir)
+                         for path in self._experiment_evidence_files(limit=6)]
+        prior_controls = self._load_dev_phase_state().get("comparison_controls", []) if dev_iter > 1 else []
         output = self.run_agent("planner", f"""
 You are planning experiments for a research project. This is Dev Phase iteration {dev_iter}/{max_dev_iters}.
 
@@ -2702,23 +2705,45 @@ the `required_systems` section — in those files. Do NOT guess from memory, and
 do NOT re-derive systems already listed in project_context.md.
 
 ## Current Findings
-{findings_summary if findings_summary else "No experiments run yet."}
+{findings_summary if findings_summary else "No findings summary is available."}
+Candidate result files on disk (up to six paths, contents and relevance unverified):
+{json.dumps(saved_results, ensure_ascii=False)}
+Active comparison controls from earlier iterations:
+{json.dumps(prior_controls, ensure_ascii=False)}
 
 ## Scope & Budget
 {scope_note}
-You MUST plan no more than {max_exps} experiments total. Pick the minimum
-set that demonstrates the core idea — favor running 1 well-designed
-experiment over many shallow ones.
+You MUST plan no more than {max_exps} experiments total. Put the cheapest
+comparison that could change the central conclusion first. Defer larger
+runs until that comparison shows why they are needed.
 
 ## Task
 Design a focused experiment plan ({max_exps} experiments max):
 1. First, identify what external systems, tools, libraries, or datasets the project requires based on the research idea and deep research context. These are tools that must be INSTALLED and USED — not re-implemented from scratch.
-2. What experiments to run (with specific scripts, parameters, baselines)
-3. What metrics to measure
-4. What baselines to compare against
-5. State the testable hypothesis and the observation that would count against it.
-   When two explanations fit the current evidence, choose the cheapest comparison
-   that distinguishes them. Reuse completed measurements; plan only the missing test.
+2. Inspect relevant saved outputs under `results/` and `{self.config.get("scripts_dir", "scripts")}/results/`,
+   even if the findings summary is empty. Cite the file and rows, keys or cases
+   that already cover each comparison. Identify which observations are missing.
+   If the saved observations suffice, specify the reanalysis using those files.
+3. For an explanatory claim, name a credible rival, including a confound or a null
+   effect when plausible. Select a control that gives the two explanations different
+   observable predictions. Specify what changes and what stays matched (for example,
+   the same data split, evaluator and training budget).
+   When the central comparison depends on a matched attribute, include it under
+   `comparison_controls`. Give distinct result pointers for the reference and
+   treatment so the experimenter can record each arm's observed value from its
+   loaded data or runtime configuration. Choose a field that identifies the
+   attribute (for cohort membership, compute a digest of evaluated IDs for each arm).
+   Omit this section when matching an attribute is irrelevant to the design.
+   To correct an earlier comparison, keep its label and give the replacement fresh
+   result paths. Add `replaces` to that new control, copying the exact reference
+   and treatment pointers from the active pair above. Preserve the pilot results.
+4. Give each experiment's script, parameters, observable and predicted outcomes in
+   advance. For exploratory or qualitative work, use a contrasting case or a pattern
+   that would change the interpretation. Omit inapplicable hypothesis fields for
+   purely descriptive work.
+5. State a feasible time, compute or sample limit and what result would stop further
+   runs, justify a larger test, or leave the claim unresolved. If both explanations
+   fit, specify the narrower claim. Include only this iteration's work in `experiments`.
 
 Save the experiment plan to auto_research/state/experiment_plan.yaml with format:
 ```yaml
@@ -2732,16 +2757,29 @@ required_systems:
     install_hint: "pip install X, or conda install X, or git clone URL"
     verify: "python -c 'import X; print(X.__version__)'"
 
+# Optional example for a claim that depends on evaluating the same population:
+comparison_controls:
+  - label: "same evaluated population"
+    reference_source: "results/metrics.json#/reference/cohort"
+    treatment_source: "results/metrics.json#/variant/cohort"
+    # Only for a corrected comparison with the same label:
+    # replaces:
+    #   reference_source: "results/pilot.json#/reference/cohort"
+    #   treatment_source: "results/pilot.json#/variant/cohort"
+
 experiments:
   - id: "exp1"
     title: "Experiment title"
     description: "What to test"
-    hypothesis: "What this experiment predicts"
-    falsifier: "An observation that would contradict the prediction"
+    hypothesis: "Proposed explanation and its observable prediction under the control"
+    alternative: "Most credible rival explanation or interpretation"
+    falsifier: "Contrasting outcome expected under the rival that would weaken the proposed explanation"
+    existing_evidence: "Source and coverage of saved observations, or what you checked and found missing"
     script: "path/to/script.py"
     parameters: "key params"
     metrics: ["metric1", "metric2"]
-    baseline: "comparison baseline"
+    baseline: "Control or contrasting case, including what is held constant"
+    stopping_rule: "Budget for the comparison and how its outcome changes the next decision or claim"
 ```
 
 IMPORTANT: If the research idea describes a specific platform, framework, or system (e.g., "evaluate on OpenClaw", "benchmark on MLPerf"), you MUST list it under required_systems. The experimenter is NOT allowed to re-implement these from scratch — they must install and use the real thing. If you are unsure how to install something, write your best guess for install_hint and the experimenter will search online for the correct method.
@@ -2794,13 +2832,19 @@ IMPORTANT: If the research idea describes a specific platform, framework, or sys
             self._compute_backend.sync_to_backend(str(self.code_dir), remote_work_dir)
             compute_instructions = self._compute_backend.get_agent_instructions()
             exp_output = self.run_agent("experimenter", f"""
-Execute ALL planned experiments for this dev iteration.
+Carry out the approved comparisons for this iteration. Reuse saved observations
+that cover an arm, run missing measurements and honor the plan's stopping rule.
 {resume_note}
 ## Experiment Plan (MANDATORY — Read before running)
 Use Read to load `auto_research/state/experiment_plan.yaml` in full. It
 contains the required_systems and every experiment definition. Do NOT
 proceed without having consulted it.
 {self._experiment_plan_digest()}
+For each comparison_controls entry, record each arm's value at its specified
+JSON Pointer from the data or configuration actually used by that arm. Preserve
+any mismatch. If the value is unavailable, leave the field absent and explain the gap.
+For a control with `replaces`, keep the old raw files and write the corrected
+comparison to its new result paths. Distinguish the two runs in the results.
 
 {compute_instructions}
 
@@ -2844,7 +2888,8 @@ Do NOT build a "workaround" or "standalone mode" — the experiment either runs 
 system or it fails with a clear report of what is needed.
 
 ## Other Requirements
-- Write and submit ALL experiment scripts at once
+- Submit independent new measurements together. For a comparison covered by
+  existing observations, compute it directly from those files.
 - Each script should save results to results/ directory
 - Use clear naming: results/exp1_results.json, results/exp2_results.json, etc.
 - Handle errors gracefully (log failures, continue with remaining experiments)
@@ -2955,6 +3000,22 @@ report success without that confirmation.
         if not isinstance(entries, list) or not entries:
             return ""
         lines = []
+        controls = data.get("comparison_controls")
+        if isinstance(controls, list):
+            for control in controls[:limit]:
+                if not isinstance(control, dict):
+                    continue
+                fields = [control.get(key) for key in ("label", "reference_source", "treatment_source")]
+                if all(isinstance(field, str) and field.strip() for field in fields):
+                    label, reference, treatment = fields
+                    lines.append(f"- Match to check: {label}\n  Reference: {reference}\n  Treatment: {treatment}")
+                    previous = control.get("replaces")
+                    if isinstance(previous, dict):
+                        old_reference = previous.get("reference_source")
+                        old_treatment = previous.get("treatment_source")
+                        if isinstance(old_reference, str) and isinstance(old_treatment, str):
+                            lines.append(f"  Replaces prior reference: {old_reference}\n"
+                                         f"  Replaces prior treatment: {old_treatment}")
         for e in entries[:limit]:
             if not isinstance(e, dict):
                 continue
@@ -2964,8 +3025,10 @@ report success without that confirmation.
             what = str(e.get("description") or e.get("title") or e.get("name")
                        or e.get("goal") or "").strip().replace("\n", " ")
             lines.append(f"- {eid}: {what[:160]}" if what else f"- {eid}")
-            for key, label in (("hypothesis", "Hypothesis"), ("baseline", "Baseline"),
-                               ("metrics", "Metrics"), ("falsifier", "Would refute")):
+            for key, label in (("hypothesis", "Hypothesis"), ("alternative", "Rival explanation"),
+                               ("baseline", "Control or baseline"), ("falsifier", "Would count against it"),
+                               ("existing_evidence", "Evidence already checked"), ("metrics", "Metrics"),
+                               ("stopping_rule", "Budget and stopping rule")):
                 value = e.get(key)
                 if isinstance(value, list):
                     value = ", ".join(str(item) for item in value if isinstance(item, (str, int, float)))
@@ -2978,7 +3041,7 @@ report success without that confirmation.
         return ("\nFor orientation, the plan currently defines:\n"
                 + "\n".join(lines) + more + "\n")
 
-    def _experiment_evidence_files(self) -> list:
+    def _experiment_evidence_files(self, limit: int | None = None) -> list:
         """Result files with actual content in them.
 
         Zero-byte files are excluded deliberately: they are the fingerprint of
@@ -2990,7 +3053,7 @@ report success without that confirmation.
         scripts_dir = self.config.get("scripts_dir", "scripts")
         candidates = [self.code_dir / "results",
                       self.code_dir / scripts_dir / "results"]
-        return [f for d in candidates if d.exists()
+        files = (f for d in candidates if d.exists()
                 for f in d.rglob("*")
                 if f.is_file() and f.stat().st_size > 0
                 # An escalation report is a request for help, not a result;
@@ -3003,7 +3066,8 @@ report success without that confirmation.
                 and f.name not in _SETUP_REPORTS
                 # Slurm opens these even for OOM and failed setup. Job logs
                 # can diagnose failures; only experiment outputs unlock analysis.
-                and not re.fullmatch(r"slurm-\d+(?:_\d+)?\.(?:err|out)", f.name)]
+                and not re.fullmatch(r"slurm-\d+(?:_\d+)?\.(?:err|out)", f.name))
+        return list(islice(files, limit))
 
     def _require_experiment_evidence(self) -> None:
         """An experiment step that produced nothing did not succeed.
@@ -3066,9 +3130,14 @@ summary — verify each experiment's outputs against the plan.
    time and explicitly leave variability and a general speed advantage unresolved.
 6. Write auto_research/state/findings.json with ALL findings. For directly copied
    JSON measurements include metric_sources with the original unrounded value
-   and its JSON Pointer. For a derived comparison give its inputs and formula
-   in construct. Citations to text logs, CSV rows, and predicted or hypothetical
-   values belong in source/construct, outside the per-metric JSON Pointer map.
+   and its JSON Pointer. For a derived comparison identify the reference and
+   treatment, their raw locations (JSON Pointers when available), metric, units,
+   and signed formula in construct.
+   Check which trials, inputs or splits each arm covers and how they were aggregated.
+   If the measurements do not cover the claimed comparison, report the observations
+   separately and state what is missing. Citations to text logs, CSV rows, and
+   predicted or hypothetical values belong in source/construct, outside the
+   per-metric JSON Pointer map.
    Preserve prior coverage, notes and qualitative findings.
 
 Write **auto_research/state/findings.json** (JSON, not YAML). ARK converts
@@ -3129,7 +3198,9 @@ it to findings.yaml for you — do NOT hand-write YAML. Include every finding
                     "and explain the limitation. metric_sources holds exact observed JSON scalars only. "
                     "For a prediction or a value from a log or CSV, describe its source and calculation "
                     "in construct and omit that entry from metric_sources. Preserve pointers for all "
-                    "direct JSON measurements. Do not submit or rerun experiments.\n" + detail)
+                    "direct JSON measurements. For a disputed comparison, verify the two raw inputs, "
+                    "their population, units, direction and denominator, or narrow the claim. "
+                    "Do not submit or rerun experiments.\n" + detail)
         self.log_step_header(3, 4, "Analyze Results", "end")
         return output
 
@@ -3138,65 +3209,39 @@ it to findings.yaml for you — do NOT hand-write YAML. Include every finding
         """Decide whether another experiment would change a material paper claim."""
         self.log_step_header(4, 4, "Evaluate Completeness")
 
-        decision_format = """Return one complete JSON object as your final answer. Start with {.
-Include these fields:
-- sufficient: a JSON boolean. Use true only for proceed_to_writing.
-- recommendation: proceed_to_writing, reanalyze_existing, or need_more_experiments.
-- contradictions: strings naming each disputed finding and explaining the conflict.
-- claim_checks: for each checked exact claim, give its claim text, numeric predicted
-  value, and observed_source as a project-relative JSON Pointer to the same quantity in
-  the same units. Check ratios or rounded summaries only when their underlying exact
-  observations support such a test. A timing in seconds cannot verify a speed ratio.
-- gaps: specific open questions or limits on the conclusion.
-Use JSON arrays for the last three fields and empty arrays where appropriate."""
+        decision_format = """Return one JSON object. Always include sufficient (boolean), recommendation
+(proceed_to_writing, reanalyze_existing or need_more_experiments), contradictions,
+claim_checks and gaps (arrays). sufficient is true only for proceed_to_writing.
+For contradictions give the finding ID and the counterexample or arithmetic in one sentence.
+A claim_check takes claim, predicted (the number asserted), and observed_source for a
+single raw scalar. For directly comparable raw scalars, use reference_source,
+treatment_source and operation: difference (treatment minus reference), ratio
+(treatment / reference), or relative_change_pct (100 * difference / reference).
+Sources are results/file.json#/field JSON Pointers. A reported reduction has negative
+relative_change_pct. decimal_places applies only to an explicitly rounded claim.
+If no check fits, use []; give the calculation or missing observation in words.
+A clear contradiction is sufficient to return a decision immediately."""
         task = f"""
 Evaluate whether we have sufficient experimental data for the paper.
-This is a pre-draft decision. Inspect the saved study and return the verdict in
-your final answer. Do not write an action plan, modify files or submit jobs.
+Question: {research_idea}
 
-## Research Idea
-{research_idea}
-
-## Current Findings
+Findings to check:
 {findings_summary}
 
-## Source Material (MANDATORY — Read before deciding)
-- `auto_research/state/findings.yaml` — full findings record (not just the summary above)
-- files under `results/` — raw experiment outputs
-- `auto_research/state/experiment_plan.yaml` — what was planned
+Read auto_research/state/findings.yaml, the experiment_plan.yaml in the same
+directory, and the relevant raw files under results/. Use project_context.md
+and setup or credential records to check systems the comparison actually requires.
+Inspect the strongest claim first. Match metric, units, workload and denominator.
+Try a counterexample to an exact or universal claim. Distinguish a failure of the
+hypothesis already reported in the findings from an error still present in the findings.
 
-## Task
-Determine if the experiments are sufficient to write a complete paper:
-1. Do we have data for ALL major claims?
-2. Are baselines properly compared?
-3. Negative or inconclusive outcomes can answer the question. Is uncertainty
-   characterized appropriately for the measurement?
-4. Which missing comparison would actually change a central conclusion? List
-   concrete gaps. A narrower supported claim can be sufficient to draft.
-5. Read `auto_research/state/project_context.md` and check: were ALL external systems
-   listed there actually installed, configured, and used in experiments? If any system
-   was listed but never used (e.g., never started, never called its API, never imported
-   its package), that is a critical gap.
-6. If present, inspect `results/environment_setup.json` and `results/credentials_needed.json`. Are
-   there any systems marked as "blocked" or credentials still missing? Those represent
-   incomplete experiments.
-
-Choose reanalyze_existing when the missing comparison can be computed from saved
-measurements. Choose need_more_experiments only when new observations are needed.
-For either choice set sufficient to false and name the question in gaps.
-
-Independently try to falsify the strongest derived claim. Read the actual result
-and construct text in findings.yaml, including claims that disagree with one
-another. For a claimed exact law or universal relationship, substitute the
-smallest measured input and one other into the *stated* formula. Quote it as
-written with its finding id, even when you already know the corrected law. Show the
-predicted number and the JSON Pointer to its observed value. Calculate the
-prediction yourself before comparing. Even one counterexample refutes an
-"all inputs" claim. For noisy or qualitative results, explain the uncertainty
-instead of asserting exact equality. List any internally contradictory or
-disproved findings under contradictions so analysis can correct them. If the
-draft would need to correct a finding, that correction belongs in contradictions.
-Use gaps for measurements or controls that are still missing.
+Choose proceed_to_writing for a supported, scoped result, including a null result.
+Choose reanalyze_existing when saved observations can settle the question. Explain
+what is wrong and the correction, even if the derivation takes multiple steps and
+has no single raw JSON pointer. Choose need_more_experiments when the scoped question
+needs a new measurement, naming the smallest missing comparison in gaps. A short
+descriptive study need not establish a population-wide effect. Return the verdict
+now. Do not modify files, submit jobs or design additional studies.
 
 {decision_format}
 """
@@ -3332,6 +3377,21 @@ Produce the complete paper. Do not stop until all sections are written and it co
 
         state = self._load_dev_phase_state()
         gaps = state.get("evidence_gaps") or []
+        if state.get("comparison_controls"):
+            from ark.findings_schema import comparison_control_gaps
+            # Continue may resume directly at drafting with a saved positive
+            # verdict. Check the cited metadata as it exists at handoff.
+            current_gaps = comparison_control_gaps(state["comparison_controls"], self.code_dir, include_replaced=True)
+            gaps = list(dict.fromkeys([*current_gaps, *gaps]))
+            prompt += ("\nA match in recorded metadata establishes agreement on that field only. "
+                       "Support claims about experiment execution and attribution with separate evidence.")
+            for control in state["comparison_controls"]:
+                if isinstance(control, dict) and isinstance(control.get("replaces"), dict):
+                    old = control["replaces"]
+                    prompt += (f"\nThe follow-up for '{control['label']}' uses {control['reference_source']} "
+                               f"and {control['treatment_source']}. Any conclusions from that pair apply only "
+                               f"to its observations. Describe the earlier pair at {old['reference_source']} "
+                               f"and {old['treatment_source']} separately.")
         if gaps or state.get("sufficient") is False:
             limitations = "\n".join(f"- {gap}" for gap in gaps)
             prompt += ("\n\n## Scope of the available evidence\n"

@@ -195,6 +195,43 @@ class TestExperimentPlanDigest:
         assert "exp1" in out
 
 
+def test_planner_sees_saved_measurements_without_a_findings_summary(pipe, tmp_path):
+    pipe.code_dir = tmp_path
+    pipe.config = {"scripts_dir": "bench", "venue_pages": 2}
+    results = tmp_path / "bench" / "results"
+    results.mkdir(parents=True)
+    (results / "heldout.csv").write_text("item,group,correct\n42,heldout,1\n")
+    (results / "setup_failure.json").write_text("{}")
+    (results / "partial.csv").touch()
+    pipe.run_agent = MagicMock()
+    pipe.log_step_header = MagicMock()
+
+    pipe._plan_experiments(1, 2, "Does the gain survive on held-out groups?", "")
+
+    role, prompt = pipe.run_agent.call_args.args
+    assert role == "planner" and "bench/results/heldout.csv" in prompt
+    assert "partial.csv" not in prompt and "setup_failure.json" not in prompt
+    assert "No experiments run yet" not in prompt
+
+
+def test_followup_planner_sees_exact_control_pair_from_checkpoint(pipe, tmp_path):
+    pipe.code_dir = pipe.state_dir = tmp_path
+    pipe.config = {}
+    pipe.log_step_header = MagicMock()
+    pipe.run_agent = MagicMock()
+    (tmp_path / "dev_phase_state.yaml").write_text(
+        "iteration: 2\nstatus: in_progress\ncomparison_controls:\n"
+        "- label: evaluated speakers\n"
+        "  reference_source: results/round1.json#/a/included\n"
+        "  treatment_source: results/round1.json#/b/included\n"
+    )
+    pipe._plan_experiments(2, 2, "Compare on the same cohort", "Round 1 used different speakers.")
+    _, prompt = pipe.run_agent.call_args.args
+    assert "evaluated speakers" in prompt
+    assert "results/round1.json#/a/included" in prompt
+    assert "results/round1.json#/b/included" in prompt
+
+
 class TestEvidenceMeansContent:
     """A zero-byte result file is a crash fingerprint, not evidence.
 
@@ -435,7 +472,7 @@ class TestExperimentCorrectivePass:
 
         def agent(agent_type, task, timeout=None, **kw):
             ev.append("agent")
-            p.agent_args.append(kw)
+            p.agent_args.append({"task": task, **kw})
             if ev.count("agent") == 1 and first_call_error:
                 p._terminal_error = first_call_error
             if ev.count("agent") == 2 and retry_writes:
@@ -448,6 +485,32 @@ class TestExperimentCorrectivePass:
             (tmp_path / "results" / "previous.json").write_text('{"acc": 0.9}')
         p._run_experiments(1, 1, resumed=bool(resume_session))
         return p
+
+    def test_approval_and_experimenter_see_both_matched_attribute_sources(self, tmp_path):
+        (tmp_path / "experiment_plan.yaml").write_text(
+            "experiments:\n  - id: compare\n    title: Evaluate the saved predictions\n"
+            "comparison_controls:\n  - label: evaluated speakers\n"
+            "    reference_source: results/predictions.json#/baseline/cohort_digest\n"
+            "    treatment_source: results/predictions.json#/method/cohort_digest\n"
+            "    replaces:\n"
+            "      reference_source: results/pilot.json#/baseline/cohort_digest\n"
+            "      treatment_source: results/pilot.json#/method/cohort_digest\n"
+        )
+        (tmp_path / "results").mkdir()
+        (tmp_path / "results/predictions.json").write_text(
+            '{"baseline": {"cohort_digest": "1d7a"}, "method": {"cohort_digest": "1d7a"}}'
+        )
+        p = self._run(tmp_path)
+        p._should_ask = lambda kind: True
+        p.ask_user_decision = MagicMock(return_value=(0, ""))
+        p._experiment_approval_gate()
+        approval = " ".join(p.ask_user_decision.call_args.kwargs["background"])
+        for preview in (approval, p.agent_args[0]["task"]):
+            assert "Match to check: evaluated speakers" in preview
+            assert "Reference: results/predictions.json#/baseline/cohort_digest" in preview
+            assert "Treatment: results/predictions.json#/method/cohort_digest" in preview
+            assert "Replaces prior reference: results/pilot.json#/baseline/cohort_digest" in preview
+            assert "Replaces prior treatment: results/pilot.json#/method/cohort_digest" in preview
 
     def test_restart_with_unsettled_jobs_does_not_start_an_agent(self, tmp_path, monkeypatch):
         monkeypatch.setenv("ARK_AGENT_RUNTIME", "dsh")
@@ -505,7 +568,7 @@ class TestDevAbortKeepsTheIterationCounter:
         assert p.iteration == 2
 
 
-@pytest.mark.parametrize("source", ["yaml", "legacy", "absent"])
+@pytest.mark.parametrize("source", ["yaml", "comparison", "legacy", "absent"])
 def test_approval_shows_the_planner_artifact(tmp_path, source):
     p = PipelineMixin.__new__(PipelineMixin)
     p.state_dir = tmp_path
@@ -519,18 +582,27 @@ def test_approval_shows_the_planner_artifact(tmp_path, source):
     p.ask_user_decision = ask
     if source != "absent":
         (tmp_path / "plan.md").write_text("Run the legacy comparison.")
-    if source == "yaml":
-        (tmp_path / "experiment_plan.yaml").write_text(
+    if source in ("yaml", "comparison"):
+        plan = (
             "experiments:\n- id: paired\n  title: Compare sorting times\n"
             "  hypothesis: Sort A is faster\n  baseline: Sort B\n  metrics: [latency]\n"
             "  falsifier: Identical elapsed time\n"
         )
+        if source == "comparison":
+            plan += ("  alternative: The first invocation pays for cache warmup\n"
+                     "  existing_evidence: results/runs.csv has only B-first runs\n"
+                     "  stopping_rule: Alternate order for two minutes. "
+                     "If the gain reverses, report only an order effect.\n")
+        (tmp_path / "experiment_plan.yaml").write_text(plan)
     p._experiment_approval_gate()
     context = " ".join(seen["background"])
-    if source == "yaml":
+    if source in ("yaml", "comparison"):
         for value in ("Compare sorting times", "Sort A is faster", "Sort B", "latency", "Identical elapsed time"):
             assert value in context
         assert "legacy" not in context
+        if source == "comparison":
+            for value in ("cache warmup", "results/runs.csv", "two minutes", "report only an order effect"):
+                assert value in context
     elif source == "legacy":
         assert "legacy comparison" in context
     else:

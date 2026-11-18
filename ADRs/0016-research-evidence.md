@@ -2,6 +2,8 @@
 
 Status: implemented on the candidate branch, 2026-11-18
 
+The follow-up compared Google's ScientistTwo, Sakana v3 and other research systems against failure modes observed in the hosted decision loop. The candidate now freezes declared comparison controls before execution and replays numerical comparisons from raw results. The report includes matched Google model evaluations and a Slurm counterexample. [Systems, implementation and measured outcomes](../docs/ai-scientist-comparison-2026-11.md)
+
 ## Product decision
 
 A researcher should be able to approve a falsifiable comparison, see which observation changed the conclusion, and recover the exact work that remains after an interruption. Keep DSH as the hosted runtime and Slurm as the experiment executor. Put the next engineering investment into the research decision between those two systems and the draft.

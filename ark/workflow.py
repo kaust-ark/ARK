@@ -2,8 +2,9 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
-from ark.findings_schema import check_claim_prediction
+from ark.findings_schema import check_claim_prediction, comparison_control_gaps, freeze_comparison_controls
 from ark.quality_gate import extract_json
 
 
@@ -80,7 +81,7 @@ class ResearchDecision:
 
     @classmethod
     def from_review(cls, output, project_root, log):
-        review = extract_json(output, want=dict)
+        review = extract_json(output, want=dict, parse_float=Decimal)
         if not review or type(review.get("sufficient")) is not bool:
             raise ValueError("The completeness review returned no valid yes/no decision.")
         if not {"recommendation", "contradictions", "claim_checks", "gaps"}.issubset(review):
@@ -106,8 +107,8 @@ class ResearchDecision:
                 claim = item.get("claim") or item.get("issue") or item.get("note")
                 if not isinstance(claim, str) or not claim.strip():
                     raise ValueError("A reported contradiction did not identify the disputed finding.")
-                if "observed_source" in item:
-                    checks = [item, *checks]
+                if item.keys() & {"observed_source", "operation", "reference_source", "treatment_source"}:
+                    checks = [{**item, "claim": claim}, *checks]
                 detail = item.get("note")
                 item = f"{item.get('finding_id', '')} {claim}"
                 if isinstance(detail, str) and detail.strip() and detail != claim:
@@ -176,6 +177,16 @@ class ExperimentIteration:
             return False
         if self.first:
             project._experiment_approval_gate()
+        state_dir = getattr(project, "state_dir", None)
+        plan = state_dir / "experiment_plan.yaml" if state_dir is not None else None
+        try:
+            self.state["comparison_controls"] = freeze_comparison_controls(
+                plan, self.state.get("comparison_controls", []), getattr(project, "code_dir", None),
+            )
+        except ValueError as exc:
+            project._terminal_error = f"Cannot checkpoint the planned comparison controls. {exc}"
+            project.log(project._terminal_error, "ERROR")
+            return False
         self._finished("plan")
         return True
 
@@ -208,6 +219,15 @@ class ExperimentIteration:
             decision = project._evaluate_completeness(self.idea, self.findings)
             if decision is None:
                 return None
+            if decision.action != "correct_findings":
+                # Use the pre-run checkpoint on Continue and on analysis-only
+                # iterations. A later edit of the plan cannot change the check.
+                control_gaps = comparison_control_gaps(
+                    self.state.get("comparison_controls", []), getattr(project, "code_dir", None),
+                )
+                if control_gaps:
+                    action = "need_more_experiments" if decision.action == "proceed_to_writing" else decision.action
+                    decision = ResearchDecision(action, list(dict.fromkeys([*control_gaps, *decision.gaps])))
             attempted = bool(self.state.get("analysis_corrections"))
             # A qualified yes may contain a necessary scope correction that
             # the model placed in gaps. Reconcile it with the findings once.

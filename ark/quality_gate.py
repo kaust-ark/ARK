@@ -26,7 +26,7 @@ import re
 from typing import Any, Callable, Optional
 
 
-def extract_json(text: str, *, want: Optional[type] = None) -> Optional[Any]:
+def extract_json(text: str, *, want: Optional[type] = None, parse_float=float) -> Optional[Any]:
     """Best-effort pull of the first JSON value out of LLM text.
 
     Handles ```json fences and leading/trailing prose by trying the whole
@@ -45,7 +45,7 @@ def extract_json(text: str, *, want: Optional[type] = None) -> Optional[Any]:
             candidates.append(s[i:j + 1])
     for c in candidates:
         try:
-            v = json.loads(c)
+            v = json.loads(c, parse_float=parse_float)
         except Exception:
             continue
         if want is None or isinstance(v, want):
