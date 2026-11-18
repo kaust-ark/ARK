@@ -1334,7 +1334,7 @@ not to kill it; be honest but constructive.
                 "Skills", "picking from library...", level="working"
             )
             skills_index = self._load_skills_index()
-            if skills_index and "No skills" not in skills_index:
+            if skills_index:
                 self.run_agent("researcher", f"""
 Select skills from the library that will be useful across this project —
 implementation, paper writing, reviewing, and any supporting phase.
@@ -1351,21 +1351,13 @@ implementation, paper writing, reviewing, and any supporting phase.
   Zero is acceptable if nothing matches.
 - When in doubt, leave it out.
 
-## How to Explore (MANDATORY)
-The Skills Library section below gives you paths, not the full catalog. The
-index's descriptions are TRUNCATED — you MUST inspect the actual SKILL.md
-before committing to any skill.
-
-Required procedure:
-1. Read the master index JSON to see every skill's name/path
-2. Glob category directories as needed to understand structure
-3. For EACH candidate skill, Read its SKILL.md (frontmatter + body) to verify
-   it matches the project — do not rely on the index's truncated description
-4. Only after step 3 passes, add the path to selected_skills.json
-
-Do NOT rely on prior knowledge of the library — always check current state.
-Do NOT add a skill to selected_skills.json without having Read its SKILL.md
-in this session.
+## How to Select
+Search the project-local catalog below for relevant methods and tools. Each
+entry includes an excerpt from the installed SKILL.md. Read only project files.
+The path field is a selection ID: copy it verbatim, do not open or search that
+directory. Leave out skills whose excerpt does not support a specific use.
+After selection, the installer makes the complete skills available in the
+project. Builtins and cluster-specific guidance are supplied automatically.
 
 ## Source Material (MANDATORY — Read before selecting)
 - `auto_research/state/project_context.md` — verified external systems, env setup, experiment guidance
@@ -1382,7 +1374,7 @@ selected skill paths (or an empty array `[]` if nothing matches). Also write
 `auto_research/state/selected_skills_rationale.md` with a short rationale per
 selected skill (why it matches, which phase will use it).
 """, timeout=defaults.TIMEOUT_INITIALIZER)
-            n_skills = self._install_selected_skills()
+            n_skills = self._install_selected_skills() if skills_index else 0
             self.log_step("Specialization complete", "success")
             if isinstance(n_skills, int) and n_skills >= 0:
                 self.notify_progress(
@@ -1415,92 +1407,50 @@ selected skill (why it matches, which phase will use it).
             )
 
     def _load_skills_index(self) -> str:
-        """Return navigation pointers for the skills library.
-
-        We do NOT flatten the full catalog into the prompt. The researcher
-        agent has Read/Glob/Grep and can explore categories on demand —
-        surfacing only library paths plus per-category counts keeps the
-        planning prompt small and avoids signal loss from truncation.
-
-        Builtin skills live under skills/builtin/ and are auto-installed in
-        every project. The researcher still sees them here so the
-        Experimental Protocol can plan to invoke them and bind them in
-        selected_skills_rationale.md.
-        """
-        import json
-        import collections
+        """Create a searchable catalog of available optional skills for this project."""
         skills_root = Path(__file__).parent.parent / "skills"
-        lines = []
-
         index_path = skills_root / "index.json"
-        library_path = skills_root / "library"
-        if index_path.exists() and library_path.exists():
-            category_counts = collections.Counter()
+        try:
+            entries = json.loads(index_path.read_text())
+        except (OSError, ValueError):
+            return ""
+
+        if not isinstance(entries, list):
+            return ""
+        available = []
+        for entry in entries:
+            # Shipped indexes may contain paths from the checkout that built them.
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                continue
+            parts = Path(entry["path"]).parts
+            if "library" not in parts:
+                continue
+            relative = Path(*parts[parts.index("library") + 1:])
+            if not relative.parts or ".." in relative.parts:
+                continue
+            if relative == Path("hpc/rocs-testbed-slurm"):
+                # SlurmComputeBackend supplies this guide when it detects ROCS.
+                continue
+            directory = skills_root / "library" / relative
+            skill_file = directory / "SKILL.md"
+            if not skill_file.is_file():
+                continue
             try:
-                with open(index_path) as f:
-                    for entry in json.load(f):
-                        path = entry.get("path", "")
-                        if "/library/" not in path:
-                            continue
-                        suffix = path.split("/library/", 1)[1]
-                        parts = suffix.split("/")
-                        # Group by <library>/<first-subdir> so AI-Research categories
-                        # (01-model-architecture, …) and scientific-skills domains
-                        # are distinguishable.
-                        key = f"{parts[0]}/{parts[1]}" if len(parts) >= 2 else parts[0]
-                        category_counts[key] += 1
-            except Exception:
-                pass
+                with skill_file.open(encoding="utf-8", errors="replace") as stream:
+                    excerpt = stream.read(1536).strip()
+            except OSError:
+                continue
+            if excerpt:
+                available.append({"name": entry.get("name", directory.name),
+                                  "path": str(directory), "excerpt": excerpt})
 
-            lines.append("### Skill Library")
-            lines.append(f"- Master index (JSON with name, description, tags, path for every skill): `{index_path}`")
-            lines.append(f"- Library root (browse by directory): `{library_path}`")
-            if category_counts:
-                lines.append("")
-                lines.append("Categories available (count of skills per category):")
-                for cat, n in sorted(category_counts.items()):
-                    lines.append(f"- `{cat}/` ({n} skills)")
-            lines.append("")
-            lines.append(
-                "Use Read/Glob/Grep to explore. Read the master index for the flat catalog; "
-                "Read individual SKILL.md files for full instructions before selecting."
-            )
-
-        # Builtin skills (auto-installed; still document rationale when used)
-        builtin_dir = skills_root / "builtin"
-        if builtin_dir.exists():
-            builtin_entries = []
-            for skill_dir in sorted(builtin_dir.iterdir()):
-                skill_md = skill_dir / "SKILL.md"
-                if not (skill_dir.is_dir() and skill_md.exists()):
-                    continue
-                try:
-                    text = skill_md.read_text()
-                    # Parse minimal YAML frontmatter (name/description/tags)
-                    if text.startswith("---"):
-                        end = text.find("---", 3)
-                        if end > 0:
-                            fm = text[3:end]
-                            import yaml as _yaml
-                            meta = _yaml.safe_load(fm) or {}
-                            name = meta.get("name", skill_dir.name)
-                            desc = (meta.get("description") or "").strip().replace("\n", " ")
-                            tags = ", ".join((meta.get("tags") or [])[:3])
-                            builtin_entries.append(
-                                f"- {name}: {desc[:120]} [{tags}] @ {skill_dir}"
-                            )
-                except Exception:
-                    continue
-            if builtin_entries:
-                if lines:
-                    lines.append("")
-                lines.append(
-                    "### Builtin skills (auto-installed in every project — still bind "
-                    "in selected_skills_rationale.md when a Protocol item will rely on them)"
-                )
-                lines.extend(builtin_entries)
-
-        return "\n".join(lines) if lines else "No skills available."
+        if not available:
+            return ""
+        catalog = self.state_dir / "available_skills.jsonl"
+        with catalog.open("w") as stream:
+            for entry in available:
+                stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return f"Search `{catalog}` for installed skill names and excerpts."
 
     def _install_selected_skills(self) -> int:
         """Copy selected skills to the project directory. Returns count installed."""
@@ -1519,8 +1469,15 @@ selected skill (why it matches, which phase will use it).
             skills_dest = Path(self.code_dir) / ".claude" / "skills"
             skills_dest.mkdir(parents=True, exist_ok=True)
 
+            # Older projects store their selections without a local catalog.
+            catalog = self.state_dir / "available_skills.jsonl"
+            offered = None
+            if catalog.is_file():
+                offered = {json.loads(line)["path"] for line in catalog.read_text().splitlines()}
             installed = []
             for skill_path in selected_paths:
+                if offered is not None and skill_path not in offered:
+                    continue
                 src = Path(skill_path)
                 if src.exists() and (src / "SKILL.md").exists():
                     dest = skills_dest / src.name
@@ -2718,8 +2675,14 @@ comparison that could change the central conclusion first. Defer larger
 runs until that comparison shows why they are needed.
 
 ## Task
+Use the existing project environment to inspect files. Your only deliverable is
+the plan. Do not create environments, install packages, train models, run experiments
+or submit jobs during planning. The experimenter will handle these after approval.
+
 Design a focused experiment plan ({max_exps} experiments max):
-1. First, identify what external systems, tools, libraries, or datasets the project requires based on the research idea and deep research context. These are tools that must be INSTALLED and USED — not re-implemented from scratch.
+1. Identify the external systems, tools, libraries and datasets the experimenter
+   will need, based on the research idea and project context. Reuse existing
+   dependencies and record install hints only for missing ones.
 2. Inspect relevant saved outputs under `results/` and `{self.config.get("scripts_dir", "scripts")}/results/`,
    even if the findings summary is empty. Cite the file and rows, keys or cases
    that already cover each comparison. Identify which observations are missing.
@@ -2783,6 +2746,7 @@ experiments:
 ```
 
 IMPORTANT: If the research idea describes a specific platform, framework, or system (e.g., "evaluate on OpenClaw", "benchmark on MLPerf"), you MUST list it under required_systems. The experimenter is NOT allowed to re-implement these from scratch — they must install and use the real thing. If you are unsure how to install something, write your best guess for install_hint and the experimenter will search online for the correct method.
+Once you have saved experiment_plan.yaml, return immediately for approval.
 """, timeout=defaults.TIMEOUT_LIT_REVIEW, pre_draft=True)
         self.log_step_header(1, 4, "Plan Experiments", "end")
         return output

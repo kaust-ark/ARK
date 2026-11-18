@@ -9,6 +9,7 @@ and returned done, so the pipeline went on to write a paper about experiments
 that had never executed.
 """
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -212,6 +213,8 @@ def test_planner_sees_saved_measurements_without_a_findings_summary(pipe, tmp_pa
     assert role == "planner" and "bench/results/heldout.csv" in prompt
     assert "partial.csv" not in prompt and "setup_failure.json" not in prompt
     assert "No experiments run yet" not in prompt
+    assert "Do not create environments, install packages, train models, run experiments" in prompt
+    assert "Once you have saved experiment_plan.yaml, return immediately for approval." in prompt
 
 
 def test_followup_planner_sees_exact_control_pair_from_checkpoint(pipe, tmp_path):
@@ -230,6 +233,69 @@ def test_followup_planner_sees_exact_control_pair_from_checkpoint(pipe, tmp_path
     assert "evaluated speakers" in prompt
     assert "results/round1.json#/a/included" in prompt
     assert "results/round1.json#/b/included" in prompt
+
+
+@pytest.mark.parametrize("with_optional", [False, True])
+def test_specialization_uses_only_skills_available_in_this_checkout(tmp_path, monkeypatch, with_optional):
+    checkout = tmp_path / "checkout"
+    root = checkout / "skills"
+    old_library = tmp_path / "old" / "skills" / "library"
+    stale = old_library / "absent"
+    stale.mkdir(parents=True)
+    (stale / "SKILL.md").write_text("installed only in old checkout")
+    optional = root / "library" / "plotting"
+    directories = [root / "builtin" / "writing", root / "library" / "hpc" / "rocs-testbed-slurm"]
+    if with_optional:
+        directories.append(optional)
+    for directory in directories:
+        directory.mkdir(parents=True)
+        (directory / "SKILL.md").write_text("figure API: compare_groups()\n" + "x" * 4096 + "full guide")
+    (root / "index.json").write_text(json.dumps([
+        {"name": name, "path": str(old_library / name)}
+        for name in ("absent", "plotting", "hpc/rocs-testbed-slurm")
+    ]))
+    monkeypatch.setattr("ark.pipeline.__file__", str(checkout / "ark" / "pipeline.py"))
+
+    p = MagicMock()
+    p.code_dir = p.state_dir = tmp_path / "project"
+    p.state_dir.mkdir()
+    (p.state_dir / "idea.md").write_text("Compare two methods")
+    p.config = {"skip_deep_research": True}
+    p.telegram.is_configured = False
+    p._load_skills_index.side_effect = lambda: PipelineMixin._load_skills_index(p)
+
+    PipelineMixin._run_research_phase(p)
+
+    prompts = [call.args[1] for call in p.run_agent.call_args_list]
+    selection = [prompt for prompt in prompts if "selected_skills.json" in prompt]
+    catalog = p.state_dir / "available_skills.jsonl"
+    if with_optional:
+        assert len(selection) == 1 and str(catalog) in selection[0]
+        assert "copy it verbatim, do not open or search" in selection[0]
+        [entry] = [json.loads(line) for line in catalog.read_text().splitlines()]
+        assert entry["path"] == str(optional)
+        assert "compare_groups()" in entry["excerpt"] and "full guide" not in entry["excerpt"]
+        p._install_selected_skills.assert_called_once()
+        (p.state_dir / "selected_skills.json").write_text(json.dumps([str(stale), entry["path"]]))
+        assert PipelineMixin._install_selected_skills(p) == 1
+        installed = p.code_dir / ".claude" / "skills"
+        assert not (installed / "absent").exists()
+        assert (installed / "plotting" / "SKILL.md").read_text().endswith("full guide")
+    else:
+        assert not selection and not catalog.exists()
+        p._install_selected_skills.assert_not_called()
+    p._install_builtin_skills.assert_called_once()
+
+
+def test_skills_selected_before_local_catalog_still_install(tmp_path):
+    p = MagicMock()
+    p.code_dir = p.state_dir = tmp_path
+    original = tmp_path / "library" / "legacy"
+    original.mkdir(parents=True)
+    (original / "SKILL.md").write_text("full instructions")
+    (tmp_path / "selected_skills.json").write_text(json.dumps([str(original)]))
+    assert PipelineMixin._install_selected_skills(p) == 1
+    assert (tmp_path / ".claude" / "skills" / "legacy" / "SKILL.md").is_file()
 
 
 class TestEvidenceMeansContent:
