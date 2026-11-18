@@ -94,7 +94,7 @@ def _write_maintenance(message: str, level: str = "warning") -> dict:
     return {"message": message, "level": level}
 
 import yaml
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from starlette.requests import Request
 
@@ -490,7 +490,8 @@ def _provider_preflight(keys: dict, model_variant: str = "") -> None:
     sat at $0.27 with all paid testing blocked, which is why free models exist
     in the picker at all).
     """
-    if _is_free_model(model_variant):
+    routed_model = _maybe_route_via_openrouter(_to_litellm_model(model_variant), keys)
+    if _is_free_model(routed_model):
         return
     key = keys.get("openrouter")
     if not key:
@@ -2269,7 +2270,7 @@ async def api_get_user_settings(request: Request):
     # Keys with dedicated fields below (or retired legacy cloud creds we keep
     # suppressed) — anything NOT here surfaces via the generic passthrough loop.
     _STD_KEY_FIELDS = {
-        "gemini", "anthropic", "openai", "openrouter",
+        "gemini", "anthropic", "openai", "openrouter", "default_launch_model",
         "claude_oauth_token", "gemini_oauth_json",
         "github_pat", "github_org",
         "gcp_project", "gcp_conda_env",
@@ -2297,6 +2298,7 @@ async def api_get_user_settings(request: Request):
         "aws_account_id": keys.get("aws_account_id") or "",
         "aws_region": keys.get("aws_region") or settings.cloud_aws_region or "",
         "has_keys": any(keys.values()),
+        "default_launch_model": user.default_launch_model,
         # Telegram is a user-level account setting (managed in Settings).
         "telegram_token": user.telegram_token or "",
         "telegram_chat_id": user.telegram_chat_id or "",
@@ -2306,6 +2308,34 @@ async def api_get_user_settings(request: Request):
         if _k not in _STD_KEY_FIELDS and _v:
             _resp[_k] = _mask_key(_v)
     return JSONResponse(_resp)
+
+
+def _has_launch_model_key(model: str, keys: dict) -> bool:
+    provider = model.split("/", 1)[0]
+    return provider not in _NON_PROVIDER_KEY_FIELDS and bool(keys.get(provider))
+
+
+@router.put("/api/user/default-launch-model")
+async def api_set_default_launch_model(request: Request, model: str = Body(..., embed=True, max_length=200)):
+    user = _require_user(request)
+    value = model.strip()
+    with get_session(get_settings().db_path) as session:
+        owner = session.get(User, user.id)
+        if value:
+            canonical = _to_litellm_model(value)
+            if ("/" not in value and canonical.split("/", 1)[1] != value
+                    or not re.fullmatch(r"[a-z0-9_]+/[a-zA-Z0-9][a-zA-Z0-9._:/-]*", canonical)):
+                raise HTTPException(400, "Choose a model from the new-project picker.")
+            keys = _get_user_keys(owner)
+            # Save the billing provider in the preference. Removing a direct
+            # key must never silently switch this default onto an OpenRouter key.
+            value = _maybe_route_via_openrouter(canonical, keys)
+            if not _has_launch_model_key(value, keys):
+                raise HTTPException(400, "Add an API key for this model in Settings first.")
+        owner.default_launch_model = value or None
+        session.add(owner)
+        session.commit()
+    return {"default_launch_model": value or None}
 
 
 @router.post("/api/user/settings")
@@ -2344,7 +2374,7 @@ async def api_save_user_settings(request: Request):
     # any OpenHands/LiteLLM provider works (deepseek, xai, mistral, groq, …).
     # Telegram lives on User columns, not in encrypted_keys — exclude it from the
     # long-tail provider sweep so it isn't stored as a bogus provider key.
-    _reserved = set(fields) | {"verification", "telegram_token", "telegram_chat_id"}
+    _reserved = set(fields) | {"default_launch_model", "verification", "telegram_token", "telegram_chat_id"}
     for field, raw in body.items():
         if not isinstance(field, str) or field in _reserved:
             continue
@@ -2587,7 +2617,7 @@ async def api_create_project(
     max_dev_iterations: int = Form(1),
     pdf_file: Optional[UploadFile] = File(None),
     template_zip: Optional[UploadFile] = File(None),
-    model: str = Form(DEFAULT_MODEL),
+    model: str = Form(""),
     telegram_token: str = Form(""),
     telegram_chat_id: str = Form(""),
     comment: str = Form(""),
@@ -2619,6 +2649,9 @@ async def api_create_project(
         keys = _get_user_keys(db_user) if db_user else {}
         if not any(keys.values()):
             raise HTTPException(400, "Please add at least one API key in Settings first (e.g. OpenRouter — one key unlocks every model).")
+
+        if not model and db_user.default_launch_model and _has_launch_model_key(db_user.default_launch_model, keys):
+            model = db_user.default_launch_model
 
     # Cheap test-project preset (admin-only): a 2-page EuroMLSys paper with a
     # trivial, self-contained sklearn experiment, NO live Deep Research (a canned
@@ -2755,6 +2788,7 @@ async def api_create_project(
         "gemini-2.5-pro": ("gemini", "gemini-2.5-pro"),
         "gemini-2.5-flash": ("gemini", "gemini-2.5-flash"),
     }
+    model = model or DEFAULT_MODEL
     if model in MODEL_MAP:
         model_backend, model_variant = MODEL_MAP[model]
     else:

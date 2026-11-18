@@ -125,7 +125,7 @@ def test_providers_the_webapp_offers_route_without_a_base_url(monkeypatch):
     assert route("anthropic/claude-sonnet-5-5") == (
         "anthropic-messages", "https://api.anthropic.com")
     assert route("gemini/gemini-2.5-flash") == (
-        "openai-completions", "https://generativelanguage.googleapis.com/v1beta/openai")
+        "google-generative-ai", "https://generativelanguage.googleapis.com/v1beta")
     assert route("deepseek/deepseek-v4-pro") == ("", "")
     # A provider with no route says which variable to set, instead of failing
     # the first agent call minutes into the run.
@@ -134,6 +134,7 @@ def test_providers_the_webapp_offers_route_without_a_base_url(monkeypatch):
     with pytest.raises(ValueError, match="provider/model"):
         route("bare-model-name")
     monkeypatch.setenv("LLM_BASE_URL", "http://gw.invalid/v1")
+    assert route("gemini/gemini-2.5-flash") == ("openai-completions", "http://gw.invalid/v1")
     assert route("openrouter/vendor/m") == ("openai-completions", "http://gw.invalid/v1")
     assert route("deepseek/deepseek-v4-pro") == ("", "http://gw.invalid/v1")
     monkeypatch.setenv("ARK_DSH_API", "openai-completions")
@@ -196,7 +197,8 @@ def real_gateway(monkeypatch):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             state["requests"].append({"path": self.path, "body": body,
-                "auth": self.headers.get("Authorization") or "Bearer " + self.headers.get("x-api-key", "")})
+                "auth": self.headers.get("Authorization") or "Bearer " + (
+                    self.headers.get("x-api-key") or self.headers.get("x-goog-api-key", ""))})
             if state["mode"] == "balance":
                 payload = json.dumps({"error": {"message": "Insufficient Balance",
                                                 "type": "insufficient_balance_error"}}).encode()
@@ -228,7 +230,18 @@ def real_gateway(monkeypatch):
                 {"choices": [{"index": 0, "delta": {}, "finish_reason": reason}],
                  "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
             ]
-            if urlsplit(self.path).path.endswith("/messages"):
+            if urlsplit(self.path).path.endswith(":streamGenerateContent"):
+                if reason == "tool_calls":
+                    part = {"functionCall": {"name": tool_name, "args": args},
+                            "thoughtSignature": state["signature"]}
+                else:
+                    part = {"text": delta["content"]}
+                chunk = {"candidates": [{"content": {"role": "model", "parts": [part]},
+                                         "finishReason": "STOP"}],
+                         "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5,
+                                           "totalTokenCount": 15}}
+                payload = ("data: " + json.dumps(chunk) + "\n\n").encode()
+            elif urlsplit(self.path).path.endswith("/messages"):
                 tool = reason == "tool_calls"
                 chunks = [
                     {"type": "message_start", "message": {"id": f"fixture-{len(state['requests'])}",
@@ -274,8 +287,12 @@ def real_gateway(monkeypatch):
         thread.join(timeout=2)
 
 
-@pytest.mark.parametrize("provider,protocol", [("openai", None), ("deepseek", None), ("anthropic", "anthropic-messages")])
+@pytest.mark.parametrize("provider,protocol", [
+    ("openai", None), ("gemini", None), ("deepseek", None), ("anthropic", "anthropic-messages"),
+])
 def test_real_sdk_writes_artifact_and_restores_history(real_gateway, tmp_path, monkeypatch, provider, protocol):
+    if provider == "gemini":
+        monkeypatch.setenv("GEMINI_API_KEY", "synthetic-gateway-key")
     if protocol:
         monkeypatch.setenv("ARK_DSH_API", protocol)
         monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-gateway-key")
@@ -301,7 +318,10 @@ def test_real_sdk_writes_artifact_and_restores_history(real_gateway, tmp_path, m
     assert parsed["usage"]["cost_usd"] is None
     assert len(real_gateway["requests"]) == 2
     for request in real_gateway["requests"]:
-        assert urlsplit(request["path"]).path == ("/v1/chat/completions" if provider == "openai" else "/v1/messages")
+        chat_completions = provider in ("openai", "gemini")
+        assert urlsplit(request["path"]).path == ("/v1/chat/completions" if chat_completions else "/v1/messages")
+        if provider == "gemini":
+            assert "store" not in request["body"]
         assert request["auth"] == "Bearer synthetic-gateway-key"
         assert "dsh_session_log" not in json.dumps(request["body"])
     run_dir = tmp_path / ".dsh" / runner.session_id
@@ -332,6 +352,30 @@ def test_real_sdk_sends_rendered_page_to_vision_model(real_gateway, tmp_path, mo
     assert rc == 0, (runner.parse_output(out), err[-2000:])
     messages = real_gateway["requests"][-1]["body"]["messages"]
     assert "data:image/png;base64," in json.dumps(messages)
+
+
+def test_real_sdk_preserves_native_gemini_tool_signature(real_gateway, tmp_path, monkeypatch):
+    endpoint = os.environ["LLM_BASE_URL"].removesuffix("/v1") + "/v1beta"
+    monkeypatch.setattr("ark.engines.dsh_runtime._GEMINI_ENDPOINT", endpoint)
+    monkeypatch.delenv("LLM_BASE_URL")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-gateway-key")
+    real_gateway["signature"] = "Z29vZ2xlLXRlc3Qtc2lnbmF0dXJl"
+    runner = DSHRuntime("gemini/gemini-3.8-flash")
+    rc, out, err, _, _ = runner.execute("Create fixture.txt and report.", "", tmp_path, 90)
+    assert rc == 0, (runner.parse_output(out), err[-2000:])
+    assert (tmp_path / "fixture.txt").read_text() == "verified"
+    resumed = DSHRuntime("gemini/gemini-3.8-flash", resume_session_id=runner.session_id)
+    rc, out, err, _, _ = resumed.execute("Report the earlier result.", "", tmp_path, 60)
+    assert rc == 0, (resumed.parse_output(out), err[-2000:])
+    first, second, after_resume = real_gateway["requests"]
+    for request in (first, second, after_resume):
+        assert request["path"] == "/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse"
+        assert request["auth"] == "Bearer synthetic-gateway-key"
+    for request in (second, after_resume):
+        parts = [part for turn in request["body"]["contents"] for part in turn["parts"]]
+        call = next(part for part in parts if "functionCall" in part)
+        assert call["thoughtSignature"] == real_gateway["signature"]
+        assert any(part.get("functionResponse", {}).get("name") == "bash" for part in parts)
 
 
 def test_real_sdk_balance_failure_is_terminal(real_gateway, tmp_path):
@@ -404,6 +448,9 @@ from ark.engines.dsh_profile import compaction, effective_window, role_patch  # 
     ({"kind": "completed"}, None),
     ({"kind": "max-tokens"}, "DSH.MaxIterationsReached"),
     ({"kind": "error", "error": {"code": "RATE_LIMIT", "status": 429}}, "DSH.RateLimitError"),
+    ({"kind": "error", "error": {"code": "RATE_LIMIT", "message":
+       '429 [{"error":{"status":"RESOURCE_EXHAUSTED","message":"Your project has exceeded its monthly spending cap."}}]'}},
+     "DSH.QuotaExceeded"),
     ({"kind": "error", "error": {"code": "SERVER", "status": 503}}, "DSH.ServiceUnavailableError"),
     ({"kind": "error", "error": {"code": "TRANSPORT"}}, "DSH.ServiceUnavailableError"),
     ({"kind": "error", "error": {"code": "CONTEXT_WINDOW_EXCEEDED"}}, "DSH.MaxIterationsReached"),
@@ -470,6 +517,23 @@ def test_a_resumed_call_sends_a_recovery_note_not_the_whole_task(tmp_path, monke
     assert "THE FULL TASK" not in task and "[Resumed]" in task and "503" in task
     assert "## Time limit" in task
     assert json.loads(again._config_path.read_text())["resume"] is True
+
+
+def test_resume_keeps_original_google_chat_route(tmp_path, monkeypatch):
+    from ark.engines.dsh_runtime import _GEMINI_ENDPOINT
+
+    model = "gemini/gemini-3.8-flash"
+    old_endpoint = _GEMINI_ENDPOINT + "/openai"
+    monkeypatch.setenv("LLM_BASE_URL", old_endpoint)
+    monkeypatch.delenv("ARK_DSH_API", raising=False)
+    first = DSHRuntime(model)
+    first.build_command("Start", "", tmp_path)
+    monkeypatch.delenv("LLM_BASE_URL")
+    resumed = DSHRuntime(model, resume_session_id=first.session_id)
+    resumed.build_command("Continue", "", tmp_path)
+    config = json.loads(resumed._config_path.read_text())
+    assert config["provider"] == "ark-gateway"
+    assert config["base_url"] == old_endpoint
 
 
 class TestRunAgentWithDSHOutcomes:

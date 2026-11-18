@@ -2,9 +2,8 @@
 
 `route()` returns the wire protocol and base URL that DSH hands to pi-ai, and
 unit tests pin the strings. They cannot catch a base URL that is merely wrong
-— Gemini needs its OpenAI-compatible path (`/v1beta/openai`), not the bare
-host, and Anthropic's base carries no `/v1` because its client appends
-`/v1/messages` itself.
+— Gemini appends the model's native streaming action to the versioned API
+base, and Anthropic's client appends `/v1/messages` itself.
 
 This sends an unauthenticated POST to the path each protocol's client really
 uses and asserts the vendor refuses it for credentials (400/401/403) rather
@@ -14,7 +13,6 @@ Marked `network`; the offline suite deselects it.
 """
 
 import json
-import os
 import urllib.error
 import urllib.request
 
@@ -27,6 +25,7 @@ CLIENT_PATH = {
     "anthropic-messages": "/v1/messages",
     "openai-completions": "/chat/completions",
     "openai-responses": "/responses",
+    "google-generative-ai": "/models/{model}:streamGenerateContent?alt=sse",
 }
 
 PROVIDERS = [
@@ -44,10 +43,12 @@ def test_the_route_reaches_the_vendors_api(provider, model, monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
     protocol, endpoint = route(model)
-    url = endpoint.rstrip("/") + CLIENT_PATH[protocol]
+    url = endpoint.rstrip("/") + CLIENT_PATH[protocol].format(model=model.partition("/")[2])
+    body = ({"contents": [{"parts": [{"text": "Hello"}]}]} if protocol == "google-generative-ai"
+            else {"model": "x", "messages": [], "max_tokens": 1})
     request = urllib.request.Request(
         url, method="POST",
-        data=json.dumps({"model": "x", "messages": [], "max_tokens": 1}).encode(),
+        data=json.dumps(body).encode(),
         headers={"content-type": "application/json",
                  # Anthropic refuses outright without it; the others ignore it.
                  "anthropic-version": "2023-06-01"},
