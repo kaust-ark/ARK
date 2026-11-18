@@ -18,7 +18,7 @@ from ark.execution import (
 )
 from ark.ui import RateLimitCountdown
 from ark.latex import utils as latex_utils
-from ark.workflow import ExperimentIteration, PaperIteration
+from ark.workflow import ExperimentIteration, PaperIteration, ResearchDecision
 # Re-bind public names from latex.utils into this module's namespace under
 # their historical underscore-prefixed names. Two reasons:
 #   1. ``_update_title_from_idea`` below was written when these helpers
@@ -42,7 +42,7 @@ from ark.hitl import (
     _update_hitl_decisions,
     _NONBLOCKING_URGENCIES,
 )
-from ark.quality_gate import extract_json, gate, has_fields
+from ark.quality_gate import extract_json
 
 
 # Reports the experimenter task asks for before (or instead of) any experiment.
@@ -243,7 +243,9 @@ class PipelineMixin:
                 "reviewer",
                 f"Please review the current paper {self.config.get('latex_dir', 'paper')}/main.tex "
                 f"and the generated {self.config.get('latex_dir', 'paper')}/main.pdf.\n\n"
-                f"Review according to {venue_name} standards.\n"
+                f"Review according to {venue_name} standards. Check whether the reported inputs identify "
+                "each headline statistic. If two datasets could have the stated inputs but different values, "
+                "flag the exact passage and name the missing measurement.\n"
                 f"{visual_review}\n"
                 f"{prior_review_section}\n"
                 f"Output a detailed review report and save to auto_research/state/latest_review.md",
@@ -2487,29 +2489,12 @@ Rules:
     # ==================== Dev Phase (Experiment-First) ====================
 
     def _should_run_dev_phase(self) -> bool:
-        """Check if the dev phase should run before the review loop.
-
-        Returns True if:
-        - skip_dev_phase is not set in config
-        - No findings.yaml exists (no experiments done yet)
-        - No reviews in paper_state.yaml (haven't entered review loop)
-        - Dev phase not already completed (check dev_phase_state.yaml)
-        """
+        """Run experiments when the project still needs an initial draft."""
         if self.config.get("skip_dev_phase", False):
             return False
-        dev_state_file = self.state_dir / "dev_phase_state.yaml"
-        if dev_state_file.exists():
-            try:
-                with open(dev_state_file) as f:
-                    dev_state = yaml.safe_load(f) or {}
-                if dev_state.get("status") == "completed":
-                    return False
-            except Exception:
-                pass
-
-        # If findings already exist and paper has reviews, skip
-        paper_state = self.load_paper_state()
-        if paper_state.get("reviews"):
+        if self.load_paper_state().get("reviews"):
+            return False
+        if self._load_dev_phase_state()["status"] in ("complete", "completed"):
             return False
 
         # If paper already has substantial content, skip
@@ -2519,21 +2504,28 @@ Rules:
         return True
 
     def _load_dev_phase_state(self) -> dict:
-        """Load dev phase state."""
-        dev_state_file = self.state_dir / "dev_phase_state.yaml"
-        if dev_state_file.exists():
-            try:
-                with open(dev_state_file) as f:
-                    return yaml.safe_load(f) or {}
-            except Exception:
-                pass
-        return {"iteration": 0, "status": "pending", "experiments": []}
+        """A missing checkpoint starts a project. An unreadable one must stop it."""
+        path = self.state_dir / "dev_phase_state.yaml"
+        try:
+            with path.open() as stream:
+                state = yaml.safe_load(stream)
+        except FileNotFoundError:
+            return {"iteration": 0, "status": "pending", "experiments": []}
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Cannot resume experiments from malformed {path.name}") from exc
+        # Check the fields present even before step-level resume was introduced.
+        if (not isinstance(state, dict) or type(state.get("iteration")) is not int
+                or state["iteration"] < 0
+                or state.get("status") not in ("pending", "in_progress", "complete", "completed")):
+            raise ValueError(f"Cannot resume experiments from incomplete {path.name}")
+        return state
 
     def _save_dev_phase_state(self, state: dict):
-        """Save dev phase state."""
-        dev_state_file = self.state_dir / "dev_phase_state.yaml"
-        with open(dev_state_file, "w") as f:
-            yaml.dump(state, f, default_flow_style=False, allow_unicode=True)
+        """Commit the new experiment checkpoint before publishing progress."""
+        from ark.orchestrator.state import _atomic_write_yaml
+
+        path = self.state_dir / "dev_phase_state.yaml"
+        _atomic_write_yaml(path, state, default_flow_style=False, allow_unicode=True)
         # Sync to DB
         dev_status = state.get("status", "pending")
         phase = "dev" if dev_status == "in_progress" else ("review" if dev_status in ("completed", "complete") else "")
@@ -2548,20 +2540,23 @@ Rules:
         (大实验前把关). Gated by autonomy level — skipped in full_auto."""
         if not self._should_ask("experiment_approval"):
             return
-        plan_summary = ""
-        for cand in ("experiment_plan.md", "experiments_plan.md", "plan.md", "action_plan.md"):
-            f = self.state_dir / cand
-            try:
-                if f.exists():
-                    plan_summary = f.read_text()[:1200]
+        plan_summary = self._experiment_plan_digest().strip()
+        if not plan_summary:
+            # Older projects used Markdown plans.
+            for name in ("experiment_plan.md", "experiments_plan.md", "plan.md", "action_plan.md"):
+                try:
+                    plan_summary = (self.state_dir / name).read_text()[:1200].strip()
+                except (OSError, UnicodeError):
+                    continue
+                if plan_summary:
                     break
-            except Exception:
-                pass
+        if len(plan_summary) > 2400:
+            plan_summary = plan_summary[:2399].rstrip() + "…"
         idx, reply = self.ask_user_decision(
             question="Experiment plan ready — approve and run it? (or type any changes)",
             options=["Approve — run the experiments as planned"],
             what_happened="The planner finished the experiment plan; about to execute it.",
-            background=[plan_summary] if plan_summary else None,
+            background=[plan_summary or "No readable plan summary is available."],
             timeout=defaults.TIMEOUT_HITL_DECISION, default=0,
             kind="experiment_approval", timeout_action="proceed_default",
             phase="experiment_approval",
@@ -2643,8 +2638,8 @@ Rules:
         if not err:
             return False
         self.log(f"Dev phase aborted while {during} — {err}", "ERROR")
-        self.log("No experiments were produced; refusing to draft a paper "
-                 "on absent results.", "ERROR")
+        self.log("Refusing to draft until this step completes. Continue uses the saved "
+                 "experiment checkpoint.", "ERROR")
         return True
 
     def _run_experiment_loop(self, dev_state: dict, start_iter: int,
@@ -2662,11 +2657,10 @@ Rules:
         for dev_iter in range(start_iter + 1, max_dev_iters + 1):
             experiment = ExperimentIteration(self, dev_state, dev_iter, max_dev_iters,
                                              dev_iter == start_iter + 1, research_idea, findings_summary)
-            for name, step in (("plan", experiment.plan), ("run", experiment.run),
-                               ("analyze", experiment.analyze)):
-                if name not in experiment.done and not step():
+            for name in experiment.remaining_steps():
+                if not getattr(experiment, name)():
                     return
-            if experiment.evaluate():
+            if experiment.evaluate() is not False:
                 break
             findings_summary = experiment.findings
 
@@ -2722,7 +2716,9 @@ Design a focused experiment plan ({max_exps} experiments max):
 2. What experiments to run (with specific scripts, parameters, baselines)
 3. What metrics to measure
 4. What baselines to compare against
-5. Expected outcomes
+5. State the testable hypothesis and the observation that would count against it.
+   When two explanations fit the current evidence, choose the cheapest comparison
+   that distinguishes them. Reuse completed measurements; plan only the missing test.
 
 Save the experiment plan to auto_research/state/experiment_plan.yaml with format:
 ```yaml
@@ -2740,6 +2736,8 @@ experiments:
   - id: "exp1"
     title: "Experiment title"
     description: "What to test"
+    hypothesis: "What this experiment predicts"
+    falsifier: "An observation that would contradict the prediction"
     script: "path/to/script.py"
     parameters: "key params"
     metrics: ["metric1", "metric2"]
@@ -2747,7 +2745,7 @@ experiments:
 ```
 
 IMPORTANT: If the research idea describes a specific platform, framework, or system (e.g., "evaluate on OpenClaw", "benchmark on MLPerf"), you MUST list it under required_systems. The experimenter is NOT allowed to re-implement these from scratch — they must install and use the real thing. If you are unsure how to install something, write your best guess for install_hint and the experimenter will search online for the correct method.
-""", timeout=defaults.TIMEOUT_LIT_REVIEW)
+""", timeout=defaults.TIMEOUT_LIT_REVIEW, pre_draft=True)
         self.log_step_header(1, 4, "Plan Experiments", "end")
         return output
 
@@ -2914,11 +2912,13 @@ system or it fails with a clear report of what is needed.
         self._compute_backend.sync_to_backend(str(self.code_dir), remote_work_dir)
         try:
             self.run_agent("experimenter", f"""
-Your previous experiment attempt did NOT finish: `results/` contains no file
-with actual content. {hint}Your scripts are still in `scripts/`.
+The previous attempt left no usable experiment artifact in `results/`.
+{hint}Read the existing scheduler stdout, stderr and saved outputs first.
+If the measurements already exist, extract them to a structured result file.
+Do not resubmit a completed job to recover numbers it already produced.
 
-Diagnose the failure (run the script and read its error output), fix it, and
-rerun until the result files contain real numbers. Before you finish, print the
+If measurements are missing, diagnose the failure from its error output and
+fix the failed experiment. Save its measured results. Before you finish, print the
 result files (`cat results/*.json`) to confirm they are non-empty. Do not
 report success without that confirmation.
 
@@ -2964,6 +2964,13 @@ report success without that confirmation.
             what = str(e.get("description") or e.get("title") or e.get("name")
                        or e.get("goal") or "").strip().replace("\n", " ")
             lines.append(f"- {eid}: {what[:160]}" if what else f"- {eid}")
+            for key, label in (("hypothesis", "Hypothesis"), ("baseline", "Baseline"),
+                               ("metrics", "Metrics"), ("falsifier", "Would refute")):
+                value = e.get(key)
+                if isinstance(value, list):
+                    value = ", ".join(str(item) for item in value if isinstance(item, (str, int, float)))
+                if isinstance(value, str) and value.strip():
+                    lines.append(f"  {label}: {' '.join(value.split())[:180]}")
         if not lines:
             return ""
         more = ("\n- … plus more; the file is authoritative"
@@ -2993,7 +3000,10 @@ report success without that confirmation.
                 # Likewise the setup reports the task asks for BEFORE any
                 # experiment runs: an agent that installed deps and stopped
                 # has a non-empty results/ and no results.
-                and f.name not in _SETUP_REPORTS]
+                and f.name not in _SETUP_REPORTS
+                # Slurm opens these even for OOM and failed setup. Job logs
+                # can diagnose failures; only experiment outputs unlock analysis.
+                and not re.fullmatch(r"slurm-\d+(?:_\d+)?\.(?:err|out)", f.name)]
 
     def _require_experiment_evidence(self) -> None:
         """An experiment step that produced nothing did not succeed.
@@ -3026,15 +3036,16 @@ report success without that confirmation.
                 + failure.read_text(errors="replace")[:240].replace("\n", " "))
         else:
             self._terminal_error = (
-                "Experiments produced no result files. The experimenter reported "
-                "success but wrote nothing to results/ — there is no evidence to "
-                "write a paper from.")
+                "Experiments produced no usable result files. Check the job logs and "
+                "save the measured output under results/ before drafting.")
         self.log(self._terminal_error, "ERROR")
 
-    def _analyze_results(self) -> str:
-        """Step 3: Analyze experiment results using planner agent."""
+    def _analyze_results(self, open_questions: list[str] | None = None) -> str:
+        """Check the analysis against the saved results before spending another iteration."""
+        from ark.findings_schema import analysis_evidence_issues, sync_findings_from_json
+
         self.log_step_header(3, 4, "Analyze Results")
-        output = self.run_agent("planner", f"""
+        task = f"""
 Analyze ALL experiment results from this dev iteration.
 
 ## Source Material (MANDATORY — Read before analyzing)
@@ -3049,8 +3060,16 @@ summary — verify each experiment's outputs against the plan.
 1. Check all result files in results/ directory
 2. Verify experiments completed successfully (no errors, valid outputs)
 3. Summarize key findings
-4. Compare against baselines
-5. Write auto_research/state/findings.json with ALL findings
+4. Compare against the measured baselines, identify missing controls and sample sizes.
+5. Report negative results and alternative explanations. Distinguish deterministic
+   measurements from noisy ones. For a timing measured once, describe the observed
+   time and explicitly leave variability and a general speed advantage unresolved.
+6. Write auto_research/state/findings.json with ALL findings. For directly copied
+   JSON measurements include metric_sources with the original unrounded value
+   and its JSON Pointer. For a derived comparison give its inputs and formula
+   in construct. Citations to text logs, CSV rows, and predicted or hypothetical
+   values belong in source/construct, outside the per-metric JSON Pointer map.
+   Preserve prior coverage, notes and qualitative findings.
 
 Write **auto_research/state/findings.json** (JSON, not YAML). ARK converts
 it to findings.yaml for you — do NOT hand-write YAML. Include every finding
@@ -3062,34 +3081,67 @@ it to findings.yaml for you — do NOT hand-write YAML. Include every finding
       "id": "finding1",
       "experiment": "exp1",
       "result": "Key result description",
-      "metrics": {{"metric1": 0.1, "metric2": 0.2}},
+      "metrics": {{"accuracy": 0.81}},
+      "source": "results/eval.json#test",
+      "metric_sources": {{"accuracy": "results/eval.json#/test/accuracy"}},
+      "construct": "Test-set accuracy over the stated population and split",
       "significance": "Why this matters",
       "supports_claim": "Which paper claim this supports"
     }}
   ]
 }}
 ```
-""", timeout=defaults.TIMEOUT_LIT_REVIEW)
-        # Prevention-at-source: planner authors findings.json; regenerate the
-        # canonical findings.yaml deterministically so downstream readers get
-        # well-formed YAML by construction.
-        try:
-            from ark.findings_schema import sync_findings_from_json
-            converted, sync_msgs = sync_findings_from_json(self.state_dir)
-            for m in sync_msgs:
-                self.log_step(f"findings sync: {m}", "info" if converted else "warning")
-        except Exception as e:  # noqa: BLE001
-            self.log_step(f"findings sync skipped: {e}", "warning")
+"""
+        if open_questions:
+            task += ("\nAnswer these questions by reanalyzing the saved measurements. "
+                     "Do not submit new experiments. Record any comparison those data cannot support.\n"
+                     + "\n".join(f"- {gap}" for gap in open_questions))
+        json_path = self.state_dir / "findings.json"
+        yaml_path = self.state_dir / "findings.yaml"
+        for attempt in range(2):
+            source = json_path if json_path.exists() else yaml_path
+            before = self._file_stamp(source)
+            output = self.run_agent("planner", task, timeout=defaults.TIMEOUT_LIT_REVIEW, pre_draft=True)
+            if getattr(self, "_terminal_error", None):
+                break
+            current = json_path if json_path.exists() else yaml_path
+            unchanged = current == source and self._file_stamp(current) == before
+            converted, messages = sync_findings_from_json(self.state_dir)
+            for message in messages:
+                self.log_step(message, "info" if converted else "warning")
+            # An invalid JSON submission must not pass against a stale YAML
+            # from a previous iteration. YAML-only projects still resume.
+            if not converted and json_path.exists():
+                issues = ["Write valid findings.json containing the current analysis."]
+            else:
+                issues = analysis_evidence_issues(yaml_path, self.code_dir, warn=lambda msg: self.log(msg, "WARN"))
+            if open_questions and unchanged and not issues:
+                issues = ["Record the analysis of the saved results in findings.json: " + "; ".join(open_questions)]
+            if not issues:
+                break
+            detail = "\n".join(issues)
+            if attempt:
+                self._terminal_error = f"Analysis needs corrected findings before drafting. {detail}"
+                break
+            self.log_step(f"Checking findings against saved results: {detail}", "warning")
+            task = ("Correct auto_research/state/findings.json using the existing raw results. "
+                    "Keep valid observations. Correct each cited value or withdraw the claim "
+                    "and explain the limitation. metric_sources holds exact observed JSON scalars only. "
+                    "For a prediction or a value from a log or CSV, describe its source and calculation "
+                    "in construct and omit that entry from metric_sources. Preserve pointers for all "
+                    "direct JSON measurements. Do not submit or rerun experiments.\n" + detail)
         self.log_step_header(3, 4, "Analyze Results", "end")
         return output
 
     def _evaluate_completeness(self, research_idea: str,
-                                findings_summary: str) -> bool:
-        """Step 4: Evaluate if experiments are sufficient to write paper."""
+                                findings_summary: str) -> ResearchDecision | None:
+        """Decide whether another experiment would change a material paper claim."""
         self.log_step_header(4, 4, "Evaluate Completeness")
 
         eval_output = self.run_agent("planner", f"""
 Evaluate whether we have sufficient experimental data for the paper.
+This is a pre-draft decision. Inspect the saved study and return the verdict in
+your final answer. Do not write an action plan, modify files or submit jobs.
 
 ## Research Idea
 {research_idea}
@@ -3106,42 +3158,59 @@ Evaluate whether we have sufficient experimental data for the paper.
 Determine if the experiments are sufficient to write a complete paper:
 1. Do we have data for ALL major claims?
 2. Are baselines properly compared?
-3. Are the results statistically significant?
-4. Are there obvious gaps that need more experiments?
+3. Negative or inconclusive outcomes can answer the question. Is uncertainty
+   characterized appropriately for the measurement?
+4. Which missing comparison would actually change a central conclusion? List
+   concrete gaps. A narrower supported claim can be sufficient to draft.
 5. Read `auto_research/state/project_context.md` and check: were ALL external systems
    listed there actually installed, configured, and used in experiments? If any system
    was listed but never used (e.g., never started, never called its API, never imported
    its package), that is a critical gap.
-6. Check `results/environment_setup.json` and `results/credentials_needed.json` — are
+6. If present, inspect `results/environment_setup.json` and `results/credentials_needed.json`. Are
    there any systems marked as "blocked" or credentials still missing? Those represent
    incomplete experiments.
 
-Output your evaluation in JSON format:
+Choose reanalyze_existing when the missing comparison can be computed from saved
+measurements. Choose need_more_experiments only when new observations are needed.
+For either choice set sufficient to false and name the question in gaps.
+
+Independently try to falsify the strongest derived claim. Read the actual result
+and construct text in findings.yaml, including claims that disagree with one
+another. For a claimed exact law or universal relationship, substitute the
+smallest measured input and one other into the *stated* formula. Quote it as
+written with its finding id, even when you already know the corrected law. Show the
+predicted number and the JSON Pointer to its observed value. Calculate the
+prediction yourself before comparing. Even one counterexample refutes an
+"all inputs" claim. For noisy or qualitative results, explain the uncertainty
+instead of asserting exact equality. List any internally contradictory or
+disproved findings under contradictions so analysis can correct them. If the
+draft would need to correct a finding, that correction belongs in contradictions.
+Use gaps for measurements or controls that are still missing.
+
+Use empty lists for absent contradictions and inapplicable exact checks.
+Return only a JSON evaluation:
 ```json
 {{
   "sufficient": true/false,
   "coverage_pct": 0-100,
+  "contradictions": [],
+  "claim_checks": [{{"claim": "Exact relationship and input tested",
+                    "predicted": 7, "observed_source": "results/file.json#/row/metric"}}],
   "gaps": ["gap1", "gap2"],
-  "recommendation": "proceed_to_writing" | "need_more_experiments",
+  "recommendation": "proceed_to_writing" | "reanalyze_existing" | "need_more_experiments",
   "reason": "explanation"
 }}
 ```
-""", timeout=defaults.TIMEOUT_INITIALIZER)
+""", timeout=defaults.TIMEOUT_INITIALIZER, pre_draft=True)
         self.log_step_header(4, 4, "Evaluate Completeness", "end")
 
-        # Parse the verdict through the quality gate: pull a JSON object out of
-        # the (possibly fenced/prosey) output and require a "sufficient" field.
-        # If the model returns garbage, the safe default is "not sufficient" —
-        # run more experiments rather than prematurely declaring the paper done.
-        ok, ev = gate(
-            extract_json(eval_output, want=dict),
-            [("has-sufficient", has_fields("sufficient"))],
-            label="completeness verdict", default=None, log=self.log,
-        )
-        if ok and ev is not None:
-            return bool(ev.get("sufficient", False))
-        # garbage verdict → only trust an explicit textual "sufficient": true
-        return '"sufficient": true' in eval_output.lower()
+        if getattr(self, "_terminal_error", None):
+            return None
+        try:
+            return ResearchDecision.from_review(eval_output, self.code_dir, self.log)
+        except ValueError as error:
+            self._terminal_error = f"{error} Continue to retry the review with the saved results."
+            return None
 
     def _generate_all_figures(self):
         """Generate all figures: geometry config, matplotlib plots, AI concept figures.
@@ -3210,10 +3279,10 @@ Output your evaluation in JSON format:
 
 ### 1. All sections must be fully written (zero placeholders)
 - Abstract (150-250 words): problem, method, key results with actual numbers
-- Introduction: motivation, gap, 3-5 numbered contributions, paper roadmap
-- Related Work: 3-4 subsections, at least 10 cited works, explain how we differ
+- Introduction: motivation, question, and contributions supported by this study
+- Related Work: cite verified sources relevant to the closest competing explanations
 - Method: full technical description, equations where appropriate
-- Experiments: setup table, baselines listed, main results table with numbers, ablation
+- Experiments: setup, measured baselines, main results and any ablations actually run
 - Analysis/Discussion: explain WHY results are good/bad, failure cases
 - Conclusion: 1 paragraph summary + 1 paragraph future work
 - Acknowledgments: keep the pre-inserted `\\section*{{Acknowledgments}}` block VERBATIM. It is *endmatter* — ARK's post-processing will automatically place it on the references page (after the body `\\clearpage`, before `\\bibliography`), and it does NOT count toward the body page limit. Do NOT rewrite, edit, translate, remove, or wrap it in `\\clearpage` yourself.
@@ -3227,11 +3296,11 @@ Output your evaluation in JSON format:
 
 ### 3. Data integrity
 - Every performance claim must use actual numbers from findings
-- Include at least one \\begin{{table}} comparing against baselines
-- No vague statements like "our method is better" — use exact percentages
+- Tabulate measured baseline comparisons where available. Identify any missing control explicitly
+- Include denominators or units. State the limits of each comparison
 
 ### 4. Page target: {venue_pages} pages of body text
-- The last page must be at least 90% filled
+- Fit the evidence to the venue. Leave fine page fitting to the configured layout pass
 - Ensure `\\clearpage` before `\\bibliography{{...}}`
 
 ### 5. LaTeX mechanics
@@ -3242,6 +3311,22 @@ Output your evaluation in JSON format:
 Produce the complete paper. Do not stop until all sections are written and it compiles.
 """
 
+        state = self._load_dev_phase_state()
+        gaps = state.get("evidence_gaps") or []
+        if gaps or state.get("sufficient") is False:
+            limitations = "\n".join(f"- {gap}" for gap in gaps)
+            prompt += ("\n\n## Scope of the available evidence\n"
+                       "The experimental review left the following questions open. Narrow the abstract, "
+                       "results and conclusion accordingly. Describe untested comparisons as limitations.\n"
+                       + limitations)
+        prompt += ("\nRead the full findings.yaml and the cited raw outputs before writing. "
+                   "Only report measured comparisons. Explain what a negative result still establishes. "
+                   "Keep metric names, units, denominators and aggregation as measured. For each derived "
+                   "statistic test whether two datasets with the same recorded observations could have "
+                   "different values of that statistic. If so, the observations do not identify it. "
+                   "Omit the estimate or state precisely which inputs are missing. "
+                   "Separate exact counts from noisy measurements. Scope any timing advantage to the trials "
+                   "actually run. Claims about untested sizes or asymptotic behavior require a derivation.")
         self.run_agent("writer", prompt, timeout=defaults.TIMEOUT_WRITER)
 
     def _deliver_dev_phase(self, dev_state: dict, max_dev_iters: int):

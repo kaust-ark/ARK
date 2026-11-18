@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from ark.pipeline import PipelineMixin
+from ark.workflow import ResearchDecision
 
 
 @pytest.fixture
@@ -49,7 +50,7 @@ def test_the_refusal_to_draft_is_stated_explicitly(pipe):
     pipe._terminal_error = "BadRequestError: model not found"
     pipe._abort_dev_on_terminal_error("analyzing results")
     joined = " ".join(m for _, m in pipe.logs).lower()
-    assert "no experiments" in joined and "refusing" in joined
+    assert "checkpoint" in joined and "refusing" in joined
 
 
 class TestLoopStopsAtTheFailingStep:
@@ -79,7 +80,7 @@ class TestLoopStopsAtTheFailingStep:
         p._plan_experiments = step("plan")
         p._run_experiments = step("run")
         p._analyze_results = step("analyze")
-        p._evaluate_completeness = lambda *a, **k: (p.called.append("evaluate"), True)[1]
+        p._evaluate_completeness = lambda *a, **k: (p.called.append("evaluate"), ResearchDecision("proceed_to_writing", []))[1]
         p._run_experiment_loop({}, 0, 1, "idea")
         return p.called
 
@@ -502,3 +503,35 @@ class TestDevAbortKeepsTheIterationCounter:
         p.iteration = 3
         p._handle_terminal_error(5.0)
         assert p.iteration == 2
+
+
+@pytest.mark.parametrize("source", ["yaml", "legacy", "absent"])
+def test_approval_shows_the_planner_artifact(tmp_path, source):
+    p = PipelineMixin.__new__(PipelineMixin)
+    p.state_dir = tmp_path
+    p._should_ask = lambda kind: True
+    seen = {}
+
+    def ask(**decision):
+        seen.update(decision)
+        return 0, ""
+
+    p.ask_user_decision = ask
+    if source != "absent":
+        (tmp_path / "plan.md").write_text("Run the legacy comparison.")
+    if source == "yaml":
+        (tmp_path / "experiment_plan.yaml").write_text(
+            "experiments:\n- id: paired\n  title: Compare sorting times\n"
+            "  hypothesis: Sort A is faster\n  baseline: Sort B\n  metrics: [latency]\n"
+            "  falsifier: Identical elapsed time\n"
+        )
+    p._experiment_approval_gate()
+    context = " ".join(seen["background"])
+    if source == "yaml":
+        for value in ("Compare sorting times", "Sort A is faster", "Sort B", "latency", "Identical elapsed time"):
+            assert value in context
+        assert "legacy" not in context
+    elif source == "legacy":
+        assert "legacy comparison" in context
+    else:
+        assert "No readable plan" in context

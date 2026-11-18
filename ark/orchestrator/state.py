@@ -52,6 +52,36 @@ def _atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
+def _summarize_findings(data) -> str:
+    """Give each finding room for its observation and source in the model context."""
+    rows = data.get("findings") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return yaml.safe_dump(data, allow_unicode=True)[:500]
+    lines = []
+    for index, row in enumerate(rows[:8], 1):
+        if not isinstance(row, dict):
+            continue
+        result = str(row.get("result") or "").strip()
+        source = str(row.get("source") or "").strip()
+        # Identifiers such as "f1" label records. As a heading, "f1" caused
+        # writers to present a correct/total count as a measured F1 score.
+        lines.append(f"- Observation {index}: {result[:320]}")
+        metrics = row.get("metrics")
+        if isinstance(metrics, dict):
+            # Include metric names alongside their values so a percentage
+            # cannot lose its denominator or turn into a different statistic.
+            quoted = [f"{str(k)[:60]}={v}" for k, v in list(metrics.items())[:4]
+                      if type(v) in (float, int)]
+            if quoted:
+                lines.append("  Metrics: " + ", ".join(quoted))
+        if row.get("construct"):
+            lines.append("  Measurement: " + str(row["construct"])[:160])
+        if source:
+            lines.append(f"  Source: {source[:200]}")
+    lines.append("Read auto_research/state/findings.yaml for all metrics, populations and limitations.")
+    return "\n".join(lines)
+
+
 class StateManager:
     """Handles persistence of research state, paper state, and checkpoints with robust error recovery."""
 
@@ -219,7 +249,7 @@ class StateManager:
             with open(self.findings_file) as f:
                 text = f.read()
             findings = yaml.safe_load(text) or {}
-            return yaml.dump(findings, allow_unicode=True)[:500]
+            return _summarize_findings(findings)
         except yaml.YAMLError as e:
             try:
                 from ark.findings_schema import attempt_repair
@@ -238,7 +268,7 @@ class StateManager:
                         f"({detail}); original saved to {backup.name}",
                         "INFO",
                     )
-                    return yaml.dump(findings, allow_unicode=True)[:500]
+                    return _summarize_findings(findings)
                 except Exception as repair_err:
                     self.log(
                         f"findings.yaml auto-repair failed at write step: {repair_err}",

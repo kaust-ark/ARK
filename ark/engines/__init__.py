@@ -612,7 +612,7 @@ class AgentMixin:
                   session_out: Optional[list] = None, outcome_out: Optional[dict] = None,
                   session_checkpoint: Optional[Path] = None,
                   interrupted_session: Optional[str] = None,
-                  resume_instructions: str = "") -> str:
+                  resume_instructions: str = "", pre_draft: bool = False) -> str:
         """Run an agent of the specified type, returning its output.
 
         Args:
@@ -636,6 +636,11 @@ class AgentMixin:
             raise FileNotFoundError(f"Agent prompt not found: {prompt_file}")
 
         base_prompt = prompt_file.read_text()
+        if pre_draft and agent_type == "planner":
+            # Drop the built-in post-review procedure. Project-specific
+            # knowledge appended to the template still applies to this task.
+            base_prompt = re.sub(r"(?ms)^<!-- paper-review-planning -->.*?^<!-- /paper-review-planning -->\n?",
+                                 "", base_prompt)
 
         # Look up context profile for this agent type
         profile = AGENT_CONTEXT_PROFILES.get(agent_type, _DEFAULT_PROFILE)
@@ -730,7 +735,7 @@ Instead:
 
 {context_block}
 
-Execute the task and update the corresponding files.
+{"Return the deliverable specified in the current task." if pre_draft else "Execute the task and update the corresponding files."}
 """
 
         # Credentials guidance — only when the intervention gate is active (the

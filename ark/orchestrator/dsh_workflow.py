@@ -55,7 +55,7 @@ def run_workflow(project):
             try:
                 with parent.makefile("rb") as requests:
                     parent.settimeout(45)
-                    if requests.readline(512) != b"ready-v1\n":
+                    if requests.readline(512) != b"ready-v2\n":
                         raise RuntimeError("DSH workflow did not start")
                     project.log("DSH hosted workflow started", "INFO")
                     while True:

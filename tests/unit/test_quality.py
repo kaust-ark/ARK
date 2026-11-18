@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ark.quality import (
@@ -25,7 +26,7 @@ from ark.quality import (
     registered_rules,
     register_rule,
 )
-from ark.findings_schema import validate_findings
+from ark.findings_schema import analysis_evidence_issues, validate_findings
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────
@@ -269,3 +270,98 @@ def test_validate_findings_parse_error_blocks(tmp_path: Path) -> None:
     p.write_text(":\n: :\nnot yaml: [")
     violations = validate_findings(p)
     assert any(v.severity == "block" for v in violations)
+
+@pytest.fixture
+def metric_evidence(tmp_path):
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "trial.json").write_text(
+        '{"a/b":{"~samples":[{"accuracy":0.45,"status":true,"count":9007199254740993}]}}'
+    )
+    finding = {"id": "trial", "result": "Held-out accuracy measured on one split.",
+               "metrics": {"accuracy": 0.45}, "source": "results/trial.json",
+               "construct": "Fraction of held-out samples classified correctly.",
+               "metric_sources": {"accuracy": "results/trial.json#/a~1b/~0samples/0/accuracy"}}
+    return tmp_path / "findings.yaml", finding
+
+
+def test_exact_measurement_and_later_correction(metric_evidence):
+    path, row = metric_evidence
+    _write_findings(path, [row])
+    assert validate_findings(path, path.parent) == []
+    row["metrics"]["accuracy"] = 0.95
+    _write_findings(path, [row])
+    issues = analysis_evidence_issues(path, path.parent)
+    assert len(issues) == 1 and "0.45" in issues[0] and "0.95" in issues[0]
+    # Evidence can change between two invocations in one long-lived worker.
+    result = path.parent / "results" / "trial.json"
+    result.write_text(result.read_text().replace("0.45", "0.95"))
+    assert analysis_evidence_issues(path, path.parent) == []
+
+
+@pytest.mark.parametrize(("ref", "expected"), [
+    ("results/missing.json#/count", "does not exist"),
+    ("results/trial.json#/a~1b/~0samples/1/accuracy", "was not found"),
+    ("results/trial.json#/a~1b/~0samples/-1/accuracy", "was not found"),
+    ("results/trial.json#/a~1b/~0samples/0/status", "finite numeric"),
+    ("results/trial.json#/a~1b/~0samples/0/count", "9007199254740993"),
+    ("results/../outside.json#/secret", "project-relative"),
+    ("/tmp/trial.json#/secret", "project-relative"),
+])
+def test_broken_metric_sources_explain_repair(metric_evidence, ref, expected):
+    path, row = metric_evidence
+    row["metric_sources"]["accuracy"] = ref
+    _write_findings(path, [row])
+    assert expected in analysis_evidence_issues(path, path.parent)[0]
+
+
+def test_metric_source_confined_to_results(metric_evidence, monkeypatch):
+    path, row = metric_evidence
+    outside = path.parent / "private.json"
+    outside.write_text('{"private": 3}')
+    (path.parent / "results" / "link.json").symlink_to(outside)
+    row["metric_sources"]["accuracy"] = "results/link.json#/private"
+    row["source"] = "../private.json"
+    _write_findings(path, [row])
+
+    def unexpected_read(*args):
+        pytest.fail("Out-of-scope result was opened")
+
+    monkeypatch.setattr("ark.findings_schema._read_result", unexpected_read)
+    violations = validate_findings(path, path.parent)
+    assert [v.severity for v in violations] == ["block", "warn"]
+
+
+def test_large_valid_result_is_unverified(metric_evidence, monkeypatch):
+    path, row = metric_evidence
+    _write_findings(path, [row])
+    monkeypatch.setattr("ark.findings_schema._MAX_RESULT_BYTES", 8)
+    violations = validate_findings(path, path.parent)
+    assert len(violations) == 1 and violations[0].severity == "warn"
+    assert "size limit" in violations[0].message
+    assert analysis_evidence_issues(path, path.parent) == []
+
+
+def test_legacy_analysis_requires_observation_only(tmp_path):
+    path = tmp_path / "findings.yaml"
+    assert analysis_evidence_issues(path, tmp_path)
+    for findings in ([], [{"result": "   "}], [{"metrics": {"loss": 3}}]):
+        _write_findings(path, findings)
+        assert analysis_evidence_issues(path, tmp_path)
+    _write_findings(path, [{"result": "The proposed baseline failed to converge."}])
+    assert analysis_evidence_issues(path, tmp_path) == []
+
+
+def test_typed_metadata_and_annotated_text_keep_distinct_audit_status(metric_evidence):
+    path, row = metric_evidence
+    (path.parent / "results/slurm-99.err").write_text("expected 2, observed 1")
+    row["metrics"].update(complete=True, predicted=2)
+    row["metric_sources"].update(complete="results/trial.json#/a~1b/~0samples/0/status",
+                                 predicted="results/slurm-99.err (line 1: expected 2)")
+    _write_findings(path, [row])
+    warnings = []
+    assert analysis_evidence_issues(path, path.parent, warn=warnings.append) == []
+    assert len(warnings) == 1 and "not independently verified" in warnings[0]
+    row["metrics"]["complete"] = False
+    _write_findings(path, [row])
+    assert "differs" in analysis_evidence_issues(path, path.parent)[0]

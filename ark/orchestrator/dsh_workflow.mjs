@@ -21,7 +21,7 @@ export function apply(ctx) {
     void (async () => {
       let exit = 1
       try {
-        await send('ready-v1')
+        await send('ready-v2')
         await runWorkflow(call)
         await send('done')
         exit = 0
@@ -39,12 +39,12 @@ export function apply(ctx) {
 async function runExperiments(call) {
   await call('dev-start')
   for (;;) {
-    const completed = await call('dev-iteration')
-    if (completed === null) break
-    for (const step of ['plan', 'run', 'analyze']) {
-      if (!completed.includes(step) && !await call(`dev-${step}`)) return
+    const steps = await call('dev-iteration')
+    if (steps === null) break
+    for (const step of steps) {
+      if (!await call(`dev-${step}`)) return
     }
-    if (await call('dev-evaluate')) break
+    if ((await call('dev-evaluate')) !== false) break
   }
 }
 

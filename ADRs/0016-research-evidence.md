@@ -1,0 +1,42 @@
+# 0016. Let the evidence determine the next research action
+
+Status: implemented on the candidate branch, 2026-11-18
+
+## Product decision
+
+A researcher should be able to approve a falsifiable comparison, see which observation changed the conclusion, and recover the exact work that remains after an interruption. Keep DSH as the hosted runtime and Slurm as the experiment executor. Put the next engineering investment into the research decision between those two systems and the draft.
+
+Google's Co-Scientist combines hypothesis generation with criticism and ranking. The August extension couples those activities to experiment execution and manuscript preparation. The useful unit for Idea2Paper is a question whose possible outcomes distinguish competing explanations. A project owner can assess that choice before committing cluster time. [Co-Scientist](https://deepmind.google/blog/co-scientist-a-multi-agent-ai-partner-to-accelerate-research/) · [August real-world study](https://arxiv.org/abs/2608.26701)
+
+Google's ERA work uses empirical evaluation to guide scientific code development. Sakana's AI Scientist-v2 uses tree search for experimental exploration. Its authors report a tradeoff in success rate for open-ended exploration. On Idea2Paper, another branch is justified when an affordable new observation could change the conclusion. Computing a missing comparison from saved measurements consumes a different budget. [ERA and Computational Discovery](https://research.google/blog/empirical-research-assistance-era-from-nature-publication-to-catalyzing-computational-discovery/) · [AI Scientist-v2](https://github.com/SakanaAI/AI-Scientist-v2)
+
+## Behavior
+
+| Evidence available at the decision | Next action |
+| --- | --- |
+| A failed job wrote only scheduler logs | Inspect the failure and recover any recorded measurements before considering a new submission. |
+| A new comparison needs fresh observations | Carry the specific gap into the next plan, within the existing iteration limit. |
+| The comparison is possible with saved observations | Reanalyze the files. Skip experiment planning, approval and execution on this pass. |
+| The review identifies mutually inconsistent findings, or an exact prediction differs from the cited observation | Reopen analysis against the same data. Save this checkpoint before the repair. A repeated contradiction pauses the run before drafting. |
+| Negative results answer the scoped question | Write the result and its limits. Unresolved gaps accompany the writer even at the iteration limit. |
+| The provider returns an unusable verdict | Preserve the measurements and analysis. Continue retries the evaluation. |
+
+The existing dev checkpoint carries the decision and open questions. DSH and the Python runner consume the same list of outstanding experimental steps. The checkpoint uses atomic replacement. A prior checkpoint can be read without the new optional fields. A malformed checkpoint produces a diagnostic so an existing job cannot silently turn into a new project.
+
+For new quantitative findings, an exact metric can point to a scalar in an original JSON result. The checker resolves a project-relative JSON Pointer and compares the literal value, including its type for string and boolean metadata. An evaluator can also submit the *predicted* value of a stated relationship at a measured input. This permits an independent arithmetic check even when every copied raw number is correct. Descriptive findings, derived quantities and older findings retain their source and construct. For a citation to a line in a text or CSV result, the checker verifies that the file exists and flags the value for review. An unreadable or oversized raw result is reported as unchecked. A match at sampled points does not establish a universal law.
+
+## Evaluation
+
+Replay the decisions with local fixtures and the real pinned DSH controller using the repository CI suite. The cases in `tests/unit/test_research_evidence_flow.py` cover interrupted reanalysis, conflicting raw observations, malformed verdicts, limitations at budget exhaustion and failed-job logs.
+
+For a writer comparison, run `scripts/eval_writer_evidence.py --checkout PATH --out NEW_DIRECTORY` against the release and candidate checkouts using the same free model and an OpenRouter key. Each run makes four requests. The script records both requests and completions. Inspect the Results and Limitations together. Does the paper limit its timing conclusion to the observed trial? Does the classification paper claim an improvement without a baseline? Does the null result specify the tested inputs? Does the service paper distinguish throughput from tail latency? Check the identity of each metric as well as its numeric value. These are fixed excerpt tasks with raw measurements provided to the writer.
+
+For a full-paper comparison, freeze a set of unseen project briefs, research data, model, call allowance and compute budget. Have reviewers blinded to the branch score the evidence for each main claim, the choice of discriminating control, reproducibility from saved scripts and scientific value of the conclusion. Record failed and stopped runs in the denominator alongside expense, duplicate submissions, owner interventions and time to a reviewable paper. Author-grounded, individually scorable reproduction criteria in PaperBench inform this evaluation design. [PaperBench](https://openai.com/index/paperbench/)
+
+## Candidate observations on mcnode15
+
+- On saved Slurm jobs 87732 and 87733, the release counted the first job's OOM stderr as a result. The candidate admitted the second job's measurement JSON. Independently recomputing the measurements gave exactly log₂(n) binary inspections for all 24 measured powers of two and a timing tie at n = 16. A real SDK review found both errors in a model's analysis even though its individually quoted counts were correct.
+- In a fresh review of the corrected findings, the free model read the files and described the correct formula, the tie and the single timing sample in prose. It ended its turn before returning a structured decision. The candidate paused at evaluation. An uninterrupted end-to-end run on these revised findings is still unverified.
+- Killing a worker mid-checkpoint lost the release's completed planning and execution records. The same signal on the candidate preserved both records. Chromium at 390 × 844 retained a pending approval and its draft edit through a stream update and a failed submission.
+- In a controlled comparison on a fixed classifier result, an intermediate summary headed with the internal record ID f1 produced an unsupported F1 claim at each of three seeds. Changing only the heading to Observation 1 eliminated all three mentions. This measures sensitivity to a record label for one model and task.
+- With identical saved results, model and response limits, the candidate's complete-note replay compiled after one LaTeX repair and correctly reported the search law and timing tie. It occupied four pages against a two-page request. The release exhausted both response limits before closing its document. The replay covered writing and compilation. The production layout stage and independent full-paper review require separate evaluation. A candidate excerpt on a different task asserted repeated trials that the fixture did not record.

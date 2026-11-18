@@ -7,7 +7,11 @@ read that as "n is done" and began at n + 1; at the cap it went straight to
 and two of those drafts reported numbers no experiment had produced.
 """
 
+import pytest
+import yaml
+
 from ark.pipeline import PipelineMixin
+from ark.workflow import ResearchDecision
 
 
 def _pipe(monkeypatch, state, max_iters=1, sufficient=True):
@@ -35,7 +39,7 @@ def _pipe(monkeypatch, state, max_iters=1, sufficient=True):
     p._plan_experiments = step("plan")
     p._run_experiments = step("run")
     p._analyze_results = step("analyze")
-    p._evaluate_completeness = lambda *a, **k: (p.called.append("evaluate"), sufficient)[1]
+    p._evaluate_completeness = lambda *a, **k: (p.called.append("evaluate"), ResearchDecision("proceed_to_writing" if sufficient else "need_more_experiments", []))[1]
     p._generate_all_figures = lambda: p.called.append("draft")
     p._write_initial_draft = lambda *a: None
     p._deliver_dev_phase = lambda *a: None
@@ -85,3 +89,42 @@ def test_progress_is_saved_after_each_step(monkeypatch):
     assert ["plan"] in steps and ["plan", "run"] in steps
     assert p.saved[-1]["steps_done"] == ["plan", "run", "analyze", "evaluate"]
     assert p.saved[-1]["sufficient"] is True
+
+
+def test_failed_checkpoint_write_preserves_resume_position(tmp_path, monkeypatch):
+    project = _pipe(monkeypatch, {}, max_iters=2)
+    del project._load_dev_phase_state, project._save_dev_phase_state
+    project.state_dir = tmp_path
+    synced = []
+    project._sync_db = lambda **fields: synced.append(fields)
+    last_good = {"iteration": 1, "status": "in_progress", "steps_done": ["plan", "run"]}
+    project._save_dev_phase_state(last_good)
+
+    def partial_write(state, stream, **options):
+        stream.write("iteration: 1\nsteps_done: [")
+        stream.flush()
+        raise OSError("interrupted checkpoint write")
+
+    with monkeypatch.context() as fault:
+        fault.setattr(yaml, "dump", partial_write)
+        with pytest.raises(OSError, match="interrupted checkpoint write"):
+            project._save_dev_phase_state(dict(last_good, steps_done=["plan", "run", "analyze"]))
+
+    assert len(synced) == 1
+    assert project._load_dev_phase_state() == last_good
+    project._run_dev_phase()
+    assert project.called == ["analyze", "evaluate", "draft"]
+
+
+def test_corrupt_existing_dev_checkpoint_stops_resume(tmp_path):
+    project = PipelineMixin.__new__(PipelineMixin)
+    project.state_dir = tmp_path
+    project.config = {}
+    project.load_paper_state = lambda: {"reviews": []}
+    project._paper_has_substantial_content = lambda: False
+    checkpoint = tmp_path / "dev_phase_state.yaml"
+    for partial in ("", "iteration: 1\nsteps_done: [", "iteration: 1\n"):
+        checkpoint.write_text(partial)
+        with pytest.raises(ValueError, match="dev_phase_state.yaml"):
+            project._should_run_dev_phase()
+        assert checkpoint.read_text() == partial

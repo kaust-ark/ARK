@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import text, update
 from sqlmodel import Field, Session, SQLModel, create_engine, delete, select
 
 
@@ -637,12 +637,9 @@ def create_pending_decision(session: Session, project_id: str, question: str,
                             deadline_at: Optional[datetime] = None) -> str:
     """Open a decision for the human. Cancels any prior open decision for the
     project first (one live question at a time). Returns the decision id."""
-    for old in session.exec(
-        select(PendingDecision).where(PendingDecision.project_id == project_id,
-                                      PendingDecision.status == "pending")
-    ).all():
-        old.status = "cancelled"
-        session.add(old)
+    session.execute(update(PendingDecision).where(
+        PendingDecision.project_id == project_id, PendingDecision.status == "pending",
+    ).values(status="cancelled"))
     dec = PendingDecision(
         project_id=project_id, kind=kind, question=question,
         options=json.dumps(list(options or [])), context=context,
@@ -670,28 +667,19 @@ def get_decision(session: Session, decision_id: str) -> Optional["PendingDecisio
 def answer_decision(session: Session, decision_id: str, index: int = -1,
                     text: str = "", by: str = "", source: str = "webapp") -> bool:
     """Record a human's answer to a decision. Returns False if already closed."""
-    dec = session.get(PendingDecision, decision_id)
-    if not dec or dec.status != "pending":
-        return False
-    dec.status = "answered"
-    dec.answer_index = index
-    dec.answer_text = text or ""
-    dec.answered_by = by
-    dec.source = source
-    dec.answered_at = datetime.utcnow()
-    session.add(dec)
+    changed = session.execute(update(PendingDecision).where(
+        PendingDecision.id == decision_id, PendingDecision.status == "pending",
+    ).values(status="answered", answer_index=index, answer_text=text or "",
+             answered_by=by, source=source, answered_at=datetime.utcnow()))
     session.commit()
-    return True
+    return changed.rowcount == 1
 
 
 def expire_decision(session: Session, decision_id: str) -> None:
-    dec = session.get(PendingDecision, decision_id)
-    if dec and dec.status == "pending":
-        dec.status = "timed_out"
-        dec.source = "timeout"
-        dec.answered_at = datetime.utcnow()
-        session.add(dec)
-        session.commit()
+    session.execute(update(PendingDecision).where(
+        PendingDecision.id == decision_id, PendingDecision.status == "pending",
+    ).values(status="timed_out", source="timeout", answered_at=datetime.utcnow()))
+    session.commit()
 
 
 # ── Control-plane HITL engine helpers (outbound notify + timeout sweep) ──────────
@@ -719,19 +707,17 @@ def sweep_expired_decisions(session: Session) -> list[str]:
     ids swept. This is the control plane owning timeout enforcement (D1/D4): a run
     whose orchestrator died mid-decision no longer hangs a pending question."""
     now = datetime.utcnow()
-    rows = session.exec(
-        select(PendingDecision).where(PendingDecision.status == "pending",
-                                      PendingDecision.deadline_at != None)  # noqa: E711
-    ).all()
-    swept: list[str] = []
-    for dec in rows:
-        if dec.deadline_at and dec.deadline_at <= now:
-            dec.status = "timed_out"
-            dec.source = "timeout"
-            dec.answered_at = now
-            session.add(dec)
-            swept.append(dec.id)
-    if swept:
+    due = session.exec(select(PendingDecision.id).where(
+        PendingDecision.status == "pending", PendingDecision.deadline_at <= now,
+    )).all()
+    swept = []
+    for decision_id in due:
+        changed = session.execute(update(PendingDecision).where(
+            PendingDecision.id == decision_id, PendingDecision.status == "pending",
+        ).values(status="timed_out", source="timeout", answered_at=now))
+        if changed.rowcount:
+            swept.append(decision_id)
+    if due:
         session.commit()
     return swept
 

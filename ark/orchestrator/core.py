@@ -2137,59 +2137,6 @@ a {{ color: #0d9488; }}
             default_flow_style=False, allow_unicode=True,
         )
 
-    def _load_findings_summary(self) -> str:
-        """Load findings.yaml summary.
-
-        Tolerates malformed YAML by degrading to a note rather than
-        crashing the plan phase. A previous experimenter run may have
-        emitted ``library_use:`` mid-list (see experimenter.prompt
-        layout guidance); that file should still not prevent downstream
-        agents from running — planner can proceed from the review alone.
-        """
-        if self.findings_file.exists():
-            try:
-                with open(self.findings_file) as f:
-                    text = f.read()
-                findings = yaml.safe_load(text) or {}
-                return yaml.dump(findings, allow_unicode=True)[:500]
-            except yaml.YAMLError as e:
-                # Try the same auto-repair as state.load_findings_summary
-                # so this read path doesn't lose evidence to a known bug.
-                try:
-                    from ark.findings_schema import attempt_repair
-                    repaired, changes = attempt_repair(text)
-                except Exception:
-                    repaired, changes = None, []
-                if repaired is not None:
-                    try:
-                        backup = self.findings_file.with_suffix(".yaml.malformed")
-                        _atomic_write_text(backup, text)
-                        _atomic_write_text(self.findings_file, repaired)
-                        findings = yaml.safe_load(repaired) or {}
-                        detail = "; ".join(changes) if changes else "auto-repaired"
-                        self.log(
-                            f"findings.yaml had a parse error and was "
-                            f"auto-repaired ({detail}); original saved to "
-                            f"{backup.name}",
-                            "INFO",
-                        )
-                        return yaml.dump(findings, allow_unicode=True)[:500]
-                    except Exception as repair_err:
-                        self.log(
-                            f"findings.yaml auto-repair failed at write step: "
-                            f"{repair_err}",
-                            "WARN",
-                        )
-                detail = "; ".join(changes) if changes else "no known repair pattern matched"
-                self.log(
-                    f"findings.yaml is malformed ({type(e).__name__}); "
-                    f"planner will proceed without it. Fix the file to "
-                    f"restore evidence-aware planning. Repair attempt: {detail}.",
-                    "WARN",
-                )
-                return f"[findings.yaml unparseable: {e.__class__.__name__}]"
-        return "No findings yet"
-
     # ========== Review Parsing ==========
 
     def parse_review_score(self, review_output: str) -> float:

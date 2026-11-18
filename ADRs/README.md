@@ -48,3 +48,4 @@ cross-link — the docs carry the full detail; the ADRs carry the *decision*:
 | [0013](0013-state-db-projection.md) | Control-plane state as a DB projection of orchestrator-local files | Proposed |
 | [0014](0014-dsh-runtime-intranet-evaluation.md) | DSH runtime migration with evaluation inside the will network | Proposed |
 | [0015](0015-dsh-native-bundle.md) | Run an installable Idea2Paper workflow in DSH | Proposed |
+| [0016](0016-research-evidence.md) | Route experiments, analysis and drafting using the available evidence | Implemented on candidate branch |

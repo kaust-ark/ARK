@@ -54,6 +54,16 @@
       min-height: 100vh;
     }
 
+    #hitl-decision { margin-bottom: 14px; border-inline-start: 3px solid var(--teal); }
+    #decision-context { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; overflow: auto; margin: .65rem 0; }
+    #decision-default, #decision-error { font-size: .82rem; color: var(--text-second); }
+    #decision-form fieldset { border: 0; min-width: 0; }
+    #decision-options { display: flex; flex-wrap: wrap; gap: .5rem; margin: .7rem 0; }
+    #decision-form label, #decision-text { display: block; margin: .35rem 0; }
+    #decision-text { width: 100%; max-width: 42rem; padding: .5rem; font: inherit; border: 1px solid var(--card-border); border-radius: 6px; resize: vertical; }
+    #decision-error { color: #a13717; }
+    #hitl-compose { display: flex; }
+    #hitl-decision:not([hidden]) ~ #hitl-chat #hitl-compose { display: none; }
     /* ── nav ── */
     nav {
       position: sticky; top: 0; z-index: 100;
@@ -1153,6 +1163,22 @@ Strict — hit the exact page limit (spends the most tokens).">
 
   <div class="detail-actions share-hide" id="detail-actions"></div>
 
+  <section id="hitl-decision" class="detail-card share-hide" hidden aria-labelledby="decision-heading">
+    <h4 id="decision-heading" data-i18n="decision_needed">Your decision</h4>
+    <strong id="decision-question"></strong>
+    <div id="decision-context"></div>
+    <p id="decision-default"></p>
+    <form id="decision-form">
+      <fieldset>
+        <div id="decision-options"></div>
+        <label for="decision-text" data-i18n="decision_instruction">Your instruction</label>
+        <textarea id="decision-text" rows="2" required></textarea>
+        <button class="btn-secondary" type="submit" data-i18n="decision_send">Send instruction</button>
+      </fieldset>
+    </form>
+    <span id="decision-error" role="status"></span>
+  </section>
+
   <!-- HITL: conversation thread (chat). Shown while the project is active. -->
   <div id="hitl-chat" class="share-hide" style="display:none;margin:4px 0 14px;border:1px solid var(--card-border);border-radius:12px;overflow:hidden">
     <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--bg-hover);border-bottom:1px solid var(--card-border)">
@@ -1168,7 +1194,7 @@ Strict — hit the exact page limit (spends the most tokens).">
       <span id="hitl-model" title="Model this project runs on" style="display:none">🤖 —</span>
     </div>
     <div id="hitl-thread" style="height:340px;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px;background:var(--bg)"></div>
-    <div style="display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--card-border);background:var(--bg-hover)">
+    <div id="hitl-compose" style="gap:8px;padding:10px 12px;border-top:1px solid var(--card-border);background:var(--bg-hover)">
       <input id="hitl-input" placeholder="Message the project — steer it, or answer its question…" style="flex:1;padding:9px 13px;border:1px solid var(--card-border);border-radius:20px;font-size:.85rem;outline:none;background:var(--bg)"
         onkeydown="if(event.key==='Enter')hitlSend()">
       <button class="btn-primary" style="border-radius:20px;padding:8px 18px" onclick="hitlSend()">Send</button>
@@ -2736,6 +2762,13 @@ Strict — hit the exact page limit (spends the most tokens).">
 // ══════════════════════════════════════════════════════
 const TRANSLATIONS = {
   en: {
+    decision_needed: "Your decision",
+    decision_instruction: "Your instruction",
+    decision_send: "Send instruction",
+    decision_default: "If unanswered by %s, the project will choose “%s”.",
+    decision_retry: "Could not send. Your instruction is saved here. Try again.",
+    decision_answered: "Answer received.",
+    decision_closed: "This decision has already closed.",
     // nav
     nav_admin: 'Admin',
     sign_out: 'Sign out',
@@ -2904,6 +2937,13 @@ const TRANSLATIONS = {
     disabled: 'Disabled',
   },
   ar: {
+    decision_needed: "قرارك",
+    decision_instruction: "تعليماتك",
+    decision_send: "إرسال التعليمات",
+    decision_default: "في حال عدم الرد بحلول %s، سيختار المشروع «%s».",
+    decision_retry: "تعذّر الإرسال. تعليماتك محفوظة هنا. حاول مجددًا.",
+    decision_answered: "تم استلام الإجابة.",
+    decision_closed: "أُغلق هذا القرار بالفعل.",
     nav_admin: 'الإدارة',
     sign_out: 'تسجيل الخروج',
     lang_label: 'EN',
@@ -3043,6 +3083,13 @@ const TRANSLATIONS = {
     disabled: 'معطّل',
   },
   zh: {
+    decision_needed: "等待你的决定",
+    decision_instruction: "你的调整意见",
+    decision_send: "提交意见",
+    decision_default: "若到 %s 仍未答复，项目将选择“%s”。",
+    decision_retry: "提交失败。你的输入已保留，可以重试。",
+    decision_answered: "答复已收到。",
+    decision_closed: "该决定已结束。",
     nav_admin: '管理',
     sign_out: '退出',
     lang_label: 'EN',
@@ -3917,12 +3964,15 @@ function _renderPhaseStatus(p) {
 //  Project Detail
 // ══════════════════════════════════════════════════════
 async function loadDetail(id) {
+  if (detailProjectId !== id) renderDecision(null, id);
   detailProjectId = id;
   stopDetailStream();
 
   const res = await fetch(`${APP_BASE}/api/projects/${id}`);
+  if (detailProjectId !== id) return;
   if (!res.ok) { navigate('dashboard'); return; }
   const p = await res.json();
+  if (detailProjectId !== id) return;
 
   resetProgress(p.max_iterations);
   setProgressWidgetVisible(p.status === 'running' || p.status === 'queued');
@@ -4438,7 +4488,7 @@ async function stopProject(id) {
 // ── HITL conversation (chat) ──────────────────────────────────────────────────
 let _chatSeen = new Set();      // message ids already rendered
 let _chatThreadFor = null;      // which project the thread is loaded for
-let _hitlOpenDecision = null;   // decision_id of the currently-open decision
+let _lastAnsweredDecision = null;   // Ignore a pre-answer status event still in flight.
 let _pendingEcho = null;        // optimistic user bubble text to dedup vs SSE
 let _hitlActive = false;        // is the project currently running (vs finished)
 
@@ -4462,14 +4512,13 @@ function renderHitl(p) {
   if (inp) inp.placeholder = active ? 'Message the project — steer it, or answer its question…' : 'Send instructions to resume & refine the project…';
   const mc = document.getElementById('hitl-model');
   if (mc && p.model) { mc.textContent = '🤖 ' + prettyModelName(p.model); mc.style.display = ''; }
-  _hitlOpenDecision = p.pending_decision ? p.pending_decision.id : null;
-  if ((active || finished) && _chatThreadFor !== p.id) loadChatThread(p.id);
+  renderDecision(active && !window.SHARE_MODE ? p.pending_decision : null, p.id);
+  if (!window.SHARE_MODE && (active || finished) && _chatThreadFor !== p.id) loadChatThread(p.id);
   // A chat/apply agent is mid-turn (activity carries the 💬/Applying marker):
   // make sure the thinking dots are showing — survives page refresh/SSE reconnect.
   const busyChat = /^💬|^Applying/.test(p.activity || '');
   if (busyChat && !document.getElementById('hitl-thinking')) showThinking();
   else if (!busyChat && !_hitlActive) { /* finished + idle: dots are cleared by the reply bubble */ }
-  closeStaleDecisions();   // disable buttons on any decision no longer open
 }
 
 function htmlToText(s) {
@@ -4529,14 +4578,73 @@ function hideThinking() {
   if (t) t.remove();
 }
 
-function closeStaleDecisions() {
-  document.querySelectorAll('#hitl-thread [data-decision-id]').forEach(el => {
-    if (el.dataset.decisionId !== _hitlOpenDecision && !el.dataset.closed) {
-      el.dataset.closed = '1';
-      el.querySelectorAll('button').forEach(b => { b.disabled = true; b.style.opacity = '.45'; b.style.cursor = 'default'; });
-      const note = el.querySelector('.dec-note'); if (note) note.textContent = '✓ closed (answered or auto-decided)';
+// A pending decision belongs to the project, even if its chat bubble has scrolled
+// out of the retained history or the worker stopped between opening and posting it.
+function renderDecision(decision, projectId) {
+  const card = document.getElementById('hitl-decision');
+  if (!decision || decision.id === _lastAnsweredDecision) {
+    card.hidden = true;
+    delete card.dataset.decisionId;
+    return;
+  }
+  if (card.dataset.decisionId === decision.id && card.lang === currentLang) return;
+  const input = document.getElementById('decision-text');
+  if (card.dataset.decisionId !== decision.id) input.value = '';
+  card.dataset.decisionId = decision.id;
+  card.lang = currentLang;
+  card.hidden = false;
+  const options = Array.isArray(decision.options) ? decision.options : [];
+  document.getElementById('decision-question').textContent = decision.question;
+  document.getElementById('decision-context').textContent = decision.context || '';
+  const deadline = decision.deadline_at;
+  document.getElementById('decision-default').textContent =
+    decision.timeout_action === 'proceed_default' && deadline && options[decision.default_index]
+      ? t('decision_default', fmtDate(deadline), options[decision.default_index]) : '';
+
+  const form = document.getElementById('decision-form');
+  const controls = form.querySelector('fieldset');
+  const error = document.getElementById('decision-error');
+  controls.disabled = false;
+  error.textContent = '';
+  async function answer(index, text) {
+    if (controls.disabled || card.dataset.decisionId !== decision.id || detailProjectId !== projectId) return;
+    controls.disabled = true;
+    error.textContent = '';
+    try {
+      const r = await fetch(`${APP_BASE}/api/projects/${projectId}/decision`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision_id: decision.id, index, text }),
+      });
+      if (card.dataset.decisionId !== decision.id || detailProjectId !== projectId) return;
+      if (!r.ok && r.status !== 404 && r.status !== 409) throw new Error();
+      _lastAnsweredDecision = decision.id;
+      renderDecision(null, projectId);
+      showToast(t(r.ok ? 'decision_answered' : 'decision_closed'));
+    } catch {
+      if (card.dataset.decisionId === decision.id && detailProjectId === projectId) {
+        controls.disabled = false;
+        error.textContent = t('decision_retry');
+      }
     }
+  }
+  const choices = document.getElementById('decision-options');
+  choices.replaceChildren();
+  options.forEach((option, i) => {
+    // The worker appends this sentinel to advertise free text. Submitting its
+    // index with no text would release the worker without the requested edits.
+    if (option === 'Custom — type your own instruction') return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-secondary';
+    btn.textContent = option;
+    btn.onclick = () => answer(i, '');
+    choices.appendChild(btn);
   });
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (text) answer(-1, text);
+  };
 }
 
 async function loadChatThread(pid) {
@@ -4547,8 +4655,10 @@ async function loadChatThread(pid) {
   if (thread) thread.innerHTML = '';
   try {
     const r = await fetch(`${APP_BASE}/api/projects/${pid}/messages`);
-    if (r.ok) (await r.json()).messages.forEach(appendBubble);
-    closeStaleDecisions();   // historical decisions are closed
+    if (r.ok) {
+      const { messages } = await r.json();
+      if (_chatThreadFor === pid && detailProjectId === pid) messages.forEach(appendBubble);
+    }
   } catch (e) {}
 }
 
@@ -4611,22 +4721,10 @@ function appendBubble(m) {
     if (m.kind === 'decision' && m.meta) {
       const guardrail = (m.meta.kind === 'guardrail');
       if (guardrail) bub.style.cssText += ';border:1.5px solid #ef4444;background:#fef2f2;color:#7f1d1d';
-      bub.dataset.decisionId = m.meta.decision_id || '';
       const q = document.createElement('div'); q.style.fontWeight = '600';
       q.textContent = (guardrail ? '🛑 ' : '⚠️ ') + htmlToText(m.text || 'Decision needed');
       bub.appendChild(q);
       if (m.meta.context) { const c = document.createElement('div'); c.style.cssText = 'font-size:.78rem;color:var(--text-second);margin-top:4px'; c.textContent = htmlToText(m.meta.context); bub.appendChild(c); }
-      const opts = document.createElement('div'); opts.style.cssText = 'display:flex;flex-direction:column;gap:5px;margin-top:8px';
-      (m.meta.options || []).forEach((opt, i) => {
-        const b = document.createElement('button'); b.className = 'btn-secondary';
-        b.style.cssText = 'text-align:left;width:100%;font-size:.82rem;padding:5px 10px';
-        b.textContent = `${i + 1}. ${htmlToText(opt)}` + (i === m.meta.default_index ? '  · default' : '');
-        b.onclick = () => answerDecisionByIndex(m.meta.decision_id, i, bub);
-        opts.appendChild(b);
-      });
-      bub.appendChild(opts);
-      const note = document.createElement('div'); note.className = 'dec-note'; note.style.cssText = 'font-size:.72rem;color:var(--text-muted);margin-top:6px'; note.textContent = '…or just type your answer below.';
-      bub.appendChild(note);
     } else if (!isUser) {
       bub.innerHTML = renderMarkdown(m.text);   // agent messages → rendered markdown
     } else {
@@ -4665,17 +4763,6 @@ function renderMarkdown(src) {
   // collapse leftover table-marker lines, then newlines → <br> (not inside block tags)
   s = s.replace(/\n/g, '<br>').replace(/(<\/(?:pre|table)>)<br>/g, '$1');
   return s;
-}
-
-async function answerDecisionByIndex(decisionId, index, bubEl) {
-  if (!detailProjectId) return;
-  _hitlOpenDecision = null;
-  if (bubEl) { bubEl.dataset.closed = '1'; bubEl.querySelectorAll('button').forEach(b => { b.disabled = true; b.style.opacity = '.45'; }); }
-  const r = await fetch(`${APP_BASE}/api/projects/${detailProjectId}/decision`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ decision_id: decisionId, index: index, text: '' }),
-  });
-  if (bubEl) { const note = bubEl.querySelector('.dec-note'); if (note) note.textContent = r.ok ? '✓ answered' : '⏱ this decision already closed'; }
 }
 
 // Smooth, in-thread offer to apply an instruction to a finished project — sized
@@ -4869,7 +4956,8 @@ function startDetailStream(id) {
     if (data.score !== undefined) setScore(data.score);
     if (data.cost_report !== undefined) renderCost(data.cost_report);
     // HITL live update (activity / pause state / pending decision / autonomy)
-    renderHitl(data);
+    if (detailProjectId !== id || es !== detailEventSource) return;
+    renderHitl({ ...data, id });
     if (data.status === 'done' || data.status === 'failed' || data.status === 'stopped') {
       // Stop SSE — do NOT call loadDetail (would restart SSE → infinite loop)
       stopDetailStream();
@@ -4879,7 +4967,7 @@ function startDetailStream(id) {
       // and stopping the stream can drop it — reload the thread from the DB so the
       // answer (and any missed steps) always show without a manual refresh.
       _chatThreadFor = null;            // force loadChatThread to actually reload
-      loadChatThread(id);
+      if (!window.SHARE_MODE) loadChatThread(id);
       // One-shot fetch to refresh actions (PDF button, etc.)
       fetch(`${APP_BASE}/api/projects/${id}`)
         .then(r => r.json())

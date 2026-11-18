@@ -9,8 +9,9 @@ Goals:
   two optional fields that become required only where a number is
   being asserted (``metrics:`` present on a finding).
 - **File-reference verification.** If ``source:`` is filled, we check
-  the referenced path exists relative to the project dir. A dangling
-  reference is a strong signal the agent invented a provenance.
+  the referenced path exists relative to the project dir. Optional
+  ``metric_sources`` pin individual numeric measurements to JSON Pointers
+  in raw results; a contradictory literal is reported as a blocking issue.
 """
 
 from __future__ import annotations
@@ -18,10 +19,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import tempfile
 from dataclasses import dataclass, asdict
+from decimal import Decimal
+from functools import lru_cache
+from itertools import islice
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import unquote
 
 import yaml
 
@@ -30,7 +36,7 @@ import yaml
 # ``results/phase3/run07_skills/tpr_fpr.json:42``   (path:line)
 _SOURCE_RE = re.compile(
     r"^(?P<path>[A-Za-z0-9_./\-]+)"
-    r"(?:#(?P<frag>[A-Za-z0-9_.\-\[\]]+)|:(?P<line>\d+(?:-\d+)?))?$"
+    r"(?:#(?P<frag>[A-Za-z0-9_.\-\[\]]+|/[^\s#]*)|:(?P<line>\d+(?:-\d+)?))?$"
 )
 
 
@@ -48,7 +54,7 @@ class Violation:
 def _parse_findings_text(text: str) -> Optional[Dict[str, Any]]:
     try:
         loaded = yaml.safe_load(text) or {}
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError, RecursionError):
         return None
     return loaded if isinstance(loaded, dict) else None
 
@@ -350,10 +356,14 @@ def sync_findings_from_json(state_dir: Path) -> tuple[bool, List[str]]:
 def validate_findings(
     findings_path: Path,
     project_root: Optional[Path] = None,
+    *,
+    require_result: bool = False,
 ) -> List[Violation]:
     """Validate ``findings.yaml`` at the given path.
 
-    - File missing / empty → no violations (nothing to check).
+    - With ``require_result``, require a nonempty observation for analysis.
+      Otherwise absent or empty findings keep their historical audit behavior.
+    - Optional per-metric JSON Pointers are verified against measured values.
     - YAML parse error → one ``structure`` violation.
     - Each finding with ``metrics:`` non-empty must have ``source:`` and
       ``construct:`` fields. Missing → ``warn``.
@@ -362,14 +372,16 @@ def validate_findings(
       dangling.
     """
     findings_path = Path(findings_path)
-    if not findings_path.exists():
-        return []
+    missing = [Violation("<root>", "findings", "block",
+                         "Record at least one observation in findings.json with a nonempty result.")]
     try:
+        if project_root is not None and not findings_path.resolve().is_relative_to(project_root.resolve()):
+            return [Violation("<root>", "structure", "block", "Findings must be inside the project.")]
         text = findings_path.read_text(encoding="utf-8")
-    except OSError:
-        return []
+    except (OSError, UnicodeError, RuntimeError):
+        return missing if require_result else []
     if not text.strip():
-        return []
+        return missing if require_result else []
 
     data = _parse_findings_text(text)
     if data is None:
@@ -391,6 +403,15 @@ def validate_findings(
         ))
         return violations
 
+    if require_result and not any(
+        isinstance(item, dict) and isinstance(item.get("result"), str) and item["result"].strip()
+        for item in findings
+    ):
+        violations.extend(missing)
+
+    # Multiple headline metrics often cite the same raw file. Keep at most one
+    # bounded document in memory, scoped to this audit so a repair sees new data.
+    read_result = lru_cache(maxsize=1)(_read_result)
     for i, f in enumerate(findings):
         if not isinstance(f, dict):
             violations.append(Violation(
@@ -402,6 +423,17 @@ def validate_findings(
             continue
         fid = str(f.get("id", f"[{i}]"))
         metrics = f.get("metrics")
+        if "metric_sources" in f:
+            sources = f["metric_sources"]
+            if not isinstance(sources, dict):
+                violations.append(Violation(fid, "metric_sources", "block",
+                                            "Map measured metric names to results/file.json#/field."))
+            else:
+                for key, ref in sources.items():
+                    problem = _check_metric_source(key, ref, metrics, project_root, read_result)
+                    if problem:
+                        severity, message = problem
+                        violations.append(Violation(fid, f"metric_sources.{key}", severity, message))
         has_metrics = bool(metrics) and (
             not isinstance(metrics, dict) or len(metrics) > 0
         )
@@ -463,10 +495,14 @@ def _check_source_value(
     if project_root is None:
         return []
     path_part = m.group("path")
-    full = (project_root / path_part).resolve()
+    relative = Path(path_part)
     try:
-        exists = full.exists()
-    except OSError:
+        root = project_root.resolve()
+        if (relative.is_absolute() or ".." in relative.parts
+                or not (root / relative).resolve().is_relative_to(root)):
+            return [Violation(fid, "source", "warn", "Use a source path inside the project.")]
+        exists = (root / relative).is_file()
+    except (OSError, RuntimeError):
         exists = False
     if not exists:
         return [Violation(
@@ -479,6 +515,113 @@ def _check_source_value(
             ),
         )]
     return []
+
+
+# Small scalar measurements should usually be in a summary artifact. Large raw
+# datasets remain legitimate sources; skip the exact comparison with a warning.
+_MAX_RESULT_BYTES = 4 * 1024 * 1024
+
+
+def _read_result(path: Path):
+    """Read once per adjacent source, including failures for a shared artifact."""
+    try:
+        info = path.stat()
+        if not stat.S_ISREG(info.st_mode):
+            return None, ("block", "must be a regular JSON result file.")
+        if info.st_size <= _MAX_RESULT_BYTES:
+            with path.open("rb") as stream:
+                payload = stream.read(_MAX_RESULT_BYTES + 1)
+            if len(payload) <= _MAX_RESULT_BYTES:
+                return json.loads(payload, parse_float=Decimal), None
+        return None, ("warn", "exceeds the exact-check size limit; cite a smaller result summary.")
+    except FileNotFoundError:
+        return None, ("block", "does not exist.")
+    except (ValueError, RecursionError):
+        return None, ("block", "could not be parsed as a JSON result.")
+    except OSError:
+        return None, ("warn", "could not be read for an exact check.")
+
+
+def _json_pointer(document, pointer):
+    for token in unquote(pointer, errors="strict")[1:].split("/"):
+        if re.search(r"~(?![01])", token):
+            raise ValueError("invalid JSON Pointer escape")
+        key = token.replace("~1", "/").replace("~0", "~")
+        if isinstance(document, list):
+            if not re.fullmatch(r"0|[1-9][0-9]*", key):
+                raise KeyError(key)
+            document = document[int(key)]
+        elif isinstance(document, dict):
+            document = document[key]
+        else:
+            raise KeyError(key)
+    return document
+
+
+def _check_metric_source(key, ref, metrics, project_root, read_result):
+    if not isinstance(metrics, dict) or type(metrics.get(key)) not in (str, bool, int, float):
+        return "block", "Reference a scalar value from the same finding's metrics."
+    filename, _, pointer = ref.partition("#") if isinstance(ref, str) else ("", "", "")
+    # Projects may cite CSV rows and scheduler diagnostics as supporting
+    # provenance. Existence can be checked; mark the value as unverified.
+    line_ref = re.fullmatch(r"(results/[^:#\n]+?\.(?:csv|tsv|txt|log|err|out))"
+                            r"(?:\s*\(?line\s+\d+.*|:\d+.*)", filename, re.IGNORECASE)
+    relative = Path(line_ref[1] if line_ref else filename)
+    if relative.parts[:1] != ("results",) or ".." in relative.parts:
+        return "block", "Use a project-relative results/file.json#/field JSON Pointer."
+    if not line_ref and (relative.suffix.lower() != ".json" or not pointer.startswith("/")):
+        return "block", "Use a project-relative results/file.json#/field JSON Pointer."
+    if project_root is None:
+        return None
+    try:
+        root = project_root.resolve()
+        path = (root / relative).resolve()
+        if not path.is_relative_to(root / "results"):
+            return "block", "The referenced file is outside the project's results directory."
+        if line_ref:
+            if not path.is_file():
+                return "block", f"{relative} does not exist as a regular file."
+            return "warn", f"{ref} cites a text artifact; the scalar value was not independently verified."
+    except (OSError, RuntimeError, ValueError):
+        return "block", "Provide a valid path inside the project's results directory."
+    document, problem = read_result(path)
+    if problem:
+        severity, detail = problem
+        return severity, f"{filename} {detail}"
+    try:
+        actual = _json_pointer(document, pointer)
+    except (KeyError, IndexError, ValueError):
+        return "block", f"JSON Pointer {pointer} was not found in {filename}."
+    reported = metrics[key]
+    if type(reported) in (str, bool):
+        if type(actual) is type(reported) and actual == reported:
+            return None
+        return "block", f"The metadata at {ref} differs from the reported {key}."
+    if type(actual) not in (int, Decimal) or not Decimal(actual).is_finite():
+        return "block", f"{ref} must point to a finite numeric measurement."
+    if actual != Decimal(str(metrics[key])):
+        return "block", f"{ref} contains {actual}, but the finding reports {metrics[key]}."
+    return None
+
+
+def check_claim_prediction(check: dict, project_root: Path):
+    """Compare a reviewer's predicted value to a cited raw observation."""
+    if type(check.get("predicted")) not in (int, float):
+        return "warn", "Only numeric predictions can be checked against an exact scalar."
+    return _check_metric_source("predicted", check.get("observed_source"),
+                                {"predicted": check.get("predicted")}, project_root, _read_result)
+
+
+def analysis_evidence_issues(findings_path: Path, project_root: Path, *, warn=None) -> list[str]:
+    """Actionable findings edits before drafting. Only explicit contradictions or
+    unusable findings block; uninstrumented legacy metrics remain reviewable.
+    """
+    issues = validate_findings(findings_path, project_root, require_result=True)
+    if warn:
+        for v in islice((v for v in issues if v.severity == "warn"), 8):
+            warn(f"{v.finding_id}.{v.field}: {v.message}"[:400])
+    failures = (f"{v.finding_id}.{v.field}: {v.message}"[:400] for v in issues if v.severity == "block")
+    return list(islice(failures, 8))
 
 
 def format_violations_for_log(violations: List[Violation]) -> str:

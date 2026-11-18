@@ -11,7 +11,7 @@ import re
 import shutil
 import uuid
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path as _Path
 from pathlib import Path
 from typing import Optional
@@ -582,12 +582,16 @@ def _share_project_grant(request: Request) -> str | None:
     return expected_id
 
 
-def _can_read_project(request: Request, project: Project) -> bool:
-    """Read access: owner, admin, or a project-share grant for this exact project."""
+def _project_read_access(request: Request, project: Project) -> str | None:
+    """Distinguish the management view from an exact, read-only project grant."""
     if _share_project_grant(request) == project.id:
-        return True
+        return "shared"
     user = _get_current_user(request)
-    return bool(user and _can_access_project(user, project))
+    return "manage" if user and _can_access_project(user, project) else None
+
+
+def _can_read_project(request: Request, project: Project) -> bool:
+    return _project_read_access(request, project) is not None
 
 
 def _project_dir(settings, user_id: str, project_id: str) -> Path:
@@ -2863,7 +2867,8 @@ async def api_get_project(project_id: str, request: Request):
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_read_project(request, project):
+        access = _project_read_access(request, project) if project else None
+        if not access:
             raise HTTPException(404)
         pdir = _project_dir(settings, project.user_id, project_id)
         score = _read_project_score(pdir, project=project)
@@ -2933,8 +2938,8 @@ async def api_get_project(project_id: str, request: Request):
             "queue_eta_end": _queue_eta_end(session, settings, project),
             "user_email": owner.email if owner else "",
             "model": _read_project_model(pdir, project=project),
-            "telegram_token": project.telegram_token,
-            "telegram_chat_id": project.telegram_chat_id,
+            "telegram_token": project.telegram_token if access == "manage" else "",
+            "telegram_chat_id": project.telegram_chat_id if access == "manage" else "",
             "has_deep_research": (pdir / "auto_research" / "state" / "deep_research.md").exists(),
             "environment": environment,
             "experiment_backend": experiment_backend,
@@ -2953,7 +2958,7 @@ async def api_get_project(project_id: str, request: Request):
             "autonomy_level": project.autonomy_level or "collaborative",
             "control_state": project.control_state or "",
             "activity": project.activity or "",
-            "pending_decision": _decision_to_dict(get_open_decision(session, project_id)),
+            "pending_decision": _decision_to_dict(get_open_decision(session, project_id)) if access == "manage" else None,
         })
 
 
@@ -3014,7 +3019,7 @@ def _decision_to_dict(dec) -> Optional[dict]:
         "id": dec.id, "kind": dec.kind, "question": dec.question,
         "options": options, "context": dec.context,
         "default_index": dec.default_index, "timeout_action": dec.timeout_action,
-        "deadline_at": dec.deadline_at.isoformat() if dec.deadline_at else None,
+        "deadline_at": dec.deadline_at.replace(tzinfo=timezone.utc).isoformat() if dec.deadline_at else None,
     }
 
 
@@ -3065,7 +3070,10 @@ async def api_answer_decision(project_id: str, request: Request):
     user = _require_user(request)
     body = await request.json()
     decision_id = (body.get("decision_id") or "").strip()
-    index = int(body.get("index", -1))
+    try:
+        index = int(body.get("index", -1))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "invalid option")
     text = (body.get("text") or "").strip()
     settings = get_settings()
     with get_session(settings.db_path) as session:
@@ -3075,15 +3083,15 @@ async def api_answer_decision(project_id: str, request: Request):
         dec = get_decision(session, decision_id) if decision_id else get_open_decision(session, project_id)
         if not dec or dec.project_id != project_id:
             raise HTTPException(404, "no open decision")
+        if dec.status != "pending":
+            raise HTTPException(409, "decision already closed")
+        opts = _decision_to_dict(dec)["options"]
+        if not ((index == -1 and text) or (0 <= index < len(opts) and not text)):
+            raise HTTPException(400, "choose an option or enter an instruction")
         ok = answer_decision(session, dec.id, index=index, text=text,
                              by=user.email, source="webapp")
         if not ok:
             raise HTTPException(409, "decision already closed")
-        # user bubble for the answer
-        try:
-            opts = json.loads(dec.options or "[]")
-        except Exception:
-            opts = []
         bubble = text or (f"Option {index + 1}: {opts[index]}" if 0 <= index < len(opts) else "")
         if bubble:
             add_message(session, project_id, "user", bubble, kind="answer")
@@ -3103,7 +3111,7 @@ async def api_get_messages(project_id: str, request: Request, after: str = ""):
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_read_project(request, project):
+        if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         msgs = list_messages(session, project_id, after=after or None)
         return JSONResponse({"messages": [_message_to_dict(m) for m in msgs]})
@@ -3135,8 +3143,9 @@ async def api_post_message(project_id: str, request: Request):
             raise HTTPException(404)
         dec = get_open_decision(session, project_id)
         if dec:
-            answer_decision(session, dec.id, index=-1, text=text,
-                            by=user.email, source="webapp")
+            if not answer_decision(session, dec.id, index=-1, text=text,
+                                   by=user.email, source="webapp"):
+                raise HTTPException(409, "decision already closed")
             add_message(session, project_id, "user", text, kind="answer")
             return JSONResponse({"ok": True, "routed": "decision"})
         running = (project.status == "running")
@@ -4021,7 +4030,8 @@ async def api_stream_log(project_id: str, request: Request):
 
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_read_project(request, project):
+        access = _project_read_access(request, project) if project else None
+        if not access:
             raise HTTPException(404)
         owner_id = project.user_id
 
@@ -4115,13 +4125,13 @@ async def api_stream_log(project_id: str, request: Request):
                         "control_state": p.control_state or "",
                         "activity": p.activity or "",
                         "autonomy_level": p.autonomy_level or "collaborative",
-                        "pending_decision": _decision_to_dict(get_open_decision(session, project_id)),
+                        "pending_decision": _decision_to_dict(get_open_decision(session, project_id)) if access == "manage" else None,
                     })
                     yield f"event: status\ndata: {payload}\n\n"
 
                 # Emit new chat-thread bubbles since the last tick.
                 try:
-                    new_msgs = list_messages(session, project_id, after=last_msg_ts)
+                    new_msgs = list_messages(session, project_id, after=last_msg_ts) if access == "manage" else ()
                     for m in new_msgs:
                         yield f"event: message\ndata: {json.dumps(_message_to_dict(m))}\n\n"
                         last_msg_ts = m.created_at.isoformat()

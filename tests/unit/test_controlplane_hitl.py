@@ -143,3 +143,93 @@ def test_sweep_expires_past_deadline_only(db_project):
     with db.get_session(db_path) as s:
         assert db.get_decision(s, d_past).status == "timed_out"
         assert db.get_decision(s, d_future).status == "pending"
+
+
+def test_browser_response_cannot_overwrite_an_intervening_answer(db_project):
+    db, db_path, pid = db_project
+    with db.get_session(db_path) as browser:
+        did = db.create_pending_decision(browser, pid, "Proceed?", ["Yes"])
+        displayed = db.get_decision(browser, did)
+        assert displayed.status == "pending"
+        with db.get_session(db_path) as telegram:
+            assert db.answer_decision(telegram, did, text="Change the baseline", source="telegram")
+        assert not db.answer_decision(browser, did, index=0)
+        db.expire_decision(browser, did)
+    with db.get_session(db_path) as s:
+        saved = db.get_decision(s, did)
+        assert (saved.status, saved.answer_text, saved.source) == ("answered", "Change the baseline", "telegram")
+
+
+def test_project_decision_route_auth_and_input(db_project, monkeypatch):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+    from website.dashboard import routes
+
+    db, db_path, pid = db_project
+    monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(db_path=db_path, admin_emails=[]))
+    with db.get_session(db_path) as s:
+        uid = db.get_project(s, pid).user_id
+        other, _ = db.get_or_create_user_by_email(s, "other@example.com")
+        other_id = other.id
+        did = db.create_pending_decision(s, pid, "Run?", ["Yes"], deadline_at=datetime(2030, 1, 1))
+
+    def submit(user_id, **data):
+        request = SimpleNamespace(session={"user_id": user_id}, json=AsyncMock(return_value={"decision_id": did, **data}))
+        return asyncio.run(routes.api_answer_decision(pid, request))
+
+    for who, code in ((None, 401), (other_id, 404)):
+        with pytest.raises(HTTPException) as err:
+            submit(who, index=0)
+        assert err.value.status_code == code
+    for bad in ({"index": -1, "text": " "}, {"index": 8}, {"index": 0, "text": "ambiguous"}):
+        with pytest.raises(HTTPException) as err:
+            submit(uid, **bad)
+        assert err.value.status_code == 400
+    response = asyncio.run(routes.api_get_decision(pid, SimpleNamespace(session={"user_id": uid})))
+    assert json.loads(response.body)["decision"]["deadline_at"].endswith("+00:00")
+    assert submit(uid, index=-1, text="Use paired seeds").status_code == 200
+    with pytest.raises(HTTPException) as err:
+        submit(uid, index=0)
+    assert err.value.status_code == 409
+    with db.get_session(db_path) as s:
+        assert db.get_decision(s, did).answer_text == "Use paired seeds"
+
+
+def test_read_only_share_omits_bot_credentials_and_decision_thread(db_project, tmp_path, monkeypatch):
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from website.dashboard import routes
+    from website.dashboard.auth import make_share_token
+
+    db, db_path, pid = db_project
+    settings = SimpleNamespace(projects_root=tmp_path, db_path=db_path, secret_key="test",
+                               slurm_conda_env="", admin_emails=[])
+    monkeypatch.setattr(routes, "get_settings", lambda: settings)
+    with db.get_session(db_path) as s:
+        owner_id = db.get_project(s, pid).user_id
+        did = db.create_pending_decision(s, pid, "Approval?", ["Run"], context="PRIVATE_PLAN")
+        db.add_message(s, pid, "agent", "PRIVATE_MESSAGE", kind="decision")
+    share = SimpleNamespace(session={"share_kind": "project", "share_id": pid,
+                                     "share_token": make_share_token(pid, "test")},
+                            is_disconnected=AsyncMock(side_effect=[False, True]))
+    owner = SimpleNamespace(session={"user_id": owner_id})
+    shared = json.loads(asyncio.run(routes.api_get_project(pid, share)).body)
+    managed = json.loads(asyncio.run(routes.api_get_project(pid, owner)).body)
+    assert (managed["telegram_token"], managed["pending_decision"]["id"]) == ("tok", did)
+    assert (shared["telegram_token"], shared["telegram_chat_id"], shared["pending_decision"]) == ("", "", None)
+
+    async def shared_events():
+        stream = await routes.api_stream_log(pid, share)
+        return "".join([event async for event in stream.body_iterator])
+
+    events = asyncio.run(shared_events())
+    assert "event: status" in events
+    assert '"pending_decision": null' in events
+    assert "PRIVATE_" not in events

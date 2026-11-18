@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ark.workflow import ResearchDecision
 from ark.orchestrator.dsh_workflow import hosted_workflow_enabled, run_workflow
 
 
@@ -49,7 +50,7 @@ def test_real_hosted_workflow_resumes_python_checkpoint(monkeypatch, fail_execut
         _save_dev_phase_state=lambda *_: None, _send_dev_phase_telegram=lambda *_: None,
         _abort_dev_on_terminal_error=lambda *_: False, _plan_experiments=record("dev-plan"),
         _experiment_approval_gate=record("approve"), _run_experiments=record("dev-run"),
-        _analyze_results=record("dev-analyze"), _evaluate_completeness=record("dev-evaluate", True),
+        _analyze_results=record("dev-analyze"), _evaluate_completeness=record("dev-evaluate", ResearchDecision("proceed_to_writing", [])),
         _start_initial_draft=record("writing"), _generate_all_figures=record("figures"),
         _write_initial_draft=record("draft"), _deliver_dev_phase=record("deliver"),
         load_paper_state=lambda: {"current_score": 6}, get_resume_step=lambda: 3,
