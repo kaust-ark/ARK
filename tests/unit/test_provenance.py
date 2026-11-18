@@ -143,3 +143,41 @@ def test_a_fully_read_project_still_fails_on_untraced_numbers(tmp_path):
     assert r["evidence_partial"] is False
     ok, detail = verdict(r)
     assert ok is False and "appear in results/" in detail
+
+
+def test_scientific_notation_retains_exponent_and_printed_resolution(tmp_path):
+    project = _project(tmp_path)
+    (project / "results/raw.json").write_text('{"small":1.057982444763e-12,"large":2E+13}')
+    paper = r"\section{Results} $1.058 \times 10^{-12}$, 2.000E+13, 1.058e-10, 0.0000000001058, 1.059e-12, 1e-500."
+    result = audit(paper, project)
+    assert result["strong"] == 5 and result["strong_traced"] == 2
+    assert [r["number"] for r in result["untraced"]] == ["1.058e-10", "0.0000000001058", "1.059e-12"]
+
+
+def test_explicit_time_claims_require_a_matching_dimension(tmp_path):
+    project = _project(tmp_path)
+    (project / "results/raw.jsonl").write_text(
+        '{"timer": {"elapsed_seconds": [0.0000010579824]}, "count": 1.059}\n'
+        '{"latency_ms":0.00137102,"other_units":0.001059}')
+    paper = r"""\section{Results}
+        \SI{1.058}{\micro\second}, \qty{1371}{\nano\second},
+        \SI{1.058}{\milli\second}, \SI{1.059}{\micro\second}."""
+    result = audit(paper, project)
+    assert result["strong"] == 4 and result["strong_traced"] == 2
+    assert [r["number"] for r in result["untraced"]] == ["1.058", "1.059"]
+
+
+def test_unlabelled_evidence_cannot_confirm_a_time_conversion(tmp_path):
+    project = _project(tmp_path, {"unlabelled": [0.000001234, 1.234]})
+    (project / "results/legacy.csv").write_text("run,value\n1,1.234e-6")
+    (project / "results/legacy.txt").write_text("Observed 1.234")
+    times = r"\section{Results}" + r" \SI{1.234}{\micro\second}." * 21
+    result = audit(times, project)
+    assert result["strong_traced"] == 0 and result["unit_unverified"] == 21
+    verdict(result)
+    assert result["unverified"]
+    single = audit(r"\section{Results} \SI{1.234}{ms}.", project)
+    assert verdict(single)[0] and single["unverified"]
+    mixed = audit(times + " Scores: 6.789, 7.654, 8.765, 9.321, 5.431.", project)
+    assert verdict(mixed)[0] is False
+    assert not mixed.get("unverified") and mixed["untraced"][0]["number"] == "6.789"

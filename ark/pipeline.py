@@ -3138,7 +3138,18 @@ it to findings.yaml for you — do NOT hand-write YAML. Include every finding
         """Decide whether another experiment would change a material paper claim."""
         self.log_step_header(4, 4, "Evaluate Completeness")
 
-        eval_output = self.run_agent("planner", f"""
+        decision_format = """Return one complete JSON object as your final answer. Start with {.
+Include these fields:
+- sufficient: a JSON boolean. Use true only for proceed_to_writing.
+- recommendation: proceed_to_writing, reanalyze_existing, or need_more_experiments.
+- contradictions: strings naming each disputed finding and explaining the conflict.
+- claim_checks: for each checked exact claim, give its claim text, numeric predicted
+  value, and observed_source as a project-relative JSON Pointer to the same quantity in
+  the same units. Check ratios or rounded summaries only when their underlying exact
+  observations support such a test. A timing in seconds cannot verify a speed ratio.
+- gaps: specific open questions or limits on the conclusion.
+Use JSON arrays for the last three fields and empty arrays where appropriate."""
+        task = f"""
 Evaluate whether we have sufficient experimental data for the paper.
 This is a pre-draft decision. Inspect the saved study and return the verdict in
 your final answer. Do not write an action plan, modify files or submit jobs.
@@ -3187,30 +3198,38 @@ disproved findings under contradictions so analysis can correct them. If the
 draft would need to correct a finding, that correction belongs in contradictions.
 Use gaps for measurements or controls that are still missing.
 
-Use empty lists for absent contradictions and inapplicable exact checks.
-Return only a JSON evaluation:
-```json
-{{
-  "sufficient": true/false,
-  "coverage_pct": 0-100,
-  "contradictions": [],
-  "claim_checks": [{{"claim": "Exact relationship and input tested",
-                    "predicted": 7, "observed_source": "results/file.json#/row/metric"}}],
-  "gaps": ["gap1", "gap2"],
-  "recommendation": "proceed_to_writing" | "reanalyze_existing" | "need_more_experiments",
-  "reason": "explanation"
-}}
-```
-""", timeout=defaults.TIMEOUT_INITIALIZER, pre_draft=True)
-        self.log_step_header(4, 4, "Evaluate Completeness", "end")
-
-        if getattr(self, "_terminal_error", None):
-            return None
-        try:
-            return ResearchDecision.from_review(eval_output, self.code_dir, self.log)
-        except ValueError as error:
-            self._terminal_error = f"{error} Continue to retry the review with the saved results."
-            return None
+{decision_format}
+"""
+        session = []
+        decision = None
+        for turn in range(2):
+            outcome = {}
+            reply = self.run_agent(
+                "planner", task, pre_draft=True, session_out=session, outcome_out=outcome,
+                continue_session=session[-1] if turn else None,
+                timeout=defaults.TIMEOUT_SCORE_RETRY if turn else defaults.TIMEOUT_INITIALIZER,
+            )
+            if getattr(self, "_terminal_error", None):
+                break
+            if outcome.get("completed") is False:
+                self._terminal_error = "The evidence review stopped before completion. Continue to retry it with the saved results."
+                break
+            try:
+                decision = ResearchDecision.from_review(reply, self.code_dir, self.log)
+                break
+            except ValueError as error:
+                if turn or not session or not outcome.get("completed"):
+                    self._terminal_error = f"{error} Continue to retry the review with the saved results."
+                    break
+                self.log_step("The reviewer finished reading the evidence. Asking it to complete its decision.", "info")
+                task = (f"Finish the evidence review from this conversation. {error} "
+                        "Use the observations already inspected. Retain counterexamples, raw source "
+                        "references and limitations. Distinguish a disproved hypothesis already corrected "
+                        "in the findings from a contradiction still in the findings. If the evidence is "
+                        "insufficient, name the missing comparison. Do not call tools, edit files or "
+                        "submit a job.\n" + decision_format)
+        self.log_step_header(4, 4, "Evaluate Completeness", "end" if decision else "incomplete")
+        return decision
 
     def _generate_all_figures(self):
         """Generate all figures: geometry config, matplotlib plots, AI concept figures.
@@ -3325,8 +3344,13 @@ Produce the complete paper. Do not stop until all sections are written and it co
                    "statistic test whether two datasets with the same recorded observations could have "
                    "different values of that statistic. If so, the observations do not identify it. "
                    "Omit the estimate or state precisely which inputs are missing. "
-                   "Separate exact counts from noisy measurements. Scope any timing advantage to the trials "
-                   "actually run. Claims about untested sizes or asymptotic behavior require a derivation.")
+                   "Identify what each observation represents. Distinct inputs or conditions establish "
+                   "coverage. To report repeatability, trace runs within the same condition or use a "
+                   "per-condition summary that records the statistic. Give the recorded count, spread "
+                   "and unit where relevant. An exact count or agreement between methods does not "
+                   "establish zero run-to-run variance. When replication is undocumented, describe the "
+                   "observed values and leave repeatability open. Scope timing to the trials recorded. "
+                   "Claims about untested sizes or asymptotic behavior require a derivation.")
         self.run_agent("writer", prompt, timeout=defaults.TIMEOUT_WRITER)
 
     def _deliver_dev_phase(self, dev_state: dict, max_dev_iters: int):

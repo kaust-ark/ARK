@@ -1430,6 +1430,55 @@ def _find_pdf(project_dir: Path) -> Optional[Path]:
     return None
 
 
+def _read_delivery_report(project_dir: Path) -> dict | None:
+    """Read the saved audit for the manager's result view without rerunning the checks."""
+    report = project_dir / "auto_research/state/delivery_report.yaml"
+    unreadable = {"status": "unavailable"}
+    try:
+        if not report.exists():
+            return None
+        if not report.resolve().is_relative_to(project_dir.resolve()) or not report.is_file():
+            return unreadable
+        with report.open("rb") as stream:
+            payload = stream.read(128 * 1024 + 1)
+            checked = os.fstat(stream.fileno()).st_mtime_ns
+        if len(payload) > 128 * 1024:
+            return unreadable
+        data = yaml.safe_load(payload)
+        rows = data.get("findings") if isinstance(data, dict) else None
+        if not isinstance(rows, list) or not rows or any(
+            not isinstance(row, dict) or not isinstance(row.get("check"), str)
+            or row.get("status") not in ("pass", "skipped", "violated")
+            or row.get("severity") not in ("hard", "soft")
+            or not isinstance(row.get("detail", ""), str) for row in rows
+        ):
+            return unreadable
+        issues = [r for r in rows if r["status"] == "violated"]
+        hard = sum(r["severity"] == "hard" for r in issues)
+        if (not any(r["check"] == "pdf_exists" for r in rows)
+                or data.get("violations") != len(issues) or data.get("hard_violations") != hard):
+            return unreadable
+        # A previous report can survive an edit, PDF replacement or deletion.
+        pdf = project_dir / "paper/main.pdf"
+        artifacts = (pdf, pdf.with_suffix(".tex"), project_dir / "paper/references.bib")
+        pdf_passed = any(r["check"] == "pdf_exists" and r["status"] == "pass" for r in rows)
+        if ((pdf_passed and not pdf.is_file())
+                or any(f.is_file() and f.stat().st_mtime_ns > checked for f in artifacts)):
+            return {"status": "stale"}
+    except (OSError, RuntimeError, ValueError, yaml.YAMLError):
+        return unreadable
+    page = next((r for r in rows if r["check"] == "page_budget"), None)
+    return {
+        "status": "blocked" if hard else "warnings" if issues else "checked",
+        "hard": hard, "soft": len(issues) - hard, "skipped": sum(r["status"] == "skipped" for r in rows),
+        "pages": page.get("detail", "")[:600] if page else "",
+        "legacy_pages": bool(page and data.get("schema_version") is None),
+        "issues": [(r.get("detail") or r["check"].replace("_", " "))[:600]
+                   for r in sorted(issues, key=lambda row: row["severity"] != "hard")
+                   if r["check"] != "page_budget"][:5],
+    }
+
+
 def _artifact_store_for(pdir: Path):
     """Build the artifact store for a project from its config.yaml (Phase 3,
     ADR-0012). Falls back to a local store rooted at the project dir."""
@@ -2932,6 +2981,7 @@ async def api_get_project(project_id: str, request: Request):
             "figure_generation": getattr(project, "figure_generation", None) or "nano_banana",
             "phase_status": _read_phase_status(pdir, project),
             "has_pdf": pdf is not None,
+            "delivery_report": _read_delivery_report(pdir) if access == "manage" else None,
             "has_pdf_upload": bool(project.has_pdf_upload),
             "slurm_job_id": project.slurm_job_id,
             "queue_position": _queue_position(project_id, session),

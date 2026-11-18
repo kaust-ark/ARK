@@ -4,6 +4,67 @@ import re
 import subprocess
 from pathlib import Path
 
+_ENDMATTER_HEADING = re.compile(
+    r"(?:(?:\d+|[IVX]+)[.\s]+)?(?:references|bibliography|acknowledg(?:e)?ments?"
+    r"|appendices|appendix(?:\s+[a-z])?)", re.IGNORECASE)
+
+# The destination travels with the delivered PDF, including when the project
+# is exported without auxiliary TeX files. Older papers use visible headings.
+BODY_END_DESTINATION = "idea2paper.body.end"
+BODY_END_PDF_MARKER = rf"\ifdefined\pdfdest\pdfdest name{{{BODY_END_DESTINATION}}} xyz\relax\fi"
+
+
+def marked_body_end_page(doc) -> int | None:
+    destination = doc.resolve_names().get(BODY_END_DESTINATION)
+    if destination and 0 <= destination.get("page", -1) < len(doc):
+        return destination["page"] + 1
+    return None
+
+
+def recorded_body_end_page(aux_text: str, total_pages: int) -> int | None:
+    """The body's last page from the compiler marker, when consistent with this PDF."""
+    last = re.search(r"\\gdef\s*\\@abspage@last\{(\d+)\}", aux_text)
+    if last and int(last[1]) != total_pages:
+        return None
+    marker = re.search(r"\\gdef\\arkBodyEndPage\{(\d+)\}", aux_text)
+    if marker and 1 <= int(marker[1]) <= total_pages:
+        return int(marker[1])
+    return None
+
+
+def body_page_boundary(doc) -> tuple[int, tuple[float, float]] | None:
+    """Return the endmatter page index and preceding body text height in each column.
+
+    A marker may precede a full page of deferred body floats flushed by clearpage.
+    Look for the actual start of the endmatter from that marker onwards.
+    """
+    marker = marked_body_end_page(doc)
+    for index in range(marker - 1 if marker else 0, len(doc)):
+        page = doc[index]
+        lines = page.get_text().splitlines()
+        if any(line.strip().lower() in {"contents", "table of contents"} for line in lines):
+            continue
+        if not any(_ENDMATTER_HEADING.fullmatch(line.strip()) for line in lines):
+            continue
+        height = page.rect.height
+        body_bottoms = [0.0, 0.0]
+        # Text blocks follow PDF reading order, including the left column when
+        # References starts at the top of the right column on the same page.
+        for block in page.get_text("dict", flags=0)["blocks"]:
+            for line in block.get("lines", []):
+                content = "".join(s["text"] for s in line["spans"]).strip()
+                left, _, _, bottom = line["bbox"]
+                if _ENDMATTER_HEADING.fullmatch(content):
+                    if marker and index + int(any(body_bottoms)) < marker:
+                        continue
+                    return index, (body_bottoms[0], body_bottoms[1])
+                if (content and not content.isdigit()
+                        and 0.08 * height < bottom < 0.96 * height):
+                    column = int(left >= page.rect.width / 2)
+                    body_bottoms[column] = max(body_bottoms[column], bottom)
+    return (marker, (0.0, 0.0)) if marker else None
+
+
 # --------------- Title generation helpers ---------------
 
 _TITLE_MIN_LEN = 10

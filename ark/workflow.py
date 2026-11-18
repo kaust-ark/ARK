@@ -83,16 +83,18 @@ class ResearchDecision:
         review = extract_json(output, want=dict)
         if not review or type(review.get("sufficient")) is not bool:
             raise ValueError("The completeness review returned no valid yes/no decision.")
+        if not {"recommendation", "contradictions", "claim_checks", "gaps"}.issubset(review):
+            raise ValueError("The review returned an incomplete claim audit.")
         enough = review["sufficient"]
-        action = review.get("recommendation") or ("proceed_to_writing" if enough else "need_more_experiments")
+        action = review["recommendation"]
         if action not in ("proceed_to_writing", "reanalyze_existing", "need_more_experiments"):
             raise ValueError("The completeness review returned an unknown next action.")
         if enough != (action == "proceed_to_writing"):
             raise ValueError("The completeness verdict disagrees with its recommended action.")
 
-        raw_gaps = review.get("gaps", [])
-        contradictions = review.get("contradictions", [])
-        checks = review.get("claim_checks", [])
+        raw_gaps = review["gaps"]
+        contradictions = review["contradictions"]
+        checks = review["claim_checks"]
         if (not isinstance(raw_gaps, list) or not isinstance(contradictions, list)
                 or not all(isinstance(v, str) for v in raw_gaps)
                 or not isinstance(checks, list) or not all(isinstance(v, dict) for v in checks)):
@@ -101,12 +103,15 @@ class ResearchDecision:
         corrections = []
         for item in contradictions[:8]:
             if isinstance(item, dict):
-                claim = item.get("claim") or item.get("note")
+                claim = item.get("claim") or item.get("issue") or item.get("note")
                 if not isinstance(claim, str) or not claim.strip():
                     raise ValueError("A reported contradiction did not identify the disputed finding.")
                 if "observed_source" in item:
                     checks = [item, *checks]
-                item = f"{item.get('finding_id', '')} {claim}. {item.get('note', '')}"
+                detail = item.get("note")
+                item = f"{item.get('finding_id', '')} {claim}"
+                if isinstance(detail, str) and detail.strip() and detail != claim:
+                    item += f". {detail}"
             if not isinstance(item, str) or not item.strip():
                 raise ValueError("A reported contradiction was empty.")
             corrections.append(item.strip()[:600])
@@ -125,8 +130,9 @@ class ResearchDecision:
             return cls("correct_findings", corrections)
         if not enough and not gaps:
             reason = review.get("reason")
-            gaps = [reason.strip()[:500] if isinstance(reason, str) and reason.strip()
-                    else "The review found the evidence insufficient without naming a comparison."]
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError("The review requested more research without naming an open question.")
+            gaps = [reason.strip()[:500]]
         return cls(action, gaps)
 
 

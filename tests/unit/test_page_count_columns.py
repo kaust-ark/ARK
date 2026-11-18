@@ -12,7 +12,6 @@ fitz-like objects.
 
 import types
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -56,14 +55,9 @@ def _stub_doc(pages):
 def compiler():
     from ark.latex.compiler import CompilerMixin
 
-    stub = MagicMock(spec=CompilerMixin)
+    stub = CompilerMixin()
     stub.latex_dir = Path("/tmp/notused")
-    stub.log = MagicMock()
-    # Bind the methods we want to test
-    stub._column_adjust = CompilerMixin._column_adjust.__get__(stub)
-    stub._is_two_column_doc = CompilerMixin._is_two_column_doc.__get__(stub)
-    stub._HEADER_BAND = CompilerMixin._HEADER_BAND
-    stub._FOOTER_BAND = CompilerMixin._FOOTER_BAND
+    stub.log = lambda *args: None
     return stub
 
 
@@ -91,6 +85,15 @@ def test_is_two_column_rejects_1col_layout(compiler):
     # Block right edge 540 > mid_x but classification is by b[0] only.
     # So has_right=False → not 2-col.
     assert compiler._is_two_column_doc(doc, ref_page_idx=1) is False
+
+
+def test_centered_footer_number_does_not_inflate_body_fill(compiler):
+    page = _stub_page([
+        _block(72, 100, 540, 202, "Conclusion"),
+        _block(303, 742, 309, 752, "3"),
+    ])
+    blocks = compiler._body_text_blocks(page)
+    assert [b[4] for b in blocks] == ["Conclusion"]
 
 
 def test_is_two_column_short_doc_returns_false(compiler):

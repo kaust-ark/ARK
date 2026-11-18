@@ -95,7 +95,6 @@ MIN_PDF_BYTES = 50_000       # below this a "paper" is a stub/template skeleton
 # and 6942 extractable characters, one skeleton a rate limit cut short at 473.
 MIN_PDF_TEXT_CHARS = 1_500
 MIN_FIG_BYTES = 5_000        # ignore icons/empty plot files
-PAGE_SLACK = 3               # refs/appendix allowance past the venue body budget
 
 
 @dataclass
@@ -119,7 +118,7 @@ class DeliveryReport:
         return [f for f in self.violations if f.severity == "hard"]
 
     def to_dict(self) -> dict:
-        return {"findings": [asdict(f) for f in self.findings],
+        return {"schema_version": 2, "findings": [asdict(f) for f in self.findings],
                 "violations": len(self.violations),
                 "hard_violations": len(self.hard_violations)}
 
@@ -135,15 +134,38 @@ def _pdf_text(pdf: Path) -> Optional[str]:
         return None
 
 
-def _pdf_pages(pdf: Path) -> int:
+def _page_budget(pdf: Path, tex: str, limit: int) -> Finding:
+    from ark.latex.utils import body_page_boundary
     try:
         import fitz
-        doc = fitz.open(str(pdf))
-        n = len(doc)
-        doc.close()
-        return n
-    except Exception:
-        return 0
+        with fitz.open(pdf) as doc:
+            total = len(doc)
+            if not limit:
+                return Finding("page_budget", "skipped", "soft", f"No body-page limit set ({total} total pages)")
+            boundary = body_page_boundary(doc)
+            if boundary is None:
+                # Localized sections and included TeX files may lack a visible
+                # English heading. Total pages give a safe upper bound only.
+                declares_endmatter = re.search(
+                    r"\\(?:bibliography\b|printbibliography\b|appendi(?:x|ces)\b"
+                    r"|begin\{(?:thebibliography|appendices)\})", tex)
+                if declares_endmatter or not tex.strip():
+                    status = "pass" if total <= limit else "skipped"
+                    return Finding("page_budget", status, "soft",
+                                   f"{total} total pages, body limit {limit}. "
+                                   "The body/endmatter boundary could not be verified.")
+                body = total
+            else:
+                page_index, body_bottoms = boundary
+                body = page_index + int(any(body_bottoms))
+        detail = f"{body} body pages / limit {limit} ({total} total pages)"
+        if body > limit:
+            over = body - limit
+            return Finding("page_budget", "violated", "soft",
+                           f"{detail}, {over} page{'s' if over != 1 else ''} over limit.")
+        return Finding("page_budget", "pass", "soft", detail)
+    except (ImportError, OSError, RuntimeError, ValueError) as error:
+        return Finding("page_budget", "skipped", "soft", f"Could not measure body pages: {error}")
 
 
 def _ack_block(tex: str) -> str:
@@ -282,14 +304,7 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
                                     f"{len(made)} figures / {n_inc} includegraphics"))
 
     # ── page budget ───────────────────────────────────────────────────────
-    npages = _pdf_pages(pdf)
-    if venue_pages and npages > venue_pages + PAGE_SLACK:
-        rep.findings.append(Finding(
-            "page_budget", "violated", "soft",
-            f"{npages} pages vs venue budget {venue_pages} (+{PAGE_SLACK} slack)"))
-    else:
-        rep.findings.append(Finding("page_budget", "pass", "soft",
-                                    f"{npages} pages / budget {venue_pages or 'n/a'}"))
+    rep.findings.append(_page_budget(pdf, tex, venue_pages))
 
     # ── vector figures not upscaled at insertion ──────────────────────────
     # matplotlib PDFs are saved at print size; inserting a small one at
@@ -495,10 +510,9 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
 def write_report(project_dir: Path, report: DeliveryReport) -> Optional[Path]:
     """Persist the report for dashboards/ops. Fail-soft."""
     try:
-        import yaml
+        from ark.orchestrator.state import _atomic_write_yaml
         out = Path(project_dir) / "auto_research" / "state" / "delivery_report.yaml"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(yaml.safe_dump(report.to_dict(), sort_keys=False))
+        _atomic_write_yaml(out, report.to_dict(), sort_keys=False)
         return out
     except Exception:
         return None

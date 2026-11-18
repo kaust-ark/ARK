@@ -164,6 +164,23 @@ class TestDeadlineNote:
         assert "## Time limit" not in calls[1]["prompt"]
 
 
+@pytest.mark.parametrize(("error_code", "response", "status"), [
+    ("DSHConfigurationError", "", "error"),
+    ("DSH.MaxIterationsReached", "partial output", "warning"),
+    (None, "finished", "success"),
+])
+def test_agent_progress_reports_the_actual_runtime_outcome(tmp_path, error_code, response, status):
+    o, _, runner = _agent(tmp_path, [
+        (0, "stream", 1, False, {"result": response, "usage": None, "error_code": error_code})
+    ])
+    steps = []
+    o.log_step = lambda message, level: steps.append((message, level))
+    _run(o, runner)
+    assert steps[-1][1] == status
+    if status != "success":
+        assert all(level != "success" for _, level in steps)
+
+
 class TestStreamFiles:
     def test_two_agents_ending_in_the_same_second_keep_both_streams(self, tmp_path):
         o, _, Runner = _agent(tmp_path, [

@@ -207,6 +207,7 @@ def test_read_only_share_omits_bot_credentials_and_decision_thread(db_project, t
 
     from website.dashboard import routes
     from website.dashboard.auth import make_share_token
+    from ark.delivery_contract import DeliveryReport, Finding, write_report
 
     db, db_path, pid = db_project
     settings = SimpleNamespace(projects_root=tmp_path, db_path=db_path, secret_key="test",
@@ -220,10 +221,15 @@ def test_read_only_share_omits_bot_credentials_and_decision_thread(db_project, t
                                      "share_token": make_share_token(pid, "test")},
                             is_disconnected=AsyncMock(side_effect=[False, True]))
     owner = SimpleNamespace(session={"user_id": owner_id})
+    project_dir = routes._project_dir(settings, owner_id, pid)
+    write_report(project_dir, DeliveryReport([
+        Finding("pdf_exists", "violated", "hard", "PRIVATE_DELIVERY_DETAIL")]))
     shared = json.loads(asyncio.run(routes.api_get_project(pid, share)).body)
     managed = json.loads(asyncio.run(routes.api_get_project(pid, owner)).body)
     assert (managed["telegram_token"], managed["pending_decision"]["id"]) == ("tok", did)
     assert (shared["telegram_token"], shared["telegram_chat_id"], shared["pending_decision"]) == ("", "", None)
+    assert managed["delivery_report"]["issues"] == ["PRIVATE_DELIVERY_DETAIL"]
+    assert shared["delivery_report"] is None
 
     async def shared_events():
         stream = await routes.api_stream_log(pid, share)

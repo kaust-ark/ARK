@@ -20,6 +20,7 @@ from ark.findings_schema import (
 )
 from ark.config import defaults
 from ark.engines.cli import selected_agent_runtime
+from ark.latex.utils import BODY_END_PDF_MARKER
 
 
 _STRUCTURE = {
@@ -984,13 +985,13 @@ After making all changes, you MUST verify the page count:
             self.log(f"[{context}] Page fitting: relaxed — no page adjustment", "INFO")
             return True
 
+        # Measure the layout the user will receive, including the body-end
+        # marker and the separate endmatter page, before requesting an edit.
+        self._ensure_clearpage_before_bibliography()
         self.compile_latex()
         page_count = getattr(self, '_body_page_count', 0)
         if not page_count:
             return True
-
-        # First: ensure \clearpage before \bibliography (programmatic, no agent needed)
-        self._ensure_clearpage_before_bibliography()
 
         # 70% fill rule:
         # Last page must be at least 70% filled (30% whitespace allowed).
@@ -1103,6 +1104,10 @@ After making all changes, you MUST verify the page count:
 Current: {page_count:.2f} body pages ({gap:+.2f} over limit, {columns}-column).
 Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
 
+For a small overflow, first look for a result or motivation repeated across the
+introduction, discussion and conclusion. Keep its clearest occurrence and edit
+the redundant prose. Preserve the supporting table, citations and the limits
+on the claim. Recompile before changing any other part of the paper.
 Refer to the page-adjustment and figure-integrity skills for strategies and constraints.
 After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 """, timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
@@ -1215,6 +1220,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             # Strip any previously-injected body-end markers so the
             # rebuild below uses a single canonical position.
             content = content.replace(self._ARK_BODY_END_MARKER + '\n', '')
+            content = content.replace(BODY_END_PDF_MARKER + '\n', '')
 
             # Locate the bibliography block. We treat
             # \bibliographystyle + \bibliography as a single contiguous
@@ -1342,6 +1348,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             parts = [
                 body_section,
                 "",
+                BODY_END_PDF_MARKER,
                 self._ARK_BODY_END_MARKER,
                 r"\clearpage",
             ]

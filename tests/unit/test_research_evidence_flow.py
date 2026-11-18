@@ -37,6 +37,11 @@ def finding(value):
                           "metric_sources": {"time": "results/raw.json#/time"}}]}
 
 
+def review(action="proceed_to_writing", **evidence):
+    return json.dumps({"sufficient": action == "proceed_to_writing", "recommendation": action,
+                       "contradictions": [], "claim_checks": [], "gaps": [], **evidence})
+
+
 def test_analysis_repairs_existing_measurements_and_routes_open_questions(project):
     p = project
     (p.code_dir / "results/raw.json").write_text('{"time": 2}')
@@ -48,7 +53,7 @@ def test_analysis_repairs_existing_measurements_and_routes_open_questions(projec
         if name == "writer":
             p.events.append(("writer", prompt))
         elif "Evaluate whether" in prompt:
-            return json.dumps({"sufficient": False, "gaps": [gap]})
+            return review("need_more_experiments", gaps=[gap])
         else:
             analyzed += 1
             if analyzed == 2:
@@ -76,7 +81,7 @@ def test_repeated_contradiction_preserves_run_checkpoint_on_continue(project):
         if name == "writer":
             return "draft"
         if "Evaluate whether" in prompt:
-            return '{"sufficient":true,"gaps":[]}'
+            return review()
         (p.state_dir / "findings.json").write_text(json.dumps(finding(next(responses))))
         return "analyzed"
 
@@ -92,7 +97,7 @@ def test_repeated_contradiction_preserves_run_checkpoint_on_continue(project):
 
 @pytest.mark.parametrize("invalid", [
     '{"sufficient":"false"}', 'broken {"sufficient": true,',
-    '{"sufficient":true,"recommendation":"need_more_experiments"}',
+    '{"sufficient":true}', review("need_more_experiments", sufficient=True),
 ])
 def test_unusable_verdict_retries_evaluation_only(project, invalid):
     p = project
@@ -102,9 +107,72 @@ def test_unusable_verdict_retries_evaluation_only(project, invalid):
     assert p._terminal_error and not p.events
     assert p._load_dev_phase_state()["steps_done"] == ["plan", "run", "analyze"]
     p._terminal_error = None
-    p.run_agent = lambda *a, **kw: '{"sufficient":true}'
+    p.run_agent = lambda *a, **kw: review()
     p._run_dev_phase()
     assert p.events == ["figures", "deliver"]
+
+
+def test_review_finishes_in_the_original_session_and_checks_the_recovered_verdict(project):
+    (project.code_dir / "results/raw.json").write_text('{"visits": 1}')
+    calls = []
+
+    def reviewer(role, task, *, outcome_out, session_out, continue_session, **options):
+        calls.append(continue_session)
+        outcome_out["completed"] = True
+        if continue_session is None:
+            session_out.append("review-with-observations")
+            return "I found a counterexample. Let me construct the evaluation JSON:"
+        assert "Do not call tools" in task and "counterexamples" in task
+        return json.dumps({"sufficient": True, "recommendation": "proceed_to_writing",
+                           "contradictions": [{"finding_id": "f1", "issue": "The proposed cost conflicts with the count."}],
+                           "gaps": [], "claim_checks": [
+                               {"claim": "The first input requires two visits.", "predicted": 2,
+                                "observed_source": "results/raw.json#/visits"}]})
+
+    project.run_agent = reviewer
+    verdict = project._evaluate_completeness("How many visits?", "")
+    assert calls == [None, "review-with-observations"]
+    assert verdict.action == "correct_findings"
+    assert any("f1" in gap and "conflicts" in gap for gap in verdict.gaps)
+    assert any("contains 1" in gap for gap in verdict.gaps)
+    assert project._terminal_error is None
+
+
+@pytest.mark.parametrize("last_reply", [
+    "Let me finish the evaluation.",
+    '{"sufficient":true}',
+    '{"sufficient":false,"recommendation":"need_more_experiments","contradictions":[],"claim_checks":[],"gaps":[]}',
+])
+def test_review_repair_is_bounded_and_preserves_saved_steps(project, last_reply):
+    calls = []
+
+    def reviewer(role, task, *, outcome_out, session_out, continue_session, **options):
+        calls.append(continue_session)
+        session_out.append("saved-review")
+        outcome_out["completed"] = True
+        return last_reply if continue_session else "Here are my observations."
+
+    project.run_agent = reviewer
+    done = ["plan", "run", "analyze"]
+    project._save_dev_phase_state({"status": "in_progress", "iteration": 1, "steps_done": done})
+    project._run_dev_phase()
+    assert calls == [None, "saved-review"]
+    assert project._terminal_error and project.events == []
+    assert project._load_dev_phase_state()["steps_done"] == done
+
+
+def test_interrupted_review_does_not_use_an_apparently_valid_partial_verdict(project):
+    calls = []
+
+    def reviewer(role, task, *, outcome_out, session_out, continue_session, **options):
+        calls.append(continue_session)
+        session_out.append("interrupted-review")
+        outcome_out["completed"] = False
+        return '{"sufficient":true}'
+
+    project.run_agent = reviewer
+    assert project._evaluate_completeness("Is there a difference?", "") is None
+    assert calls == [None] and "stopped" in project._terminal_error
 
 
 def test_failed_job_logs_do_not_count_as_experiments(project):
@@ -150,8 +218,8 @@ def test_analysis_only_round_survives_interrupt_without_planning_or_submitting(p
     def role(name, prompt, **kw):
         assert "Evaluate whether" in prompt
         if analyses:
-            return '{"sufficient":true}'
-        return json.dumps({"sufficient": False, "recommendation": "reanalyze_existing", "gaps": [gap]})
+            return review()
+        return review("reanalyze_existing", gaps=[gap])
 
     p.run_agent = role
     run = p._run_dev_phase if runtime == "python" else lambda: run_workflow(p)
@@ -181,9 +249,8 @@ def test_counterexample_at_budget_limit_cannot_be_waived_by_model_vote(project, 
     def respond(role, prompt, **kw):
         if role == "writer":
             return "draft"
-        return json.dumps({"sufficient": True, "recommendation": "proceed_to_writing",
-                           "claim_checks": [{"claim": "At n=2", "predicted": 1 if corrections and repair_succeeds else 2,
-                                             "observed_source": "results/lookup.json#/2/count"}]})
+        return review(claim_checks=[{"claim": "At n=2", "predicted": 1 if corrections and repair_succeeds else 2,
+                                     "observed_source": "results/lookup.json#/2/count"}])
     p.run_agent = respond
     p._run_dev_phase()
     assert len(corrections) == 1
@@ -198,11 +265,11 @@ def test_structured_contradiction_can_override_positive_verdict(project):
     from ark.workflow import ResearchDecision
     raw = project.code_dir / "results/results.json"
     raw.write_text('{"2": 1}')
-    output = {"sufficient": True, "contradictions": [
+    output = review(contradictions=[
         {"finding_id": "f1", "claim": "The formula predicts two for input 2",
          "predicted": 2, "observed_source": "results/results.json#/2", "observed": 1},
-    ]}
-    decision = ResearchDecision.from_review(json.dumps(output), project.code_dir, project.log)
+    ])
+    decision = ResearchDecision.from_review(output, project.code_dir, project.log)
     assert decision.action == "correct_findings"
     assert any("contains 1" in issue for issue in decision.gaps)
 

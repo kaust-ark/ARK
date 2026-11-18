@@ -515,7 +515,6 @@ class CompilerMixin:
             import re
             m_y = re.search(r'\\gdef\\arkBodyEndY\{(\d+)\}', aux_text)
             m_h = re.search(r'\\gdef\\arkPageH\{(\d+)\}', aux_text)
-            m_p = re.search(r'\\gdef\\arkBodyEndPage\{(\d+)\}', aux_text)
             if not m_y or not m_h:
                 return None
 
@@ -534,23 +533,20 @@ class CompilerMixin:
             # its own page number even when an \appendix section sits
             # between body and \bibliography, which would otherwise
             # confuse a "References page minus one" heuristic.
-            if m_p:
-                last_body_idx = max(int(m_p.group(1)) - 1, 0)
+            end_page = latex_utils.recorded_body_end_page(aux_text, len(doc))
+            boundary = latex_utils.body_page_boundary(doc)
+            pdf_end_page = None
+            if boundary is not None:
+                page_index, body_bottoms = boundary
+                pdf_end_page = page_index + int(any(body_bottoms))
+            if end_page is not None and end_page == pdf_end_page:
+                last_body_idx = end_page - 1
                 ref_page_idx = last_body_idx + 1  # used by column-adjust
             else:
-                # Legacy fallback: find References page in the rendered PDF
-                # and assume the marker is on the page directly before it.
-                # Only correct when there is no appendix.
-                ref_page_idx = None
-                for i in range(len(doc)):
-                    text = doc[i].get_text()
-                    if any(line.strip() == 'References' for line in text.split('\n')):
-                        ref_page_idx = i
-                        break
-                if ref_page_idx is None:
-                    doc.close()
-                    return None
-                last_body_idx = max(ref_page_idx - 1, 0)
+                # With no verified marker page, use the rendered fallback for
+                # both the page and its fill, avoiding stale AUX coordinates.
+                doc.close()
+                return None
 
             # Column-aware correction: if doc is two-column AND the last
             # body page has an empty column, the 1-D aux fill over-reports.
@@ -573,6 +569,14 @@ class CompilerMixin:
     _HEADER_BAND = 0.08
     # Same for the bottom — running-footer / page number band.
     _FOOTER_BAND = 0.96
+
+    def _body_text_blocks(self, page):
+        height = page.rect.height
+        return [
+            block for block in page.get_text("blocks")
+            if height * self._HEADER_BAND < block[3] < height * self._FOOTER_BAND
+            and not (block[1] > height * 0.85 and block[4].strip().isdigit())
+        ]
 
     def _column_adjust(self, doc, last_body_idx: int, ref_page_idx: int,
                        fill_ratio: float) -> tuple[float, str]:
@@ -598,11 +602,7 @@ class CompilerMixin:
         page = doc[last_body_idx]
         ph = page.rect.height
         mid_x = page.rect.width / 2
-        content = [
-            b for b in page.get_text("blocks")
-            if b[1] > ph * self._HEADER_BAND
-            and b[3] < ph * self._FOOTER_BAND
-        ]
+        content = self._body_text_blocks(page)
         left_y = max((b[3] for b in content if b[0] < mid_x), default=0)
         right_y = max((b[3] for b in content if b[0] >= mid_x), default=0)
         averaged = ((left_y + right_y) / ph) / 2
@@ -637,13 +637,8 @@ class CompilerMixin:
         # halves — that's strong evidence of a two-column layout.
         for idx in sample_indices:
             page = doc[idx]
-            ph = page.rect.height
             mid_x = page.rect.width / 2
-            content = [
-                b for b in page.get_text("blocks")
-                if b[1] > ph * self._HEADER_BAND
-                and b[3] < ph * self._FOOTER_BAND
-            ]
+            content = self._body_text_blocks(page)
             has_left = any(b[0] < mid_x for b in content)
             has_right = any(b[0] >= mid_x for b in content)
             if has_left and has_right:
@@ -661,64 +656,34 @@ class CompilerMixin:
             import fitz
             doc = fitz.open(str(pdf_path))
 
-            # Find which page has "References"
-            ref_page_idx = None
-            for i in range(len(doc)):
-                text = doc[i].get_text()
-                if any(line.strip() == 'References' for line in text.split('\n')):
-                    ref_page_idx = i
-                    break
-
-            if ref_page_idx is None:
-                # No References found — all pages are body
+            boundary = latex_utils.body_page_boundary(doc)
+            if boundary is None:
                 total = len(doc)
                 doc.close()
                 return float(total)
-
-            ref_page = doc[ref_page_idx]
-            page_height = ref_page.rect.height
-
-            # Locate the "References" heading's y on its page
-            ref_y = 0
-            for block in ref_page.get_text("dict")["blocks"]:
-                for line_obj in block.get("lines", []):
-                    line_text = "".join(s["text"] for s in line_obj.get("spans", []))
-                    if line_text.strip() == "References":
-                        ref_y = line_obj["bbox"][1]
-                        break
-                if ref_y > 0:
-                    break
-
-            ref_at_top = ref_y < page_height * 0.15  # separate page if References is top
-            if ref_at_top and ref_page_idx > 0:
-                last_body_idx = ref_page_idx - 1
-            else:
-                last_body_idx = ref_page_idx
+            ref_page_idx, body_bottoms = boundary
+            shares_body = any(body_bottoms)
+            if not shares_body and ref_page_idx == 0:
+                doc.close()
+                return 0.0
+            last_body_idx = ref_page_idx if shares_body else ref_page_idx - 1
 
             last_body_page = doc[last_body_idx]
             ph = last_body_page.rect.height
             mid_x = last_body_page.rect.width / 2
-            content_blocks = [
-                b for b in last_body_page.get_text("blocks")
-                if b[1] > ph * self._HEADER_BAND
-                and b[3] < ph * self._FOOTER_BAND
-            ]
-            left = [b for b in content_blocks if b[0] < mid_x]
-            right = [b for b in content_blocks if b[0] >= mid_x]
+            if not shares_body:
+                content_blocks = self._body_text_blocks(last_body_page)
+                body_bottoms = (
+                    max((b[3] for b in content_blocks if b[0] < mid_x), default=0),
+                    max((b[3] for b in content_blocks if b[0] >= mid_x), default=0),
+                )
 
             if self._is_two_column_doc(doc, ref_page_idx):
                 # Two-column: average per-column fill so a half-empty page
                 # reads as half full, not as full as its non-empty column.
-                left_fill = (max(b[3] for b in left) / ph) if left else 0
-                right_fill = (max(b[3] for b in right) / ph) if right else 0
-                fill_ratio = (left_fill + right_fill) / 2
-            elif not ref_at_top:
-                # References starts mid-page in a single-column layout: body
-                # ends right before the References heading.
-                fill_ratio = ref_y / ph
+                fill_ratio = sum(body_bottoms) / (2 * ph)
             else:
-                # Single-column, References on separate page.
-                fill_ratio = (max((b[3] for b in content_blocks), default=0) / ph)
+                fill_ratio = max(body_bottoms) / ph
 
             result = last_body_idx + fill_ratio
             doc.close()

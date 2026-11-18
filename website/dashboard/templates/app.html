@@ -365,6 +365,9 @@
     .score-bar-lg { height: 10px; background: var(--card); border-radius: 5px; overflow: hidden; margin-top: 10px; }
     .score-fill-lg { height: 100%; background: linear-gradient(90deg, var(--teal), var(--teal-light)); border-radius: 5px; transition: width .8s ease; }
     .detail-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+    #delivery-report { margin-bottom: 16px; overflow-wrap: anywhere; }
+    #delivery-report :is(p, ul):not([hidden]) { margin-top: 6px; font-size: .9rem; }
+    #delivery-issues { padding-inline-start: 20px; }
 
     /* terminal log */
     .log-terminal {
@@ -1162,6 +1165,12 @@ Strict — hit the exact page limit (spends the most tokens).">
   </div>
 
   <div class="detail-actions share-hide" id="detail-actions"></div>
+  <section id="delivery-report" class="detail-card share-hide" hidden aria-labelledby="delivery-title">
+    <h4 id="delivery-title" data-i18n="delivery_title">Delivery checks</h4>
+    <p id="delivery-summary"></p>
+    <p id="delivery-pages"></p>
+    <ul id="delivery-issues"></ul>
+  </section>
 
   <section id="hitl-decision" class="detail-card share-hide" hidden aria-labelledby="decision-heading">
     <h4 id="decision-heading" data-i18n="decision_needed">Your decision</h4>
@@ -2850,6 +2859,12 @@ const TRANSLATIONS = {
     phase: 'Phase', iteration: 'Iteration', step: 'Step',
     // actions
     view_pdf: '👁 View PDF', download_zip: '⬇ Download Zip',
+    delivery_title: 'Delivery checks', delivery_none: 'No delivery report has been recorded for this paper.',
+    delivery_stale: 'The paper has changed since the last report. The current version has not been checked.',
+    delivery_unavailable: 'The saved delivery report could not be read.',
+    delivery_checked: 'No violations recorded.', delivery_blocked: 'Failed required checks (%d). Warnings (%d).',
+    delivery_warnings: 'Warnings (%d). No required checks failed.', delivery_skipped: 'Checks skipped (%d).',
+    delivery_legacy_pages: 'Earlier page check. The body-page limit needs a new report.',
     stop: '■ Stop', start: '▶ Start', continue_action: '▶ Continue',
     delete: '🗑 Delete',
     waiting_template_msg: '📦 Waiting for <b>%s</b> template.<br>Send a <code>.zip</code> download link via Telegram to your project bot.',
@@ -3006,6 +3021,12 @@ const TRANSLATIONS = {
     waiting_for_logs: 'في انتظار السجلات...',
     phase: 'المرحلة', iteration: 'التكرار', step: 'الخطوة',
     view_pdf: '👁 عرض PDF', download_zip: '⬇ تحميل Zip',
+    delivery_title: 'فحوص التسليم', delivery_none: 'لم يُسجَّل تقرير تسليم لهذه الورقة.',
+    delivery_stale: 'تغيّرت الورقة منذ آخر تقرير. لم تُفحص النسخة الحالية بعد.',
+    delivery_unavailable: 'تعذّرت قراءة تقرير التسليم المحفوظ.',
+    delivery_checked: 'لم تُسجَّل مخالفات.', delivery_blocked: 'عدد الفحوص الإلزامية الفاشلة %d. عدد التنبيهات %d.',
+    delivery_warnings: 'عدد التنبيهات %d. لم يفشل أي فحص إلزامي.', delivery_skipped: 'عدد الفحوص التي جرى تخطيها %d.',
+    delivery_legacy_pages: 'فحص سابق للصفحات. يتطلب التحقق من حد صفحات المتن تقريرًا جديدًا.',
     stop: '■ إيقاف', start: '▶ بدء', continue_action: '▶ متابعة',
     delete: '🗑 حذف',
     waiting_template_msg: '📦 في انتظار قالب <b>%s</b>.<br>أرسل رابط تحميل <code>.zip</code> عبر Telegram إلى بوت مشروعك.',
@@ -3152,6 +3173,12 @@ const TRANSLATIONS = {
     waiting_for_logs: '等待日志...',
     phase: '阶段', iteration: '迭代', step: '步骤',
     view_pdf: '👁 查看 PDF', download_zip: '⬇ 下载 Zip',
+    delivery_title: '交付检查', delivery_none: '这份论文还没有交付检查报告。',
+    delivery_stale: '论文在上次检查后已更改，当前版本仍待检查。',
+    delivery_unavailable: '无法读取已保存的交付报告。',
+    delivery_checked: '未记录违规。', delivery_blocked: '%d 项硬性要求未通过，另有 %d 项提醒。',
+    delivery_warnings: '有 %d 项提醒，硬性检查未发现违规。', delivery_skipped: '跳过 %d 项检查。',
+    delivery_legacy_pages: '这是旧版页数检查，正文页数上限仍待重新核验。',
     stop: '■ 停止', start: '▶ 启动', continue_action: '▶ 继续',
     delete: '🗑 删除',
     waiting_template_msg: '📦 正在等待 <b>%s</b> 模板。<br>请通过 Telegram 向项目机器人发送 <code>.zip</code> 下载链接。',
@@ -3964,7 +3991,10 @@ function _renderPhaseStatus(p) {
 //  Project Detail
 // ══════════════════════════════════════════════════════
 async function loadDetail(id) {
-  if (detailProjectId !== id) renderDecision(null, id);
+  if (detailProjectId !== id) {
+    renderDecision(null, id);
+    document.getElementById('delivery-report').hidden = true;
+  }
   detailProjectId = id;
   stopDetailStream();
 
@@ -4420,7 +4450,31 @@ function renderCost(report) {
   document.getElementById('cost-chart').innerHTML = svg;
 }
 
+function renderDeliveryReport(p) {
+  const report = p.delivery_report;
+  const panel = document.getElementById('delivery-report');
+  panel.hidden = !!window.SHARE_MODE || !(report || p.has_pdf || p.status === 'done');
+  if (panel.hidden) return;
+  const status = report?.status || 'none';
+  let summary = status === 'blocked' ? t('delivery_blocked', report.hard, report.soft)
+    : status === 'warnings' ? t('delivery_warnings', report.soft) : t('delivery_' + status);
+  if (report?.skipped) summary += ' ' + t('delivery_skipped', report.skipped);
+  document.getElementById('delivery-summary').textContent = summary;
+  const pages = document.getElementById('delivery-pages');
+  pages.textContent = [report?.legacy_pages ? t('delivery_legacy_pages') : '', report?.pages].filter(Boolean).join(' ');
+  pages.hidden = !pages.textContent;
+  const list = document.getElementById('delivery-issues');
+  list.replaceChildren();
+  for (const detail of report?.issues || []) {
+    const item = document.createElement('li');
+    item.textContent = detail;
+    list.appendChild(item);
+  }
+  list.hidden = !list.childElementCount;
+}
+
 function renderDetailActions(p) {
+  renderDeliveryReport(p);
   const el = document.getElementById('detail-actions');
   const zipReady = (p.score || 0) > 0 || p.mode === 'dev' || p.status === 'done' || p.status === 'stopped';
   const zipTitle = zipReady ? '' : 'title="Available after first review completes"';
@@ -4972,6 +5026,7 @@ function startDetailStream(id) {
       fetch(`${APP_BASE}/api/projects/${id}`)
         .then(r => r.json())
         .then(p => {
+          if (detailProjectId !== id || p.id !== id) return;
           renderDetailActions(p);
           renderScoreChart(p.score_history || []);
           renderCost(p.cost_report);

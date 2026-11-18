@@ -3,6 +3,13 @@
 Run this same script twice, changing --checkout and --out. Each case makes one
 completion, and saves the source prompt, returned LaTeX, and provider metadata.
 Read the Results and Limitations together against the raw measurements.
+
+To compare treatment of replication, select --cases null repeats aggregate timing.
+In null, rows index different sizes and establish only agreement between methods.
+In repeats, three restarts per load support the observed 5–7 s and 8–10 s ranges.
+In aggregate, the stored summaries support the reported sample SDs of 2 W and 4 W.
+The pairing and independence of the runs are unknown. In timing, a single timing
+per method supports the observed difference and leaves run-to-run spread unknown.
 """
 import argparse
 import json
@@ -40,7 +47,24 @@ CASES = {
         "Both implementations used 4, 8, and 16 comparisons on the three tested sizes.",
         "Present keys and other input sizes were not measured.",
     ),
+    "repeats": (
+        "How does completion time vary across restarts at the tested loads?",
+        {"unit": "seconds", "independent_restarts": True,
+         "by_load": {"low": {"a": 7, "b": 5, "c": 6}, "high": {"a": 8, "b": 9, "c": 10}}},
+        "The three restart times at low load were 7, 5, and 6 seconds. "
+        "Those at high load were 8, 9, and 10 seconds.",
+        "The two loads were tested on one machine.",
+    ),
+    "aggregate": (
+        "What variation in power draw was observed at the two settings?",
+        {"unit": "watts", "settings": {"idle": {"n_runs": 3, "mean": 20, "sample_sd": 2},
+                                       "busy": {"n_runs": 3, "mean": 60, "sample_sd": 4}}},
+        "Mean power was 20 W at idle and 60 W when busy.",
+        "The recorder stored per-setting summary statistics only. Individual readings are unavailable.",
+    ),
 }
+
+DEFAULT_CASES = ("timing", "baseline", "service", "null")
 
 
 def capture_prompt(root, idea, result, gap):
@@ -74,6 +98,8 @@ def main():
     parser.add_argument("--checkout", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--model", default="nvidia/nemotron-3-ultra-550b-a55b:free")
+    parser.add_argument("--cases", nargs="+", choices=CASES, default=DEFAULT_CASES,
+                        help="Replay the selected fixed cases, one model request each.")
     args = parser.parse_args()
     sys.path.insert(0, str(args.checkout.resolve()))
     key = os.environ["OPENROUTER_API_KEY"]
@@ -87,7 +113,8 @@ def main():
               "two sections of LaTeX body, at most 150 words. All relevant raw measurements follow, shared "
               "verbatim across evaluations. You have no file or shell tools. Do not supply a preamble, "
               "other sections or references.")
-    for case, (idea, raw, result, gap) in CASES.items():
+    for case in args.cases:
+        idea, raw, result, gap = CASES[case]
         with tempfile.TemporaryDirectory() as tmp:
             prompt = capture_prompt(Path(tmp), idea, result, gap)
         user = prompt + "\n\nAvailable file results/test.json\n" + json.dumps(raw)

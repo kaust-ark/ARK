@@ -1198,7 +1198,14 @@ Instead:
         if result and not failed_here:
             self._terminal_error = None
         timer.stop()
-        self.log_step(f"{Icons.for_agent(agent_type)} {agent_styled(agent_type, f'[{agent_type}]')} completed ({elapsed}s)", "success")
+        has_final_response = completed and bool(result.strip()) and not shutting_down.is_set()
+        label = f"{Icons.for_agent(agent_type)} {agent_styled(agent_type, f'[{agent_type}]')}"
+        if has_final_response:
+            self.log_step(f"{label} completed ({elapsed}s)", "success")
+        elif failed_here:
+            self.log_step(f"{label} failed ({elapsed}s)", "error")
+        else:
+            self.log_step(f"{label} ended without a completed response ({elapsed}s)", "warning")
 
         # One-line cost summary (only when claude returned parseable usage)
         if usage_record:
@@ -1275,5 +1282,5 @@ Instead:
                 and getattr(cli_runner, "supports_resume", False) and cli_runner.session_id):
             session_out.append(cli_runner.session_id)
         if outcome_out is not None:
-            outcome_out["completed"] = completed and bool(result.strip()) and not shutting_down.is_set()
+            outcome_out["completed"] = has_final_response and not shutting_down.is_set()
         return result

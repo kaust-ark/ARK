@@ -108,10 +108,11 @@ When handling figure-related tasks, **you must first read** `{FIGURES_DIR}/figur
 
 Every quantitative claim in the paper must be traceable to a real result file:
 
-1. **Before writing any number** (accuracy, F1, latency, throughput, etc.), verify it exists in a file under `results/`. Read the actual result file to get the correct value.
-2. **Do NOT invent or round numbers** — copy exact values from result files. If a result file says F1=0.8234, write 0.82 (rounded), not 0.85 (fabricated).
-3. **If a result doesn't exist**, do not write the claim. Instead, leave a LaTeX comment: `% TODO: result not available — needs experiment`
+1. Trace each reported measurement to its source under `results/`. For a derived value, verify its inputs and calculation.
+2. Preserve units and use enough precision to support the comparison. If F1 is recorded as 0.8234, reporting 0.82 to two decimal places is appropriate.
+3. If evidence for a claim is missing, omit the claim. If the missing comparison matters to the conclusion, explain the limitation to the reader.
 4. **Do NOT describe experiments that weren't run**. If `results/` is empty or contains only simulated data, do not write an Experiments section that claims real results were obtained.
+5. When revising a statement about variability, identify the experimental unit and the conditions held fixed. Trace a reported spread to the observations or a supplied per-condition summary. Even a few recorded repeats can describe sample variation. Claims about population uncertainty, pairing and independence need evidence of the sampling design. Check that the Limitations section agrees with the samples and statistics reported in Results.
 
 ## Internal Artifact Discipline (MANDATORY)
 

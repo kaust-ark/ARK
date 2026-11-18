@@ -70,7 +70,98 @@ GOOD_PDF_TEXT = "Body [1]. Acknowledgments " + ARK_ACK_TEXT
 def test_healthy_paper_passes(tmp_path):
     p = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
     rep = evaluate(p, venue_pages=8)
+    assert rep.to_dict()["schema_version"] == 2
     assert not rep.violations, [f"{f.check}: {f.detail}" for f in rep.violations]
+
+
+@pytest.mark.parametrize("endmatter,body_on_boundary,extra,expected", [
+    ("Acknowledgments", False, 0, 2),
+    ("References", True, 0, 3),
+    ("Appendix A", False, 5, 2),
+])
+def test_page_budget_counts_body_and_excludes_endmatter(
+        tmp_path, endmatter, body_on_boundary, extra, expected):
+    from ark.latex.compiler import CompilerMixin
+    project = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
+    pdf = project / "paper/main.pdf"
+    with fitz.open(pdf) as document:
+        page = document.new_page()
+        if body_on_boundary:
+            page.insert_text((72, 110), "A concluding observation.")
+        page.insert_text((72, 160), endmatter)
+        page.insert_text((72, 190), "Further material.")
+        for i in range(extra):
+            page = document.new_page()
+            page.insert_text((72, 110), f"Supplementary material {i}.")
+        saved = document.tobytes()
+    pdf.write_bytes(saved + b"%" + b"x" * 60_000)
+    # An aux file from another PDF of the same length cannot override
+    # the compiled artifact, even if its reported body would fit.
+    pdf.with_suffix(".aux").write_text(
+        r"\gdef\arkBodyEndPage{1}\gdef\arkBodyEndY{700}\gdef\arkPageH{800}"
+        + rf"\gdef\@abspage@last{{{3 + extra}}}")
+    report = evaluate(project, venue_pages=2)
+    check = next(f for f in report.findings if f.check == "page_budget")
+    assert check.status == ("violated" if expected > 2 else "pass")
+    detail = f"{expected} body pages / limit 2 ({3 + extra} total pages)"
+    assert check.detail == (detail + ", 1 page over limit." if expected > 2 else detail)
+    compiler = CompilerMixin()
+    compiler.latex_dir = pdf.parent
+    compiler.log = lambda *args: None
+    import math
+    assert math.ceil(compiler._count_body_pages(pdf)) == expected
+
+
+def test_page_budget_uses_marker_for_template_specific_appendix(tmp_path):
+    from ark.delivery_contract import _page_budget
+    pdf = tmp_path / "main.pdf"
+    _make_pdf(pdf, "Body", pages=6)
+    pdf.with_suffix(".aux").write_text(r"\gdef\arkBodyEndPage{2}\gdef\@abspage@last{6}")
+    assert _page_budget(pdf, r"\appendix", 2).status == "skipped"
+    assert _page_budget(pdf, r"\section{Discussion}", 2).status == "violated"
+    with fitz.open(pdf) as doc:
+        doc.xref_set_key(doc.pdf_catalog(), "Dests",
+                         f"<< /idea2paper.body.end [{doc.page_xref(1)} 0 R /XYZ null null null] >>")
+        marked = doc.tobytes()
+    pdf.write_bytes(marked)
+    check = _page_budget(pdf, r"\appendix", 2)
+    assert check.status == "pass" and check.detail == "2 body pages / limit 2 (6 total pages)"
+
+
+def test_deferred_result_figure_counts_after_body_marker(tmp_path):
+    from ark.delivery_contract import _page_budget
+    pdf = tmp_path / "main.pdf"
+    with fitz.open() as doc:
+        for text in ["Main result", "Figure 1: Experimental results", "Acknowledgments"]:
+            doc.new_page().insert_text((72, 110), text)
+        doc.xref_set_key(doc.pdf_catalog(), "Dests",
+                         f"<< /idea2paper.body.end [{doc.page_xref(0)} 0 R /XYZ null null null] >>")
+        doc.save(pdf)
+    check = _page_budget(pdf, r"\bibliography{refs}", 1)
+    assert check.status == "violated"
+    assert check.detail == "2 body pages / limit 1 (3 total pages), 1 page over limit."
+
+
+def test_page_budget_skips_missing_pdf_reader(tmp_path, monkeypatch):
+    import sys
+    from ark.delivery_contract import _page_budget
+    monkeypatch.setitem(sys.modules, "fitz", None)
+    check = _page_budget(tmp_path / "paper.pdf", "", 2)
+    assert check.status == "skipped" and "Could not measure" in check.detail
+
+
+def test_interrupted_report_update_keeps_last_completed_report(tmp_path, monkeypatch):
+    from ark.delivery_contract import DeliveryReport, Finding, write_report
+    from ark.orchestrator import state
+
+    path = write_report(tmp_path, DeliveryReport([Finding("page_budget", "pass", "soft")]))
+    before = path.read_bytes()
+    def fail_publish(src, dst):
+        raise OSError("storage disconnected")
+
+    monkeypatch.setattr(state.os, "replace", fail_publish)
+    assert write_report(tmp_path, DeliveryReport()) is None
+    assert path.read_bytes() == before
 
 
 def test_stub_pdf_is_hard_violation(tmp_path):

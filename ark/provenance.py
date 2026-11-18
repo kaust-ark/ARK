@@ -28,21 +28,30 @@ thousands of files there on a shared filesystem.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+from bisect import bisect_left
+from decimal import Decimal, DecimalException, localcontext
 from pathlib import Path
 
-_NUM = re.compile(r"(?<![\w.\\])(-?\d+\.\d+|-?\d+)(\s*\\?%)?")
+_COEFFICIENT = r"[+-]?(?:\d+(?:\.\d+)?|\.\d+)"
+_VALUE = rf"{_COEFFICIENT}(?:[eE][+-]?\d+)?"
+_TEX_EXPONENT = re.compile(
+    rf"(?<![\w.\\])({_COEFFICIENT})\s*(?:\\times|\\cdot|×)\s*10\s*\^\s*\{{([+-]?\d+)\}}")
+_NUM = re.compile(rf"(?<![\w.\\])({_VALUE})(\s*\\?%)?")
+_EVIDENCE_NUMBER = re.compile(_VALUE)
+_SI_QUANTITY = re.compile(rf"\\(?:SI|qty)\s*\{{\s*({_VALUE})\s*\}}\s*\{{([^{{}}]+)\}}")
+_SECOND_POWERS = {r"\second": 0, r"\milli\second": -3, r"\micro\second": -6, r"\nano\second": -9,
+                  "s": 0, "ms": -3, "us": -6, "µs": -6, "ns": -9}
+_FIELD_SECONDS = {"seconds": 0, "milliseconds": -3, "microseconds": -6, "nanoseconds": -9,
+                  "ms": -3, "us": -6, "ns": -9}
 _RESULT_SECTION = re.compile(r"result|experiment|evaluation|analysis|ablation|finding|discussion", re.I)
 _SUFFIXES = {".json", ".jsonl", ".csv", ".tsv", ".yaml", ".yml", ".txt", ".md", ".log", ".out"}
 _STATE_FILES = ("auto_research/state/findings.yaml", "auto_research/state/findings.json")
 
 MIN_STRONG = 5          # fewer strong numbers than this decides nothing
 MIN_TRACED = 0.8        # traced share of strong numbers below this is a finding
-# A number printed at more decimals than this is matched at this many. Both
-# sides of the lookup are clamped together, so the clamp can only excuse a
-# number, never accuse one.
-MAX_PLACES = 8
 
 
 def _strip(t: str) -> str:
@@ -51,6 +60,7 @@ def _strip(t: str) -> str:
                r"(\[[^\]]*\])*\{[^}]*\}", " ", t)
     t = re.sub(r"\\(begin|end)\{[^}]*\}(\[[^\]]*\])?(\{[^}]*\})?", " ", t)
     t = re.sub(r"\d+(\.\d+)?\s*(pt|cm|mm|in|em|ex)\b", " ", t)
+    t = _TEX_EXPONENT.sub(r"\g<1>e\g<2>", t)
     return t.replace("--", " ")          # a range, not a minus sign
 
 
@@ -70,19 +80,28 @@ def _regions(tex: str) -> list:
 
 def claims(tex: str) -> list:
     """(region, number as printed, is_percent, context) for each decimal or percentage."""
+    return [row[:4] for row in _claims_with_units(tex)]
+
+
+def _claims_with_units(tex: str) -> list:
     found = []
     for where, body in _regions(tex):
         body = _strip(body)
+        units = {m.start(1): m[2].strip() for m in _SI_QUANTITY.finditer(body)}
         for m in _NUM.finditer(body):
             s, pct = m.group(1), bool(m.group(2))
-            if "." in s or pct:
+            unit = units.get(m.start(1))
+            if unit in (r"\percent", r"\%"):
+                pct, unit = True, None
+            if "." in s or "e" in s.lower() or pct or unit in _SECOND_POWERS:
                 ctx = " ".join(body[max(0, m.start() - 40): m.end() + 20].split())
-                found.append((where, s, pct, ctx))
+                found.append((where, s, pct, ctx, unit))
     return found
 
 
 def _strong(s: str) -> bool:
-    return len(s.lstrip("-").replace(".", "").lstrip("0")) >= 3
+    coefficient = s.lower().partition("e")[0]
+    return len(coefficient.lstrip("+-").replace(".", "").lstrip("0")) >= 3
 
 
 def _files(root: Path, before, max_files=400, max_depth=3, max_bytes=2_000_000) -> tuple:
@@ -125,13 +144,28 @@ def _files(root: Path, before, max_files=400, max_depth=3, max_bytes=2_000_000) 
     return out, (partial or bool(frontier))
 
 
-def _places(s: str) -> int:
-    """How many decimals the paper printed, which is the precision to match at."""
-    return min(len(s.split(".")[1]), MAX_PLACES) if "." in s else 0
+def _duration_values(document):
+    """Only explicitly dimensioned JSON numbers or arrays of measurements."""
+    pending = [document]
+    while pending:
+        obj = pending.pop()
+        if isinstance(obj, list):
+            pending.extend(v for v in obj if isinstance(v, (list, dict)))
+        elif isinstance(obj, dict):
+            for key, value in obj.items():
+                power = _FIELD_SECONDS.get(key.lower().rsplit("_", 1)[-1])
+                if power is not None:
+                    samples = value if isinstance(value, list) else (value,)
+                    for item in samples:
+                        if isinstance(item, Decimal) and item.is_finite():
+                            sign, digits, exponent = item.as_tuple()
+                            yield Decimal((sign, digits, exponent + power))
+                if isinstance(value, (list, dict)):
+                    pending.append(value)
 
 
-def _index(root: Path, before, places=(0, 1, 2, 3, 4), budget=40_000_000) -> tuple:
-    idx, read = set(), 0
+def _index(root: Path, before, need_time: bool, budget=40_000_000) -> tuple:
+    values, seconds, read = set(), set(), 0
     files, partial = _files(root, before)
     for p in files:
         try:
@@ -142,42 +176,72 @@ def _index(root: Path, before, places=(0, 1, 2, 3, 4), budget=40_000_000) -> tup
         if read > budget:
             partial = True
             break
-        for m in re.finditer(r"-?\d+\.\d+(?:[eE]-?\d+)?|-?\d+", text):
+        for m in _EVIDENCE_NUMBER.finditer(text):
             try:
-                v = float(m.group())
-            except ValueError:
+                values.add(Decimal(m.group()))
+            except DecimalException:
                 continue
-            for n in places:
-                idx.add(f"{v:.{n}f}")
-                idx.add(f"{v * 100:.{n}f}")
-    return idx, partial
+        if need_time and p.suffix.lower() in {".json", ".jsonl"}:
+            records = text.splitlines() if p.suffix.lower() == ".jsonl" else [text]
+            for record in records:
+                try:
+                    data = json.loads(record, parse_float=Decimal, parse_int=Decimal)
+                    seconds.update(_duration_values(data))
+                except (ValueError, DecimalException, RecursionError):
+                    continue
+    return sorted(values), sorted(seconds), partial
+
+
+def _matches(printed: Decimal, values: list) -> bool:
+    """Only the nearest value on each side can round to the printed measurement."""
+    position = bisect_left(values, printed)
+    for observed in values[max(0, position - 1):position + 1]:
+        try:
+            if observed.quantize(printed) == printed:
+                return True
+        except DecimalException:
+            continue
+    return False
 
 
 def audit(tex: str, project_dir: Path, before: float | None = None) -> dict:
     """Trace the paper's numbers; `before` limits the evidence to older files."""
-    found = claims(tex)
-    # The index must hold the evidence at the precisions the paper prints at, or
-    # a number that IS in results/ cannot be found: dsh4 printed an accuracy as
-    # 0.93706 while the index stopped at four decimals, so a value sitting in
-    # results/raw_results.jsonl was reported as fabricated. The coarse places
-    # stay in: a figure rounded for the table still has to trace.
-    index, partial = _index(Path(project_dir), before,
-                            sorted({0, 1, 2, 3, 4} | {_places(s) for _, s, _, _ in found}))
+    found = _claims_with_units(tex)
+    values, seconds, partial = _index(Path(project_dir), before,
+                                      need_time=any(row[4] in _SECOND_POWERS for row in found))
     rows = []
-    for where, s, pct, ctx in found:
-        places = _places(s)
+    for where, s, pct, ctx, unit in found:
+        traced = False
+        try:
+            printed = Decimal(s)
+            with localcontext() as context:
+                context.prec = max(context.prec, len(printed.as_tuple().digits))
+                if unit in _SECOND_POWERS:
+                    traced = _matches(printed.scaleb(_SECOND_POWERS[unit]), seconds)
+                elif unit is None:
+                    traced = _matches(printed, values)
+                    # A table may display 82.31 for an accuracy saved as 0.8231.
+                    # Keep that convention for plain decimals, not exponents.
+                    if not traced and (pct or ("e" not in s.lower() and 1 <= abs(printed) <= 100)):
+                        traced = _matches(printed.scaleb(-2), values)
+        except DecimalException:
+            pass
         rows.append({"where": where, "number": s + ("%" if pct else ""), "context": ctx,
-                     "strong": _strong(s), "traced": f"{float(s):.{places}f}" in index})
+                     "strong": _strong(s), "traced": traced,
+                     "unit_unverified": unit is not None and (unit not in _SECOND_POWERS or not seconds)})
     strong = [r for r in rows if r["strong"]]
     traced = sum(r["traced"] for r in strong)
+    missing = sorted((r for r in strong if not r["traced"]), key=lambda row: row["unit_unverified"])
     return {"numbers": len(rows), "strong": len(strong), "strong_traced": traced,
             "ratio": round(traced / len(strong), 2) if strong else None,
-            "evidence_values": len(index), "evidence_partial": partial,
-            "untraced": [r for r in strong if not r["traced"]][:10]}
+            "evidence_values": len(values), "evidence_partial": partial,
+            "unit_unverified": sum(r["unit_unverified"] for r in strong),
+            "untraced": missing[:10]}
 
 
 def verdict(result: dict) -> tuple[bool, str]:
     """(ok, detail) for the delivery contract."""
+    unit_unknown = result.get("unit_unverified", 0)
     if result["numbers"] >= 10 and result["evidence_values"] == 0:
         if result.get("evidence_partial"):
             # Read nothing because we declined to open it, not because there
@@ -205,8 +269,15 @@ def verdict(result: dict) -> tuple[bool, str]:
             return True, (f"{result['strong_traced']}/{result['strong']} numbers traced, and the "
                           f"evidence index was CUT SHORT, so the rest is UNVERIFIED rather than "
                           f"untraced. Not checked against every result file: {examples}")
-        return False, (f"only {result['strong_traced']}/{result['strong']} of the paper's numbers "
-                       f"appear in results/ or findings. Untraced: {examples}")
+        checkable = result["strong"] - unit_unknown
+        if ((result["strong_traced"] + unit_unknown) / result["strong"] < MIN_TRACED
+                or (checkable >= MIN_STRONG and result["strong_traced"] / checkable < MIN_TRACED)):
+            return False, (f"only {result['strong_traced']}/{result['strong']} of the paper's numbers "
+                           f"appear in results/ or findings. Untraced: {examples}")
+    if unit_unknown:
+        result["unverified"] = True
+        return True, (f"{result['strong_traced']}/{result['strong']} numbers traced. "
+                      f"{unit_unknown} use units that could not be checked against unit-labelled measurements.")
     if result["strong"]:
         return True, f"{result['strong_traced']}/{result['strong']} numbers traced to result files"
     return True, "no result numbers to trace"

@@ -1946,7 +1946,8 @@ a {{ color: #0d9488; }}
             except Exception:
                 pass
         else:
-            self.log(f"│ [{timestamp}] {styled('✓ Completed', Style.GREEN)}", "RAW")
+            ending = styled("Review incomplete", Style.YELLOW) if status == "incomplete" else styled("✓ Completed", Style.GREEN)
+            self.log(f"│ [{timestamp}] {ending}", "RAW")
             self.log(styled("└" + "─" * 69, Style.DIM), "RAW")
 
     # Backward compat alias
