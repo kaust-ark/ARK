@@ -66,7 +66,7 @@ def compaction(window: int, max_tokens: int, history_budget: int) -> dict:
 def role_patch(*, role: str, workdir: Path, provider: str, model_id: str, window: int,
                max_tokens: int, history_budget: int, api: str = "", endpoint: str = "",
                sandbox: str = "danger-full-access", skills_dir: Path | None = None,
-               retries: int = 0, image_input: bool = False) -> list:
+               retries: int = 0, image_input: bool = False, model_provider: str = "") -> list:
     if sandbox not in _MODES:
         raise ValueError(f"ARK_DSH_SANDBOX must be one of {', '.join(_MODES)}")
     rows = [{"id": i, "disabled": True} for i in _OFF]
@@ -81,15 +81,23 @@ def role_patch(*, role: str, workdir: Path, provider: str, model_id: str, window
             "apiKeyEnv": "ARK_DSH_API_KEY", "defaultContextWindow": window,
             "streamIdleTimeoutMs": 600_000, "retryPolicy": retry}})
     else:
-        route = {"api": api, "baseURL": endpoint, "apiKeyEnv": "ARK_DSH_API_KEY",
+        route = {"baseURL": endpoint, "apiKeyEnv": "ARK_DSH_API_KEY",
                  "models": [{"id": model_id, "contextWindow": window, "maxTokens": max_tokens}],
                  "retryPolicy": retry}
+        # The Google catalog provider supplies its own native protocol. An
+        # explicit api selects a generic gateway and loses tool-call signatures.
+        if provider != "google":
+            route["api"] = api
         if image_input:
             route["models"][0]["input"] = ["text", "image"]
         # Most chat gateways implement system + max_tokens, not OpenAI's
         # newer developer role and max_completion_tokens fields.
         if api == "openai-completions":
             route["compat"] = {"supportsDeveloperRole": False, "maxTokensField": "max_tokens"}
+            if model_provider == "gemini":
+                # Google's compatibility endpoint rejects OpenAI's store field,
+                # including store=false. pi-ai otherwise sends it on every call.
+                route["compat"]["supportsStore"] = False
         rows += [{"id": "llm-deepseek", "disabled": True},
                  {"insert": [{"id": "llm-pi-ai", "name": "@deepseek-ai/dsh-llm-pi-ai",
                               "config": {"providers": {provider: route}}}]}]

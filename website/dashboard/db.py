@@ -21,6 +21,7 @@ class User(SQLModel, table=True):
     telegram_token: str = ""
     telegram_chat_id: str = ""
     encrypted_keys: Optional[str] = Field(default=None)
+    default_launch_model: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     # Access tracking — "who accessed": set on each successful dashboard login.
     last_login_at: Optional[datetime] = Field(default=None)
@@ -275,6 +276,9 @@ def _migrate(engine):
         existing = {row[1] for row in rows}
         if "encrypted_keys" not in existing:
             conn.execute(text("ALTER TABLE user ADD COLUMN encrypted_keys TEXT"))
+            conn.commit()
+        if "default_launch_model" not in existing:
+            conn.execute(text("ALTER TABLE user ADD COLUMN default_launch_model VARCHAR"))
             conn.commit()
         if "last_login_at" not in existing:
             conn.execute(text("ALTER TABLE user ADD COLUMN last_login_at TIMESTAMP"))

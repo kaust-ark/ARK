@@ -1040,6 +1040,10 @@ Strict — hit the exact page limit (spends the most tokens).">
                 <option value="cohere_chat/command-r-plus">command-r-plus</option>
               </optgroup>
             </select>
+            <div style="margin-top:8px">
+              <button type="button" class="btn-secondary" onclick="saveDefaultLaunchModel(false)">Set as my default</button>
+              <button type="button" class="btn-secondary" id="clear-default-model" onclick="saveDefaultLaunchModel(true)" hidden>Reset to automatic</button>
+            </div>
           </div>
           <div style="display:flex;gap:16px;margin-top:12px">
             <div class="hero-adv-field" style="flex:1">
@@ -1488,7 +1492,7 @@ Strict — hit the exact page limit (spends the most tokens).">
         <!-- PARITY: keep this Continue picker in sync with the hero #model-options picker
              (source of truth, ~line 836). Same option values / data-provider / groups / i18n.
              If you edit models in one, mirror the change here to avoid drift. -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="continue-model-options" onchange="if(event.target&&event.target.name==='continue-model'){_userPickedModel=true;document.getElementById('continue-model-unverified').value='';document.getElementById('continue-model-openrouter-more').value='';}">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="continue-model-options" onchange="if(event.target&&event.target.name==='continue-model'){document.getElementById('continue-model-unverified').value='';document.getElementById('continue-model-openrouter-more').value='';}">
           <div class="model-legend"><span class="rec">★</span> Recommended &nbsp;·&nbsp; 💰 relative cost (per token)</div>
           <div class="model-group-label">OpenRouter</div>
           <!-- Row 1: open / cost-efficient models -->
@@ -1707,7 +1711,7 @@ Strict — hit the exact page limit (spends the most tokens).">
       <!-- PARITY: keep this Restart picker in sync with the hero #model-options picker
            (source of truth, ~line 836). Same option values / data-provider / groups / i18n.
            If you edit models in one, mirror the change here to avoid drift. -->
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="restart-model-options" onchange="if(event.target&&event.target.name==='restart-model'){_userPickedModel=true;document.getElementById('restart-model-unverified').value='';document.getElementById('restart-model-openrouter-more').value='';}">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="restart-model-options" onchange="if(event.target&&event.target.name==='restart-model'){document.getElementById('restart-model-unverified').value='';document.getElementById('restart-model-openrouter-more').value='';}">
         <div class="model-legend"><span class="rec">★</span> Recommended &nbsp;·&nbsp; 💰 relative cost (per token)</div>
         <div class="model-group-label">OpenRouter</div>
         <!-- Row 1: open / cost-efficient models -->
@@ -3825,6 +3829,7 @@ async function loadGateBanner() {
       // Drive home-page model gating from saved keys (so it's correct on first
       // load, not only after opening Settings).
       window._userKeyProviders = _computeKeyProviders(uData.anthropic, uData.openai, uData.gemini, uData.openrouter);
+      _defaultLaunchModel = uData.default_launch_model || '';
       if (typeof _loadOtherProviders === 'function') _loadOtherProviders(uData);  // long-tail keys drive dropdown gating too
       if (typeof applyModelGating === 'function') applyModelGating();
     }
@@ -5292,6 +5297,10 @@ async function performLaunch(form) {
   const _uns = document.getElementById('model-unverified');
   if (_uns && _uns.value) fd.set('model', _uns.value);
 
+  // Settings may still be loading on first paint. Let the server resolve
+  // the account default if the user submits before the picker is initialized.
+  if (_defaultLaunchModel === null && !_userPickedModel) fd.delete('model');
+
   // SkyPilot cloud → append it as a "skypilot:<cloud>" suffix on the orchestrator
   // backend so the routes shaping targets the chosen cloud (default gcp).
   const _heroOrch = fd.get('orchestrator_compute_backend');
@@ -5324,6 +5333,8 @@ async function performLaunch(form) {
     }
     const proj = await res.json();
     form.reset();
+    _userPickedModel = false;
+    applyModelGating();
     heroClearFiles();
     customTplFile = null;
     document.getElementById('custom-tpl-label').textContent = 'Drop a .zip file here or click to browse';
@@ -5418,7 +5429,6 @@ async function openContinueModal(id) {
     // Preselect the EXACT stored model (no lossy map) so Continue re-runs what
     // the project actually ran. A project's own prior model is ALWAYS re-runnable,
     // even if the provider key is now missing (gating must not wipe it below).
-    _userPickedModel = true;  // don't let selectDefaultModel('continue') clobber the restore
     const storedModel = p.model || 'claude-sonnet-5-5';
     const cRadios = [...document.querySelectorAll('input[name="continue-model"]')];
     const cMore = document.getElementById('continue-model-openrouter-more');
@@ -5555,7 +5565,6 @@ async function openRestartModal(id) {
   // Preselect the EXACT stored model (no lossy map) so Restart re-runs what
   // the project actually ran. A project's own prior model is ALWAYS re-runnable,
   // even if the provider key is now missing (gating must not wipe it below).
-  _userPickedModel = true;  // don't let selectDefaultModel('restart') clobber the restore
   const storedModel = p.model || 'claude-sonnet-5-5';
   const rRadios = [...document.querySelectorAll('input[name="restart-model"]')];
   const rMore = document.getElementById('restart-model-openrouter-more');
@@ -6296,6 +6305,7 @@ async function openSettingsModal() {
     document.getElementById('settings-github_org').value = data.github_org || '';
     document.getElementById('settings-telegram-token').value = data.telegram_token || '';
     document.getElementById('settings-telegram-chat-id').value = data.telegram_chat_id || '';
+    _defaultLaunchModel = data.default_launch_model || '';
     _loadOtherProviders(data);
 
     document.getElementById('settings-gcp-project').value = data.gcp_project || '';
@@ -6322,7 +6332,7 @@ let _otherProviders = {};
 const _STD_KEYS = new Set(['anthropic','openai','gemini','openrouter','github_pat','github_org',
   'gcp_project','gcp_conda_env','aws_account_id','aws_region',
   'claude_oauth_token','gemini_oauth_json',
-  'verification','telegram_token','telegram_chat_id','has_keys']);
+  'verification','telegram_token','telegram_chat_id','has_keys','default_launch_model']);
 function _loadOtherProviders(data) {
   _otherProviders = {};
   // Only string-valued, non-standard fields are other-provider keys — this skips
@@ -6375,11 +6385,12 @@ function onExtraModelPick(sel, prefix) {
   const P = (prefix && prefix !== 'hero') ? prefix + '-' : '';
   const others = [P + 'model-openrouter-more', P + 'model-unverified'];
   if (sel.value) {
-    _userPickedModel = true;
+    if (!P) _userPickedModel = true;
     document.querySelectorAll('input[name="' + P + 'model"]').forEach(x => { x.checked = false; });
     others.forEach(id => { if (id !== sel.id) { const o = document.getElementById(id); if (o) o.value = ''; } });
   } else {
-    selectDefaultModel(prefix);   // back to the configured-key default
+    if (!P) _userPickedModel = false;
+    selectDefaultModel(prefix);
   }
 }
 // Which model rows are usable. Keys are PARALLEL — each vendor row lights up
@@ -6440,6 +6451,7 @@ function applyModelGating(prefix) {
   selectDefaultModel(prefix);
   if (!prefix || prefix === 'hero') {
     const note = document.getElementById('model-nokey-note');
+    document.getElementById('clear-default-model').hidden = !_defaultLaunchModel;
     if (note) note.hidden = Object.values(have).some(Boolean) || Object.keys(others).length > 0;
   }
 }
@@ -6449,13 +6461,47 @@ function applyModelGating(prefix) {
 // display order. With an OpenRouter key that lands on DeepSeek V4 (row-1, first
 // chip). Skips disabled (unconfigured) chips; never overrides a manual pick.
 let _userPickedModel = false;
+let _defaultLaunchModel = null;  // null until the signed-in account's settings arrive
+
+async function saveDefaultLaunchModel(clear) {
+  const radio = document.querySelector('input[name="model"]:checked:not(:disabled)');
+  const model = document.getElementById('model-unverified').value
+    || document.getElementById('model-openrouter-more').value || radio?.value;
+  if (!clear && !model) { showToast('Choose a model first.', 'warn'); return; }
+  try {
+    const res = await fetch(APP_BASE + '/api/user/default-launch-model', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({model: clear ? '' : model}),
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.detail || 'Could not save the default model.', 'warn'); return; }
+    _defaultLaunchModel = data.default_launch_model || '';
+    _userPickedModel = false;
+    applyModelGating();
+    showToast(clear ? 'Automatic model selection restored.' : 'Default model saved.');
+  } catch (e) { showToast('Could not save the default model.', 'warn'); }
+}
+
 function selectDefaultModel(prefix) {
-  if (_userPickedModel) return;
-  const P = (prefix && prefix !== 'hero') ? prefix + '-' : '';
-  const more = document.getElementById(P + 'model-openrouter-more');
-  const unver = document.getElementById(P + 'model-unverified');
-  if ((more && more.value) || (unver && unver.value)) return;  // a dropdown model is chosen
-  const radios = document.querySelectorAll('#' + P + 'model-options input[type="radio"][name="' + P + 'model"]');
+  if ((prefix && prefix !== 'hero') || _userPickedModel) return;
+  const more = document.getElementById('model-openrouter-more');
+  const unver = document.getElementById('model-unverified');
+  const radios = document.querySelectorAll('#model-options input[name="model"]');
+  more.value = '';
+  unver.value = '';
+  const provider = (_defaultLaunchModel || '').split('/')[0];
+  if (provider && (window._userKeyProviders?.[provider] || _otherProviders[provider])) {
+    const match = [...radios].find(r => !r.disabled && (
+      r.value === _defaultLaunchModel || r.closest('label').dataset.provider + '/' + r.value === _defaultLaunchModel));
+    if (match) { match.checked = true; return; }
+    radios.forEach(r => { r.checked = false; });
+    const dropdown = [...more.options].some(o => o.value === _defaultLaunchModel) ? more : unver;
+    if (![...dropdown.options].some(o => o.value === _defaultLaunchModel)) {
+      dropdown.add(new Option(_defaultLaunchModel, _defaultLaunchModel));
+    }
+    dropdown.value = _defaultLaunchModel;
+    return;
+  }
   for (const r of radios) {
     if (!r.disabled) { r.checked = true; return; }
   }

@@ -83,16 +83,13 @@ def price(model: str, usage: dict):
         return None, None
 
 
-# Providers reached with no LLM_BASE_URL set (the webapp sets none; OpenHands
-# leaves the endpoint to litellm). DeepSeek has its native route; any provider
-# not listed here needs ARK_DSH_API and LLM_BASE_URL. pi-ai speaks only the
-# three protocols in _PROTOCOLS, so Gemini is reached through Google's
-# OpenAI-compatible endpoint rather than its own API.
+# The webapp supplies no LLM_BASE_URL. DeepSeek and Google's catalog provider
+# have native routes; these other defaults use pi-ai's generic gateway support.
+_GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta"
 _ROUTES = {
     "openrouter": ("openai-completions", "https://openrouter.ai/api/v1"),
     "anthropic": ("anthropic-messages", "https://api.anthropic.com"),
     "openai": ("openai-completions", "https://api.openai.com/v1"),
-    "gemini": ("openai-completions", "https://generativelanguage.googleapis.com/v1beta/openai"),
 }
 _PROTOCOLS = ("openai-completions", "openai-responses", "anthropic-messages")
 
@@ -147,6 +144,11 @@ def route(model: str) -> tuple:
     endpoint = os.environ.get("LLM_BASE_URL", "").strip()
     if not protocol and prefix == "deepseek":
         return "", endpoint
+    if not protocol and prefix == "gemini":
+        if not endpoint or endpoint.rstrip("/") == _GEMINI_ENDPOINT:
+            return "google-generative-ai", _GEMINI_ENDPOINT
+        # Historically an explicit base URL alone selected a chat gateway.
+        return "openai-completions", endpoint
     if not protocol and prefix in _ROUTES:
         protocol, default = _ROUTES[prefix]
         endpoint = endpoint or default
@@ -255,8 +257,7 @@ class DSHRuntime(AgentCLI):
         if os.environ.get("ARK_AGENT_SANDBOX", "").strip().lower() == "apptainer":
             raise ValueError("DSH Apptainer execution is not implemented; use the existing SDK runtime")
         protocol, endpoint = route(model)
-        custom = bool(protocol)
-        model_id = model.partition("/")[2]
+        model_provider, _, model_id = model.partition("/")
         window = _window(model)
         max_tokens = _max_tokens(model)
         if not 0 < max_tokens < window:
@@ -272,6 +273,11 @@ class DSHRuntime(AgentCLI):
             saved = json.loads(manifest.read_text())
             if saved.get("workdir") != str(workdir) or saved.get("model") != model:
                 raise ValueError("DSH resume requires the original workspace and model")
+            # Older direct Gemini sessions recorded Google's chat endpoint.
+            # Keep their original wire format and DSH provider for replay.
+            if (protocol == "google-generative-ai" and saved.get("protocol") == "openai-completions"
+                    and saved.get("endpoint") == _GEMINI_ENDPOINT + "/openai"):
+                protocol, endpoint = saved["protocol"], saved["endpoint"]
             if saved.get("endpoint") != endpoint or saved.get("protocol") != protocol:
                 raise ValueError("DSH resume requires the original provider configuration")
             if saved.get("sdk_version") != SDK_VERSION:
@@ -282,11 +288,14 @@ class DSHRuntime(AgentCLI):
                                      "model": model, "endpoint": endpoint, "protocol": protocol,
                                      "sdk_version": SDK_VERSION})
         self.session_id = sid
-        provider = "ark-gateway" if custom else "deepseek-official"
+        provider = "ark-gateway" if protocol else "deepseek-official"
+        if protocol == "google-generative-ai":
+            provider = "google"
         role = getattr(self, "agent_type", None) or "research"
         skills = workdir / ".claude" / "skills"
         patch = role_patch(
             role=role, workdir=workdir, provider=provider, model_id=model_id, window=window,
+            model_provider=model_provider,
             max_tokens=max_tokens, history_budget=_history_budget(model, window),
             api=protocol, endpoint=endpoint,
             sandbox=os.environ.get("ARK_DSH_SANDBOX", "danger-full-access").strip(),

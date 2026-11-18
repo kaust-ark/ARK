@@ -102,7 +102,10 @@ def classify(reason):
         status = err.get("status")
         message = str(err.get("message") or "")
         detail = f"{code} (HTTP {status}): {message}"
-        if code in _QUOTA_CODES or str(status) == "402" or message.lstrip().startswith("402:"):
+        # Google reports its project spending cap as RESOURCE_EXHAUSTED (429).
+        # Retrying in a minute only helps a rate window.
+        monthly_cap = "exceeded its monthly spending cap" in message.lower()
+        if code in _QUOTA_CODES or str(status) == "402" or message.lstrip().startswith("402:") or monthly_cap:
             return "DSH.QuotaExceeded", detail
         if code in _TRANSIENT_CODES:
             return _TRANSIENT_CODES[code], detail
