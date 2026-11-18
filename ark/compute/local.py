@@ -1,3 +1,4 @@
+import shlex
 import subprocess
 import time
 from .base import ComputeBackend
@@ -7,11 +8,14 @@ class LocalBackend(ComputeBackend):
 
     @property
     def conda_env(self) -> str:
+        project_env = self.code_dir / ".conda_env"
+        if (project_env / "conda-meta").is_dir():
+            return str(project_env)
         explicit = (self._compute_config.get("conda_env")
                     or self.config.get("conda_env"))
         if explicit:
             return explicit
-        # Per-project env created by the webapp at <code_dir>/.env.
+        # Older local projects may have a .env prefix.
         local_env = self.code_dir / ".env"
         if (local_env / "conda-meta").is_dir():
             return str(local_env)
@@ -73,6 +77,8 @@ is mounted at its usual path and `results/` is shared with the host.
                 f"\n- Available GPUs: {self.gpu_count} (passed into the container; "
                 f"check with `nvidia-smi`)" if self.gpu_count > 0 else "")
 
+        from ark.sandbox import project_python_command
+        python = project_python_command(self.code_dir, "python")
         gpu_section = ""
         if self.gpu_count > 0:
             gpu_section = f"\n- Available GPUs: {self.gpu_count}"
@@ -81,9 +87,9 @@ is mounted at its usual path and `results/` is shared with the host.
 
 Run experiments directly on this machine. Key settings:
 - Conda environment: `{self.conda_env}`
-- Activate before running: `conda activate {self.conda_env}`{gpu_section}
+- Activate before running: `conda activate {shlex.quote(self.conda_env)}`{gpu_section}
 
-Run scripts directly (e.g., `python train.py`). Do NOT use sbatch/srun.
+Run scripts from the project root (e.g., `{python} train.py`). Do NOT use sbatch/srun.
 Use `nohup` or background processes for long-running tasks.
 Save all results to the `results/` directory."""
 

@@ -572,10 +572,19 @@ class CompilerMixin:
 
     def _body_text_blocks(self, page):
         height = page.rect.height
+        width = page.rect.width
+
+        def margin_line_numbers(block):
+            if block[2] > width * 0.08 and block[0] < width * 0.92:
+                return False
+            lines = block[4].split()
+            return len(lines) >= 2 and all(line.isdecimal() for line in lines)
+
         return [
             block for block in page.get_text("blocks")
             if height * self._HEADER_BAND < block[3] < height * self._FOOTER_BAND
             and not (block[1] > height * 0.85 and block[4].strip().isdigit())
+            and not margin_line_numbers(block)
         ]
 
     def _column_adjust(self, doc, last_body_idx: int, ref_page_idx: int,

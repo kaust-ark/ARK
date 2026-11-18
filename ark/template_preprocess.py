@@ -63,7 +63,7 @@ def _active_command_regex(cmd: str) -> re.Pattern[str]:
     return re.compile(rf'^(?P<indent>[ \t]*)\\{cmd}\s*(?=\{{)', re.MULTILINE)
 
 
-def _find_matching_brace(src: str, open_pos: int) -> Optional[int]:
+def find_matching_brace(src: str, open_pos: int) -> Optional[int]:
     """Given ``src[open_pos] == '{'``, walk balanced braces and return the
     index of the matching ``}``.  Returns ``None`` if unbalanced.  Honours
     LaTeX escapes (``\\{`` / ``\\}``).
@@ -85,19 +85,19 @@ def _find_matching_brace(src: str, open_pos: int) -> Optional[int]:
     return i - 1 if depth == 0 else None
 
 
-def _clear_command_body(src: str, cmd: str, placeholder: str = "") -> tuple[str, Optional[str]]:
-    """Replace the body of the first active ``\\<cmd>{...}`` with ``placeholder``.
+def replace_command_argument(src: str, cmd: str, replacement: str) -> tuple[str, Optional[str]]:
+    """Replace the body of the first active ``\\<cmd>{...}`` with ``replacement``.
 
     Returns ``(new_src, original_body)`` where ``original_body`` is the text
     that was replaced (or ``None`` if the command wasn't found).
     """
     for m in _active_command_regex(cmd).finditer(src):
         brace_start = m.end()
-        close = _find_matching_brace(src, brace_start)
+        close = find_matching_brace(src, brace_start)
         if close is None:
             continue
         original = src[brace_start + 1:close]
-        new_src = src[:brace_start + 1] + placeholder + src[close:]
+        new_src = src[:brace_start + 1] + replacement + src[close:]
         return new_src, original
     return src, None
 
@@ -146,12 +146,12 @@ def sanitize_tex_metadata(src: str) -> tuple[str, dict]:
     """
     detected: dict = {}
 
-    new_src, title_was = _clear_command_body(src, "title", placeholder=_TITLE_SENTINEL)
+    new_src, title_was = replace_command_argument(src, "title", _TITLE_SENTINEL)
     if title_was is not None:
         detected["title_placeholder"] = title_was.strip()[:200]
         src = new_src
 
-    new_src, author_was = _clear_command_body(src, "author", placeholder="")
+    new_src, author_was = replace_command_argument(src, "author", "")
     if author_was is not None:
         # Author blocks can be long (authors + affiliations + emails).  Keep
         # just the first meaningful line for the manifest — the NeurIPS

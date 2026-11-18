@@ -253,6 +253,22 @@ def sync_stub(tmp_path):
 
 
 class TestSyncPaperMetadata:
+    @pytest.mark.parametrize("running", ["Paper Title", "Custom running head"])
+    def test_syncs_bundled_icml_title_and_preserves_custom_running_head(self, sync_stub, running):
+        template = Path(__file__).resolve().parents[2] / "venue_templates/icml/main.tex"
+        main_tex = sync_stub.latex_dir / "main.tex"
+        main_tex.write_text(template.read_text().replace(
+            r"\icmltitlerunning{Paper Title}", rf"\icmltitlerunning{{{running}}}"))
+        title = "Sensitivity to Feature Scaling: A Controlled Study of L-BFGS Stopping Across Data Splits"
+        sync_stub._sync_paper_metadata(title)
+        text = main_tex.read_text()
+        header = "Sensitivity to Feature Scaling" if running == "Paper Title" else running
+        assert rf"\icmltitle{{{title}}}" in text
+        assert rf"\icmltitlerunning{{{header}}}" in text
+        sync_stub._sync_paper_metadata("Changed title")
+        expected = "Changed title" if running == "Paper Title" else running
+        assert rf"\icmltitlerunning{{{expected}}}" in main_tex.read_text()
+
     def test_rewrites_main_tex_title(self, sync_stub):
         main_tex = sync_stub.latex_dir / "main.tex"
         main_tex.write_text(
@@ -404,3 +420,17 @@ class TestUpdateTitleEndToEnd:
         out = main_tex.read_text()
         assert f"\\title{{{committed}}}" in out
         assert "ARK Pending Title" not in out
+
+
+@pytest.mark.parametrize(("mode", "pages", "expect_adjustment"), [
+    ("strict", 4.06, True), ("strict", 3.9, False), ("relaxed", 4.06, False),
+])
+def test_edited_paper_checks_current_artifact_and_strict_overflow(mode, pages, expect_adjustment):
+    from ark.pipeline import PipelineMixin
+    paper = MagicMock()
+    paper.config = {"layout_mode": mode, "venue_pages": 4}
+    paper.compile_latex.return_value = True
+    paper._body_page_count = pages
+    PipelineMixin._compile_edited_paper(paper)
+    assert paper._enforce_page_count.called == expect_adjustment
+    paper._report_delivery_checks.assert_called_once()

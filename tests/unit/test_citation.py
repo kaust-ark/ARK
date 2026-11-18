@@ -45,6 +45,16 @@ class TestParseBib:
         assert entries[1]["key"] == "devlin2019bert"
         assert entries[1]["fields"]["year"] == "2019"
 
+    def test_adjacent_single_line_entries_and_nested_tex_title(self, tmp_path):
+        bib = tmp_path / "references.bib"
+        bib.write_text("% @misc{ignored, title={A comment}}\n"
+                       "@misc{wine, title={Wine}, year={1992}}\n"
+                       "@article{skl, title={Machine Learning in {Python}}, year={2011}}\n")
+        entries = parse_bib(str(bib))
+        assert [(e["key"], e["fields"]["title"]) for e in entries] == [
+            ("wine", "Wine"), ("skl", "Machine Learning in {Python}")]
+        assert entries[0]["raw"].endswith("1992}}")
+
     def test_empty_file(self, tmp_path):
         bib = tmp_path / "empty.bib"
         bib.write_text("% just a comment\n")
@@ -229,6 +239,8 @@ class TestFixBib:
             original_bibtex=raw.strip(), details="Not found",
         )]
         fix_bib(str(bib), results)
+        fix_bib(str(bib), results)
+        assert bib.read_text().count("% [NEEDS-CHECK") == 1
         content = bib.read_text()
         assert "NEEDS-CHECK" in content
 
@@ -305,3 +317,28 @@ class TestSamePaperAuthorCheck:
                                           ("Huang, Lei", "Lei Hung"), ("Smith, John", "John Doe")])
     def test_a_different_person_is_still_vetoed(self, bib, api):
         assert self._pick(bib, [api]) is None
+
+
+def test_bootstrap_reuses_complete_existing_paper_without_adding_placeholder(tmp_path, monkeypatch):
+    from ark import citation
+    import yaml
+
+    bib = tmp_path / "references.bib"
+    existing = ("@article{pedregosa2011, title={Scikit-learn: Machine Learning in {Python}}, "
+                "author={Pedregosa, Fabian and Others}, year={2011}, journal={JMLR}}\n")
+    bib.write_text(existing)
+    literature = tmp_path / "literature.yaml"
+    searched = []
+    monkeypatch.setattr(citation, "_search_by_title", lambda title: searched.append(title))
+    kwargs = dict(titles=["Scikit-learn: Machine Learning in Python"], bib_path=str(bib),
+                  literature_path=str(literature), authors=["Pedregosa"], years=[2011])
+    for _ in range(2):
+        assert not citation.bootstrap_citations(**kwargs).needs_check
+    assert not searched
+    assert bib.read_text() == existing
+    refs = yaml.safe_load(literature.read_text())["references"]
+    assert [(r["bibtex_key"], r["source"]) for r in refs] == [
+        ("pedregosa2011", "existing bibliography")]
+    kwargs["authors"] = ["Different"]
+    assert citation.bootstrap_citations(**kwargs).needs_check == kwargs["titles"]
+    assert searched

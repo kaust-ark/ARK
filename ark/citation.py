@@ -22,6 +22,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional
 
+from ark.template_preprocess import find_matching_brace
+
 
 # ═══════════════════════════════════════════════════════════
 #  Data structures
@@ -1049,6 +1051,20 @@ def fetch_bibtex(paper: Paper) -> str | None:
 #  BibTeX parsing
 # ═══════════════════════════════════════════════════════════
 
+def bib_entry_spans(content: str):
+    """Yield complete brace-delimited BibTeX records, including single-line entries."""
+    header = re.compile(r"@\w+\s*\{")
+    pos = 0
+    while match := header.search(content, pos):
+        pos = match.end()
+        if content[content.rfind("\n", 0, match.start()) + 1:match.start()].lstrip().startswith("%"):
+            continue
+        closing = find_matching_brace(content, match.end() - 1)
+        if closing is not None:
+            yield match.start(), closing + 1
+            pos = closing + 1
+
+
 def parse_bib(bib_path: str) -> list[dict]:
     """Parse a .bib file into a list of entry dicts.
 
@@ -1058,17 +1074,14 @@ def parse_bib(bib_path: str) -> list[dict]:
     content = Path(bib_path).read_text(errors="replace")
     entries = []
 
-    # Match complete BibTeX entries: @type{key, ... }
-    # We track position to capture preceding comments
-    pattern = re.compile(
-        r"(@\w+\s*\{)([^,\s]+)\s*,\s*(.*?)\n\}",
-        re.DOTALL,
-    )
-
-    for match in pattern.finditer(content):
-        entry_type_raw = match.group(1).strip().lstrip("@").rstrip("{").strip().lower()
-        entry_key = match.group(2).strip()
-        body = match.group(3)
+    for start, end in bib_entry_spans(content):
+        raw = content[start:end]
+        header = re.match(r"@(\w+)\s*\{\s*([^,\s}]+)\s*,", raw)
+        if not header:
+            continue
+        entry_type_raw = header[1].lower()
+        entry_key = header[2]
+        body = raw[header.end():-1]
 
         # Extract fields
         fields = {}
@@ -1082,7 +1095,6 @@ def parse_bib(bib_path: str) -> list[dict]:
             fields[fname] = fval.strip() if fval else ""
 
         # Capture preceding comments (lines starting with %)
-        start = match.start()
         preceding = ""
         lines_before = content[:start].split("\n")
         comment_lines = []
@@ -1100,7 +1112,7 @@ def parse_bib(bib_path: str) -> list[dict]:
             "key": entry_key,
             "entry_type": entry_type_raw,
             "fields": fields,
-            "raw": match.group(0),
+            "raw": raw,
             "preceding_comments": preceding,
         })
 
@@ -1332,7 +1344,7 @@ def fix_bib(bib_path: str, results: list[VerificationResult]) -> None:
             # made it ugly red text). The leading comment is invisible to
             # LaTeX but parseable by us.
             marker = "% [NEEDS-CHECK: citation not verified]\n"
-            if not r.original_bibtex.lstrip().startswith("% [NEEDS-CHECK"):
+            if marker + r.original_bibtex not in content and not r.original_bibtex.lstrip().startswith("% [NEEDS-CHECK"):
                 content = content.replace(
                     r.original_bibtex, marker + r.original_bibtex,
                 )
@@ -1806,10 +1818,12 @@ def update_literature_yaml(literature_path: str, papers: list[Paper],
     if "references" not in data:
         data["references"] = []
 
-    existing_titles = {r.get("title", "").lower() for r in data["references"] if isinstance(r, dict)}
+    refs = [r for r in data["references"] if isinstance(r, dict)]
+    existing_titles = {r.get("title", "").lower() for r in refs}
+    existing_keys = {r.get("bibtex_key") for r in refs}
 
     for idx, (paper, key) in enumerate(zip(papers, cite_keys)):
-        if paper.title.lower() in existing_titles:
+        if key in existing_keys or paper.title.lower() in existing_titles:
             continue
         ctx = (contexts[idx] if contexts and idx < len(contexts) else "") or ""
         entry = {
@@ -1818,7 +1832,8 @@ def update_literature_yaml(literature_path: str, papers: list[Paper],
             "year": paper.year,
             "venue": paper.venue,
             "bibtex_key": key,
-            "source": f"API ({', '.join(paper.confirmed_by)})",
+            "source": (paper.source if paper.source == "existing bibliography"
+                       else f"API ({', '.join(paper.confirmed_by)})"),
             "added_date": datetime.now().strftime("%Y-%m-%d"),
         }
         if paper.abstract:
@@ -1932,9 +1947,38 @@ def bootstrap_citations(
     needs_check_years = []
     needs_check_contexts = []
 
+    # A verified-looking remote hit can have a different key, and an outage
+    # can yield a placeholder for a complete source already in the manuscript.
+    # Reuse only a full bibliographic record with the same title, author and year.
+    local_sources = {}
+    if Path(bib_path).is_file():
+        for entry in parse_bib(bib_path):
+            fields = entry["fields"]
+            venue = next((fields[k] for k in ("journal", "booktitle", "publisher", "doi")
+                          if fields.get(k)), "")
+            if not venue or "[NEEDS-CHECK]" in entry["preceding_comments"]:
+                continue
+            names = fields.get("author", "").split(" and ")
+            year = _as_year(fields.get("year"))
+            title = fields.get("title", "")
+            identity = (_normalize_title(title), _first_author_surname(names), year)
+            if all(identity):
+                local_sources[identity] = (entry["key"], Paper(
+                    title=title, authors=names, year=year, venue=venue,
+                    bibtex=entry["raw"], source="existing bibliography"))
+
     for i, title in enumerate(titles):
         title = title.strip()
         if not title:
+            continue
+
+        author = authors[i] if authors and i < len(authors) else ""
+        year = years[i] if years and i < len(years) else 0
+        identity = (_normalize_title(title), _first_author_surname([author or ""]), _as_year(year))
+        if identity in local_sources:
+            key, paper = local_sources[identity]
+            ctx = contexts[i] if contexts and i < len(contexts) else ""
+            update_literature_yaml(literature_path, [paper], [key], "", contexts=[ctx])
             continue
 
         query = (search_queries[i] if search_queries and i < len(search_queries) else title).strip()

@@ -67,3 +67,44 @@ def test_agent_is_told_when_inline_execution_is_acceptable(tmp_path):
     text = _compute(tmp_path).get_agent_instructions()
     assert "inline" in text
     assert "findings" in text        # the choice must be recorded
+
+
+def test_worker_command_reaches_research_and_cached_experiment_prompt(
+        mock_integration_project, monkeypatch):
+    """Regression for a context/specialization that copied the controller's Python."""
+    from unittest.mock import Mock
+    from ark import engines
+
+    orchestrator, _ = mock_integration_project
+    project = orchestrator.code_dir
+    (project / "sandbox").mkdir()
+    (project / "sandbox" / "run.sh").touch()
+    _make_project_env(project)
+    backend = _compute(project, {"type": "slurm", "conda_env": "shared-controller"})
+    orchestrator._compute_backend = backend
+    monkeypatch.setattr(backend, "_is_rocs_testbed", lambda: True)
+    monkeypatch.setattr("ark.sandbox.structural_sandbox_status", lambda: (False, ""))
+    worker = "./sandbox/run.sh .conda_env/bin/python"
+    assert worker + " scripts/train.py" in backend.get_agent_instructions()
+
+    legacy = "## Project-Specific Knowledge\nUse /controller/bin/python"
+    (orchestrator.agents_dir / "experimenter.prompt").write_text(legacy)
+    runner = Mock()
+    runner.execute.return_value = (0, "", "", 1, False)
+    runner.parse_output.return_value = {"result": "done", "usage": None}
+    monkeypatch.setattr(engines, "get_cli_for_model", lambda *args, **kwargs: runner)
+    for role, task in [("researcher", "Generate project_context.md"),
+                       ("researcher", "Specialize the experimenter's prompt"),
+                       ("experimenter", "Execute the plan")]:
+        orchestrator.run_agent(role, task)
+        prompt = runner.execute.call_args.kwargs["prompt"]
+        assert worker + " -B -c" in prompt
+        assert "inside the experiment's Slurm allocation" in prompt
+        assert "older project context or specialized prompt" in prompt
+        if role == "experimenter":
+            assert prompt.index(legacy) < prompt.index(worker)
+
+    orchestrator.run_agent("experimenter", "Continue", interrupted_session="prior",
+                           resume_instructions="Do not resubmit a job.")
+    assert "Do not resubmit a job." in runner.resume_instructions
+    assert worker + " -B -c" in runner.resume_instructions

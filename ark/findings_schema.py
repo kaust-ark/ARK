@@ -698,7 +698,9 @@ def _check_numeric_prediction(check, project_root, *, derived):
                              f"{approximation}{display}, but the claim reports {check['predicted']}.")
         return "block", (f"Recomputed {operation} gives {approximation}{display} "
                          f"but the claim reports {check['predicted']}. "
-                         f"Reference {check['reference_source']}, treatment {check['treatment_source']}.")
+                         f"Reference {check['reference_source']}, treatment {check['treatment_source']}. "
+                         "For a floating-point aggregate, state the comparison at a meaningful "
+                         "precision and use decimal_places, or cite the stored statistic directly.")
     return None
 
 

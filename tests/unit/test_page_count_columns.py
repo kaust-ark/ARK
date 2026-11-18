@@ -64,6 +64,12 @@ def compiler():
 # ── _is_two_column_doc ───────────────────────────────────────────────
 
 
+def test_review_line_numbers_do_not_fill_an_empty_column(compiler):
+    gutter = (25, 69, 40, 724, "165\n166\n167\n")
+    body = (55, 88, 291, 260, "Conclusion")
+    assert compiler._body_text_blocks(_stub_page([gutter, body])) == [body]
+
+
 def test_is_two_column_detects_2col_layout(compiler):
     # Sample (page index 1) has content in both halves of the page.
     sample = _stub_page([

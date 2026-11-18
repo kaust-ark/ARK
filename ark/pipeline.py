@@ -623,26 +623,7 @@ class PipelineMixin:
                                "is incomplete.")
             self.log("Delivery blocked: unresolved citations after backfill+prune", "ERROR")
 
-        # Delivery contract (observe-only v1): the gates above FIX; this
-        # VERIFIES their outcome on the final artifacts and persists a report.
-        # Violations are surfaced (log + chat), never blocking — enforcement
-        # comes after fleet reports establish the false-positive rate.
-        try:
-            from ark.delivery_contract import evaluate, write_report
-            _dr = evaluate(Path(self.code_dir),
-                           venue_pages=int(self.config.get("venue_pages") or 0))
-            write_report(Path(self.code_dir), _dr)
-            if _dr.violations:
-                _summary = "; ".join(f"{f.check}: {f.detail}" for f in _dr.violations)
-                self.log(f"Delivery contract: {len(_dr.hard_violations)} hard / "
-                         f"{len(_dr.violations)} total violation(s) — {_summary[:300]}", "WARN")
-                self._chat("agent",
-                           f"⚠ Delivery checks flagged {len(_dr.violations)} issue(s): "
-                           f"{_summary[:200]}", kind="notice")
-            else:
-                self.log("Delivery contract: all checks passed", "INFO")
-        except Exception as _e:
-            self.log(f"Delivery contract evaluation failed (non-fatal): {_e}", "WARN")
+        self._report_delivery_checks()
 
         self.send_iteration_summary(score, current_score, review_output)
         if not post_accept_cleanup: self._check_smart_intervention(score, current_score, review_output, True)
@@ -1286,6 +1267,8 @@ to verify:
 
 Write `auto_research/state/project_context.md` with sections:
 ## External Systems, ## Environment Setup, ## Experiment Guidance, ## Credentials & Access
+For Environment Setup, record the experiment worker command and identify which
+package versions were actually verified there. Keep pending worker checks explicit.
 
 ## Idea Assessment (grounded in the literature above — advisory, NEVER refuse to write)
 Append these sections to project_context.md. The goal is to SHARPEN the project,
@@ -1774,7 +1757,9 @@ for this specific project.
 Use Read to load `auto_research/state/project_context.md` in full. It has
 the verified external systems, install commands, environment setup, and
 experiment guidance for this project. Ground the specialization section
-in what that file actually says — do not guess.
+in what that file actually says — do not guess. For Python commands and package
+versions, apply the current experiment worker instructions. Carry pending worker
+checks forward without presenting them as verified.
 
 ## Focus Areas for {agent_name}
 {focus}
@@ -1908,7 +1893,7 @@ in what that file actually says — do not guess.
                     new_src = latex_utils.replace_latex_title(src, title)
                     if new_src != src:
                         main_tex.write_text(new_src)
-                        self.log(f"Synced \\title{{}} in main.tex → {title}", "INFO")
+                        self.log(f"Synced paper title in main.tex → {title}", "INFO")
             except Exception as e:
                 self.log(f"Failed to sync main.tex title: {e}", "WARN")
 
@@ -2054,41 +2039,9 @@ in what that file actually says — do not guess.
         nested braces (e.g., titles like ``{The {ACL} 2026 Special
         Theme}``). Walk the brace structure manually instead.
         """
-        out: list[str] = []
-        i = 0
-        n = len(text)
-        while i < n:
-            # find next @
-            at = text.find("@", i)
-            if at < 0:
-                break
-            # entry must look like @ident{ — guard against @-in-title
-            j = at + 1
-            while j < n and (text[j].isalnum() or text[j] == "_"):
-                j += 1
-            # skip whitespace then expect {
-            k = j
-            while k < n and text[k] in " \t":
-                k += 1
-            if k >= n or text[k] != "{":
-                i = at + 1
-                continue
-            depth = 1
-            p = k + 1
-            while p < n and depth > 0:
-                ch = text[p]
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                p += 1
-            if depth == 0:
-                out.append(text[at:p])
-                i = p
-            else:
-                # unbalanced — bail on this entry, advance past @
-                i = at + 1
-        return out
+        from ark.citation import bib_entry_spans
+
+        return [text[start:end] for start, end in bib_entry_spans(text)]
 
     def _deep_research_route(self, or_key: str, gem_key: str):
         """``(use_openrouter, use_gemini, spent_balance)`` for Deep Research.
@@ -3079,7 +3032,7 @@ Analyze ALL experiment results from this dev iteration.
 ## Source Material (MANDATORY — Read before analyzing)
 - `auto_research/state/experiment_plan.yaml` — what the plan claimed would run
 - every file under `results/` — actual experiment outputs (use Glob + Read)
-- `auto_research/state/findings.yaml` — accumulated prior findings (if any)
+- If `auto_research/state/findings.json` exists, read it before updating it. For an older project with only `findings.yaml`, read that instead.
 
 Use Read/Glob to inspect the result files directly. Do NOT rely on a
 summary — verify each experiment's outputs against the plan.
@@ -3182,7 +3135,12 @@ single raw scalar. For directly comparable raw scalars, use reference_source,
 treatment_source and operation: difference (treatment minus reference), ratio
 (treatment / reference), or relative_change_pct (100 * difference / reference).
 Sources are results/file.json#/field JSON Pointers. A reported reduction has negative
-relative_change_pct. decimal_places applies only to an explicitly rounded claim.
+relative_change_pct. For floating-point means, subtracting two stored arm means can
+differ in the last digits from the mean of paired differences. Write the derived
+claim and predicted value at the precision meaningful for the finding (e.g. a
+difference of 0.07544 with decimal_places=5). If the finding instead reports
+the full scalar saved for the paired statistic, check it with observed_source.
+Keep the original units. decimal_places applies only to an explicitly rounded claim.
 If no check fits, use []; give the calculation or missing observation in words.
 A clear contradiction is sufficient to return a decision immediately."""
         task = f"""
@@ -3295,6 +3253,8 @@ now. Do not modify files, submit jobs or design additional studies.
 {req_summary}
 
 ## Available Figures (already generated — DO NOT recreate these)
+For every caption, compare the printed axis/legend labels and the plotting script with the
+quantity and units you describe. If the required display is missing, identify which plot needs repair.
 {figure_list}
 
 **CRITICAL**: The figures above are already generated. Use \\includegraphics to include them.
@@ -3320,6 +3280,8 @@ now. Do not modify files, submit jobs or design additional studies.
 - Belongs in body: problem, core method, headline results, primary ablation, key analysis, **and FIGURES** (method/result/concept figures)
 - **Figures stay in the body.** Never move a figure to the appendix just to meet the page limit — condense prose or move detailed text/tables there instead. A figure relegated to the appendix to save space usually should not have been generated. Only genuinely supplementary figures (extra examples beyond the main results) may go to the appendix.
 - The body-page limit excludes `\\appendix` — prefer appendix over cutting body when supplementary material is worth keeping
+- Keep appendix tables near the protocol they support. If wide floats leave a nearly empty
+  appendix page, use the venue's supported appendix layout and compile again.
 - Do NOT create an empty or single-paragraph appendix just to have one
 
 ### 3. Data integrity
@@ -3872,7 +3834,10 @@ The script must be self-contained and runnable with: python {script_rel}
 ## Source Material (MANDATORY — Read before writing)
 - `{results_rel}/` — raw experiment result files (use Glob + Read on each one)
 - `auto_research/state/findings.yaml` — accumulated findings summary
-- `auto_research/state/experiment_plan.yaml` — what the experiments were supposed to measure
+- `auto_research/state/experiment_plan.yaml` — planned comparisons, pairing and stopping rules
+- `auto_research/state/paper_requirements.yaml`, when present — requested quantities and displays
+- Existing plots in results/ and their generating scripts — reuse the measured series and their
+  definitions when preparing publication-sized versions.
 
 Files currently present in `{results_rel}/`:
 {chr(10).join(f'- {f}' for f in result_files)}
@@ -3913,11 +3878,12 @@ Only use double_column for multi-panel figures (side-by-side subplots).
 
 ## Requirements:
 1. Load figure_config.json as shown above — do NOT hardcode dimensions
-2. Generate at least 2 statistical figures:
-   a) Main results comparison (bar chart or horizontal bar chart)
-   b) Ablation or analysis chart (grouped bars, line chart, or heatmap)
+2. Plot the quantities specified in the paper requirements and experiment plan. Choose two
+   complementary views when the evidence supports them. Preserve paired comparisons as paired
+   observations. Show censoring and distinguish it from observed endpoints. Use an ablation
+   label only for an experiment that actually removes or varies a component.
 3. Save each figure as BOTH PDF and PNG to {figures_dir}/
-4. Name figures descriptively: fig_main_results.pdf, fig_ablation.pdf, etc.
+4. Give each file a descriptive name that identifies the measured quantity.
 
 ## ❌ HARD RULE: NO FIGURE TITLES INSIDE THE PLOT
 LaTeX `\\caption{{}}` is the **single source of truth** for the figure's
@@ -3953,8 +3919,9 @@ provide the title.
 - constrained_layout=True on all figures
 - DPI 300, sans-serif fonts exclusively
 - Light dashed grid lines behind data
-- Error bars with caps where applicable
-- Bold font for "Ours" method labels
+- Error bars with caps where applicable. Keep legends clear of all data, including capped
+  points and error bars. Place a legend outside the axes when a panel lacks empty space.
+- Use the experimental arm names. Attribute established methods by name.
 """, timeout=defaults.TIMEOUT_INITIALIZER)
 
         if script_path.exists():
@@ -4053,9 +4020,15 @@ provide the title.
                 if what:
                     overprint = f"; ⚠ {what} — REGENERATE with room for them"
 
+            labels = ""
+            if f.suffix == ".pdf" and not is_ai:
+                from ark.figure_legibility import printed_labels
+                labels = printed_labels(f)
+                if labels:
+                    labels = f"; printed labels: {labels}"
             lines.append(
                 f"- {f.name} ({size_kb}KB, {tag_prefix}; "
-                f"placement={placement} → use {latex_env}; {scale_note}{overprint})"
+                f"placement={placement} → use {latex_env}; {scale_note}{labels}{overprint})"
             )
 
         if missing_ai_figs:
@@ -4575,6 +4548,38 @@ provide the title.
         self._chat("agent", ans[:3000] if ans else "I couldn't find a clear answer in the files.",
                    kind="message")
 
+    def _report_delivery_checks(self):
+        # Delivery contract (observe-only v1): the gates above FIX; this
+        # VERIFIES their outcome on the final artifacts and persists a report.
+        # Violations are surfaced (log + chat), never blocking — enforcement
+        # comes after fleet reports establish the false-positive rate.
+        try:
+            from ark.delivery_contract import evaluate, write_report
+            _dr = evaluate(Path(self.code_dir),
+                           venue_pages=int(self.config.get("venue_pages") or 0))
+            write_report(Path(self.code_dir), _dr)
+            if _dr.violations:
+                _summary = "; ".join(f"{f.check}: {f.detail}" for f in _dr.violations)
+                self.log(f"Delivery contract: {len(_dr.hard_violations)} hard / "
+                         f"{len(_dr.violations)} total violation(s) — {_summary[:300]}", "WARN")
+                self._chat("agent",
+                           f"⚠ Delivery checks flagged {len(_dr.violations)} issue(s): "
+                           f"{_summary[:200]}", kind="notice")
+            else:
+                self.log("Delivery contract: all checks passed", "INFO")
+        except Exception as _e:
+            self.log(f"Delivery contract evaluation failed (non-fatal): {_e}", "WARN")
+
+    def _compile_edited_paper(self):
+        self._ensure_clearpage_before_bibliography()
+        if not self.compile_latex():
+            raise RuntimeError("The edited paper failed to compile. Check the LaTeX build log.")
+        limit = self.config.get("venue_pages")
+        if (self.config.get("layout_mode") == "strict" and limit
+                and self._body_page_count > int(limit)):
+            self._enforce_page_count(context="after requested edit")
+        self._report_delivery_checks()
+
     def _apply_edit(self, instruction: str):
         """One focused writer/coder pass + recompile."""
         figure_words = ("figure", "plot", "chart", "diagram", "axis", "axes", "fig ",
@@ -4595,8 +4600,7 @@ provide the title.
                     f"include). Keep it focused — do not rewrite unrelated sections, do not "
                     f"alter figure/table data. Ensure it still compiles afterward.")
         self.run_agent(agent, task, timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
-        self._ensure_clearpage_before_bibliography()
-        self.compile_latex()
+        self._compile_edited_paper()
 
     def _apply_experiment(self, instruction: str):
         """Scoped experiment: run it for real → regen figures → fold into the paper."""
@@ -4619,8 +4623,7 @@ provide the title.
                         f"results/ files (figure-integrity skill). Keep edits focused on this "
                         f"experiment; don't rewrite unrelated sections."),
                        timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
-        self._ensure_clearpage_before_bibliography()
-        self.compile_latex()
+        self._compile_edited_paper()
 
     def run(self, *, dsh_workflow=False):
         """Run the workflow and maintain the worker lifecycle."""

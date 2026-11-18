@@ -45,6 +45,7 @@ def main():
     name = a.name or root.name
     idea = read_test_idea()
     config = {
+        "auto_github_remote": False,
         "project": name, "title": "Test run", "idea": idea,
         "venue": "ACM SIGPLAN", "venue_format": a.venue_format, "venue_pages": a.pages,
         "layout_mode": "balanced", "mode": "paper", "model": a.model, "model_variant": "",

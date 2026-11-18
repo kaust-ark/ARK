@@ -664,3 +664,41 @@ def test_a_cut_short_evidence_index_is_skipped_not_passed(tmp_path):
     assert f not in evaluate(p).violations
     assert "CUT SHORT" in f.detail
 
+
+
+def test_icml_rendered_author_error_is_a_hard_failure(tmp_path):
+    p = _project(tmp_path, GOOD_TEX,
+                 GOOD_PDF_TEXT + r" Country.AUTHORERR: Missing \icmlcorrespondingauthor.")
+    assert any(f.check == "author_metadata" for f in evaluate(p).hard_violations)
+
+
+@pytest.mark.parametrize("missing_contact", [False, True])
+def test_bundled_icml_blind_review_author_footnote(tmp_path, missing_contact, monkeypatch):
+    import shutil
+    import subprocess
+
+    pdflatex = shutil.which("pdflatex")
+    if pdflatex is None:
+        pytest.skip("pdflatex is required to render the official ICML style")
+
+    paper = tmp_path / "paper"
+    template = Path(__file__).resolve().parents[2] / "venue_templates" / "icml"
+    shutil.copytree(template, paper)
+    main = paper / "main.tex"
+    tex = main.read_text().replace("Abstract text goes here.", _BODY)
+    if missing_contact:
+        tex = "\n".join(line for line in tex.splitlines()
+                        if not line.startswith(r"\icmlcorrespondingauthor{"))
+    main.write_text(tex)
+    subprocess.run([pdflatex, "-halt-on-error", "-interaction=batchmode", "main.tex"],
+                   cwd=paper, check=True, stdout=subprocess.PIPE, timeout=30)
+    # The one-page smoke fixture embeds fewer fonts than a full manuscript.
+    monkeypatch.setattr("ark.delivery_contract.MIN_PDF_BYTES", 0)
+    report = evaluate(tmp_path)
+    author = next(f for f in report.findings if f.check == "author_metadata")
+    assert author.status == ("violated" if missing_contact else "pass")
+    with fitz.open(paper / "main.pdf") as pdf:
+        text = " ".join(pdf[0].get_text().split())
+    if not missing_contact:
+        assert "Correspondence to: Anonymous Author" in text
+        assert "anonymous@example.org" not in text

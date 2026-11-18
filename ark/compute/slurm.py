@@ -143,6 +143,8 @@ class SlurmBackend(ComputeBackend):
                 / "skills" / "library" / "hpc"
                 / "rocs-testbed-slurm" / "SKILL.md"
             )
+            from ark.sandbox import project_python_command
+            python = project_python_command(self.code_dir, "python")
             cluster_section = f"""
 
 ## Cluster: SANDS Lab ROCS Testbed (KAUST)
@@ -184,7 +186,7 @@ iteration to exactly this mistake.
 set -e
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "{self.conda_env}"
-python scripts/train.py
+{python} scripts/train.py
 ```
 
 **QoS caps (normal):** A100=2, V100=8 concurrent. For jobs >3 days

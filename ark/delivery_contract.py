@@ -226,6 +226,15 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
             "disclosure_present", "violated", "hard",
             "required Idea2Paper disclosure absent from the rendered PDF"))
 
+    # ICML emits these diagnostics as ordinary footnote text; TeX succeeds.
+    if "AUTHORERR:" in text_nows:
+        rep.findings.append(Finding(
+            "author_metadata", "violated", "hard",
+            "ICML printed AUTHORERR in the PDF. Check the author, affiliation "
+            "and corresponding-author declarations in main.tex."))
+    else:
+        rep.findings.append(Finding("author_metadata", "pass", "hard"))
+
     # ── citations resolved ────────────────────────────────────────────────
     n_unresolved = len(_UNRESOLVED_CITE_RE.findall(text))
     if n_unresolved:

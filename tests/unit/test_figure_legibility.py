@@ -17,7 +17,7 @@ import pytest
 
 fitz = pytest.importorskip("fitz")
 
-from ark.figure_legibility import OVERLAP_RATIO, clipped, collisions, describe
+from ark.figure_legibility import OVERLAP_RATIO, clipped, collisions, describe, printed_labels
 
 
 def _figure(path: Path, labels, rotate=0):
@@ -29,6 +29,19 @@ def _figure(path: Path, labels, rotate=0):
     doc.save(str(path))
     doc.close()
     return path
+
+
+def test_writer_sees_the_quantity_printed_by_each_chart(tmp_path):
+    accuracy = _figure(tmp_path / "main.pdf", [("Acc. (%)", 30, 85), ("100", 70, 90)])
+    steps = _figure(tmp_path / "ablation.pdf", [("Iter. (log)", 30, 85)])
+    assert printed_labels(accuracy) == "Acc. (%)"
+    assert printed_labels(steps) == "Iter. (log)"
+
+
+def test_subpixel_glyph_advance_is_not_overprinted_text(tmp_path):
+    width = fitz.get_text_length("-", fontsize=9)
+    f = _figure(tmp_path / "seed-range.pdf", [("-", 40, 90), ("4)", 40 + width - .004, 90)])
+    assert collisions(f) == []
 
 
 def test_two_tick_labels_drawn_on_top_of_each_other_are_caught(tmp_path):

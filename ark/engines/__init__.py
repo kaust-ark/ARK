@@ -728,7 +728,7 @@ Instead:
 - To check file contents: use `cat file` or `head -n 50 file` (NOT `tail -f`)
 - To monitor jobs: use `squeue` once (NOT `watch squeue`)
 - To wait for results: just exit — the system handles waiting automatically
-- To run scripts: use `python script.py` (NOT interactive `python`)
+- To run scripts, pass the filename to the interpreter specified for the task.
 
 ## Current Task
 
@@ -752,12 +752,22 @@ Instead:
                 "Never `echo` a secret or write it into a file.\n"
             )
 
+        from ark.compute import (ComputeBackend, LocalBackend, SlurmBackend,
+                                 worker_environment_instructions)
+        backend = getattr(self, "_compute_backend", None)
+        worker_guide = ""
+        worker_roles = ("researcher", "experimenter", "coder")
+        if agent_type in worker_roles and isinstance(backend, ComputeBackend):
+            worker_guide = worker_environment_instructions(backend)
+            full_prompt += "\n\n" + worker_guide
+
         # Experiment sandbox — route agent-generated experiment execution through
         # Apptainer (isolated from the host). No-op unless the base image exists.
-        if agent_type in ("experimenter", "coder"):
+        if agent_type in ("experimenter", "coder") and (
+                backend is None or isinstance(backend, (LocalBackend, SlurmBackend))):
             try:
                 from ark.sandbox import experimenter_directive
-                full_prompt += experimenter_directive()
+                full_prompt += experimenter_directive(self.code_dir)
             except Exception:
                 pass
             # Shared-env protection — ALWAYS on, sandbox or not. A project's
@@ -774,6 +784,11 @@ Instead:
                 "runs. If `.conda_env` is missing, report it instead of "
                 "falling back to a shared env.\n"
             )
+
+        elif agent_type in ("experimenter", "coder"):
+            full_prompt += ("\nInstall dependencies only in this project's isolated environment "
+                            "on the configured experiment worker. Never modify a shared "
+                            "controller or worker environment.\n")
 
         # Brief task description for logging
         task_brief = task.split("\n")[0][:50].strip()
@@ -821,7 +836,8 @@ Instead:
                 if session_checkpoint is not None and getattr(cli_runner, "supports_resume", False):
                     cli_runner.session_checkpoint = session_checkpoint
                 if interrupted_session and getattr(cli_runner, "supports_resume", False):
-                    cli_runner.resume_instructions = resume_instructions
+                    cli_runner.resume_instructions = "\n\n".join(
+                        part for part in (resume_instructions, worker_guide) if part)
                 timer.start()
 
                 # Live step log + intervention sandbox. No-op unless the

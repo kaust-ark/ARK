@@ -17,6 +17,40 @@ INVALID_COMPUTE_MATRIX = frozenset({
 })
 
 
+def worker_environment_instructions(backend: ComputeBackend) -> str:
+    """Describe where a researcher can verify experiment dependencies before setup."""
+    if isinstance(backend, (LocalBackend, SlurmBackend)):
+        from ark.sandbox import project_python_command
+
+        python = project_python_command(backend.code_dir, ".conda_env/bin/python")
+        location = ("inside the experiment's Slurm allocation" if isinstance(backend, SlurmBackend)
+                    else "on the local experiment worker")
+        probe = (
+            f"From the project root {location}, verify the interpreter with "
+            f"`{python} -B -c 'import sys; print(sys.version, sys.prefix)'`. Use the same command "
+            "prefix for package imports, version checks, and experiment scripts. "
+            "Record the project-relative command. A sandbox helper reporting NO isolation "
+            "does not verify a container run."
+        )
+    elif isinstance(backend, CustomBackend):
+        probe = ("Read the custom experiment backend instructions in config.yaml. "
+                 "Use the worker and environment specified there.")
+    else:
+        # SkyPilot provisions the experiment cluster later, during setup().
+        probe = (f"Once the SkyPilot worker is ready, connect via `ssh {backend.cluster_name}` "
+                 f"and check the configured environment `{backend.conda_env}` on that worker.")
+
+    return (
+        "## Experiment worker environment\n"
+        f"{probe} If the worker or its project environment is unavailable, mark versions "
+        "unverified and leave the probe for experiment setup. Never launch a worker just "
+        "to write project context or specialize a prompt. The researcher's shell, PATH, "
+        "sys.executable and installed packages do not establish the worker environment. "
+        "Use this worker guidance even if an older project context or specialized prompt "
+        "names another Python."
+    )
+
+
 def validate_config(config: dict):
     """Validate the Layer-2 × Layer-1 compute backend combination (Phase 4)."""
     orch_config = config.get("orchestrator_compute_backend", {"type": "local"})

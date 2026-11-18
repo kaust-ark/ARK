@@ -171,3 +171,39 @@ class TestLocalInstructionsMatchTheExecutionReality:
                    side_effect=RuntimeError("boom")):
             text = self._backend().get_agent_instructions()
         assert "conda activate ark-base" in text
+
+
+@pytest.mark.parametrize("structural,helper,expected", [
+    (False, True, "./sandbox/run.sh .conda_env/bin/python"),
+    (True, True, ".conda_env/bin/python"),
+    (False, False, ".conda_env/bin/python"),
+])
+def test_local_worker_probe_uses_provisioned_project_env(tmp_path, monkeypatch, structural, helper, expected):
+    from ark.compute import from_config, worker_environment_instructions
+
+    (tmp_path / ".conda_env" / "conda-meta").mkdir(parents=True)
+    if helper:
+        (tmp_path / "sandbox").mkdir()
+        (tmp_path / "sandbox" / "run.sh").touch()
+    monkeypatch.setattr("ark.sandbox.structural_sandbox_status", lambda: (structural, ""))
+    backend = from_config({"compute_backend": {"type": "local", "conda_env": "shared-base"}}, "project", tmp_path)
+    assert backend.conda_env == str(tmp_path / ".conda_env")
+    prompt = worker_environment_instructions(backend)
+    assert f"`{expected} -B -c" in prompt
+    if structural or not helper:
+        assert "sandbox/run.sh" not in prompt
+
+
+@pytest.mark.parametrize("settings,route", [
+    ({"type": "skypilot", "cluster_name": "gpu-qa", "conda_env": "evaluation"}, "ssh gpu-qa"),
+    ({"type": "custom", "instructions": "use custom worker"}, "custom"),
+])
+def test_remote_worker_probe_does_not_assume_controller_paths(tmp_path, settings, route):
+    from ark.compute import from_config, worker_environment_instructions
+
+    (tmp_path / "sandbox").mkdir()
+    (tmp_path / "sandbox" / "run.sh").touch()
+    backend = from_config({"experiment_compute_backend": settings}, "project", tmp_path)
+    text = worker_environment_instructions(backend)
+    assert route in text and "unverified" in text
+    assert "sandbox/run.sh" not in text and ".conda_env/bin/python" not in text

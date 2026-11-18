@@ -228,7 +228,19 @@ def write_sandbox_helper(code_dir) -> Optional[Path]:
     return helper
 
 
-def experimenter_directive() -> str:
+def project_python_command(code_dir: Path, fallback: str) -> str:
+    """Command to run from the project root in the experiment worker."""
+    python = ".conda_env/bin/python"
+    if (code_dir / "sandbox" / "run.sh").is_file():
+        if not structural_sandbox_status()[0]:
+            return f"./sandbox/run.sh {python}"
+        return python
+    if (code_dir / ".conda_env" / "conda-meta").is_dir():
+        return python
+    return fallback
+
+
+def experimenter_directive(code_dir: Optional[Path] = None) -> str:
     """System-rule block mandating sandboxed experiment execution (empty if N/A)."""
     if structural_sandbox_status()[0]:
         # Nothing to mandate — the confinement no longer depends on the agent
@@ -248,7 +260,10 @@ def experimenter_directive() -> str:
             "reachable from in here; if you need one, report it rather than "
             "working around it.\n"
         )
-    if not sandbox_available():
+    if code_dir is None:
+        if not sandbox_available():
+            return ""
+    elif not (code_dir / "sandbox" / "run.sh").is_file():
         return ""
     return (
         "\n\n## CRITICAL RULES — Experiment Sandbox (Apptainer)\n"

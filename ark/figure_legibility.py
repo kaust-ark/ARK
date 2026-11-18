@@ -143,7 +143,9 @@ def collisions(pdf: Path, ratio: float = OVERLAP_RATIO) -> list:
         if smaller <= 0:
             continue
         share = inter.get_area() / smaller
-        same_row = inter.height > SHARED_BASELINE * min(r1.height, r2.height)
+        # Font switches within one label can overlap by a few thousandths
+        # of a point from glyph advance rounding (e.g. the dash in 0–4).
+        same_row = inter.width > 0.05 and inter.height > SHARED_BASELINE * min(r1.height, r2.height)
         if share >= ratio or same_row:
             found.append((t1, t2, round(share, 2)))
     found.sort(key=lambda row: -row[2])
@@ -175,6 +177,16 @@ def clipped(pdf: Path, tolerance: float = EDGE_TOLERANCE) -> list:
                 out.append((text, edge))
                 break
     return out
+
+
+def printed_labels(pdf: Path) -> str:
+    """Short inventory of nonnumeric text actually drawn on the chart, for captioning."""
+    try:
+        labels = [text.strip() for text, _, _ in _drawn(pdf)
+                  if any(c.isalpha() for c in text)]
+    except (ImportError, RuntimeError, OSError, ValueError):
+        return ""
+    return " | ".join(dict.fromkeys(labels))[:400]
 
 
 def describe(pdf: Path, ratio: float = OVERLAP_RATIO) -> str:

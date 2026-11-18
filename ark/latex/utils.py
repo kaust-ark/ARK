@@ -2,7 +2,10 @@
 import os
 import re
 import subprocess
+import textwrap
 from pathlib import Path
+
+from ark.template_preprocess import replace_command_argument
 
 _ENDMATTER_HEADING = re.compile(
     r"(?:(?:\d+|[IVX]+)[.\s]+)?(?:references|bibliography|acknowledg(?:e)?ments?"
@@ -71,40 +74,27 @@ _TITLE_MIN_LEN = 10
 _TITLE_MAX_LEN = 200
 _TITLE_MAX_RETRIES = 3
 
-# Match the start of an active (non-commented) ``\title`` command, positioning
-# the regex right before the opening ``{``. Active means the line is not a
-# ``%`` comment; we verify this by requiring only whitespace before ``\title``.
-_ACTIVE_TITLE_RE = re.compile(r'^(?P<indent>[ \t]*)\\title\s*(?=\{)', re.MULTILINE)
+def _icml_running_title(title: str) -> str:
+    # Keep explicit TeX groups intact. Ordinary prose titles can use their
+    # main clause or a short sequence of whole words in the one-line header.
+    if len(title) <= 68 or any(char in title for char in "{}\\"):
+        return title
+    return textwrap.shorten(title.split(": ", 1)[0], width=68, placeholder="...")
 
 
 def replace_latex_title(src: str, new_title: str) -> str:
-    """Replace the first active ``\\title{...}`` in LaTeX source.
+    """Update the paper title, retaining an independently authored ICML running head."""
+    updated, original = replace_command_argument(src, "icmltitle", new_title)
+    if original is None:
+        return replace_command_argument(src, "title", new_title)[0]
 
-    Walks balanced braces (respecting ``\\{``/``\\}`` escapes) so titles
-    containing nested LaTeX commands like ``\\title{A \\emph{note}}`` are
-    handled correctly. Commented-out occurrences (lines starting with ``%``)
-    are skipped. Returns ``src`` unchanged if no active ``\\title`` is found.
-    """
-    for m in _ACTIVE_TITLE_RE.finditer(src):
-        brace_start = m.end()
-        if brace_start >= len(src) or src[brace_start] != '{':
-            continue
-        depth = 1
-        i = brace_start + 1
-        while i < len(src) and depth > 0:
-            ch = src[i]
-            if ch == '\\' and i + 1 < len(src):
-                i += 2
-                continue
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-            i += 1
-        if depth == 0:
-            # src[brace_start] == '{', src[i-1] == '}' — replace the body.
-            return src[:brace_start + 1] + new_title + src[i - 1:]
-    return src
+    updated_header, old_header = replace_command_argument(
+        updated, "icmltitlerunning", _icml_running_title(new_title))
+    if old_header is not None and old_header.strip() in {
+        "", "Paper Title", original.strip(), _icml_running_title(original.strip()),
+    }:
+        return updated_header
+    return updated
 
 
 def generate_title_via_llm(idea_text: str, timeout: int = 60) -> str:
