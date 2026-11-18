@@ -635,17 +635,18 @@ def _comparison_number(value):
     return Fraction(number)
 
 
-def _check_derived_prediction(check, project_root):
+def _check_numeric_prediction(check, project_root, *, derived):
     if not isinstance(check.get("claim"), str) or not check["claim"].strip():
-        return "block", "Identify the finding and comparison that the two operands are intended to check."
+        return "block", "Identify the finding that the measurements are intended to check."
     operation = check.get("operation")
-    if operation not in ("difference", "relative_change_pct", "ratio"):
-        return "block", "A derived check requires operation difference, relative_change_pct, or ratio."
-    if "observed_source" in check:
-        return "block", "Cite both raw operands separately for this comparison; remove observed_source."
+    if derived:
+        if operation not in ("difference", "relative_change_pct", "ratio"):
+            return "block", "A derived check requires operation difference, relative_change_pct, or ratio."
+        if "observed_source" in check:
+            return "block", "Cite both raw operands separately for this comparison; remove observed_source."
     predicted = _comparison_number(check.get("predicted"))
     if predicted is None:
-        return "block", "A derived check requires a finite numeric predicted value within the exact-check limit."
+        return "block", "The check requires a finite numeric predicted value within the exact-check limit."
     places = check.get("decimal_places")
     if "decimal_places" in check and (type(places) is not int or not 0 <= places <= 100):
         return "block", "decimal_places must be an integer from 0 through 100 for a rounded claim."
@@ -653,7 +654,8 @@ def _check_derived_prediction(check, project_root):
     read_result = lru_cache(maxsize=1)(_read_result)
     operands = []
     locations = []
-    for field in ("reference_source", "treatment_source"):
+    fields = ("reference_source", "treatment_source") if derived else ("observed_source",)
+    for field in fields:
         ref = check.get(field)
         location, problem = _locate_metric_source(ref, project_root)
         if location is None:
@@ -669,15 +671,18 @@ def _check_derived_prediction(check, project_root):
         operands.append(operand)
         locations.append(location)
 
-    reference, treatment = operands
-    if operation == "difference":
-        observed = treatment - reference
-    elif reference == 0:
-        return "block", f"{operation} is undefined for a zero reference measurement."
-    elif operation == "relative_change_pct":
-        observed = 100 * (treatment - reference) / reference
+    if derived:
+        reference, treatment = operands
+        if operation == "difference":
+            observed = treatment - reference
+        elif reference == 0:
+            return "block", f"{operation} is undefined for a zero reference measurement."
+        elif operation == "relative_change_pct":
+            observed = 100 * (treatment - reference) / reference
+        else:
+            observed = treatment / reference
     else:
-        observed = treatment / reference
+        observed = operands[0]
 
     if places is not None:
         # Round the exact fraction to the stated decimal place, ties away
@@ -688,6 +693,9 @@ def _check_derived_prediction(check, project_root):
     if observed != predicted:
         display = Decimal(observed.numerator) / Decimal(observed.denominator)
         approximation = "approximately " if Fraction(display) != observed else ""
+        if not derived:
+            return "block", (f"{check['observed_source']} rounded to {places} decimal places gives "
+                             f"{approximation}{display}, but the claim reports {check['predicted']}.")
         return "block", (f"Recomputed {operation} gives {approximation}{display} "
                          f"but the claim reports {check['predicted']}. "
                          f"Reference {check['reference_source']}, treatment {check['treatment_source']}.")
@@ -696,8 +704,9 @@ def _check_derived_prediction(check, project_root):
 
 def check_claim_prediction(check: dict, project_root: Path):
     """Compare a predicted scalar or directional comparison with the cited raw results."""
-    if any(key in check for key in ("operation", "reference_source", "treatment_source", "decimal_places")):
-        return _check_derived_prediction(check, project_root)
+    derived = any(key in check for key in ("operation", "reference_source", "treatment_source"))
+    if derived or "decimal_places" in check:
+        return _check_numeric_prediction(check, project_root, derived=derived)
     if type(check.get("predicted")) not in (int, float, Decimal):
         return "warn", "Only numeric predictions can be checked against an exact scalar."
     return _check_metric_source("predicted", check.get("observed_source"),

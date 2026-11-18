@@ -83,6 +83,11 @@ natural width, and traced to the data. They were simply unreadable.
 
 When writing or regenerating a plotting script:
 
+- Inspect the saved PDF at its intended print size, including both ends of
+  every rotated axis title. A chart can have zero pairwise text overlaps
+  while part of a title lies outside the canvas. Shorten the title or give
+  it more height, then render the saved file again.
+
 - **Count the characters before you choose a figsize.** Category labels on a
   shared axis need about 0.09 in per character at 9 pt. Three labels of
   "Actual max_iter (scaled)" will not fit across 3.3 in — the script must

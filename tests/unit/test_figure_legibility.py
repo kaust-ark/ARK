@@ -200,3 +200,31 @@ def test_both_kinds_of_unreadable_label_are_named_together(tmp_path):
     text = describe(tmp_path / "both.pdf")
 
     assert "labels overprint" in text and "cut off by the figure edge" in text
+
+
+def test_precheck_existing_plot_reports_clipped_axis_title(tmp_path):
+    from ark.latex.compiler import CompilerMixin
+
+    compiler = CompilerMixin()
+    compiler.code_dir = tmp_path
+    compiler.figures_dir = tmp_path / "paper" / "figures"
+    compiler.figures_dir.mkdir(parents=True)
+    compiler.config = {}
+    compiler.hooks = object()
+    compiler._create_plotting_script_if_needed = lambda: None
+    messages = []
+    compiler.log = lambda message, level: messages.append(message)
+
+    # An experiment can leave a plot without the default plotting script or
+    # a PNG twin. Its long rotated title overhangs the top of the saved PDF.
+    path = compiler.figures_dir / "solver_iterations.pdf"
+    _figure(path, [("Solver iterations (optimizer steps)", 10, 30)], rotate=90)
+    assert compiler.generate_figures()
+    assert any(path.name in line and "cut off" in line and "(top)" in line
+               for line in messages)
+
+    messages.clear()
+    path.unlink()
+    _figure(path, [("Solver iterations", 10, 125)], rotate=90)
+    assert compiler.generate_figures()
+    assert any("found no issues" in line for line in messages)

@@ -113,3 +113,31 @@ def test_json_prediction_keeps_decimal_precision_and_never_rounds_silently(proje
 def test_ratio_with_extreme_exponent_abstains_without_expanding_the_number(project):
     (project / "results/trial.json").write_text('{"times/ms":[1e999999999]}')
     assert "exact-check limit" in decision(project, "ratio", 2).gaps[0]
+
+
+@pytest.mark.parametrize(("raw", "predicted", "fields", "accepted"), [
+    ("0.9473684210526315", 0.9474, {"decimal_places": 4}, True),
+    ("0.9824561403508771", 0.9825, {"decimal_places": 4}, True),
+    ("-1.125", -1.13, {"decimal_places": 2}, True),
+    ("-1.125", -1.12, {"decimal_places": 2}, False),
+    ("0.9473684210526315", 0.9474, {}, False),
+    ("0.9473684210526315", 0.94742, {"decimal_places": 4}, False),
+    ("1.125", 1.13, {"decimal_places": True}, False),
+    ("1", 1, {"decimal_places": -1}, False),
+    ("1", 1, {"decimal_places": 101}, False),
+    ("1", 1, {"decimal_places": None}, False),
+    ("1", "1", {"decimal_places": 0}, False),
+    ("1e999999999", 1, {"decimal_places": 1}, False),
+    ("true", 1, {"decimal_places": 0}, False),
+    ('"1"', 1, {"decimal_places": 0}, False),
+    ("1", 1, {"decimal_places": 0, "treatment_source": "results/trial.json#/value"}, False),
+    ("1", 1, {"decimal_places": 0, "operation": "ratio"}, False),
+    ("1", 1, {"decimal_places": 0, "observed_source": "results/missing.json#/value"}, False),
+    ("1", 1, {"decimal_places": 0, "observed_source": "results/trial.csv:2"}, False),
+])
+def test_scalar_claims_round_only_the_raw_number_at_explicit_precision(project, raw, predicted, fields, accepted):
+    (project / "results/trial.json").write_text('{"value":' + raw + '}')
+    (project / "results/trial.csv").write_text("value\n1\n")
+    check = {"claim": "Measured value", "predicted": predicted,
+             "observed_source": "results/trial.json#/value", **fields}
+    assert review(project, [check]).action == ("proceed_to_writing" if accepted else "correct_findings")

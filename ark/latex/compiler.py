@@ -719,6 +719,7 @@ class CompilerMixin:
 
         if not full_script.exists():
             self.log(f"No figure script at {script_path}, skipping", "INFO")
+            self._precheck_figure_quality()
             return True
 
         try:
@@ -750,38 +751,42 @@ class CompilerMixin:
     def _precheck_figure_quality(self):
         """Pre-check figure quality before reviewer sees the paper."""
         self.log(">>> Figure quality pre-check...", "PRECHECK")
-        try:
-            from PIL import Image
+        from ark.figure_legibility import describe
 
-            issues = []
-            for fig_path in sorted(self.figures_dir.glob("fig*.png")):
-                img = Image.open(fig_path)
-                width, height = img.size
-                aspect_ratio = height / width
+        issues = []
+        pdfs = sorted(self.figures_dir.glob("*.pdf"))
+        pngs = sorted(self.figures_dir.glob("fig*.png"))
+        if not (pdfs or pngs):
+            self.log("No figure assets available for pre-check", "PRECHECK")
+            return
+        for pdf in pdfs:
+            try:
+                issue = describe(pdf)
+            except Exception as exc:
+                issue = f"could not check the vector labels: {exc}"
+            if issue:
+                issues.append(f"{pdf.name}: {issue}")
 
-                if aspect_ratio < 0.35:
-                    issues.append(f"  Warning: {fig_path.name}: aspect ratio too flat ({aspect_ratio:.2f}), recommend height >= width * 0.4")
+        for png in pngs:
+            try:
+                from PIL import Image
+                with Image.open(png) as image:
+                    width, height = image.size
+                if height / width < 0.35:
+                    issues.append(f"{png.name}: aspect ratio too flat ({height / width:.2f}), recommend height >= width * 0.4")
                 if width < 600:
-                    issues.append(f"  Warning: {fig_path.name}: width too small ({width}px), recommend >= 800px")
-                img.close()
+                    issues.append(f"{png.name}: width too small ({width}px), recommend >= 800px")
+            except Exception as exc:
+                issues.append(f"{png.name}: could not check raster dimensions: {exc}")
+            if not png.with_suffix(".pdf").exists():
+                issues.append(f"{png.stem}: missing PDF version")
 
-            for png_path in self.figures_dir.glob("fig*.png"):
-                pdf_path = png_path.with_suffix('.pdf')
-                if not pdf_path.exists():
-                    issues.append(f"  Warning: {png_path.stem}: missing PDF version")
-
-            if issues:
-                self.log("Figure quality issues found:", "PRECHECK")
-                for issue in issues:
-                    self.log(issue, "PRECHECK")
-                self.log("Recommend modifying scripts/create_paper_figures.py and regenerating", "PRECHECK")
-            else:
-                self.log("Figure quality check passed", "PRECHECK")
-
-        except ImportError:
-            self.log("Pillow not installed, skipping figure pre-check", "WARN")
-        except Exception as e:
-            self.log(f"Figure pre-check error: {e}", "WARN")
+        if issues:
+            for issue in issues:
+                self.log(issue, "PRECHECK")
+            self.log("Update the source plot and regenerate the affected figure.", "PRECHECK")
+        else:
+            self.log("Figure quality pre-check found no issues in the checked assets.", "PRECHECK")
 
     def _generate_figure_config(self) -> dict:
         """Generate figure_config.json from template geometry for plotting scripts."""
@@ -884,6 +889,7 @@ class CompilerMixin:
                 self.log(f"Overlap detection error (non-fatal): {e}", "WARN")
         else:
             self.log_step(f"No figure script at {script_path}, skipping generation", "info")
+            self._precheck_figure_quality()
 
         # Step 4: Generate AI concept figures (Nano Banana)
         if self.config.get("figure_generation") == "nano_banana":

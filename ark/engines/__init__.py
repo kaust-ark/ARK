@@ -505,9 +505,10 @@ class AgentMixin:
                 summary_lines.append(f"Figures touched: {len(set(fig_changes))}")
 
         elif agent_type == "experimenter":
-            slurm_jobs = re.findall(r"sbatch|srun|slurm", output, re.IGNORECASE)
-            if slurm_jobs:
-                summary_lines.append(f"Slurm jobs submitted: {len(slurm_jobs)}")
+            receipts = re.findall(r"^\s*Submitted batch job (\d+)\s*$", output,
+                                  flags=re.IGNORECASE | re.MULTILINE)
+            if receipts:
+                summary_lines.append("Reported Slurm job IDs: " + ", ".join(dict.fromkeys(receipts)))
             cloud_ops = re.findall(r"ssh\s|rsync\s|aws\s|gcloud\s|az\s", output, re.IGNORECASE)
             if cloud_ops:
                 summary_lines.append(f"Cloud operations: {len(cloud_ops)}")

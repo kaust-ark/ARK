@@ -304,3 +304,13 @@ class TestATerminalErrorDoesNotOutliveItsCall:
         o._terminal_error = "APIError: still broken"
         _run(o, Runner)
         assert o._terminal_error == "APIError: still broken"
+
+
+def test_experiment_summary_uses_distinct_submission_receipts():
+    agent = eng.AgentMixin()
+    mentions = "The Slurm run used sbatch and Slurm accounting confirmed it finished."
+    assert agent._summarize_agent_output("experimenter", mentions) == []
+    output = mentions + "\nSubmitted batch job 88985\nSubmitted batch job 88985\nSubmitted batch job 88986"
+    assert agent._summarize_agent_output("experimenter", output) == [
+        "Reported Slurm job IDs: 88985, 88986"
+    ]
