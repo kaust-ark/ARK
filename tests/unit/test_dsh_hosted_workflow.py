@@ -211,6 +211,35 @@ def test_hosted_retains_early_legacy_worker_after_log_rotation(tmp_path, monkeyp
     assert uses_native_project(project)
 
 
+def test_cli_legacy_identity_requires_its_own_run_log_pointer(tmp_path):
+    from ark.orchestrator.dsh_workflow import uses_native_project
+
+    state = tmp_path / "auto_research/state"
+    state.mkdir(parents=True)
+    logs = state.parent / "logs"
+    logs.mkdir()
+    project = SimpleNamespace(code_dir=tmp_path, state_dir=state, _project_id="db-uuid", project_name="cli-name")
+    old = logs / "cli-name_paper_20261119_183100.log"
+    old.write_text("DSH hosted workflow started")
+    assert uses_native_project(project)
+
+    latest = logs / "latest.log"
+    latest.symlink_to("../elsewhere/" + old.name)
+    assert uses_native_project(project)
+    latest.unlink()
+    latest.symlink_to(old.name)
+    assert not uses_native_project(project)
+
+    # The next Orchestrator replaces latest.log with its current empty log.
+    latest.unlink()
+    project.log_file = logs / "cli-name_paper_20261119_183200.log"
+    project.log_file.touch()
+    latest.symlink_to(project.log_file.name)
+    assert not uses_native_project(project)
+    old.unlink()
+    assert uses_native_project(project)
+
+
 def test_installed_bundle_retains_verified_project_pin_across_rollout(
     tmp_path, monkeypatch
 ):
@@ -392,14 +421,11 @@ def test_real_native_host_replays_owner_through_installed_tarball(
         server.server_close()
 
 
-def test_hosted_worker_keeps_python_and_js_pinned_after_service_rollout(tmp_path):
-    """Exercise the production module entry point across two different wheel payloads."""
+@pytest.fixture
+def worker_bundle(tmp_path):
     import hashlib
-    import subprocess
-    import sys
     import tarfile
     import zipfile
-    from pathlib import Path
 
     def make_bundle(version):
         package = tmp_path / version / "package"
@@ -431,6 +457,15 @@ def main():
             out.add(package, arcname="package")
         return archive, hashlib.sha256(archive.read_bytes()).hexdigest()
 
+    return make_bundle
+
+
+def test_hosted_worker_keeps_python_and_js_pinned_after_service_rollout(tmp_path, worker_bundle):
+    """Exercise the production module entry point across two different wheel payloads."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
     def launch(name, archive, deployed_digest):
         project = tmp_path / name
         project.mkdir(exist_ok=True)
@@ -444,8 +479,8 @@ def main():
         assert "idea2paper-worker-" in origin
         return version, digest
 
-    first, first_sha = make_bundle("first")
-    second, second_sha = make_bundle("second")
+    first, first_sha = worker_bundle("first")
+    second, second_sha = worker_bundle("second")
     assert launch("original", first, first_sha) == ("first", first_sha)
     first.unlink()
     assert launch("original", second, second_sha) == ("first", first_sha)
@@ -463,3 +498,41 @@ def main():
     with pytest.raises(subprocess.CalledProcessError) as missing:
         launch("original", second, second_sha)
     assert first_sha in missing.value.stderr and "Restore the trusted Idea2Paper release" in missing.value.stderr
+
+
+def test_cli_run_loads_the_original_worker_on_resume(tmp_path, monkeypatch, worker_bundle):
+    import sys
+
+    from ark import cli, paths
+
+    monkeypatch.setattr(paths, "_ARK_ROOT", tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv("ARK_WORKFLOW_RUNTIME", raising=False)
+    monkeypatch.delenv("ARK_AGENT_RUNTIME", raising=False)
+    config_dir = tmp_path / "projects" / "cli-pin"
+    config_dir.mkdir(parents=True)
+    workspace = tmp_path / "research"
+    workspace.mkdir()
+    (config_dir / "config.yaml").write_text(json.dumps({
+        "code_dir": str(workspace), "_project_id": "test-cli-pin", "_db_path": str(tmp_path / "db")
+    }))
+    monkeypatch.setattr(sys, "argv", ["ark", "run", "cli-pin", "--no-research"])
+    original_digest = None
+    for version in ("initial", "rollout"):
+        archive, digest = worker_bundle(version)
+        monkeypatch.setenv("IDEA2PAPER_BUNDLE_PATH", str(archive))
+        monkeypatch.setenv("IDEA2PAPER_BUNDLE_SHA256", digest)
+        if version == "rollout":
+            monkeypatch.setenv("ARK_WORKFLOW_RUNTIME", "legacy")
+        cli.main()
+        pid = int((config_dir / ".pid").read_text())
+        _, status = os.waitpid(pid, 0)
+        assert os.waitstatus_to_exitcode(status) == 0
+        worker_version, origin, worker_digest = json.loads((workspace / "worker-result.json").read_text())
+        assert worker_version == "initial" and "idea2paper-worker-" in origin
+        if original_digest is None:
+            original_digest = digest
+        assert worker_digest == original_digest
+        (workspace / "worker-result.json").unlink()
+        archive.unlink()

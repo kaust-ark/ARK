@@ -3230,7 +3230,7 @@ def main(*, hosted_entrypoint=False):
 
     if hosted_entrypoint:
         from ark.orchestrator.hosted_worker import boot_native_worker
-        boot_native_worker(project_id, code_dir, project_dir)
+        boot_native_worker(project_id, code_dir, project_dir, args.project)
 
     orchestrator = Orchestrator(
         max_days=args.max_days,

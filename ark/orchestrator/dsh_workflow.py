@@ -1,5 +1,6 @@
 """Run the hosted workflow as a Cordis plugin of the pinned DSH runtime."""
 
+import errno
 import fcntl
 import hashlib
 import json
@@ -135,16 +136,28 @@ def uses_native_project(project):
                 and review.get("verdict") in ("proceed", "refine")):
             return False
 
-    # Before Gate A, v0.5.48 still created a project-ID-scoped run log. Native
-    # bootstrap pins its bundle before Orchestrator creates that file. Match
-    # the worker's own naming convention without reading log contents.
+    # A v0.5.48 worker created a scoped log before Gate A. CLI workers used
+    # their registered name instead of the dashboard UUID and published a
+    # relative latest.log link. A copied CLI log on its own is not a receipt.
     project_id = getattr(project, "_project_id", None)
     if project_id:
         logs = state.parent / "logs"
-        name = re.compile(re.escape(project_id) + r"_paper_\d{8}_\d{6}\.log")
+        run_log = re.compile(r"(.+)_paper_\d{8}_\d{6}\.log")
+        identities = {project_id}
+        project_name = getattr(project, "project_name", None)
+        if project_name and project_name != project_id:
+            try:
+                linked = run_log.fullmatch(os.readlink(logs / "latest.log"))
+            except OSError as error:
+                if error.errno not in (errno.ENOENT, errno.EINVAL):
+                    raise
+            else:
+                if linked and linked[1] == project_name:
+                    identities.add(project_name)
         try:
             for log in logs.iterdir():
-                if log == getattr(project, "log_file", None) or not name.fullmatch(log.name):
+                match = run_log.fullmatch(log.name)
+                if not match or match[1] not in identities or log == getattr(project, "log_file", None):
                     continue
                 try:
                     info = log.lstat()

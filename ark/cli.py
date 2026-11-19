@@ -1883,6 +1883,8 @@ def cmd_run(args):
     cmd = python_prefix + [
         "-m", "ark.orchestrator",
         "--project", name,
+        "--project-dir", str(project_dir.resolve()),
+        "--code-dir", str(Path(code_dir).resolve()),
         "--mode", mode,
         "--model", model,
         "--iterations", str(max_iterations),

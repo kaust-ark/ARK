@@ -64,13 +64,15 @@ def _archive_for_project(profile, root):
     raise RuntimeError(f"Restore the trusted Idea2Paper release archive {required} to resume this project.") from original_error
 
 
-def boot_native_worker(project_id, code_dir, project_dir):
+def boot_native_worker(project_id, code_dir, project_dir, project_name):
     from ark.orchestrator.dsh_workflow import _install_bundle, hosted_workflow_enabled, uses_native_project
 
     if not project_id or not code_dir or not project_dir:
         return
     root = Path(code_dir).resolve()
-    project = SimpleNamespace(code_dir=root, state_dir=root / "auto_research/state", _project_id=project_id)
+    project = SimpleNamespace(
+        code_dir=root, state_dir=root / "auto_research/state", _project_id=project_id, project_name=project_name
+    )
     if not hosted_workflow_enabled(project_id, project) or not uses_native_project(project):
         return
     profile = root / ".dsh/native/home/profiles/idea2paper"
