@@ -274,12 +274,16 @@ def review_summary(root, review, *, delivered=False):
         previous = read_record(root, f"auto_research/state/reviews/{prior}/review.json")
     previous_issues = {row.get("id"): row for row in _rows(previous.get("issues"))}
 
-    def references(issue, version, earlier):
+    hashes = review.get("artifact_hashes", {})
+
+    def references(entries, version, earlier, *, signed_only=False):
         refs = []
-        for ref in _rows(issue.get("evidence"))[:8]:
+        for ref in _rows(entries)[:24 if signed_only else 8]:
             key = ref.get("artifact")
             digest = _text(ref.get("sha256"))
             if not re.fullmatch(r"[a-f0-9]{64}", digest):
+                continue
+            if signed_only and (not isinstance(key, str) or not isinstance(hashes, dict) or hashes.get(key) != digest):
                 continue
             if not evidence_type(key):
                 # Show only the passage already recorded by the private reviewer.
@@ -301,11 +305,10 @@ def review_summary(root, review, *, delivered=False):
     for issue in _rows(review.get("issues"))[:32]:
         row = {k: _text(issue.get(k)) for k in ("id", "claim", "reason", "fix", "status", "severity")}
         older = previous_issues.get(row["id"])
-        row["evidence"] = (references(older, prior, True) if older else []) + references(issue, revision, False)
+        row["evidence"] = (references(older.get("evidence"), prior, True) if older else []) + references(issue.get("evidence"), revision, False)
         issues.append(row)
     # Private inputs such as split TeX sources and method code also bind the
     # review. Their hashes can be checked without granting download access.
-    hashes = review.get("artifact_hashes", {})
     stale = not delivered and (
         not matches_file(root, "paper/main.pdf", review.get("paper_pdf_sha256"))
         or not isinstance(hashes, dict) or len(hashes) > MAX_ARTIFACTS
@@ -318,19 +321,34 @@ def review_summary(root, review, *, delivered=False):
             check = checks.get(domain)
             if isinstance(check, dict) and check.get("status") in ("assessed", "unassessed"):
                 item = {"domain": domain, "status": check["status"], "reason": _text(check.get("reason"))}
-                item["evidence"] = references(check, revision, False)
+                item["evidence"] = references(check.get("evidence"), revision, False)
                 support = check.get("conclusion_support")
                 if domain == "manuscript" and check["status"] == "assessed" and support in (
                     "measured", "interpretation", "needs_evidence"
                 ):
                     item["conclusion_support"] = support
+                if domain == "manuscript" and check["status"] == "assessed":
+                    claims = []
+                    for claim in _rows(check.get("claims"))[:8]:
+                        passage = claim.get("passage")
+                        if not isinstance(passage, dict) or passage.get("artifact") != "paper/main.pdf":
+                            continue
+                        source = references([passage], revision, False, signed_only=True)
+                        kind, basis = claim.get("kind"), claim.get("basis")
+                        reason = _text(claim.get("reason"), 4000)
+                        if (kind in ("result", "explanation") and basis in ("measurement", "control", "derivation", "qualified", "unsupported")
+                                and reason and source and source[0]["quote"] and (source[0]["page"] or 0) > 0
+                                and source[0]["sha256"] == review.get("paper_pdf_sha256")):
+                            claims.append({"kind": kind, "passage": source[0], "basis": basis, "reason": reason,
+                                           "evidence": references(claim.get("evidence"), revision, False, signed_only=True)})
+                    if claims:
+                        item["claims"] = claims
                 scope = review.get("evidence_scope")
                 if domain == "manuscript" and isinstance(scope, dict):
                     fields = {key: _text(scope.get(key), 1200) for key in ("comparison", "alternative", "discriminator")}
                     if all(fields.values()):
                         item["evidence_scope"] = fields
                 origins = check.get("series_origin")
-                hashes = review.get("artifact_hashes")
                 if domain == "experiment" and isinstance(hashes, dict):
                     controls = []
                     for control in _rows(check.get("controls"))[:48]:

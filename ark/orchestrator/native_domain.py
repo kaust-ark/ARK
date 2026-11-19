@@ -1998,6 +1998,10 @@ class NativeProject(CompilerMixin):
                    if Path(path).suffix.lower() != ".pdf"]
         if conclusion := snapshot.get("conclusion"):
             opening.append({key: conclusion[key] for key in ("artifact", "page", "start")})
+        if attribution := snapshot.get("evidence_scope", {}).get("attribution"):
+            location = {key: attribution[key] for key in ("artifact", "page", "start")}
+            if location not in opening:
+                opening.append(location)
         # Read current text at the last review's disputed locations. Page images cannot verify quotations.
         if pages and previous and previous.get("revision") != snapshot["revision"]:
             pdf_key = f"{snapshot.get('paper_dir', 'paper')}/main.pdf"

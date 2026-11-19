@@ -238,7 +238,10 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
                     except (ValueError, UnicodeDecodeError, RecursionError):
                         tables = []
                     if tables and len(_canonical(tables[:8])) <= VIEW_SIZE:
-                        manifest["evidence_scope"] = {"version": 1, "tables": tables[:8]}
+                        scope = {"version": 2, "tables": tables[:8]}
+                        if passage := _attribution_passage({**manifest, "project": str(root)}, pdf):
+                            scope["attribution"] = passage
+                        manifest["evidence_scope"] = scope
     return {**manifest, "project": str(root), "revision": _digest(_canonical(manifest))}
 
 
@@ -287,6 +290,42 @@ def _rendered_conclusion(snapshot, pdf):
                     headings.append({"version": 2, "artifact": pdf, "page": index + 1, "start": offset + 1,
                                      "quote": quote} if len(quote) >= 4 and offset >= 0 else None)
         return headings[0] if len(headings) == 1 else None
+
+
+def _attribution_passage(snapshot, pdf):
+    """Locate a strong explanatory assertion in the body for the reader to adjudicate."""
+    import fitz
+    from ark.latex.utils import body_page_boundary
+
+    # These phrases select one passage for inspection. The reader decides what
+    # it means and whether the experiment or a derivation can support it.
+    priority = (
+        re.compile(r"\b(?:dominated by|dominant (?:cause|mechanism|contribution)|primarily (?:driven|caused|explained) by)\b", re.I),
+        re.compile(r"\b(?:mediated by|attributable to|explained by|caused by|driven by)\b", re.I),
+    )
+    best = None
+    with fitz.open(stream=_artifact(snapshot, pdf)[0], filetype="pdf") as doc:
+        boundary = body_page_boundary(doc)
+        end = min(len(doc), boundary[0] + int(any(boundary[1]))) if boundary else len(doc)
+        for page in range(end):
+            text = doc[page].get_text()
+            for block in doc[page].get_text("blocks"):
+                if block[6] != 0:
+                    continue
+                for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", block[4].strip()):
+                    if not 12 <= len(sentence) <= 1200 or not sentence.endswith((".", "!", "?")):
+                        continue
+                    offset = text.find(sentence)
+                    if offset < 0:
+                        continue
+                    words = _normalized_quote(sentence)
+                    for rank, pattern in enumerate(priority):
+                        if pattern.search(words) and (best is None or rank < best[0]):
+                            best = (rank, {"artifact":pdf, "page":page + 1, "start":offset + 1, "quote":sentence})
+                            if rank == 0:
+                                return best[1]
+                            break
+    return best[1] if best else None
 
 
 def _page_index(number, count):
@@ -551,6 +590,26 @@ def review_prompt(snapshot, previous=None):
             "test or narrower wording that would resolve it. Assess this conclusion paragraph on its own terms. "
             "If a different section makes an unsupported assertion, locate a separate finding on that page even "
             "when the conclusion is appropriately qualified. Mark manuscript unassessed if the evidence is unavailable.")
+    scope = snapshot.get("evidence_scope", {})
+    if scope.get("version") == 2:
+        packet["claim_assessment"] = (
+            "In checks.manuscript.claims separate the paper's observed result from its strongest explanation. "
+            "For each give {kind,passage,basis,evidence,reason}. kind is result or explanation. passage is an "
+            "observed PDF reference to the author's exact words. A result can use basis measurement with a row "
+            "in evidence. If the authors explain why, include that explanation separately even in the same sentence. "
+            "Use basis control only with a measured comparison AND the specific intervention or measurement protocol "
+            "that distinguishes the explanation from your alternative. For derivation cite a separate observed "
+            "mathematical passage deriving the contribution to the outcome. A change in an intermediate quantity "
+            "alone cannot establish its contribution to the final outcome. For qualified give qualification as the "
+            "author's exact limiting words, plus the empirical context. For unsupported cite the available evidence "
+            "and open a blocker with the same passage, the missing test and smallest repair. "
+            "A purely descriptive paper needs only a result. The host checks references; you judge the science.")
+        if locator := scope.get("attribution"):
+            packet["attribution_to_check"] = locator
+            packet["claim_assessment"] += (
+                ' Assess the named attribution_to_check separately with passage={"selector":"attribution"}. '
+                "For a measured ranking of contributions, cite the recorded components and their measurement method. "
+                "Specify the measured variable or experimental contrast that supports its actual wording.")
     if conflicts := reported_change_conflicts(packet["manuscript_excerpt"]):
         packet["reported_changes_to_verify"] = conflicts[:8]
     if "worker_measurement" in snapshot:
@@ -717,17 +776,18 @@ def _observed_pdf_windows(snapshot, artifact, observed):
                     yield page, start, window
 
 
-def _observed_conclusion(snapshot, observed):
-    target = snapshot.get("conclusion")
+def _observed_conclusion(snapshot, observed, selector="conclusion"):
+    target = (snapshot.get("evidence_scope", {}).get("attribution") if selector == "attribution"
+              else snapshot.get("conclusion"))
     if not target:
-        raise ValueError("This snapshot has no conclusion selector.")
+        raise ValueError(f"This snapshot has no {selector} selector.")
     artifact, quote = target["artifact"], target["quote"]
     for page, start, window in _observed_pdf_windows(snapshot, artifact, observed):
         offset = target["start"] - start
         if page == target["page"] and offset >= 0 and window[offset:offset + len(quote)] == quote:
             return {"artifact": artifact, "page": page, "quote": quote,
                     "sha256": snapshot["artifacts"][artifact]["sha256"]}
-    raise ValueError(f'The conclusion selector needs an observed text window from this revision. '
+    raise ValueError(f'The {selector} selector needs an observed text window from this revision. '
                      f'Read {artifact}, page {target["page"]}, start {target["start"]}, visual=false.')
 
 
@@ -748,12 +808,12 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
             row = _visible_measurement_rows(view["text"])[ref["row"] - 1]
             ref = {"artifact": ref["artifact"], "quote": row}
         if "selector" in ref:
-            if ref["selector"] != "conclusion" or ref.keys() - {"selector", "artifact", "page"}:
-                raise ValueError('Use {"selector":"conclusion"} with only its optional artifact and page.')
-            located = _observed_conclusion(snapshot, observed)
+            if ref["selector"] not in ("conclusion", "attribution") or ref.keys() - {"selector", "artifact", "page"}:
+                raise ValueError('Use the conclusion or attribution selector with only its optional artifact and page.')
+            located = _observed_conclusion(snapshot, observed, ref["selector"])
             if ("artifact" in ref and ref["artifact"] != located["artifact"]) or (
                     "page" in ref and (type(ref["page"]) is not int or ref["page"] != located["page"])):
-                raise ValueError("The supplied conclusion locator conflicts with the observed PDF artifact or page.")
+                raise ValueError("The supplied passage locator conflicts with the observed PDF artifact or page.")
             verified.append(located)
             continue
         artifact = _string(ref.get("artifact"), "artifact path")
@@ -959,6 +1019,48 @@ def _interpretation_wording(target, evidence):
                      "An unrelated sentence or future proposal cannot qualify the conclusion claim.")
 
 
+def _manuscript_claims(snapshot, values, observed, blind):
+    if not isinstance(values, list) or not 1 <= len(values) <= 8:
+        raise ValueError("Supply checks.manuscript.claims with the measured result and any separate explanation.")
+    pdf = snapshot["conclusion"]["artifact"]
+    claims = []
+    for value in values:
+        if not isinstance(value, dict) or value.get("kind") not in ("result", "explanation"):
+            raise ValueError("Identify each manuscript claim as a result or an explanation.")
+        kind, basis = value["kind"], value.get("basis")
+        if basis not in (("measurement", "unsupported") if kind == "result" else
+                         ("control", "derivation", "qualified", "unsupported")):
+            raise ValueError("Match the claim basis to its kind. A measured outcome alone cannot establish its explanation.")
+        passage, = _references(snapshot, [value.get("passage")], observed, blind, required=True)
+        if passage["artifact"] != pdf or not passage.get("quote"):
+            raise ValueError("Locate the author's actual claim in observed text of the submitted PDF.")
+        evidence = _references(snapshot, value.get("evidence"), observed, blind, required=True)
+        reason = _string(value.get("reason"), "claim-specific reasoning")
+        measured = _covers(snapshot, "experiment", evidence)
+        claim = dict(kind=kind, passage=passage, basis=basis, evidence=evidence, reason=reason)
+        if basis == "measurement" and not measured:
+            raise ValueError("Cite the observed outcome for the measured result.")
+        if basis == "control" and not (measured and any(
+                snapshot["artifacts"][ref["artifact"]]["kind"] == "method" and ref.get("quote") for ref in evidence)):
+            raise ValueError("For a control cite the measured comparison and the observed method that distinguishes the mechanism.")
+        if basis == "derivation" and not any(
+                ref.get("quote") and not _contains_observed_quote(passage["quote"], ref["quote"])
+                and snapshot["artifacts"][ref["artifact"]]["kind"] in ("submission", "primary_source", "method")
+                for ref in evidence):
+            raise ValueError("Cite a separate, observed derivation connecting the explanation to the measured outcome.")
+        if basis == "qualified":
+            wording = _interpretation_wording(passage, {"claim":value.get("assertion", passage["quote"]),
+                                                       "qualification":value.get("qualification")})
+            claim["qualification"] = wording["qualification"]
+        claims.append(claim)
+    if not any(c["kind"] == "result" for c in claims):
+        raise ValueError("Identify the empirical result separately from its explanation.")
+    locator = snapshot["evidence_scope"].get("attribution")
+    if locator and not any(c["kind"] == "explanation" and _quotes_conclusion([c["passage"]], locator) for c in claims):
+        raise ValueError('Assess the located attribution separately as an explanation with passage={"selector":"attribution"}.')
+    return claims
+
+
 def _passage_survives(snapshot, ref):
     """An unrelated edit or line reflow does not repair a disputed passage."""
     path = ref["artifact"]
@@ -1121,6 +1223,12 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
             checks[domain]["conclusion_support"] = support
             if support == "interpretation":
                 checks[domain]["interpretation"] = _interpretation_wording(target, check.get("interpretation"))
+            if snapshot.get("evidence_scope", {}).get("version") == 2:
+                claims = _manuscript_claims(snapshot, check.get("claims"), observed, blind)
+                checks[domain]["claims"] = claims
+                if support == "measured" and any(c["basis"] in ("qualified","unsupported")
+                        and _contains_observed_quote(target["quote"], c["passage"]["quote"]) for c in claims):
+                    raise ValueError("The overall conclusion assessment must reflect the qualified or unsupported claim within it.")
         if domain == "experiment" and (controls or reproductions):
             checks[domain]["controls"] = controls + reproductions
         if origins:
@@ -1192,6 +1300,15 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
         raise ValueError("Report the unsupported conclusion as an open blocker. Put the disputed words in "
                          "claim verbatim, cite the same paragraph and its measured evidence, and specify "
                          "the missing test or wording change.")
+    for claim in checks["manuscript"].get("claims", []):
+        passage = claim["passage"]
+        if claim["basis"] == "unsupported" and not any(
+                issue["status"] in ("new", "still_present") and issue["severity"] == "blocker"
+                and _contains_observed_quote(passage["quote"], issue["claim"])
+                and any(r["artifact"] == passage["artifact"] and r.get("page") == passage["page"]
+                        and _contains_observed_quote(r.get("quote", ""), issue["claim"]) for r in issue["evidence"])
+                for issue in issues):
+            raise ValueError("Open a blocker on the unsupported claim's PDF page, quote the disputed wording and specify the repair.")
     for name, origin in checks["visual"].get("series_origin", {}).items():
         if origin == "copied" and not any(
             issue["severity"] == "blocker" and issue["status"] in ("new", "still_present")
@@ -1245,6 +1362,10 @@ def record_is_current(snapshot, record):
         if not isinstance(scope, dict) or not all(isinstance(scope.get(key), str) and scope[key].strip()
                 for key in ("comparison", "alternative", "discriminator")):
             return False
+        manuscript = (record.get("checks") or {}).get("manuscript") or {}
+        if (snapshot["evidence_scope"].get("version") == 2 and manuscript.get("status") == "assessed"
+                and not manuscript.get("claims")):
+            return False
     if snapshot.get("figure_methods") and record.get("verdict") == "accept":
         origins = (record.get("checks", {}).get("visual", {}).get("series_origin") or {})
         return set(origins) == set(snapshot["figure_methods"]) and all(
@@ -1287,6 +1408,10 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
         return True
     conclusion = snapshot.get("conclusion")
     if conclusion:
+        if scope := snapshot.get("evidence_scope"):
+            old = {**inputs, "conclusion": conclusion, "evidence_scope":{"version":1, "tables":scope["tables"]}}
+            if _digest(_canonical(old)) == revision:
+                return True
         for locator in (conclusion, {k: v for k, v in conclusion.items() if k != "version"}):
             if _digest(_canonical({**inputs, "conclusion": locator})) == revision:
                 return True

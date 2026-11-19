@@ -227,7 +227,6 @@ async function review(ctx, owner, domain, signal, draft = false) {
   }
   const observed = []
   let checkedVerdict, lastRejected, previousDraft
-  let requestedClaimCheck = false
   let disclosed = !protocolFirst && !packet.scope_brief, committing = false, sealed = false, disclosureError
   let configured = false
   const unlisten = ctx.on('agent/created', ({ agent }) => {
@@ -262,29 +261,6 @@ async function review(ctx, owner, domain, signal, draft = false) {
         signal.throwIfAborted()
         turnSignal.throwIfAborted()
         if (proof.valid === true) {
-          // A separate unresolved check can coexist with a confident reading of
-          // the manuscript. Test that reading against the reviewer’s own alternative.
-          if (packet.scope_brief && !requestedClaimCheck &&
-              ['measured', 'interpretation'].includes(verdict.checks?.manuscript?.conclusion_support)) {
-            requestedClaimCheck = true
-            previousDraft = verdict
-            steer([{type:'text', text:
-              'Before signing your manuscript assessment, try to falsify its strongest claim. Your own strongest alternative or limitation was: ' +
-              verdict.alternative + '\nLocate the strongest sentence in the results or discussion about WHY the ' +
-              'effect occurs. Use read_evidence to find the passage in the submitted PDF. Could the recorded ' +
-              'measurements stay the same if that particular explanation were false? Compare with the ' +
-              'discriminating observation you committed before seeing the paper. If the paper offers an analytical ' +
-              'argument, does it derive the contribution to the reported outcome or only a change in an ' +
-              'intermediate quantity? Cite the manuscript passage and the ' +
-              'observed data when you return your judgment. If the authors present an untested explanation ' +
-              'as established, open a located issue and request the smallest repair. An explicitly qualified ' +
-              'hypothesis, a tested explanation, or a descriptive result can stand. Review the strongest ' +
-              'actual wording across sections, including a draft with a qualified conclusion. You can ' +
-              'use tools to inspect the original. Finish with exactly one JSON object. To change a judgment ' +
-              'return {"amend":{...}} with the replacement fields. To affirm it after checking the evidence ' +
-              'return ' + JSON.stringify({amend:{verdict:verdict.verdict}}) + '.'}])
-            return
-          }
           checkedVerdict = verdict
           return
         }

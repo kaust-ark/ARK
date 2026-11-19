@@ -2,6 +2,16 @@
 // traffic never changes the scientific state or triggers a screen-reader announcement.
 const researchLabels = {
   question_conclusion: ['Question the judgment on page %s','质疑第 %s 页的判断','ناقش الحكم على الصفحة %s'],
+  question_result: ['Question this result on page %s','质疑第 %s 页的这条结果','ناقش هذه النتيجة في الصفحة %s'],
+  question_explanation: ['Question this explanation on page %s','质疑第 %s 页的这条解释','ناقش هذا التفسير في الصفحة %s'],
+  claim_result: ['Reported result','论文报告的结果','النتيجة المذكورة في الورقة'],
+  claim_explanation: ['Proposed explanation','论文提出的解释','التفسير المقترح في الورقة'],
+  claim_basis: ['Reviewer’s basis: %s','评审依据：%s','أساس حكم المراجع: %s'],
+  basis_measurement: ['measurement','实测数据','القياس'],
+  basis_control: ['control comparison','对照比较','المقارنة الضابطة'],
+  basis_derivation: ['derivation','推导','الاشتقاق'],
+  basis_qualified: ['qualified wording','作者的限定措辞','صياغة المؤلف المشروطة'],
+  basis_unsupported: ['insufficient evidence','证据不足','أدلة غير كافية'],
   question_draft: ['What evidence supports this judgment about the quoted passage?','哪些证据支持评审对这段原文的判断？','ما الأدلة التي تدعم هذا الحكم على المقطع المقتبس؟'],
   decision_before_question: ['Answer the open decision before sending this question.','请先答复待处理的决定，再发送这个问题。','أجب عن القرار المعلّق قبل إرسال هذا السؤال.'],
   send_message: ['Send','发送','إرسال'],
@@ -627,6 +637,36 @@ async function openEvidence(item, opener, page=1, compare=false) {
   } catch { if (!controller.signal.aborted) container.textContent = rt('unavailable'); }
 }
 
+function reviewReference(ref) {
+  const name = document.createElement(ref.key ? 'button' : 'strong');
+  name.textContent = [ref.artifact, ref.page && rt('page') + ' ' + ref.page].filter(Boolean).join(' · ');
+  if (ref.key) {
+    name.type = 'button';
+    name.onclick = () => openEvidence({...ref, label:name.textContent}, name, ref.page);
+  }
+  return name;
+}
+
+function reviewSources(evidence, questionFor) {
+  const sources = document.createElement('details'), summary = document.createElement('summary');
+  sources.className = 'review-passages';
+  summary.textContent = rt('reviewed_sources', evidence.length);
+  sources.append(summary);
+  for (const ref of evidence) {
+    const passage = document.createElement('div');
+    passage.append(reviewReference(ref));
+    if (ref.quote) {
+      const quote = document.createElement('pre');
+      quote.dir = 'auto'; quote.textContent = ref.quote;
+      passage.append(quote);
+    }
+    const ask = questionFor?.(ref);
+    if (ask) passage.append(ask);
+    sources.append(passage);
+  }
+  return sources;
+}
+
 function renderReview() {
   const delivered = researchData.evidence?.some(item => item.edition === 'delivered');
   const other = researchData.working_review;
@@ -665,21 +705,21 @@ function renderReview() {
       }
       details.append(summary, fields); li.append(details);
     }
-    const passages = !window.SHARE_MODE && check.conclusion_support ? (check.evidence || []).filter(ref =>
+    const passages = !check.claims?.length && !window.SHARE_MODE && check.conclusion_support ? (check.evidence || []).filter(ref =>
       ref.artifact === 'paper/main.pdf' && ref.page > 0 && ref.quote && !ref.previous) : [];
-    function questionButton(passage) {
+    function questionButton(passage, judgment=label.textContent, action='question_conclusion') {
       const ask = document.createElement('button');
       ask.type = 'button';
-      ask.textContent = rt('question_conclusion', passage.page);
+      ask.textContent = rt(action, passage.page);
       ask.className = 'question-conclusion';
       ask.setAttribute('aria-controls', 'hitl-compose');
       ask.onclick = () => {
         const input = re('hitl-input'), compose = re('hitl-compose');
         const source = [passage.artifact, rt('page') + ' ' + passage.page].join(' · ');
-        const citation = source + '\n“' + passage.quote + '”\n' + rt('review') + ' ' + review.revision;
+        const citation = judgment + '\n' + source + '\n“' + passage.quote + '”\n' + rt('review') + ' ' + review.revision;
         const question = input.value.trimEnd() || rt('question_draft');
         if (!input.value.includes(citation)) {
-          input.value = question + '\n\n' + label.textContent + '\n' + citation;
+          input.value = question + '\n\n' + citation;
           compose.dataset.review = review.revision;
           input.rows = 8;
           input.dispatchEvent(new Event('input'));
@@ -690,6 +730,26 @@ function renderReview() {
         input.scrollIntoView({block:'center', behavior:matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
       };
       return ask;
+    }
+    if (check.claims?.length) {
+      const list = document.createElement('ul');
+      list.className = 'review-claims';
+      for (const claim of check.claims) {
+        const row = document.createElement('li'), heading = document.createElement('strong');
+        const quote = document.createElement('blockquote'), basis = document.createElement('strong'), reason = document.createElement('p');
+        heading.textContent = rt('claim_' + claim.kind);
+        quote.dir = 'auto'; quote.textContent = claim.passage.quote;
+        basis.textContent = rt('claim_basis', rt('basis_' + claim.basis));
+        reason.dir = 'auto'; reason.textContent = claim.reason;
+        const actions = document.createElement('div');
+        actions.className = 'review-controls';
+        actions.append(reviewReference(claim.passage));
+        if (!window.SHARE_MODE) actions.append(questionButton(claim.passage, [heading.textContent, basis.textContent, claim.reason].join('\n'), 'question_' + claim.kind));
+        row.append(heading, quote, basis, reason, actions);
+        if (claim.evidence.length) row.append(reviewSources(claim.evidence));
+        list.append(row);
+      }
+      li.append(list);
     }
     if (passages.length === 1) {
       const controls = document.createElement('div'), ask = questionButton(passages[0]);
@@ -739,27 +799,7 @@ function renderReview() {
       details.append(summary, list); li.append(details);
     }
     if (check.evidence?.length) {
-      const sources = document.createElement('details'), summary = document.createElement('summary');
-      sources.className = 'review-passages';
-      summary.textContent = rt('reviewed_sources', check.evidence.length);
-      sources.append(summary);
-      for (const ref of check.evidence) {
-        const passage = document.createElement('div'), name = document.createElement(ref.key ? 'button' : 'strong');
-        name.textContent = [ref.artifact, ref.page && rt('page') + ' ' + ref.page].filter(Boolean).join(' · ');
-        if (ref.key) {
-          name.type = 'button';
-          name.onclick = () => openEvidence({...ref, label:name.textContent}, name, ref.page);
-        }
-        passage.append(name);
-        if (ref.quote) {
-          const quote = document.createElement('pre');
-          quote.textContent = ref.quote;
-          passage.append(quote);
-        }
-        if (passages.length > 1 && passages.includes(ref)) passage.append(questionButton(ref));
-        sources.append(passage);
-      }
-      li.append(sources);
+      li.append(reviewSources(check.evidence, ref => passages.length > 1 && passages.includes(ref) && questionButton(ref)));
     }
     if (check.figures?.length) {
       const figures = document.createElement('ul');

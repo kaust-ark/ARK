@@ -7,6 +7,7 @@ import socket
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Thread
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -66,11 +67,15 @@ def test_live_research_desk(tmp_path, monkeypatch):
           condition="128 items", differed=1, outcomes=2, metric="search_comparisons",
           reported_value="7", independent_value="0")
     event("observed", "experiments", "Recorded search comparisons for 128 items.", artifact="results/experiment.json")
+    result_sentence = "At 128 items, the search used seven comparisons."
+    explanation_sentence = "A cache effect could explain the lower elapsed time."
     previous = None
     for label, claim in [("Reversed", "Arrow points to the wrong series"), ("Corrected", "Arrow points to the baseline")]:
         with fitz.open() as doc:
             pg = doc.new_page()
             pg.insert_text((60, 80), label + " plot")
+            if previous:
+                pg.insert_text((60, 110), result_sentence + "\n" + explanation_sentence)
             data = doc.tobytes()
         digest = hashlib.sha256(data).hexdigest()
         revision = hashlib.sha256(label.encode()).hexdigest()
@@ -109,6 +114,18 @@ def test_live_research_desk(tmp_path, monkeypatch):
                               "page":1,"visual":True,"sha256":digest},{"artifact":"paper/main.tex",
                               "quote":claim,"sha256":hashlib.sha256(source.encode()).hexdigest()}]}]}
         if previous:
+            measurement_ref = {"artifact": "results/experiment.json", "quote": "128 items",
+                               "sha256": hashlib.sha256(measurement.read_bytes()).hexdigest()}
+            record["artifact_hashes"].update({"paper/main.pdf": digest, measurement_ref["artifact"]: measurement_ref["sha256"]})
+            result = {"kind": "result", "basis": "measurement", "reason": "The count matches the recorded trial.",
+                      "passage": {"artifact": "paper/main.pdf", "page": 1, "quote": result_sentence, "sha256": digest},
+                      "evidence": [measurement_ref, {**measurement_ref, "sha256": "0" * 64, "quote": "Unverified evidence"}]}
+            explanation = {"kind": "explanation", "basis": "qualified", "reason": "The authors explicitly say ‘could explain’.",
+                           "passage": {**result["passage"], "quote": explanation_sentence},
+                           "evidence": [{**result["passage"], "quote": explanation_sentence}]}
+            record["checks"]["manuscript"]["claims"] = [
+                result, explanation, {**result, "passage": {**result["passage"], "sha256": "0" * 64}},
+            ]
             record["evidence_scope"] = {"comparison":"Compare search cost at equal input sizes.",
                                         "alternative":"A cache effect could change the timing.",
                                         "discriminator":"Record comparisons separately from elapsed time."}
@@ -249,12 +266,18 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     page.locator("#decision-text").wait_for()
                     assert page.locator("#decision-text").input_value() == draft
                     page.locator("#review-coverage > summary").click()
-                    ask = page.get_by_role("button", name="Question the judgment on page 1")
+                    box = page.locator("#hitl-input")
+                    page.get_by_role("button", name="Question this result on page 1").press("Enter")
+                    assert result_sentence in box.input_value() and explanation_sentence not in box.input_value()
+                    assert "Reviewer’s basis: measurement" in box.input_value()
+                    box.fill("")
+                    ask = page.get_by_role("button", name="Question this explanation on page 1")
                     ask.focus()
                     page.keyboard.press("Enter")
                     box = page.locator("#hitl-input")
                     assert box.evaluate("el => el === document.activeElement")
-                    assert revision in box.input_value() and "Corrected plot" in box.input_value()
+                    assert revision in box.input_value() and explanation_sentence in box.input_value() and result_sentence not in box.input_value()
+                    assert "Reviewer’s basis: qualified wording" in box.input_value()
                     assert page.locator("#hitl-send").is_disabled() and page.locator("#decision-text").input_value() == draft
                     # Guard against a decision arriving between the last UI update and an explicit send.
                     assert page.request.post(base + f"/dashboard/api/projects/{pid}/message",
@@ -286,6 +309,26 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert judgment.inner_text() == "Reviewer’s judgment: a possible explanation"
                 assert judgment.evaluate("el => getComputedStyle(el).display") == "block"
                 assert record["checks"]["manuscript"]["reason"] in judgment.locator("..").inner_text()
+                claim_rows = page.locator(".review-claims > li")
+                assert claim_rows.locator("blockquote").all_text_contents() == [result_sentence, explanation_sentence]
+                first = claim_rows.first
+                sources = first.locator(".review-passages")
+                sources.locator("summary").press("Enter")
+                assert sources.locator("pre").all_text_contents() == ["128 items"]
+                sources.get_by_role("button", name="results/experiment.json").click()
+                assert page.locator("#preview-content td").first.inner_text() == "128 items"
+                page.locator("#evidence-close").click()
+                sources.locator("summary").press("Enter")
+                first.get_by_role("button", name="paper/main.pdf · Page 1").click()
+                page.wait_for_function("document.querySelector('#preview-content img')?.naturalWidth > 0")
+                query = parse_qs(urlsplit(page.locator("#preview-content img").get_attribute("src")).query)
+                assert query == {"key": [f"auto_research/state/reviews/{revision}/main.pdf"], "sha256": [digest], "page": ["1"]}
+                page.locator("#evidence-close").click()
+                if output := os.environ.get("IDEA2PAPER_UI_CAPTURE"):
+                    sources.locator("summary").click()
+                    claim_rows.first.evaluate("el => window.scrollBy(0,el.getBoundingClientRect().top-84)")
+                    page.locator(".review-claims").screenshot(path=str(Path(output) / f"claim-fixture-en-{width}.png"))
+                    sources.locator("summary").click()
                 scope = page.locator(".review-scope")
                 scope.locator("summary").press("Enter")
                 assert scope.locator("dd").all_text_contents() == list(record["evidence_scope"].values())
@@ -354,6 +397,11 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     page.get_by_text("实验控制项（3）", exact=True).wait_for(state="attached")
                     history.get_by_text("打开归档文件 · main.pdf", exact=True).wait_for(state="attached")
                     assert "不一致" in controls.text_content() and "评审理由" in controls.text_content()
+                    assert "评审依据：实测数据" in claim_rows.first.text_content()
+                    assert "质疑第 1 页的这条解释" in claim_rows.last.text_content()
+                    if output := os.environ.get("IDEA2PAPER_UI_CAPTURE"):
+                        claim_rows.first.evaluate("el => window.scrollBy(0,el.getBoundingClientRect().top-84)")
+                        page.screenshot(path=str(Path(output) / "claim-fixture-zh-mobile.png"))
                     page.emulate_media(reduced_motion="no-preference")
                     # Switching languages reconnects the stream. The initial snapshot
                     # restores the screen silently; only a subsequent live event animates.
@@ -385,6 +433,11 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     page.get_by_text("ضوابط التجربة (3)", exact=True).wait_for(state="attached")
                     history.get_by_text("فتح الملف الحالي · experiment.json", exact=True).wait_for(state="attached")
                     assert "غير مطابق" in controls.text_content()
+                    assert "أساس حكم المراجع: القياس" in claim_rows.first.text_content()
+                    assert "ناقش هذا التفسير في الصفحة 1" in claim_rows.last.text_content()
+                    if output := os.environ.get("IDEA2PAPER_UI_CAPTURE"):
+                        claim_rows.first.evaluate("el => window.scrollBy(0,el.getBoundingClientRect().top-84)")
+                        page.screenshot(path=str(Path(output) / "claim-fixture-ar-mobile.png"))
                     event("match", "review", "Recomputed seed 3.", action="measurement_reproduction_finished",
                           condition="seed 3", differed=0, outcomes=6)
                     comparison.wait_for(state="hidden")
@@ -396,6 +449,8 @@ def test_live_research_desk(tmp_path, monkeypatch):
             shared.goto(base + f"/dashboard/share/{token}", wait_until="domcontentloaded")
             shared.locator("#research-observation").get_by_text("No observation recorded yet.").wait_for()
             assert shared.locator("#research-review").is_hidden()
+            assert shared.locator(".review-claims").count() == 0
+            assert result_sentence not in shared.request.get(base + f"/dashboard/api/projects/{pid}").text()
             assert shared.locator("#research-history .history-file").count() == 0
             assert shared.request.get(base + f"/dashboard/api/projects/{pid}/evidence?key=results/experiment.json").status == 404
             assert shared.request.get(base + f"/dashboard/api/projects/{pid}/research-history?before=10").status == 404
@@ -457,7 +512,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
             cover.wait_for()
             assert f"sha256={archived_digest}" in cover.get_attribute("src") and cover.evaluate("img => img.naturalWidth > 0")
             owner_page.get_by_role("button", name="Inspect the review").click()
-            assert owner_page.locator(".review-scope").count() == 0  # Older signed delivery
+            assert owner_page.locator(".review-scope, .review-claims").count() == 0  # Older signed delivery
             assert owner_page.locator("#review-coverage").get_attribute("open") is not None
             assert owner_page.locator("#review-coverage > summary").evaluate("s => document.activeElement === s")
             sends = []

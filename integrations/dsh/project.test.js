@@ -386,9 +386,9 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         } else if (!history.includes('known-answer-receipt')) {
           response = {name:'run_method_control',args:{target:'mean',inputs_json:'{"values":[2,4]}',
             expected_json:'3',alternative_json:'6',rationale:'The mean of two and four is three. The sum is six.'}}
-        } else if (history.includes('Before signing your manuscript assessment')) {
+        } else if (history.includes('Separate the result from its explanation')) {
           assert.match(history, /different exposure still fits/)
-          response = JSON.stringify({amend:{verdict:'accept'}})
+          response = JSON.stringify({amend:{verdict:'accept',checks:{manuscript:{claims:[{kind:'result'},{kind:'explanation'}]}}}})
         } else if (history.includes('independently-read-primary-passage')) {
           const citations = {status:'assessed', evidence:[{artifact:'sources/paper.txt',quote:'independently-read-primary-passage'}]}
           response = JSON.stringify(google ? {revision:'rev1', verdict:'unassessed', alternative:'different exposure still fits', checks:{citations,manuscript:{conclusion_support:'measured'}}} : {amend:{checks:{citations}}})
@@ -508,6 +508,8 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.equal(args.revision, 'rev1')
         return {receipt:{control:1, artifact:'scripts/plot.py', marker:'known-answer-receipt', matches:true}}
       case 'check_review':
+        if (google && args.verdict.checks?.citations?.evidence?.length && !args.verdict.checks?.manuscript?.claims)
+          return {valid:false, diagnostic:'Separate the result from its explanation'}
         return args.observed.some(r => r.artifact === 'sources/paper.txt') && args.verdict.checks?.citations.evidence[0].artifact === 'sources/paper.txt'
           ? {valid:true} : {valid:false, diagnostic:'Cite an observed primary source'}
       case 'record_review':

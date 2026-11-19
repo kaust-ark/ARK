@@ -91,6 +91,11 @@
 #review-coverage li { margin:4px 0 8px 1rem; color:var(--muted); font-size:.85rem; overflow-wrap:anywhere; }
 #review-coverage .review-figures { list-style:none; margin-block:8px; }
 .review-judgment { display:block; margin-block-end:4px; color:var(--ink); }
+#review-coverage .review-claims { list-style:none; padding:0; margin-block:10px; }
+#review-coverage .review-claims>li { margin:0; border-inline-start:2px solid var(--line); padding:4px 12px; }
+#review-coverage .review-claims>li+li { margin-block-start:12px; }
+.review-claims blockquote { margin:4px 0 8px; color:var(--ink); white-space:pre-wrap; }
+.review-claims p { margin:3px 0; }
 .review-scope { margin-block:8px; }
 .review-scope dl { margin:6px 0; padding-inline-start:10px; border-inline-start:2px solid var(--line); }
 .review-scope dt { font-weight:600; color:var(--ink); }

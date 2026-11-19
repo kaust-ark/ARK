@@ -299,6 +299,82 @@ def test_conclusion_reviewer_checks_the_whole_observed_paragraph_against_results
     assert "conclusion" not in paper(effect)
 
 
+def test_result_and_explanation_require_separate_observed_support(tmp_path):
+    from ark.review import _manuscript_claims
+
+    pair = {"domain":"experiment", "clean":"Plots lost mass.", "table":"group,loss\nA,3\nB,7",
+            "question":"Does treatment reduce loss?", "defect":"The mechanism was not measured."}
+    project(tmp_path, pair, "clean")
+    filename = "paper/main.pdf"
+    outcome = "The treated plots lost less mass."
+    explanation = "The difference was dominated by root uptake."
+    method = "scripts/worker.py"
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / method).write_text("loss = initial_mass - final_mass")
+    measured = "results/rows.json"
+    path = tmp_path / measured
+    path.write_text('[{"treated":3,"control":7}]')
+    def make_snapshot(assertion):
+        with fitz.open() as doc:
+            p = doc.new_page()
+            p.insert_text((40, 50), assertion)
+            p = doc.new_page()
+            p.insert_text((40, 50), "Conclusion")
+            p.insert_text((40, 90), outcome)
+            doc.save(tmp_path / filename)
+        return build_snapshot(tmp_path, expected_measurement=measured, measurement_run={
+            "status":"completed", "artifact":measured, "sha256":hashlib.sha256(path.read_bytes()).hexdigest()})
+
+    snap = make_snapshot(explanation)
+    assert snap["evidence_scope"]["attribution"]["quote"] == explanation
+    row = {"artifact":measured,"row":1}
+    result = {"kind":"result", "basis":"measurement", "passage":{"selector":"conclusion"},
+              "evidence":[row], "reason":"Lower recorded mass loss."}
+    causal = {"kind":"explanation","basis":"control","passage":{"selector":"attribution"},
+              "evidence":[row],"reason":"The paired loss differs."}
+    receipts = [read_evidence(snap, filename, page=n)["receipt"] for n in (1,2)] + [
+        read_evidence(snap, measured)["receipt"]]
+    def assess(values):
+        return _manuscript_claims(snap, values, receipts, "")
+    with pytest.raises(ValueError, match="separately"):
+        assess([result])
+    with pytest.raises(ValueError, match="separately"):
+        assess([result, {**causal,"kind":"result","basis":"measurement"}])
+    with pytest.raises(ValueError, match="observed method"):
+        assess([result, causal])
+    with pytest.raises(ValueError, match="separate, observed derivation"):
+        assess([result, {**causal,"basis":"derivation","evidence":[{"selector":"attribution"}]}])
+    with pytest.raises(ValueError, match="observed text window"):
+        _manuscript_claims(snap,[result, {**causal,"basis":"unsupported"}],receipts[1:],"")
+    claims = assess([result,{**causal,"basis":"unsupported"}])
+    assert claims[1]["passage"]["page"] == 1 and claims[0]["passage"]["page"] == 2
+
+    answer, seen = record(snap, pair, "clean", "")
+    answer["checks"]["experiment"]["evidence"] = [row]
+    answer["checks"]["manuscript"].update(evidence=[{"selector":"conclusion"},row],
+        conclusion_support="measured", claims=[result, {**causal, "basis":"unsupported"}])
+    # The conclusion is sound. The unsupported explanation survives on a different page.
+    with pytest.raises(ValueError, match="unsupported claim"):
+        validate_review(snap,answer,observed=[*receipts,*seen])
+    answer.update(verdict="revise",issues=[dict(id="R1",domain="manuscript",severity="blocker",status="new",
+        claim=explanation, reason="The study did not measure uptake.",fix="Report it as a hypothesis.",
+        evidence=[{"selector":"attribution"},row])])
+    assert validate_review(snap,answer,observed=[*receipts,*seen])["verdict"] == "revise"
+
+    fixed = make_snapshot("Root uptake is one possible explanation.")
+    assert "attribution" not in fixed["evidence_scope"]
+    evidence = [read_evidence(fixed, filename, page=n)["receipt"] for n in (1,2)] + [
+        read_evidence(fixed, measured)["receipt"]]
+    qualified = dict(causal, passage={"artifact":filename,"page":1,"quote":"Root uptake is one possible explanation."},
+                     basis="qualified", qualification="possible")
+    assert _manuscript_claims(fixed,[result,qualified],evidence,"")[1]["qualification"] == "possible"
+    fixed_answer,seen = record(fixed, pair, "clean", "")
+    fixed_answer["checks"]["experiment"]["evidence"] = [row]
+    fixed_answer["checks"]["manuscript"].update(evidence=[{"selector":"conclusion"},row],
+        conclusion_support="measured", claims=[result,qualified])
+    assert validate_review(fixed,fixed_answer,observed=[*evidence,*seen])["deliverable"]
+
+
 def test_conclusion_selector_verifies_the_observed_page_window_and_pdf_digest(tmp_path):
     from ark import review
 
