@@ -1,0 +1,130 @@
+{
+  "format": 1,
+  "title": "Idea2Paper",
+  "plugins": [
+    {
+      "name": "idea2paper-dsh",
+      "title": "Idea2Paper",
+      "description": {
+        "en": "Run a research project with experiments, independent review and a checked paper.",
+        "zh": "完成研究实验、独立评审和论文交付。"
+      },
+      "author": "Idea2Paper Team",
+      "homepage": "https://github.com/kaust-ark/ARK",
+      "repository": {
+        "url": "https://github.com/kaust-ark/ARK",
+        "directory": "integrations/dsh"
+      },
+      "versions": [
+        {
+          "version": "0.2.0-alpha.20",
+          "publishTimestamp": 1795129115,
+          "engines": {
+            "dsh": "0.2.1-rc.2 || 0.2.2-rc.5"
+          },
+          "source": {
+            "type": "git",
+            "url": "https://github.com/kaust-ark/ARK",
+            "commit": "e1819f4e7ef3ad96de34bccaa6e20c8ad37915d8"
+          }
+        },
+        {
+          "version": "0.2.0-alpha.19",
+          "publishTimestamp": 1795126927,
+          "engines": {
+            "dsh": "0.2.1-rc.2 || 0.2.2-rc.5"
+          },
+          "source": {
+            "type": "git",
+            "url": "https://github.com/kaust-ark/ARK",
+            "commit": "5daa6ce93dbcb0529e5581c2e0e8c145d46c0d92"
+          }
+        },
+        {
+          "version": "0.2.0-alpha.17",
+          "publishTimestamp": 1795124229,
+          "engines": {
+            "dsh": "0.2.1-rc.2 || 0.2.2-rc.5"
+          },
+          "source": {
+            "type": "git",
+            "url": "https://github.com/kaust-ark/ARK",
+            "commit": "5119f81a709c71e577704e5757c9e02e592a113b"
+          }
+        },
+        {
+          "version": "0.2.0-alpha.6",
+          "publishTimestamp": 1795112133,
+          "engines": {
+            "dsh": "0.2.1-rc.2"
+          },
+          "source": {
+            "type": "git",
+            "url": "https://github.com/kaust-ark/ARK",
+            "commit": "b6a3c98951b823b1d35a49e341cc6012456598ea"
+          }
+        },
+        {
+          "version": "0.2.0-alpha.5",
+          "publishTimestamp": 1795111042,
+          "engines": {
+            "dsh": "0.2.1-rc.2"
+          },
+          "source": {
+            "type": "git",
+            "url": "https://github.com/kaust-ark/ARK",
+            "commit": "16be1eb32f3f0649dd1f50f125c3765d0bee5c64"
+          }
+        },
+        {
+          "version": "0.2.0-alpha.4",
+          "publishTimestamp": 1795105540,
+          "engines": {
+            "dsh": "0.2.1-rc.2"
+          },
+          "source": {
+            "type": "git",
+            "url": "https://github.com/kaust-ark/ARK",
+            "commit": "2983df17ce530cc35456fbc200a3b1585dc890ac"
+          }
+        },
+        {
+          "version": "0.2.0-alpha.3",
+          "publishTimestamp": 1795080853,
+          "engines": {
+            "dsh": "0.2.1-rc.2"
+          },
+          "source": {
+            "type": "git",
+            "url": "https://github.com/kaust-ark/ARK",
+            "commit": "290d658e7ff0f46b4a015e95db75dc88015a650e"
+          }
+        },
+        {
+          "version": "0.2.0-alpha.2",
+          "publishTimestamp": 1795078044,
+          "engines": {
+            "dsh": "0.2.1-rc.2"
+          },
+          "source": {
+            "type": "git",
+            "url": "https://github.com/kaust-ark/ARK",
+            "commit": "8f2224e4c210a2febf8196f0c1dd324088a62a6d"
+          }
+        },
+        {
+          "version": "0.2.0-alpha.1",
+          "publishTimestamp": 1795071000,
+          "engines": {
+            "dsh": "0.2.1-rc.2"
+          },
+          "source": {
+            "type": "git",
+            "url": "https://github.com/kaust-ark/ARK",
+            "commit": "06a2d73325be1a63bc2ab1ce62f7873d2cc23f0d"
+          }
+        }
+      ]
+    }
+  ]
+}
