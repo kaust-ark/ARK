@@ -11,6 +11,63 @@ from ark.workflow import ResearchDecision
 from ark.orchestrator.dsh_workflow import hosted_workflow_enabled, run_workflow
 
 
+def test_pack_cache_keys_the_staged_wheel_and_npm_inputs(tmp_path, monkeypatch):
+    from pathlib import Path
+    from subprocess import CompletedProcess
+    from integrations.dsh import pack
+
+    repo = tmp_path / "repo"
+    plugin = repo / "integrations/dsh"
+    monkeypatch.setattr(pack, "HERE", plugin)
+    monkeypatch.setattr(pack, "REPO", repo)
+    def write(path, text):
+        file = repo / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(text)
+        return file
+
+    for name in ("LICENSE", "pyproject.toml", "ark/orchestrator/dsh_workflow.mjs",
+                 "website/dashboard/templates/research.css", "skills/paper/SKILL.md", "venue_templates/icml/main.tex",
+                 "integrations/dsh/LICENSE", "integrations/dsh/README.md", "integrations/dsh/index.js"):
+        write(name, "initial")
+    write("integrations/dsh/package.json", json.dumps({"files": ["index.js", "companion"]}))
+    builds = []
+    fail_pack = False
+    def run(cmd, **kwargs):
+        if "wheel" in cmd:
+            out = Path(cmd[cmd.index("--wheel-dir") + 1])
+            (out / "ark.whl").write_bytes(b"wheel")
+        elif cmd[1] == "pack":
+            target = Path(cmd[-1]) / "idea2paper-dsh-1.tgz"
+            target.write_bytes(b"tar")
+            if fail_pack:
+                raise RuntimeError("interrupted pack")
+            builds.append(target.name)
+            return CompletedProcess(cmd, 0, json.dumps([{"filename": target.name}]))
+        return CompletedProcess(cmd, 0)
+    monkeypatch.setattr(pack.subprocess, "run", run)
+
+    cache = tmp_path / "cache"
+    first = pack.build(cache, cached=True)
+    write("website/__pycache__/app.pyc", "unrelated")
+    write("skills/.pytest_cache/v/cache/nodeids", "unrelated")
+    write("integrations/dsh/project.test.js", "outside the npm files list")
+    assert pack.build(cache, cached=True) == first and len(builds) == 1
+    previous = first
+    for name in ("website/dashboard/templates/research.css", "ark/orchestrator/dsh_workflow.mjs",
+                 "LICENSE", "integrations/dsh/README.md"):
+        write(name, "changed")
+        current = pack.build(cache, cached=True)
+        assert current.parent != previous.parent and current.is_file()
+        previous = current
+    write("integrations/dsh/package.json", json.dumps({"files": ["index.js", "project.test.js", "companion"]}))
+    fail_pack = True
+    with pytest.raises(RuntimeError, match="interrupted pack"):
+        pack.build(cache, cached=True)
+    fail_pack = False
+    assert pack.build(cache, cached=True).parent != previous.parent and len(builds) == 6
+
+
 @pytest.mark.parametrize(("override", "budget"), [(None, 1), ("0", 0), ("3", 3)])
 def test_native_profile_retries_only_transient_provider_failures(tmp_path, monkeypatch, override, budget):
     from ark.orchestrator.dsh_workflow import _native_profile
@@ -292,3 +349,76 @@ def test_real_native_host_replays_owner_through_installed_tarball(
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_hosted_worker_keeps_python_and_js_pinned_after_service_rollout(tmp_path):
+    """Exercise the production module entry point across two different wheel payloads."""
+    import hashlib
+    import subprocess
+    import sys
+    import tarfile
+    import zipfile
+    from pathlib import Path
+
+    def make_bundle(version):
+        package = tmp_path / version / "package"
+        (package / "node_modules/commander").mkdir(parents=True)
+        (package / "node_modules/commander/package.json").write_text("{}")
+        (package / "package.json").write_text(json.dumps({"name":"idea2paper-dsh", "engines":{"dsh":"0.2.1-rc.2"}}))
+        (package / "index.js").write_text(version)
+        companion = package / "companion"
+        companion.mkdir()
+        wheel = companion / "fixture.whl"
+        core = """
+import json, os, sys
+from pathlib import Path
+def main():
+    project = Path(sys.argv[sys.argv.index('--code-dir') + 1])
+    package = project / '.dsh/native/home/profiles/idea2paper/node_modules/idea2paper-dsh'
+    assert (package / 'index.js').read_text() == VERSION
+    (project/'workflow.json').write_text('{"version":3}')
+    (project/'worker-result.json').write_text(json.dumps([VERSION, __file__, os.environ['IDEA2PAPER_BUNDLE_SHA256']]))
+"""
+        with zipfile.ZipFile(wheel, "w") as ws:
+            ws.writestr("ark/__init__.py", "")
+            ws.writestr("ark/orchestrator/__init__.py", "")
+            ws.writestr("ark/orchestrator/core.py", f"VERSION = {version!r}\n" + core)
+        (companion / "manifest.json").write_text(json.dumps({
+            "wheel":wheel.name, "sha256":hashlib.sha256(wheel.read_bytes()).hexdigest()}))
+        archive = tmp_path / (version + ".tgz")
+        with tarfile.open(archive, "w:gz") as out:
+            out.add(package, arcname="package")
+        return archive, hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    def launch(name, archive, deployed_digest):
+        project = tmp_path / name
+        project.mkdir(exist_ok=True)
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2]), "ARK_WORKFLOW_RUNTIME":"native",
+               "ARK_AGENT_RUNTIME":"dsh", "IDEA2PAPER_BUNDLE_PATH":str(archive), "IDEA2PAPER_BUNDLE_SHA256":deployed_digest,
+               "XDG_CACHE_HOME":str(tmp_path / "service-cache")}
+        subprocess.run([sys.executable, "-m", "ark.orchestrator", "--project", name, "--project-id", name,
+                        "--project-dir", str(project), "--code-dir", str(project), "--db-path", str(tmp_path / "db")],
+                       env=env, cwd=tmp_path, check=True, capture_output=True, text=True, timeout=30)
+        version, origin, digest = json.loads((project / "worker-result.json").read_text())
+        assert "idea2paper-worker-" in origin
+        return version, digest
+
+    first, first_sha = make_bundle("first")
+    second, second_sha = make_bundle("second")
+    assert launch("original", first, first_sha) == ("first", first_sha)
+    first.unlink()
+    assert launch("original", second, second_sha) == ("first", first_sha)
+    assert launch("fresh", second, second_sha) == ("second", second_sha)
+
+    # Migrate an existing v3 profile whose service has only its older build cache.
+    cache = tmp_path / "service-cache/idea2paper"
+    original_archive = cache / "hosted-archives" / (first_sha + ".tgz")
+    older_cache = cache / "bundles/source-input-key/original.tgz"
+    older_cache.parent.mkdir(parents=True)
+    original_archive.rename(older_cache)
+    assert launch("original", second, second_sha) == ("first", first_sha)
+    original_archive.unlink()
+    older_cache.unlink()
+    with pytest.raises(subprocess.CalledProcessError) as missing:
+        launch("original", second, second_sha)
+    assert first_sha in missing.value.stderr and "Restore the trusted Idea2Paper release" in missing.value.stderr

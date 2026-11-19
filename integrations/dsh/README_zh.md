@@ -14,11 +14,11 @@
 dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.3/idea2paper-dsh-0.2.0-alpha.3.tgz
 ```
 
-在源码仓库中，也可以先构建同一份安装包，再从本地安装。
+源码分支包含 0.2.0-alpha.4 候选版。可以从仓库根目录构建并安装这份归档。
 
 ```sh
 python3 integrations/dsh/pack.py --out dist/dsh
-dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-0.2.0-alpha.3.tgz"
+dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-0.2.0-alpha.4.tgz"
 dsh --profile idea2paper --help
 ```
 
@@ -55,7 +55,7 @@ dsh --profile idea2paper resume search-study
 
 ## 在 Discover 中查看
 
-在 DSH Web 打开 **Plugins → More → Experimental plugins**，启用 **Custom plugin markets**，再选择 **Discover → Add index source**。发布后填入下方地址。插件卡片会显示精确的 Git 提交和兼容的 DSH 版本。索引和安装均属于当前 profile。如果 Web 使用单独的 profile，请用上面的 CLI 命令安装到 `idea2paper`。[DSH Discover 中文指南](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.zh.md)
+在 DSH Web 打开 **Plugins → More → Experimental plugins**，启用 **Custom plugin markets**，再选择 **Discover → Add index source**。填入下方已发布的 0.2.0-alpha.3 索引地址。插件卡片会显示精确的 Git 提交和兼容的 DSH 版本。索引和安装均属于当前 profile。如果 Web 使用单独的 profile，请用上面的 CLI 命令安装到 `idea2paper`。[DSH Discover 中文指南](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.zh.md)
 
 ```text
 https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.3/index.json
@@ -67,7 +67,7 @@ https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.3/index.j
 
 ```sh
 python3 integrations/dsh/pack.py --out dist/dsh
-python3 integrations/dsh/verify.py dist/dsh/idea2paper-dsh-0.2.0-alpha.3.tgz --prepare dist/dsh/release
+python3 integrations/dsh/verify.py dist/dsh/idea2paper-dsh-0.2.0-alpha.4.tgz --prepare dist/dsh/release
 ```
 
 验证程序会从本地 HTTP 地址安装到干净的 profile，调用包内 Python 组件读取已停止的项目，再启动 DSH Web 核对 Discover 的 Git 安装目标，并通过本地 Git 镜像安装同一提交。生成的独立 Git 仓库包含归档中的文件和 wheel，索引指向实际的包提交。原 0.1.0-alpha.1 安装包可使用 `verify_legacy.py` 运行对应的测试。

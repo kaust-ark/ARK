@@ -141,44 +141,11 @@ def _bundle_archive():
         raise RuntimeError(
             "Set IDEA2PAPER_BUNDLE_PATH to the tested Idea2Paper bundle tarball."
         )
-    # Include dirty release sources. Two provisioners can share the same content-addressed build.
-    inputs = [
-        source / "pyproject.toml",
-        *sorted((source / "integrations/dsh").glob("*.js")),
-        *sorted((source / "integrations/dsh").glob("*.py")),
-        source / "integrations/dsh/package.json",
-        source / "integrations/dsh/cordis.patch.yml",
-        *sorted((source / "ark").rglob("*.py")),
-        *sorted((source / "ark/templates").rglob("*.prompt")),
-    ]
-    digest = hashlib.sha256()
-    for path in inputs:
-        digest.update(
-            str(path.relative_to(source)).encode() + b"\0" + path.read_bytes()
-        )
-    for name in ("skills", "venue_templates"):
-        for path in sorted((source / name).rglob("*")):
-            if path.is_file():
-                digest.update(
-                    str(path.relative_to(source)).encode() + b"\0" + path.read_bytes()
-                )
-    cache = (
-        Path(os.getenv("XDG_CACHE_HOME", Path.home() / ".cache"))
-        / "idea2paper/bundles"
-        / digest.hexdigest()
+    cache = Path(os.getenv("XDG_CACHE_HOME", Path.home() / ".cache")) / "idea2paper/bundles"
+    archive = subprocess.check_output(
+        [sys.executable, str(pack), "--cache-dir", str(cache)], cwd=source, text=True
     )
-    cache.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with (cache / ".lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        archives = list(cache.glob("idea2paper-dsh-*.tgz"))
-        if not archives:
-            subprocess.run(
-                [sys.executable, str(pack), "--out", str(cache)], check=True, cwd=source
-            )
-            archives = list(cache.glob("idea2paper-dsh-*.tgz"))
-        if len(archives) != 1:
-            raise RuntimeError("The bundle build must produce one Idea2Paper tarball.")
-        return archives[0]
+    return Path(archive.strip()).resolve(strict=True)
 
 
 def _bundle_files(package):
@@ -195,7 +162,7 @@ def _bundle_files(package):
     return files
 
 
-def _install_bundle(profile):
+def _install_bundle(profile, *, archive=None):
     """Install the immutable, dependency-bundled npm payload without a registry request."""
     marker = profile / "bundle.sha256"
     package = profile / "node_modules/idea2paper-dsh"
@@ -203,14 +170,14 @@ def _install_bundle(profile):
     pinned = marker.read_text().strip() if marker.is_file() else None
     if pinned is not None and (len(pinned) != 64 or any(c not in "0123456789abcdef" for c in pinned)):
         raise RuntimeError("Invalid project bundle digest. Restore the project's verified bundle metadata.")
-    if pinned and package.is_dir() and manifest.is_file():
+    if archive is None and pinned and package.is_dir() and manifest.is_file():
         # Service rollout variables select the archive for new projects. An existing
         # owner can continue offline only while its installed payload matches its pin.
         if json.loads(manifest.read_text()) != {"sha256": pinned, "files": _bundle_files(package)}:
             raise RuntimeError(f"Installed Idea2Paper bundle changed. Restore archive {pinned}.")
         return pinned
     try:
-        archive = _bundle_archive()
+        archive = archive if archive is not None else _bundle_archive()
         digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
         if pinned:

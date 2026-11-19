@@ -3152,7 +3152,7 @@ def _on_stop_signal(sig, frame):
     sys.exit(0)
 
 
-def main():
+def main(*, hosted_entrypoint=False):
     parser = argparse.ArgumentParser(description="ARK Automated Research Orchestrator")
     # `--mode` accepted for backward compatibility with existing slurm
     # scripts that pass `--mode paper`; there is only one mode now.
@@ -3227,6 +3227,10 @@ def main():
     # Auto-resolve project_id (by name, or a bare id) on the LocalDb path only.
     if not project_id and not control_plane_url and db_path and Path(db_path).exists():
         project_id = resolve_project_id_by_name(db_path, args.project)
+
+    if hosted_entrypoint:
+        from ark.orchestrator.hosted_worker import boot_native_worker
+        boot_native_worker(project_id, code_dir, project_dir)
 
     orchestrator = Orchestrator(
         max_days=args.max_days,
