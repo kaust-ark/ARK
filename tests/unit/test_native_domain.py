@@ -370,6 +370,24 @@ def test_transport_carries_only_requested_result(tmp_path):
     assert good["ok"] and good["result"]["state"] == "new"
 
 
+def test_original_pdf_keeps_adjacent_columns_out_of_quoted_passages(monkeypatch):
+    import io
+    from unittest.mock import Mock
+    import fitz
+    from ark import literature_evidence as evidence
+
+    with fitz.open() as doc:
+        page = doc.new_page()
+        page.insert_textbox((60, 60, 270, 160), "The original authors measured\na paired improvement.", fontsize=11)
+        page.insert_textbox((330, 60, 530, 160), "0.2  0.4  0.6\nFigure axes", fontsize=11)
+        pdf = io.BytesIO(doc.tobytes())
+    pdf.headers = {}
+    monkeypatch.setattr(evidence, "build_opener", lambda *args: Mock(open=Mock(return_value=pdf)))
+    page, = evidence._paper_excerpt("https://arxiv.org/pdf/example")
+    assert "The original authors measured a paired improvement." in " ".join(page.split())
+    assert "Figure axes" in page
+
+
 def test_primary_source_resolution_requires_correct_identity(monkeypatch):
     evidence = domain.literature_evidence
     entry = {

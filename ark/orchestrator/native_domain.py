@@ -1808,6 +1808,7 @@ class NativeProject(CompilerMixin):
         self.review_receipts = []
         self.control_attempts = 0
         self.reproduction_attempts = 0
+        self.reproduction_format_retry = False
         archive = self.state_dir / "reviews" / snapshot["revision"]
         archive.mkdir(parents=True, exist_ok=True)
         self.reproduction_path = None
@@ -1962,19 +1963,28 @@ class NativeProject(CompilerMixin):
             decision = self._seal_reproduction({"unavailable": reason})
             self.event("review", "measurement_reproduction_unavailable", reason, revision=snap["revision"])
             return decision
-        if self.reproduction_attempts >= 3:
-            raise ValueError("The independent reproduction has used its three attempts; report available evidence.")
+        regular_attempts = 3
+        attempt_limit = regular_attempts + int(self.reproduction_format_retry)
+        if self.reproduction_attempts >= attempt_limit:
+            raise ValueError("Independent calculation attempts exhausted. Supply unavailable with the specific reason.")
         data, _ = review._artifact(snap, task["artifact"])
         row = measurement_table.reproduction_row(json.loads(data), snap["measurement_comparison"]["unchanged_arrays"],
                                                  task["sha256"])
         self.reproduction_attempts += 1
         identity = ", ".join(f"{k} {v}" for k, v in task["identifiers"].items()) or "single observation"
         self.event("review", "measurement_reproduction_started", f"Independently recomputing {identity}.",
-                   condition=identity)
+                   condition=identity, attempt=self.reproduction_attempts)
         try:
             expected = review_control.reproduce(snap["method_control"], program, task["identifiers"], task["columns"])
+        except review_control.ReproductionFormatError as error:
+            self.reproduction_format_retry = True
+            remaining = regular_attempts + 1 - self.reproduction_attempts
+            self.event("review", "measurement_reproduction_failed", "The program returned an invalid measurement row.",
+                       failure="row_format", attempt=self.reproduction_attempts)
+            raise ValueError(f"{error} Remaining executions: {remaining}.") from None
         except Exception:
-            self.event("review", "measurement_reproduction_failed", "The independent calculation did not return the requested outcomes.")
+            self.event("review", "measurement_reproduction_failed", "The independent calculation did not return the requested outcomes.",
+                       failure="execution", attempt=self.reproduction_attempts)
             raise
         observed = row["outcomes"]
         differences = [key for key in task["columns"] if not math.isclose(expected[key], observed[key],

@@ -383,12 +383,19 @@ def reproduction_brief(snapshot):
     task = snapshot["measurement_reproduction"]
     brief = (snapshot.get("measurement_method") or {}).get("request")
     request = _artifact(snapshot, brief)[0].decode("utf-8", errors="replace")[:24000] if brief else ""
-    schema = {"identifier_fields": list(task["identifiers"]), "outcome_columns": task["columns"]}
+    schema = {
+        "identifier_fields": {name: type(value).__name__ for name, value in task["identifiers"].items()},
+        "outcome_columns": task["columns"],
+    }
     return (
         "You are the independent scientific reviewer. Before reading the submission, independently implement "
         "one recorded condition from the ORIGINAL research request. Call reproduce_measurement with a Python "
         "program defining reproduce(identifiers) that loads the original public data in the science image "
-        "and returns all named numeric outcomes. Follow the protocol's exact objectives, units, data splits "
+        "for exactly one row. Each identifiers[field] is one scalar. Read it by key and compute that condition. "
+        "Return a flat Python dict mapping every outcome column to one finite number. "
+        "For example, a hypothetical trial/loss interface reads trial = identifiers['trial'] and returns "
+        "{'loss': float(computed_loss)}. Use the actual field names below. "
+        "Follow the protocol's exact objectives, units, data splits "
         "and numerical requirements. The host chooses the condition and will freeze your working program "
         "before showing the author's measurements, manuscript, code or prior reviews. If the task, data or "
         "available compute is insufficient, call the same tool with unavailable and a concrete reason. "

@@ -188,7 +188,13 @@ def _paper_excerpt(url):
         with fitz.open(stream=body, filetype="pdf") as doc:
             if not len(doc):
                 return None
-            return [doc[page].get_text(sort=True)[:9000] for page in range(min(16, len(doc)))]
+            pages = []
+            for page in doc.pages(stop=min(16, len(doc))):
+                # Line-by-line layout sorting interleaves two-column prose with
+                # neighboring figures. Keep each original text block together.
+                blocks = page.get_text("blocks", sort=True)
+                pages.append("\n\n".join(block[4].strip() for block in blocks if block[6] == 0)[:9000])
+            return pages
     except (OSError, ValueError, RuntimeError, urllib.error.URLError):
         return None
 

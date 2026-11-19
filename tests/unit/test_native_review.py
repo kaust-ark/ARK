@@ -264,11 +264,23 @@ def test_unchanged_measured_rows_require_an_independent_reproduction_before_acce
     host.reproduction_decision = None
     host.reproduction_path = tmp_path / "sealed.json"
     host.reproduction_attempts = 0
+    host.reproduction_format_retry = False
     host.state_dir.mkdir(parents=True, exist_ok=True)
     with pytest.raises(ValueError, match="Before opening"):
         host.review_evidence({"revision": snap["revision"], "artifact": measured})
     with pytest.raises(ValueError, match="Before opening"):
         host.run_method_control({"revision": snap["revision"]})
+    assert '"seed": "int"' in blind and 'a flat Python dict' in blind
+    # Execution failures use the regular budget. A completed calculation with a
+    # malformed row permits exactly one extra attempt while evidence stays hidden.
+    probe = {"revision": snap["revision"], "program": "def reproduce(ids): return []"}
+    failures = [ValueError("calculation failed"), review_control.ReproductionFormatError("Single row required"),
+                review_control.ReproductionFormatError("Single row required")]
+    with patch.object(review_control, "reproduce", side_effect=failures) as runner:
+        for phrase in ("calculation failed", "Remaining executions: 2", "Remaining executions: 1"):
+            with pytest.raises(ValueError, match=phrase):
+                host.reproduce_measurement(probe)
+        assert runner.call_count == 3 and host.reproduction_decision is None
     original_program = 'def reproduce(identifiers): return {"score":7,"accuracy":0.9}'
     with patch.object(review_control, "reproduce", return_value={"score":7,"accuracy":0.9}) as worker:
         request = {"revision": snap["revision"], "program": original_program}
@@ -282,6 +294,10 @@ def test_unchanged_measured_rows_require_an_independent_reproduction_before_acce
         assert worker.call_count == 1 and json.loads(host.reproduction_path.read_text()) == sealed
     host.reproduction_path = tmp_path / "abstained.json"
     host.reproduction_decision = None
+    with patch.object(review_control, "reproduce") as runner:
+        with pytest.raises(ValueError, match="attempts exhausted"):
+            host.reproduce_measurement(probe)
+        runner.assert_not_called()
     assert host.reproduce_measurement({"revision": snap["revision"], "unavailable": "Missing offline dataset"}) == {
         "unavailable": "Missing offline dataset"}
     with pytest.raises(ValueError, match="sealed"):

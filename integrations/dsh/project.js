@@ -368,7 +368,7 @@ export const methodControlTool = ['Test the frozen scientific worker on a small 
   target: str, inputs_json: str, array_inputs: strings, expected_json: str, alternative_json: str, rationale: str,
 }, ['target', 'inputs_json', 'expected_json', 'alternative_json', 'rationale']]
 
-export const reproductionTool = ['Use the original research request to independently recompute the designated condition. Supply exactly one of program or unavailable. The program defines Python reproduce(identifiers) and returns all requested finite scalar columns. The CPU sandbox provides the science image and identifiers, with no project files or network. If reproduction is infeasible, give the specific reason in unavailable. The submission opens after commitment, and the program cannot be changed after disclosure.', {program: str, unavailable: str}]
+export const reproductionTool = ['Use the original research request to independently recompute the designated condition. Supply exactly one of program or unavailable. Python calls reproduce(identifiers) once with a dictionary for one condition. Each named identifier is a scalar. Return one flat dict with exactly the requested outcome keys and one finite Python number per key. The CPU sandbox provides the science image and identifiers, with no project files or network. If reproduction is infeasible, give the specific reason in unavailable. The submission opens after commitment, and the program cannot be changed after disclosure.', {program: str, unavailable: str}]
 
 function render(_args, value) {
   const { attachment, ...details } = value

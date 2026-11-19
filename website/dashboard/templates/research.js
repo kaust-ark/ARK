@@ -48,11 +48,14 @@ const researchLabels = {
   event_method_control_failed: ['Prediction test unavailable','预测检验未完成','تعذر اختبار التوقع'],
   event_manuscript_reviewed: ['Verdict recorded','评审结论已归档','حُفظ قرار المراجعة'],
   row_start: ['Independent calculation started for %s.','正在复算 %s。','بدأ الحساب المستقل للحالة %s.'],
+  row_attempt: ['Independent calculation for %s · attempt %s','正在复算 %s · 第 %s 次尝试','إعادة حساب %s · المحاولة %s'],
+  row_format: ['Attempt %s returned data in the wrong shape. No comparison is available.','第 %s 次复算返回的数据格式有误，尚无可比较的数值。','أعادت المحاولة %s بيانات بتنسيق غير صالح. لم تتوفر مقارنة.'],
+  row_execution: ['Attempt %s ended before it produced a measurement.','第 %s 次复算在得到测量值前中止。','انتهت المحاولة %s قبل الحصول على قياس.'],
   row_match: ['%s · All %s outcomes matched.','%s · %s 项指标全部吻合。','%s · تطابقت النتائج كلها (%s).'],
   row_diff: ['%s · %s of %s outcomes differ.','%s · %s 项存在差异，共 %s 项。','%s · تختلف %s من أصل %s نتائج.'],
-  row_values: ['%s was reported as %s and recomputed as %s.','%s 的原始实测为 %s，独立复算为 %s。','%s: القيمة المسجلة %s وإعادة الحساب %s.'],
+  row_values: ['%s was reported as %s and recomputed as %s.','%s 的论文报告值为 %s，独立复算为 %s。','%s: القيمة المسجلة %s وإعادة الحساب %s.'],
   control_metric: ['Outcome','指标','المقياس'], control_recomputed: ['Recomputed','独立复算','أُعيد حسابه'],
-  control_reported: ['Reported','论文实测','المسجل'], control_result: ['Comparison','比较','المقارنة'],
+  control_reported: ['Reported','论文报告值','المسجل'], control_result: ['Comparison','比较','المقارنة'],
   control_expected: ['Expected','预期值','المتوقع'], control_observed: ['Observed','观察值','المرصود'],
   control_rationale: ['Reviewer’s rationale','评审理由','تعليل المراجع'], control_source: ['Source','证据来源','المصدر'],
   measured: ['Plotted from measurements','由实测数据绘制','رُسم من القياسات'],
@@ -63,6 +66,7 @@ const researchLabels = {
   blocker: ['Blocking issue','阻断性问题','مشكلة مانعة'], minor: ['Minor issue','次要问题','ملاحظة طفيفة'], question: ['Question','待澄清','سؤال'],
   no_score: ['Awaiting review','等待评审','بانتظار المراجعة'], accept: ['Accepted','已通过','مقبول'], revise: ['Needs revision','需要修改','يتطلب التعديل'],
   unassessed: ['Unassessed','尚未评估','لم يقيّم'], new: ['Open','待修复','مفتوح'], still_present: ['Still present','问题仍存在','ما زالت قائمة'], resolved: ['Resolved','已解决','تم الحل'],
+  seconds: ['%s s','%s 秒','%s ث'], minutes: ['%s min','%s 分钟','%s د'],
   page: ['Page','页','صفحة'], elapsed: ['%s since observation','距上次记录 %s','%s منذ آخر ملاحظة']
 };
 Object.entries(researchLabels).forEach(([key, values]) =>
@@ -120,7 +124,10 @@ function reviewEventLabel(event) {
 }
 
 function observationText(event) {
-  if (event?.condition && event.action === 'measurement_reproduction_started') return rt('row_start', event.condition);
+  if (event?.action === 'measurement_reproduction_started' && event.condition)
+    return event.attempt ? rt('row_attempt', event.condition, event.attempt) : rt('row_start', event.condition);
+  if (event?.action === 'measurement_reproduction_failed' && event.attempt && ['row_format','execution'].includes(event.failure))
+    return rt(event.failure === 'row_format' ? 'row_format' : 'row_execution', event.attempt);
   if (event?.condition && event.action === 'measurement_reproduction_finished' && Number.isInteger(event.outcomes)) {
     if (event.differed === 0) return rt('row_match', event.condition, event.outcomes);
     if (event.differed > 0 && event.metric) return rt('row_diff', event.condition, event.differed, event.outcomes) +
@@ -248,12 +255,21 @@ function renderResearch(animate=false) {
   meter.hidden = !measured;
   meter.classList.toggle('research-count-live', animate && active && !disconnected && !waiting && !paused && !quota);
   if (measured) meter.firstElementChild.style.transform = 'scaleX(' + obs.count / obs.total + ')';
-  re('research-observation').textContent = observed + counter;
+  const observation = re('research-observation');
+  if (observation.textContent !== observed + counter) {
+    observation.textContent = observed + counter;
+    if (animate && active && !disconnected && !paused && !waiting && !quota &&
+        window.matchMedia('(prefers-reduced-motion: no-preference)').matches) {
+      observation.getAnimations().forEach(animation => animation.cancel());
+      observation.animate([{opacity:.6, transform:'translateY(3px)'}, {opacity:1, transform:'none'}],
+        {duration:220, easing:'ease-out'});
+    }
+  }
   const ts = obs?.ts || researchData.milestone?.ts;
   re('research-time').textContent = ts ? fmtDate(ts) : '';
   if (ts && active && !waiting && !paused && !disconnected) {
     const seconds = Math.floor((Date.now() - Date.parse(ts)) / 1000);
-    if (seconds >= 0) re('research-time').textContent += ' · ' + rt('elapsed', seconds < 60 ? seconds + ' s' : Math.floor(seconds / 60) + ' min');
+    if (seconds >= 0) re('research-time').textContent += ' · ' + rt('elapsed', seconds < 60 ? rt('seconds', seconds) : rt('minutes', Math.floor(seconds / 60)));
   }
   if (animate && !disconnected && !waiting && !paused && re('research-announce').textContent !== observed + counter)
     re('research-announce').textContent = observed + counter;
@@ -293,12 +309,13 @@ function renderEvidence(animate) {
       const type = document.createElement('span'), name = document.createElement('span');
       type.className = 'file-type'; name.className = 'file-name';
       type.textContent = item.key.split('.').pop().toUpperCase();
-      name.textContent = item.label || item.key; btn.title = item.key; btn.append(type,name);
+      btn.title = item.key; btn.append(type,name);
       if (animate) btn.classList.add('research-arrived');
-      btn.onclick = () => openEvidence(item,btn);
       target.append(btn);
     }
     existing.delete(item.key);
+    btn.querySelector('.file-name').textContent = item.label || item.key;
+    btn.onclick = () => openEvidence(item,btn);
     btn.setAttribute('aria-pressed', String(preview?.key === item.key));
   }
   for (const btn of existing.values()) btn.remove();

@@ -132,6 +132,12 @@ def journal(root, after=None, before=None):
             for field in ("differed", "outcomes"):
                 if type(event.get(field)) is int and 0 <= event[field] <= 16:
                     e[field] = event[field]
+        if e["action"] in ("measurement_reproduction_started", "measurement_reproduction_failed"):
+            attempt = event.get("attempt")
+            if type(attempt) is int and attempt > 0:
+                e["attempt"] = attempt
+            if e["action"].endswith("_failed") and event.get("failure") in ("row_format", "execution"):
+                e["failure"] = event["failure"]
         if evidence_type(event.get("artifact")):
             e["artifact"] = event["artifact"]
         events.append(e)

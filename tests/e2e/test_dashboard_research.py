@@ -123,6 +123,13 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 cookie = TimestampSigner(settings.secret_key).sign(base64.b64encode(json.dumps({"user_id":uid}).encode()))
                 ctx.add_cookies([{"name":"session","value":cookie.decode(),"url":base}])
                 page = ctx.new_page()
+                # Observe actual Web Animations without depending on a 220 ms screenshot window.
+                page.add_init_script("""const animate = Element.prototype.animate;
+                    window.observationMotion = [];
+                    Element.prototype.animate = function(...args) {
+                        if (this.id === 'research-observation') window.observationMotion.push(this.textContent);
+                        return animate.apply(this, args);
+                    };""")
                 errors = []
                 page.on("pageerror", lambda exc: errors.append(str(exc)))
                 page.route("https://**", lambda r: r.abort())
@@ -142,6 +149,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert meter.is_visible()
                 assert abs(meter.evaluate("el => el.getBoundingClientRect().width / el.parentNode.clientWidth") - 2/3) < .01
                 assert meter.evaluate("el => getComputedStyle(el).transitionDuration") == "0s"
+                assert page.evaluate("window.observationMotion") == []
                 experiment = page.locator('#research-phases button[data-phase="experiment"]')
                 experiment.click()
                 assert experiment.get_attribute("aria-pressed") == "true"
@@ -235,12 +243,21 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     page.evaluate("setLang('zh')")
                     page.get_by_text("实验控制项（3）", exact=True).wait_for(state="attached")
                     assert "不一致" in controls.text_content() and "评审理由" in controls.text_content()
+                    page.emulate_media(reduced_motion="no-preference")
+                    event("abi", "review", "Invalid row.", action="measurement_reproduction_failed",
+                          failure="row_format", attempt=2)
+                    row_error = "第 2 次复算返回的数据格式有误，尚无可比较的数值。"
+                    page.locator("#research-observation").get_by_text(row_error, exact=True).wait_for()
+                    assert page.evaluate("window.observationMotion") == [row_error]
+                    event("abi", "review", "Invalid row.", action="measurement_reproduction_failed",
+                          failure="row_format", attempt=2)
                     event("real-row", "review", "Recomputed seed 2.", action="measurement_reproduction_finished",
                           condition="seed 2", differed=3, outcomes=6, metric="best_temp",
                           reported_value="16", independent_value="64")
                     page.locator("#research-observation").get_by_text(
-                        "seed 2 · 3 项存在差异，共 6 项。 best_temp 的原始实测为 16，独立复算为 64。", exact=True
+                        "seed 2 · 3 项存在差异，共 6 项。 best_temp 的论文报告值为 16，独立复算为 64。", exact=True
                     ).wait_for()
+                    assert page.evaluate("window.observationMotion").count(row_error) == 1
                     page.evaluate("setLang('ar')")
                     page.get_by_text("ضوابط التجربة (3)", exact=True).wait_for(state="attached")
                     assert "غير مطابق" in controls.text_content()

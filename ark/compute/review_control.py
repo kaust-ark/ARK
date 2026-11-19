@@ -12,6 +12,10 @@ import time
 
 from ark.compute.native_experiment import apptainer_command
 
+class ReproductionFormatError(ValueError):
+    """The program ran but its output cannot represent the requested scalar row."""
+
+
 _WALL_SECONDS = 30
 _OUTPUT_BYTES = 8192
 
@@ -56,9 +60,12 @@ with tempfile.TemporaryDirectory() as directory, open(os.devnull, 'w') as quiet:
         namespace = {'__name__': 'independent_reproduction'}
         exec(compile(case['program'], '<independent reproduction>', 'exec'), namespace)
         result = namespace['reproduce'](case['identifiers'])
-        if not isinstance(result, dict) or not 1 <= len(result) <= 16:
-            raise ValueError('Return one dictionary of measured numeric columns.')
-        result = {k: v.item() if getattr(v, 'shape', None) == () else v for k, v in result.items()}
+        if isinstance(result, dict):
+            result = {k: v.item() if getattr(v, 'shape', None) == () else v for k, v in result.items()}
+        # Only return valid scalar candidates across the sandbox boundary.
+        if not isinstance(result, dict) or not 1 <= len(result) <= 16 or any(
+                type(v) not in (int, float) for v in result.values()):
+            result = None
     print(json.dumps(result, allow_nan=False))
 """
 
@@ -189,10 +196,11 @@ def reproduce(runtime, program, identifiers, columns):
     row = _execute(runtime.get("backend"), runtime.get("image"), {"program": program, "identifiers": identifiers},
                    driver=_REPRODUCTION_DRIVER)
     if not isinstance(row, dict) or row.keys() != set(columns):
-        raise ValueError("Return exactly the requested numeric columns.")
+        raise ReproductionFormatError("Return one flat dict for a single condition, with keys " +
+                                      ", ".join(columns) + " and one finite number per key.")
     for value in row.values():
         if type(value) not in (int, float):
-            raise ValueError("Return one finite number per column.")
+            raise ReproductionFormatError("Return one finite number per column in a single flat dict.")
         _numbers(value)
     return {name: row[name] for name in columns}
 
