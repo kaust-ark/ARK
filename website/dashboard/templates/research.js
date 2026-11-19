@@ -57,6 +57,7 @@ const researchLabels = {
   row_diff: ['%s · %s of %s outcomes differ.','%s · %s 项存在差异，共 %s 项。','%s · تختلف %s من أصل %s نتائج.'],
   row_values: ['%s was reported as %s and recomputed as %s.','%s 的论文报告值为 %s，独立复算为 %s。','%s: القيمة المسجلة %s وإعادة الحساب %s.'],
   control_metric: ['Outcome','指标','المقياس'], control_recomputed: ['Recomputed','独立复算','أُعيد حسابه'],
+  compared_metric: ['Recomputed metric','复算指标','المقياس المُعاد حسابه'],
   control_reported: ['Reported','论文报告值','المسجل'], control_result: ['Comparison','比较','المقارنة'],
   control_expected: ['Expected','预期值','المتوقع'], control_observed: ['Observed','观察值','المرصود'],
   control_rationale: ['Reviewer’s rationale','评审理由','تعليل المراجع'], control_source: ['Source','证据来源','المصدر'],
@@ -126,7 +127,7 @@ function reviewEventLabel(event) {
   return researchLabels[label] ? rt(label) : '';
 }
 
-function observationText(event) {
+function observationText(event, withValues=true) {
   if (event?.action === 'manuscript_reviewed' && ['accept','revise','unassessed'].includes(event.observation))
     return rt(event.observation);
   if (event?.action === 'measurement_reproduction_started' && event.condition)
@@ -135,8 +136,11 @@ function observationText(event) {
     return rt(event.failure === 'row_format' ? 'row_format' : 'row_execution', event.attempt);
   if (event?.condition && event.action === 'measurement_reproduction_finished' && Number.isInteger(event.outcomes)) {
     if (event.differed === 0) return rt('row_match', event.condition, event.outcomes);
-    if (event.differed > 0 && event.metric) return rt('row_diff', event.condition, event.differed, event.outcomes) +
-      ' ' + rt('row_values', event.metric, event.reported_value, event.independent_value);
+    if (event.differed > 0 && event.differed <= event.outcomes) {
+      const summary = rt('row_diff', event.condition, event.differed, event.outcomes);
+      return withValues && event.metric && event.reported_value && event.independent_value
+        ? summary + ' ' + rt('row_values', event.metric, event.reported_value, event.independent_value) : summary;
+    }
   }
   return event?.observation || '';
 }
@@ -293,6 +297,16 @@ function renderResearch(animate=false) {
   details.hidden = !diagnostic;
   const observed = diagnostic ? (location ? rt('build_location',location[1],location[2]) : rt('build_error')) :
     observationText(obs) || researchData.milestone?.text || fallback;
+  const comparison = re('research-comparison');
+  const summary = observationText(obs, false);
+  const showValues = obs?.action === 'measurement_reproduction_finished' && !!summary && summary !== observed;
+  comparison.hidden = !showValues;
+  if (showValues) {
+    const fields = comparison.querySelectorAll('bdi, dd');
+    [obs.metric, obs.reported_value, obs.independent_value].forEach((value, i) => {
+      if (fields[i].textContent !== value) fields[i].textContent = value;
+    });
+  }
   const measured = Number.isInteger(obs?.count) && Number.isInteger(obs.total) &&
     obs.count >= 0 && obs.total > 0 && obs.count <= obs.total;
   const counter = measured ? ' (' + obs.count + '/' + obs.total + ')' : '';
@@ -301,13 +315,16 @@ function renderResearch(animate=false) {
   meter.classList.toggle('research-count-live', animate && active && !disconnected && !waiting && !paused && !quota);
   if (measured) meter.firstElementChild.style.transform = 'scaleX(' + obs.count / obs.total + ')';
   const observation = re('research-observation');
-  if (observation.textContent !== observed + counter) {
-    observation.textContent = observed + counter;
+  if (observation.dataset.description !== observed + counter) {
+    observation.dataset.description = observed + counter;
+    observation.textContent = (showValues ? summary : observed) + counter;
     if (animate && active && !disconnected && !paused && !waiting && !quota &&
         window.matchMedia('(prefers-reduced-motion: no-preference)').matches) {
-      observation.getAnimations().forEach(animation => animation.cancel());
-      observation.animate([{opacity:.6, transform:'translateY(3px)'}, {opacity:1, transform:'none'}],
-        {duration:220, easing:'ease-out'});
+      for (const el of showValues ? [observation, comparison] : [observation]) {
+        el.getAnimations().forEach(animation => animation.cancel());
+        el.animate([{opacity:.6, transform:'translateY(3px)'}, {opacity:1, transform:'none'}],
+          {duration:220, easing:'ease-out'});
+      }
     }
   }
   const ts = obs?.ts || researchData.milestone?.ts;

@@ -24,6 +24,14 @@
 #research-action { font-size:clamp(1.25rem,2.4vw,1.8rem); line-height:1.21; font-weight:600; letter-spacing:-.028em; }
 #research-state { display:inline-flex; margin-top:16px; padding:3px 8px; border:1px solid #698d82; border-radius:5px; font-size:.76rem; color:#e3efe8; }
 #research-observation { color:var(--ink); font-size:1.03rem; line-height:1.55; }
+#research-comparison { margin:12px 0 0; border:1px solid var(--line); border-radius:9px; overflow:hidden; }
+#research-comparison figcaption { padding:6px 12px; font-size:.78rem; color:var(--muted); border-bottom:1px solid var(--line); }
+#research-comparison figcaption bdi { color:var(--ink); font-family:monospace; }
+#research-comparison dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); margin:0; }
+#research-comparison dl>div { padding:9px 12px; }
+#research-comparison dl>div+div { background:#eff7f3; border-inline-start:1px solid var(--line); }
+#research-comparison dt { color:var(--muted); font-size:.78rem; }
+#research-comparison dd { margin:2px 0 0; color:var(--ink); font-size:clamp(1.25rem,3vw,1.8rem); font-weight:650; line-height:1.15; font-variant-numeric:tabular-nums; }
 #research-build-details pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:.78rem; }
 #research-count { height:4px; margin-top:12px; background:#dfebe5; border-radius:3px; overflow:hidden; }
 #research-count span { display:block; height:100%; background:#237a65; transform-origin:left; }

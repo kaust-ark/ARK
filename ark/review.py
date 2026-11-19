@@ -290,6 +290,13 @@ def _measured_statistic(data, ext, statistic, column, rows_pointer):
     return f"{statistic}({column or 'rows'}) = {answer} over {len(rows)} recorded rows"
 
 
+def _text_window(text, start):
+    if start > max(1, len(text)):
+        raise ValueError("Evidence offset is past the end")
+    end = min(start - 1 + VIEW_SIZE, len(text))
+    return text[start - 1:end], end
+
+
 def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, statistic=None, column="", rows_pointer=""):
     """Return a bounded text excerpt or an actual rendered PDF page with a receipt."""
     if type(start) is not int or start < 1 or type(visual) is not bool:
@@ -327,10 +334,7 @@ def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, stati
         if visual or page is not None or ext in {".png", ".svg", ".jpg", ".jpeg"}:
             raise ValueError("Inspect figures on their rendered manuscript page")
         text = data.decode("utf-8", errors="replace")
-    if start > max(1, len(text)):
-        raise ValueError("Evidence offset is past the end")
-    chunk = text[start - 1:start - 1 + VIEW_SIZE]
-    receipt["end"] = start - 1 + len(chunk)
+    chunk, receipt["end"] = _text_window(text, start)
     return {**result, "text": chunk, "next_start": start + len(chunk) if receipt["end"] < len(text) else None,
             "receipt": receipt}
 
@@ -545,7 +549,36 @@ def _json_quote_observed(snapshot, artifact, view, quote):
     return False
 
 
-def _references(snapshot, refs, observed, blind, *, required):
+def _observed_pdf_windows(snapshot, artifact, observed):
+    """Replay delivered text windows, opening the frozen PDF once across pages."""
+    identity = {"revision": snapshot["revision"], "artifact": artifact,
+                "sha256": snapshot["artifacts"][artifact]["sha256"]}
+    receipt_keys = identity.keys() | {"page", "start", "end"}
+    by_page = {}
+    for receipt in observed:
+        if not isinstance(receipt, dict) or receipt.keys() != receipt_keys:
+            continue
+        page, start = receipt["page"], receipt["start"]
+        if (all(receipt[k] == v for k, v in identity.items()) and type(page) is int and page > 0
+                and type(start) is int and start > 0 and type(receipt["end"]) is int):
+            by_page.setdefault(page, set()).add((start, receipt["end"]))
+    if not by_page:
+        return
+    import fitz
+    with fitz.open(stream=_artifact(snapshot, artifact)[0], filetype="pdf") as doc:
+        for page, ranges in by_page.items():
+            if page > len(doc):
+                continue
+            text = doc[page - 1].get_text()
+            for start, end in ranges:
+                if start > max(1, len(text)):
+                    continue
+                window, expected_end = _text_window(text, start)
+                if expected_end == end:
+                    yield page, window
+
+
+def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
     if not isinstance(refs, list) or len(refs) > 24 or (required and not refs):
         raise ValueError("Provide specific evidence for this judgment")
     tex, _ = _submission(snapshot)
@@ -563,9 +596,10 @@ def _references(snapshot, refs, observed, blind, *, required):
             raise ValueError("Invalid evidence page or visual mode")
         if (Path(artifact).suffix.lower() == ".pdf") != (page is not None):
             raise ValueError("PDF references require a one-based page; text references use a quote")
-        receipt_matches = [r for r in observed if isinstance(r, dict) and not r.get("control") and
-                           (r.get("revision"), r.get("artifact"), r.get("sha256"), r.get("page"), r.get("visual", False)) ==
-                           (snapshot["revision"], artifact, info["sha256"], page, visual)]
+        page_receipts = [r for r in observed if isinstance(r, dict) and not r.get("control") and
+                         (r.get("revision"), r.get("artifact"), r.get("sha256"), r.get("page")) ==
+                         (snapshot["revision"], artifact, info["sha256"], page)]
+        receipt_matches = [r for r in page_receipts if r.get("visual", False) == visual]
         if visual:
             if not receipt_matches or not any(r.get("image_sha256") for r in receipt_matches):
                 raise ValueError("The reviewer did not observe pixels of the cited page")
@@ -591,6 +625,20 @@ def _references(snapshot, refs, observed, blind, *, required):
             if located:
                 calculation = options
         if not located:
+            if page is not None and pdf_windows is not None:
+                if artifact not in pdf_windows:
+                    pdf_windows[artifact] = list(_observed_pdf_windows(snapshot, artifact, observed))
+                matches = {p for p, text in pdf_windows[artifact] if p != page and quote in text}
+                if len(matches) == 1:
+                    raise ValueError(f"Retry the quote with observed page {matches.pop()} "
+                                     f"(cited page {page}) in {artifact}: {quote[:100]}")
+                if any(p == page for p, _ in pdf_windows[artifact]):
+                    raise ValueError(f"Quote the delivered text of page {page} verbatim, or read another text window "
+                                     f"from {artifact}. Unlocated quote: {quote[:100]}")
+                if any(r.get("visual") is True and r.get("image_sha256") for r in page_receipts):
+                    raise ValueError(f"Only pixels were observed on page {page}. Call "
+                                     f"read_evidence(artifact={json.dumps(artifact)}, page={page}, visual=false) "
+                                     "and quote the returned text.")
             raise ValueError(f"Unobserved or unlocatable quote in {artifact}: {quote[:100]}")
         verified.append({"artifact": artifact, **({"page": page} if page else {}),
                          "quote": quote, "sha256": info["sha256"], **calculation})
@@ -606,6 +654,7 @@ def draft_evidence_feedback(snapshot, proposal, observed, first_error):
         return first_error
     blind = _blind_text(snapshot)
     repairs = [first_error]
+    pdf_windows = {}
     groups = [(f"checks.{name}", checks.get(name)) for name in ("manuscript", "experiment", "citations", "visual")]
     groups.extend((f"issues[{i}]", item) for i, item in enumerate(issues[:8]))
     for field, group in groups:
@@ -615,7 +664,7 @@ def draft_evidence_feedback(snapshot, proposal, observed, first_error):
             continue
         refs = group["evidence"]
         try:
-            verified = _references(snapshot, refs, observed, blind, required=False)
+            verified = _references(snapshot, refs, observed, blind, required=False, pdf_windows=pdf_windows)
         except ValueError as exc:
             message = str(exc)
         else:

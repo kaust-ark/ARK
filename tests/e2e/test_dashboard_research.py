@@ -290,13 +290,23 @@ def test_live_research_desk(tmp_path, monkeypatch):
                           condition="seed 2", differed=3, outcomes=6, metric="best_temp",
                           reported_value="16", independent_value="64")
                     page.locator("#research-observation").get_by_text(
-                        "seed 2 · 3 项存在差异，共 6 项。 best_temp 的论文报告值为 16，独立复算为 64。", exact=True
+                        "seed 2 · 3 项存在差异，共 6 项。", exact=True
                     ).wait_for()
+                    comparison = page.locator("#research-comparison")
+                    assert comparison.locator("bdi").inner_text() == "best_temp"
+                    assert comparison.locator("dt").all_text_contents() == ["论文报告值", "独立复算"]
+                    assert comparison.locator("dd").all_text_contents() == ["16", "64"]
+                    assert "独立复算为 64" in page.locator("#research-announce").inner_text()
+                    assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
                     assert page.evaluate("window.observationMotion").count(row_error) == 1
                     page.evaluate("setLang('ar')")
                     page.get_by_text("ضوابط التجربة (3)", exact=True).wait_for(state="attached")
                     history.get_by_text("فتح الملف الحالي · experiment.json", exact=True).wait_for(state="attached")
                     assert "غير مطابق" in controls.text_content()
+                    event("match", "review", "Recomputed seed 3.", action="measurement_reproduction_finished",
+                          condition="seed 3", differed=0, outcomes=6)
+                    comparison.wait_for(state="hidden")
+                    assert "seed 3" in page.locator("#research-observation").inner_text()
                 ctx.close()
 
             shared = browser.new_context().new_page()

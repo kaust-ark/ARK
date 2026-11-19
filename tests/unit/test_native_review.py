@@ -83,6 +83,51 @@ def test_review_feedback_returns_independent_repairs_without_accepting_the_draft
         validate_review(snap, response, observed=observed)
 
 
+def test_pdf_quote_retry_hint_requires_a_unique_observed_literal_window(tmp_path):
+    from ark import review
+
+    pair = PAIRS[0]
+    project(tmp_path, pair, "clean")
+    artifact = "paper/main.pdf"
+    quote = "unique result"
+    with fitz.open() as doc:
+        for text in ("Cited page", f"Prefix {quote}", f"Prefix {quote}"):
+            doc.new_page().insert_text((60, 65), text)
+        doc.save(tmp_path / artifact)
+    snap = build_snapshot(tmp_path)
+    response, observed = record(snap, pair, "clean", "")
+    ref = {"artifact": artifact, "page": 1, "quote": quote}
+    response["checks"]["manuscript"]["evidence"] = [ref]
+    cited_text = read_evidence(snap, artifact, page=1)["receipt"]
+    cited_pixels = read_evidence(snap, artifact, page=1, visual=True)["receipt"]
+    partial = read_evidence(snap, artifact, page=2, start=10)["receipt"]
+    full = read_evidence(snap, artifact, page=2, start=8)["receipt"]
+    other = read_evidence(snap, artifact, page=3, start=8)["receipt"]
+    visual = read_evidence(snap, artifact, page=2, visual=True)["receipt"]
+
+    def feedback(*additional):
+        receipts = [*observed, *additional]
+        with pytest.raises(ValueError, match="Unobserved") as rejected:
+            validate_review(snap, response, observed=receipts)
+        return review.draft_evidence_feedback(snap, response, receipts, str(rejected.value))
+
+    pixels_only = feedback(cited_pixels)
+    assert "Only pixels were observed on page 1" in pixels_only
+    assert 'read_evidence(artifact="paper/main.pdf", page=1, visual=false)' in pixels_only
+    assert "Only pixels" not in feedback(dict(cited_pixels, revision="old"))
+    observed.append(cited_text)
+    assert "Quote the delivered text of page 1 verbatim" in feedback(cited_pixels)
+    assert "observed page 2" in feedback(partial, full, full)
+    for receipts in ((), (full, other), (partial,), (visual,), (dict(full, sha256="old"),),
+                     (dict(full, revision="old"),), (dict(full, artifact="sources/other.pdf"),),
+                     (dict(full, end=full["end"] - 1),)):
+        assert "Retry the quote" not in feedback(*receipts)
+    ref["quote"] = "unique  result"
+    assert "Retry the quote" not in feedback(full)
+    ref.update(page=2, quote=quote)
+    assert validate_review(snap, response, observed=[*observed, full])["verdict"] == "accept"
+
+
 def test_blind_packet_contains_no_private_values_or_score(tmp_path):
     pair = PAIRS[0]
     snapshot = project(tmp_path, pair, "flawed")
