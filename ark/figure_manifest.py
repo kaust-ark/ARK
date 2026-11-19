@@ -116,7 +116,7 @@ def _infer_scalable(source: str) -> bool:
     return source in AI_SOURCES
 
 
-def load_manifest(figures_dir: Path) -> dict:
+def load_manifest(figures_dir: Path, *, infer_existing: bool = True) -> dict:
     """Load manifest from figures_dir, or auto-generate from existing files.
 
     Defensive on shape: agents have been observed writing their own
@@ -143,6 +143,9 @@ def load_manifest(figures_dir: Path) -> dict:
             elif not isinstance(figs, dict):
                 data["figures"] = {}
             return data
+    # A provenance audit must not guess an image source from its name or size.
+    if not infer_existing:
+        return {"figures": {}}
     # Auto-migrate: build manifest from existing files (also the fallback
     # for unparseable or non-dict top-level content)
     return _build_manifest_from_existing(figures_dir)

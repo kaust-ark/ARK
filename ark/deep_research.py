@@ -292,9 +292,10 @@ def run_deep_research(
         # The 04-2026 preview is built on Gemini 3.1 Pro and is the
         # speed-optimized variant; the Max sibling targets async/cron
         # workflows and is overkill for our interactive pipeline.
+        agent = "deep-research-preview-04-2026"
         interaction = client.interactions.create(
             input=query,
-            agent="deep-research-preview-04-2026",
+            agent=agent,
             background=True,
         )
 
@@ -338,6 +339,9 @@ def run_deep_research(
                     f"# Deep Research Report\n\n"
                     f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
                     f"**Project**: {config.get('title', 'Unknown')}\n"
+                    f"**Provider**: Google Gemini\n"
+                    f"**Agent**: {agent}\n"
+                    f"**Interaction ID**: {interaction_id}\n"
                     f"**Duration**: {elapsed_str}\n\n"
                     f"---\n\n"
                 )

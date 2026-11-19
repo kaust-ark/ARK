@@ -28,6 +28,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 # The one required tooling acknowledgment (see template_preprocess.ARK_ACK_TEXT).
 # Matching is on the stable marker, tolerant of legacy wording ("used ARK").
 DISCLOSURE_MARKER = "idea2paper.org"
@@ -183,6 +185,38 @@ def _dangling_refs(tex: str) -> set:
     return refs - labels
 
 
+def _concept_figure_in_pdf(pdf: Path, figures_dir: Path) -> Finding:
+    """Match the registered concept art to pixels actually painted in the paper."""
+    import fitz
+
+    from ark.figure_manifest import AI_SOURCES, load_manifest
+
+    check = "concept_figure_embedded"
+    figures = load_manifest(figures_dir, infer_existing=False).get("figures", {})
+    sources = [figures_dir / name for name, info in figures.items()
+               if isinstance(info, dict) and info.get("source") in AI_SOURCES
+               and Path(name).name == name]
+    if not sources:
+        return Finding(check, "violated", "soft", "No concept artwork registered for the selected figure mode")
+    try:
+        with fitz.open(pdf) as doc:
+            pages = {image["digest"]: page.number + 1 for page in doc
+                     for image in page.get_image_info(hashes=True)}
+    except (OSError, RuntimeError, ValueError) as error:
+        return Finding(check, "skipped", "soft", f"Could not inspect PDF images: {error}")
+    for source in sources:
+        try:
+            pixels = fitz.Pixmap(str(source))
+            if pixels.alpha:
+                pixels = fitz.Pixmap(pixels, 0)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        page_number = pages.get(pixels.digest)
+        if page_number:
+            return Finding(check, "pass", "soft", f"{source.name} matches PDF pixels on page {page_number}")
+    return Finding(check, "violated", "soft", "Could not match any registered concept artwork to images in the PDF")
+
+
 def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     """Run every acceptance check over the project's final artifacts."""
     project_dir = Path(project_dir)
@@ -270,14 +304,29 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     # thinner foundation is visible in the report and to `ark audit` — it used
     # to pass silently, and a paper written on no literature at all looked
     # exactly like one written on a full survey.
-    degraded = project_dir / "auto_research" / "state" / "research_degraded.txt"
-    if degraded.exists():
+    state = project_dir / "auto_research" / "state"
+    try:
+        config = yaml.safe_load((project_dir / "config.yaml").read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        config = {}
+    if not isinstance(config, dict):
+        config = {}
+    degraded = state / "research_degraded.txt"
+    report = state / "deep_research.md"
+    if degraded.is_file():
         rep.findings.append(Finding(
             "research_grounded", "violated", "soft",
             degraded.read_text(errors="replace").strip()[:200]))
-    else:
+    elif config.get("skip_deep_research"):
+        rep.findings.append(Finding("research_grounded", "skipped", "soft",
+                                    "Deep Research disabled in project settings"))
+    elif report.is_file() and report.read_text(errors="replace").strip():
         rep.findings.append(Finding("research_grounded", "pass", "soft",
-                                    "full research report available"))
+                                    "Literature report present in project artifacts"))
+    else:
+        status = "violated" if config.get("skip_deep_research") is False else "skipped"
+        rep.findings.append(Finding("research_grounded", status, "soft",
+                                    "No literature report available in project artifacts"))
 
     # ── generated figures actually used ───────────────────────────────────
     figs_dir = paper_dir / "figures"
@@ -311,6 +360,9 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
         rep.findings.append(Finding("figures_referenced",
                                     "pass" if figs else "skipped", "soft",
                                     f"{len(made)} figures / {n_inc} includegraphics"))
+
+    if config.get("figure_generation") == "nano_banana":
+        rep.findings.append(_concept_figure_in_pdf(pdf, figs_dir))
 
     # ── page budget ───────────────────────────────────────────────────────
     rep.findings.append(_page_budget(pdf, tex, venue_pages))

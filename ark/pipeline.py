@@ -4584,8 +4584,14 @@ provide the title.
         """One focused writer/coder pass + recompile."""
         figure_words = ("figure", "plot", "chart", "diagram", "axis", "axes", "fig ",
                         "fig.", "colour", "color", "图", "图表", "坐标", "曲线", "配色")
-        is_figure = any(w in instruction.lower() for w in figure_words)
-        agent = "coder" if is_figure else "writer"
+        # Captions and figure placement live in the manuscript. A bare mention
+        # of a chart used to limit those requests to editing a plotting script.
+        text = instruction.lower()
+        manuscript_terms = ("caption", "typeset", "page layout", "paper layout", "manuscript",
+                            "bibliography", "citation", "figure placement", "on page", "to page",
+                            "排版", "图注", "参考文献", "正文", "页首", "页底", "移到第")
+        has_figure = any(word in text for word in figure_words)
+        agent = "coder" if has_figure and not any(word in text for word in manuscript_terms) else "writer"
         ctx = self._apply_context()
         if agent == "coder":
             task = (f"A user asked for this change to the paper's FIGURES:\n\n"
@@ -4596,9 +4602,10 @@ provide the title.
         else:
             task = (f"A user asked for this change to the paper:\n\n"
                     f"\"{instruction}\"\n\n{ctx}\n\n"
-                    f"Make ONLY this change to the LaTeX (paper/main.tex or the relevant "
-                    f"include). Keep it focused — do not rewrite unrelated sections, do not "
-                    f"alter figure/table data. Ensure it still compiles afterward.")
+                    f"Edit the manuscript and bibliography where required by this request. "
+                    f"Use existing figure assets for placement or caption changes. If the "
+                    f"request also changes a plot, update its source and regenerate it. "
+                    f"Preserve the measured data. Inspect the resulting pages at print size.")
         self.run_agent(agent, task, timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
         self._compile_edited_paper()
 

@@ -702,3 +702,48 @@ def test_bundled_icml_blind_review_author_footnote(tmp_path, missing_contact, mo
     if not missing_contact:
         assert "Correspondence to: Anonymous Author" in text
         assert "anonymous@example.org" not in text
+
+@pytest.mark.parametrize(("skip", "saved", "expected"), [
+    (True, True, "skipped"), (False, False, "violated"), (False, True, "pass"),
+    (None, False, "skipped"),
+])
+def test_research_status_uses_report_and_project_settings(tmp_path, skip, saved, expected):
+    project = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
+    if skip is not None:
+        (project / "config.yaml").write_text("skip_deep_research: " + str(skip).lower())
+    if saved:
+        state = project / "auto_research/state"
+        state.mkdir(parents=True, exist_ok=True)
+        (state / "deep_research.md").write_text("Literature review with source material.")
+    report = evaluate(project)
+    assert next(f.status for f in report.findings if f.check == "research_grounded") == expected
+
+
+@pytest.mark.parametrize("registered,draw_art,expected", [
+    (False, True, "violated"), (True, False, "violated"), (True, True, "pass"),
+])
+def test_requested_concept_figure_must_be_drawn_in_pdf(tmp_path, registered, draw_art, expected):
+    from PIL import Image
+    from ark.figure_manifest import register_figure, save_manifest
+
+    project = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
+    (project / "config.yaml").write_text("figure_generation: nano_banana")
+    figures = project / "paper/figures"
+    art = figures / "concept.png"
+    Image.new("RGB", (48, 32), "teal").save(art)
+    if registered:
+        manifest = {"figures": {}}
+        register_figure(manifest, art.name, "nano_banana")
+        save_manifest(figures, manifest)
+    pdf = project / "paper/main.pdf"
+    with fitz.open(pdf) as doc:
+        painted = art if draw_art else figures / "chart.png"
+        if not draw_art:
+            Image.new("RGB", (48, 32), "orange").save(painted)
+        doc[1].insert_image(fitz.Rect(72, 120, 216, 216), filename=str(painted))
+        data = doc.tobytes()
+    pdf.write_bytes(data + b"%" + b"x" * 60_000)
+    finding = next(f for f in evaluate(project).findings if f.check == "concept_figure_embedded")
+    assert finding.status == expected
+    if draw_art and registered:
+        assert "page 2" in finding.detail

@@ -434,3 +434,20 @@ def test_edited_paper_checks_current_artifact_and_strict_overflow(mode, pages, e
     PipelineMixin._compile_edited_paper(paper)
     assert paper._enforce_page_count.called == expect_adjustment
     paper._report_delivery_checks.assert_called_once()
+
+
+@pytest.mark.parametrize(("request_text", "expected_role"), [
+    ("把已有的图放进正文，调整排版和参考文献", "writer"),
+    ("Revise the caption for the figure on page two", "writer"),
+    ("Move Figure 1 to page two", "writer"),
+    ("Change the color of the line in the plot", "coder"),
+    ("Explain how the split was made", "writer"),
+])
+def test_edit_routes_placement_and_caption_requests_to_the_manuscript(request_text, expected_role):
+    from ark.pipeline import PipelineMixin
+
+    worker = MagicMock()
+    worker._apply_context.return_value = ""
+    PipelineMixin._apply_edit(worker, request_text)
+    assert worker.run_agent.call_args.args[0] == expected_role
+    worker._compile_edited_paper.assert_called_once()

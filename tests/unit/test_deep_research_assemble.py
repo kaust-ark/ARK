@@ -16,7 +16,7 @@ import base64
 from pathlib import Path
 from types import SimpleNamespace
 
-from ark.deep_research import _apply_url_annotations, _assemble_report
+from ark.deep_research import _apply_url_annotations, _assemble_report, run_deep_research
 
 
 def _text(text: str, annotations=None) -> SimpleNamespace:
@@ -35,6 +35,27 @@ def _ann(start: int, end: int, url: str) -> SimpleNamespace:
     return SimpleNamespace(
         type="url_citation", start_index=start, end_index=end, url=url, title=None
     )
+
+
+def test_completed_google_report_identifies_the_actual_interaction(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    from google import genai
+
+    api = Mock()
+    api.create.return_value = SimpleNamespace(id="fixture-interaction")
+    api.get.return_value = SimpleNamespace(
+        status="completed",
+        steps=[SimpleNamespace(type="model_output", content=[_text("Study evidence.")])],
+    )
+    monkeypatch.setattr(genai, "Client", lambda **kwargs: SimpleNamespace(interactions=api))
+    report_path = run_deep_research({"title": "Study"}, tmp_path, custom_query="Query", api_key="dummy")
+    api.get.assert_called_once_with("fixture-interaction")
+    report = Path(report_path).read_text()
+    header, body = report.split("\n---\n", 1)
+    assert "**Provider**: Google Gemini" in header
+    assert f"**Agent**: {api.create.call_args.kwargs['agent']}" in header
+    assert "**Interaction ID**: fixture-interaction" in header
+    assert body.strip() == "Study evidence."
 
 
 # ─────────────────────────────────────────────────────────────────────
