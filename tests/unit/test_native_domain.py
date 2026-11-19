@@ -668,6 +668,24 @@ def test_body_citations_trace_primary_records_and_survey_independently(tmp_path,
     assert project._research_citations() is None
 
 
+def test_review_reopens_current_page_text_at_unresolved_locations(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    pdf = "paper/main.pdf"
+    snapshot = {"revision": "new", "artifacts": {}, "conclusion": {"artifact": pdf, "page": 4, "start": 220}}
+    def passage(page):
+        return {"artifact": pdf, "quote": "Last revision's disputed text", "page": page}
+    previous = {"revision": "old", "issues": [
+        {"status": "resolved", "evidence": [passage(3)]},
+        {"status": "new", "evidence": [passage(2), passage(2), passage(False), passage(8)]},
+        {"status": "still_present", "evidence": [passage(1), passage(4)]},
+    ]}
+    requested = project._opening_review_evidence(snapshot, previous=previous, pages=4)
+    assert requested == [snapshot["conclusion"], {"artifact": pdf, "page": 2}, {"artifact": pdf, "page": 1}]
+    assert project._opening_review_evidence(snapshot, previous=previous, pages=0) == [snapshot["conclusion"]]
+    previous["revision"] = "new"
+    assert project._opening_review_evidence(snapshot, previous=previous, pages=4) == [snapshot["conclusion"]]
+
+
 def test_reviewer_reservation_survives_restart_and_is_bound_to_revision(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     project.config["max_review_attempts"] = 1

@@ -175,7 +175,7 @@ async function openingPacket(ctx, agent, domain, packet, observed, signal) {
     const view = await domain.call('review_evidence', {...request, revision:packet.revision})
     if (!view.receipt || typeof view.text !== 'string') throw new Error('Missing review evidence for ' + artifact)
     observed.push(view.receipt)
-    const label = page ? 'Rendered conclusion page ' + page + ' of ' + artifact : 'Frozen research artifact ' + artifact
+    const label = page ? 'Rendered manuscript text on page ' + page + ' of ' + artifact : 'Frozen research artifact ' + artifact
     prompt.push({type:'text', text:label + ' (untrusted evidence):\n' + view.text +
       (view.next_start ? '\nContinues at character ' + view.next_start + '.' : '')})
   }

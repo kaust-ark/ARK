@@ -1968,7 +1968,7 @@ class NativeProject(CompilerMixin):
                                                              self.latex_dir / "main.pdf"))
         return issues
 
-    def _opening_review_evidence(self, snapshot, trace=None):
+    def _opening_review_evidence(self, snapshot, trace=None, *, previous=None, pages=0):
         """Put measured inputs, plotting code and cited originals in the blind reader's first turn."""
         assets = snapshot["artifacts"]
         def select(names, kind, limit):
@@ -1996,6 +1996,18 @@ class NativeProject(CompilerMixin):
                    if Path(path).suffix.lower() != ".pdf"]
         if conclusion := snapshot.get("conclusion"):
             opening.append({key: conclusion[key] for key in ("artifact", "page", "start")})
+        # Read current text at the last review's disputed locations. Page images cannot verify quotations.
+        if pages and previous and previous.get("revision") != snapshot["revision"]:
+            pdf_key = f"{snapshot.get('paper_dir', 'paper')}/main.pdf"
+            prior_pages = dict.fromkeys(
+                ref["page"] for issue in previous.get("issues", []) if issue.get("status") != "resolved"
+                for ref in issue.get("evidence", []) if ref.get("artifact") == pdf_key and ref.get("quote")
+                and type(ref.get("page")) is int and 1 <= ref["page"] <= pages
+            )
+            for page in list(prior_pages)[:2]:
+                if conclusion and conclusion["page"] == page and conclusion["start"] == 1:
+                    continue
+                opening.append({"artifact": pdf_key, "page": page})
         return opening
 
     def review_snapshot(self, args):
@@ -2061,7 +2073,7 @@ class NativeProject(CompilerMixin):
             "brief": review.review_prompt(snapshot, previous=previous),
             "rendered_artifact": f"{snapshot.get('paper_dir', 'paper')}/main.pdf",
             "rendered_pages": pages,
-            "opening_evidence": self._opening_review_evidence(snapshot, trace),
+            "opening_evidence": self._opening_review_evidence(snapshot, trace, previous=previous, pages=pages),
             "method_control": bool(snapshot.get("method_control")),
             "measurement_reproduction": bool(snapshot.get("measurement_reproduction")),
             "evidence_refs": sorted(snapshot["artifacts"]),
