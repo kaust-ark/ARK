@@ -378,6 +378,25 @@ def test_live_research_desk(tmp_path, monkeypatch):
             assert shared.request.get(api + "/evidence?key=" + archived_pdf).status == 404
             assert "review" not in shared.request.get(api).json()["research"]
             assert shared.locator("#research-review").is_hidden()
+            # The delivery card opens the signed paper and the reviewer evidence for this edition.
+            assert owner_page.locator("#research-read-paper").is_hidden()
+            with db.get_session(settings.db_path) as session:
+                db.update_project(session, db.get_project(session, pid), status="done")
+            owner_page.reload(wait_until="domcontentloaded")
+            owner_page.get_by_role("heading", name="Your paper is ready").wait_for()
+            read_paper = owner_page.get_by_role("link", name="Read the paper")
+            assert owner_page.request.get(base + read_paper.get_attribute("href")).body() == saved.read_bytes()
+            cover = read_paper.locator("img")
+            cover.wait_for()
+            assert f"sha256={archived_digest}" in cover.get_attribute("src") and cover.evaluate("img => img.naturalWidth > 0")
+            owner_page.get_by_role("button", name="Inspect the review").click()
+            assert owner_page.locator("#review-coverage").get_attribute("open") is not None
+            assert owner_page.locator("#review-coverage > summary").evaluate("s => document.activeElement === s")
+            assert shared.url == base + f"/dashboard/share/{token}"
+            shared.reload(wait_until="domcontentloaded")
+            shared.get_by_role("link", name="Read the paper").wait_for()
+            assert shared.get_by_role("button", name="Inspect the review").count() == 0
+            assert shared.locator("#research-read-paper img").get_attribute("src") is None
             (root / "paper/main.pdf").unlink()
             assert shared.request.get(api).json()["has_pdf"]
             assert shared.request.get(api + "/pdf").body() == saved.read_bytes()

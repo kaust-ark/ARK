@@ -3613,7 +3613,8 @@ function navigate(page, params = {}) {
     // copy-paste of the URL lands users on a different environment
     // than the one they were browsing. Same issue on prod (hitting
     // "/" returns the homepage, not the dashboard app).
-    history.pushState({}, '', `${APP_BASE}/#project/${params.id}`);
+    // The shared reader must keep its signed URL when the page is refreshed.
+    if (!window.SHARE_MODE) history.pushState({}, '', `${APP_BASE}/#project/${params.id}`);
   } else if (page === 'admin') {
     stopDetailStream();
     loadAdminPage();

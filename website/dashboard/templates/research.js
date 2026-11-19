@@ -1,6 +1,10 @@
 // Research milestones come from the durable project journal; transient token and log
 // traffic never changes the scientific state or triggers a screen-reader announcement.
 const researchLabels = {
+  paper_delivered: ['Your paper is ready','论文已交付','ورقتك جاهزة'],
+  read_paper: ['Read the paper','阅读定稿 PDF','اقرأ الورقة'],
+  review_evidence: ['Inspect the review','查看评审依据','اعرض أدلة المراجعة'],
+  delivery_verified: ['The PDF matches the version signed by the independent reviewer.','这份 PDF 与独立评审签字的版本一致。','يطابق ملف PDF النسخة التي اعتمدها المراجع المستقل.'],
   delivered_pdf: ['Delivered PDF','已交付 PDF','ملف PDF المُسلَّم'], working_pdf: ['Working draft PDF','工作稿 PDF','ملف PDF للمسودة الحالية'],
   delivered_review: ['Review of the delivered paper','已交付稿评审','مراجعة الورقة المُسلَّمة'],
   working_review: ['Review of the working draft','工作稿评审','مراجعة المسودة الحالية'],
@@ -140,6 +144,8 @@ function reviewEventLabel(event) {
 }
 
 function observationText(event, withValues=true) {
+  if (event?.action === 'delivered' && event.artifact === 'paper/main.pdf' && /^[a-f0-9]{64}$/.test(event.revision))
+    return rt('delivery_verified');
   if (event?.action === 'manuscript_reviewed' && ['accept','revise','unassessed'].includes(event.observation))
     return rt(event.observation);
   if (event?.action === 'measurement_reproduction_started' && event.condition)
@@ -316,10 +322,37 @@ function renderResearch(animate=false) {
   const label = t('status_' + p.status);
   const state = (quota ? rt('quota') : active && waiting ? rt('waiting') : paused ? rt('paused') :
     label.startsWith('status_') ? (p.status || '') : label).replace(/^[^\p{L}\p{N}]+/u, '');
+  const delivered = p.status === 'done' && researchData.evidence?.find(item => item.edition === 'delivered');
   re('research-state').textContent = disconnected ? rt('disconnected') : state;
+  re('research-state').hidden = Boolean(delivered && !disconnected);
+  const paper = re('research-read-paper');
+  paper.hidden = !delivered;
+  if (delivered) {
+    const base = APP_BASE + '/api/projects/' + encodeURIComponent(detailProjectId);
+    paper.href = base + '/pdf?delivered=' + encodeURIComponent(delivered.delivered_sha256);
+    const cover = paper.querySelector('img');
+    const revision = researchData.review?.revision;
+    const showCover = !window.SHARE_MODE && /^[a-f0-9]{64}$/.test(revision);
+    if (showCover) {
+      const key = 'auto_research/state/reviews/' + revision + '/main.pdf';
+      const src = base + '/evidence?key=' + encodeURIComponent(key) + '&sha256=' + delivered.delivered_sha256 + '&page=1';
+      if (cover.getAttribute('src') !== src) {
+        cover.hidden = true;
+        cover.onload = () => { cover.hidden = false; };
+        cover.onerror = () => { cover.hidden = true; };
+        cover.src = src;
+      }
+    } else {
+      cover.hidden = true;
+      cover.removeAttribute('src');
+    }
+  } else {
+    paper.removeAttribute('href');
+    paper.querySelector('img').removeAttribute('src');
+  }
   const action = quota ? rt('check_quota') : active && waiting ? p.pending_decision.question : !active || paused ? state :
     p.activity || reviewEventLabel(last) || (last?.status === 'running' && (last.action === 'tool/call' ? last.observation : last.action)) || (p.status !== 'running' ? state : rt('idle'));
-  re('research-action').textContent = action;
+  re('research-action').textContent = delivered ? rt('paper_delivered') : action;
   const artifact = researchData.evidence?.[0];
   const fallback = artifact?.key === 'paper/main.pdf' ? rt('paper_ready') :
     artifact ? rt('file_ready', artifact.label) : rt('empty');
@@ -333,7 +366,7 @@ function renderResearch(animate=false) {
   }
   details.hidden = !diagnostic;
   const observed = diagnostic ? (location ? rt('build_location',location[1],location[2]) : rt('build_error')) :
-    observationText(obs) || researchData.milestone?.text || fallback;
+    observationText(obs) || (delivered ? rt('delivery_verified') : researchData.milestone?.text || fallback);
   const comparison = re('research-comparison');
   const summary = observationText(obs, false);
   const showValues = hasComparison(obs);
@@ -384,8 +417,20 @@ function filesForProject() {
 }
 function renderEvidence(animate) {
   const files = filesForProject(), signature = JSON.stringify([currentLang, files]);
-  re('research-open-evidence').hidden = !files.length;
-  re('research-open-evidence').onclick = () => {
+  const opener = re('research-open-evidence');
+  const delivered = researchProject.status === 'done' && files.some(item => item.edition === 'delivered');
+  const reviewAvailable = delivered && !window.SHARE_MODE && researchData.review?.checks?.length;
+  opener.hidden = !files.length || (delivered && !reviewAvailable);
+  opener.textContent = rt(reviewAvailable ? 'review_evidence' : 'view_evidence');
+  opener.onclick = () => {
+    if (reviewAvailable) {
+      showWorkingReview = false;
+      renderReview();
+      const coverage = re('review-coverage');
+      coverage.open = true;
+      coverage.querySelector('summary').focus();
+      return;
+    }
     const obs = [...researchEvents.values()].reverse().find(e => e.observation && !['tool/call','tool/result','turn/end','turn_end'].includes(e.action));
     const file = files.find(f => f.key === obs?.artifact);
     if (file) openEvidence(file,re('research-open-evidence'));

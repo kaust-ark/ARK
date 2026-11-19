@@ -19,6 +19,9 @@
 .research-focus { display:grid; grid-template-columns:1.06fr 1fr; }
 .research-action, .research-observation { padding:clamp(18px,3vw,30px); min-width:0; overflow-wrap:anywhere; }
 .research-action { color:#f7fffb; background:#173f3b; }
+#research-read-paper { display:inline-flex; align-items:center; gap:12px; margin-top:14px; min-height:44px; color:#fff; font-size:.9rem; font-weight:600; text-underline-offset:4px; }
+#research-read-paper img { width:50px; height:66px; object-fit:contain; background:#fff; border-radius:2px; box-shadow:0 2px 6px #082a2560; }
+#research-read-paper:focus-visible { outline:2px solid #c2f2dc; outline-offset:4px; }
 .research-label { text-transform:uppercase; letter-spacing:.09em; font-size:.69rem; font-weight:700; margin-bottom:10px; color:var(--muted); }
 .research-action .research-label { color:#b9d8c9; }
 #research-action { font-size:clamp(1.25rem,2.4vw,1.8rem); line-height:1.21; font-weight:600; letter-spacing:-.028em; }
