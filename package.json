@@ -1,0 +1,50 @@
+{
+  "name": "idea2paper-dsh",
+  "version": "0.2.0-alpha.5",
+  "description": "A persistent research agent, independently reviewed experiments and reproducible papers in DeepSeek Harness",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kaust-ark/ARK.git",
+    "directory": "integrations/dsh"
+  },
+  "type": "module",
+  "exports": "./index.js",
+  "files": [
+    "index.js",
+    "workflow.js",
+    "experiment.js",
+    "cordis.patch.yml",
+    "project.js",
+    "domain_bootstrap.py",
+    "README_zh.md",
+    "companion"
+  ],
+  "engines": {
+    "node": ">=22.12.0",
+    "dsh": "0.2.1-rc.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "commander": "15.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-cmdline": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2"
+  },
+  "homepage": "https://github.com/kaust-ark/ARK",
+  "keywords": [
+    "dsh",
+    "research",
+    "peer-review",
+    "scientific-workflow"
+  ],
+  "bundledDependencies": [
+    "commander"
+  ]
+}
