@@ -102,6 +102,21 @@ def test_localdb_commands_consume_on_read(db_and_project):
     cp.ack_command(cmds[0].id)  # no-op, must not raise
 
 
+def test_native_command_ack_survives_worker_restart(db_and_project):
+    db, db_path, pid = db_and_project
+    with db.get_session(db_path) as session:
+        db.enqueue_command(session, pid, "steer", payload="Check a second baseline")
+    first = LocalDbControlPlaneClient(db_path, pid)
+    first.defer_command_ack = True
+    command, = first.poll_commands()
+    restarted = LocalDbControlPlaneClient(db_path, pid)
+    restarted.defer_command_ack = True
+    assert [item.id for item in restarted.poll_commands()] == [command.id]
+    restarted.ack_command(command.id)
+    restarted.ack_command(command.id)
+    assert restarted.poll_commands() == []
+
+
 def test_localdb_open_and_poll_decision(db_and_project):
     # The orchestrator only opens + polls; answering/expiring are owned by the
     # control-plane HITL engine (tested in test_controlplane_hitl.py).

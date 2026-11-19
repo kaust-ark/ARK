@@ -70,3 +70,143 @@ def test_real_hosted_workflow_resumes_python_checkpoint(monkeypatch, fail_execut
     assert calls[1][2]["resumed"] is True
     assert next(args for label, args, _ in calls if label == "execute") == (4, 5, 3, {}, "")
     assert state["steps_done"] == ["plan", "run", "analyze", "evaluate"]
+
+
+def test_hosted_uses_native_for_fresh_project_and_retains_legacy(tmp_path, monkeypatch):
+    from ark.orchestrator.dsh_workflow import uses_native_project
+    state = tmp_path / "auto_research/state"
+    state.mkdir(parents=True)
+    project = SimpleNamespace(code_dir=tmp_path, state_dir=state)
+    assert uses_native_project(project)
+    (state / "dev_phase_state.yaml").write_text("steps_done: [plan]\n")
+    assert not uses_native_project(project)
+    (tmp_path / "workflow.json").write_text('{"version":3}')
+    assert uses_native_project(project)
+    monkeypatch.setenv("ARK_WORKFLOW_RUNTIME", "legacy")
+    assert not uses_native_project(project)
+
+
+@pytest.mark.parametrize("model", ["deepseek/deepseek-flash", "openai/fixture"])
+def test_real_native_host_replays_owner_through_installed_tarball(
+    tmp_path, monkeypatch, model
+):
+    """A real native owner uses the hosted pipe; all model requests stay on loopback."""
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from ark.orchestrator import native_domain
+    from ark.orchestrator.dsh_workflow import run_native_project
+
+    if not os.getenv("ARK_DSH_TEST_PYTHON") or not os.getenv("IDEA2PAPER_BUNDLE_PATH"):
+        pytest.skip(
+            "Set ARK_DSH_TEST_PYTHON and IDEA2PAPER_BUNDLE_PATH to test the packed hosted runtime"
+        )
+    requests, operations = [], []
+
+    class Model(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            requests.append(body)
+            if model.startswith("openai/"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                payload = {"id": "localhost", "object": "chat.completion.chunk",
+                           "created": 1, "model": body["model"], "choices": [
+                           {"index": 0, "delta": {"role": "assistant", "content": "Fixture project response"},
+                            "finish_reason": "stop"}],
+                           "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}}
+                self.wfile.write(("data: " + json.dumps(payload) + "\n\ndata: [DONE]\n\n").encode())
+                return
+            frames = [
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg-" + str(len(requests)),
+                        "model": body["model"],
+                        "usage": {"input_tokens": 5, "output_tokens": 0},
+                    },
+                },
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "Fixture project response"},
+                },
+                {"type": "content_block_stop", "index": 0},
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn"},
+                    "usage": {"output_tokens": 3},
+                },
+                {"type": "message_stop"},
+            ]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(
+                "".join(
+                    f"event: {f['type']}\ndata: {json.dumps(f)}\n\n" for f in frames
+                ).encode()
+            )
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Model)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    class Domain:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def invoke(self, op, args):
+            operations.append((op, args))
+            if op == "project_status":
+                return {"state": "running", "delivered": bool(requests), "commands": []}
+            assert op == "project_event", op
+            return {"recorded": True}
+
+    monkeypatch.setattr(native_domain, "NativeProject", Domain)
+    monkeypatch.setattr(
+        "ark.orchestrator.dsh_workflow.native_delivery_current", lambda _: True
+    )
+    monkeypatch.setenv("ARK_DSH_PYTHON", os.environ["ARK_DSH_TEST_PYTHON"])
+    monkeypatch.setenv("LLM_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "local-fixture-only")
+    monkeypatch.setenv("OPENAI_API_KEY", "local-fixture-only")
+    monkeypatch.delenv("ARK_DSH_API", raising=False)
+    project = SimpleNamespace(
+        code_dir=tmp_path,
+        state_dir=tmp_path / "auto_research/state",
+        config={},
+        model=model,
+        _research_idea="A private hosted research idea",
+        _terminal_error=None,
+        _stop_requested=False,
+        log=lambda *_: None,
+    )
+    project.state_dir.mkdir(parents=True)
+    try:
+        run_native_project(project)
+        claim = json.loads((tmp_path / "workflow.json").read_text())
+        run_native_project(project, message="Explain the previous result")
+        assert (
+            json.loads((tmp_path / "workflow.json").read_text())["owner_session_id"]
+            == claim["owner_session_id"]
+        )
+        assert len(requests) == 2
+        assert project._research_idea in str(requests[1]["messages"])
+        assert "Explain the previous result" in str(requests[1]["messages"])
+        assert any(
+            op == "project_event" and args.get("kind") == "owner/response"
+            for op, args in operations
+        )
+    finally:
+        server.shutdown()
+        server.server_close()

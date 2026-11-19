@@ -1,0 +1,42 @@
+[
+  {
+    "topic": "digits",
+    "title": "Calibration loss on paired splits",
+    "question": "What was the largest mean loss across test splits?",
+    "clean": "The maximum of the two split means was 12. Individual losses were not saved.",
+    "flawed": "The maximum individual loss across all samples was 12.",
+    "table": "split,mean_loss,n\n0,8,20\n1,12,20\n",
+    "defect": "Confuses a maximum of split means with an individual maximum that the data do not identify.",
+    "domain": "experiment"
+  },
+  {
+    "topic": "friedman",
+    "title": "Masked covariates in regression",
+    "question": "Does the comparison isolate the causal effect of retraining?",
+    "clean": "The frozen and retrained models used different test distributions, so their error gap cannot identify a retraining effect.",
+    "flawed": "The lower error proves that retraining causally improves prediction at fixed test distribution.",
+    "table": "fit,test_distribution,rmse\nfrozen,stationary,2.30\nretrained,shifted,1.90\n",
+    "defect": "The compared arms changed the test distribution along with retraining.",
+    "domain": "experiment"
+  },
+  {
+    "topic": "timing",
+    "title": "Paired sort timings",
+    "question": "Did caching improve the median elapsed time in these paired trials?",
+    "clean": "Caching showed no median benefit on the three paired trials. We make no population-level speedup claim.",
+    "flawed": "Caching reduced median elapsed time by half across the three paired trials.",
+    "table": "trial,uncached_ms,cached_ms\n1,9,11\n2,10,10\n3,11,9\n",
+    "defect": "Both sample medians are 10 ms. A well-scoped null result is supported.",
+    "domain": "experiment"
+  },
+  {
+    "topic": "attribution",
+    "title": "What an archived study measured",
+    "question": "Which parameter was selected by the cited study?",
+    "clean": "The cited study selected the penalty on a validation set. Its observation does not establish test-set tuning.",
+    "flawed": "The cited study selected the penalty using test labels.",
+    "source": "The penalty was selected using validation labels. Test labels were hidden until evaluation.",
+    "defect": "The original explicitly states validation labels were used, contradicting the attribution to test labels.",
+    "domain": "citations"
+  }
+]

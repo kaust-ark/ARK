@@ -1170,6 +1170,10 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
     )
 
     def _ensure_clearpage_before_bibliography(self):
+        return ExecutionMixin.prepare_endmatter(self.latex_dir, self.log)
+
+    @staticmethod
+    def prepare_endmatter(latex_dir, log):
         """Pin canonical ACM layout:
 
             body
@@ -1211,7 +1215,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
         """
         import re as _re
 
-        main_tex = self.latex_dir / "main.tex"
+        main_tex = latex_dir / "main.tex"
         if not main_tex.exists():
             return
         try:
@@ -1221,7 +1225,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 
             # Strip any previously-injected body-end markers so the
             # rebuild below uses a single canonical position.
-            content = content.replace(self._ARK_BODY_END_MARKER + '\n', '')
+            content = content.replace(ExecutionMixin._ARK_BODY_END_MARKER + '\n', '')
             content = content.replace(BODY_END_PDF_MARKER + '\n', '')
 
             # Locate the bibliography block. We treat
@@ -1322,12 +1326,12 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 if ack_idx is not None:
                     endmatter_blocks[ack_idx] = (
                         endmatter_blocks[ack_idx].rstrip() + "\n\n" + ARK_ACK_TEXT)
-                    self.log("Appended Idea2Paper disclosure to the writer's "
+                    log("Appended Idea2Paper disclosure to the writer's "
                              "Acknowledgments (required text was missing)", "INFO")
                 else:
                     endmatter_blocks.append(
                         "\\section*{Acknowledgments}\n" + ARK_ACK_TEXT)
-                    self.log("Inserted Idea2Paper Acknowledgments (required "
+                    log("Inserted Idea2Paper Acknowledgments (required "
                              "disclosure was missing)", "INFO")
 
             endmatter_text = "\n\n".join(b for b in endmatter_blocks if b.strip())
@@ -1335,7 +1339,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             # Strip stray \clearpage from the trailing edges of each
             # piece — we re-insert canonical separators below.
             body_section = _re.sub(
-                r'\\clearpage\s*$', '', body_section.rstrip()
+                r'(?:\\(?:clearpage|newpage)\s*)+\Z', '', body_section.rstrip()
             ).rstrip()
             if appendix_block:
                 appendix_block = _re.sub(
@@ -1362,7 +1366,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 body_section,
                 "",
                 BODY_END_PDF_MARKER,
-                self._ARK_BODY_END_MARKER,
+                ExecutionMixin._ARK_BODY_END_MARKER,
                 r"\clearpage",
             ]
             if endmatter_text:
@@ -1381,7 +1385,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             # would vanish, the rewrite is wrong: keep the file as it is.
             lost = _structure_lost(content, new_content)
             if lost:
-                self.log("Skipped end-matter reorder: it would have dropped "
+                log("Skipped end-matter reorder: it would have dropped "
                          + ", ".join(lost), "WARN")
                 # This function is the only place a pipeline run inserts the
                 # required Idea2Paper disclosure (`ensure_disclosure_in_tex`
@@ -1391,17 +1395,17 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 try:
                     from ark.delivery_contract import ensure_disclosure_in_tex
                     if ensure_disclosure_in_tex(main_tex):
-                        self.log("Inserted the required Idea2Paper disclosure "
+                        log("Inserted the required Idea2Paper disclosure "
                                  "without reordering", "INFO")
                 except Exception as e:
-                    self.log(f"Could not insert the Idea2Paper disclosure: {e}",
+                    log(f"Could not insert the Idea2Paper disclosure: {e}",
                              "ERROR")
                 return
 
             if new_content != content:
                 main_tex.write_text(new_content)
                 if reordered:
-                    self.log(
+                    log(
                         "Reordered: body → bibliography → appendix "
                         "(matches acmart sample-sigplan convention)",
                         "INFO",
@@ -1412,13 +1416,13 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                         m = _re.search(r'\\section\*?\{\s*([^}]+?)\s*\}', b)
                         if m:
                             titles.append(m.group(1))
-                    self.log(
+                    log(
                         f"Moved endmatter ({', '.join(titles)}) onto refs "
                         f"page (after \\clearpage, before \\bibliography)",
                         "INFO",
                     )
         except Exception as e:
-            self.log(f"Failed to inject \\clearpage: {e}", "WARN")
+            log(f"Failed to inject \\clearpage: {e}", "WARN")
 
     @staticmethod
     def _first_pos(content: str, *needles: str) -> int:

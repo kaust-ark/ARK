@@ -497,6 +497,17 @@ def scheduler(project, job_id, accounting):
             for p in (base.glob(f"*{job_id}*") if base == project else base.rglob(f"*{job_id}*"))
             if p.is_file() and p.suffix in (".out", ".log")
             and re.search(rf"(?<!\d){re.escape(job_id)}(?!\d)", p.name)]
+    runs = project / "auto_research/state/native_runs"
+    for path in runs.glob("*/receipt.json"):
+        row = json.loads(path.read_text())
+        if (row.get("backend") == "slurm" and str(row.get("job_id")) == job_id
+                and row.get("status") == "completed" and row.get("identity") == "i2p-" + path.parent.name
+                and not row.get("input_sha256")):
+            output = path.parent / "stdout"
+            result = (project / row["artifact"]).resolve()
+            if (output.is_file() and result.is_relative_to(results.resolve()) and result.is_file()
+                    and sha256(result) == row.get("sha256")):
+                logs.append(output)
     if not any(p.stat().st_size for p in logs):
         raise ValueError(f"No worker output file for scheduler job {job_id} in project")
     return {"job_id": job_id, "accounting_sha256": sha256(accounting),

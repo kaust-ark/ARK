@@ -72,6 +72,10 @@ idea2paper 协调 **6 个专业 AI 智能体**，将研究构想转化为完整�
 
 ---
 
+## 在 DeepSeek Harness 中使用
+
+将 [Idea2Paper DSH Bundle](integrations/dsh/README_zh.md) 安装到专用 profile。每个项目保留一个主研究会话，实验、写作和修订共用同一段上下文。独立 reviewer 可以复算测量结果、阅读原文，也能检查实际 PDF 页面。安装命令、运行条件和续接方法见中文指南。
+
 ## 快速上手
 
 ```bash

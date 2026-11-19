@@ -193,7 +193,8 @@ class LocalDbControlPlaneClient(ControlPlaneClient):
             return []
         try:
             with db.get_session(self._db_path) as s:
-                rows = db.take_pending_commands(s, self._project_id)
+                poll = db.list_pending_commands if getattr(self, "defer_command_ack", False) else db.take_pending_commands
+                rows = poll(s, self._project_id)
             return [Command(id=r.get("id", ""), kind=r.get("kind", ""),
                             payload=r.get("payload", ""), source=r.get("source", "webapp"),
                             created_by=r.get("created_by", "")) for r in rows]
@@ -201,8 +202,13 @@ class LocalDbControlPlaneClient(ControlPlaneClient):
             return []
 
     def ack_command(self, cmd_id: str) -> None:
-        # LocalDb consumes on read (take_pending_commands), so ack is a no-op.
-        pass
+        if not getattr(self, "defer_command_ack", False):
+            return
+        db = self._db()
+        with db.get_session(self._db_path) as s:
+            command = s.get(db.ProjectCommand, cmd_id)
+            if command is not None and command.project_id == self._project_id:
+                db.mark_command_consumed(s, cmd_id)
 
     # ── conversation ────────────────────────────────────────────────────────────────
     def append_message(self, role: str, text: str, kind: str = "message",

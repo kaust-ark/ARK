@@ -9,6 +9,7 @@ import logging
 import random
 import re
 import shutil
+from contextlib import closing
 import uuid
 import zipfile
 from datetime import datetime, timezone
@@ -95,7 +96,7 @@ def _write_maintenance(message: str, level: str = "warning") -> dict:
 
 import yaml
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import Response, FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from starlette.requests import Request
 
 # Lazy-initialized Google OAuth client
@@ -127,6 +128,7 @@ def _get_google_oauth():
         client_kwargs={"scope": "openid email profile"},
     )
     return _google_oauth
+from . import progress
 from .config import get_settings
 from .db import (
     Feedback,
@@ -156,6 +158,7 @@ from .db import (
     list_messages,
     list_events,
     latest_artifact,
+    get_artifact,
     get_state_doc,
     list_state_docs,
     list_access_requests,
@@ -2995,6 +2998,11 @@ async def api_get_project(project_id: str, request: Request):
         experiment_backend = _backend_label(
             project.experiment_compute_backend or project.compute_backend)
         orchestrator_backend = _backend_label(project.orchestrator_compute_backend)
+        pdf_ref = latest_artifact(session, project_id, "pdf")
+        has_pdf = pdf is not None or bool(pdf_ref and pdf_ref.size > 10000)
+        research = progress.snapshot(session, project, pdir, manage=access == "manage", has_pdf=has_pdf)
+        cursor, observations = progress.journal(pdir) if access == "manage" else (0, [])
+        research.update(cursor=cursor, events=observations)
         return JSONResponse({
             "id": project.id,
             "name": project.name,
@@ -3014,7 +3022,8 @@ async def api_get_project(project_id: str, request: Request):
             "layout_mode": getattr(project, "layout_mode", "balanced") or "balanced",
             "figure_generation": getattr(project, "figure_generation", None) or "nano_banana",
             "phase_status": _read_phase_status(pdir, project),
-            "has_pdf": pdf is not None,
+            "has_pdf": has_pdf,
+            "research": research,
             "delivery_report": _read_delivery_report(pdir) if access == "manage" else None,
             "has_pdf_upload": bool(project.has_pdf_upload),
             "slurm_job_id": project.slurm_job_id,
@@ -3843,6 +3852,74 @@ async def api_get_pdf(project_id: str, request: Request):
                         filename=pdf.name, content_disposition_type="inline")
 
 
+@router.get("/api/projects/{project_id}/research-history")
+def api_research_history(project_id: str, before: int, request: Request):
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        if not project or _project_read_access(request, project) != "manage":
+            raise HTTPException(404)
+        root = _project_dir(settings, project.user_id, project_id)
+    _, events = progress.journal(root, before=before)
+    return {"events": events}
+
+
+@router.get("/api/projects/{project_id}/evidence")
+def api_get_evidence(project_id: str, key: str, request: Request, sha256: str = "", page: int = 0):
+    """Preview only scientific files, using the same project grant as the snapshot."""
+    media = progress.evidence_type(key)
+    settings = get_settings()
+    with get_session(settings.db_path) as session:
+        project = get_project(session, project_id)
+        access = _project_read_access(request, project) if project else None
+        if not media or access != "manage":
+            raise HTTPException(404)
+        root = _project_dir(settings, project.user_id, project_id)
+        row = get_artifact(session, project_id, key)
+        try:
+            if row and row.store_type != "local":
+                from ark.artifacts import ArtifactRef
+                ref = ArtifactRef(store_type=row.store_type, key=row.key, content_type=media)
+                stream = _artifact_store_for(root).open(ref)
+            else:
+                stream = progress.open_project_file(root, key)
+        except (OSError, ValueError):
+            raise HTTPException(404)
+
+    headers = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox",
+               "Cache-Control": "private, no-store"}
+    if sha256 or page:
+        import hashlib
+        with closing(stream):
+            data = stream.read(32 * 1024 * 1024 + 1)
+        if len(data) > 32 * 1024 * 1024:
+            raise HTTPException(413, "Evidence exceeds the preview size limit")
+        if sha256 and hashlib.sha256(data).hexdigest() != sha256:
+            raise HTTPException(409, "Evidence changed since this review")
+        if page:
+            if media != "application/pdf" or page < 1:
+                raise HTTPException(400, "Page preview requires a PDF")
+            import fitz
+            try:
+                with fitz.open(stream=data, filetype="pdf") as doc:
+                    if page > len(doc):
+                        raise HTTPException(404)
+                    pdf_page = doc[page - 1]
+                    scale = min(1.75, 1440 / max(1, pdf_page.rect.width, pdf_page.rect.height))
+                    data = pdf_page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).tobytes("png")
+                media = "image/png"
+            except (ValueError, RuntimeError):
+                raise HTTPException(422, "Could not read this PDF page")
+        return Response(data, media_type=media, headers=headers)
+
+    def chunks():
+        with closing(stream):
+            while chunk := stream.read(64 * 1024):
+                yield chunk
+
+    return StreamingResponse(chunks(), media_type=media, headers=headers)
+
+
 @router.get("/api/projects/{project_id}/uploaded-pdf")
 async def api_get_uploaded_pdf(project_id: str, request: Request):
     settings = get_settings()
@@ -4109,7 +4186,7 @@ async def api_get_log(project_id: str, request: Request, lines: int = 200):
 # ── SSE log stream ────────────────────────────────────────────────────────────
 
 @router.get("/api/projects/{project_id}/stream")
-async def api_stream_log(project_id: str, request: Request):
+async def api_stream_log(project_id: str, request: Request, cursor: int = 0):
     settings = get_settings()
 
     with get_session(settings.db_path) as session:
@@ -4139,11 +4216,17 @@ async def api_stream_log(project_id: str, request: Request):
         # mid-stream switches over and never double-renders from files.
         last_event_id = 0
         saw_events = False
+        last_research = None
+        replay = getattr(request, "headers", {}).get("last-event-id", "")
+        research_cursor = int(replay) if re.fullmatch(r"[0-9]{1,18}", replay) else max(0, cursor)
         while True:
             if await request.is_disconnected():
                 break
 
             with get_session(settings.db_path) as _s:
+                project = get_project(_s, project_id)
+                if not project or _project_read_access(request, project) != access:
+                    break
                 evs = list_events(_s, project_id, after_id=last_event_id, limit=2000)
             if evs:
                 saw_events = True
@@ -4201,8 +4284,20 @@ async def api_stream_log(project_id: str, request: Request):
                 p = get_project(session, project_id)
                 if p:
                     score = _read_project_score(pdir, project=p)
+                    pdf_ref = latest_artifact(session, project_id, "pdf")
+                    has_pdf = bool(_find_pdf(pdir) or pdf_ref and pdf_ref.size > 10000)
+                    research = progress.snapshot(session, p, pdir, manage=access == "manage", has_pdf=has_pdf)
+                    if access == "manage":
+                        research_cursor, observations = progress.journal(pdir, research_cursor)
+                    else:
+                        observations = []
+                    if research != last_research or observations:
+                        last_research = research
+                        record = {**research, "cursor": research_cursor, "events": observations}
+                        yield f"id: {research_cursor}\nevent: research\ndata: {json.dumps(record)}\n\n"
                     payload = json.dumps({
                         "status": p.status,
+                        "phase_status": _read_phase_status(pdir, p),
                         "score": score,
                         "cost_report": _read_cost_report(pdir, project=p),
                         # HITL live fields

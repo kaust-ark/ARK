@@ -438,9 +438,24 @@ class Orchestrator(AgentMixin, CompilerMixin, ExecutionMixin, PipelineMixin):
                 self._set_control_state("")
                 self.log("▶️  Resumed by user.", "INFO")
             elif kind == "stop":
+                if getattr(self, "_native_owner", False):
+                    domain = getattr(self, "_native_domain", None)
+                    if domain is not None:
+                        domain.stop({})
+                    else:
+                        from ark.compute.native_experiment import cancel
+                        cancel(self.code_dir)
                 self._stop_requested = True
                 self.log("⏹  Stop requested by user.", "WARN")
             elif kind == "steer" and payload:
+                if getattr(self, "_native_owner", False):
+                    identifier = str(c.id)
+                    domain = getattr(self, "_native_domain", None)
+                    if domain is not None and identifier in domain.state.get("acknowledged", []):
+                        self.cp.ack_command(c.id)
+                    else:
+                        self._native_commands[identifier] = payload
+                    continue  # Kept pending in the control plane until DSH admits it.
                 try:
                     self.inject_user_update(payload)
                 except Exception:
@@ -2550,8 +2565,10 @@ a {{ color: #0d9488; }}
             with open(updates_file, "w") as f:
                 yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
             self.log(f"Telegram reply injected as user update: {message[:80]}", "INFO")
+            return True
         except Exception as e:
             self.log(f"Failed to inject user update: {e}", "WARN")
+            return False
 
     def ask_telegram_user(self, question: str, timeout: int = 1800) -> str | None:
         """Send a question via Telegram and block until the user replies (or timeout).
@@ -2926,6 +2943,10 @@ a {{ color: #0d9488; }}
             extra = "\n".join(f"• {b}" for b in background if b)
             context = (context + "\n\n" + extra).strip() if context else extra
 
+        if option_details:
+            consequences = [f"{option}: {detail}" for option, detail in zip(opts, option_details) if detail]
+            context = "\n\n".join(filter(None, [context, "\n".join(consequences)]))
+
         # Open the decision on the control plane and poll for the outcome. The CP
         # owns everything else now (D1): notifying the human over Telegram/webapp/
         # email, capturing the answer from any channel, and enforcing the timeout.
@@ -2957,17 +2978,22 @@ a {{ color: #0d9488; }}
                 except Exception:
                     dec = None
                 if dec is not None and dec.status == "answered":
+                    receipt = "consumed"
                     if dec.answer_text and (dec.answer_index is None or dec.answer_index < 0):
                         # Free-text answer becomes the next directive.
                         try:
-                            self.inject_user_update(dec.answer_text)
+                            if self.inject_user_update(dec.answer_text) is False:
+                                receipt = "failed"
                         except Exception:
-                            pass
+                            receipt = "failed"
                         result = (len(opts) - 1, dec.answer_text)
                     else:
                         ridx = (dec.answer_index if (dec.answer_index is not None
                                 and 0 <= dec.answer_index < len(opts)) else default)
                         result = (ridx, dec.answer_text or "")
+                    self._chat("system", "Researcher received your answer." if receipt == "consumed" else
+                               "Researcher read your answer but could not save the instruction.",
+                               kind="decision_ack", meta={"decision_id": decision_id, "status": receipt})
                     break
                 if dec is not None and dec.status in ("cancelled", "timed_out"):
                     result = (default, ""); break
@@ -3293,11 +3319,16 @@ def main():
                 _score = float((orchestrator.load_paper_state() or {}).get("current_score") or 0.0)
             except Exception:
                 pass
-            if not _pdf.exists() or _pdf.stat().st_size < 50_000 or _score <= 0:
+            native = getattr(orchestrator, "_native_owner", False) is True
+            if native:
+                from .dsh_workflow import native_delivery_current
+            if (not _pdf.is_file() or
+                    (not native and (_pdf.stat().st_size < 50_000 or _score <= 0)) or
+                    (native and not native_delivery_current(orchestrator))):
                 final_status = "failed"
                 final_error = ("Run ended without a deliverable "
                                f"(pdf={'present' if _pdf.exists() else 'missing'}, "
-                               f"score={_score}) — see the run log for the root cause.")
+                               f"score={_score}, current native review required={native}) — see the run log for the root cause.")
             else:
                 # A resumed or exhausted iteration can leave the review loop
                 # without finalizing. Check the actual artifact before publishing done.

@@ -236,6 +236,20 @@ def concept_design(fig: dict, state_dir: Path | None) -> str:
             lines = [line for line in body.splitlines() if not re.search(
                 r"(?i)api[_ -]?key|password|secret|credential|access[_ -]?token", line)]
             parts.append(name + "\n" + "\n".join(lines)[:2200])
+        # Scientific labels are checked against the measured outcome when available.
+        # The result path and digest originate in the isolated worker's receipt.
+        receipt_file = Path(state_dir) / "native_project.json"
+        if receipt_file.is_file():
+            receipt = json.loads(receipt_file.read_text()).get("experiment") or {}
+            relative = receipt.get("artifact", "")
+            if receipt.get("status") == "completed" and re.fullmatch(r"results/[\w-]+\.json", relative):
+                result = Path(state_dir).parent.parent / relative
+                if result.is_file() and result.resolve() == result and result.stat().st_size <= 16_000_000:
+                    data = result.read_bytes()
+                    if hashlib.sha256(data).hexdigest() == receipt.get("sha256"):
+                        parsed = json.loads(data)
+                        summary = parsed.get("summary", parsed) if isinstance(parsed, dict) else parsed
+                        parts.append("Verified worker measurements (excerpt):\n" + json.dumps(summary)[:2600])
     return "\n\n".join(parts)
 
 

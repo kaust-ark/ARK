@@ -2161,23 +2161,18 @@ def _extract_keywords_from_title(title: str) -> str:
 #  Mark [NEEDS-CHECK] citations in tex files
 # ═══════════════════════════════════════════════════════════
 
-def unconfirmed_citations(tex_dir: Path) -> list[str]:
-    """Identify actually cited bibliography entries explicitly marked unconfirmed."""
+def active_tex_sources(tex_dir: Path):
+    """Walk local TeX inputs reachable from the manuscript, ignoring comments and unused drafts."""
     root = Path(tex_dir).resolve()
-    bib = root / "references.bib"
-    if not bib.is_file():
-        return []
-    # Templates and old drafts can sit alongside the actual paper. Follow the
-    # active TeX inputs; an unused exemplar must never block the deliverable.
     queue = [root / "main.tex"]
-    seen, cited = set(), set()
+    seen = set()
     while queue:
         file = queue.pop()
         if file in seen or not file.is_relative_to(root) or not file.is_file():
             continue
         seen.add(file)
         source = re.sub(r"(?m)(?<!\\)%.*$", "", file.read_text(errors="replace"))
-        cited.update(cited_keys_in_tex(source))
+        yield file, source
         for name in re.findall(r"\\(?:input|include|subfile)\s*\{([^{}]+)\}", source):
             rel = Path(name)
             if not rel.suffix:
@@ -2186,6 +2181,14 @@ def unconfirmed_citations(tex_dir: Path) -> list[str]:
             if not candidate.is_file():
                 candidate = file.parent / rel
             queue.append(candidate.resolve())
+
+
+def unconfirmed_citations(tex_dir: Path) -> list[str]:
+    """Identify actually cited bibliography entries explicitly marked unconfirmed."""
+    bib = Path(tex_dir) / "references.bib"
+    if not bib.is_file():
+        return []
+    cited = {key for _, source in active_tex_sources(tex_dir) for key in cited_keys_in_tex(source)}
     missing = []
     for entry in parse_bib(str(bib)):
         tags = re.findall(r"(?m)^%\s*\[(NEEDS-CHECK|ARK:source=[^\]]+)\]", entry.get("preceding_comments", ""))

@@ -1,0 +1,188 @@
+import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { createInterface } from 'node:readline'
+import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { projectFile } from './project.js'
+
+const bundle = dirname(fileURLToPath(import.meta.url))
+test('author can edit sources but cannot rewrite evidence, credentials or linked paths', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'research-files-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  assert.equal((await projectFile(root, 'paper/main.tex', 'paper source')).bytes, 12)
+  assert.equal((await projectFile(root, 'paper/main.tex')).content, 'paper source')
+  for (const path of ['paper/../workflow.json', 'results/raw.json', 'paper/data.png', '.env', 'scripts/../../outside.py']) {
+    await assert.rejects(projectFile(root, path, 'x'))
+  }
+  await symlink('/tmp', join(root, 'paper', 'escape'))
+  await assert.rejects(projectFile(root, 'paper/escape/out.tex', 'x'))
+})
+
+function frames(model, content) {
+  const id = randomUUID()
+  const isTool = typeof content !== 'string'
+  const data = [
+    {type:'message_start',message:{id, model,usage:{input_tokens:10,output_tokens:0}}},
+    {type:'content_block_start',index:0,content_block:isTool ? {type:'tool_use',id,name:content.name,input:{}} : {type:'text',text:''}},
+    {type:'content_block_delta',index:0,delta:isTool ? {type:'input_json_delta',partial_json:JSON.stringify(content.args)} : {type:'text_delta',text:content}},
+    {type:'content_block_stop',index:0},
+    {type:'message_delta',delta:{stop_reason:isTool?'tool_use':'end_turn'},usage:{output_tokens:5}},
+    {type:'message_stop'},
+  ]
+  return data.map(frame => 'event: ' + frame.type + '\ndata: ' + JSON.stringify(frame) + '\n\n').join('')
+}
+
+// Provide an already installed, disposable base-backed idea2paper profile to test fully offline.
+test('concurrent section edits preserve other manuscript passages', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'research-edits-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const file = 'paper/main.tex'
+  await projectFile(root, file, 'Result A. Result B.')
+  await Promise.all([projectFile(root, file, 'First observation.', 'Result A.'),
+                     projectFile(root, file, 'Second observation.', 'Result B.')])
+  assert.equal((await projectFile(root, file)).content, 'First observation. Second observation.')
+  await assert.rejects(projectFile(root, file, 'Wrong replacement', 'Result A.'), /exactly once/)
+  await projectFile(root, file, 'same method; same method')
+  await assert.rejects(projectFile(root, file, 'new method', 'same method'), /found 2/)
+  await assert.rejects(projectFile(root, file, 'new method', 'same method', {expected_matches: 3}), /found 2/)
+  await projectFile(root, file, 'new method', 'same method', {expected_matches: 2})
+  assert.equal((await projectFile(root, file)).content, 'new method; new method')
+
+})
+
+// The test copies the profile and overlays only the candidate bundle's source.
+test('pinned native owner, evidence-only reviewer and persisted resume', {
+  skip: !process.env.IDEA2PAPER_TEST_PROFILE || !process.env.IDEA2PAPER_TEST_DSH,
+  timeout: 90000,
+}, async t => {
+  const home = await mkdtemp(join(tmpdir(), 'idea2paper-native-test-'))
+  if (!process.env.IDEA2PAPER_TEST_KEEP) t.after(() => rm(home, { recursive: true, force: true }))
+  const profile = join(home, 'profiles', 'idea2paper')
+  await mkdir(dirname(profile), { recursive: true })
+  await cp(process.env.IDEA2PAPER_TEST_PROFILE, profile, { recursive: true })
+  const pkg = join(profile, 'node_modules', 'idea2paper-dsh')
+  for (const file of ['index.js','workflow.js','project.js','experiment.js','cordis.patch.yml','package.json']) await cp(join(bundle,file), join(pkg,file))
+  let phase = 'review'
+  let recorded, delivered = false, resumed = false, stopped = false, parked
+  const blocked = Promise.withResolvers()
+  const events = []
+  const calls = []
+  let failure
+  const server = createServer(async (req,res) => {
+    try {
+      let raw = ''
+      for await (const chunk of req) raw += chunk
+      const body = JSON.parse(raw)
+      const tools = body.tools?.map(tool => tool.name) || []
+      const history = JSON.stringify(body.messages)
+      if (parked) {
+        blocked.resolve()
+        return // Hold the request open until DSH cancels the in-flight turn.
+      }
+      let response
+      if (tools.includes('read_evidence')) {
+        assert.deepEqual(tools, ['read_evidence'])
+        assert.ok(!history.includes('parent-scientific-private'))
+        assert.match(history, /Rendered manuscript page 2 of 2/)
+        assert.match(history, /"type":"image"/)
+        if (history.includes('measured-observation')) {
+          assert.match(history, /"type":"image"/, 'The provider must receive pixels for a visual receipt')
+          response = JSON.stringify({ revision:'rev1', verdict:'accept' })
+        } else response = { name:'read_evidence',args:{artifact:'paper/main.pdf',page:1,visual:true} }
+      } else {
+        assert.ok(tools.includes('request_review'), JSON.stringify(tools))
+        if (resumed) {
+          assert.match(history, /parent-scientific-private/)
+          assert.match(history, /What happened/)
+          response = 'The recorded review accepted revision one.'
+        } else if (phase === 'review') {
+          phase = 'deliver'
+          response = {name:'request_review',args:{}}
+        } else if (phase === 'deliver') {
+          phase = 'done'
+          response = {name:'deliver',args:{}}
+        } else response = 'The project delivered.'
+      }
+      res.writeHead(200, {'Content-Type':'text/event-stream'})
+      res.end(frames(body.model, response))
+    } catch (error) {
+      failure = error
+      res.writeHead(400)
+      res.end(JSON.stringify({error:{message:error.message}}))
+    }
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => server.close())
+  const gateway = 'http://127.0.0.1:' + server.address().port
+  await writeFile(join(profile, 'cordis.patch.yml'), JSON.stringify([
+    {id:'agent-default-model',config:{provider:'loopback',model:'vision-fixture'}},
+    {id:'llm-pi-ai',config:{providers:{loopback:{api:'anthropic-messages',baseURL:gateway,apiKeyEnv:'FIXTURE_KEY',
+      models:[{id:'vision-fixture',contextWindow:65536,maxTokens:2048,input:['text','image']}]}}}},
+  ]))
+  const domain = ({op,args}) => {
+    calls.push(op)
+    switch (op) {
+      case 'stop': stopped = true; return {state:'stopped'}
+      case 'project_status': return { state:stopped?'stopped':delivered?'delivered':'running', delivered, commands:[] }
+      case 'project_event': events.push(args); return {}
+      case 'review_snapshot': return {revision:'rev1',rendered_pages:2,rendered_artifact:'paper/main.pdf',brief:'Blind reviewer. Inspect results/data.json using read_evidence.'}
+      case 'review_evidence': return {text:'measured-observation',receipt:{artifact:'paper/main.pdf',visual:true},
+        mime_type:'image/png',image_base64:'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAIklEQVR4nGNkYGhgoAZgooopowaNGjRq0KhBowaNGkQRAAAV1ACwA5vbQAAAAABJRU5ErkJggg=='}
+      case 'record_review':
+        assert.equal(args.verdict.verdict, 'accept')
+        assert.equal(args.observed[0].artifact, 'paper/main.pdf')
+        assert.ok(args.observed.length >= 2)
+        recorded = args
+        return { accepted:true }
+      case 'deliver': assert.ok(recorded); delivered=true; return {delivered}
+      default: throw new Error('unexpected op ' + op)
+    }
+  }
+  const project = join(home,'research')
+  async function launch(...args) {
+    const child = spawn(process.env.IDEA2PAPER_TEST_DSH, ['--profile','idea2paper',...args], {
+      env: { HOME:home,PATH:process.env.PATH,DSH_HOME:home,
+        PKG_NATIVE_CACHE_PATH:process.env.PKG_NATIVE_CACHE_PATH,DEEPSEEK_API_KEY:'fixture-only',FIXTURE_KEY:'localhost',
+        DEEPSEEK_BASE_URL:'http://127.0.0.1:' + server.address().port,
+        DSH_TELEMETRY_DISABLED:'1',IDEA2PAPER_DOMAIN_FD:'3' },
+      stdio:['ignore','pipe','pipe','pipe'],
+    })
+    let log = ''
+    child.stdout.on('data',chunk => {log += chunk})
+    child.stderr.on('data',chunk => {log += chunk})
+    const watchdog = setTimeout(() => child.kill('SIGKILL'), 30000)
+    const lines = createInterface({input:child.stdio[3]})
+    lines.on('line', line => {
+      const request = JSON.parse(line)
+      try { child.stdio[3].write(JSON.stringify({id:request.id,ok:true,result:domain(request)}) + '\n') }
+      catch(error) { failure=error; child.stdio[3].write(JSON.stringify({id:request.id,ok:false,error:error.message}) + '\n') }
+    })
+    const code = await new Promise(resolve => child.once('close',resolve))
+    clearTimeout(watchdog)
+    if (failure) throw failure
+    assert.equal(code,0,home + '\n' + log)
+  }
+  await launch('run',project,'parent-scientific-private')
+  const first = JSON.parse(await readFile(join(project,'workflow.json'),'utf8'))
+  assert.ok(delivered)
+  assert.notEqual(recorded.session_id,first.owner_session_id)
+  assert.ok(events.some(e => e.role === 'reviewer' && e.kind === 'tool/call'))
+  resumed = true
+  await launch('resume',project,'What happened?', '--command-id', 'history-question')
+  await launch('resume',project,'What happened?', '--command-id', 'history-question')
+  assert.equal(JSON.parse(await readFile(join(project,'workflow.json'),'utf8')).owner_session_id,first.owner_session_id)
+  assert.equal(calls.filter(op => op === 'record_review').length,1)
+  parked = true
+  const active = launch('resume', project, 'Explain again', '--command-id', 'interrupted')
+  await blocked.promise
+  await launch('resume', project, 'Narrow the claim', '--command-id', 'future-scope')
+  await launch('stop', project)
+  await active
+  assert.equal(calls.filter(op => op === 'stop').length,1)
+  assert.ok(stopped)
+})

@@ -72,6 +72,10 @@ The fastest way to try it is the hosted instance at **[idea2paper.org](https://i
 
 ---
 
+## Run inside DeepSeek Harness
+
+Install the [Idea2Paper DSH bundle](integrations/dsh/README.md) into a dedicated profile. Each project keeps one research session across experiments, writing and revisions. The independent reviewer can inspect measured rows, original papers and rendered PDF pages. The guide includes the install command, prerequisites, and how to resume a project.
+
 ## Quick Start
 
 ```bash

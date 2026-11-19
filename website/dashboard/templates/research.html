@@ -1,0 +1,23 @@
+<section id="research-desk" aria-labelledby="research-action">
+  <ol id="research-phases" aria-label="Research phases"></ol>
+  <div class="research-focus">
+    <div class="research-action">
+      <div class="research-label" data-i18n="research_current">Current action</div>
+      <h2 id="research-action" tabindex="-1"></h2>
+      <span id="research-state"></span>
+    </div>
+    <div class="research-observation">
+      <h3 class="research-label" data-i18n="research_observation">Latest observation</h3>
+      <p id="research-observation"></p>
+      <div id="research-count" aria-hidden="true" hidden><span></span></div>
+      <time id="research-time"></time>
+      <button type="button" id="research-open-evidence" hidden data-i18n="research_view_evidence">View evidence files</button>
+    </div>
+  </div>
+  <details id="research-history" hidden>
+    <summary data-i18n="research_history">Research history</summary>
+    <ol></ol>
+    <button type="button" id="history-earlier" class="btn-secondary" hidden data-i18n="research_earlier">Earlier events</button>
+  </details>
+</section>
+<p id="research-announce" class="research-sr" role="status" aria-atomic="true"></p>

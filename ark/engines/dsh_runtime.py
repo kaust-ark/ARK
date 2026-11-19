@@ -98,8 +98,8 @@ def dsh_interpreter() -> str:
     return os.environ.get("ARK_DSH_PYTHON") or sys.executable
 
 
-def dsh_installation_error() -> str | None:
-    interpreter = dsh_interpreter()
+def dsh_installation_error(interpreter=None) -> str | None:
+    interpreter = interpreter or dsh_interpreter()
     try:
         probe = subprocess.run(
             [interpreter, "-c", "import importlib.metadata as m;"

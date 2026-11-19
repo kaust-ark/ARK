@@ -8,7 +8,7 @@ const steps = ['plan', 'code', 'experiment', 'writer', 'reviewer', 'revision', '
 const formatVersion = 2
 const python = process.env.IDEA2PAPER_PYTHON || 'python3'
 
-async function readJson(path) {
+export async function readJson(path) {
   try {
     return JSON.parse(await readFile(path, 'utf8'))
   } catch (error) {
@@ -16,7 +16,7 @@ async function readJson(path) {
   }
 }
 
-async function writeJson(path, value) {
+export async function writeJson(path, value) {
   const temp = path + '.tmp'
   const handle = await open(temp, 'w', 0o600)
   try {
@@ -169,7 +169,7 @@ if report.hard_violations:
   }
 }
 
-export async function runWorkflow({ directory, idea, selection, signal, runRole }) {
+export async function runLegacyWorkflow({ directory, idea, selection, signal, runRole }) {
   if (idea === undefined) {
     if (!(await lstat(directory)).isDirectory()) throw new Error('Resume requires an existing project directory')
   } else {
@@ -329,7 +329,7 @@ Use stdout for the result, with no files, installations, or external datasets.`,
 
 // The OS releases this advisory lock even after SIGKILL. The helper exits on
 // stdin EOF when its owning Node process dies.
-async function acquireLock(directory, signal) {
+export async function acquireLock(directory, signal) {
   signal.throwIfAborted()
   const child = spawn('flock', ['-n', '-E', '73', join(directory, '.workflow.lock'),
     'sh', '-c', 'printf locked; cat >/dev/null'], { stdio: ['pipe', 'pipe', 'ignore'] })

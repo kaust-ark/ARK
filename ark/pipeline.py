@@ -856,7 +856,11 @@ class PipelineMixin:
 
         if selected_agent_runtime() == "dsh":
             from ark.engines.dsh_runtime import dsh_installation_error, route
-            error = dsh_installation_error()
+            if getattr(self, "_hosted_runtime_preflight", False):
+                from ark.orchestrator.dsh_workflow import native_interpreter
+                error = dsh_installation_error(native_interpreter(self))
+            else:
+                error = dsh_installation_error()
             if error:
                 self.log(error, "ERROR")
                 sys.exit(1)
@@ -2589,12 +2593,12 @@ Rules:
             phase=phase,
         )
 
-    def _experiment_approval_gate(self):
+    def _experiment_approval_gate(self, plan_summary=None):
         """Before running experiments, let the user approve the plan or steer it
         (大实验前把关). Gated by autonomy level — skipped in full_auto."""
         if not self._should_ask("experiment_approval"):
             return
-        plan_summary = self._experiment_plan_digest().strip()
+        plan_summary = plan_summary or self._experiment_plan_digest().strip()
         if not plan_summary:
             # Older projects used Markdown plans.
             for name in ("experiment_plan.md", "experiments_plan.md", "plan.md", "action_plan.md"):
@@ -2623,6 +2627,7 @@ Rules:
                 self.log("Applied your experiment adjustment.", "INFO")
             except Exception:
                 pass
+            return str(reply).strip()
 
     def _run_dev_phase(self):
         """Run the Dev Phase: iterative experiments → initial paper draft.
@@ -4256,12 +4261,12 @@ provide the title.
                 existing_raw = []
 
         in_memory_keys = {
-            (s.get("timestamp"), s.get("agent_type"))
+            (s.get("timestamp"), s.get("agent_type"), s.get("native_event"))
             for s in self._agent_stats
         }
         merged_stats = [
             s for s in existing_raw
-            if (s.get("timestamp"), s.get("agent_type")) not in in_memory_keys
+            if (s.get("timestamp"), s.get("agent_type"), s.get("native_event")) not in in_memory_keys
         ]
         merged_stats.extend(self._agent_stats)
         merged_stats.sort(key=lambda s: s.get("timestamp") or "")
@@ -4529,12 +4534,58 @@ provide the title.
             )
         return True
 
+    def _native_followup(self, message):
+        from ark.orchestrator.dsh_workflow import run_native_project, uses_native_project
+        if not (Path(self.code_dir) / "workflow.json").is_file() or not uses_native_project(self):
+            return False
+        try:
+            run_native_project(self, message=message)
+        except Exception as exc:
+            self._chat("agent", f"The project researcher could not finish this request: {exc}", kind="notice")
+            raise
+        return True
+
+    def _record_native_event(self, event):
+        """Account for each durable DSH billable event, including discarded attempts."""
+        from ark.engines.dsh_driver import classify
+        from ark.engines.dsh_runtime import price
+        if event.get("kind") == "owner/response":
+            self._chat("agent", str(event.get("detail") or ""), kind="message")
+        if event.get("kind") == "turn/end" and not event.get("replayed"):
+            code, detail = classify(event.get("reason"))
+            message = (detail or "").casefold()
+            if (code == "DSH.QuotaExceeded" or
+                    any(token in message for token in ("insufficient balance", "insufficient_balance", "insufficient_quota"))):
+                self._quota_exhausted = True
+                self._native_provider_error = f"Provider quota exceeded: {detail}. Check your provider balance or quota, then Continue."
+        usage = event.get("usage")
+        if not isinstance(usage, dict):
+            return
+        role = "native_" + ("reviewer" if event.get("role") == "reviewer" else "owner")
+        session_id, seq = event["session_id"], event["seq"]
+        # A checkpoint may lag the cost file after a kill. Its stable row key
+        # also lets _write_cost_report replace that entry during replay.
+        token = f"{session_id}/{seq}"
+        if any(row.get("native_event") == token for row in self._agent_stats):
+            return
+        counters = {key: int(usage.get(native_key) or 0) for key, native_key in (
+            ("input_tokens", "inputTokens"), ("output_tokens", "outputTokens"),
+            ("cache_read_tokens", "cacheReadTokens"), ("cache_creation_tokens", "cacheWriteTokens"))}
+        model = self.config.get("model_variant") or self.model
+        cost, source = price(model, counters)
+        timestamp = datetime.fromtimestamp(float(event.get("time") or 0) / 1000).isoformat(timespec="microseconds")
+        self._agent_stats.append({"agent_type": role, "timestamp": timestamp, "native_event": token,
+                                  "model": model, "cost_usd": cost, "cost_source": source, "requests": 1, **counters})
+        self._write_cost_report()
+
     def chat_turn(self, message: str):
         """Out-of-band chat: ONE turn of a PERSISTENT OpenHands conversation with
         full memory + file access (Claude-Code-level). The agent itself decides
         whether to answer, read, edit, or run; its tool steps stream to the chat
         live, and the final reply is posted as the answer. The conversation id is
         kept in the workspace so the next turn resumes with full context."""
+        if self._native_followup(message):
+            return
         from ark.chat_agent import run_chat_turn, load_conversation_id
         self.start_telegram_listener()
         self._ensure_control_poller()
@@ -4652,6 +4703,9 @@ provide the title.
                              its figure, fold results into the paper. Needs compute,
                              but not a whole iteration.
         """
+        if self._native_followup(instruction):
+            return
+
         self.check_dependencies()
         self.start_telegram_listener()
         self._ensure_control_poller()
@@ -4806,6 +4860,7 @@ provide the title.
 
     def run(self, *, dsh_workflow=False):
         """Run the workflow and maintain the worker lifecycle."""
+        self._hosted_runtime_preflight = dsh_workflow
         self.check_dependencies()
 
         # Provider-billed baseline: sample the OpenRouter key's lifetime usage

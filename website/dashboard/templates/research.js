@@ -1,0 +1,317 @@
+// Research milestones come from the durable project journal; transient token and log
+// traffic never changes the scientific state or triggers a screen-reader announcement.
+const researchLabels = {
+  paper_ready: ['Paper PDF available','论文 PDF 已生成','ملف الورقة متاح'],
+  file_ready: ['Published %s','已生成证据文件 %s','ملف الأدلة متاح %s'],
+  view_evidence: ['View evidence files','查看证据文件','عرض ملفات الأدلة'],
+  earlier: ['Earlier events','更早的记录','السجل السابق'],
+  current: ['Current action','当前工作','العمل الحالي'], observation: ['Latest observation','最新观察','أحدث ملاحظة'],
+  history: ['Research history','研究记录','سجل البحث'], evidence: ['Evidence','研究证据','الأدلة'],
+  open: ['Open file','打开文件','فتح الملف'], close: ['Close','关闭','إغلاق'],
+  report: ['Delivery','交付','التسليم'], review: ['Review','评审','المراجعة'],
+  research: ['Research','调研','البحث'], experiment: ['Experiment','实验','التجربة'], writing: ['Writing','写作','الكتابة'],
+  empty: ['No observation recorded yet.','尚无观察记录。','لم تُسجّل أي ملاحظة بعد.'],
+  no_file: ['No evidence files available yet.','尚无可查看的证据文件。','لا توجد ملفات أدلة متاحة بعد.'],
+  idle: ['Waiting for the next recorded action','等待下一项工作记录','بانتظار تسجيل الإجراء التالي'],
+  waiting: ['Waiting for your decision','等待你的决定','بانتظار قرارك'],
+  disconnected: ['Disconnected · reconnecting','连接中断，正在重连','انقطع الاتصال. جارٍ إعادة الاتصال'],
+  quota: ['Paused for API quota','因 API 配额暂停','متوقف لبلوغ حصة الواجهة'],
+  paused: ['Paused','已暂停','متوقف مؤقتًا'], conversation: ['Conversation','对话','المحادثة'],
+  command: ['Latest command','最近指令','آخر أمر'], pending: ['Queued','已入队','في قائمة الانتظار'],
+  consumed: ['Acknowledged by worker','执行端已接收','استلم العامل الأمر'], failed: ['Failed','失败','فشل'],
+  recorded: ['Answer recorded','答复已记录','تم تسجيل الرد'], decision: ['Decision','决定','القرار'],
+  receipt: ['Your instruction was received.','已收到你的指令。','تم استلام تعليماتك.'],
+  retry: ['Could not send. Your text is ready to retry.','发送失败，可保留原文重试。','تعذّر الإرسال. يمكنك إعادة المحاولة.'],
+  reply: ['Waiting for a reply','等待回复','بانتظار الرد'], review_title: ['Independent review','独立评审','مراجعة مستقلة'],
+  stale: ['Current paper awaiting review','当前稿件待评审','الورقة الحالية بانتظار المراجعة'],
+  steer: ['Discuss this finding','讨论该问题','ناقش هذه الملاحظة'], diagnostics: ['Diagnostic log','诊断日志','سجل التشخيص'],
+  before: ['Previous revision','上一版','النسخة السابقة'], after: ['Reviewed revision','受评版本','النسخة المراجعة'],
+  unavailable: ['Preview unavailable','无法预览','المعاينة غير متاحة'], truncated: ['Preview limited to 64 KiB.','预览仅显示前 64 KiB。','تقتصر المعاينة على 64 كيلوبايت.'],
+  pause_at: ['Response deadline %s','答复截止时间 %s','الموعد النهائي للرد %s'],
+  trial: ['Trial','试验','التجربة'], baseline: ['Baseline','基线','خط الأساس'], proposed: ['Proposed','所提方法','الطريقة المقترحة'],
+  coverage: ['What the reviewer checked','评审检查了什么','ما الذي فحصه المراجع'],
+  manuscript: ['Manuscript','论文正文','المخطوطة'], citations: ['Citations','引用','الاستشهادات'],
+  visual: ['Rendered pages and figures','排版与图表','الصفحات والأشكال'], assessed: ['Assessed','已核查','تم تقييمه'],
+  blocker: ['Blocking issue','阻断性问题','مشكلة مانعة'], minor: ['Minor issue','次要问题','ملاحظة طفيفة'], question: ['Question','待澄清','سؤال'],
+  no_score: ['Awaiting review','等待评审','بانتظار المراجعة'], accept: ['Accepted','已通过','مقبول'], revise: ['Needs revision','需要修改','يتطلب التعديل'],
+  unassessed: ['Unassessed','尚未评估','لم يقيّم'], new: ['Open','待修复','مفتوح'], still_present: ['Still present','问题仍存在','ما زالت قائمة'], resolved: ['Resolved','已解决','تم الحل'],
+  page: ['Page','页','صفحة'], elapsed: ['%s since observation','距上次记录 %s','%s منذ آخر ملاحظة']
+};
+Object.entries(researchLabels).forEach(([key, values]) =>
+  ['en','zh','ar'].forEach((lang, i) => TRANSLATIONS[lang]['research_' + key] = values[i]));
+const rt = (key, ...args) => t('research_' + key, ...args);
+const re = id => document.getElementById(id);
+let researchProject = {}, researchData = {}, researchEvents = new Map(), researchCursor = 0;
+let fileSignature = '', reviewSignature = '', preview = null, streamReady = false, disconnected = false;
+
+function resetResearch(project) {
+  closeEvidence(false);
+  researchProject = project;
+  researchEvents.clear();
+  researchData = {};
+  researchCursor = 0;
+  fileSignature = reviewSignature = '';
+  disconnected = streamReady = false;
+  re('research-history').open = false;
+  re('research-announce').textContent = '';
+  re('command-receipt').textContent = '';
+  receiveResearch(project.research || {}, false);
+}
+
+function receiveResearch(record, animate) {
+  let changed = false;
+  for (const event of record.events || []) {
+    if (!event.id || researchEvents.has(event.id)) continue;
+    researchEvents.set(event.id, event);
+    changed = true;
+  }
+  researchCursor = record.cursor ?? researchCursor;
+  researchData = record;
+  renderResearch(animate && changed);
+  if (changed || !researchEvents.size) renderHistory();
+  renderEvidence(animate && changed);
+  renderReview();
+  const cmd = record.command;
+  const receipts = [];
+  if (cmd) receipts.push([rt('command'),cmd.kind,researchLabels[cmd.status] ? rt(cmd.status) : cmd.status].join(' · '));
+  if (record.decision_receipt) receipts.push(rt('decision') + ' · ' + rt(record.decision_receipt));
+  const text = receipts.join(' / ');
+  if (re('command-receipt').textContent !== text) re('command-receipt').textContent = text;
+}
+
+function renderHistory() {
+  const history = re('research-history');
+  history.hidden = !researchEvents.size;
+  re('history-earlier').hidden = !([...researchEvents.values()][0]?.offset > 0);
+  history.querySelector('ol').replaceChildren(...[...researchEvents.values()].reverse().map(e => {
+    const li = document.createElement('li'), time = document.createElement('time');
+    time.textContent = e.ts ? fmtDate(e.ts) : '';
+    const progress = e.count != null && e.total > 0 ? ' (' + e.count + '/' + e.total + ')' : '';
+    li.append(time, [e.action, e.observation].filter(Boolean).join(' · ') + progress);
+    return li;
+  }));
+}
+
+re('history-earlier').onclick = async function () {
+  const id = detailProjectId, first = [...researchEvents.values()][0]?.offset;
+  if (!first) return;
+  this.disabled = true;
+  try {
+    const response = await fetch(APP_BASE + '/api/projects/' + encodeURIComponent(id) + '/research-history?before=' + first);
+    if (!response.ok) throw Error();
+    const {events} = await response.json();
+    if (id !== detailProjectId) return;
+    const earlier = events.map(e => [e.id,e]);
+    researchEvents = new Map([...earlier,...researchEvents]);
+    renderHistory();
+    if (!earlier.length) this.hidden = true;
+  } catch { if (id === detailProjectId) re('research-announce').textContent = rt('unavailable'); }
+  finally { this.disabled = false; }
+};
+
+function renderResearch(animate=false) {
+  const p = researchProject, events = [...researchEvents.values()], last = events.at(-1);
+  const recent = events.slice().reverse();
+  const obs = recent.find(e => e.observation && !['tool/call','tool/result','turn/end','turn_end'].includes(e.action)) ||
+    recent.find(e => e.observation && e.action !== 'tool/call');
+  const rawPhase = recent.find(e => e.phase && e.phase !== 'work')?.phase || p.phase_status?.phase;
+  const phase = ({ experiments:'experiment', figures:'writing', dev:'experiment', development:'experiment', planning:'research', plan:'research', literature:'research', analysis:'experiment',
+    draft:'writing', manuscript:'writing', reviewer:'review', delivered:'report', delivery:'report', accepted:'report' })[rawPhase] || rawPhase;
+  const rail = re('research-phases');
+  if (rail.dataset.phase !== (phase || '') || rail.lang !== currentLang) {
+    const previous = rail.dataset.phase;
+    rail.dataset.phase = phase || '';
+    rail.lang = currentLang;
+    rail.replaceChildren(...['research','experiment','writing','review','report'].map(key => {
+      const li = document.createElement('li'), label = document.createElement('span');
+      label.textContent = rt(key);
+      if (key === phase) {
+        li.setAttribute('aria-current','step');
+        if (animate && previous !== phase && !disconnected && !p.pending_decision && p.status === 'running' && p.control_state !== 'paused') li.classList.add('research-arrived');
+      }
+      li.append(label);
+      return li;
+    }));
+  }
+  re('research-stop').hidden = !!window.SHARE_MODE || !['queued','running'].includes(p.status);
+  const active = ['initializing','queued','pending','running'].includes(p.status);
+  const waiting = p.pending_decision && p.pending_decision.id !== _lastAnsweredDecision;
+  const quota = /quota[_ -]?(paused|exhausted)|insufficient[_ ]balance/i.test(
+    [p.control_state, last?.status, last?.action === 'quota' ? 'quota_paused' : '', p.error_message].filter(Boolean).join(' '));
+  const paused = p.control_state === 'paused';
+  const label = t('status_' + p.status);
+  const state = (quota ? rt('quota') : active && waiting ? rt('waiting') : paused ? rt('paused') :
+    label.startsWith('status_') ? (p.status || '') : label).replace(/^[^\p{L}\p{N}]+/u, '');
+  re('research-state').textContent = disconnected ? rt('disconnected') : state;
+  const action = active && waiting ? p.pending_decision.question : !active || paused || quota ? state :
+    p.activity || (last?.status === 'running' && (last.action === 'tool/call' ? last.observation : last.action)) || (p.status !== 'running' ? state : rt('idle'));
+  re('research-action').textContent = action;
+  const artifact = researchData.evidence?.[0];
+  const fallback = artifact?.key === 'paper/main.pdf' ? rt('paper_ready') :
+    artifact ? rt('file_ready', artifact.label) : rt('empty');
+  const observed = obs?.observation || researchData.milestone?.text || fallback;
+  const measured = Number.isInteger(obs?.count) && Number.isInteger(obs.total) &&
+    obs.count >= 0 && obs.total > 0 && obs.count <= obs.total;
+  const counter = measured ? ' (' + obs.count + '/' + obs.total + ')' : '';
+  const meter = re('research-count');
+  meter.hidden = !measured;
+  meter.classList.toggle('research-count-live', animate && active && !disconnected && !waiting && !paused && !quota);
+  if (measured) meter.firstElementChild.style.transform = 'scaleX(' + obs.count / obs.total + ')';
+  re('research-observation').textContent = observed + counter;
+  const ts = obs?.ts || researchData.milestone?.ts;
+  re('research-time').textContent = ts ? fmtDate(ts) : '';
+  if (ts && active && !waiting && !paused && !disconnected) {
+    const seconds = Math.floor((Date.now() - Date.parse(ts)) / 1000);
+    if (seconds >= 0) re('research-time').textContent += ' · ' + rt('elapsed', seconds < 60 ? seconds + ' s' : Math.floor(seconds / 60) + ' min');
+  }
+  if (animate && !disconnected && !waiting && !paused && re('research-announce').textContent !== observed + counter)
+    re('research-announce').textContent = observed + counter;
+}
+
+function filesForProject() {
+  const files = new Map();
+  for (const item of researchData.evidence || []) files.set(item.key, item);
+  for (const e of [...researchEvents.values()].reverse()) {
+    if (e.artifact && !files.has(e.artifact)) files.set(e.artifact, { key:e.artifact, label:e.revision ? e.artifact.split('/').pop() + ' · ' + e.revision.slice(0,10) : e.artifact.split('/').pop() });
+  }
+  return [...files.values()];
+}
+function renderEvidence(animate) {
+  const files = filesForProject(), signature = JSON.stringify([currentLang, files]);
+  re('research-open-evidence').hidden = !files.length;
+  re('research-open-evidence').onclick = () => {
+    const obs = [...researchEvents.values()].reverse().find(e => e.observation && !['tool/call','tool/result','turn/end','turn_end'].includes(e.action));
+    const file = files.find(f => f.key === obs?.artifact);
+    if (file) openEvidence(file,re('research-open-evidence'));
+    else re('evidence-heading').focus();
+  };
+  if (fileSignature === signature) return;
+  fileSignature = signature;
+  const target = re('evidence-files');
+  if (!files.length) {
+    const p = document.createElement('p'); p.textContent = rt('no_file'); target.replaceChildren(p);
+    return;
+  }
+  const existing = new Map([...target.querySelectorAll('button')].map(b => [b.dataset.key,b]));
+  target.querySelector('p')?.remove();
+  for (const item of files) {
+    let btn = existing.get(item.key);
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.type = 'button'; btn.dataset.key = item.key;
+      const type = document.createElement('span'), name = document.createElement('span');
+      type.className = 'file-type'; name.className = 'file-name';
+      type.textContent = item.key.split('.').pop().toUpperCase();
+      name.textContent = item.label || item.key; btn.title = item.key; btn.append(type,name);
+      if (animate) btn.classList.add('research-arrived');
+      btn.onclick = () => openEvidence(item,btn);
+      target.append(btn);
+    }
+    existing.delete(item.key);
+    btn.setAttribute('aria-pressed', String(preview?.key === item.key));
+  }
+  for (const btn of existing.values()) btn.remove();
+}
+
+function closeEvidence(focus=true) {
+  const old = preview;
+  preview?.controller.abort();
+  preview = null;
+  re('evidence-preview').hidden = true;
+  re('preview-content').replaceChildren();
+  old?.opener?.setAttribute('aria-pressed','false');
+  if (focus && old?.opener?.isConnected) old.opener.focus();
+}
+re('evidence-close').onclick = () => closeEvidence();
+re('evidence-preview').onkeydown = event => { if (event.key === 'Escape') closeEvidence(); };
+
+async function openEvidence(item, opener, page=1, compare=false) {
+  const container = re('preview-content'), scroll = compare ? container.scrollTop : 0;
+  closeEvidence(false);
+  const controller = new AbortController();
+  preview = {key:item.key, opener, controller};
+  opener.setAttribute('aria-pressed','true');
+  const base = APP_BASE + '/api/projects/' + encodeURIComponent(detailProjectId);
+  const media = item.type || ({pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg'})[item.key.split('.').pop()] || 'text/plain';
+  const url = item.key === 'paper/main.pdf' && !item.sha256 ? base + '/pdf' : base + '/evidence?key=' + encodeURIComponent(item.key) + (item.sha256 ? '&sha256=' + encodeURIComponent(item.sha256) : '');
+  const href = media === 'application/pdf' ? url + '#page=' + Math.max(1,Number(page)||1) : url;
+  re('evidence-preview').hidden = false;
+  re('preview-name').textContent = item.label || item.key.split('/').pop();
+  re('evidence-open').href = href;
+  if (!compare) re('preview-name').focus({preventScroll:false});
+  if (media.startsWith('image/') || media === 'application/pdf') {
+    const rasterPage = media === 'application/pdf' && item.sha256 && page > 0;
+    const view = document.createElement(media === 'application/pdf' && !rasterPage ? 'iframe' : 'img');
+    view.title = view.alt = re('preview-name').textContent;
+    view.onload = () => { container.scrollTop = scroll; };
+    view.onerror = () => { if (!controller.signal.aborted) container.textContent = rt('unavailable'); };
+    view.src = rasterPage ? url + '&page=' + page : href; container.replaceChildren(view);
+    return;
+  }
+  try {
+    const r = await fetch(url, {signal:controller.signal});
+    if (!r.ok) throw Error();
+    const reader = r.body.getReader(), decoder = new TextDecoder();
+    let text = '', remaining = 65536;
+    while (remaining > 0) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      text += decoder.decode(value.subarray(0,remaining), {stream:true});
+      remaining -= value.length;
+    }
+    text += decoder.decode();
+    if (remaining <= 0) { await reader.cancel(); text += '\n' + rt('truncated'); }
+    if (controller.signal.aborted) return;
+    let rows;
+    try { rows = JSON.parse(text).rows; } catch {}
+    if (Array.isArray(rows) && rows.length && rows.every(row => row && typeof row.label === 'string' && Number.isFinite(row.baseline) && Number.isFinite(row.proposed))) {
+      const table = document.createElement('table'), head = table.createTHead().insertRow();
+      for (const key of ['trial','baseline','proposed']) { const th = document.createElement('th'); th.textContent = rt(key); head.append(th); }
+      const body = table.createTBody();
+      for (const row of rows) { const tr = body.insertRow(); for (const k of ['label','baseline','proposed']) tr.insertCell().textContent = row[k]; }
+      container.replaceChildren(table);
+    } else {
+      const pre = document.createElement('pre'); pre.textContent = text; container.replaceChildren(pre);
+    }
+  } catch { if (!controller.signal.aborted) container.textContent = rt('unavailable'); }
+}
+
+function renderReview() {
+  const review = researchData.review, key = JSON.stringify([currentLang,review]);
+  if (key === reviewSignature) return;
+  reviewSignature = key;
+  re('research-review').hidden = !review || window.SHARE_MODE;
+  if (!review) return;
+  const verdict = review.stale ? rt('stale') : (researchLabels[review.verdict] ? rt(review.verdict) : review.verdict);
+  re('review-verdict').textContent = [verdict, review.revision?.slice(0,12), review.summary].filter(Boolean).join(' · ');
+  const coverage = re('review-coverage');
+  coverage.hidden = !review.checks?.length;
+  coverage.querySelector('ul').replaceChildren(...(review.checks || []).map(check => {
+    const li = document.createElement('li'), label = document.createElement('strong');
+    label.textContent = rt(check.domain) + ' · ' + rt(check.status);
+    li.append(label, document.createTextNode(check.reason ? ' ' + check.reason : ''));
+    return li;
+  }));
+  re('review-issues').replaceChildren(...(review.issues || []).map(issue => {
+    const li = document.createElement('li'), title = document.createElement('strong'), detail = document.createElement('p'), controls = document.createElement('div');
+    li.dataset.status = issue.status || '';
+    title.textContent = [issue.id, researchLabels[issue.severity] && rt(issue.severity), issue.claim, researchLabels[issue.status] ? rt(issue.status) : issue.status].filter(Boolean).join(' · ');
+    detail.textContent = [issue.reason,issue.fix].filter(Boolean).join(' ');
+    controls.className = 'review-controls';
+    for (const ref of issue.evidence || []) {
+      if (ref.quote) { const quote = document.createElement('p'); quote.textContent = ref.quote; li.append(quote); }
+      if (!ref.key) continue;
+      const btn = document.createElement('button'); btn.type = 'button';
+      btn.textContent = [ref.previous ? rt('before') : rt('after'),ref.artifact,ref.page && rt('page') + ' ' + ref.page].filter(Boolean).join(' · ');
+      btn.onclick = () => openEvidence({key:ref.key, sha256:ref.sha256, label:btn.textContent},btn,ref.page,!!preview && preview.opener?.closest('li') === li);
+      controls.append(btn);
+    }
+    const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = rt('steer');
+    btn.onclick = () => {
+      const input = re('hitl-decision').hidden ? re('hitl-input') : re('decision-text');
+      if (!input.value) input.value = [issue.id,issue.claim].join(' · ') + '\n';
+      input.dispatchEvent(new Event('input')); input.focus();
+    };
+    controls.append(btn); li.prepend(title,detail); li.append(controls); return li;
+  }));
+}

@@ -108,3 +108,30 @@ def test_serve_streams_when_no_local_path(tmp_path, monkeypatch):
 
     asyncio.run(_drain())
     assert closed["v"] is True
+
+
+def test_research_cursor_and_evidence_confinement(tmp_path):
+    from website.dashboard import progress
+
+    state = tmp_path / "auto_research/state"
+    state.mkdir(parents=True)
+    journal = tmp_path / progress.JOURNAL
+    journal.write_bytes(b'{"id":"one","observation":"1"}\n{"id":"two"')
+    cursor, initial = progress.journal(tmp_path)
+    assert [e["id"] for e in initial] == ["one"]
+    with journal.open("ab") as f:
+        f.write(b',"observation":"2"}\n')
+    end, live = progress.journal(tmp_path, after=cursor)
+    assert [e["id"] for e in live] == ["two"]
+    assert progress.journal(tmp_path, after=end) == (end, [])
+    assert progress.journal(tmp_path, before=live[0]["offset"])[1] == initial
+
+    for key in ("results/../config.yaml", "results/secrets.json", "paper/figures/active.svg",
+                "/etc/passwd", "auto_research/state/native_project.json", "results/.env"):
+        assert progress.evidence_type(key) is None
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "link.txt").symlink_to(journal)
+    (results / "dir").symlink_to(state, target_is_directory=True)
+    assert not progress.file_exists(tmp_path, "results/link.txt")
+    assert not progress.file_exists(tmp_path, "results/dir/research_events.jsonl")

@@ -1,53 +1,83 @@
 # Idea2Paper for DeepSeek Harness
 
-The bundle runs a small research workflow in DSH. Separate model sessions plan the study, write an experiment, draft the paper, and review the claims. The experiment produces measured data in a local container. The bundle renders a LaTeX source and a PDF, then checks the delivery with the existing Python audit.
+[中文](README_zh.md)
 
-The current scope is a local CPU experiment that fits in Python's standard library. Use ideas that can be tested on generated inputs. The workflow makes at most one revision after independent review. Research requiring an external dataset, libraries, GPU, or Slurm needs a separate execution backend.
+Give Idea2Paper a question and a new project directory. A persistent DSH session plans the experiment, runs it, reads the measurements and writes the paper. An independent reviewer examines the manuscript and can request original results and rendered pages. Follow up with the same project to change the experiment or repair a claim.
 
-## Install
+## Install the prerelease
 
-Use Linux with Node.js 22.12 or later, pnpm, `flock`, a local Docker daemon, and TeX Live with `pdflatex` and T1 fonts. Install DSH `0.2.1-rc.2`. Pull the same experiment image the package uses:
+Use Linux, Node.js 22.12 or newer, pnpm and DSH 0.2.1-rc.2. Python 3.10 or newer with venv and pip, TeX Live with pdflatex and BibTeX, and a working Docker daemon are needed for the local experiment. The first run installs the bundled Python wheel and its dependencies into a private cache and builds the experiment image. Budget disk space and package-download time for that setup. [DSH installation](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-rc.2)
+
+The release asset for version 0.2.0-alpha.1 installs into the dedicated profile with one command. The DSH Web Discover view requires the full upstream CLI with its Web profile.
 
 ```sh
-docker pull python@sha256:ae52c5bef62a6bdd42cd1e8dffef86b9cd284bde9427da79839de7a4b983e7ca
+dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.1/idea2paper-dsh-0.2.0-alpha.1.tgz
 ```
 
-Install the Idea2Paper Python project for the audit, then install the packed bundle into a dedicated profile. Run these commands from the source checkout:
+From a source checkout, build the same package locally and install the resulting archive.
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install .
-export IDEA2PAPER_PYTHON="$PWD/.venv/bin/python"
-npm pack ./integrations/dsh
-dsh plugin --profile idea2paper add "$PWD/idea2paper-dsh-0.1.0-alpha.1.tgz"
+python3 integrations/dsh/pack.py --out dist/dsh
+dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-0.2.0-alpha.1.tgz"
 dsh --profile idea2paper --help
 ```
 
-Configure the DSH model and credentials for the dedicated profile. For the default DeepSeek route, set `DEEPSEEK_API_KEY` in the environment. The supported DSH version may print pnpm peer warnings during bundle installation. It supplies those peers from its own installation. Use the profile name `idea2paper` to activate the workflow commands. The bundle can be listed in DSH Web Discover while its workflow runs in the dedicated CLI profile.
+## Run a small study
 
-## Run and resume
+Configure your chosen model in DSH. For its DeepSeek provider, set `DEEPSEEK_API_KEY` in the environment that launches DSH. Use a model and provider with image input for checks requiring inspection of rendered figures. A standalone project with a configured Gemini key can also request Google Deep Research and method illustrations. Those calls use the associated provider account.
 
 ```sh
-dsh --profile idea2paper run search-study "Compare linear and binary search on missing targets"
+dsh --profile idea2paper run search-study "Compare the number of key inspections in linear and binary search for missing targets on sorted arrays. Include small arrays and report the exact counts."
+dsh --profile idea2paper status search-study
+dsh --profile idea2paper resume search-study "Report the crossover and any ties in the tested range."
+dsh --profile idea2paper stop search-study
 dsh --profile idea2paper resume search-study
 ```
 
-Give `run` a new project directory. The workspace contains `workflow.json`, `results/experiment.json`, `paper/main.tex`, `paper/main.pdf`, and `auto_research/state/delivery_report.yaml`. The checkpoint records the model selection and completed DSH role session IDs. Resume with the same model and project directory. It retries the unfinished model stage, reuses a matching experiment container after interruption, and reuses recorded results after the experiment completes. A second rejected review leaves the feedback in the checkpoint and stops before PDF delivery. A project from alpha.0 resumes with the alpha.0 bundle.
+The first command opens the project. Run status, send a follow-up or request a stop from another terminal. Resume after an interruption with the original profile, model and project directory. Standalone runs default to local experiment execution. A configured Slurm environment can dispatch experiments to the cluster. The paper must pass the current revision's review and delivery checks.
 
-The experiment container runs as an unprivileged user with a read-only filesystem, no network, no host mounts, and bounded memory, process count, CPU, and time. The runner keeps an interrupted container long enough to recover its result. For a failed experiment, `docker logs idea2paper-<project id>` displays the bounded output. The project ID is in `workflow.json`.
+| Inspect | Project file |
+| --- | --- |
+| Scientific milestones and measured artifact paths | `auto_research/state/research_events.jsonl` |
+| Measurements and plotted figures | `results/` and `paper/figures/` |
+| Rendered paper | `paper/main.pdf` |
+| Independent verdict and issue evidence | `auto_research/state/native_review.json` |
+| Archived reviewed PDFs | `auto_research/state/reviews/<revision>/main.pdf` |
+| Delivery checks | `auto_research/state/delivery_report.yaml` |
 
-## Verify a package
+## Discover
 
-```sh
-python3 integrations/dsh/verify.py ./idea2paper-dsh-0.1.0-alpha.1.tgz
+In DSH Web, open **Plugins → More → Experimental plugins**, enable **Custom plugin markets**, and select **Discover → Add index source**. After publication, enter the index URL below. The card identifies the exact release package commit and its supported DSH version. Market sources and installations belong to the selected profile. Use the CLI install command for the `idea2paper` profile when browsing from a separate Web profile. [DSH Discover guide](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.md)
+
+```text
+https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.1/index.json
 ```
 
-The test installs the tarball into a fresh DSH profile, uses scripted model responses over loopback, and checks real container results, PDFs, audit reports, and resume behavior.
+## Verify and publish
 
-## Publish a prerelease
+From the source checkout, put the pinned DSH binary and pnpm on PATH. Build once and test the same tarball intended for release. Choose a new output directory for the distribution repository.
 
-Run `npm publish <tested-tarball> --access public --tag alpha` from an authorized npm account. Verify the published `dist.integrity` matches the tested tarball. Install the exact version in a clean DSH home with `dsh plugin --profile idea2paper add idea2paper-dsh@0.1.0-alpha.1` and check `dsh --profile idea2paper --help`.
+```sh
+python3 integrations/dsh/pack.py --out dist/dsh
+python3 integrations/dsh/verify.py dist/dsh/idea2paper-dsh-0.2.0-alpha.1.tgz --prepare dist/dsh/release
+```
 
-To list it in Discover, generate a format-1 index from the published npm package name using the [DSH market guide](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.md) and serve the result over HTTPS. Include the pinned DSH version and tell users to install the bundle into the `idea2paper` profile. To withdraw a prerelease, remove it from the index and remove the npm `alpha` dist-tag. An installed package can be removed with `dsh plugin --profile idea2paper remove idea2paper-dsh`. Keep project directories and checkpoints for resuming with their original bundle version.
+The verifier installs the archive over loopback into a clean profile, reads a stopped project using the packaged companion, checks the Git target in the running DSH Web Discover service, and installs that exact commit through a local Git mirror. Its separate Git repository contains the exact unpacked npm contents, including the wheel, and an index pointing to that package commit. The legacy v0.1.0-alpha.1 package fixture is available as `verify_legacy.py`.
 
-The [implementation plan](../../ADRs/0015-dsh-native-bundle.md) records the public release criteria.
+After the release gates pass, a release owner with access to the repository can publish the tag and attach the verified tarball. The tag exposes the index directly as a raw HTTPS file. The archive remains available from the release asset URL above.
+
+```sh
+git -C dist/dsh/release push git@github.com:kaust-ark/ARK.git refs/tags/dsh-bundle-0.2.0-alpha.1
+gh release create dsh-bundle-0.2.0-alpha.1 dist/dsh/idea2paper-dsh-0.2.0-alpha.1.tgz --repo kaust-ark/ARK --verify-tag --prerelease --title "Idea2Paper DSH 0.2.0-alpha.1" --notes "Persistent research sessions, measured experiments and revision-bound independent review. Requires DSH 0.2.1-rc.2."
+```
+
+Verify both public downloads against the tested files, then repeat the one-command installation with a fresh DSH home.
+
+```sh
+curl -fsSL https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.1/idea2paper-dsh-0.2.0-alpha.1.tgz -o dist/dsh/downloaded.tgz
+cmp dist/dsh/downloaded.tgz dist/dsh/idea2paper-dsh-0.2.0-alpha.1.tgz
+curl -fsS https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.1/index.json -o dist/dsh/downloaded-index.json
+cmp dist/dsh/downloaded-index.json dist/dsh/release/index.json
+```
+
+An npm maintainer can additionally publish the same archive with `npm publish dist/dsh/idea2paper-dsh-0.2.0-alpha.1.tgz --access public --tag alpha`. Check its registry `dist.integrity` before documenting the npm install path. To uninstall the profile plugin, run `dsh plugin --profile idea2paper remove idea2paper-dsh`. Keep the project directory and original profile for resuming work.
