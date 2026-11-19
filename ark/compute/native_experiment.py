@@ -110,6 +110,9 @@ with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
 
 # Only the field selection and labels are embedded. Each worker reads all
 # coordinates from its immutable results.json at render time.
+# The caption diagnostic recognizes this specific template's bar semantics.
+# Re-audit a changed template before assigning its digest here.
+BAR_WITHOUT_ERROR_BARS_TEMPLATE_SHA256 = "db1b77035c73d198edb8cfc6f0f18c9b817e0492f3c4f0433e6e976508ee91de"
 MEASURED_PLOT = '''
 import json
 from functools import reduce
@@ -628,6 +631,11 @@ def _advance(root, path, row, backend, artifact, plot):
     return row
 
 
+def measured_plot_code(spec, filename):
+    """Exact worker input for the built-in measured-column renderer."""
+    return (f"spec = {spec!r}\nfilename = {filename!r}\n" + MEASURED_PLOT).encode()
+
+
 def execute(root, config, plan, script, *, plot=None, selection=None, measurement_sha256=None, prior_plot_identity=None):
     """Start or poll exactly one operation for a fixed plan, script, and input."""
     root = Path(root).resolve()
@@ -654,7 +662,7 @@ def execute(root, config, plan, script, *, plot=None, selection=None, measuremen
             code = _read(_safe(root, root / script))
         else:
             spec = measurement_table.plot_spec(json.loads(inputs), selection)
-            code = (f"spec = {spec!r}\nfilename = {plot!r}\n" + MEASURED_PLOT).encode()
+            code = measured_plot_code(spec, plot)
         payload = json.dumps([str(root), plan, kind, plot], sort_keys=True).encode()
         token = hashlib.sha256(payload + b"\0" + code + b"\0" + inputs).hexdigest()[:24]
         staging = _safe(root, runs / token)

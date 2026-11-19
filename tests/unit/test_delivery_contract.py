@@ -824,6 +824,19 @@ def test_only_used_unconfirmed_sources_block_strict_delivery(tmp_path):
                for f in report.delivery_blockers(cfg))
 
 
+def test_unresolved_table_reference_in_the_final_tex_pass_blocks_delivery(tmp_path):
+    project = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
+    log = project / "paper/main.log"
+    log.write_text("LaTeX Warning: Reference `tab:results' on page 2 undefined on input line\n"
+                   " 102.\n\nLaTeX Warning: There were undefined references.\n")
+    for config in ({}, {"layout_mode": "strict"}):
+        failures = evaluate(project, config=config).delivery_blockers(config)
+        issue, = [f for f in failures if f.check == "cross_references_resolved"]
+        assert issue.severity == "hard" and "tab:results (page 2, input line 102)" in issue.detail
+    log.write_text("LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.\n")
+    assert not any(f.check == "cross_references_resolved" for f in evaluate(project).delivery_blockers({}))
+
+
 def test_strict_checks_the_final_build_log_including_the_appendix(tmp_path):
     project = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
     log = project / "paper/main.log"

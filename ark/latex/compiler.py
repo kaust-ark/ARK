@@ -8,6 +8,7 @@ import subprocess
 import sys
 import yaml
 from pathlib import Path
+from typing import NamedTuple
 from ark.latex import utils as latex_utils
 # The one citation-command regex + key extractors (ark.citation is stdlib-only,
 # so this top-level import cannot cycle). Every "which keys are cited?" question
@@ -23,7 +24,15 @@ GEMINI_IMAGE_ASPECT_RATIOS = frozenset({
 })
 
 
-def _body_repetition_sources(root, sources):
+class BodyFigure(NamedTuple):
+    label: str
+    asset: str
+    location: str
+    caption: str
+    caption_location: str
+
+
+def body_sections_and_figures(root, sources):
     """Track source lines in input order, stopping at the first appendix."""
     main = root / "main.tex"
     events = re.compile(
@@ -77,12 +86,14 @@ def _body_repetition_sources(root, sources):
         if label:
             offset = event.start("body") + graphic.start("graphic")
             line = source.count("\n", 0, offset) + 1
-            figures.append((label[1], graphic["asset"], f"{location}:{line}"))
+            caption_line = source.count("\n", 0, event.start("body") + graphic.end() - 1) + 1
+            figures.append(BodyFigure(label[1], graphic["asset"], f"{location}:{line}",
+                                      body[graphic.end():end], f"{location}:{caption_line}"))
     return headings, figures
 
 
-def _repeated_figure_notes(doc, figures, sources, root):
-    """Confirm the labelled captions have the same rendered raster immediately above them."""
+def rendered_body_images(doc, figures, sources, root):
+    """Match plain labelled floats to their printed caption and adjacent raster."""
     labels = {}
     label_pattern = re.compile(r"\\newlabel\{([^{}]+)\}\{\{(\d+)\}\{(\d+)\}")
     pending = [root / "main.aux"]
@@ -96,9 +107,8 @@ def _repeated_figure_notes(doc, figures, sources, root):
         pending.extend((root / name).resolve() for name in re.findall(r"\\@input\{([^{}]+\.aux)\}", content))
         for key, number, page in label_pattern.findall(content):
             labels[key] = (number, int(page))
-    images = {}
-    for label, asset, loc in figures:
-        number, page_no = labels.get(label, ("", 0))
+    for figure in figures:
+        number, page_no = labels.get(figure.label, ("", 0))
         if not 1 <= page_no <= len(doc):
             continue
         page = doc[page_no - 1]
@@ -111,7 +121,14 @@ def _repeated_figure_notes(doc, figures, sources, root):
                     if 0 <= top - im["bbox"][3] < 30
                     and left <= (im["bbox"][0] + im["bbox"][2]) / 2 <= right]
         if len(adjacent) == 1:
-            images.setdefault((asset, adjacent[0]), {})[number] = f"Figure {number} (p. {page_no}, {loc}, {asset})"
+            yield figure, number, page_no, captions[0][4], adjacent[0]
+
+
+def _repeated_figure_notes(doc, figures, sources, root):
+    images = {}
+    for figure, number, page_no, _, pixels in rendered_body_images(doc, figures, sources, root):
+        images.setdefault((figure.asset, pixels), {})[number] = (
+            f"Figure {number} (p. {page_no}, {figure.location}, {figure.asset})")
     notes = []
     for matches in images.values():
         if len(matches) > 1:
@@ -173,9 +190,9 @@ class CompilerMixin:
             sources = dict(active_tex_sources(root))
             if main not in sources:
                 return []
-            headings, figures = _body_repetition_sources(root, sources)
-            counts = Counter(asset for _, asset, _ in figures)
-            figures = [figure for figure in figures if counts[figure[1]] > 1]
+            headings, figures = body_sections_and_figures(root, sources)
+            counts = Counter(figure.asset for figure in figures)
+            figures = [figure for figure in figures if counts[figure.asset] > 1]
             if len(headings) < 2 and len(figures) < 2:
                 return []
 

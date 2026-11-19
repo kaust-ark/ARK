@@ -38,7 +38,7 @@ from ark import (
 )
 from ark.compute import native_experiment, review_control
 from ark.execution import ExecutionMixin
-from ark.latex.compiler import CompilerMixin
+from ark.latex.compiler import CompilerMixin, body_sections_and_figures, rendered_body_images
 from ark.latex.utils import body_page_boundary, extract_latex_errors, parse_overfull_warnings
 from ark.orchestrator.state import _atomic_write_text
 
@@ -1553,8 +1553,15 @@ class NativeProject(CompilerMixin):
                 # Recheck editorial observations even when resuming an older compiled checkpoint.
                 notes = list(dict.fromkeys([*cached.get("editorial_notes", []), *self._body_repetition_notes()]))
                 issues = self._strict_paper_issues()
-                if notes != cached.get("editorial_notes") or issues != cached.get("manuscript_issues"):
-                    cached.update(editorial_notes=notes, manuscript_issues=issues)
+                checks = cached.get("checks", [])
+                final_log = self.latex_dir / "main.log"
+                if final_log.is_file():
+                    checks = [check for check in checks if check["check"] != "cross_references_resolved"]
+                    if warning := delivery_contract.cross_reference_warning(final_log.read_text(errors="replace")):
+                        checks.append(dict(check="cross_references_resolved", status="violated", detail=warning))
+                if (notes != cached.get("editorial_notes") or issues != cached.get("manuscript_issues")
+                        or checks != cached.get("checks")):
+                    cached.update(editorial_notes=notes, manuscript_issues=issues, checks=checks)
                     self.save()
                 return cached
         with tempfile.TemporaryDirectory(prefix="idea2paper-tex-") as tmp:
@@ -1725,11 +1732,78 @@ class NativeProject(CompilerMixin):
             if symbol not in calls
         ]
 
+    def _plot_caption_issues(self):
+        """Identify an explicit uncertainty claim for a verified plain bar chart."""
+        plots = self.state.get("plots", {})
+        # Only this audited renderer draws the selected y values with ax.bar and
+        # no uncertainty layer. A future renderer must establish its own semantics.
+        template_digest = hashlib.sha256(native_experiment.MEASURED_PLOT.encode()).hexdigest()
+        if not plots or template_digest != native_experiment.BAR_WITHOUT_ERROR_BARS_TEMPLATE_SHA256:
+            return []
+        inputs = set(self.state.get("compile", {}).get("inputs", []))
+        bars = {name: row for name, row in plots.items()
+                if re.fullmatch(r"[\w-]+\.png", name, re.ASCII) and "figures/" + name in inputs
+                and isinstance(row, dict) and isinstance(row.get("plot_spec"), dict)
+                and row["plot_spec"].get("kind") == "bar" and row.get("script") is None
+                and row.get("status") == "completed" and row.get("plot_protocol") == 1
+                and row.get("input_access") == "worker_observed_read" and row.get("plot_filename") == name
+                and row.get("artifact") == "paper/figures/" + name}
+        if not bars:
+            return []
+        claim = re.compile(
+            r"(?:^|(?<=[.!?]))\s*((?:The )?error bars (?:indicate|represent|denote|show) "
+            r"(?:the )?(?:variance|variability|standard deviation|standard error|95% confidence intervals?)"
+            r"(?: (?:across|over|between) (?:the )?(?:(?:test|random) )?(?:splits|seeds|runs|trials|folds|replicates))?)"
+            r"(?=\s*(?:\.|$))", re.I)
+        sources = dict(citation.active_tex_sources(self.latex_dir))
+        if self.latex_dir / "main.tex" not in sources:
+            return []
+        _, figures = body_sections_and_figures(self.latex_dir, sources)
+        candidates = {}
+        for figure in figures:
+            name = Path(figure.asset).name
+            if name not in bars or figure.asset not in (name, "figures/" + name):
+                continue
+            caption = " ".join(figure.caption.replace(r"\%", "%").split())
+            ambiguous = re.search(r"\b(?:panels?|no|none|not|without|omit(?:ted)?|absent|would|could)\b|\([a-d]\)",
+                                  caption, re.I)
+            if (m := claim.search(caption)) and not ambiguous:
+                candidates[figure] = m[1]
+        if not candidates:
+            return []
+
+        import fitz
+        from PIL import Image
+
+        notes = []
+        with fitz.open(self.latex_dir / "main.pdf") as doc:
+            for figure, number, page, text, pixels in rendered_body_images(doc, candidates, sources, self.latex_dir):
+                name = Path(figure.asset).name
+                row = bars[name]
+                identity = re.fullmatch(r"i2p-([0-9a-f]{24})", row.get("identity") or "")
+                if not identity or candidates[figure] not in " ".join(text.split()):
+                    continue
+                receipt = self.state_dir / "native_runs" / identity[1] / "receipt.json"
+                png = self.figures_dir / name
+                code = native_experiment.measured_plot_code(row["plot_spec"], name)
+                if (receipt.resolve() != receipt or _load(receipt) != row or png.resolve() != png
+                        or not png.is_file() or _sha(png) != row.get("sha256")
+                        or hashlib.sha256(code).hexdigest() != row.get("code_sha256")):
+                    continue
+                with Image.open(png) as image:
+                    # MuPDF hashes decoded samples; the worker's SHA-256 above binds the file bytes.
+                    if hashlib.md5(image.convert("RGB").tobytes(), usedforsecurity=False).digest() != pixels:
+                        continue
+                notes.append(f'Figure {number} (PDF p. {page}, {figure.caption_location}, {name}) says '
+                             f'“{candidates[figure]}”. The verified bar renderer draws each selected y value '
+                             'without error bars. Correct the caption or regenerate the plot with measured uncertainty.')
+        return notes
+
     def _strict_paper_issues(self):
         if self.config.get("layout_mode") != "strict":
             return []
         rendered = self.state.get("compile", {})
-        issues = self._implementation_claims()
+        issues = self._implementation_claims() + self._plot_caption_issues()
         main = self.latex_dir / "main.tex"
         if main.is_file() and main.resolve() == main:
             issues.extend(review.reported_change_conflicts(main.read_text()))
@@ -1917,6 +1991,9 @@ class NativeProject(CompilerMixin):
         if pages and (notes := self._body_repetition_notes()):
             result["brief"] += ("\nTypesetting observations on the submitted revision. Open the named pages and "
                                 "decide whether the repetition is justified or requires a repair.\n"
+                                + json.dumps(notes, ensure_ascii=False))
+        if pages and (notes := self._plot_caption_issues()):
+            result["brief"] += ("\nPlot caption checks. Inspect the named PDF page and caption before reporting a visual finding.\n"
                                 + json.dumps(notes, ensure_ascii=False))
         if snapshot.get("measurement_reproduction"):
             result["reproduction_brief"] = review.reproduction_brief(snapshot)

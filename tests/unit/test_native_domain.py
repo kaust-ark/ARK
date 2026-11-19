@@ -51,6 +51,81 @@ def test_inspect_charges_nothing_and_creates_nothing(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
+def test_error_bar_caption_requires_the_executed_renderer_and_the_printed_image(tmp_path, monkeypatch):
+    from matplotlib.figure import Figure
+    from PIL import Image
+
+    project = open_project(tmp_path, monkeypatch)
+    name = "response.png"
+    image = project.figures_dir / name
+    data = [{"seed": 1, "loss": 3.5}, {"seed": 2, "loss": 2.9}]
+    spec = domain.measurement_table.plot_spec(data, {"kind": "bar", "x": {"path": "seed"}, "series": [{"path": "loss"}]})
+    renderer = domain.native_experiment
+    code = renderer.measured_plot_code(spec, name)
+    # Execute the real fixed worker program locally. Redirect just its two container paths.
+    real_open, savefig = open, Figure.savefig
+    with monkeypatch.context() as worker:
+        worker.setattr("builtins.open", lambda path, *a, **kw: io.StringIO(json.dumps(data))
+                       if path == "/study/results.json" else real_open(path, *a, **kw))
+        worker.setattr(Figure, "savefig", lambda fig, path, **kw: savefig(fig, image, **kw))
+        exec(code, {})
+    identity = "a" * 24
+    row = dict(identity="i2p-" + identity, status="completed", script=None, plot_protocol=1,
+               plot_filename=name, plot_spec=spec, input_access="worker_observed_read", artifact="paper/figures/" + name,
+               sha256=domain._sha(image), code_sha256=hashlib.sha256(code).hexdigest())
+    receipt = project.state_dir / "native_runs" / identity / "receipt.json"
+    receipt.parent.mkdir(parents=True)
+    receipt.write_text(json.dumps(row))
+    project.state["plots"] = {name: row}
+    source = project.latex_dir / "main.tex"
+    claim = "Error bars indicate variance across splits."
+    source.write_text(r"""\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\begin{figure}[ht]\centering
+\includegraphics[width=120pt]{figures/response.png}
+\caption{Observed losses. Error bars indicate variance across splits.}\label{fig:result}
+\end{figure}
+\end{document}
+""")
+    compiled = project.compile_paper({})
+    note, = project._plot_caption_issues()
+    assert "Figure 1 (PDF p. 1, main.tex:6, response.png)" in note and claim[:-1] in note
+    assert note in compiled["manuscript_issues"] and note in project.review_snapshot({"preflight": True})["blockers"]
+    snapshot = project._snapshot()
+    snapshot["measurement_reproduction"] = dict(artifact="results/count.json", rows_pointer="", identifiers={"seed": 1},
+                                                columns=["loss"])
+    monkeypatch.setattr(project, "_snapshot", lambda: snapshot)
+    packet = project.review_snapshot({})
+    assert note in packet["brief"] and "error bars" not in packet["reproduction_brief"].lower()
+
+    original = source.read_text()
+    for caption in ("No error bars are shown.", "The error bars would show variance across splits.",
+                    "Panel (b). " + claim, "Error bars indicate variance across splits in earlier studies.",
+                    claim + " None are shown here."):
+        source.write_text(original.replace(claim, caption))
+        assert project._plot_caption_issues() == []
+    source.write_text(original.replace("\\caption{", r"\includegraphics[width=30pt]{figures/response.png}\caption{"))
+    assert project._plot_caption_issues() == []
+    source.write_text(original)
+    with monkeypatch.context() as changed:
+        changed.setattr(renderer, "MEASURED_PLOT", renderer.MEASURED_PLOT + "\n# unaudited version")
+        assert project._plot_caption_issues() == []
+    for delta in ({"script": "scripts/uncertainty.py"}, {"code_sha256": "0" * 64}):
+        project.state["plots"][name] = {**row, **delta}
+        receipt.write_text(json.dumps(project.state["plots"][name]))
+        assert project._plot_caption_issues() == []
+    project.state["plots"][name] = row
+    assert project._plot_caption_issues() == []  # The durable receipt contradicts the project pointer.
+    receipt.write_text(json.dumps(row))
+    Image.new("RGB", (60, 40), "red").save(image)
+    assert project._plot_caption_issues() == []
+    row["sha256"] = domain._sha(image)
+    receipt.write_text(json.dumps(row))
+    assert project._plot_caption_issues() == []  # The PDF still embeds the original pixels.
+
+
 def test_status_rechecks_interrupted_ethics_and_explicit_resume_respects_refusal(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     assert project.state.pop("ethics_completed")

@@ -123,7 +123,7 @@ class DeliveryReport:
     def delivery_blockers(self, config: dict) -> list[Finding]:
         """Failures confirmed on the artifact; heuristic warnings remain visible in the report."""
         required = {"pdf_exists", "pdf_readable", "author_metadata", "disclosure_present",
-                    "citations_resolved"}
+                    "citations_resolved", "cross_references_resolved"}
         if config.get("layout_mode") == "strict":
             required.update({"page_budget", "cited_sources_verified", "column_overflow"})
         if config.get("figure_generation") == "nano_banana":
@@ -218,6 +218,23 @@ def _ack_block(tex: str) -> str:
         r"\\section\*?\{Acknowledg[^}]*\}([\s\S]*?)(?=\\section|\\bibliography|\\begin\{thebibliography\}|\\end\{document\}|$)",
         tex)
     return m.group(1) if m else ""
+
+
+def cross_reference_warning(final_log: str) -> str:
+    """Describe unresolved references after the final TeX pass."""
+    warnings = re.findall(
+        r"^LaTeX Warning: Reference [`']([^'\n]+)'\s+on page (\S+)\s+undefined"
+        r"(?:\s+on\s+input\s+line\s+(\d+))?", final_log, flags=re.M)
+    if warnings:
+        locations = list(dict.fromkeys(
+            f"{label} (page {page}" + (f", input line {line})" if line else ")")
+            for label, page, line in warnings
+        ))
+        return ("Unresolved LaTeX cross-reference: " + ", ".join(locations[:8]) +
+                ". Check the reference and the label on the intended table, figure or section, then recompile.")
+    if "LaTeX Warning: There were undefined references." in final_log:
+        return "LaTeX reports unresolved references in the final pass. Inspect main.log, fix the references and recompile."
+    return ""
 
 
 def _dangling_refs(tex: str) -> set:
@@ -386,6 +403,8 @@ def evaluate(project_dir: Path, venue_pages: int = 0, *, config: Optional[dict] 
     log = paper_dir / "main.log"
     if log.is_file():
         log_text = log.read_text(errors="replace")
+        cross_ref = cross_reference_warning(log_text)
+        rep.findings.append(Finding("cross_references_resolved", "violated" if cross_ref else "pass", "hard", cross_ref))
         sizes = [float(pt) for pt in re.findall(r"Overfull \\hbox \(([0-9.]+)pt too wide\)", log_text)]
         over = [pt for pt in sizes if pt > 3]
         rep.findings.append(Finding("column_overflow", "violated" if over else "pass", "soft",
