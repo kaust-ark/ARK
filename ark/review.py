@@ -597,6 +597,36 @@ def _references(snapshot, refs, observed, blind, *, required):
     return verified
 
 
+def draft_evidence_feedback(snapshot, proposal, observed, first_error):
+    """Report independent evidence repairs together, without altering any proposed finding."""
+    if not isinstance(proposal, dict):
+        return first_error
+    checks, issues = proposal.get("checks"), proposal.get("issues")
+    if not isinstance(checks, dict) or not isinstance(issues, list):
+        return first_error
+    blind = _blind_text(snapshot)
+    repairs = [first_error]
+    groups = [(f"checks.{name}", checks.get(name)) for name in ("manuscript", "experiment", "citations", "visual")]
+    groups.extend((f"issues[{i}]", item) for i, item in enumerate(issues[:8]))
+    for field, group in groups:
+        if len(repairs) >= 6:
+            break
+        if not isinstance(group, dict) or not isinstance(group.get("evidence"), list):
+            continue
+        refs = group["evidence"]
+        try:
+            verified = _references(snapshot, refs, observed, blind, required=False)
+        except ValueError as exc:
+            message = str(exc)
+        else:
+            if not (field.startswith("issues[") and verified and not _covers(snapshot, "manuscript", verified)):
+                continue
+            message = "Locate the disputed passage in the manuscript or cite its observed PDF page."
+        if message != first_error:
+            repairs.append(f"{field}: {message[:240]}")
+    return "\n".join(repairs)
+
+
 def _covers(snapshot, domain, refs):
     tex, pdf = _submission(snapshot)
     if domain == "manuscript":

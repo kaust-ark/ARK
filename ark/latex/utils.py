@@ -249,13 +249,13 @@ def extract_latex_errors(log_path: Path) -> str:
             terminal_markers.append(i)
             continue
         # With -file-line-error, TeX can omit the traditional leading bang.
-        located = re.match(r"^(?:\./)?[^:\n]+\.(?:tex|sty|cls|bbl):\d+:\s+(.+)", line)
+        located = re.match(r"^(?:\./)?[^:\n]+\.(?:tex|sty|cls|bbl|aux|toc|out|lof|lot):\d+:\s+(.+)", line)
         if (located and not re.match(r"(?:warning|info)\b", located[1], re.I)
                 or line.startswith("!")
                 or "Emergency stop" in line
                 or "Undefined control sequence" in line
                 or "LaTeX Error:" in line
-                or "Package Error:" in line
+                or re.search(r"\bPackage(?: [\w.-]+)? Error:", line)
                 or "Missing $ inserted" in line
                 or "Extra alignment tab" in line
                 or "Misplaced alignment tab" in line

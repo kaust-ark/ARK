@@ -1,5 +1,6 @@
 """CompilerMixin: LaTeX compilation, figure generation, PDF-to-image conversion."""
 
+from collections import Counter
 import json
 import os
 import re
@@ -12,13 +13,112 @@ from ark.latex import utils as latex_utils
 # so this top-level import cannot cycle). Every "which keys are cited?" question
 # in this module goes through these — divergent copies silently delete valid
 # references; see CITE_CMD_RE's docstring.
-from ark.citation import CITE_CMD_RE, NOCITE_ALL, cited_keys_in_dir
+from ark.citation import CITE_CMD_RE, NOCITE_ALL, active_tex_sources, cited_keys_in_dir
+from ark.template_preprocess import find_matching_brace
 
 
 GEMINI_IMAGE_ASPECT_RATIOS = frozenset({
     "1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1",
     "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9",
 })
+
+
+def _body_repetition_sources(root, sources):
+    """Track source lines in input order, stopping at the first appendix."""
+    main = root / "main.tex"
+    events = re.compile(
+        r"\\begin\{(?P<literal>verbatim\*?|lstlisting|minted|comment)\}.*?\\end\{(?P=literal)\}"
+        r"|\\(?:input|include|subfile)\s*\{(?P<input>[^{}]+)\}"
+        r"|(?P<appendix>\\appendix\b|\\begin\{appendices\})|(?P<end>\\end\{document\})"
+        r"|(?P<heading>\\section\s*(?:\[[^\]]*\]\s*)?\{\s*(?i:conclusions?)\s*\})"
+        r"|\\begin\{(?P<float>figure\*?)\}(?P<body>.*?)\\end\{(?P=float)\}", re.S)
+    plain_figure = re.compile(
+        r"\s*(?:\[[^\]]*\]\s*)?(?:\\centering\s*)?(?P<graphic>\\includegraphics)"
+        r"\s*(?:\[(?P<options>[^\]]*)\]\s*)?\{(?P<asset>[^{}\\]+)\}\s*"
+        r"\\caption\s*(?:\[[^\]]*\]\s*)?\{")
+
+    def walk(path, ancestors):
+        source = sources[path]
+        start = re.search(r"\\begin\{document\}", source)
+        for event in events.finditer(source, start.end() if start else 0):
+            if event["end"]:
+                break
+            if event["input"]:
+                rel = Path(event["input"])
+                if not rel.suffix:
+                    rel = rel.with_suffix(".tex")
+                child = (root / rel).resolve()
+                if child not in sources:
+                    child = (path.parent / rel).resolve()
+                if child in sources and child not in ancestors:
+                    yield from walk(child, ancestors | {child})
+            else:
+                yield path, source, event
+
+    headings, figures = [], []
+    for path, source, event in walk(main, {main}):
+        if event["appendix"]:
+            break
+        location = path.relative_to(root)
+        if event["heading"]:
+            line = source.count("\n", 0, event.start()) + 1
+            headings.append(f"{location}:{line}")
+        if not event["float"]:
+            continue
+        body = event["body"]
+        graphic = plain_figure.match(body)
+        if not graphic:
+            continue
+        options = {opt.split("=")[0].strip() for opt in (graphic["options"] or "").split(",") if opt.strip()}
+        if options - {"width", "height", "totalheight", "scale", "keepaspectratio"}:
+            continue
+        end = find_matching_brace(body, graphic.end() - 1)
+        label = re.fullmatch(r"\s*\\label\s*\{([^{}]+)\}\s*", body[end + 1:]) if end else None
+        if label:
+            offset = event.start("body") + graphic.start("graphic")
+            line = source.count("\n", 0, offset) + 1
+            figures.append((label[1], graphic["asset"], f"{location}:{line}"))
+    return headings, figures
+
+
+def _repeated_figure_notes(doc, figures, sources, root):
+    """Confirm the labelled captions have the same rendered raster immediately above them."""
+    labels = {}
+    label_pattern = re.compile(r"\\newlabel\{([^{}]+)\}\{\{(\d+)\}\{(\d+)\}")
+    pending = [root / "main.aux"]
+    active_aux = {path.with_suffix(".aux") for path in sources}
+    while pending:
+        aux = pending.pop()
+        if aux not in active_aux or aux.is_symlink() or not aux.is_file():
+            continue
+        active_aux.remove(aux)
+        content = aux.read_text(errors="replace")
+        pending.extend((root / name).resolve() for name in re.findall(r"\\@input\{([^{}]+\.aux)\}", content))
+        for key, number, page in label_pattern.findall(content):
+            labels[key] = (number, int(page))
+    images = {}
+    for label, asset, loc in figures:
+        number, page_no = labels.get(label, ("", 0))
+        if not 1 <= page_no <= len(doc):
+            continue
+        page = doc[page_no - 1]
+        captions = [b for b in page.get_text("blocks", flags=0)
+                    if re.match(rf"^\s*(?:Figure|Fig\.)\s+{number}[.:]\s", b[4], re.I)]
+        if len(captions) != 1:
+            continue
+        left, top, right = captions[0][:3]
+        adjacent = [im["digest"] for im in page.get_image_info(hashes=True)
+                    if 0 <= top - im["bbox"][3] < 30
+                    and left <= (im["bbox"][0] + im["bbox"][2]) / 2 <= right]
+        if len(adjacent) == 1:
+            images.setdefault((asset, adjacent[0]), {})[number] = f"Figure {number} (p. {page_no}, {loc}, {asset})"
+    notes = []
+    for matches in images.values():
+        if len(matches) > 1:
+            where = ", ".join(matches.values())
+            notes.append(f"The same whole image appears in {where}. "
+                         "Keep one figure and reference it from the other passage.")
+    return notes
 
 
 class CompilerMixin:
@@ -63,6 +163,38 @@ class CompilerMixin:
     def _extract_latex_errors(self, log_path: Path) -> str:
         """Parse LaTeX log for structured error messages."""
         return latex_utils.extract_latex_errors(log_path)
+
+    def _body_repetition_notes(self) -> list[str]:
+        """Locate repeated conclusions and plain, separately numbered whole-image floats."""
+        root = self.latex_dir.resolve()
+        main = root / "main.tex"
+        notes = []
+        try:
+            sources = dict(active_tex_sources(root))
+            if main not in sources:
+                return []
+            headings, figures = _body_repetition_sources(root, sources)
+            counts = Counter(asset for _, asset, _ in figures)
+            figures = [figure for figure in figures if counts[figure[1]] > 1]
+            if len(headings) < 2 and len(figures) < 2:
+                return []
+
+            import fitz
+            with fitz.open(root / "main.pdf") as doc:
+                if len(headings) > 1:
+                    rendered = [(m[1], i + 1) for i, page in enumerate(doc)
+                                for block in page.get_text("blocks", flags=0)
+                                if (m := re.fullmatch(r"\s*(\d+)\.?\s+conclusions?\s*", block[4], re.I))]
+                    if len(rendered) == len(headings):
+                        where = ", ".join(f"section {n} (p. {p}, {loc})"
+                                          for (n, p), loc in zip(rendered, headings))
+                        notes.append(f"Repeated Conclusion heading in {where}. Merge the closing material into one section.")
+                if len(figures) > 1:
+                    notes.extend(_repeated_figure_notes(doc, figures, sources, root))
+        except (ImportError, OSError, RuntimeError, ValueError):
+            # These optional notices require readable, matching typesetting artifacts.
+            pass
+        return notes
 
     def _compile_until_success(self, context: str = "") -> bool:
         """Keep fixing and recompiling until LaTeX compiles successfully.
@@ -253,6 +385,8 @@ class CompilerMixin:
                 overfull_info = f", {len(self._overfull_warnings)} overfull warnings" if self._overfull_warnings else ""
                 error_info = f", {len(self._last_compile_errors)} errors" if self._last_compile_errors else ""
                 self.log(f"LaTeX compiled successfully: {pdf_path} ({pdf_path.stat().st_size} bytes{page_info}{overfull_info}{error_info})")
+                for note in self._body_repetition_notes():
+                    self.log(f"Manuscript edit: {note}", "WARN")
                 if self._last_compile_errors:
                     for err in self._last_compile_errors[:5]:
                         self.log(f"  Compile issue: {err[:120]}", "WARN")

@@ -11,6 +11,8 @@ const researchLabels = {
   current: ['Current action','当前工作','العمل الحالي'], observation: ['Latest observation','最新观察','أحدث ملاحظة'],
   all_phases: ['Show all phases','查看全部阶段','عرض جميع المراحل'],
   history: ['Research history','研究记录','سجل البحث'], evidence: ['Evidence','研究证据','الأدلة'],
+  current_file: ['Open current file · %s','打开当前文件 · %s','فتح الملف الحالي · %s'],
+  archived_file: ['Open archived file · %s','打开归档文件 · %s','فتح الملف المؤرشف · %s'],
   open: ['Open file','打开文件','فتح الملف'], close: ['Close','关闭','إغلاق'],
   report: ['Delivery','交付','التسليم'], review: ['Review','评审','المراجعة'],
   research: ['Research','调研','البحث'], experiment: ['Experiment','实验','التجربة'], writing: ['Writing','写作','الكتابة'],
@@ -87,6 +89,7 @@ function resetResearch(project) {
   fileSignature = reviewSignature = '';
   disconnected = streamReady = false;
   re('research-history').open = false;
+  re('research-history').querySelector('ol').replaceChildren();
   re('research-announce').textContent = '';
   re('command-receipt').textContent = '';
   receiveResearch(project.research || {}, false);
@@ -124,6 +127,8 @@ function reviewEventLabel(event) {
 }
 
 function observationText(event) {
+  if (event?.action === 'manuscript_reviewed' && ['accept','revise','unassessed'].includes(event.observation))
+    return rt(event.observation);
   if (event?.action === 'measurement_reproduction_started' && event.condition)
     return event.attempt ? rt('row_attempt', event.condition, event.attempt) : rt('row_start', event.condition);
   if (event?.action === 'measurement_reproduction_failed' && event.attempt && ['row_format','execution'].includes(event.failure))
@@ -144,13 +149,53 @@ function renderHistory() {
   all.hidden = !historyPhase;
   history.querySelector('summary').textContent = historyPhase ? rt('history') + ' · ' + rt(historyPhase) : rt('history');
   const visible = [...researchEvents.values()].reverse().filter(e => !historyPhase || researchPhase(e.phase) === historyPhase);
-  history.querySelector('ol').replaceChildren(...visible.map(e => {
-    const li = document.createElement('li'), time = document.createElement('time');
-    time.textContent = e.ts ? fmtDate(e.ts) : '';
-    const progress = e.count != null && e.total > 0 ? ' (' + e.count + '/' + e.total + ')' : '';
-    li.append(time, [reviewEventLabel(e) || e.action, observationText(e)].filter(Boolean).join(' · ') + progress);
-    return li;
-  }));
+  const list = history.querySelector('ol');
+  list.classList.toggle('history-filtered', !!historyPhase);
+  const existing = new Map([...list.children].map(row => [row.dataset.event, row]));
+  const visibleIds = new Set(visible.map(e => e.id));
+  for (const [id,row] of existing) if (!visibleIds.has(id)) row.remove();
+  for (const [index,e] of visible.entries()) {
+    let row = existing.get(e.id);
+    if (!row || row.lang !== currentLang) {
+      row = document.createElement('li');
+      row.dataset.event = e.id;
+      row.lang = currentLang;
+      const meta = document.createElement('div'), time = document.createElement('time');
+      meta.className = 'history-meta';
+      const phase = researchPhase(e.phase);
+      const label = document.createElement('span'), action = reviewEventLabel(e);
+      label.textContent = action || (researchLabels[phase] ? rt(phase) : e.action);
+      if (!action && researchLabels[phase]) label.className = 'history-phase';
+      label.title = e.action;
+      meta.append(label);
+      if (e.ts) {
+        time.dateTime = e.ts;
+        time.textContent = fmtDate(e.ts);
+        meta.append(time);
+      }
+      const observation = document.createElement('p');
+      const progress = e.count != null && e.total > 0 ? ' (' + e.count + '/' + e.total + ')' : '';
+      observation.textContent = (observationText(e) || e.action) + progress;
+      row.append(meta, observation);
+      if (e.artifact && !window.SHARE_MODE) {
+        const key = e.artifact, name = key.split('/').pop();
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'history-file';
+        const archived = /^auto_research\/state\/reviews\/[a-f0-9]{64}\//.test(key);
+        button.textContent = rt(archived ? 'archived_file' : 'current_file', name);
+        button.title = key;
+        button.setAttribute('aria-controls','evidence-preview');
+        button.setAttribute('aria-pressed','false');
+        button.onclick = () => openEvidence({key, label:name}, button);
+        row.append(button);
+      }
+      existing.get(e.id)?.replaceWith(row);
+    }
+    // Keeping existing rows attached preserves keyboard focus and the preview's
+    // return target when a live event arrives above the reader's position.
+    if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
+  }
 }
 
 function selectHistoryPhase(phase) {

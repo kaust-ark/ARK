@@ -36,12 +36,18 @@ ACTIVE_SLURM = {"PENDING", "RUNNING", "REQUEUED", "REQUEUE_HOLD", "CONFIGURING",
 # No host output directory is mounted in either backend. The trusted wrapper
 # returns one bounded result and captures child stdout without log rotation.
 RUNNER = r"""
-import base64, os, resource, stat, subprocess, sys, tempfile
+import base64, json, os, re, resource, stat, subprocess, sys, tempfile
 limit = 12 * 1024 * 1024
 limit_fsize = (limit, limit)
 def limits():
     resource.setrlimit(resource.RLIMIT_FSIZE, limit_fsize)
 plot = len(sys.argv) == 2
+expected = sys.argv[2] if len(sys.argv) == 3 and sys.argv[1] == "--result" else None
+if expected:
+    if not re.fullmatch(r"results/[\w-]+\.json", expected, re.ASCII):
+        sys.exit("Invalid registered measurement path.")
+    os.makedirs("/output/results", exist_ok=True)
+    results_dir = os.open("/output/results", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 if plot:
     # Observe reads in the outer worker, independent of the plotting library.
     import ctypes, struct
@@ -77,6 +83,27 @@ with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
     else:
         out.seek(0)
         payload = out.read(limit+1)
+        if expected:
+            try:
+                fd = os.open(expected.split("/")[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=results_dir)
+            except FileNotFoundError:
+                if not payload.strip():
+                    sys.exit("No measurements found. Write the registered JSON file or print measured JSON to stdout.")
+            else:
+                with os.fdopen(fd, "rb") as result:
+                    info = os.fstat(result.fileno())
+                    if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
+                        sys.exit("Registered measurement file must be a nonempty, bounded regular file.")
+                    measured = result.read(limit + 1)
+                if payload.strip():
+                    try:
+                        printed = json.loads(payload)
+                    except (ValueError, UnicodeDecodeError):
+                        printed = None  # Diagnostic log text is allowed alongside a registered file.
+                    if isinstance(printed, (dict, list)) and printed != json.loads(measured):
+                        sys.exit("The registered measurement file and printed measurements disagree.")
+                payload = measured
+            os.close(results_dir)
     sys.stdout.buffer.write(payload)
 """
 
@@ -254,13 +281,15 @@ def apptainer_command():
            "--net", "--network", "none", "--no-mount", "hostfs,bind-paths,cwd"], image
 
 
-def _slurm_command(staging, config, name, plot=None):
+def _slurm_command(staging, config, name, plot=None, expected=None):
     run, image = apptainer_command()
     run += ["--bind", f"{staging / 'input'}:/study:ro", "--scratch", "/output", "--pwd", "/output",
            "--env", "MPLCONFIGDIR=/tmp/mpl,OPENBLAS_NUM_THREADS=1,OMP_NUM_THREADS=1",
            image, "python3", "-I", "-B", "/study/runner.py"]
     if plot:
         run.append(plot)
+    elif expected:
+        run.extend(["--result", expected])
     args = ["sbatch", "--parsable", "--export=NONE", "--job-name", name, "--chdir", str(staging),
             "--output", str(staging / "stdout"), "--error", str(staging / "stderr"),
             "--ntasks=1", "--cpus-per-task", str(config.get("cpus_per_task") or 1),
@@ -287,7 +316,7 @@ def _slurm(staging, config, row, path, plot):
             if not job:
                 return "submission_unknown"
         else:
-            args = _slurm_command(staging, config, name, plot)
+            args = _slurm_command(staging, config, name, plot, row.get("expected"))
             row["submitted_intent"] = True
             _save(path, row)
             result = _run(args, check=False)
@@ -405,6 +434,8 @@ def _docker(staging, row, path, plot):
                 "timeout", "-k", "2", "240", "python", "-I", "-B", "/study/runner.py"]
         if plot:
             args.append(plot)
+        elif row.get("expected"):
+            args.extend(["--result", row["expected"]])
         container_id = _run(args).stdout.strip()
         status = "created"
     else:
@@ -453,7 +484,7 @@ def _publish(root, staging, artifact, plot, row):
     else:
         result = json.loads(payload)
         if not isinstance(result, (dict, list)) or not result:
-            raise ValueError("Print a nonempty JSON object or array of measured results")
+            raise ValueError("Return a nonempty JSON object or array of measured results")
         data = (json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode()
         if len(data) > MAX_BYTES:
             raise ValueError("Serialized measurements exceeded their byte limit")

@@ -343,7 +343,7 @@ export const operations = {
     script: {type:'string', description:'One project-relative Python filename, for example scripts/experiment.py.'},
     result_path: {type:'string', description:'One project-relative JSON output filename, for example results/measurements.json.'},
   }, ['question', 'baseline', 'comparison', 'metric', 'controls', 'script', 'result_path']],
-  run_experiment: ['Run or reconcile the registered experiment. The isolated script prints its measured JSON result to stdout.', {}],
+  run_experiment: ['Run or reconcile the registered experiment. The isolated script writes measured JSON to the registered relative results path or prints it to stdout.', {}],
   render_results_table: ['Typeset measured results from the worker JSON. Call with no columns to discover available rows and fields. Include the returned file in a LaTeX table.', {
     name: str, rows_pointer: str, columns: { type: 'array', items: { type: 'object', properties: {
       path: str, label: str, digits: num, percent: bool }, required: ['path'] } },
@@ -352,7 +352,11 @@ export const operations = {
     filename: str, rows_pointer: str, kind: {type:'string', enum:['line','points','bar']},
     x: plotField, series: {type:'array', items:plotField}, y_label: str, script: str,
   }],
-  generate_concept_figure: ['Generate a method illustration. A study_panel shows source-grounded comparison arms with genuine illustrative artwork. Use the returned caption for a study panel. For a scientific mechanism or flow diagram, select schematic.', { name: str, caption: str, description: str, representation: {type:'string', enum:['study_panel','schematic']} }, ['name', 'caption', 'description']],
+  generate_concept_figure: ['Illustrate the scientific question. For paired conditions, side-by-side comparisons or a method overview, use compare_conditions (the default). The approved baseline and comparison are typeset automatically. Use the returned caption. Use explain_mechanism only to show how a particular process works and name that process in description.', {
+    name: str, caption: str, description: str,
+    purpose: {type:'string', enum:['compare_conditions','explain_mechanism']},
+    representation: {type:'string', enum:['study_panel','schematic'], description:'Legacy format for older callers. New calls use purpose.'},
+  }, ['name', 'caption', 'description']],
   verify_citations: ['Check the manuscript bibliography against primary bibliographic records.', {}],
   compile_paper: ['Compile the current manuscript and inspect its figures, citations and layout. manuscript_revision identifies main.tex after typesetting adjustments.', {}],
   request_review: ['Request an independent, blind submission review after artifact checks. Use draft only for early scientific feedback on an incomplete manuscript.', { draft: bool }],
@@ -360,6 +364,31 @@ export const operations = {
   read_project_file: ['Read up to 6000 characters of a manuscript, result, skill, original brief (auto_research/state/idea.md), experiment_plan.yaml or deep_research.md in that directory, or sources/<id>.txt from verify_citations. Supply next_offset as offset to continue, or find a passage to get its match_line. Use start_line to read up to 40 numbered lines. sha256 covers the entire file. For paper/main.tex, list_revisions lists saved digests and revision_sha256 reads a saved version.', { path: str, offset: num, find: str, start_line: num, revision_sha256: str, list_revisions: bool }, ['path']],
   write_project_file: ['Write a manuscript or script. To edit lines of paper/main.tex, read the numbered lines and send inclusive start_line/end_line with just the new text. The last numbered view supplies its revision; alternatively provide the exact current base_sha256. A TeX error introduced into a compiling draft rejects the edit. For a section edit use replace, insert_before or insert_after with an exact unique passage or heading. Use expected_matches only to correct a known count of identical passages. A substantial full shrink of paper/main.tex needs its current base_sha256 and allow_shrink:true. Each changed manuscript saves previous_sha256. To restore it, supply only path, current base_sha256 and restore_sha256.', { path: str, content: str, start_line: num, end_line: num, replace: str, expected_matches: num, insert_before: str, insert_after: str, base_sha256: str, allow_shrink: bool, restore_sha256: str }, ['path']],
 }
+// The reviewer may revise its own rejected draft during this activation.
+export function reviewSubmission(message, previous, revision) {
+  if (!message || !Object.hasOwn(message, 'amend')) return message
+  const patch = message.amend
+  if (!previous || previous.revision !== revision || Object.keys(message).length !== 1 ||
+      !patch || typeof patch !== 'object' || Array.isArray(patch) || !Object.keys(patch).length) {
+    throw new Error('An amendment requires a rejected verdict for this revision and one amend object.')
+  }
+  const allowed = ['summary', 'alternative', 'strengths', 'checks', 'issues', 'verdict', 'score']
+  if (Object.keys(patch).some(field => !allowed.includes(field))) {
+    throw new Error('Amend only verdict fields. The submission revision is fixed.')
+  }
+  const updated = {...previous, ...patch}
+  if (Object.hasOwn(patch, 'checks')) {
+    const checks = patch.checks
+    const domains = ['manuscript', 'experiment', 'citations', 'visual']
+    if (!checks || typeof checks !== 'object' || Array.isArray(checks) || !Object.keys(checks).length ||
+        Object.keys(checks).some(domain => !domains.includes(domain))) {
+      throw new Error('In amend.checks, supply complete replacement checks under their domain names.')
+    }
+    updated.checks = {...previous.checks, ...checks}
+  }
+  return updated
+}
+
 export const evidenceTool = ['Inspect one named artifact from the blind review packet. Request an exact PDF page or image when checking visual presentation.', {
   artifact: str, page: num, start: num, visual: bool, statistic: str, column: str, rows_pointer: str,
 }, ['artifact']]

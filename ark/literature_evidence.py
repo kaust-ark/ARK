@@ -1,6 +1,7 @@
 """Recover verifiable records and passages when a bibliography lacks a DOI."""
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import json
 import re
 import urllib.error
@@ -41,12 +42,47 @@ def source_leads(report, limit=10):
             lead = {"query": query, "report_line": number}
             if len(quoted) == 1:
                 lead["reported_title"] = quoted[0]
-            identifiers.setdefault(query.lower(), lead)
+            previous = identifiers.setdefault(query.lower(), lead)
+            if "reported_title" in lead:
+                previous.setdefault("reported_title", lead["reported_title"])
         if section:
             for title in quoted:
                 titles.setdefault(title.casefold(), {"query": title, "report_line": number})
     named = {r["reported_title"].casefold() for r in identifiers.values() if "reported_title" in r}
     return [*identifiers.values(), *(v for k, v in titles.items() if k not in named)][:limit]
+
+
+def doi_original(doi):
+    """Read the DOI deposit, including DataCite deposits for arXiv preprints."""
+    if not citation._doi_id(doi):
+        return None
+    raw = citation._http_get("https://doi.org/" + doi,
+                             headers={"Accept": "application/vnd.citationstyles.csl+json"}, timeout=5)
+    try:
+        meta = json.loads(raw or "null")
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(meta, dict) or citation._doi_id(meta.get("DOI")) != doi.lower():
+        return None
+    title, abstract = meta.get("title"), meta.get("abstract")
+    if not isinstance(title, str) or not isinstance(abstract, str):
+        return None
+    passage = " ".join(unescape(re.sub(r"<[^>]+>", " ", abstract)).split())
+    if title.strip() and passage:
+        return {"title": title.strip(), "source": "Deposited author abstract (DOI registry)",
+                "url": "https://doi.org/" + doi, "passage": passage[:24000]}
+    return None
+
+
+def survey_originals(leads, cache):
+    """Resolve a bounded set of survey DOIs. Only store matching original records."""
+    candidates = list(dict.fromkeys(doi for lead in leads if (doi := citation._doi_id(lead["query"]))))[:6]
+    missing = [doi for doi in candidates if doi not in cache]
+    if missing:
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            cache.update((doi, record) for doi, record in zip(missing, pool.map(doi_original, missing)) if record)
+    return [{**lead, "official_title": record["title"], "abstract_excerpt": record["passage"][:480]}
+            if (record := cache.get(citation._doi_id(lead["query"]))) else lead for lead in leads]
 
 
 def body_source_trace(paper, report_path, checked):
@@ -128,6 +164,8 @@ def body_source_trace(paper, report_path, checked):
     ref_line = next((i for i, raw in enumerate(raw_lines, 1)
                      if re.fullmatch(r"#+\s*(?:references|bibliography|sources)\s*", raw, re.I)), None)
     matched = sum("report_line" in row for row in records.values())
+    verified_works = {citation._doi_id(entries[key].get("doi")) or citation._normalize_title(entries[key].get("title", ""))
+                      for key, row in records.items() if row.get("source") and row.get("report_line")}
     summary = f"{matched} of {len(records)} distinct body citations could be located by title or identifier in the verified Deep Research report."
     if matched < len(records):
         summary += " Inspect the survey for relevant comparisons and check claims against their original sources. Supplemental papers may legitimately come from outside the survey."
@@ -135,7 +173,7 @@ def body_source_trace(paper, report_path, checked):
     samples = [key for flag in (True, False)
                for key in [k for k, v in records.items() if ("report_line" in v) == flag][:8]]
     return {"report": "auto_research/state/deep_research.md", "references_line": ref_line,
-            "matched": matched, "total": len(records), "summary": summary,
+            "matched": matched, "verified_works": len(verified_works - {""}), "total": len(records), "summary": summary,
             "body_citations": {key: records[key] for key in sorted(samples)}}
 
 # Only fetch public PDFs from known research repositories. Other locations still

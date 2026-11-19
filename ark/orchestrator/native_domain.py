@@ -321,13 +321,14 @@ class NativeProject(CompilerMixin):
             "owner_brief": (
                 "Use the same session for planning, measurements, writing and repair. Read the venue skeleton and project skills. "
                 "Investigate primary literature, freeze paired controls, run a Python experiment, inspect measurements, and generate its plots. "
-                "Ground related work in the verified research report and consult the original sources. "
+                "Use the survey's official titles and primary abstracts to select relevant originals before writing. "
+                "Register those works with lookup_papers and cite the returned keys at the specific comparisons. "
                 "Use render_results_table to include the exact worker values in per-condition tables. "
                 "Show the paired measurements with their conditions, units and denominators so a reader can reproduce the central comparison. "
                 "Use the venue's body-page budget for evidence, uncertainty, interpretation and limitations; keep references and a substantive linked appendix after the body. "
                 "Compile, verify citations, request an independent review, address consequential findings, then deliver. "
                 "Call project tools when needed. Prefer reanalysis to a duplicate experiment. A negative result is valid. "
-                "Report missing evidence rather than claiming success. Scientific scripts print one JSON object of measurements to stdout. "
+                "Report missing evidence rather than claiming success. Scientific scripts write their measurements as JSON to the registered results path or stdout. "
                 "A plotting script reads /study/results.json and saves the requested figure under /output/."
             ),
             "skills": [
@@ -529,10 +530,12 @@ class NativeProject(CompilerMixin):
                 artifact="auto_research/state/deep_research.md",
             )
         report = (self.state_dir / "deep_research.md").read_text()
+        leads = self._survey_leads(literature_evidence.source_leads(report))
         return {
             "path": "auto_research/state/deep_research.md",
-            "source_leads": literature_evidence.source_leads(report),
-            "source_guidance": "These are unverified leads located in the survey. Before writing related work, select relevant "
+            "source_leads": leads,
+            "source_guidance": "official_title and abstract_excerpt come from the DOI deposit. Survey titles and claims may be wrong. "
+                               "Before writing related work, select relevant "
                                "ones with lookup_papers(query, add_to_bibliography=true). Check their official titles "
                                "and original passages before citing their returned keys. Keep the venue bibliography.",
             "report": report[:6000],
@@ -813,9 +816,14 @@ class NativeProject(CompilerMixin):
             raise ValueError("Choose a simple figure basename.")
         caption = _text(args, "caption", limit=1000)
         description = _text(args, "description", limit=9000)
+        purpose = args.get("purpose")
+        if purpose is not None and purpose not in ("compare_conditions", "explain_mechanism"):
+            raise ValueError("Choose compare_conditions or explain_mechanism for the figure purpose.")
         representation = args.get("representation", "study_panel")
         if representation not in ("study_panel", "schematic"):
-            raise ValueError("Choose study_panel for comparison arms or schematic for a mechanism diagram.")
+            raise ValueError("Choose study_panel or schematic for the legacy representation.")
+        if purpose is not None:
+            representation = "schematic" if purpose == "explain_mechanism" else "study_panel"
         spec = {"name": name, "caption": caption, "section_context": description, "placement": "full_width"}
         path = self.figures_dir / (name + ".png")
         manifest = figure_manifest.load_manifest(self.figures_dir, infer_existing=False)
@@ -836,9 +844,8 @@ class NativeProject(CompilerMixin):
             and current.get("semantic_pass")
         )
         existing_kind = "study_panel" if entry.get("representation") == "subject_with_comparison_panel" else "schematic"
-        legacy = not entry.get("native_design_sha256") and (
-            "representation" not in args or representation == existing_kind
-        )
+        explicit_kind = purpose is not None or "representation" in args
+        legacy = not entry.get("native_design_sha256") and (not explicit_kind or representation == existing_kind)
         same_request = entry.get("native_description") == fingerprint
         old_design_sha = entry.get("native_design_sha256")
         if not same_request and old_design_sha and old_design_sha != design_sha:
@@ -850,7 +857,7 @@ class NativeProject(CompilerMixin):
             if existing_kind == "study_panel" and (entry.get("panel_plan") or {}).get("caption"):
                 current["caption"] = entry["panel_plan"]["caption"]
         legacy_request = legacy and entry.get("native_description") == legacy_fingerprint
-        unversioned = legacy and not entry.get("native_description") and "representation" not in args
+        unversioned = legacy and not entry.get("native_description") and not explicit_kind
         prior = entry.get("semantic_review") or {}
         if (actual_sha and actual_sha == prior.get("artifact_sha256") and (same_request or legacy_request or unversioned)
                 and (conflict := nano_banana.generated_result_conflict(prior.get("checks")))):
@@ -886,14 +893,17 @@ class NativeProject(CompilerMixin):
             if representation == "study_panel":
                 text_model = self.config.get("paperbanana_text_model") or nano_banana.TEXT_MODELS["flash"]
                 receipt = nano_banana.create_study_panel(
-                    path, design, "google", key, text_model.removeprefix("google/").removeprefix("gemini/"), "16:9"
+                    path, design, "google", key, text_model.removeprefix("google/").removeprefix("gemini/"), "16:9",
+                    approved_plan=self.state["plan"],
                 )
                 if not receipt:
                     raise RuntimeError("No source-grounded study panel was produced. Check the plan and image receipt.")
             elif not nano_banana.generate_figure(
                 "Illustrate the method in the approved protocol below. Depict the configuration, scientific objects, "
                 "and operations that explain the comparison. Use schematic examples for geometry when appropriate. "
-                "Omit performance panels, empirical results axes, trend lines and recorded observations.\n" + design,
+                "Omit performance panels, empirical results axes, trend lines and recorded observations.\n" + design
+                + ("\nRequested mechanism to explain, subject to the approved protocol:\n" + description
+                   if purpose == "explain_mechanism" else ""),
                 path,
                 key,
                 self.config.get("nano_banana_model") or "flash",
@@ -950,12 +960,34 @@ class NativeProject(CompilerMixin):
                 record["corrections"] = corrections
         return record
 
+    def _survey_leads(self, leads):
+        originals = dict(self.state.get("survey_originals") or {})
+        resolved = literature_evidence.survey_originals(leads, originals)
+        if originals != self.state.get("survey_originals", {}):
+            self.state["survey_originals"] = originals
+            self.save()
+        return resolved
+
     def lookup_papers(self, args):
         query = _text(args, "query", limit=500)
         limit = args.get("limit", 4)
         if type(limit) is not int or not 1 <= limit <= 8:
             raise ValueError("Choose between one and eight papers.")
         doi = citation._doi_id(query)
+        wanted = citation._normalize_title(query)
+        if (not doi and args.get("add_to_bibliography")
+                and deep_research.research_report_status(self.state_dir) == "verified"):
+            # Older checkpoints may have the survey but no resolved originals.
+            leads = literature_evidence.source_leads((self.state_dir / "deep_research.md").read_text())
+            originals = self.state.get("survey_originals") or {}
+            candidates = [lead for lead in leads if wanted in {
+                citation._normalize_title(lead.get("reported_title", "")),
+                citation._normalize_title(originals.get(citation._doi_id(lead["query"]), {}).get("title", "")),
+            }]
+            exact = [citation._doi_id(lead["query"]) for lead in self._survey_leads(candidates)
+                     if citation._normalize_title(lead.get("official_title", "")) == wanted]
+            if len(exact) == 1:
+                doi = exact[0]
         direct = None
         if doi and args.get("add_to_bibliography"):
             # A resolver returns the selected work, even when a title search ranks
@@ -973,7 +1005,6 @@ class NativeProject(CompilerMixin):
         result = {"papers": found}
         if not args.get("add_to_bibliography"):
             return result
-        wanted = citation._normalize_title(query)
         matching = [p for p in found if (doi and citation._doi_id(p["doi"]) == doi)
                     or (not doi and citation._normalize_title(p["title"]) == wanted)]
         if len(matching) != 1:
@@ -1033,8 +1064,12 @@ class NativeProject(CompilerMixin):
         if not title:
             return None
         doi = citation._doi_id(fields.get("doi"))
-        record = None
-        if doi:
+        record = (self.state.get("survey_originals") or {}).get(doi)
+        if not record and doi.startswith("10.48550/arxiv."):
+            record = literature_evidence.doi_original(doi)
+        if record and citation.title_similarity(title, record["title"]) < citation._SIMILARITY_THRESHOLD:
+            record = None
+        if doi and not record:
             data = citation._http_get_json("https://api.crossref.org/works/" + quote(doi, safe=""))
             meta = (data or {}).get("message") or {}
             returned_title = (meta.get("title") or [""])[0]
@@ -1068,7 +1103,7 @@ class NativeProject(CompilerMixin):
                 }
         if not record:
             return None
-        record["bibtex_key"] = entry["key"]
+        record = {**record, "bibtex_key": entry["key"]}
         name = hashlib.sha256(record["url"].encode()).hexdigest()[:24] + ".txt"
         path = self.root / "sources" / name
         if path.resolve() != path:
@@ -1194,9 +1229,24 @@ class NativeProject(CompilerMixin):
         proof = _load(self.state_dir / "native_citations.json", {})
         if not bib.is_file() or proof.get("sha256") != _sha(bib):
             return None
-        return literature_evidence.body_source_trace(
-            self.latex_dir, self.state_dir / "deep_research.md", proof.get("checked", {})
-        )
+        report = self.state_dir / "deep_research.md"
+        trace = literature_evidence.body_source_trace(self.latex_dir, report, proof.get("checked", {}))
+        if trace and trace["verified_works"] < 2:
+            # Report location is evidence of discovery, not authority for the paper's findings.
+            cited_lines = {r.get("report_line") for r in trace["body_citations"].values()}
+            used = {citation._doi_id(row["fields"].get("doi")) for row in citation.parse_bib(str(bib))
+                    if row["key"] in trace["body_citations"]}
+            originals = self.state.get("survey_originals") or {}
+            leads = []
+            for lead in literature_evidence.source_leads(report.read_text()):
+                doi = citation._doi_id(lead["query"])
+                if (doi in used if doi else lead["report_line"] in cited_lines):
+                    continue
+                original = originals.get(doi, {})
+                leads.append({**lead, **({"official_title": original["title"],
+                                          "abstract_excerpt": original["passage"][:360]} if original else {})})
+            trace["unused_leads"] = sorted(leads, key=lambda lead: "official_title" not in lead)[:4]
+        return trace
 
     def _rendered_body_length(self):
         import fitz
@@ -1428,8 +1478,9 @@ class NativeProject(CompilerMixin):
             active = re.sub(r"(?<!\\)%[^\n]*", "", content)
             if (re.search(managed, previous.decode("utf-8", errors="replace"))
                     and not re.search(managed, active)
-                    and re.search(r"\\section\*?\s*\{(?:References|Bibliography)\}", active, re.I)
-                    and re.search(r"(?:^|\n)\s*\[\d+\]", active)
+                    and (re.search(r"\\begin\s*\{thebibliography\}", active)
+                         or (re.search(r"\\section\*?\s*\{(?:References|Bibliography)\}", active, re.I)
+                             and re.search(r"(?:^|\n)\s*\[\d+\]", active)))
                     and not re.search(r"\\(?:input|include)\s*\{[^{}]*(?:bib|ref)[^{}]*\}", active, re.I)):
                 return {"ok": False, "checked": True, "diagnostic":
                         "This edit replaces the venue bibliography with hand-numbered references. Keep its "
@@ -1498,6 +1549,12 @@ class NativeProject(CompilerMixin):
                         cached["research_citations"] = trace
                     else:
                         cached.pop("research_citations", None)
+                    self.save()
+                # Recheck editorial observations even when resuming an older compiled checkpoint.
+                notes = list(dict.fromkeys([*cached.get("editorial_notes", []), *self._body_repetition_notes()]))
+                issues = self._strict_paper_issues()
+                if notes != cached.get("editorial_notes") or issues != cached.get("manuscript_issues"):
+                    cached.update(editorial_notes=notes, manuscript_issues=issues)
                     self.save()
                 return cached
         with tempfile.TemporaryDirectory(prefix="idea2paper-tex-") as tmp:
@@ -1587,6 +1644,7 @@ class NativeProject(CompilerMixin):
                     "explain where the evidence stops. Preserve the venue margins and type size."
                 )
         result["editorial_notes"] = [f.detail for f in report.violations if f.check in {"body_prose_repeated", "markdown_emphasis"}]
+        result["editorial_notes"].extend(self._body_repetition_notes())
         if citation_proof:
             result["unverified_citations"] = citation_proof["unconfirmed"]
         if trace := self._research_citations():
@@ -1681,6 +1739,15 @@ class NativeProject(CompilerMixin):
                               "Use lookup_papers with an exact title or DOI and add_to_bibliography=true. "
                               "Cite its returned key at the supported claim and use the venue bibliography "
                               "instead of typing a numbered reference list.")
+        trace = rendered.get("research_citations") or {}
+        if (self.config.get("venue_format") == "icml" and float(self.config.get("venue_pages") or 4) >= 4
+                and trace and trace.get("verified_works", trace["matched"]) < 2):
+            leads = ", ".join(lead["query"] for lead in trace.get("unused_leads", [])[:3])
+            issues.append("The empirical related work needs a second distinct research-report paper linked in the body. "
+                          "Inspect the returned unused_leads and compare the original abstract to your claim. "
+                          "Register a relevant work with lookup_papers(add_to_bibliography=true). "
+                          + (f"Survey candidates: {leads}. " if leads else "") +
+                          "Use the returned cite key in the supported passage.")
         if guidance := rendered.get("layout_guidance"):
             issues.append(guidance)
         if overflow := rendered.get("overflow"):
@@ -1847,6 +1914,10 @@ class NativeProject(CompilerMixin):
             "measurement_reproduction": bool(snapshot.get("measurement_reproduction")),
             "evidence_refs": sorted(snapshot["artifacts"]),
         }
+        if pages and (notes := self._body_repetition_notes()):
+            result["brief"] += ("\nTypesetting observations on the submitted revision. Open the named pages and "
+                                "decide whether the repetition is justified or requires a repair.\n"
+                                + json.dumps(notes, ensure_ascii=False))
         if snapshot.get("measurement_reproduction"):
             result["reproduction_brief"] = review.reproduction_brief(snapshot)
         if trace:
@@ -1854,7 +1925,7 @@ class NativeProject(CompilerMixin):
                 "\nCitation locations from the frozen body PDF, verified survey and registered source files. "
                 "Use the pages and source paths to inspect whether the original work supports the manuscript claim. "
                 "A missing report match alone does not establish a citation error.\n"
-                + json.dumps(trace, ensure_ascii=False)
+                + json.dumps({k: v for k, v in trace.items() if k != "unused_leads"}, ensure_ascii=False)
             )
         if record and review.record_is_current(snapshot, record):
             if previous != record:
@@ -2025,10 +2096,16 @@ class NativeProject(CompilerMixin):
             self._require_disclosure()
             if any(r.get("control") and r not in observed for r in self.review_receipts):
                 raise ValueError("The verdict must retain all executed numerical controls.")
-            record = review.validate_review(snapshot, args["verdict"], previous=previous, observed=observed)
         except ValueError as exc:
             if check_only:
                 return {"valid": False, "diagnostic": str(exc)}
+            raise
+        try:
+            record = review.validate_review(snapshot, args["verdict"], previous=previous, observed=observed)
+        except ValueError as exc:
+            if check_only:
+                feedback = review.draft_evidence_feedback(snapshot, args["verdict"], observed, str(exc))
+                return {"valid": False, "diagnostic": feedback}
             raise
         if check_only:
             return {"valid": True}

@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { projectFile, projectEditor, readProjectFile } from './project.js'
+import { projectFile, projectEditor, readProjectFile, reviewSubmission } from './project.js'
 
 const bundle = dirname(fileURLToPath(import.meta.url))
 test('author can edit sources but cannot rewrite evidence, credentials or linked paths', async t => {
@@ -257,7 +257,8 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
           response = {name:'run_method_control',args:{target:'mean',inputs_json:'{"values":[2,4]}',
             expected_json:'3',alternative_json:'6',rationale:'The mean of two and four is three. The sum is six.'}}
         } else if (history.includes('independently-read-primary-passage')) {
-          response = JSON.stringify({revision:'rev1', verdict:'accept', source:'sources/paper.txt'})
+          const citations = {status:'assessed', evidence:[{artifact:'sources/paper.txt',quote:'independently-read-primary-passage'}]}
+          response = JSON.stringify(google ? {revision:'rev1', verdict:'accept', checks:{citations}} : {amend:{checks:{citations}}})
         } else if (history.includes('Cite an observed primary source')) {
           response = {name:'read_evidence',args:{artifact:'sources/paper.txt'}}
         } else if (history.includes('measured-observation')) {
@@ -358,11 +359,11 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.equal(args.revision, 'rev1')
         return {receipt:{control:1, artifact:'scripts/plot.py', marker:'known-answer-receipt', matches:true}}
       case 'check_review':
-        return args.observed.some(r => r.artifact === 'sources/paper.txt') && args.verdict.source === 'sources/paper.txt'
+        return args.observed.some(r => r.artifact === 'sources/paper.txt') && args.verdict.checks?.citations.evidence[0].artifact === 'sources/paper.txt'
           ? {valid:true} : {valid:false, diagnostic:'Cite an observed primary source'}
       case 'record_review':
         assert.equal(args.verdict.verdict, 'accept')
-        assert.equal(args.verdict.source, 'sources/paper.txt')
+        assert.equal(args.verdict.checks.citations.evidence[0].artifact, 'sources/paper.txt')
         assert.ok(args.observed.some(r => r.marker === 'known-answer-receipt'))
         assert.equal(args.observed.some(r => r.marker === 'independent-row-receipt'), commitment === 'program')
         assert.ok(args.observed.every(Boolean))
@@ -527,4 +528,19 @@ test('owner can continue the research report and inspect only allowlisted read-o
   await assert.rejects(projectFile(root,source,'changed'), /Use paper/)
   await assert.rejects(readProjectFile(root,{path:'auto_research/state/native_project.json'}), /Use paper/)
   await assert.rejects(readProjectFile(root,{path:'sources/credentials.txt'}), /Use paper/)
+})
+
+test('review amendments preserve unchanged checks and cannot cross revisions or set host fields', () => {
+  const previous = {revision:'snapshot', verdict:'revise', checks:{visual:{status:'unassessed'}}, issues:[{id:'R1'}]}
+  const check = {status:'assessed', evidence:[]}
+  const edit = {amend:{checks:{experiment:check}}}
+  assert.deepEqual(reviewSubmission(edit, previous, 'snapshot'),
+    {...previous, checks:{visual:previous.checks.visual, experiment:check}})
+  assert.deepEqual(Object.keys(previous.checks), ['visual'])
+  assert.throws(() => reviewSubmission(edit, undefined, 'snapshot'))
+  assert.throws(() => reviewSubmission(edit, previous, 'another-snapshot'))
+  for (const bad of [{amend:{revision:'other'}}, {amend:{},revision:'snapshot'},
+                     {amend:{checks:{unknown:check}}}, JSON.parse('{"amend":{"__proto__":{}}}')]) {
+    assert.throws(() => reviewSubmission(bad, previous, 'snapshot'))
+  }
 })

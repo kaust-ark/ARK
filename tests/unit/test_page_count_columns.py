@@ -61,6 +61,72 @@ def compiler():
     return stub
 
 
+@pytest.mark.parametrize("repeated", [True, False])
+def test_rendered_body_repetition_in_split_manuscript(compiler, tmp_path, repeated):
+    import shutil
+    import subprocess
+
+    if not shutil.which("pdflatex"):
+        pytest.skip("pdflatex unavailable")
+    fitz = pytest.importorskip("fitz")
+    compiler.latex_dir = tmp_path
+    chapters = tmp_path / "chapters"
+    chapters.mkdir()
+    for name, color in [("first/left", 50), ("alternate/left", 200), ("right", 150)]:
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 50, 30))
+        pix.clear_with(color)
+        image = tmp_path / f"{name}.png"
+        image.parent.mkdir(exist_ok=True)
+        pix.save(image)
+
+    def figure(asset, label, options="width=60pt"):
+        return (r"\begin{figure}[ht]\centering" + "\n"
+                + rf"\includegraphics[{options}]{{{asset}.png}}" + "\n"
+                + rf"\caption{{The measured response.}}\label{{{label}}}\end{{figure}}" + "\n")
+
+    (tmp_path / "main.tex").write_text(
+        r"""\documentclass{article}
+\usepackage{graphicx}
+\graphicspath{{first/}}
+\begin{document}
+\include{chapters/first}
+""" + ("" if repeated else r"\graphicspath{{alternate/}}") + r"""
+\input{chapters/next}
+\input{chapters/endbody}
+\input{chapters/supplement}
+\end{document}
+""")
+    (chapters / "first.tex").write_text(r"\section{Conclusion}" + "\nFirst result.\n"
+                                        + figure("left", "fig:first"))
+    (chapters / "next.tex").write_text(
+        (r"\section{Conclusions}" if repeated else r"\subsection{Conclusion}") + "\nSecond result.\n"
+        + figure("left", "fig:second")
+        + figure("left", "fig:crop", "trim=1pt 0 0 0,clip,width=60pt")
+        + r"""\begin{figure}[ht]\centering
+\begin{minipage}{60pt}\includegraphics[width=60pt]{left.png}\end{minipage}
+\begin{minipage}{60pt}\includegraphics[width=60pt]{right.png}\end{minipage}
+\caption{Two panels.}\label{fig:panels}\end{figure}
+""")
+    (chapters / "endbody.tex").write_text(r"\clearpage\appendix")
+    (chapters / "supplement.tex").write_text(r"\section{Conclusion}" + "\n"
+                                             + figure("left", "fig:supplement"))
+    (chapters / "unused.tex").write_text((chapters / "first.tex").read_text())
+    subprocess.run(["pdflatex", "-no-shell-escape", "-halt-on-error", "-interaction=batchmode", "main.tex"],
+                   cwd=tmp_path, check=True, capture_output=True, timeout=30)
+    # next.tex is included via input. An old include's aux is no longer used.
+    (chapters / "next.aux").write_text(r"\newlabel{fig:second}{{10}{10}}")
+
+    notes = compiler._body_repetition_notes()
+    if repeated:
+        assert len(notes) == 2
+        assert "chapters/first.tex:1" in notes[0] and "chapters/next.tex:1" in notes[0]
+        assert "Figure 1 (p. 1, chapters/first.tex:4" in notes[1]
+        assert "Figure 2 (p. 2, chapters/next.tex:4" in notes[1]
+        assert "Figure 3" not in notes[1] and "supplement" not in str(notes)
+    else:
+        assert notes == []
+
+
 # ── _is_two_column_doc ───────────────────────────────────────────────
 
 

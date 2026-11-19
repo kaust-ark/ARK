@@ -430,6 +430,44 @@ def test_survey_leads_retain_report_locations_without_treating_redirects_or_code
     ]
 
 
+def test_survey_candidates_use_official_abstract_and_cache_only_confirmed_dois(monkeypatch):
+    evidence = domain.literature_evidence
+    calls = []
+    def fetch(url, headers, timeout):
+        calls.append(url)
+        if url.endswith("missing"):
+            return json.dumps({"DOI": "10.1234/other", "title": "Wrong paper", "abstract": "Wrong abstract"})
+        return json.dumps({"DOI": "10.1234/METHOD", "title": "Canonical title",
+                           "abstract": "<p>Original &amp; measured.</p>"})
+    monkeypatch.setattr(evidence.citation, "_http_get", fetch)
+    report = 'See doi:10.1234/method.\nThe paper "A mistaken report title" has DOI:10.1234/method.\nSee doi:10.1234/missing.'
+    leads = evidence.source_leads(report)
+    cache = {}
+    resolved = evidence.survey_originals(leads, cache)
+    assert len(calls) == 2 and set(cache) == {"10.1234/method"}
+    assert resolved[0]["reported_title"] == "A mistaken report title"
+    assert resolved[0]["official_title"] == "Canonical title"
+    assert resolved[0]["abstract_excerpt"] == "Original & measured."
+    assert "official_title" not in resolved[1]
+    evidence.survey_originals(leads, cache)
+    assert len(calls) == 3 and calls[-1].endswith("missing")
+
+
+def test_survey_title_registration_uses_the_matched_deposit_on_old_checkpoints(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    (project.state_dir / "deep_research.md").write_text('The paper "Exactly Selected Title" has DOI: 10.1234/chosen.')
+    monkeypatch.setattr(domain.deep_research, "research_report_status", lambda state: "verified")
+    meta = {"url":"https://doi.org/10.1234/chosen", "source":"Deposited author abstract (DOI registry)",
+            "title":"Exactly Selected Title", "passage":"Measured the paired trials."}
+    monkeypatch.setattr(domain.literature_evidence, "doi_original", lambda doi: meta)
+    monkeypatch.setattr(domain.citation, "search_papers", lambda *args, **kwargs: pytest.fail("ambiguous title search"))
+    monkeypatch.setattr(domain.citation, "_fetch_bibtex_from_doi", lambda doi:
+                        "@article{trial, title={Exactly Selected Title}, author={Lee, B}, doi={10.1234/chosen}, year={2025}}")
+    result = project.lookup_papers({"query": "Exactly Selected Title", "add_to_bibliography": True})
+    assert result["saved"] and result["cite_key"] == "trial" and result["passage"] == meta["passage"]
+    assert "bibtex_key" not in project.state["survey_originals"]["10.1234/chosen"]
+
+
 def test_strict_research_manuscript_preserves_live_bibliography(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     project.config["skip_deep_research"] = False
@@ -442,6 +480,8 @@ def test_strict_research_manuscript_preserves_live_bibliography(tmp_path, monkey
     assert not result["ok"] and "lookup_papers" in result["diagnostic"]
     assert project.check_manuscript_edit({"content": previous + "\n% " + manual})["ok"]
     assert project.check_manuscript_edit({"content": proposed + r"\input{refs}"})["ok"]
+    manual = r"\begin{thebibliography}{9}\bibitem{madeup} A typed reference.\end{thebibliography}"
+    assert "lookup_papers" in project.check_manuscript_edit({"content": manual})["diagnostic"]
     source.write_text(proposed)
     assert project.check_manuscript_edit({"content": proposed + "\n"})["ok"]
 
@@ -521,6 +561,7 @@ def test_body_citations_trace_primary_records_and_survey_independently(tmp_path,
     monkeypatch.setattr(domain.literature_evidence, "body_page_boundary", lambda doc: (1, (200, 0)))
     trace = project._research_citations()
     assert (trace["matched"], trace["total"], trace["references_line"]) == (1, 2, 3)
+    assert trace["verified_works"] == 1
     assert trace["body_citations"] == {
         "main": {"source": checked["main"]["source"], "pages": [2], "report_line": 4},
         "extra": {"source": checked["extra"]["source"], "pages": [1]},
@@ -751,6 +792,8 @@ def test_verified_concept_can_be_reused_without_charging_or_loading_a_key(tmp_pa
     monkeypatch.setattr(domain.deep_research,"get_gemini_api_key",lambda: None)
     args = {"name":"overview","caption":"Protocol","description":"Show the paired comparison"}
     assert project.invoke("generate_concept_figure",args)["already_revised"]
+    with pytest.raises(RuntimeError, match="Google key"):
+        project.invoke("generate_concept_figure", {**args, "purpose": "compare_conditions"})
     image.write_bytes(b"unverified replacement")
     with pytest.raises(RuntimeError,match="Google key"):
         project.invoke("generate_concept_figure",args)
@@ -758,12 +801,16 @@ def test_verified_concept_can_be_reused_without_charging_or_loading_a_key(tmp_pa
 
 @pytest.mark.parametrize("verdict", ["passed", "contradiction"])
 def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_path, monkeypatch, verdict):
-    from google import genai
     from PIL import Image
     from ark import nano_banana
 
     project = open_project(tmp_path, monkeypatch)
-    approved = project.invoke("plan_experiment", plan())
+    approved = project.invoke("plan_experiment", {
+        **plan(), "question": "How do irrelevant features affect nearest-neighbor regression?",
+        "baseline": "KNeighborsRegressor on 10 features (5 signal and 5 noise)",
+        "comparison": "KNeighborsRegressor on 5 signal features",
+        "metric": "RMSE and MAE",
+    })
     artifact = tmp_path / approved["expected"]
     artifact.write_text('{"summary": {"paired_probes": 8}}')
     project.state["experiment"] = {
@@ -772,33 +819,28 @@ def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_pa
     }
     project.save()
     (project.state_dir / "experiment_plan.yaml").write_text("unsupported class clusters")
-    args = {"name": "method", "caption": "Unsupported class clusters.", "description": "Depict class clusters."}
-    panel = {
-        "subject": "An ordered row of search inputs.",
-        "groups": [
-            {"label": "Linear search", "description": "Scan the common input.", "evidence": "linear"},
-            {"label": "Binary search", "description": "Bisect the common input.", "evidence": "binary"},
-        ],
-        "caption": "Count comparisons on the same sorted input and target.",
+    args = {
+        "name": "method",
+        "caption": "Left: noise obscures a signal manifold. Right: the neighborhood regains precision.",
+        "description": "Show class clusters and a shrinking neighborhood in two panels.",
     }
+    if verdict == "passed":
+        # A layout preference cannot turn a requested comparison into generated scientific labels.
+        args.update(purpose="compare_conditions", representation="schematic")
+    mechanism = "Show how Euclidean distances select the nearest training observations for one query."
     monkeypatch.setattr(domain.deep_research, "get_gemini_api_key", lambda: "fixture")
-    monkeypatch.setattr(genai, "Client", lambda **kw: object())
+    monkeypatch.setattr(nano_banana, "_call_gemini_text", lambda *a: pytest.fail("invented new comparison arms"))
     monkeypatch.setattr(nano_banana, "repair_concept_image", lambda *a: pytest.fail("redrew a typeset image"))
-    prompts, draws, reviews = [], [], []
-
-    def plan_panel(client, model, prompt):
-        assert all(s in prompt for s in ("linear", "binary"))
-        assert "paired_probes" not in prompt
-        assert "class clusters" not in prompt
-        prompts.append(prompt)
-        return json.dumps(panel)
+    draws, reviews = [], []
 
     def draw(prompt, path, key, model, *, aspect_ratio, receipt):
         draws.append(prompt)
         if path.suffix == ".image":
-            assert aspect_ratio == "1:1" and "An ordered row" in prompt
+            assert aspect_ratio == "1:1" and approved["question"] in prompt
+            assert "class clusters" not in prompt and "paired_probes" not in prompt
         else:
-            assert aspect_ratio == "16:9" and "linear" in prompt and "binary" in prompt
+            assert aspect_ratio == "16:9" and approved["baseline"] in prompt and approved["comparison"] in prompt
+            assert mechanism in prompt
             assert "class clusters" not in prompt and "paired_probes" not in prompt
         buf = io.BytesIO()
         Image.new("RGB", (50, 40), "silver").save(buf, "PNG")
@@ -810,34 +852,42 @@ def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_pa
         checks = {name: {"status": "consistent", "observed": "Approved condition."}
                   for name in nano_banana._SEMANTIC_CHECKS}
         checks["result_marks"]["depiction"] = "method"
-        checks["printed_labels"]["transcription"] = [g["label"] for g in panel["groups"]]
+        checks["printed_labels"]["transcription"] = ["Baseline", "Comparison"]
         if "subject-only illustration" in design:
-            assert panel["caption"] in design and "Unsupported class clusters." not in design
+            assert approved["baseline"] in design and approved["comparison"] in design
+            assert "class clusters" not in design and "regains precision" not in design
             if verdict == "contradiction":
                 checks["comparison_groups"].update(status="contradiction", expected="Only two conditions.",
                                                    correction="Remove the unsupported third condition.")
         return {"status": nano_banana.semantic_verdict(checks), "model": model, "provider": provider, "checks": checks}
 
-    monkeypatch.setattr(nano_banana, "_call_gemini_text", plan_panel)
     monkeypatch.setattr(nano_banana, "generate_figure", draw)
     monkeypatch.setattr(nano_banana, "review_concept_image", inspect)
     result = project.invoke("generate_concept_figure", args)
     path = tmp_path / result["path"]
     get_entry = lambda: domain.figure_manifest.load_manifest(project.figures_dir)["figures"][path.name]
     entry = get_entry()
-    assert len(prompts) == len(draws) == len(reviews) == 1
+    assert len(draws) == len(reviews) == 1
     assert result["representation"] == "study_panel" and result["semantic_pass"] == (verdict == "passed")
+    panel = entry["panel_plan"]
+    assert [(g["label"], g["description"], g["evidence"]) for g in panel["groups"]] == [
+        ("Baseline", approved["baseline"], approved["baseline"]),
+        ("Comparison", approved["comparison"], approved["comparison"]),
+    ]
+    assert all(approved[k] in panel["caption"] for k in ("baseline", "comparison", "metric"))
     assert result.get("caption") == (panel["caption"] if verdict == "passed" else None)
     assert domain._sha(path) == result["sha256"] == entry["artifact_sha256"]
     assert domain._sha(path.parent / entry["illustration_file"]) == entry["payload_sha256"]
     assert entry["semantic_review"]["label_verification"]["coverage"] == "reproduced_typeset"
     assert project.invoke("generate_concept_figure", args)["semantic_pass"] == (verdict == "passed")
-    assert len(prompts) == len(draws) == len(reviews) == 1
+    assert len(draws) == len(reviews) == 1
 
-    schematic = project.invoke("generate_concept_figure", {**args, "representation": "schematic"})
+    request = {"name": "method", "caption": "How neighbors are selected for one query.", "description": mechanism}
+    schematic = project.invoke("generate_concept_figure", {**request, "purpose": "explain_mechanism"})
     assert schematic["representation"] == "schematic" and schematic["semantic_pass"]
     assert get_entry()["native_description"] != entry["native_description"]
-    assert len(prompts) == 1 and len(draws) == len(reviews) == 2
+    assert project.invoke("generate_concept_figure", {**request, "representation": "schematic"})["cached"]
+    assert len(draws) == len(reviews) == 2
     artifact.write_text('{"summary": "tampered"}')
     assert "tampered" not in nano_banana.native_study_design(project.state, project.state_dir)
 
@@ -849,7 +899,7 @@ def test_unavailable_initial_panel_does_not_trigger_a_second_image(tmp_path, mon
     project.invoke("plan_experiment", plan())
     args = {"name": "method", "caption": "A comparison", "description": "Two conditions"}
     monkeypatch.setattr(domain.deep_research, "get_gemini_api_key", lambda: "fixture")
-    monkeypatch.setattr(nano_banana, "create_study_panel", lambda *a: None)
+    monkeypatch.setattr(nano_banana, "create_study_panel", lambda *a, **kw: None)
     monkeypatch.setattr(nano_banana, "generate_figure", lambda *a, **kw: pytest.fail("unexpected fallback image"))
     with pytest.raises(RuntimeError, match="No source-grounded study panel"):
         project.invoke("generate_concept_figure", args)

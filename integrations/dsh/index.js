@@ -6,7 +6,7 @@ import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Command } from 'commander'
 import { acquireLock, readJson, runLegacyWorkflow, writeJson } from './workflow.js'
-import { acknowledgeLocal, pendingCommands, queueCommand, attachEvidence, evidenceTool, methodControlTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
+import { acknowledgeLocal, pendingCommands, queueCommand, reviewSubmission, attachEvidence, evidenceTool, methodControlTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
 
 export const name = 'idea2paper'
 export const inject = ['cmdlineArgs', 'agentDefaultModel', 'agents', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'subagents', 'llm', 'attachments']
@@ -198,7 +198,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
     throw new Error('Missing independent reproduction brief')
   }
   const observed = []
-  let checkedVerdict, lastRejected
+  let checkedVerdict, lastRejected, rejectedDraft
   let disclosed = !protocolFirst, committing = false, sealed = false, disclosureError
   let configured = false
   const unlisten = ctx.on('agent/created', ({ agent }) => {
@@ -221,6 +221,10 @@ async function review(ctx, owner, domain, signal, draft = false) {
       let verdict, diagnostic
       try { verdict = JSON.parse(output.replace(/^`{3}(?:json)?\s*|\s*`{3}$/gi, '')) }
       catch { diagnostic = 'The final message must contain a complete JSON verdict.' }
+      if (!diagnostic && disclosed) {
+        try { verdict = reviewSubmission(verdict, rejectedDraft, packet.revision) }
+        catch (error) { diagnostic = error.message }
+      }
       if (!disclosed) diagnostic = 'Use reproduce_measurement to commit your program or explain why independent reproduction is unavailable.'
       if (!diagnostic) {
         const proof = await domain.call('check_review', {revision:packet.revision, verdict, observed})
@@ -229,6 +233,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
         if (proof.valid === true) { checkedVerdict = verdict; return }
         if (proof.valid !== false || !proof.diagnostic) throw new Error('Missing review validation result')
         diagnostic = proof.diagnostic
+        if (verdict?.revision === packet.revision) rejectedDraft = verdict
       }
       // Steer this DSH step boundary so the independent reader keeps its evidence and identity.
       if (lastRejected?.output === output && lastRejected.observations === observed.length) {
@@ -236,7 +241,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
       }
       lastRejected = {output, observations:observed.length}
       agent.steer(createUserMessage({source:{kind:'idea2paper-review', form:'instructions'}, content:[{
-        type:'text', text:'Review evidence check: ' + diagnostic + (disclosed ? '\nInspect the relevant originals with read_evidence as needed. Correct the complete verdict, using only supported findings, or mark the affected check unassessed.' : ''),
+        type:'text', text:'Review evidence check: ' + diagnostic + (disclosed ? '\nInspect the relevant originals with read_evidence as needed. Return the corrected verdict or, after a rejected draft, {"amend":{...}} containing only the changed fields. Under checks, send complete replacements for changed domains. To change issues, replace the issues array. The whole verdict is checked again.' : ''),
       }]}))
     })
     scope.tools.presentAs('native')

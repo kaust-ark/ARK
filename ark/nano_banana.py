@@ -669,8 +669,8 @@ def _compose_study_panel(illustration: Path, groups: list, destination: Path, si
     _save_generated_image(buffer.getvalue(), destination)
 
 
-def create_study_panel(path: Path, design: str, provider: str, key: str, model: str, aspect_ratio: str):
-    """Generate a single subject illustration. Source-grounded comparison text is typeset in code."""
+def _study_panel_plan(design, provider, key, model):
+    """Recover the comparison when a legacy project only stores prose."""
     from ark.quality_gate import extract_json
     prompt = ("The source describes a scientific comparison. Return JSON with subject (one grounded "
               "physical or conceptual study object to illustrate, without a protocol), groups "
@@ -680,26 +680,49 @@ def create_study_panel(path: Path, design: str, provider: str, key: str, model: 
               "conditions, control and assessment). Cover every required comparison. Do not create "
               "a panel if the groups cannot be supported. Write ordinary readable text without LaTeX."
               "\nStudy design:\n" + design)
+    if provider == "google":
+        from google import genai
+        response = _call_gemini_text(genai.Client(api_key=key), model, prompt)
+    else:
+        response = _openrouter_figure_request(key, model, prompt, None)["choices"][0]["message"]["content"]
+    plan = extract_json(response, want=dict)
+    if not plan or not isinstance(plan.get("subject"), str) or not 2 <= len(plan["subject"]) <= 400:
+        return None
+    groups = plan.get("groups")
+    if (not isinstance(groups, list) or not 2 <= len(groups) <= 3
+            or not isinstance(plan.get("caption"), str) or not 2 <= len(plan["caption"]) <= 500):
+        return None
+    for g in groups:
+        if (not isinstance(g, dict) or not all(isinstance(g.get(k), str) and g[k].strip()
+                for k in ("label", "description", "evidence")) or len(g["label"]) > 40
+                or len(g["description"]) > 125 or g["evidence"] not in design):
+            return None
+    if len({g["label"].casefold() for g in groups}) != len(groups):
+        return None
+    return plan
+
+
+def create_study_panel(path: Path, design: str, provider: str, key: str, model: str, aspect_ratio: str,
+                       *, approved_plan: dict | None = None):
+    """Typeset the approved arms and generate only the subject illustration."""
     try:
-        if provider == "google":
-            from google import genai
-            response = _call_gemini_text(genai.Client(api_key=key), model, prompt)
-        else:
-            response = _openrouter_figure_request(key, model, prompt, None)["choices"][0]["message"]["content"]
-        plan = extract_json(response, want=dict)
-        if not plan or not isinstance(plan.get("subject"), str) or not 2 <= len(plan["subject"]) <= 400:
-            return None
-        groups = plan.get("groups")
-        if (not isinstance(groups, list) or not 2 <= len(groups) <= 3
-                or not isinstance(plan.get("caption"), str) or not 2 <= len(plan["caption"]) <= 500):
-            return None
-        for g in groups:
-            if (not isinstance(g, dict) or not all(isinstance(g.get(k), str) and g[k].strip()
-                    for k in ("label", "description", "evidence")) or len(g["label"]) > 40
-                    or len(g["description"]) > 125 or g["evidence"] not in design):
+        if approved_plan is None:
+            plan = _study_panel_plan(design, provider, key, model)
+            if not plan:
                 return None
-        if len({g["label"].casefold() for g in groups}) != len(groups):
-            return None
+        else:
+            baseline, comparison = approved_plan["baseline"], approved_plan["comparison"]
+            if not baseline.strip() or not comparison.strip():
+                return None
+            plan = {
+                "subject": approved_plan["question"],
+                "groups": [{"label": label, "description": arm, "evidence": arm}
+                           for label, arm in (("Baseline", baseline), ("Comparison", comparison))],
+                "caption": (f"The study compares {baseline.rstrip('.')} with {comparison.rstrip('.')}. "
+                            f"The protocol evaluates {approved_plan['metric'].rstrip('.')}. "
+                            "The artwork illustrates the study subject."),
+            }
+        groups = plan["groups"]
         art_prompt = ("Create one clean, publication-quality scientific illustration of this single "
                       "study object, centered on white: " + plan["subject"] + ". No words, numerals, "
                       "letters, arrows, branches, workflows, charts, comparisons or layout panels. "

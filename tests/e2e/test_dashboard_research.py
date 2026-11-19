@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import os
 import socket
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,6 +98,10 @@ def test_live_research_desk(tmp_path, monkeypatch):
                               "page":1,"visual":True,"sha256":digest},{"artifact":"paper/main.tex",
                               "quote":claim,"sha256":hashlib.sha256(source.encode()).hexdigest()}]}]}
         (archived / "review.json").write_text(json.dumps(record))
+        if previous is None:
+            archived_pdf = f"auto_research/state/reviews/{revision}/main.pdf"
+            archived_digest = digest
+            event("archived-review", "review", "revise", action="manuscript_reviewed", artifact=archived_pdf)
         previous = revision
     (state / "native_review.json").write_text(json.dumps(record))
 
@@ -154,9 +159,36 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 experiment.click()
                 assert experiment.get_attribute("aria-pressed") == "true"
                 assert page.locator("#research-history").get_attribute("open") is not None
+                history = page.locator("#research-history")
+                result_file = history.get_by_role("button", name="Open current file · experiment.json")
+                result_file.focus()
+                output = os.environ.get("IDEA2PAPER_UI_CAPTURE")
+                def capture_history():
+                    desk = page.locator("#research-desk")
+                    desk.evaluate("el => window.scrollBy(0, el.getBoundingClientRect().top - document.querySelector('#main-nav').offsetHeight - 8)")
+                    desk.screenshot(path=str(Path(output) / f"evidence-history-{width}.png"))
+                if output and width == 390:
+                    capture_history()
+                event(f"focus-{width}", "experiments", "Finished reading result rows.", action="tool/result")
+                history.locator(f'li[data-event="focus-{width}"]').wait_for()
+                assert result_file.evaluate("el => document.activeElement === el")
+                page.keyboard.press("Enter")
+                page.locator("#preview-content td").first.wait_for()
+                assert page.locator("#preview-content td").all_text_contents() == ["128 items", "128", "7"]
+                page.keyboard.press("Escape")
+                assert result_file.evaluate("el => document.activeElement === el")
                 page.locator("#history-all").click()
                 assert experiment.get_attribute("aria-pressed") == "false"
                 assert page.locator("#research-history li").filter(has_text="Second batch").count() == 1
+                archive_file = history.get_by_role("button", name="Open archived file · main.pdf")
+                assert archive_file.locator("..").get_by_text("Needs revision", exact=True).is_visible()
+                if output and width == 1300:
+                    capture_history()
+                archive_file.click()
+                archive_url = page.locator("#evidence-open").get_attribute("href")
+                assert hashlib.sha256(page.request.get(base + archive_url).body()).hexdigest() == archived_digest
+                page.locator("#evidence-close").click()
+                assert archive_file.evaluate("el => document.activeElement === el")
                 page.locator("#research-history summary").click()
                 if width == 1300:
                     draft = "Add 256 items before doubling again."
@@ -224,7 +256,6 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert not page.evaluate("document.documentElement.scrollWidth > innerWidth"), overflow
                 assert not errors
                 # Local inspection without generating repo artifacts.
-                import os
                 if output := os.environ.get("IDEA2PAPER_UI_CAPTURE"):
                     page.locator("#evidence-close").click()
                     page.evaluate("window.scrollTo(0,0)")
@@ -242,8 +273,12 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     assert details.locator("pre").inner_text() == diagnostic
                     page.evaluate("setLang('zh')")
                     page.get_by_text("实验控制项（3）", exact=True).wait_for(state="attached")
+                    history.get_by_text("打开归档文件 · main.pdf", exact=True).wait_for(state="attached")
                     assert "不一致" in controls.text_content() and "评审理由" in controls.text_content()
                     page.emulate_media(reduced_motion="no-preference")
+                    # Switching languages reconnects the stream. The initial snapshot
+                    # restores the screen silently; only a subsequent live event animates.
+                    page.wait_for_function("streamReady && !disconnected && detailEventSource?.readyState === EventSource.OPEN")
                     event("abi", "review", "Invalid row.", action="measurement_reproduction_failed",
                           failure="row_format", attempt=2)
                     row_error = "第 2 次复算返回的数据格式有误，尚无可比较的数值。"
@@ -260,6 +295,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     assert page.evaluate("window.observationMotion").count(row_error) == 1
                     page.evaluate("setLang('ar')")
                     page.get_by_text("ضوابط التجربة (3)", exact=True).wait_for(state="attached")
+                    history.get_by_text("فتح الملف الحالي · experiment.json", exact=True).wait_for(state="attached")
                     assert "غير مطابق" in controls.text_content()
                 ctx.close()
 
@@ -268,6 +304,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
             shared.goto(base + f"/dashboard/share/{token}", wait_until="domcontentloaded")
             shared.locator("#research-observation").get_by_text("No observation recorded yet.").wait_for()
             assert shared.locator("#research-review").is_hidden()
+            assert shared.locator("#research-history .history-file").count() == 0
             assert shared.request.get(base + f"/dashboard/api/projects/{pid}/evidence?key=results/experiment.json").status == 404
             assert shared.request.get(base + f"/dashboard/api/projects/{pid}/research-history?before=10").status == 404
             browser.close()

@@ -178,6 +178,25 @@ def test_local_crash_cannot_be_resubmitted_on_another_daemon(monkeypatch, tmp_pa
     assert json.loads(path.read_text()) == row
 
 
+@pytest.mark.parametrize("script,expected", [
+    ("open('results/one.json','w').write('[42]')", [42]),
+    ("print('[42]')", [42]),
+    ("print('measurement complete'); open('results/one.json','w').write('[42]')", [42]),
+    ("print('[1]'); open('results/one.json','w').write('[42]')", None),
+    ("from pathlib import Path; Path('results/one.json').symlink_to('../main.py')", None),
+    ("pass", None),
+])
+def test_worker_returns_only_the_registered_file_or_matching_stdout(tmp_path, script, expected):
+    (tmp_path / "main.py").write_text(script)
+    runner = compute.RUNNER.replace("/study", str(tmp_path)).replace("/output", str(tmp_path))
+    process = subprocess.run([sys.executable, "-I", "-c", runner, "--result", "results/one.json"],
+                             capture_output=True)
+    if expected is None:
+        assert process.returncode and not process.stdout
+    else:
+        assert process.returncode == 0 and json.loads(process.stdout) == expected
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="the isolated science worker runs Linux")
 @pytest.mark.parametrize("read_input", [True, False])
 def test_worker_observes_actual_measurement_reads(tmp_path, read_input):

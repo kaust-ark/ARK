@@ -63,6 +63,26 @@ def test_paired_lifecycle_and_sham_fix(tmp_path, pair):
         validate_review(after, response, before, observed=receipts)
 
 
+def test_review_feedback_returns_independent_repairs_without_accepting_the_draft(tmp_path):
+    from ark.review import draft_evidence_feedback
+
+    pair = PAIRS[0]
+    snap = project(tmp_path, pair, "flawed")
+    response, observed = record(snap, pair, "flawed", "new")
+    response["checks"]["manuscript"]["evidence"] = [{"artifact": "paper/main.tex", "quote": "Text absent from draft."}]
+    response["checks"]["experiment"]["evidence"] = [{"artifact": "results/rows.csv", "quote": "Invented row."}]
+    response["issues"][0]["evidence"] = [{"artifact": "results/rows.csv",
+                                         "quote": read_evidence(snap, "results/rows.csv")["text"]}]
+    original = copy.deepcopy(response)
+    with pytest.raises(ValueError) as rejected:
+        validate_review(snap, response, observed=observed)
+    feedback = draft_evidence_feedback(snap, response, observed, str(rejected.value))
+    assert "paper/main.tex" in feedback and "checks.experiment" in feedback and "issues[0]" in feedback
+    assert response == original
+    with pytest.raises(ValueError):
+        validate_review(snap, response, observed=observed)
+
+
 def test_blind_packet_contains_no_private_values_or_score(tmp_path):
     pair = PAIRS[0]
     snapshot = project(tmp_path, pair, "flawed")
