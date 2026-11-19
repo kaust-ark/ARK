@@ -665,6 +665,38 @@ def test_live_research_desk(tmp_path, monkeypatch):
             assert "unfinished_review" not in shared.request.get(api).json()["research"]
             receipt.write_text(json.dumps({"state":"running","review_attempts":{"reader":current}}))
             assert not owner_page.request.get(api).json()["research"]["unfinished_review"]
+            # Inspect the exact build even when a subsequent compile arrives during reading.
+            working_pdf = root / "paper/main.pdf"
+            with fitz.open() as pdf:
+                for i in range(6):
+                    pdf.new_page().insert_text((72, 100), f"Working draft on page {i + 1}")
+                working_pdf.write_bytes(pdf.tobytes())
+            first_build = hashlib.sha256(working_pdf.read_bytes()).hexdigest()
+            event("body-layout", "writing", "Rendered 6 pages.", action="paper_compiled", artifact="paper/main.pdf",
+                  body_pages=3.006, target_pages=4, pdf_pages=6, last_body_page=4, pdf_sha256=first_build)
+            owner_page.reload(wait_until="domcontentloaded")
+            card = owner_page.locator("#research-build-page")
+            owner_page.get_by_text("Body about 3.01 of 4 pages · PDF 6 pages", exact=True).first.wait_for()
+            assert card.inner_text() == "View body page 4"
+            card.click()
+            selected = owner_page.locator("#preview-content img")
+            owner_page.wait_for_function("document.querySelector('#preview-content img')?.naturalWidth > 0")
+            first_url = selected.get_attribute("src")
+            assert first_build in first_url and first_url.endswith("page=4")
+            with fitz.open() as pdf:
+                for i in range(7):
+                    pdf.new_page().insert_text((72, 120), f"Different build on page {i + 1}")
+                working_pdf.write_bytes(pdf.tobytes())
+            second_build = hashlib.sha256(working_pdf.read_bytes()).hexdigest()
+            event("new-layout", "writing", "Rendered 7 pages.", action="paper_compiled", artifact="paper/main.pdf",
+                  body_pages=4.2, target_pages=4, pdf_pages=7, last_body_page=5, pdf_sha256=second_build)
+            card.get_by_text("View body page 5").wait_for()
+            assert selected.get_attribute("src") == first_url
+            assert owner_page.request.get(base + first_url).status == 409
+            owner_page.locator("#evidence-close").click()
+            card.click()
+            assert second_build in selected.get_attribute("src") and selected.get_attribute("src").endswith("page=5")
+            assert not any(e.get("layout") for e in shared.request.get(api).json()["research"].get("events", []))
             browser.close()
         with db.get_session(settings.db_path) as session:
             assert db.get_decision(session, decision).answer_text == draft

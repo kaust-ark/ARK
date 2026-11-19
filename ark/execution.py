@@ -1338,9 +1338,6 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 
             # Strip stray \clearpage from the trailing edges of each
             # piece — we re-insert canonical separators below.
-            body_section = _re.sub(
-                r'(?:\\(?:clearpage|newpage)\s*)+\Z', '', body_section.rstrip()
-            ).rstrip()
             if appendix_block:
                 appendix_block = _re.sub(
                     r'^\s*\\clearpage\s*', '', appendix_block.lstrip()
@@ -1351,12 +1348,19 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             if venue == "icml":
                 # The stock ICML bibliography already typesets its own heading.
                 if not _re.search(r"\\(?:renewcommand|def)\s*\{?\\bibsection\b", content):
-                    body_section = _re.sub(r"(?m)^\s*\\section\*\{References\}\s*\Z", "", body_section).rstrip()
+                    body_section = _re.sub(
+                        r"(?m)^\s*\\section\*\{References\}\s*(?:\\(?:clearpage|newpage)\s*)*\Z",
+                        "", body_section,
+                    ).rstrip()
                 # Keep the author's title and prose while giving a stand-alone appendix
                 # after the bibliography its venue counter and PDF destination.
                 title = _re.match(r"\\section\*?\{((?:Reproducibility |Technical )?Appendix)\}", appendix_block, _re.I)
                 if appendix_m is None and title and _re.sub(r"(?m)(?<!\\)%.*", "", appendix_block[title.end():]).strip():
                     appendix_block = r"\appendix" + "\n" + r"\section{" + title[1] + "}" + appendix_block[title.end():]
+            # Removing a redundant heading can expose the writer's preceding page break.
+            body_section = _re.sub(
+                r'(?:\\(?:clearpage|newpage)\s*)+\Z', '', body_section.rstrip()
+            ).rstrip()
             if endmatter_text:
                 endmatter_text = _re.sub(
                     r'^\s*\\clearpage\s*', '', endmatter_text.lstrip()

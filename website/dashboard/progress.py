@@ -137,6 +137,15 @@ def journal(root, after=None, before=None):
         for field in ("count", "total"):
             if type(event.get(field)) is int and event[field] >= 0:
                 e[field] = event[field]
+        if e["action"] == "paper_compiled" and event.get("artifact") == "paper/main.pdf":
+            body, target = event.get("body_pages"), event.get("target_pages")
+            pages, last = event.get("pdf_pages"), event.get("last_body_page")
+            digest = event.get("pdf_sha256")
+            if (type(pages) is int and type(last) is int and 1 <= last <= pages
+                    and type(body) in (int, float) and 0 < body <= pages
+                    and type(target) in (int, float) and 0 < target < float("inf")
+                    and isinstance(digest, str) and re.fullmatch(r"[a-f0-9]{64}", digest)):
+                e["layout"] = {"body": body, "target": target, "pages": pages, "last": last, "sha256": digest}
         if e["action"] in ("measurement_reproduction_started", "measurement_reproduction_finished"):
             for field in ("condition", "metric", "reported_value", "independent_value"):
                 if isinstance(event.get(field), str):

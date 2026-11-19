@@ -56,6 +56,8 @@ const researchLabels = {
   build_details: ['Compiler details','编译详情','تفاصيل التجميع'],
   paper_ready: ['Paper PDF available','论文 PDF 已生成','ملف الورقة متاح'],
   file_ready: ['Published %s','已生成证据文件 %s','ملف الأدلة متاح %s'],
+  body_coverage: ['Body about %s of %s pages · PDF %s pages','正文约 %s / %s 页 · PDF 共 %s 页','المتن نحو %s من %s صفحات · ملف PDF من %s صفحات'],
+  open_body_page: ['View body page %s','查看正文第 %s 页','عرض صفحة المتن %s'],
   view_evidence: ['View evidence files','查看证据文件','عرض ملفات الأدلة'],
   earlier: ['Earlier events','更早的记录','السجل السابق'],
   current: ['Current action','当前工作','العمل الحالي'], observation: ['Latest observation','最新观察','أحدث ملاحظة'],
@@ -226,6 +228,10 @@ function mechanismCoverage(event) {
 }
 
 function observationText(event, withValues=true) {
+  if (event?.layout) {
+    const n = new Intl.NumberFormat(currentLang, {maximumFractionDigits:2});
+    return rt('body_coverage',n.format(event.layout.body),n.format(event.layout.target),n.format(event.layout.pages));
+  }
   const coverage = mechanismCoverage(event);
   if (coverage) return coverage;
   if (['review_started','evidence_scope_committed','review_repair_requested','inference_test_started','inference_test_failed'].includes(event?.action)) return reviewEventLabel(event);
@@ -363,11 +369,11 @@ function renderHistory() {
         button.type = 'button';
         button.className = 'history-file';
         const archived = /^auto_research\/state\/reviews\/[a-f0-9]{64}\//.test(key);
-        button.textContent = rt(archived ? 'archived_file' : 'current_file', name);
+        button.textContent = e.layout ? rt('open_body_page',e.layout.last) : rt(archived ? 'archived_file' : 'current_file', name);
         button.title = key;
         button.setAttribute('aria-controls','evidence-preview');
         button.setAttribute('aria-pressed','false');
-        button.onclick = () => openEvidence({key, label:name, edition:key === 'paper/main.pdf' ? 'working' : null}, button);
+        button.onclick = () => openEvidence({key, label:name, sha256:e.layout?.sha256, edition:key === 'paper/main.pdf' ? 'working' : null}, button, e.layout?.last);
         row.append(button);
       }
       existing.get(e.id)?.replaceWith(row);
@@ -497,6 +503,16 @@ function renderResearch(animate=false) {
   const artifact = researchData.evidence?.[0];
   const fallback = artifact?.key === 'paper/main.pdf' ? rt('paper_ready') :
     artifact ? rt('file_ready', artifact.label) : rt('empty');
+  const buildButton = re('research-build-page');
+  buildButton.hidden = !obs?.layout || window.SHARE_MODE;
+  if (!buildButton.hidden) {
+    const item = {key:obs.artifact, label:rt('working_pdf'), type:'application/pdf', sha256:obs.layout.sha256};
+    const img = buildButton.querySelector('img'), page = obs.layout.last;
+    const src = evidenceUrl(item) + '&page=' + page;
+    if (img.getAttribute('src') !== src) img.src = src;
+    buildButton.querySelector('span').textContent = rt('open_body_page', page);
+    buildButton.onclick = () => openEvidence(item,buildButton,page);
+  }
   const diagnostic = obs?.action === 'paper_compile_failed' ? obs.observation : '';
   const location = diagnostic?.match(/(?:^|\s)(?:\.\/)?([\w./-]+\.(?:tex|sty|bbl|cls)):(\d+):/m);
   const details = re('research-build-details');
@@ -618,17 +634,21 @@ function closeEvidence(focus=true) {
 re('evidence-close').onclick = () => closeEvidence();
 re('evidence-preview').onkeydown = event => { if (event.key === 'Escape') closeEvidence(); };
 
+function evidenceUrl(item) {
+  const base = APP_BASE + '/api/projects/' + encodeURIComponent(detailProjectId);
+  const pdfQuery = item.delivered_sha256 ? '?delivered=' + encodeURIComponent(item.delivered_sha256) :
+    item.edition === 'working' && !window.SHARE_MODE ? '?working=true' : '';
+  return item.key === 'paper/main.pdf' && !item.sha256 ? base + '/pdf' + pdfQuery : base + '/evidence?key=' + encodeURIComponent(item.key) + (item.sha256 ? '&sha256=' + encodeURIComponent(item.sha256) : '');
+}
+
 async function openEvidence(item, opener, page=1, compare=false) {
   const container = re('preview-content'), scroll = compare ? container.scrollTop : 0;
   closeEvidence(false);
   const controller = new AbortController();
   preview = {key:item.key, opener, controller};
   opener.setAttribute('aria-pressed','true');
-  const base = APP_BASE + '/api/projects/' + encodeURIComponent(detailProjectId);
   const media = item.type || ({pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg'})[item.key.split('.').pop()] || 'text/plain';
-  const pdfQuery = item.delivered_sha256 ? '?delivered=' + encodeURIComponent(item.delivered_sha256) :
-    item.edition === 'working' && !window.SHARE_MODE ? '?working=true' : '';
-  const url = item.key === 'paper/main.pdf' && !item.sha256 ? base + '/pdf' + pdfQuery : base + '/evidence?key=' + encodeURIComponent(item.key) + (item.sha256 ? '&sha256=' + encodeURIComponent(item.sha256) : '');
+  const url = evidenceUrl(item);
   const href = media === 'application/pdf' ? url + '#page=' + Math.max(1,Number(page)||1) : url;
   re('evidence-preview').hidden = false;
   re('preview-name').textContent = item.label || item.key.split('/').pop();

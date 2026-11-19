@@ -531,6 +531,49 @@ def test_manuscript_check_trials_the_actual_edit_without_publishing(tmp_path, mo
     }
 
 
+@pytest.mark.skipif(not shutil.which("pdflatex") or not shutil.which("bibtex"), reason="requires TeX Live")
+def test_icml_preview_and_compile_keep_appendix_link_with_the_body(tmp_path, monkeypatch):
+    import fitz
+
+    project = open_project(tmp_path, monkeypatch)
+    project.config["venue_pages"] = 1
+    source = project.latex_dir / "main.tex"
+    raw = source.read_text().split(r"\section{Introduction}")[0] + r"""
+\section{Conclusion}
+Body conclusion.\nocite{*}
+\clearpage
+\section*{References}
+\bibliographystyle{icml2026}
+\bibliography{references}
+\clearpage
+\section*{Reproducibility Appendix}
+Archive contents.
+\end{document}
+"""
+    (project.latex_dir / "references.bib").write_text(
+        "@book{record, author={A. Author}, title={Technical record}, year={2000}, publisher={Press}}\n")
+    source.write_text(raw)
+    compiled = project.compile_paper({})
+    assert compiled["ok"] and compiled["pages"] == 3
+    assert 0 < compiled["body_equivalent_pages"] < 0.75
+    with fitz.open(project.latex_dir / "main.pdf") as doc:
+        assert "Additional details appear in Appendix" in doc[0].get_text()
+        assert "Acknowledgments" in doc[1].get_text() and "Archive contents." in doc[2].get_text()
+    canonical = source.read_text()
+    # Previously compiled revisions already had a label and an isolated generated link.
+    link = "Additional details appear in Appendix"
+    old = canonical.replace(link, "\\clearpage\n\n" + link)
+    for candidate in (raw, old):
+        preview = project.check_manuscript_edit({"content": candidate})["first_pass_preview"]
+        assert preview["body_pages"] == preview["target"] == 1
+        assert preview["body_equivalent_pages"] == pytest.approx(compiled["body_equivalent_pages"], abs=.03)
+        assert "insert_before" in preview["next"]
+        assert source.read_text() == canonical
+    source.write_text(old)
+    assert project.compile_paper({})["pdf_sha256"] == compiled["pdf_sha256"]
+    assert source.read_text() == canonical
+
+
 def test_manuscript_check_handles_missing_tool_and_unsafe_assets(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     pdf = project.latex_dir / "main.pdf"

@@ -201,3 +201,11 @@ body.share-mode .research-workspace { grid-template-columns:1fr; }
 #research-open-evidence { display:block; background:none; border:0; text-decoration:underline; color:#126657; cursor:pointer; font-family:inherit; font-weight:600; font-size:.8rem; }
 #research-review h4, #delivery-report h4, #hitl-decision h4 { color:#526c66; }
 #research-stop { margin-inline-start:auto; padding:4px 12px; color:#7b3e2a; }
+
+#research-build-page { display:flex; align-items:center; gap:12px; padding:7px 14px 7px 7px;
+  width:fit-content; max-width:100%; margin-block:8px; border:1px solid #cbdad3;
+  border-radius:6px; background:#f4f8f5; color:#175c48; font:inherit; text-align:start; cursor:pointer; }
+#research-build-page[hidden] { display:none; }
+#research-build-page img { display:block; width:42px; height:55px; object-fit:contain; background:white;
+  box-shadow:0 1px 4px #183f3028; }
+#research-build-page:hover span { text-decoration:underline; }

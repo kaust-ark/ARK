@@ -39,7 +39,7 @@ from ark import (
 from ark.compute import native_experiment, review_control
 from ark.execution import ExecutionMixin
 from ark.latex.compiler import CompilerMixin, body_repetition_notes, body_sections_and_figures, rendered_body_images
-from ark.latex.utils import body_page_boundary, extract_latex_errors, parse_overfull_warnings
+from ark.latex.utils import BODY_END_PDF_MARKER, body_page_boundary, extract_latex_errors, parse_overfull_warnings
 from ark.orchestrator.state import _atomic_write_text
 
 
@@ -128,13 +128,14 @@ def _local_tex_inputs(staging):
     return inputs
 
 
-def _manuscript_first_pass(paper, content, *, check_headings=False, page_target=None, expected_style=None):
+def _manuscript_first_pass(project, content, *, check_headings=False, page_target=None, expected_style=None):
     with tempfile.TemporaryDirectory(prefix="idea2paper-edit-") as tmp:
         staging = Path(tmp)
-        env = _stage_tex(paper, staging)
+        env = _stage_tex(project.latex_dir, staging)
         (staging / "main.tex").write_bytes(content)
         if page_target and expected_style == "icml2026.sty":
             ExecutionMixin.prepare_endmatter(staging, lambda *_: None, venue="icml")
+            project._link_appendix(staging)
         run = subprocess.run(
             _PDFLATEX, cwd=staging, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=90
         )
@@ -160,9 +161,15 @@ def _manuscript_first_pass(paper, content, *, check_headings=False, page_target=
                 end_page, body_bottoms = boundary
                 count = end_page + int(any(body_bottoms))
                 preview = {"body_pages": count, "target": page_target}
-                if count == page_target:
-                    preview["next"] = ("The first TeX pass reaches the requested body length. Run compile_paper "
-                                       "now to verify the final pagination, references and figures before further edits.")
+                if expected_style == "icml2026.sty":
+                    length, _ = project._rendered_body_coverage(pdf)
+                    preview["body_equivalent_pages"] = round(length, 2)
+                    if length < page_target - 0.25:
+                        preview["next"] = ("Use write_project_file with insert_before on the next section heading "
+                                           "and content containing only the new evidence or interpretation. "
+                                           "Compile the revised paper to check final pagination.")
+                if count == page_target and "next" not in preview:
+                    preview["next"] = ("Run compile_paper now to verify final body coverage, references and figures.")
                 return {"first_pass_preview": preview}
         return {}
 
@@ -1321,10 +1328,12 @@ class NativeProject(CompilerMixin):
             trace["unused_leads"] = sorted(leads, key=lambda lead: "official_title" not in lead)[:4]
         return trace
 
-    def _rendered_body_length(self):
+    def _rendered_body_coverage(self, path=None):
+        """Measure body length and locate its last physical PDF page."""
         import fitz
 
-        path = self.latex_dir / "main.pdf"
+        published = self.latex_dir / "main.pdf"
+        path = path or published
         if self.config.get("venue_format") == "icml":
             with fitz.open(path) as doc:
                 boundary = body_page_boundary(doc)
@@ -1346,37 +1355,37 @@ class NativeProject(CompilerMixin):
                         for left, right in ((width * 0.12, width / 2 - 8), (width / 2 + 8, width * 0.88))
                     ]
                     fill = sum(min(column_height, max(0, y - top)) for y in bottoms) / (2 * column_height)
-                    return boundary[0] - 1 + fill
-        return self._count_body_pages(path)
+                    return boundary[0] - 1 + fill, boundary[0]
+        # A staged edit has its own PDF. Its page count must never use the published AUX.
+        length = self._count_body_pages(path) if path == published else self._count_body_pages_from_pdf(path)
+        return length, max(1, math.ceil(length))
 
-    def _link_appendix(self):
-        if self.config.get("layout_mode") != "strict":
-            return
-        source = self.latex_dir / "main.tex"
+    @staticmethod
+    def _link_appendix(paper):
+        source = paper / "main.tex"
         original = source.read_text()
         match = re.search(r"\\appendix\b", original)
         if not match or not re.search(r"\\section\{[^}]+\}", original[match.end() :]):
             return
         appendix = original[match.end() :]
         body = original[: match.start()]
-        labels = re.findall(r"\\label\{([^}]+)\}", appendix)
-        if any(re.search(r"\\(?:auto|page|name|c|C)?ref\{" + re.escape(key) + r"\}", body) for key in labels):
+        marker = body.find(BODY_END_PDF_MARKER)
+        if marker < 0:
             return
         section = re.search(r"\\section\{[^}]+\}(?:\s*\\label\{([^}]+)\})?", appendix)
         label = section[1] or "app:i2p-supplement"
+        link = r"Additional details appear in Appendix~\ref{" + label + "}."
+        # Old builds could strand this generated sentence on its own page.
+        before_marker = re.sub(r"(?m)^(?:[ \t]*\\(?:clearpage|newpage)\s*)+(?=" + re.escape(link) + r"\s*\Z)",
+                               "", body[:marker])
+        labels = re.findall(r"\\label\{([^}]+)\}", appendix)
+        if any(re.search(r"\\(?:auto|page|name|c|C)?ref\{" + re.escape(key) + r"\}", body) for key in labels):
+            if before_marker != body[:marker]:
+                _atomic_write_text(source, before_marker + original[marker:])
+            return
         if not section[1]:
             appendix = appendix[: section.end()] + r"\label{" + label + "}" + appendix[section.end() :]
-        marker = body.find(r"\ifdefined\pdfdest\pdfdest name{idea2paper.body.end}")
-        if marker < 0:
-            return
-        body = (
-            body[:marker]
-            + "Additional details appear in Appendix~"
-            + r"\ref{"
-            + label
-            + "}.\n\n"
-            + body[marker:]
-        )
+        body = before_marker + link + "\n\n" + body[marker:]
         _atomic_write_text(source, body + match[0] + appendix)
 
     def _apply_figure_layout(self):
@@ -1601,7 +1610,7 @@ class NativeProject(CompilerMixin):
         if (strict_icml and previous and not receipt.get("ok") and r"\end{document}" in content
                 and previous == (venue_template / "main.tex").read_bytes()):
             try:
-                trial = _manuscript_first_pass(self.latex_dir, candidate, expected_style="icml2026.sty")
+                trial = _manuscript_first_pass(self, candidate, expected_style="icml2026.sty")
             except (OSError, subprocess.TimeoutExpired) as exc:
                 return {"ok": False, "checked": False, "diagnostic": f"The first venue build could not run: {exc}"}
             return {"ok": "diagnostic" not in trial, "checked": True, **trial}
@@ -1613,13 +1622,13 @@ class NativeProject(CompilerMixin):
         try:
             strict = self.config.get("layout_mode") == "strict"
             style_check = {"expected_style": "icml2026.sty"} if strict_icml and "icml2026.sty" in receipt.get("inputs", ()) else {}
-            trial = _manuscript_first_pass(self.latex_dir, candidate, check_headings=strict,
+            trial = _manuscript_first_pass(self, candidate, check_headings=strict,
                                            page_target=(self.config.get("venue_pages") or 4) if strict else None, **style_check)
             if "diagnostic" not in trial:
                 return {"ok": True, "checked": True, **trial}
             if trial.get("missing_venue_style"):
                 return {"ok": False, "checked": True, **trial}
-            baseline = _manuscript_first_pass(self.latex_dir, previous, check_headings=strict)
+            baseline = _manuscript_first_pass(self, previous, check_headings=strict)
         except subprocess.TimeoutExpired:
             return {"ok": False, "checked": False, "diagnostic": "The manuscript check timed out after 90 seconds."}
         except OSError as exc:
@@ -1640,7 +1649,8 @@ class NativeProject(CompilerMixin):
             return result
         return {**result, "manuscript_revision": {
             "path": "paper/main.tex", "sha256": _sha(source),
-            "next": "Use this post-build revision for the next edit. Read the current sections before a full rewrite.",
+            "next": "Use this post-build revision for the next edit. To expand a section, insert_before its "
+                    "next heading or replace a unique passage, supplying only the new paragraphs as content.",
         }}
 
     def _compile_paper(self, args):
@@ -1653,7 +1663,7 @@ class NativeProject(CompilerMixin):
         self._apply_figure_layout()
         if self.config.get("layout_mode") == "strict":
             ExecutionMixin.prepare_endmatter(self.latex_dir, self.log, venue=self.config.get("venue_format"))
-            self._link_appendix()
+            self._link_appendix(self.latex_dir)
         self._recheck_concept()
         self._disclose_study_panel_art(self.latex_dir / "main.tex")
         source = self.latex_dir / "main.tex"
@@ -1757,9 +1767,10 @@ class NativeProject(CompilerMixin):
             if x.status != "pass"
         ]
         if self.config.get("layout_mode") == "strict":
-            body = self._rendered_body_length()
+            body, last_body_page = self._rendered_body_coverage()
             target = float(self.config.get("venue_pages") or 4)
             result["body_equivalent_pages"] = body
+            result["last_body_page"] = last_body_page
             if body and body < target - 0.25:
                 result["layout_guidance"] = (
                     f"The body occupies about {body:.2f} of {target:g} requested pages. "
@@ -1786,7 +1797,11 @@ class NativeProject(CompilerMixin):
                     return self._compile_paper(args)
                 finally:
                     self._layout_retry = False
-        self.event("writing", "paper_compiled", f"Rendered {pages} pages.", artifact="paper/main.pdf")
+        coverage = {}
+        if result.get("body_equivalent_pages", 0) > 0 and 1 <= result["last_body_page"] <= pages:
+            coverage = {"body_pages": round(body, 3), "target_pages": target, "pdf_pages": pages,
+                        "last_body_page": last_body_page, "pdf_sha256": result["pdf_sha256"]}
+        self.event("writing", "paper_compiled", f"Rendered {pages} pages.", artifact="paper/main.pdf", **coverage)
         return result
 
     def _snapshot(self):
