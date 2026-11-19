@@ -427,6 +427,7 @@ def _first_author_surname(authors: list) -> str:
     if not authors:
         return ""
     name = authors[0] if isinstance(authors[0], str) else str(authors[0])
+    name = re.sub(r"\s+et\s+al\.?$", "", name, flags=re.IGNORECASE)
     if "," in name:
         name = name.split(",", 1)[0]
     # Tokens that are not the surname: DBLP's homonym number ("Wei Wang 0001")
@@ -591,10 +592,11 @@ def _fetch_bibtex_from_doi(doi: str) -> str | None:
 #  arXiv search (metadata only, no BibTeX)
 # ═══════════════════════════════════════════════════════════
 
-def _search_arxiv(query: str, max_results: int = 5) -> list[Paper]:
+def _search_arxiv(query: str, max_results: int = 5, *, title_only: bool = False) -> list[Paper]:
     """Search arXiv API for metadata (title, authors, abstract, arxiv_id)."""
-    encoded = urllib.parse.quote(query)
-    url = f"http://export.arxiv.org/api/query?search_query=all:{encoded}&max_results={max_results}"
+    term = f'ti:"{query}"' if title_only else f"all:{query}"
+    encoded = urllib.parse.quote(term)
+    url = f"https://export.arxiv.org/api/query?search_query={encoded}&max_results={max_results}"
     body = _http_get(url, timeout=20)
     if not body:
         return []
@@ -615,7 +617,7 @@ def _search_arxiv(query: str, max_results: int = 5) -> list[Paper]:
             abstract_m = re.search(r"<summary>(.*?)</summary>", entry, re.DOTALL)
             abstract = re.sub(r"\s+", " ", abstract_m.group(1)).strip() if abstract_m else None
 
-            id_m = re.search(r"<id>http://arxiv.org/abs/(.*?)</id>", entry)
+            id_m = re.search(r"<id>https?://arxiv.org/abs/(.*?)</id>", entry)
             arxiv_id = id_m.group(1) if id_m else None
             # Strip version suffix for cleaner ID
             if arxiv_id and "v" in arxiv_id:
@@ -931,7 +933,7 @@ def _strip_bibtex_fields(bib: str) -> str:
     # Detect entry type
     type_match = re.match(r"@(\w+)\s*\{", bib.strip())
     entry_type = type_match.group(1).lower() if type_match else ""
-    keep = _KEEP_FIELDS.get(entry_type, _KEEP_FIELDS_DEFAULT)
+    keep = _KEEP_FIELDS.get(entry_type, _KEEP_FIELDS_DEFAULT) | {"doi"}
 
     lines = bib.split("\n")
     result = []
@@ -1014,7 +1016,8 @@ def fetch_bibtex(paper: Paper) -> str | None:
         dblp_results = _search_dblp(paper.title, max_results=3)
         time.sleep(_DBLP_DELAY)
         for d in dblp_results:
-            if title_similarity(paper.title, d.title) >= _SIMILARITY_THRESHOLD and d.dblp_key:
+            if d.dblp_key and _same_paper(paper.title, {"author": " and ".join(paper.authors),
+                                                      "year": paper.year, "doi": paper.doi}, [d]):
                 bib = _fetch_bibtex_from_dblp(d.dblp_key)
                 if bib:
                     if "journal      = {CoRR}" in bib and (paper.arxiv_id or d.arxiv_id):
@@ -1071,9 +1074,12 @@ def parse_bib(bib_path: str) -> list[dict]:
     Each dict has: key, entry_type, fields (dict), raw (original text),
     preceding_comments (comment lines above the entry).
     """
-    content = Path(bib_path).read_text(errors="replace")
-    entries = []
+    return parse_bib_string(Path(bib_path).read_text(errors="replace"))
 
+
+def parse_bib_string(content: str) -> list[dict]:
+    """Parse an in-memory bibliography with the same fields and comments as a file."""
+    entries = []
     for start, end in bib_entry_spans(content):
         raw = content[start:end]
         header = re.match(r"@(\w+)\s*\{\s*([^,\s}]+)\s*,", raw)
@@ -1221,7 +1227,8 @@ def verify_bib(bib_path: str) -> list[VerificationResult]:
 
         if doi:
             bib = _fetch_bibtex_from_doi(doi)
-            if bib:
+            records = parse_bib_string(bib) if bib else []
+            if len(records) == 1 and _same_paper(title, fields, [_bib_paper(records[0])]):
                 found_in.append("crossref")
                 best_bibtex = _strip_bibtex_fields(bib)
             time.sleep(_CROSSREF_DELAY)
@@ -1231,7 +1238,7 @@ def verify_bib(bib_path: str) -> list[VerificationResult]:
         time.sleep(_DBLP_DELAY)
         dblp_match = None
         for d in dblp_results:
-            if title_similarity(title, d.title) >= _SIMILARITY_THRESHOLD:
+            if _same_paper(title, fields, [d]):
                 dblp_match = d
                 found_in.append("dblp")
                 # For arXiv papers found on DBLP: use arXiv's own BibTeX
@@ -1251,7 +1258,7 @@ def verify_bib(bib_path: str) -> list[VerificationResult]:
             cr_results = _search_crossref(title, max_results=3)
             time.sleep(_CROSSREF_DELAY)
             for cr in cr_results:
-                if title_similarity(title, cr.title) >= _SIMILARITY_THRESHOLD:
+                if _same_paper(title, fields, [cr]):
                     found_in.append("crossref")
                     if cr.doi:
                         bib = _fetch_bibtex_from_doi(cr.doi)
@@ -1306,17 +1313,6 @@ def verify_bib(bib_path: str) -> list[VerificationResult]:
                 ))
 
     return results
-
-
-def parse_bib_string(bib_string: str) -> list[dict]:
-    """Parse a BibTeX string (not file) into entry dicts. Same format as parse_bib."""
-    import tempfile
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".bib", delete=False) as f:
-        f.write(bib_string)
-        f.flush()
-        result = parse_bib(f.name)
-    Path(f.name).unlink(missing_ok=True)
-    return result
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1409,6 +1405,21 @@ def _as_year(value) -> int:
     return int(m.group()) if m else 0
 
 
+def _doi_id(value) -> str:
+    """Accept a standalone DOI or resolver URL, never a substring of a claim."""
+    value = re.sub(r"^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)", "", str(value or "").strip(), flags=re.I)
+    return value.lower() if re.fullmatch(r"10\.\d{4,9}/[^\s<>]+", value, re.I) else ""
+
+
+def _bib_paper(entry: dict) -> Paper:
+    f = entry["fields"]
+    return Paper(title=f.get("title", ""), authors=f.get("author", "").split(" and "),
+                 year=_as_year(f.get("year")), doi=_doi_id(f.get("doi")) or None,
+                 arxiv_id=f.get("eprint"),
+                 venue=next((f[k] for k in ("journal", "booktitle", "publisher") if f.get(k)), ""),
+                 bibtex=entry["raw"])
+
+
 def _same_paper(title: str, fields: dict, candidates) -> "Paper | None":
     """Pick the candidate that is the SAME PAPER, not merely the same title.
 
@@ -1428,6 +1439,7 @@ def _same_paper(title: str, fields: dict, candidates) -> "Paper | None":
     agrees we return None and the caller leaves the entry unresolved — a marked
     or dropped citation is recoverable, a confidently wrong one is not.
     """
+    want_doi = _doi_id(fields.get("doi"))
     want_year = _as_year(fields.get("year"))
     raw_authors = (fields.get("author") or "").split(" and ")
     want_author = _first_author_surname([a.strip() for a in raw_authors if a.strip()])
@@ -1438,6 +1450,8 @@ def _same_paper(title: str, fields: dict, candidates) -> "Paper | None":
     # state it and they disagree.
     fallback = None
     for p in candidates:
+        if want_doi and p.doi and _doi_id(p.doi) != want_doi:
+            continue
         if title_similarity(title, p.title) < _SIMILARITY_THRESHOLD:
             continue
         # Preprint and proceedings years routinely differ by one. The APIs are
@@ -1635,7 +1649,8 @@ def regenerate_bib_from_literature(literature_path: str, bib_path: str) -> None:
         if not bibtex:
             title = ref.get("title", "")
             if title:
-                paper = _search_by_title(title)
+                paper = _search_by_title(title, {"author": ref.get("authors"),
+                                                 "year": ref.get("year"), "doi": ref.get("doi")})
                 if paper:
                     bibtex = fetch_bibtex(paper)
                     if bibtex:
@@ -1914,175 +1929,211 @@ class BootstrapResult:
     needs_check: list    # Titles that couldn't be found in any API
 
 
-def bootstrap_citations(
-    titles: list[str],
-    bib_path: str,
-    literature_path: str,
-    search_queries: list[str] = None,
-    authors: list[str] = None,
-    years: list = None,
-    contexts: list[str] = None,
-) -> BootstrapResult:
-    """Given a list of paper titles, search APIs, fetch BibTeX, write to bib.
+def _cited_work(title: str, fields: dict, candidates: list[Paper]) -> Paper | None:
+    """Require affirmative metadata for identity fields supplied by the researcher."""
+    candidates = [c for c in candidates if
+                  (not fields.get("author") or _first_author_surname(c.authors))
+                  and (not fields.get("year") or _as_year(c.year))
+                  and (not fields.get("doi") or _doi_id(c.doi) == _doi_id(fields["doi"]))]
+    if not any(fields.get(k) for k in ("author", "year", "doi")):
+        candidates = [c for c in candidates if title_similarity(title, c.title) >= 0.97]
+    return _same_paper(title, fields, candidates)
 
-    Args:
-        titles: Clean paper titles (used for display and [NEEDS-CHECK] entries).
-        bib_path: Path to references.bib.
-        literature_path: Path to literature.yaml.
-        search_queries: Optional richer search queries (title + author + year).
-                        If not provided, titles are used as search queries.
 
-    For each title:
-    1. Search by query → if found, fetch BibTeX
-    2. If not found, try keyword search
-    3. If still not found, mark as [NEEDS-CHECK] using the clean title
+def _resolve_bootstrap_paper(title: str, fields: dict, query: str) -> Paper | None:
+    if fields["doi"]:
+        raw = _fetch_bibtex_from_doi(fields["doi"])
+        records = parse_bib_string(raw) if raw else []
+        if len(records) == 1:
+            candidate = _bib_paper(records[0])
+            if _cited_work(title, fields, [candidate]):
+                candidate.source, candidate.confirmed_by = "crossref", ["crossref"]
+                candidate.bibtex = _strip_bibtex_fields(raw)
+                return candidate
+    for term in dict.fromkeys((title, query, _extract_keywords_from_title(title))):
+        if term:
+            candidate = _search_by_title(title, fields, term)
+            if candidate:
+                if not candidate.abstract and candidate.source in ("dblp", "crossref"):
+                    _supplement_abstract(candidate)
+                return candidate
+    return None
 
-    Returns BootstrapResult with found papers and needs-check titles.
-    """
-    found_papers = []
-    found_keys = []
-    found_contexts = []
-    needs_check_titles = []
-    needs_check_authors = []
-    needs_check_years = []
-    needs_check_contexts = []
 
-    # A verified-looking remote hit can have a different key, and an outage
-    # can yield a placeholder for a complete source already in the manuscript.
-    # Reuse only a full bibliographic record with the same title, author and year.
-    local_sources = {}
-    if Path(bib_path).is_file():
-        for entry in parse_bib(bib_path):
-            fields = entry["fields"]
-            venue = next((fields[k] for k in ("journal", "booktitle", "publisher", "doi")
-                          if fields.get(k)), "")
-            if not venue or "[NEEDS-CHECK]" in entry["preceding_comments"]:
-                continue
-            names = fields.get("author", "").split(" and ")
-            year = _as_year(fields.get("year"))
-            title = fields.get("title", "")
-            identity = (_normalize_title(title), _first_author_surname(names), year)
-            if all(identity):
-                local_sources[identity] = (entry["key"], Paper(
-                    title=title, authors=names, year=year, venue=venue,
-                    bibtex=entry["raw"], source="existing bibliography"))
+def _previous_bootstrap_reference(references, by_key, title, fields, paper):
+    matches = []
+    for ref in references:
+        entry = by_key.get(ref.get("bibtex_key"))
+        if not entry or not _is_ark_managed(entry):
+            continue
+        if ref.get("requested_title") == title and _same_paper(title, fields, [_bib_paper(entry)]):
+            matches.append(ref)
+            continue
+        # Legacy rows did not store the requested identity. Only a single
+        # labeled DOI in that row's claim can corroborate a separately
+        # resolved publication. Never use prose as the lookup identifier.
+        context = ref.get("context") or ""
+        if (not ref.get("requested_title") and paper and paper.doi
+                and title_similarity(title, ref.get("title", "")) >= _SIMILARITY_THRESHOLD):
+            mentioned = re.findall(r"\b10\.\d{4,9}/[^\s)\],]+", context, re.I)
+            if (len(mentioned) == 1 and _doi_id(mentioned[0]) == _doi_id(paper.doi)
+                    and re.search(r"\bDOI:\s*" + re.escape(mentioned[0]), context, re.I)):
+                matches.append(ref)
+    return matches[0] if len(matches) == 1 else None
 
-    for i, title in enumerate(titles):
-        title = title.strip()
+
+def bootstrap_citations(titles: list[str], bib_path: str, literature_path: str,
+                        search_queries: list[str] = None, authors: list[str] = None,
+                        years: list = None, contexts: list[str] = None,
+                        dois: list[str] = None) -> BootstrapResult:
+    """Resolve each extracted work independently, keeping its requested identity and claim together."""
+    import yaml
+    from datetime import date
+    from ark.orchestrator.state import _atomic_write_text
+
+    bib_file, lit_file = Path(bib_path), Path(literature_path)
+    bib = bib_file.read_text() if bib_file.is_file() else "% ARK auto-managed references\n"
+    literature = (yaml.safe_load(lit_file.read_text()) or {}) if lit_file.is_file() else {}
+    references = literature.setdefault("references", [])
+    unverified = literature.setdefault("needs_check", [])
+    found, keys, missing = [], [], []
+
+    for i, original_title in enumerate(titles):
+        title = original_title.strip()
         if not title:
             continue
 
-        author = authors[i] if authors and i < len(authors) else ""
-        year = years[i] if years and i < len(years) else 0
-        identity = (_normalize_title(title), _first_author_surname([author or ""]), _as_year(year))
-        if identity in local_sources:
-            key, paper = local_sources[identity]
-            ctx = contexts[i] if contexts and i < len(contexts) else ""
-            update_literature_yaml(literature_path, [paper], [key], "", contexts=[ctx])
-            continue
+        def value(items, default=""):
+            return items[i] if items and i < len(items) and items[i] is not None else default
 
-        query = (search_queries[i] if search_queries and i < len(search_queries) else title).strip()
+        fields = {"author": value(authors), "year": _as_year(value(years)), "doi": _doi_id(value(dois))}
+        context = value(contexts)
+        entries = parse_bib_string(bib)
+        by_key = {e["key"]: e for e in entries}
+        local = None
+        previous = None
+        # A placeholder's key can already be cited by the manuscript.
+        for row in unverified:
+            if (_normalize_title(row.get("title", "")) == _normalize_title(title)
+                    and _same_paper(title, fields, [Paper(title, [row.get("authors", "")], row.get("year"))])):
+                previous = row
+                break
+        for entry in entries:
+            paper = _bib_paper(entry)
+            if (_normalize_title(title) == _normalize_title(paper.title)
+                    and _first_author_surname([fields["author"]])
+                    and _as_year(fields["year"]) and (paper.venue or paper.doi or paper.arxiv_id)
+                    and _first_author_surname(paper.authors) and paper.year
+                    and "[NEEDS-CHECK]" not in entry["preceding_comments"]
+                    and (not fields["doi"] or fields["doi"] == paper.doi)
+                    and _same_paper(title, fields, [paper])):
+                paper.source = "existing bibliography"
+                local = (entry["key"], paper)
+                break
 
-        # Round 1: search by query
-        paper = _search_by_title(query)
+        paper = local[1] if local else _resolve_bootstrap_paper(title, fields, value(search_queries))
+        # Verify what will actually be printed. A metadata match can be followed
+        # by a BibTeX fetch returning an unrelated edition, author, or software.
+        raw = (paper.bibtex or fetch_bibtex(paper)) if paper else None
+        records = parse_bib_string(raw) if raw else []
+        if len(records) != 1 or not _cited_work(title, fields, [_bib_paper(records[0])]):
+            paper = None
 
-        # Round 2: if not found, try with just the title
-        if not paper and query != title:
-            paper = _search_by_title(title)
+        if not previous:
+            previous = _previous_bootstrap_reference(references, by_key, title, fields, paper)
 
-        # Round 3: if still not found, try keyword search
-        if not paper:
-            keywords = _extract_keywords_from_title(title)
-            if keywords and keywords != _normalize_title(title):
-                paper = _search_by_title(keywords)
+        key = (previous or {}).get("bibtex_key") or (local[0] if local else None)
+        if not key and paper:
+            key = records[0]["key"]
+        if not key:
+            key = "".join(re.findall(r"\w+", title.lower())[:3]) or "source"
+        entry = by_key.get(key)
+        if entry and not previous and not local and not _same_paper(title, fields, [_bib_paper(entry)]):
+            base = key
+            suffix = 2
+            while key in by_key:
+                key = f"{base}{suffix}"
+                suffix += 1
+            entry = None
 
         if paper:
-            # Use Deep Research context as fallback abstract if API didn't provide one
-            ctx = (contexts[i] if contexts and i < len(contexts) else "") or ""
-            if not paper.abstract and ctx:
-                paper.abstract = ctx
-            found_papers.append(paper)
-            found_contexts.append(ctx)
+            source = f"API ({', '.join(paper.confirmed_by)})" if not local else "existing bibliography"
+            raw = re.sub(r"(@\w+\s*\{\s*)[^,]+", lambda m: m[1] + key, raw.strip(), count=1)
+            paper.bibtex = raw
+            record = {"title": paper.title, "authors": ", ".join(paper.authors), "year": paper.year,
+                      "venue": paper.venue, "bibtex_key": key, "bibtex": raw, "source": source,
+                      "requested_title": title}
+            if paper.doi:
+                record["doi"] = paper.doi
+            if paper.arxiv_id:
+                record["arxiv_id"] = paper.arxiv_id
+            if paper.abstract:
+                record["abstract"] = paper.abstract[:500]
+            tag = f"% [ARK:source={paper.source or 'verified'}]"
+            found.append(paper)
+            keys.append(key)
         else:
-            needs_check_titles.append(title)
-            nc_author = (authors[i] if authors and i < len(authors) else "") or ""
-            nc_year = (years[i] if years and i < len(years) else 0) or 0
-            nc_ctx = (contexts[i] if contexts and i < len(contexts) else "") or ""
-            needs_check_authors.append(nc_author)
-            needs_check_years.append(nc_year)
-            needs_check_contexts.append(nc_ctx)
+            record = {"title": title, "authors": fields["author"], "year": fields["year"],
+                      "bibtex_key": key, "status": "[NEEDS-CHECK]", "reason": "Source identity unconfirmed"}
+            raw = (f"@misc{{{key},\n  title = {{{title}}},\n"
+                   + (f"  author = {{{fields['author']} et al.}},\n" if fields["author"] else "")
+                   + (f"  year = {{{fields['year']}}},\n" if fields["year"] else "") + "}")
+            tag = "% [NEEDS-CHECK] Source identity unconfirmed"
+            missing.append(title)
+        record["added_date"] = (previous or {}).get("added_date") or date.today().isoformat()
+        if context:
+            record["context"] = context
+            if any(word in context.lower() for word in ("must cite", "essential", "critical", "closest prior work")):
+                record["importance"] = "critical"
+        existing = next((r for r in references if r.get("bibtex_key") == key), None)
+        if local and existing:
+            # Preserve upstream provenance and any other curated fields on reuse.
+            record = {**existing, **record, "source": existing.get("source") or record["source"],
+                      "added_date": existing.get("added_date") or record["added_date"]}
+        for group in (references, unverified):
+            group[:] = [row for row in group if row.get("bibtex_key") != key]
+        (references if paper else unverified).append(record)
+        if not local or (previous and entry and entry["raw"] != raw):
+            if entry:
+                # Replace only the ARK marker directly attached to this record.
+                pattern = r"(?:^% \[(?:ARK:source=|NEEDS-CHECK)[^\n]*\n)*" + re.escape(entry["raw"])
+                bib = re.sub(pattern, lambda _: tag + "\n" + raw, bib, count=1, flags=re.M)
+            else:
+                bib += "\n" + tag + "\n" + raw + "\n"
 
-    # Fetch BibTeX and write to references.bib
-    if found_papers:
-        found_keys = append_papers_to_bib(bib_path, found_papers)
-
-    # Write [NEEDS-CHECK] entries to references.bib (with author/year if available)
-    needs_check_keys = []
-    if needs_check_titles:
-        needs_check_keys = _write_needs_check_to_bib(
-            bib_path, needs_check_titles, needs_check_authors, needs_check_years
-        )
-
-    # Update literature.yaml (found papers + needs-check)
-    if found_papers and found_keys:
-        update_literature_yaml(literature_path, found_papers, found_keys, "",
-                               contexts=found_contexts)
-    if needs_check_titles:
-        _write_needs_check_to_literature(literature_path, needs_check_titles, needs_check_keys,
-                                         needs_check_contexts, needs_check_authors, needs_check_years)
-
-    return BootstrapResult(
-        found=found_papers,
-        found_keys=found_keys,
-        needs_check=needs_check_titles,
-    )
+    if titles:
+        if not bib_file.is_file() or bib != bib_file.read_text():
+            _atomic_write_text(bib_file, bib)
+        _atomic_write_text(lit_file, yaml.safe_dump(literature, allow_unicode=True, sort_keys=False))
+    return BootstrapResult(found=found, found_keys=keys, needs_check=missing)
 
 
-def _search_by_title(title: str) -> Paper | None:
-    """Search for a specific paper by title across all APIs.
-
-    Uses strict similarity matching first. For short queries (likely abbreviations
-    or partial titles), also checks if the query is contained in the result title.
-
-    Returns the best matching Paper or None.
-    """
-    def _matches(paper: Paper) -> bool:
-        return title_similarity(title, paper.title) >= _SIMILARITY_THRESHOLD
-
-    # Try DBLP first — prefer published over preprint if both match
-    dblp_results = _search_dblp(title, max_results=5)
-    time.sleep(_DBLP_DELAY)
-    dblp_matches = [p for p in dblp_results if _matches(p)]
-    if dblp_matches:
-        # Prefer published version
-        published = [p for p in dblp_matches if _is_published(p)]
-        best = published[0] if published else dblp_matches[0]
-        if not best.abstract:
-            _supplement_abstract(best)
-        return best
-
-    # Try CrossRef
-    cr_results = _search_crossref(title, max_results=3)
-    time.sleep(_CROSSREF_DELAY)
-    for p in cr_results:
-        if _matches(p):
-            if not p.abstract:
-                _supplement_abstract(p)
-            return p
-
-    # Try Semantic Scholar (has good title matching + abstract)
-    s2_results = _search_semantic_scholar(title, max_results=3)
-    for p in s2_results:
-        if _matches(p):
-            return p
-
+def _search_by_title(title: str, fields: dict | None = None, query: str = "") -> Paper | None:
+    """Use the query to retrieve candidates; verify against the requested work."""
+    fields = fields or {}
+    query = query or title
+    for search, delay in ((_search_dblp, _DBLP_DELAY), (_search_crossref, _CROSSREF_DELAY),
+                          (_search_semantic_scholar, 0)):
+        candidates = search(query, max_results=6)
+        if delay:
+            time.sleep(delay)
+        candidates.sort(key=lambda paper: (not _is_published(paper), -title_similarity(title, paper.title)))
+        candidate = _cited_work(title, fields, candidates)
+        if candidate:
+            return candidate
+    # arXiv has papers that Crossref does not index. The title prefix survives
+    # punctuation and hyphen changes between preprint and proceedings titles.
+    if query == title:
+        prefix = " ".join(_normalize_title(title).split()[:4])
+        return _cited_work(title, fields, _search_arxiv(prefix, max_results=8, title_only=True))
     return None
 
 
 def _supplement_abstract(paper: Paper) -> None:
     """Try to get abstract from Semantic Scholar for a paper that lacks one."""
     s2_results = _search_semantic_scholar(paper.title, max_results=1)
-    if s2_results and title_similarity(paper.title, s2_results[0].title) >= _SIMILARITY_THRESHOLD:
+    if s2_results and _same_paper(paper.title, {"author": " and ".join(paper.authors),
+                                                 "year": paper.year, "doi": paper.doi}, [s2_results[0]]):
         if s2_results[0].abstract:
             paper.abstract = s2_results[0].abstract
         if s2_results[0].citation_count and not paper.citation_count:
@@ -2109,6 +2160,39 @@ def _extract_keywords_from_title(title: str) -> str:
 # ═══════════════════════════════════════════════════════════
 #  Mark [NEEDS-CHECK] citations in tex files
 # ═══════════════════════════════════════════════════════════
+
+def unconfirmed_citations(tex_dir: Path) -> list[str]:
+    """Identify actually cited bibliography entries explicitly marked unconfirmed."""
+    root = Path(tex_dir).resolve()
+    bib = root / "references.bib"
+    if not bib.is_file():
+        return []
+    # Templates and old drafts can sit alongside the actual paper. Follow the
+    # active TeX inputs; an unused exemplar must never block the deliverable.
+    queue = [root / "main.tex"]
+    seen, cited = set(), set()
+    while queue:
+        file = queue.pop()
+        if file in seen or not file.is_relative_to(root) or not file.is_file():
+            continue
+        seen.add(file)
+        source = re.sub(r"(?m)(?<!\\)%.*$", "", file.read_text(errors="replace"))
+        cited.update(cited_keys_in_tex(source))
+        for name in re.findall(r"\\(?:input|include|subfile)\s*\{([^{}]+)\}", source):
+            rel = Path(name)
+            if not rel.suffix:
+                rel = rel.with_suffix(".tex")
+            candidate = root / rel
+            if not candidate.is_file():
+                candidate = file.parent / rel
+            queue.append(candidate.resolve())
+    missing = []
+    for entry in parse_bib(str(bib)):
+        tags = re.findall(r"(?m)^%\s*\[(NEEDS-CHECK|ARK:source=[^\]]+)\]", entry.get("preceding_comments", ""))
+        if entry["key"] in cited and tags and tags[-1] == "NEEDS-CHECK":
+            missing.append(entry["key"])
+    return sorted(missing)
+
 
 def mark_needs_check_in_tex(bib_path: str, tex_dir: str,
                             literature_path: str = None) -> int:

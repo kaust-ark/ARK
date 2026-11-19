@@ -329,7 +329,7 @@ def test_bootstrap_reuses_complete_existing_paper_without_adding_placeholder(tmp
     bib.write_text(existing)
     literature = tmp_path / "literature.yaml"
     searched = []
-    monkeypatch.setattr(citation, "_search_by_title", lambda title: searched.append(title))
+    monkeypatch.setattr(citation, "_search_by_title", lambda title, fields, query: searched.append(title))
     kwargs = dict(titles=["Scikit-learn: Machine Learning in Python"], bib_path=str(bib),
                   literature_path=str(literature), authors=["Pedregosa"], years=[2011])
     for _ in range(2):
@@ -342,3 +342,92 @@ def test_bootstrap_reuses_complete_existing_paper_without_adding_placeholder(tmp
     kwargs["authors"] = ["Different"]
     assert citation.bootstrap_citations(**kwargs).needs_check == kwargs["titles"]
     assert searched
+
+
+def test_bootstrap_repairs_legacy_claim_keeps_cited_key_and_reuses_receipt(tmp_path, monkeypatch):
+    from ark import citation as c
+    import yaml
+
+    title = "Inference for the Generalization Error"
+    doi = "10.1023/a:1024068626366"
+    old_title = "mlr3inferr: Inference on the Generalization Error"
+    old = f"@misc{{Fischer_2025, title={{{old_title}}}, author={{Sebastian Fischer}}, year={{2025}}}}"
+    new = (f"@article{{Nadeau_2003, title={{{title}}}, author={{Claude Nadeau and Yoshua Bengio}}, "
+           f"year={{2003}}, journal={{Machine Learning}}, doi={{{doi}}}}}")
+    bib, lit = tmp_path / "r.bib", tmp_path / "lit.yaml"
+    bib.write_text("% [ARK:source=crossref]\n" + old)
+    lit.write_text(yaml.safe_dump({"references": [{"bibtex_key": "Fischer_2025", "title": old_title,
+                                                   "context": f"Original result (DOI: {doi})."}]}))
+    requests = []
+    monkeypatch.setattr(c, "_fetch_bibtex_from_doi", lambda x: requests.append(x) or new)
+    monkeypatch.setattr(c, "_search_by_title", lambda *args: pytest.fail("Unexpected title search"))
+    for _ in range(2):
+        resolved = c.bootstrap_citations([title], str(bib), str(lit), authors=["Nadeau"], years=[2003],
+                                         dois=["https://doi.org/" + doi], contexts=["A rephrased claim."])
+        assert resolved.found_keys == ["Fischer_2025"] and not resolved.needs_check
+    assert requests == [doi]
+    [entry] = c.parse_bib(str(bib))
+    assert entry["fields"]["author"].startswith("Claude Nadeau") and entry["fields"]["doi"] == doi
+    [ref] = yaml.safe_load(lit.read_text())["references"]
+    assert ref["requested_title"] == title and ref["doi"] == doi
+
+
+def test_claim_with_multiple_dois_cannot_rebind_existing_work(tmp_path, monkeypatch):
+    from ark import citation as c
+    import yaml
+
+    title = "Estimation of Generalization Error"
+    old_title = "Estimation of the Generalization Error"
+    old = f"@article{{Original, title={{{old_title}}}, author={{Smith}}, year={{2015}}, journal={{Journal}}}}"
+    doi = "10.1234/second"
+    new = f"@article{{Second, title={{{title}}}, author={{Wang}}, year={{2020}}, doi={{{doi}}}}}"
+    ctx = f"Compare the methods (DOI: 10.1234/first and DOI: {doi})."
+    b, l = tmp_path / "refs.bib", tmp_path / "lit.yaml"
+    b.write_text("% [ARK:source=crossref]\n" + old)
+    l.write_text(yaml.safe_dump({"references": [{"bibtex_key": "Original", "title": old_title, "context": ctx}]}))
+    monkeypatch.setattr(c, "_fetch_bibtex_from_doi", lambda x: new if x == doi else pytest.fail(x))
+    out = c.bootstrap_citations([title], str(b), str(l), authors=["Wang"], years=[2020], contexts=[ctx], dois=[doi])
+    assert out.found_keys == ["Second"]
+    assert [(k["key"], k["fields"]["author"]) for k in c.parse_bib(str(b))] == [
+        ("Original", "Smith"), ("Second", "Wang")]
+    assert len(yaml.safe_load(l.read_text())["references"]) == 2
+
+
+def test_bootstrap_validates_fetched_bib_and_keeps_each_key_with_its_own_claim(tmp_path, monkeypatch):
+    import yaml
+    from ark import citation as c
+
+    titles = ["Paper whose metadata endpoint failed", "Paper with confirmed measurements"]
+    papers = {title: c.Paper(title, [surname], 2010, source="dblp", confirmed_by=["dblp"])
+              for title, surname in zip(titles, ("Red", "Blue"))}
+    monkeypatch.setattr(c, "_search_by_title", lambda title, *args: papers[title])
+    def official(paper):
+        name = "Unrelated" if paper is papers[titles[0]] else "Blue"
+        return f"@article{{{name}2010,title={{{paper.title}}},author={{{name}}},year={{2010}},journal={{J}}}}"
+    monkeypatch.setattr(c, "fetch_bibtex", official)
+    b, l = tmp_path / "refs.bib", tmp_path / "lit.yaml"
+    for _ in range(2):
+        result = c.bootstrap_citations(titles, str(b), str(l), authors=["Red", "Blue"], years=[2010, 2010],
+                                       contexts=["earlier claim", "later claim"])
+        assert result.needs_check == [titles[0]] and result.found_keys == ["Blue2010"]
+    data = yaml.safe_load(l.read_text())
+    assert len(c.parse_bib(str(b))) == 2
+    assert [(r["title"], r["context"], r["bibtex_key"]) for r in data["references"]] == [
+        (titles[1], "later claim", "Blue2010")]
+    assert [r["title"] for r in data["needs_check"]] == [titles[0]]
+
+
+def test_title_search_filters_homonyms_and_uses_original_title_for_arxiv(tmp_path, monkeypatch):
+    from ark import citation as c
+
+    title = "On Calibration of Modern Neural Networks"
+    wrong = c.Paper(title, ["A. Smith"], 2025)
+    right = c.Paper(title, ["Chuan Guo"], 2017, arxiv_id="1706.04599", venue="arXiv")
+    for source in ("_search_dblp", "_search_crossref", "_search_semantic_scholar"):
+        monkeypatch.setattr(c, source, lambda *args, **kwargs: [wrong])
+    monkeypatch.setattr(c.time, "sleep", lambda _: None)
+    def arxiv(query, max_results, title_only):
+        assert title_only and query == "on calibration of modern"
+        return [wrong, right]
+    monkeypatch.setattr(c, "_search_arxiv", arxiv)
+    assert c._search_by_title(title, {"author": "Guo", "year": 2017}) is right

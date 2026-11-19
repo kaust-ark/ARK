@@ -425,6 +425,8 @@ def _detect_package_name(venue_format: str, latex_path: Path) -> dict[str, str]:
 def _get_main_tex_content(venue_format: str, title: str, venue_name: str, authors: list,
                           latex_path: Path = None) -> str:
     """Generate main.tex content based on venue_format. If latex_path is provided, infer package names from downloaded files."""
+    from ark.template_preprocess import ARK_ACK_TEXT
+
     author_str = " \\and ".join(authors) if authors else "Author Name"
     title = title or "Paper Title"
 
@@ -453,7 +455,7 @@ def _get_main_tex_content(venue_format: str, title: str, venue_name: str, author
 
 
 \section*{Acknowledgments}
-The author(s) used Idea2Paper (idea2paper.org) for background research, coding, experimentation, results analysis and content generation in every section of the article. All content was reviewed and edited by the author(s), who take full responsibility for the final work.
+""" + ARK_ACK_TEXT + r"""
 
 \bibliographystyle{plainnat}
 \bibliography{references}

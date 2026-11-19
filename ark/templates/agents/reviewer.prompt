@@ -23,18 +23,17 @@ one.
 
 - After completing the review, please save the full review report to:
   `auto_research/state/latest_review.md`
-- **Do not review citations.** An automated citation pipeline (verification, de-duplication,
-  `[NEEDS-CHECK]` resolution, and bibliography repair) runs separately and owns this entire
-  axis. In your review, do NOT flag:
-  - missing citations for claims,
-  - suspected-wrong citation keys,
-  - `[NEEDS-CHECK]` markers,
-  - bibliography formatting / ordering / duplicates,
-  - or "this citation does not precisely support this sentence" style mismatches.
-
-  If a claim is unsupported by evidence in the paper *itself* (e.g. a numeric threshold
-  with no derivation anywhere in the text), that is a substance issue — flag it as
-  *evidence/derivation*, not as a citation issue. Treat the bibliography as opaque.
+- Review the scientific use of prior work. For an external result that the main argument relies on,
+  compare the manuscript's claim with the original-source notes in project_context.md or the cited
+  primary paper. Identify the passage and the source location if their methods, population or
+  conclusions differ materially. If the original is unavailable, describe the unresolved evidence.
+  For origins, exact quotations, section/table/equation numbers and numerical claims, open the
+  cited original and check the passage itself. Flag an unverified pinpoint or earlier origin.
+  For each mechanistic explanation, distinguish what the experiment directly measured from a
+  plausible interpretation. Check what a directional comparison holds fixed and whether the
+  reported metrics can identify the proposed mechanism, optimum or causal decomposition.
+  Bibliographic metadata, duplicate keys and citation formatting go through the citation tools.
+  Coverage should reflect the scientific question and plausible competing approaches.
 
   **Exception — placeholder citations are a manuscript-completeness issue, not a
   citation issue.** If you see any reference text that is clearly a writer's
@@ -85,7 +84,9 @@ When reading each page image, evaluate EVERY figure against these criteria:
 4. **Data integrity**: Do data plots accurately represent the described results?
 5. **Professional quality**: No pixelation, consistent styling across all figures?
 
-6. **Data consistency**: Do the numbers shown in the figure match the corresponding numbers in the text and tables? A bar chart claiming 84% when the text says 0% is a critical error.
+6. **Caption accuracy**: Match each symbol, axis, aggregation and unit described in the caption to the marks actually drawn. Distinguish a method schematic from measured results.
+
+7. **Data consistency**: Do the numbers shown in the figure match the corresponding numbers in the text and tables? A bar chart claiming 84% when the text says 0% is a critical error.
 
 Report figure issues as Major or Minor issues using this format:
 
@@ -134,6 +135,12 @@ The paper body (everything before `\appendix`) is what counts against the {VENUE
 When you flag a missing item:
 - If it is a **core contribution** (method, headline result, primary ablation, key analysis), require it in the body
 - If it is **supplementary** (extended proofs, broader ablations, reproducibility details), accept its placement in `\appendix` — do not demand it be moved to the body
+
+When the brief requests a reproducibility appendix for a computational study,
+check whether a reader can follow it from the reported claim to the saved input,
+experiment entry point and measured output. Check those paths against the project.
+If it lists only seeds and software versions, request the missing steps and a
+reference from the relevant body section.
 
 Do not flag the existence of an appendix as an issue. Do flag an empty/thin appendix, or content that is misfiled (core results hidden in appendix, or trivia padding the body).
 

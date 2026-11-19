@@ -7,6 +7,9 @@ research before starting the paper writing loop.
 """
 
 import base64
+from bisect import bisect_right
+import hashlib
+import json
 import os
 import threading
 import time
@@ -68,8 +71,8 @@ def build_research_query(config: dict) -> str:
         "Please conduct comprehensive research on this topic. I need:"
     )
     query_parts.append(
-        "1. A thorough literature review of the most relevant and recent papers "
-        "(2022-2026), including key findings, methodologies, and gaps."
+        "1. The original work establishing the problem, the closest competing methods and "
+        "the strongest recent comparisons, including findings, assumptions and gaps."
     )
     query_parts.append(
         "2. Current state-of-the-art approaches, benchmarks, and baselines."
@@ -119,45 +122,60 @@ def build_research_query(config: dict) -> str:
     return "\n".join(query_parts)
 
 
+def _field(item, name, default=None):
+    # SDKs predating the steps schema retain newer response fields as raw JSON.
+    return item.get(name, default) if isinstance(item, dict) else getattr(item, name, default)
+
+
+def _linked_text_blocks(outputs: list) -> dict[int, str]:
+    """Resolve local and report-wide byte offsets before inserting image references."""
+    blocks = {}
+    offsets = []
+    indices = []
+    annotations = []
+    length = 0
+    for index, item in enumerate(outputs):
+        if _field(item, "type") != "text":
+            continue
+        data = (_field(item, "text") or "").encode()
+        blocks[index] = data
+        indices.append(index)
+        offsets.append(length)
+        length += len(data)
+        annotations.extend((index, a) for a in _field(item, "annotations") or [])
+
+    links = {}
+    for index, annotation in annotations:
+        start = _field(annotation, "start_index")
+        end = _field(annotation, "end_index")
+        url = _field(annotation, "url")
+        if (_field(annotation, "type") != "url_citation" or not url
+                or not isinstance(start, int) or not isinstance(end, int) or not 0 <= start < end):
+            continue
+        # Some responses attach ALL annotations to the first text item and
+        # index into the concatenated text (no joins or image placeholders).
+        if not blocks[index][start:end].startswith(b"[cite:"):
+            location = bisect_right(offsets, start) - 1
+            other = indices[location]
+            local_start, local_end = start - offsets[location], end - offsets[location]
+            if (local_end <= len(blocks[other])
+                    and blocks[other][local_start:local_end].startswith(b"[cite:")):
+                index, start, end = other, local_start, local_end
+        if end <= len(blocks[index]):
+            urls = links.setdefault((index, end), [])
+            if url not in urls:
+                urls.append(url)
+
+    for (index, end), urls in sorted(links.items(), reverse=True):
+        # Several sources can ground the same citation marker.
+        suffix = f"({urls[0]})" + "".join(f" [source]({url})" for url in urls[1:])
+        data = blocks[index]
+        blocks[index] = data[:end] + suffix.encode() + data[end:]
+    return {index: data.decode("utf-8", errors="replace") for index, data in blocks.items()}
+
+
 def _apply_url_annotations(text: str, annotations: Iterable | None) -> str:
-    """Inline `[cite: N]` markers as markdown links using URLCitation data.
-
-    The Deep Research API returns each citation marker as a substring
-    range (start_index/end_index) plus a grounding URL on the parent
-    TextContent. We rewrite ``text[start:end]`` from ``[cite: N]`` to
-    ``[cite: N](url)`` in reverse offset order so earlier substitutions
-    don't shift later indices.
-
-    The offsets are UTF-8 **byte** offsets, not character indices, so we
-    slice/insert in byte space and decode back. Treating them as str
-    indices drifts the insertion point past every multibyte character
-    (em-dashes, curly quotes, ...) that precedes the marker, jamming the
-    ``(url)`` into the following word.
-
-    Annotations without a URL or with out-of-range offsets are skipped
-    silently — the underlying body text already contains the marker, so
-    a missing URL just means that citation stays unlinked rather than
-    crashing the whole report.
-    """
-    if not annotations:
-        return text
-    data = text.encode("utf-8")
-    spans: list[tuple[int, int, str]] = []
-    for a in annotations:
-        if getattr(a, "type", "") != "url_citation":
-            continue
-        start = getattr(a, "start_index", None)
-        end = getattr(a, "end_index", None)
-        url = getattr(a, "url", None)
-        if start is None or end is None or not url:
-            continue
-        if start < 0 or end > len(data) or start >= end:  # bounds in bytes
-            continue
-        spans.append((start, end, url))
-    spans.sort(key=lambda s: s[0], reverse=True)
-    for start, end, url in spans:
-        data = data[:end] + f"({url})".encode("utf-8") + data[end:]
-    return data.decode("utf-8", errors="replace")
+    return _linked_text_blocks([{"type": "text", "text": text, "annotations": annotations}])[0]
 
 
 def _model_output_contents(interaction) -> list:
@@ -171,14 +189,14 @@ def _model_output_contents(interaction) -> list:
     of this module is schema-agnostic. Falls back to ``outputs`` for the
     legacy schema (old SDKs / recorded fixtures).
     """
-    steps = getattr(interaction, "steps", None)
+    steps = _field(interaction, "steps")
     if steps is None:
-        return list(getattr(interaction, "outputs", None) or [])
+        return list(_field(interaction, "outputs") or [])
     items: list = []
     for s in steps or []:
-        if getattr(s, "type", "") != "model_output":
+        if _field(s, "type") != "model_output":
             continue
-        items.extend(list(getattr(s, "content", None) or []))
+        items.extend(list(_field(s, "content") or []))
     return items
 
 
@@ -197,19 +215,20 @@ def _assemble_report(outputs: Iterable, assets_dir: Path) -> str:
     """
     parts: list[str] = []
     fig_count = 0
-    for o in outputs or []:
-        otype = getattr(o, "type", "")
+    outputs = list(outputs or [])
+    linked = _linked_text_blocks(outputs)
+    for index, o in enumerate(outputs):
+        otype = _field(o, "type")
         if otype == "text":
-            text = getattr(o, "text", "") or ""
+            text = linked[index]
             if not text.strip():
                 continue
-            text = _apply_url_annotations(text, getattr(o, "annotations", None))
             parts.append(text)
         elif otype == "image":
-            data = getattr(o, "data", "") or ""
+            data = _field(o, "data") or ""
             if not data:
                 continue
-            mime = (getattr(o, "mime_type", "") or "image/png").lower()
+            mime = (_field(o, "mime_type") or "image/png").lower()
             ext = ".png" if "png" in mime else (".jpg" if "jp" in mime else ".bin")
             fig_count += 1
             try:
@@ -227,11 +246,39 @@ def _assemble_report(outputs: Iterable, assets_dir: Path) -> str:
     return "\n\n".join(parts)
 
 
+def research_report_status(state_dir: Path) -> str:
+    """Classify the saved literature survey, including pre-receipt projects."""
+    report = state_dir / "deep_research.md"
+    degraded = (state_dir / "research_degraded.txt").is_file()
+    data = report.read_bytes() if report.is_file() else b""
+    if not data.strip():
+        return "degraded" if degraded else "missing"
+    if data.startswith(b"# Literature Survey (fallback)"):
+        return "degraded"
+    receipt_path = state_dir / "deep_research_receipt.json"
+    if receipt_path.is_file():
+        try:
+            receipt = json.loads(receipt_path.read_text())
+            if (isinstance(receipt, dict) and receipt.get("provider") == "google"
+                    and receipt.get("status") == "completed" and receipt.get("interaction_id")
+                    and receipt.get("report_sha256") == hashlib.sha256(data).hexdigest()):
+                return "verified"
+        except (OSError, ValueError):
+            pass
+        return "invalid_receipt"
+    header, _, body = data.partition(b"\n---\n")
+    if (header.startswith(b"# Deep Research Report\n") and b"**Duration**:" in header
+            and b"**Generated**:" in header and body.strip()):
+        return "legacy"
+    return "degraded" if degraded else "available"
+
+
 def run_deep_research(
     config: dict,
     output_dir: Path,
     custom_query: str = None,
     api_key: str = None,
+    interaction_id: str | None = None,
 ) -> str:
     """Run Gemini Deep Research and save results.
 
@@ -240,10 +287,28 @@ def run_deep_research(
         output_dir: Directory to save the research report
         custom_query: Deep research query (generated by initializer agent)
         api_key: Gemini API key (overrides stored key)
+        interaction_id: Resume a known Google interaction without creating a new one.
 
     Returns:
         Path to the saved research report, or empty string on failure
     """
+    import fcntl
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    # Continue and a worker finishing its last poll may overlap. Serialize
+    # the whole claim/publish transaction: waiters reuse the completed report.
+    with (output_dir / ".deep_research.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if research_report_status(output_dir) in ("verified", "legacy", "available"):
+            (output_dir / "research_degraded.txt").unlink(missing_ok=True)
+            return str(output_dir / "deep_research.md")
+        return _run_google_interaction(config, output_dir, custom_query, api_key, interaction_id)
+
+
+def _run_google_interaction(config, output_dir, custom_query, api_key, interaction_id):
+    from ark.orchestrator.state import _atomic_write_text
+
+    report_path = output_dir / "deep_research.md"
     try:
         from google import genai
     except ImportError:
@@ -269,14 +334,26 @@ def run_deep_research(
             f"I am writing an academic paper titled \"{title}\" targeting {venue}.\n\n"
             f"Research idea:\n{idea[:4000]}\n\n"
             "Please conduct comprehensive research on this topic covering:\n"
-            "1. Literature review of recent relevant papers (2022-2026)\n"
+            "1. Foundational sources, closest prior work and relevant recent comparisons\n"
             "2. State-of-the-art approaches and baselines\n"
             "3. External systems and tools needed, with installation instructions\n"
             "4. Experimental methodology and evaluation metrics\n"
         )
 
-    # Initialize client
+    # Ask for checkable primary evidence even when the initializer supplied the
+    # topic. The writer needs what a paper supports, not just a list of titles.
+    query += (
+        "\n\nFor each directly relevant source, identify the original publication or "
+        "dataset, its DOI or official URL, and the section, table or result supporting "
+        "the claim. Distinguish the source's finding from its applicability to this "
+        "project. Include relevant foundational work as well as recent comparisons. "
+        "Identify the methods or metrics in the experimental comparison and trace them "
+        "to the relevant original papers. Treat job scheduling, art generation and manuscript "
+        "delivery as workflow instructions unless they are themselves the research subject. "
+        "Flag inaccessible originals and unresolved claims."
+    )
     client = genai.Client(api_key=key)
+    pending = output_dir / "deep_research_interaction.json"
 
     print()
     print("  Starting Gemini Deep Research...")
@@ -293,13 +370,23 @@ def run_deep_research(
         # speed-optimized variant; the Max sibling targets async/cron
         # workflows and is overkill for our interactive pipeline.
         agent = "deep-research-preview-04-2026"
-        interaction = client.interactions.create(
-            input=query,
-            agent=agent,
-            background=True,
-        )
-
-        interaction_id = interaction.id
+        # The initializer's suggested query may be unavailable on Continue.
+        # The saved idea is stable across process restarts of the same project.
+        request_hash = hashlib.sha256(query.encode()).hexdigest()
+        idea = output_dir / "idea.md"
+        idea_hash = hashlib.sha256(idea.read_bytes()).hexdigest() if idea.is_file() else None
+        if not interaction_id and pending.is_file():
+            saved = json.loads(pending.read_text())
+            if saved.get("agent") == agent and (saved.get("query_sha256") == request_hash
+                    or (idea_hash and saved.get("idea_sha256") == idea_hash)):
+                interaction_id = saved["interaction_id"]
+        if not interaction_id:
+            interaction = client.interactions.create(input=query, agent=agent, background=True)
+            interaction_id = interaction.id
+        _atomic_write_text(pending, json.dumps({
+            "agent": agent, "interaction_id": interaction_id, "query_sha256": request_hash,
+            "idea_sha256": idea_hash,
+        }) + "\n")
         print(f"  Research ID: {interaction_id}")
         print()
 
@@ -311,7 +398,7 @@ def run_deep_research(
 
         while True:
             interaction = client.interactions.get(interaction_id)
-            status = interaction.status
+            status = _field(interaction, "status")
             elapsed = int(time.time() - start_time)
             elapsed_str = f"{elapsed // 60}m {elapsed % 60}s"
 
@@ -320,6 +407,7 @@ def run_deep_research(
                 last_status = status
 
             if status == "completed":
+                agent = _field(interaction, "agent") or agent
                 # Assemble all outputs (text + images) into one report.
                 # Earlier code took only outputs[0].text — that dropped
                 # the Sources list and ~80% of the body. See
@@ -334,7 +422,6 @@ def run_deep_research(
                     print("  Warning: Research completed but no text output found.")
                     return ""
 
-                report_path = output_dir / "deep_research.md"
                 header = (
                     f"# Deep Research Report\n\n"
                     f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
@@ -346,14 +433,28 @@ def run_deep_research(
                     f"---\n\n"
                 )
 
-                report_path.write_text(header + report_text)
+                document = header + report_text
+                usage = _field(interaction, "usage")
+                if hasattr(usage, "model_dump"):
+                    usage = usage.model_dump(mode="json", exclude_none=True)
+                receipt = {
+                    "provider": "google", "agent": agent, "interaction_id": interaction_id,
+                    "status": status, "report_sha256": hashlib.sha256(document.encode()).hexdigest(),
+                    "usage": usage if isinstance(usage, dict) else None,
+                }
+                # The report is the stage's completion marker. Publish it after its
+                # receipt so a reader cannot mistake an unfinished write for success.
+                _atomic_write_text(output_dir / "deep_research_receipt.json", json.dumps(receipt, indent=2) + "\n")
+                _atomic_write_text(report_path, document)
+                (output_dir / "research_degraded.txt").unlink(missing_ok=True)
+                pending.unlink(missing_ok=True)
 
                 print()
                 print(f"  Research completed! ({elapsed_str})")
                 print(f"  Report saved: {report_path}")
                 print(f"  Outputs: {len(contents)} items "
-                      f"({sum(1 for o in contents if getattr(o, 'type', '') == 'text')} text, "
-                      f"{sum(1 for o in contents if getattr(o, 'type', '') == 'image')} image)")
+                      f"({sum(1 for o in contents if _field(o, 'type') == 'text')} text, "
+                      f"{sum(1 for o in contents if _field(o, 'type') == 'image')} image)")
                 print()
 
                 return str(report_path)
@@ -363,6 +464,7 @@ def run_deep_research(
                 if hasattr(interaction, "error") and interaction.error:
                     error_msg = str(interaction.error)
                 print(f"  Research {status}: {error_msg}")
+                pending.unlink(missing_ok=True)
                 return ""
 
             # Timeout after 60 minutes
@@ -378,6 +480,8 @@ def run_deep_research(
             time.sleep(10)
 
     except Exception as e:
+        if interaction_id and getattr(e, "status_code", None) == 404:
+            pending.unlink(missing_ok=True)
         print(f"  Deep Research error: {e}")
         return ""
 

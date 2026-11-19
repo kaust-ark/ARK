@@ -2,6 +2,7 @@ name: ark-base
 channels:
   - conda-forge
 dependencies:
+  - tesseract
   - _openmp_mutex=4.5=20_gnu
   - bzip2=1.0.8=hda65f42_9
   - ca-certificates=2026.2.25=hbd8a1cb_0

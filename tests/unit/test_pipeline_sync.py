@@ -423,13 +423,16 @@ class TestUpdateTitleEndToEnd:
 
 
 @pytest.mark.parametrize(("mode", "pages", "expect_adjustment"), [
-    ("strict", 4.06, True), ("strict", 3.9, False), ("relaxed", 4.06, False),
+    ("strict", 4.06, True), ("strict", 2.8, True), ("strict", 3.24, True), ("strict", 3.9, False), ("relaxed", 4.06, False),
 ])
-def test_edited_paper_checks_current_artifact_and_strict_overflow(mode, pages, expect_adjustment):
+def test_edited_paper_checks_current_artifact_and_strict_overflow(tmp_path, mode, pages, expect_adjustment):
     from ark.pipeline import PipelineMixin
     paper = MagicMock()
-    paper.config = {"layout_mode": mode, "venue_pages": 4}
+    paper.config = {"layout_mode": mode, "venue_pages": 4, "venue_format": "icml"}
+    paper.latex_dir = tmp_path
     paper.compile_latex.return_value = True
+    from ark.delivery_contract import DeliveryReport
+    paper._report_delivery_checks.return_value = DeliveryReport()
     paper._body_page_count = pages
     PipelineMixin._compile_edited_paper(paper)
     assert paper._enforce_page_count.called == expect_adjustment
@@ -451,3 +454,79 @@ def test_edit_routes_placement_and_caption_requests_to_the_manuscript(request_te
     PipelineMixin._apply_edit(worker, request_text)
     assert worker.run_agent.call_args.args[0] == expected_role
     worker._compile_edited_paper.assert_called_once()
+
+
+@pytest.mark.parametrize("issue,expected", [(False, "accepted"), (True, "in_progress")])
+def test_high_scoring_review_finishes_only_after_artifact_checks(issue, expected):
+    from ark.delivery_contract import DeliveryReport, Finding
+    from ark.workflow import PaperIteration
+    from ark.pipeline import PipelineMixin
+
+    worker = MagicMock()
+    state = {"current_score": 9}
+    worker.config = {"layout_mode": "strict", "figure_generation": "nano_banana"}
+    worker._run_fatal = worker._terminal_error = None
+    worker.max_iterations = worker.iteration = 1
+    worker.paper_accept_threshold = 8
+    worker.hooks = None
+    worker.project_name = "test"
+    worker.load_paper_state.return_value = state
+    worker._step_review.return_value = ("review", 9.0, [])
+    worker._check_acceptance.side_effect = lambda *args: PipelineMixin._check_acceptance(worker, *args)
+    worker._iteration_finalize.side_effect = lambda *args: PipelineMixin._iteration_finalize(worker, *args)
+    worker._report_delivery_checks.return_value = DeliveryReport(
+        [Finding("concept_figure_embedded", "violated", "soft", "missing")] if issue else [])
+    worker._asked_this_iteration = False
+    result = PaperIteration(worker).review()
+    assert result == "stop"
+    assert state["status"] == expected
+    worker._report_delivery_checks.assert_called_once()
+    worker._step_plan.assert_not_called()
+    if issue:
+        assert "concept_figure_embedded" in worker._run_fatal
+        worker.send_notification.assert_not_called()
+    else:
+        worker.send_notification.assert_called_once()
+
+
+def test_missing_concept_repaired_even_when_a_data_figure_is_present(tmp_path, monkeypatch):
+    from ark.delivery_contract import Finding
+    from ark.figure_manifest import register_figure, save_manifest
+    from ark.pipeline import PipelineMixin
+
+    paper = MagicMock()
+    paper.latex_dir = tmp_path
+    paper.figures_dir = tmp_path / "figures"
+    paper.figures_dir.mkdir()
+    paper.config = {"figure_generation": "nano_banana"}
+    (tmp_path / "main.tex").write_text(r"\includegraphics{figures/outcomes.pdf}")
+    manifest = {"figures": {}}
+    for filename, origin in [("outcomes.pdf", "matplotlib"), ("mechanism.jpg", "nano_banana")]:
+        (paper.figures_dir / filename).write_bytes(b"x" * 6000)
+        register_figure(manifest, filename, origin)
+    save_manifest(paper.figures_dir, manifest)
+    monkeypatch.setattr("ark.delivery_contract._concept_figure_in_pdf",
+                        lambda *a: Finding("concept_figure_embedded", "violated", "soft", "missing"))
+    PipelineMixin._ensure_figures_referenced(paper)
+    assert "mechanism.jpg" in paper.run_agent.call_args.args[1]
+    paper.compile_latex.assert_called_once()
+
+
+def test_depleted_source_list_is_researched_once_even_after_bad_cites_are_removed(tmp_path):
+    import yaml
+    from types import SimpleNamespace
+    from ark.pipeline import PipelineMixin
+
+    worker = MagicMock()
+    worker.config = {"layout_mode": "strict"}
+    worker.state_dir = worker.latex_dir = tmp_path
+    (tmp_path / "deep_research.md").write_text("A saved survey")
+    library = tmp_path / "literature.yaml"
+    library.write_text(yaml.safe_dump({"references": [{"bibtex_key": "benchmark"}],
+                                       "needs_check": [{"bibtex_key": "unsupported"}]}))
+    worker._bootstrap_citations_from_deep_research.return_value = SimpleNamespace(found_keys=["original"])
+    PipelineMixin._repair_cited_sources(worker)
+    PipelineMixin._repair_cited_sources(worker)
+    worker._bootstrap_citations_from_deep_research.assert_called_once_with(recheck_keys=["unsupported"])
+    worker.run_agent.assert_called_once()
+    assert "original" in worker.run_agent.call_args.args[1]

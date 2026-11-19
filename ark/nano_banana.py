@@ -8,14 +8,20 @@ Supports two modes:
   - Pipeline: generate_figure_pipeline() — Planner → Stylist → Visualizer → Critic loop
 
 Models:
-  - flash: gemini-3.1-flash-image-preview  (fast, image generation)
-  - pro:   gemini-3-pro-image-preview       (highest quality, image generation)
+  - flash: gemini-3.1-flash-image  (fast, image generation)
+  - pro:   gemini-3-pro-image       (highest quality, image generation)
 """
 
+import base64
+import csv
+import hashlib
+import io
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import yaml
 from pathlib import Path
 from typing import Optional
@@ -34,8 +40,8 @@ _logging.getLogger("google_genai._api_client").addFilter(
 # ══════════════════════════════════════════════════════════════
 
 IMAGE_MODELS = {
-    "flash": "gemini-3.1-flash-image-preview",
-    "pro": "gemini-3-pro-image-preview",
+    "flash": "gemini-3.1-flash-image",
+    "pro": "gemini-3-pro-image",
 }
 
 TEXT_MODELS = {
@@ -81,7 +87,8 @@ def _load_style_guide(guide_name: str) -> str:
 #  Gemini Text Helper
 # ══════════════════════════════════════════════════════════════
 
-def _call_gemini_text(client, model_id: str, prompt: str, image_bytes: bytes = None) -> str:
+def _call_gemini_text(client, model_id: str, prompt: str, image_bytes: bytes = None,
+                      receipt: dict | None = None) -> str:
     """Call Gemini text model, optionally with an image for multimodal input.
 
     Args:
@@ -109,8 +116,12 @@ def _call_gemini_text(client, model_id: str, prompt: str, image_bytes: bytes = N
             contents=contents,
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT"],
+                **({"media_resolution": "MEDIA_RESOLUTION_HIGH"} if image_bytes and receipt is not None else {}),
             ),
         )
+        if receipt is not None:
+            receipt.update(response_id=getattr(response, "response_id", None),
+                           model_version=getattr(response, "model_version", None))
         return response.text or ""
     except Exception as e:
         print(f"Gemini text call error ({model_id}): {e}")
@@ -121,11 +132,39 @@ def _call_gemini_text(client, model_id: str, prompt: str, image_bytes: bytes = N
 #  Image Generation (legacy, unchanged)
 # ══════════════════════════════════════════════════════════════
 
+def _save_generated_image(payload: bytes, output_path: Path, receipt: dict | None = None, **metadata) -> None:
+    """Install decoded provider output atomically; preserve evidence across format conversion."""
+    from PIL import Image
+
+    output_path = Path(output_path)
+    with Image.open(io.BytesIO(payload)) as image:
+        image.load()
+        target = Image.registered_extensions().get(output_path.suffix.lower())
+        encoded = payload
+        if target and image.format != target:
+            buffer = io.BytesIO()
+            image.save(buffer, format=target)
+            encoded = buffer.getvalue()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(dir=output_path.parent, prefix=f".{output_path.name}.")
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(encoded)
+        os.replace(temp_name, output_path)
+    finally:
+        Path(temp_name).unlink(missing_ok=True)
+    if receipt is not None:
+        receipt.update(metadata, payload_sha256=hashlib.sha256(payload).hexdigest(),
+                       artifact_sha256=hashlib.sha256(encoded).hexdigest())
+
+
 def generate_figure(
     prompt: str,
     output_path: Path,
     api_key: str = None,
     model: str = DEFAULT_MODEL,
+    *, aspect_ratio: str | None = None, receipt: dict | None = None, reference_image: bytes | None = None,
 ) -> bool:
     """Generate a single figure using Nano Banana.
 
@@ -149,30 +188,385 @@ def generate_figure(
         print("Error: google-genai package not installed. Run: pip install google-genai")
         return False
 
-    model_id = IMAGE_MODELS.get(model, IMAGE_MODELS[DEFAULT_MODEL])
+    model_id = IMAGE_MODELS.get(model, model)
 
     try:
         client = genai.Client(api_key=key)
         response = client.models.generate_content(
             model=model_id,
-            contents=prompt,
+            contents=([types.Part.from_bytes(data=reference_image, mime_type="image/png"), prompt]
+                      if reference_image else prompt),
             config=types.GenerateContentConfig(
                 response_modalities=["IMAGE"],
+                image_config=types.ImageConfig(aspect_ratio=aspect_ratio) if aspect_ratio else None,
             ),
         )
 
         for part in response.parts:
-            if part.inline_data is not None:
-                output_path = Path(output_path)
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                image = part.as_image()
-                image.save(str(output_path))
+            if part.inline_data and part.inline_data.data:
+                _save_generated_image(part.inline_data.data, output_path, receipt,
+                                      provider="google", image_model=model_id, payload_source="google_inline_data",
+                                      model_version=getattr(response, "model_version", None),
+                                      response_id=getattr(response, "response_id", None))
                 return True
 
         return False
     except Exception as e:
         print(f"Nano Banana error: {e}")
         return False
+
+
+SEMANTIC_REVIEW_VERSION = 2
+_SEMANTIC_CHECKS = ("arrows", "comparison_groups", "numbers", "data_separation", "stages_and_labels", "printed_labels")
+
+
+def concept_design(fig: dict, state_dir: Path | None) -> str:
+    """The same bounded study design is used for inspection, editing and cache identity."""
+    parts = [json.dumps(fig, sort_keys=True, ensure_ascii=False)]
+    if state_dir:
+        for name in ("idea.md", "project_context.md", "experiment_plan.yaml"):
+            path = Path(state_dir) / name
+            if not path.is_file():
+                continue
+            body = path.read_text(errors="replace")
+            if name == "project_context.md":
+                sections = re.split(r"(?=^## )", body, flags=re.M)
+                body = "\n".join(section for section in sections if re.search(
+                    r"(?i)experiment|research design|evaluation", section.split("\n")[0]))
+            lines = [line for line in body.splitlines() if not re.search(
+                r"(?i)api[_ -]?key|password|secret|credential|access[_ -]?token", line)]
+            parts.append(name + "\n" + "\n".join(lines)[:2200])
+    return "\n\n".join(parts)
+
+
+def _openrouter_figure_request(key, model, prompt, pixels, *, aspect_ratio=None):
+    """One owner-authorized vision request, optionally requesting an edited image."""
+    import httpx
+    content = [{"type": "text", "text": prompt}]
+    if pixels:
+        url = "data:image/png;base64," + base64.b64encode(pixels).decode()
+        content.append({"type": "image_url", "image_url": {"url": url}})
+    payload = {"model": model, "messages": [{"role": "user", "content": content}]}
+    if aspect_ratio:
+        payload.update(modalities=["image", "text"], image_config={"aspect_ratio": aspect_ratio})
+    else:
+        payload["max_tokens"] = 2000
+    response = httpx.post("https://openrouter.ai/api/v1/chat/completions", json=payload,
+                          headers={"Authorization": "Bearer " + key}, timeout=120)
+    response.raise_for_status()
+    return response.json()
+
+
+def semantic_verdict(checks) -> str:
+    """Derive a verdict from the actual check records, including literal transcription."""
+    if not isinstance(checks, dict) or not all(k in checks for k in _SEMANTIC_CHECKS):
+        return "unavailable"
+    printed = checks.get("printed_labels")
+    transcription = printed.get("transcription") if isinstance(printed, dict) else None
+    if not isinstance(transcription, list) or not transcription or not all(
+            isinstance(label, str) and label.strip() for label in transcription):
+        return "unavailable"
+    states = []
+    for k in _SEMANTIC_CHECKS:
+        item = checks[k]
+        if not isinstance(item, dict) or not isinstance(item.get("observed"), str) or not item["observed"].strip():
+            return "unavailable"
+        status = item.get("status")
+        if status not in ("consistent", "contradiction", "unclear", "not_applicable"):
+            return "unavailable"
+        if status == "contradiction" and not all(isinstance(item.get(f), str) and item[f].strip()
+                                                  for f in ("expected", "correction")):
+            return "unavailable"
+        states.append(status)
+    verdict = ("contradiction" if "contradiction" in states else
+               "unclear" if "unclear" in states or "consistent" not in states else "passed")
+    return verdict
+
+
+def _one_letter_apart(a: str, b: str) -> bool:
+    if min(len(a), len(b)) < 5 or not (a.isascii() and a.isalpha() and b.isascii() and b.isalpha()):
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b)) == 1
+    short, long = sorted((a, b), key=len)
+    return len(long) == len(short) + 1 and any(long[:i] + long[i+1:] == short for i in range(len(long)))
+
+
+def _label_differences(labels, lines):
+    """An entire multiword phrase must align uniquely with one differing English word."""
+    differences = {}
+    for label in labels:
+        expected = label.split()
+        normalized = [word.casefold() for word in expected]
+        if len(expected) < 2 or not all(re.fullmatch("[a-z]+", word) for word in normalized):
+            continue
+        alternatives, exact = [], False
+        for line in lines:
+            for start in range(len(line) - len(expected) + 1):
+                chunk = line[start:start + len(expected)]
+                tokens = [row["text"].casefold() for row in chunk]
+                diff = [i for i, (left, right) in enumerate(zip(normalized, tokens)) if left != right]
+                if not diff:
+                    exact = True
+                    continue
+                if len(diff) != 1 or any(row["confidence"] < 90 for row in chunk):
+                    continue
+                i = diff[0]
+                if (expected[i].isupper() or chunk[i]["text"].isupper()
+                        or not _one_letter_apart(normalized[i], tokens[i])):
+                    continue
+                alternatives.append({"model_label": label, "model_word": expected[i],
+                                     "read_label": " ".join(r["text"] for r in chunk), **chunk[i]})
+        if not exact and len(alternatives) == 1:
+            differences[label] = alternatives[0]
+    return differences
+
+
+def _tesseract_lines(binary, path, mode):
+    process = subprocess.run([binary, str(path), "stdout", "-l", "eng", "--psm", str(mode), "tsv"],
+                             capture_output=True, check=True, timeout=25, text=True,
+                             env={**os.environ, "OMP_THREAD_LIMIT": "1"})
+    lines = {}
+    for row in csv.DictReader(io.StringIO(process.stdout), delimiter="\t"):
+        if row.get("level") == "5" and row["text"].strip():
+            group = tuple(row[k] for k in ("page_num", "block_num", "par_num", "line_num"))
+            lines.setdefault(group, []).append({"text": row["text"].strip(), "confidence": float(row["conf"]),
+                "box": [int(row[k]) for k in ("left", "top", "width", "height")]})
+    return list(lines.values())
+
+
+def verify_printed_labels(path: Path, review: dict, entry: dict, aspect_ratio: str) -> dict:
+    """Augment a saved visual review without another model request."""
+    checks = review.get("checks") or {}
+    labels = (checks.get("printed_labels") or {}).get("transcription")
+    if not isinstance(labels, list) or not all(isinstance(word, str) for word in labels):
+        return review
+    pixel_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    label_hash = hashlib.sha256(json.dumps(labels, ensure_ascii=False).encode()).hexdigest()
+    prior = review.get("label_verification") or {}
+    binary = shutil.which(os.environ.get("ARK_TESSERACT") or "tesseract")
+    is_panel = entry.get("representation") == "subject_with_comparison_panel"
+    if (prior.get("version") == 1 and prior.get("image_sha256") == pixel_hash
+            and prior.get("transcription_sha256") == label_hash and
+            (prior.get("coverage") in ("two_ocr_layouts", "reproduced_typeset")
+             or (not is_panel and not binary and prior.get("coverage") == "unavailable"))):
+        return review
+    evidence = {"version": 1, "image_sha256": pixel_hash, "transcription_sha256": label_hash,
+                "coverage": "unavailable", "model_label_count": len(labels), "conflicts": []}
+    if is_panel:
+        raw = (path.parent / (entry.get("illustration_file") or "")).resolve()
+        groups = (entry.get("panel_plan") or {}).get("groups") or []
+        try:
+            if (raw.is_relative_to((path.parent / ".concept_sources").resolve()) and raw.is_file()
+                    and hashlib.sha256(raw.read_bytes()).hexdigest() == entry.get("payload_sha256")):
+                with tempfile.TemporaryDirectory() as folder:
+                    reproduced = Path(folder) / "panel.png"
+                    _compose_study_panel(raw, groups, reproduced, single_column=aspect_ratio == "4:3")
+                    if hashlib.sha256(reproduced.read_bytes()).hexdigest() == pixel_hash:
+                        printed = [g[k] for g in groups for k in ("label", "description")]
+                        lines = [[{"text": w, "confidence": 100, "box": []} for w in line.split()] for line in printed]
+                        evidence.update(coverage="reproduced_typeset", labels=printed,
+                                        conflicts=list(_label_differences(labels, lines).values()))
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    if evidence["coverage"] == "unavailable" and binary:
+        try:
+            runs = [_tesseract_lines(binary, path, mode) for mode in (6, 11)]
+            if all(runs):
+                first, second = [_label_differences(labels, lines) for lines in runs]
+                conflicts = []
+                for label, a in first.items():
+                    b = second.get(label)
+                    if (b and a["read_label"].casefold() == b["read_label"].casefold()
+                            and max(abs(x-y) for x, y in zip(a["box"], b["box"])) <= 3):
+                        conflicts.append({**a, "confirming_confidence": b["confidence"], "confirming_box": b["box"]})
+                unique = [c for c in conflicts if sum(
+                    x["box"] == c["box"] and x["text"] == c["text"] for x in conflicts) == 1]
+                evidence.update(coverage="two_ocr_layouts", psm=[6, 11], conflicts=unique)
+        except (OSError, subprocess.SubprocessError, KeyError, ValueError, TypeError):
+            pass
+    result = {**review, "label_verification": evidence}
+    if evidence["conflicts"]:
+        heard = ", ".join(f"{v['read_label']!r} vs {v['model_label']!r}" for v in evidence["conflicts"])
+        printed = {**checks["printed_labels"], "status": "contradiction",
+                   "observed": "Printed phrase and visual transcription disagree: " + heard,
+                   "expected": "The printed label must literally match the intended study label.",
+                   "correction": "Correct the printed phrase at the identified location: " + heard}
+        result.update(checks={**checks, "printed_labels": printed}, status="contradiction")
+    return result
+
+
+def review_concept_image(path: Path, design: str, provider: str, key: str, model: str) -> dict:
+    """Assess the actual selected pixels. Only concrete contradictions authorize an edit."""
+    pixels = path.read_bytes()
+    result = {"status": "unavailable", "provider": provider, "model": model}
+    prompt = f"""Scientifically audit this final manuscript image against the study design below.
+Inspect the attached pixels independently. Trace each arrow stem to its visible arrowhead:
+identify both endpoint labels, the input/output, and which branch receives the value. Check shared
+inputs versus treatment-only fitted parameters, baseline/control isolation, group identities,
+sample counts, numeric labels and units, held-out data and leakage. Read every visible stage label:
+look for wrong/garbled scientific labels, duplicated splits/stages or counts with conflicting
+roles, and unconnected boxes presenting a spurious operation. A repeated label identifying a
+shared dataset in separate legitimate stages is acceptable. For printed_labels, transcribe every printed
+heading and method label literally, including repeated or garbled words. Read letter by letter; never
+silently correct a misspelling to the intended word. Supply a nonempty "transcription" array of those
+literal strings (use ["no printed labels"] only for an entirely unlabeled picture). Misspelled ordinary
+words and corrupted scientific names are contradictions even if the underlying science is correct.
+If a word cannot be deciphered mark unclear, not consistent. Ignore purely aesthetic preferences.
+Report a contradiction only when pixels and design establish different meanings. If an endpoint
+or label cannot be read, mark unclear. A check outside this design can be not_applicable.
+Return only JSON with a checks object containing exactly {", ".join(_SEMANTIC_CHECKS)}.
+Each check must have status consistent, contradiction, unclear or not_applicable, and an observed
+string describing what is actually visible. For each contradiction also include expected (specific
+design fact) and correction (one precise edit). Do not let a correct caption override wrong pixels.
+Study design and contextual evidence:
+{design}"""
+    try:
+        if provider == "openrouter":
+            response = _openrouter_figure_request(key, model, prompt, pixels)
+            text = response["choices"][0]["message"]["content"]
+            result.update(response_id=response.get("id"), model_version=response.get("model"))
+        else:
+            from google import genai
+            text = _call_gemini_text(genai.Client(api_key=key), model, prompt, pixels, receipt=result)
+        from ark.quality_gate import extract_json
+        data = extract_json(text, want=dict) if text else None
+        checks = data.get("checks") if isinstance(data, dict) else None
+        verdict = semantic_verdict(checks)
+        if verdict == "unavailable":
+            return result
+        result.update(status=verdict, checks={k: checks[k] for k in _SEMANTIC_CHECKS})
+    except Exception:
+        # Never store an HTTP exception body or owner credential in the manifest.
+        pass
+    return result
+
+
+def repair_concept_image(path: Path, design: str, review: dict, provider: str, key: str,
+                         model: str, aspect_ratio: str, receipt: dict) -> bool:
+    changes = [v["correction"] for v in review["checks"].values() if v["status"] == "contradiction"]
+    prompt = ("Edit the attached scientific diagram. Keep its legible, accurate labels, geometry and "
+              "scientific relationships. Preserve every required comparison arm, endpoint and shared input. If a line is wrong, reroute its arrowhead without deleting either node or merging the groups. Correct every documented contradiction. Simplify clutter when "
+              "necessary to make arrow endpoints unambiguous. Return only the complete corrected diagram."
+              "\nRequired changes:\n- " + "\n- ".join(changes) + "\nStudy design:\n" + design)
+    pixels = path.read_bytes()
+    if provider == "google":
+        return generate_figure(prompt, path, key, model, aspect_ratio=aspect_ratio,
+                               receipt=receipt, reference_image=pixels)
+    try:
+        response = _openrouter_figure_request(key, model, prompt, pixels, aspect_ratio=aspect_ratio)
+        url = response["choices"][0]["message"]["images"][0]["image_url"]["url"]
+        if not url.startswith("data:image/") or ";base64," not in url:
+            return False
+        _save_generated_image(base64.b64decode(url.split(",", 1)[1], validate=True), path, receipt,
+                              provider=provider, image_model=model, model_version=response.get("model"),
+                              response_id=response.get("id"), payload_source="openrouter_inline_data")
+        return True
+    except Exception:
+        return False
+
+
+def _compose_study_panel(illustration: Path, groups: list, destination: Path, single_column: bool):
+    from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+    width = 840 if single_column else 1600
+    margin, padding = 28, 24
+    card_x = margin if single_column else 620
+    card_width = width - margin - card_x
+    heading = ImageFont.truetype("DejaVuSans-Bold.ttf", 32 if single_column else 43)
+    body = ImageFont.truetype("DejaVuSans.ttf", 29 if single_column else 36)
+    def wrap(text, font):
+        lines = [""]
+        for word in text.split():
+            line = (lines[-1] + " " + word).strip()
+            if font.getlength(line) <= card_width - 2 * padding:
+                lines[-1] = line
+            elif not lines[-1] or font.getlength(word) > card_width - 2 * padding:
+                raise ValueError("Panel label cannot fit at print size")
+            else:
+                lines.append(word)
+        return lines
+    sections = [(wrap(g["label"], heading), wrap(g["description"], body)) for g in groups]
+    heights = [2 * padding + len(names) * (heading.size + 9) + len(lines) * (body.size + 8)
+               for names, lines in sections]
+    top = 245 if single_column else margin
+    height = max(top + sum(heights) + 14 * (len(groups) - 1) + margin, 560)
+    canvas = Image.new("RGB", (width, height), "white")
+    art_box = (width - 2 * margin, top - 2 * margin) if single_column else (card_x - 2 * margin, height - 2 * margin)
+    with Image.open(illustration) as im:
+        art = ImageOps.contain(im.convert("RGB"), art_box, Image.Resampling.LANCZOS)
+        canvas.paste(art, (margin + (art_box[0] - art.width) // 2, margin + (art_box[1] - art.height) // 2))
+    draw = ImageDraw.Draw(canvas)
+    for i, ((names, lines), h) in enumerate(zip(sections, heights)):
+        draw.rounded_rectangle((card_x, top, width - margin, top + h), radius=14,
+                               fill=("#edf4f7", "#f0f4ec", "#f7f1ec")[i], outline="#68767c", width=2)
+        y = top + padding - 3
+        for text, font in [(t, heading) for t in names] + [(t, body) for t in lines]:
+            draw.text((card_x + padding, y), text, font=font, fill="#172428")
+            y += font.size + (9 if font is heading else 8)
+        top += h + 14
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="PNG")
+    _save_generated_image(buffer.getvalue(), destination)
+
+
+def create_study_panel(path: Path, design: str, provider: str, key: str, model: str, aspect_ratio: str):
+    """Generate a single subject illustration. Source-grounded comparison text is typeset in code."""
+    from ark.quality_gate import extract_json
+    prompt = ("The source describes a scientific comparison. Return JSON with subject (one grounded "
+              "physical or conceptual study object to illustrate, without a protocol), groups "
+              "(2 or 3 distinct required comparisons or study conditions, each with label up to 40 "
+              "characters, description up to 125 characters, and evidence copied VERBATIM from the "
+              "provided design), and caption (up to 500 characters explaining the shared data, "
+              "conditions, control and assessment). Cover every required comparison. Do not create "
+              "a panel if the groups cannot be supported. Write ordinary readable text without LaTeX."
+              "\nStudy design:\n" + design)
+    try:
+        if provider == "google":
+            from google import genai
+            response = _call_gemini_text(genai.Client(api_key=key), model, prompt)
+        else:
+            response = _openrouter_figure_request(key, model, prompt, None)["choices"][0]["message"]["content"]
+        plan = extract_json(response, want=dict)
+        if not plan or not isinstance(plan.get("subject"), str) or not 2 <= len(plan["subject"]) <= 400:
+            return None
+        groups = plan.get("groups")
+        if (not isinstance(groups, list) or not 2 <= len(groups) <= 3
+                or not isinstance(plan.get("caption"), str) or not 2 <= len(plan["caption"]) <= 500):
+            return None
+        for g in groups:
+            if (not isinstance(g, dict) or not all(isinstance(g.get(k), str) and g[k].strip()
+                    for k in ("label", "description", "evidence")) or len(g["label"]) > 40
+                    or len(g["description"]) > 125 or g["evidence"] not in design):
+                return None
+        if len({g["label"].casefold() for g in groups}) != len(groups):
+            return None
+        art_prompt = ("Create one clean, publication-quality scientific illustration of this single "
+                      "study object, centered on white: " + plan["subject"] + ". No words, numerals, "
+                      "letters, arrows, branches, workflows, charts, comparisons or layout panels. "
+                      "It illustrates the subject only. Do not present simulated data as an observation.")
+        flash = IMAGE_MODELS["flash"]
+        original = path.parent / ".concept_sources" / (path.stem + "-" + hashlib.sha256(design.encode()).hexdigest()[:12] + ".image")
+        receipt = {}
+        if provider == "google":
+            if not generate_figure(art_prompt, original, key, flash, aspect_ratio="1:1", receipt=receipt):
+                return None
+        else:
+            flash = "google/" + flash
+            res = _openrouter_figure_request(key, flash, art_prompt, None, aspect_ratio="1:1")
+            url = res["choices"][0]["message"]["images"][0]["image_url"]["url"]
+            if not url.startswith("data:image/") or ";base64," not in url:
+                return None
+            _save_generated_image(base64.b64decode(url.split(",", 1)[1], validate=True), original, receipt,
+                                  provider=provider, image_model=flash, response_id=res.get("id"),
+                                  model_version=res.get("model"), payload_source="openrouter_inline_data")
+        _compose_study_panel(original, groups, path, single_column=aspect_ratio == "4:3")
+        receipt.update(artifact_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                       selected_candidate="typeset_study_panel", representation="subject_with_comparison_panel",
+                       illustration_file=str(original.relative_to(path.parent)), panel_plan=plan)
+        return receipt
+    except Exception:
+        return None
 
 
 def generate_concept_figures(
@@ -512,6 +906,7 @@ def generate_figure_pipeline(
     column_width_in: float = 3.333,
     max_critic_rounds: int = 3,
     log_fn=None,
+    *, aspect_ratio: str = "16:9", receipt: dict | None = None,
 ) -> bool:
     """Generate a concept figure using the full Planner → Stylist → Critic pipeline.
 
@@ -565,7 +960,8 @@ def generate_figure_pipeline(
     if not description:
         _log("Planner failed to generate description, falling back to one-shot", "WARN")
         prompt = build_figure_prompt(figure_name, caption, paper_context, venue, column_width_in)
-        return generate_figure(prompt, output_path, api_key=key, model=model)
+        return generate_figure(prompt, output_path, api_key=key, model=model,
+                               aspect_ratio=aspect_ratio, receipt=receipt)
 
     # ── Step 2: Stylist ──
     _log(f"[Stylist] Refining visual spec with style guide...")
@@ -575,8 +971,8 @@ def generate_figure_pipeline(
         styled_description = description
 
     # ── Step 3: Visualizer → Critic Loop ──
-    best_path = None
-    for round_idx in range(max_critic_rounds):
+    generated = False
+    for round_idx in range(max(1, max_critic_rounds)):
         # Build image generation prompt
         image_prompt = f"""Generate a publication-quality scientific methodology diagram for a top-tier AI conference paper (NeurIPS/ICML level).
 
@@ -600,22 +996,20 @@ ABSOLUTE PROHIBITIONS:
 - NO heavy black outlines or borders. Use thin, subtle strokes.
 - NO 3D effects, gradients, or textures (unless encoding data dimensionality)
 - NO drop shadows (flat design, not material design)
-- Proportions: landscape, aspect ratio ~16:9, width ~{column_width_in:.1f} inches
+- Proportions: landscape, aspect ratio {aspect_ratio}, width ~{column_width_in:.1f} inches
 - Background: white or off-white (#FAFAFA)"""
 
         # Generate image
         _log(f"[Visualizer] Generating image (round {round_idx + 1}/{max_critic_rounds})...")
-        ok = generate_figure(image_prompt, output_path, api_key=key, model=model)
+        ok = generate_figure(image_prompt, output_path, api_key=key, model=model,
+                             aspect_ratio=aspect_ratio, receipt=receipt)
         if not ok:
             _log(f"Image generation failed in round {round_idx + 1}", "WARN")
-            if best_path and best_path.exists():
-                # Roll back to previous best
-                import shutil
-                shutil.copy2(best_path, output_path)
             break
 
-        # Save as candidate for potential rollback
-        best_path = output_path
+        generated = True
+        if max_critic_rounds == 0:
+            break
 
         # Read generated image for Critic
         try:
@@ -664,12 +1058,11 @@ Apply ALL the corrections above. Fix every issue mentioned."""
             _log("Critic gave no actionable feedback, stopping", "WARN")
             break
 
-    success = output_path.exists() and output_path.stat().st_size > 0
-    if success:
+    if generated:
         _log(f"Pipeline complete: {output_path.name}")
     else:
         _log(f"Pipeline failed for {figure_name}", "WARN")
-    return success
+    return generated
 
 
 # ══════════════════════════════════════════════════════════════

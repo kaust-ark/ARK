@@ -13,8 +13,13 @@ TextContent/ImageContent pydantic models (only the attrs we touch).
 """
 
 import base64
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
 
 from ark.deep_research import _apply_url_annotations, _assemble_report, run_deep_research
 
@@ -38,13 +43,13 @@ def _ann(start: int, end: int, url: str) -> SimpleNamespace:
 
 
 def test_completed_google_report_identifies_the_actual_interaction(tmp_path, monkeypatch):
-    from unittest.mock import Mock
     from google import genai
 
     api = Mock()
     api.create.return_value = SimpleNamespace(id="fixture-interaction")
     api.get.return_value = SimpleNamespace(
         status="completed",
+        usage={"grounding_tool_count": [{"type": "google_search", "count": 3}]},
         steps=[SimpleNamespace(type="model_output", content=[_text("Study evidence.")])],
     )
     monkeypatch.setattr(genai, "Client", lambda **kwargs: SimpleNamespace(interactions=api))
@@ -56,6 +61,117 @@ def test_completed_google_report_identifies_the_actual_interaction(tmp_path, mon
     assert f"**Agent**: {api.create.call_args.kwargs['agent']}" in header
     assert "**Interaction ID**: fixture-interaction" in header
     assert body.strip() == "Study evidence."
+    receipt = json.loads((tmp_path / "deep_research_receipt.json").read_text())
+    assert receipt == {
+        "provider": "google", "agent": api.create.call_args.kwargs["agent"],
+        "interaction_id": "fixture-interaction", "status": "completed",
+        "report_sha256": hashlib.sha256(Path(report_path).read_bytes()).hexdigest(),
+        "usage": api.get.return_value.usage,
+    }
+    assert "original publication" in api.create.call_args.kwargs["input"]
+
+
+def test_existing_interaction_restores_raw_steps_and_cross_block_grounding(tmp_path, monkeypatch):
+    from google import genai
+
+    api = Mock()
+    prefix = "Préface. "
+    body = "Study [cite: 1, 2] continues."
+    start = len((prefix + "Study ").encode())
+    end = start + len("[cite: 1, 2]")
+    annotations = [
+        {"type": "url_citation", "start_index": start, "end_index": end, "url": url}
+        for url in ("https://one.example/", "https://two.example/")
+    ]
+    api.get.return_value = SimpleNamespace(status="completed", steps=[
+        {"type": "user_input", "content": [{"type": "text", "text": "Private input"}]},
+        {"type": "thought", "content": [{"type": "text", "text": "Private thought"}]},
+        {"type": "model_output", "content": [{"type": "text", "text": prefix, "annotations": annotations}]},
+        {"type": "model_output", "content": [{"type": "image", "data": "YWJj", "mime_type": "image/png"},
+                                               {"type": "text", "text": body}]},
+    ], usage={"search_count": 2})
+    monkeypatch.setattr(genai, "Client", lambda **_: SimpleNamespace(interactions=api))
+    (tmp_path / "research_degraded.txt").touch()
+    (tmp_path / "deep_research.md").write_text("# Literature Survey (fallback)")
+
+    path = run_deep_research({}, tmp_path, api_key="dummy", interaction_id="old-id")
+    text = Path(path).read_text()
+    assert prefix in text and "Private" not in text
+    assert "[cite: 1, 2](https://one.example/) [source](https://two.example/) continues." in text
+    assert text.index(prefix) < text.index("![Figure 1]") < text.index("Study [cite")
+    assert (tmp_path / "deep_research_assets/figure_01.png").read_bytes() == b"abc"
+    assert not (tmp_path / "research_degraded.txt").exists()
+    api.create.assert_not_called()
+    api.get.assert_called_once_with("old-id")
+
+
+def test_interrupted_google_request_is_polled_once_on_continue(tmp_path, monkeypatch):
+    from google import genai
+
+    api = Mock()
+    api.create.return_value = SimpleNamespace(id="paid-id")
+    api.get.side_effect = [TimeoutError("unavailable"), SimpleNamespace(
+        status="completed", outputs=[_text("Completed survey.")])]
+    monkeypatch.setattr(genai, "Client", lambda **_: SimpleNamespace(interactions=api))
+    (tmp_path / "idea.md").write_text("Original idea")
+    # Initializer can emit a custom query, whereas Continue builds it from idea.md.
+    assert not run_deep_research({}, tmp_path, "initializer's prompt", "dummy")
+    pending = tmp_path / "deep_research_interaction.json"
+    assert json.loads(pending.read_text())["interaction_id"] == "paid-id"
+    (tmp_path / "deep_research.md").write_text("# Literature Survey (fallback)")
+    (tmp_path / "research_degraded.txt").touch()
+    path = run_deep_research({}, tmp_path, "reconstructed prompt", "dummy")
+    assert "Completed survey." in Path(path).read_text()
+    assert not pending.exists()
+    # Already complete, including if process stopped just before marker cleanup.
+    (tmp_path / "research_degraded.txt").touch()
+    assert run_deep_research({}, tmp_path, "reconstructed prompt", "dummy") == path
+    assert not (tmp_path / "research_degraded.txt").exists()
+    api.create.assert_called_once()
+    assert [call.args for call in api.get.call_args_list] == [("paid-id",), ("paid-id",)]
+
+
+@pytest.mark.parametrize("terminal", ["failed", "cancelled", "not_found"])
+def test_terminal_interaction_allows_a_new_submission_on_next_attempt(tmp_path, monkeypatch, terminal):
+    from google import genai
+
+    class NotFound(Exception):
+        status_code = 404
+    api = Mock()
+    api.create.side_effect = [SimpleNamespace(id="expired"), SimpleNamespace(id="replacement")]
+    api.get.side_effect = [
+        NotFound() if terminal == "not_found" else SimpleNamespace(status=terminal),
+        SimpleNamespace(status="completed", outputs=[_text("New report.")]),
+    ]
+    monkeypatch.setattr(genai, "Client", lambda **_: SimpleNamespace(interactions=api))
+    assert not run_deep_research({}, tmp_path, api_key="dummy")
+    assert not (tmp_path / "deep_research_interaction.json").exists()
+    assert run_deep_research({}, tmp_path, api_key="dummy")
+    assert [call.args for call in api.get.call_args_list] == [("expired",), ("replacement",)]
+
+
+def test_concurrent_workers_share_one_google_interaction(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from google import genai
+
+    entered, release = Event(), Event()
+    api = Mock()
+    api.create.return_value = SimpleNamespace(id="shared")
+    def respond(interaction_id):
+        entered.set()
+        assert release.wait(5)
+        return SimpleNamespace(status="completed", outputs=[_text("Shared survey.")])
+    api.get.side_effect = respond
+    monkeypatch.setattr(genai, "Client", lambda **_: SimpleNamespace(interactions=api))
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(run_deep_research, {}, tmp_path, api_key="dummy")
+        assert entered.wait(5)
+        second = pool.submit(run_deep_research, {}, tmp_path, api_key="dummy")
+        release.set()
+        assert first.result() == second.result() == str(tmp_path / "deep_research.md")
+    api.create.assert_called_once()
+    api.get.assert_called_once_with("shared")
 
 
 # ─────────────────────────────────────────────────────────────────────

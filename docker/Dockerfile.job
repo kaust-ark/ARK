@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         texlive-latex-base \
         texlive-latex-extra \
         texlive-latex-recommended \
+        tesseract-ocr tesseract-ocr-eng \
         texlive-science \
         texlive-fonts-recommended \
         texlive-fonts-extra \

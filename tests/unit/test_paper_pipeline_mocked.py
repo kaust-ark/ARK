@@ -98,17 +98,16 @@ class TestIntegration:
         assert "planner" in called
         assert "writer" in called
 
-    def test_paper_accepted_stops(self, mock_integration_project_factory):
-        """Score >= threshold should stop iteration (return False)."""
+    def test_high_score_with_stub_pdf_continues(self, mock_integration_project_factory):
+        """The mock compiler writes a 13-byte PDF. A high score cannot accept it."""
         orch, controller = mock_integration_project_factory(
             project_name="test_accept", review_score=9.0
         )
         result = orch.run_paper_iteration()
 
-        # Score 9 >= threshold 8 → paper accepted, should stop
-        assert result is False
-        paper_state = orch.load_paper_state()
-        assert paper_state["status"] == "accepted"
+        assert result is True
+        assert orch.load_paper_state()["status"] == "in_progress"
+        assert "main.pdf missing or stub" in (orch.code_dir / "auto_research/state/delivery_report.yaml").read_text()
 
     def test_score_zero_retries_reviewer(self, mock_integration_project_factory):
         """When initial score is 0 but review exists, should retry reviewer."""

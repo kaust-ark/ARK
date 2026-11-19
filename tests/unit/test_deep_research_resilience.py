@@ -156,6 +156,69 @@ class TestFallbackSurvey:
         assert "Attention Is All You Need" in (tmp_path / "deep_research.md").read_text()
 
 
+@pytest.mark.parametrize(("settings", "retry"), [
+    ({"skip_deep_research": False, "deep_research_backend": "gemini"}, True),
+    ({"skip_deep_research": False, "deep_research_backend": "openrouter"}, True),
+    ({"skip_deep_research": False, "layout_mode": "strict"}, True),
+    ({"skip_deep_research": False}, False),
+    ({"skip_deep_research": True, "deep_research_backend": "gemini"}, False),
+])
+def test_continue_retries_degraded_survey_only_when_required(tmp_path, settings, retry):
+    from ark.pipeline import PipelineMixin
+
+    p = PipelineMixin()
+    p.state_dir = tmp_path
+    p.config = settings
+    for name in ("idea.md", "project_context.md"):
+        (tmp_path / name).write_text("Present")
+    report = tmp_path / "deep_research.md"
+    marker = tmp_path / "research_degraded.txt"
+    report.write_text("# Literature Survey (fallback)\nSearch findings")
+    marker.write_text("Partial survey")
+    assert p._should_run_research_phase() is retry
+    if not settings["skip_deep_research"]:
+        # Existing completed releases had no receipt; a stale fallback marker
+        # cannot require their owners to pay for the survey again.
+        report.write_text("# Deep Research Report\n**Generated**: yesterday\n**Duration**: 3m\n---\nStudy.")
+        assert not p._should_run_research_phase()
+        assert not marker.exists()
+
+
+def test_retry_uses_normal_research_phase_and_preserves_previous_fallback_on_failure(tmp_path, monkeypatch):
+    from ark.pipeline import PipelineMixin
+
+    p = PipelineMixin()
+    p.state_dir = tmp_path
+    p.config = {"deep_research_backend": "gemini", "skip_deep_research": False, "gemini_api_key": "dummy"}
+    p.telegram = SimpleNamespace(is_configured=False)
+    for name in ("_sync_db", "log", "log_section", "log_step", "log_step_header",
+                 "_ensure_project_env", "_update_title_from_idea", "_send_deep_research_telegram",
+                 "_sync_agent_prompt_bases", "_install_builtin_skills",
+                 "_bootstrap_citations_from_deep_research", "_fallback_literature_survey"):
+        monkeypatch.setattr(p, name, MagicMock(), raising=False)
+    for name in ("idea.md", "project_context.md"):
+        (tmp_path / name).write_text("original")
+    report = tmp_path / "deep_research.md"
+    marker = tmp_path / "research_degraded.txt"
+    marker.write_text("Partial survey")
+    report.write_text("# Literature Survey (fallback)\nExisting references.")
+    def paid_survey(**kwargs):
+        report.write_text("# Deep Research Report\n**Generated**: today\n**Duration**: 1m\n---\nNew research.")
+        return str(report)
+    with patch("ark.deep_research.run_deep_research", return_value="") as failed:
+        assert p._should_run_research_phase()
+        p._run_research_phase()
+        failed.assert_called_once()
+        assert marker.is_file() and "Existing references." in report.read_text()
+        p._fallback_literature_survey.assert_not_called()
+    with patch("ark.deep_research.run_deep_research", side_effect=paid_survey) as completed:
+        assert p._should_run_research_phase()
+        p._run_research_phase()
+        completed.assert_called_once()
+        assert not marker.exists()
+        assert not p._should_run_research_phase()
+
+
 def test_delivery_contract_flags_degraded_research(tmp_path):
     """A thinner foundation must be visible in the report, not silent."""
     from ark import delivery_contract as dc

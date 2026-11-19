@@ -268,3 +268,32 @@ def test_the_disclosure_survives_a_skipped_reorder(stub, monkeypatch):
     assert ARK_ACK_TEXT in out
     said = " ".join(str(c) for c in stub.log.call_args_list)
     assert "Skipped end-matter reorder" in said
+
+
+def test_ack_and_post_bibliography_style_share_the_references_page(stub):
+    from ark.template_preprocess import ARK_ACK_TEXT
+    main = stub.latex_dir / "main.tex"
+    main.write_text(r"""\documentclass{article}
+\begin{document}
+Some body.
+\section*{Acknowledgments}
+An existing acknowledgment.
+\clearpage
+""" + ARK_ACK_TEXT + r"""
+\bibliography{references}
+\clearpage
+\bibliographystyle{plain}
+\clearpage
+\appendix
+\section{Details}
+Enough detail.
+\end{document}
+""")
+    stub._ensure_clearpage_before_bibliography()
+    canonical = main.read_text()
+    ack = canonical.index(r"\section*{Acknowledgments}")
+    bib = canonical.index(r"\bibliography{references}")
+    assert r"\clearpage" not in canonical[ack:bib]
+    assert canonical.index(r"\bibliographystyle{plain}") < bib < canonical.index(r"\appendix")
+    stub._ensure_clearpage_before_bibliography()
+    assert main.read_text() == canonical

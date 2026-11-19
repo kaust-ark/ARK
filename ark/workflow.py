@@ -34,7 +34,7 @@ class PaperIteration:
         if not self.review_output and self.score == self.current_score and not issues:
             return "repeat"
         stop, self.cleanup, self.stop_after_cleanup = project._check_acceptance(self.score, issues, self.state)
-        return "stop" if stop else "next"
+        return self.finalize() if stop else "next"
 
     def plan(self):
         project = self.project

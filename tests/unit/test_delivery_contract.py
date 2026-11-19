@@ -747,3 +747,90 @@ def test_requested_concept_figure_must_be_drawn_in_pdf(tmp_path, registered, dra
     assert finding.status == expected
     if draw_art and registered:
         assert "page 2" in finding.detail
+        manifest["figures"][art.name]["artifact_sha256"] = "0" * 64
+        save_manifest(figures, manifest)
+        changed = next(f for f in evaluate(project).findings if f.check == "concept_figure_embedded")
+        assert changed.status == "violated"
+        assert art.name in changed.detail
+
+
+def test_strict_delivery_checks_current_body_and_configured_paths(tmp_path):
+    from PIL import Image
+    from ark.figure_manifest import register_figure, save_manifest
+
+    project = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
+    paper = project / "manuscript"
+    (project / "paper").rename(paper)
+    figures = paper / "art"
+    (paper / "figures").rename(figures)
+    art = figures / "concept.png"
+    Image.new("RGB", (48, 32), "teal").save(art)
+    manifest = {"figures": {}}
+    register_figure(manifest, art.name, "nano_banana")
+    save_manifest(figures, manifest)
+    pdf = paper / "main.pdf"
+    with fitz.open(pdf) as doc:
+        page = doc.new_page()
+        page.insert_text((72, 80), "References")
+        page.insert_image(fitz.Rect(72, 120, 216, 216), filename=str(art))
+        data = doc.tobytes()
+    pdf.write_bytes(data + b"%" + b"x" * 60_000)
+    config = {"layout_mode": "strict", "latex_dir": "manuscript", "figures_dir": "manuscript/art",
+              "figure_generation": "nano_banana"}
+    report = evaluate(project, venue_pages=4, config=config)
+    assert {f.check for f in report.delivery_blockers(config)} == {"page_budget", "concept_figure_embedded", "concept_figure_science"}
+    assert not report.delivery_blockers({"layout_mode": "balanced"})
+    assert [f.check for f in report.delivery_blockers(
+        {**config, "layout_mode": "balanced"})] == ["concept_figure_embedded", "concept_figure_science"]
+
+
+def test_native_research_receipt_cannot_verify_a_replaced_report(tmp_path):
+    import hashlib
+    import json
+
+    project = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
+    cfg = {"skip_deep_research": False, "layout_mode": "strict"}
+    state = project / "auto_research/state"
+    state.mkdir(parents=True)
+    report_file = state / "deep_research.md"
+    report_file.write_text("Survey from native interaction 123.")
+    (state / "deep_research_receipt.json").write_text(json.dumps({
+        "provider": "google", "status": "completed", "interaction_id": "123",
+        "report_sha256": hashlib.sha256(report_file.read_bytes()).hexdigest(),
+    }))
+    assert not evaluate(project, config=cfg).delivery_blockers(cfg)
+    report_file.write_text("An unrelated survey.")
+    assert [f.check for f in evaluate(project, config=cfg).delivery_blockers(cfg)] == ["research_grounded"]
+
+
+def test_only_used_unconfirmed_sources_block_strict_delivery(tmp_path):
+    project = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
+    paper = project / "paper"
+    (paper / "references.bib").write_text(
+        "% [NEEDS-CHECK] Source identity unconfirmed\n"
+        "@article{unverified, title={Untested source}, year={2025}}\n"
+    )
+    cfg = {"layout_mode": "strict"}
+    report = evaluate(project, config=cfg)
+    assert not any(f.check == "cited_sources_verified" for f in report.delivery_blockers(cfg))
+    manuscript = paper / "main.tex"
+    (paper / "alternative.tex").write_text(r"An outside claim \citep{unverified}.")
+    assert not any(f.check == "cited_sources_verified"
+                   for f in evaluate(project, config=cfg).delivery_blockers(cfg))
+    manuscript.write_text(manuscript.read_text().replace(r"\end{document}",
+                           r"\input{alternative}" + "\n" + r"\end{document}"))
+    report = evaluate(project, config=cfg)
+    assert any(f.check == "cited_sources_verified" and "unverified" in f.detail
+               for f in report.delivery_blockers(cfg))
+
+
+def test_strict_checks_the_final_build_log_including_the_appendix(tmp_path):
+    project = _project(tmp_path, GOOD_TEX, GOOD_PDF_TEXT)
+    log = project / "paper/main.log"
+    config = {"layout_mode": "strict"}
+    log.write_text(r"Overfull \hbox (65.07pt too wide) in paragraph at lines 195--206")
+    report = evaluate(project, config=config)
+    assert any(f.check == "column_overflow" and "65.07" in f.detail
+               for f in report.delivery_blockers(config))
+    log.write_text(r"Overfull \hbox (0.05pt too wide) in paragraph at lines 195--206")
+    assert not any(f.check == "column_overflow" for f in evaluate(project, config=config).delivery_blockers(config))

@@ -141,3 +141,23 @@ def test_scalar_claims_round_only_the_raw_number_at_explicit_precision(project, 
     check = {"claim": "Measured value", "predicted": predicted,
              "observed_source": "results/trial.json#/value", **fields}
     assert review(project, [check]).action == ("proceed_to_writing" if accepted else "correct_findings")
+
+
+@pytest.mark.parametrize(("predicted", "accepted"), [
+    (-846321.6943433309, True),   # a separately averaged pairwise difference
+    (-846321.6943433311, False),  # several binary64 units away
+    (846321.6943433309, False),   # reversed comparison
+    (-846.3216943433309, False),  # wrong scale
+])
+def test_binary64_aggregate_recomputation(project, predicted, accepted):
+    (project / "results/baseline.json").write_text('{"times/ms":[859756.2472217195]}')
+    (project / "results/trial.json").write_text('{"times/ms":[13434.552878388646]}')
+    action = decision(project, "difference", predicted).action
+    assert action == ("proceed_to_writing" if accepted else "correct_findings")
+
+
+def test_binary64_allowance_never_overrides_declared_rounding(project):
+    (project / "results/baseline.json").write_text('{"times/ms":[0.1369927947351017]}')
+    (project / "results/trial.json").write_text('{"times/ms":[0.4009768015525168]}')
+    assert decision(project, "difference", 0.26398400681741513).action == "proceed_to_writing"
+    assert decision(project, "difference", 0.26398400681741513, decimal_places=6).action == "correct_findings"

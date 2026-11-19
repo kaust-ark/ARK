@@ -26,7 +26,7 @@ from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from functools import lru_cache
 from itertools import islice
-from math import floor
+from math import floor, isfinite, ulp
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
@@ -653,6 +653,7 @@ def _check_numeric_prediction(check, project_root, *, derived):
 
     read_result = lru_cache(maxsize=1)(_read_result)
     operands = []
+    binary64_input = False
     locations = []
     fields = ("reference_source", "treatment_source") if derived else ("observed_source",)
     for field in fields:
@@ -669,6 +670,11 @@ def _check_numeric_prediction(check, project_root, *, derived):
         if operand is None:
             return "block", f"{field} {ref} must point to a finite numeric measurement within the exact-check limit."
         operands.append(operand)
+        # Summaries may store separately averaged binary64 statistics. Their
+        # printed operands and paired delta can differ in the last bit.
+        if (isinstance(value, Decimal) and 15 <= len(value.as_tuple().digits) <= 17
+                and Decimal(str(float(value))) == value):
+            binary64_input = True
         locations.append(location)
 
     if derived:
@@ -690,6 +696,12 @@ def _check_numeric_prediction(check, project_root, *, derived):
         scale = 10 ** places
         rounded = floor(abs(observed) * scale + Fraction(1, 2))
         observed = Fraction(-rounded if observed < 0 else rounded, scale)
+    if (derived and places is None and binary64_input and observed != predicted
+            and (observed > 0 and predicted > 0 or observed < 0 and predicted < 0)):
+        reported = float(Decimal(str(check["predicted"])))
+        if (isfinite(reported) and _comparison_number(reported) == predicted
+                and abs(observed - predicted) <= Fraction(ulp(reported))):
+            return None
     if observed != predicted:
         display = Decimal(observed.numerator) / Decimal(observed.denominator)
         approximation = "approximately " if Fraction(display) != observed else ""

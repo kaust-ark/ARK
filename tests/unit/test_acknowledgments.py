@@ -12,7 +12,9 @@ def test_writer_scaffold_contains_acknowledgments():
     scaffold = template_preprocess._WRITER_SCAFFOLD
     assert r"\section*{Acknowledgments}" in scaffold
     assert "Idea2Paper (idea2paper.org)" in scaffold
+    assert template_preprocess.ARK_ACK_TEXT in scaffold
     assert "full responsibility" in scaffold
+    assert "reviewed and edited" not in scaffold
 
 
 def test_writer_scaffold_orders_conclusion_then_acknowledgments():
@@ -31,6 +33,8 @@ def test_default_cli_template_has_acknowledgments_before_bibliography():
         venue_name="Workshop",
         authors=["Test"],
     )
+    assert template_preprocess.ARK_ACK_TEXT in tex
+    assert "reviewed and edited" not in tex
     assert r"\section*{Acknowledgments}" in tex
     ack_idx = tex.index(r"\section*{Acknowledgments}")
     biblio_idx = tex.index(r"\bibliography{")

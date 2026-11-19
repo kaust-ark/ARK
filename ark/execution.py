@@ -1108,6 +1108,7 @@ For a small overflow, first look for a result or motivation repeated across the
 introduction, discussion and conclusion. Keep its clearest occurrence and edit
 the redundant prose. Preserve the supporting table, citations and the limits
 on the claim. Recompile before changing any other part of the paper.
+Keep citations tied to verified primary records. Do not reintroduce removed, unconfirmed citations to fill space.
 Refer to the page-adjustment and figure-integrity skills for strategies and constraints.
 After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 """, timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
@@ -1120,6 +1121,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 Current: {page_count:.2f} body pages ({-gap:+.2f} short of target, {columns}-column).
 Target: {cur_min:.2f}–{venue_pages:.0f} body pages.
 
+Keep citations tied to verified primary records. Do not reintroduce removed, unconfirmed citations to fill space.
 Refer to the page-adjustment and figure-integrity skills for strategies and constraints.
 After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 """, timeout=defaults.TIMEOUT_PAGE_ADJUSTMENT)
@@ -1246,6 +1248,12 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             appendix_pos = appendix_m.start() if appendix_m else -1
             # Whatever follows the bibliography stays, appendix or not.
             after_bib = content[bib_match.end():end_doc_pos].strip()
+            # A style declared after the bibliography prints nothing. Keep it
+            # with its bibliography so it cannot acquire its own page break.
+            trailing_style = _re.match(r"(?:\\clearpage\s*)*(\\bibliographystyle\{[^}]*\})\s*", after_bib)
+            if trailing_style and r"\bibliographystyle" not in bib_block:
+                bib_block = trailing_style[1] + "\n" + bib_block
+                after_bib = after_bib[trailing_style.end():].lstrip()
 
             # Three input shapes to handle:
             #   (a) appendix BEFORE bib  → reorder to bib then appendix
@@ -1343,6 +1351,11 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
                 endmatter_text = _re.sub(
                     r'\\clearpage\s*$', '', endmatter_text.rstrip()
                 ).rstrip()
+
+            # When a writer has put a break between an acknowledgment and
+            # its disclosure, the short acknowledgment otherwise takes a
+            # whole page. These boilerplate paragraphs precede references.
+            endmatter_text = _re.sub(r"(?m)^[ \t]*\\(?:clearpage|newpage)[ \t]*$", "", endmatter_text).strip()
 
             # Reassemble in canonical order.
             parts = [

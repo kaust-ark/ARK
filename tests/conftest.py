@@ -90,7 +90,11 @@ class MockController:
         exe = cmd[0] if isinstance(cmd, (list, tuple)) else cmd
         if exe == "pdflatex":
             pdf = kwargs.get("cwd", self.latex_dir) / "main.pdf" if isinstance(kwargs.get("cwd"), Path) else Path(kwargs.get("cwd", str(self.latex_dir))) / "main.pdf"
-            pdf.write_bytes(b"%PDF-1.4 fake")
+            # A successful compile produces a fresh file even on a filesystem
+            # whose mtime resolution merges two immediate mocked compilations.
+            output = pdf.with_suffix(".tmp")
+            output.write_bytes(b"%PDF-1.4 fake")
+            output.replace(pdf)
             return self._ok("")
         if exe == "bibtex": return self._ok("")
         if exe == "git": return self._handle_git(cmd, **kwargs)

@@ -241,3 +241,28 @@ def test_precheck_existing_plot_reports_clipped_axis_title(tmp_path):
     _figure(path, [("Solver iterations", 10, 125)], rotate=90)
     assert compiler.generate_figures()
     assert any("found no issues" in line for line in messages)
+
+
+def test_plot_script_registers_its_own_named_outputs(tmp_path):
+    import hashlib
+    from ark.figure_manifest import load_manifest
+    from ark.latex.compiler import CompilerMixin
+
+    compiler = CompilerMixin()
+    compiler.code_dir = tmp_path
+    compiler.figures_dir = tmp_path / "figures"
+    compiler.figures_dir.mkdir()
+    compiler.hooks = None
+    compiler.config = {"create_figures_script": "plot.py"}
+    compiler.log = lambda *args: None
+    (tmp_path / "plot.py").write_text(
+        "from PIL import Image\n"
+        "Image.new('RGB', (64, 48), 'blue').save('figures/calibration_curve.png')\n"
+    )
+    (compiler.figures_dir / "existing.png").write_bytes(b"pre-existing user file")
+    assert compiler.generate_figures()
+    entries = load_manifest(compiler.figures_dir, infer_existing=False)["figures"]
+    assert set(entries) == {"calibration_curve.png"}
+    image = compiler.figures_dir / "calibration_curve.png"
+    assert entries[image.name]["artifact_sha256"] == hashlib.sha256(image.read_bytes()).hexdigest()
+    assert entries[image.name]["script"] == "plot.py"

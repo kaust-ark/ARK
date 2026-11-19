@@ -49,9 +49,11 @@ from typing import Optional
 
 # The ARK-usage acknowledgment REQUIRED in every generated paper (single source
 # of truth — execution.py inserts it for built-in venue templates too). Wording
-# finalized in 89f9fa2: author-responsibility framing, no author identity, so it
-# is double-blind-safe.
-ARK_ACK_TEXT = "The author(s) used Idea2Paper (idea2paper.org) for background research, coding, experimentation, results analysis and content generation in every section of the article. All content was reviewed and edited by the author(s), who take full responsibility for the final work."
+# describes tooling and author responsibility without attesting to a human review.
+ARK_ACK_TEXT = (
+    "This manuscript was prepared with Idea2Paper (idea2paper.org), an AI research and writing system. "
+    "The authors take full responsibility for the final manuscript."
+)
 
 
 def _active_command_regex(cmd: str) -> re.Pattern[str]:
@@ -304,9 +306,7 @@ _WRITER_SCAFFOLD = """
 % TO BE WRITTEN
 
 \\section*{Acknowledgments}
-The author(s) used Idea2Paper (idea2paper.org) for background research, coding, experimentation, results analysis and content generation in every section of the article. All content was reviewed and edited by the author(s), who take full responsibility for the final work.
-
-"""
+""" + ARK_ACK_TEXT + "\n\n"
 
 
 def stub_out_boilerplate(src: str, span: tuple[int, int]) -> str:

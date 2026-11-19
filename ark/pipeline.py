@@ -247,6 +247,8 @@ class PipelineMixin:
                 f"Review according to {venue_name} standards. Check whether the reported inputs identify "
                 "each headline statistic. If two datasets could have the stated inputs but different values, "
                 "flag the exact passage and name the missing measurement.\n"
+                "Read any previous delivery findings in auto_research/state/delivery_report.yaml. "
+                "Check flagged issues against this compiled PDF before carrying them forward.\n"
                 f"{visual_review}\n"
                 f"{prior_review_section}\n"
                 f"Output a detailed review report and save to auto_research/state/latest_review.md",
@@ -495,14 +497,9 @@ class PipelineMixin:
                 paper_state["accepted_score"] = score
                 paper_state["accepted_iteration"] = self.iteration
                 return False, True, True
-            else:
-                self.log_section(f"PAPER ACCEPTED!  Score: {score}/10 >= {self.paper_accept_threshold}/10", "★")
-                paper_state["status"] = "accepted"
-                self.save_paper_state(paper_state)
-                self._last_score = score
-                self.git_commit(f"ACCEPTED: Final score {score}/10")
-                self.send_notification("Paper Accepted", f"{self.project_name.upper()} scored {score}/10 after {self.iteration} iterations")
-                return True, False, False
+            # A positive review skips planning and execution. The same
+            # pre-delivery checks still run before recording acceptance.
+            return True, False, True
         return False, False, False
 
     def _step_plan(self, step_num: int, total_steps: int, resume_step: int, review_output: str) -> tuple[dict, str]:
@@ -586,13 +583,18 @@ class PipelineMixin:
         
         self.log("", "RAW")
         gap = self.paper_accept_threshold - score
-        status = "POST_ACCEPT_CLEANUP" if post_accept_cleanup else ("CONTINUE" if gap > 0 else "ACCEPTED")
+        status = "POST_ACCEPT_CLEANUP" if post_accept_cleanup else ("CONTINUE" if gap > 0 else "CHECKING DELIVERY")
         self.log_summary_box(f"Iteration {self.iteration} Summary", [f"Score: {score}/10", f"Status: {status}"], inside_phase=False)
         self.record_score_to_memory(score)
         
         self.log_step("Pre-delivery checks...", "progress")
         self._ensure_clearpage_before_bibliography()
         self._ensure_float_barrier()
+        # Continue can skip the initial figure stage. Recheck existing final
+        # artwork before compiling so the PDF includes any approved edit.
+        if (self.config.get("figure_generation") == "nano_banana"
+                and (self.figures_dir / "concept_figures.json").is_file()):
+            self._generate_nano_banana_figures()
         self.compile_latex()
         # Before page fitting: integrating forgotten figures changes the page
         # count, so this must precede _enforce_page_count.
@@ -604,8 +606,9 @@ class PipelineMixin:
         self._fix_illegible_figures(context="pre-delivery")
         self._fix_overfull(context="pre-delivery")
         self._run_citation_verification()
+        self._repair_cited_sources()
         try:
-            self._enforce_page_count(context="pre-delivery")
+            layout_ok = self._enforce_page_count(context="pre-delivery")
         except QuotaExhaustedError as e:
             return self._handle_quota_exhausted(score, detail=f"Page compression failed: {e.page_count:.1f}/{e.venue_pages} pages")
         # LAST compile-touching gate: page-fitting above may have recompiled via
@@ -616,17 +619,46 @@ class PipelineMixin:
         # NOT deliver a paper full of "?" as a clean result. Flag it (sticky)
         # so the run ends failed with an actionable reason rather than shipping
         # garbage (the recurring missing-references failure).
-        if not self.ensure_resolved_citations(context="pre-delivery"):
+        # A page-length edit can reintroduce an old citation or overflow.
+        self._repair_cited_sources(recheck_database=False)
+        self._fix_overfull(context="final-layout")
+        if not self.compile_latex():
+            self._run_fatal = "Final manuscript sources failed to compile. See the LaTeX build log."
+        elif not self.ensure_resolved_citations(context="pre-delivery"):
             self._run_fatal = ("Bibliography could not be resolved: the paper cites "
                                "works that no academic database could confirm and "
                                "auto-repair (backfill + prune) failed. references.bib "
                                "is incomplete.")
             self.log("Delivery blocked: unresolved citations after backfill+prune", "ERROR")
 
-        self._report_delivery_checks()
+        report = self._report_delivery_checks()
+        problems = report.delivery_blockers(self.config) if report is not None else []
+        if layout_ok is False and self.config.get("layout_mode") == "strict":
+            from ark.delivery_contract import Finding
+            problems.append(Finding("page_budget", "violated", "soft",
+                                    f"Page fitting stalled at {self._body_page_count:.2f} "
+                                    f"of {self.config.get('venue_pages')} requested body pages."))
+        failure = getattr(self, "_run_fatal", None)
+        if report is None and not failure:
+            failure = "Could not verify the final manuscript. See the delivery-check log."
+        if problems and not failure:
+            failure = "Final manuscript checks: " + "; ".join(f"{f.check}: {f.detail}" for f in problems)
+        if failure:
+            paper_state["status"] = "in_progress"
+            self.save_paper_state(paper_state)
+            self.log(failure, "ERROR")
+            if problems and not getattr(self, "_run_fatal", None) and self.iteration < self.max_iterations:
+                self.save_checkpoint()
+                return True
+            self._run_fatal = failure
+            # Repeat the unfinished paper iteration on Continue. The separate
+            # experiment checkpoint and all existing worker outputs stay valid.
+            self.iteration -= 1
+            self.save_checkpoint()
+            return False
 
         self.send_iteration_summary(score, current_score, review_output)
-        if not post_accept_cleanup: self._check_smart_intervention(score, current_score, review_output, True)
+        if not post_accept_cleanup and not stop_after_cleanup: self._check_smart_intervention(score, current_score, review_output, True)
         self.cleanup_workspace()
         self.git_commit(f"Iteration {self.iteration}: score {score}/10")
         self.save_checkpoint()
@@ -634,10 +666,62 @@ class PipelineMixin:
         if stop_after_cleanup:
             paper_state["status"] = "accepted"
             self.save_paper_state(paper_state)
-            self.log_section(f"PAPER ACCEPTED AFTER CLEANUP  |  Score: {score}/10", "★")
+            self.log_section(f"PAPER ACCEPTED  |  Score: {score}/10", "★")
+            if not post_accept_cleanup:
+                self.send_notification("Paper Accepted", f"{self.project_name.upper()} scored {score}/10 after {self.iteration} iterations")
             return False
 
         return self._handle_stagnation(score, current_score, review_output)
+
+    def _repair_cited_sources(self, *, recheck_database=True):
+        """Repair explicitly unconfirmed citations before fitting the final PDF."""
+        if self.config.get("layout_mode") != "strict":
+            return
+        from ark.citation import unconfirmed_citations
+        from ark.orchestrator.state import _atomic_write_yaml
+        import hashlib
+        missing = unconfirmed_citations(self.latex_dir)
+        survey = self.state_dir / "deep_research.md"
+        library = self.state_dir / "literature.yaml"
+        new_keys = set()
+        if recheck_database and survey.is_file() and library.is_file():
+            try:
+                literature = yaml.safe_load(library.read_text())
+            except (OSError, yaml.YAMLError):
+                literature = None
+            if not isinstance(literature, dict):
+                literature = {}
+            confirmed = {r.get("bibtex_key") for r in literature.get("references") or []
+                         if isinstance(r, dict) and r.get("bibtex_key")}
+            pending = [r["bibtex_key"] for r in literature.get("needs_check") or []
+                       if isinstance(r, dict) and r.get("bibtex_key")]
+            digest = hashlib.sha256(survey.read_bytes()).hexdigest()
+            # If most of the initial shortlist failed verification, deleting
+            # the affected passages would leave a nominally clean but thin
+            # discussion. Make one primary-source discovery pass per survey.
+            thin = bool(pending and len(pending) >= len(confirmed)
+                        and literature.get("coverage_review_sha256") != digest)
+            if missing or thin:
+                candidates = missing or pending
+                self.log("Checking primary sources for gaps in the literature review", "WARN")
+                result = self._bootstrap_citations_from_deep_research(recheck_keys=candidates)
+                if result is not None:
+                    new_keys = set(result.found_keys) - confirmed
+                    if thin:
+                        updated = yaml.safe_load(library.read_text()) or {}
+                        updated["coverage_review_sha256"] = digest
+                        _atomic_write_yaml(library, updated, sort_keys=False)
+            missing = unconfirmed_citations(self.latex_dir)
+        if missing or new_keys:
+            self.run_agent("writer",
+                "Repair the supporting literature in the manuscript. Unconfirmed keys still cited: "
+                + (", ".join(missing) or "none") + ". Additional verified keys: "
+                + (", ".join(sorted(new_keys)) or "none") + ". Read the supporting passages in "
+                  "the saved research, original records and managed bibliography. Integrate each "
+                  "relevant finding where it supports a specific statement about the research question, "
+                  "baseline, benchmark or closest alternative. Remove claims lacking such support. "
+                  "Use primary sources that matter to this study. Do not reinstate unconfirmed "
+                  "citations to fill space. Leave verification marks and experimental values intact.")
 
     def _ensure_figures_referenced(self):
         """Delivery gate: generated figures must actually appear in the paper.
@@ -649,21 +733,29 @@ class PipelineMixin:
         """
         try:
             figs = [f for f in sorted(self.figures_dir.glob("*"))
-                    if f.suffix in (".png", ".pdf") and f.stat().st_size > 5000]
+                    if f.suffix.lower() in (".png", ".jpg", ".jpeg", ".pdf") and f.stat().st_size > 5000]
             if not figs:
                 return
             main_tex = self.latex_dir / "main.tex"
             if not main_tex.exists():
                 return
-            if re.search(r"\\includegraphics", main_tex.read_text(errors="replace")):
-                return
+            has_graphics = bool(re.search(r"\\includegraphics", main_tex.read_text(errors="replace")))
+            if has_graphics:
+                if self.config.get("figure_generation") != "nano_banana":
+                    return
+                from ark.delivery_contract import _concept_figure_in_pdf
+                from ark.figure_manifest import load_manifest, AI_SOURCES
+                manifest = load_manifest(self.figures_dir, infer_existing=False).get("figures", {})
+                figs = [f for f in figs if isinstance(manifest.get(f.name), dict)
+                        and manifest[f.name].get("source") in AI_SOURCES]
+                if not figs or _concept_figure_in_pdf(main_tex.with_suffix(".pdf"), self.figures_dir).status != "violated":
+                    return
             names = ", ".join(f.name for f in figs[:8])
-            self.log(f"{len(figs)} figure(s) generated but the paper references "
-                     f"NONE — one writer pass to integrate them", "WARN")
+            self.log(f"Integrating available figures into the manuscript: {names}", "WARN")
             self.run_agent("writer", (
-                f"The paper currently contains ZERO \\includegraphics, but these "
-                f"real generated figures exist in paper/figures/: {names}.\n"
-                f"Integrate the ones that genuinely support the text into main.tex "
+                f"The compiled paper is missing available figure evidence from paper/figures/: {names}.\n"
+                f"Place the requested concept artwork near its explanation in the main body. "
+                f"Integrate supporting data figures into main.tex "
                 f"using proper figure environments with accurate captions, and "
                 f"reference each from the prose (\\label/\\ref). Do NOT invent "
                 f"results or alter figure data; skip any figure that does not fit "
@@ -890,6 +982,27 @@ class PipelineMixin:
 
     # ==================== Research Phase ====================
 
+    def _needs_deep_research(self) -> bool:
+        from ark.deep_research import research_report_status
+
+        if self.config.get("skip_deep_research"):
+            return False
+        status = research_report_status(self.state_dir)
+        if status in ("verified", "legacy"):
+            # A crash can land between publishing the report and removing the
+            # old fallback marker. The completed report already incurred cost.
+            (self.state_dir / "research_degraded.txt").unlink(missing_ok=True)
+        if status == "missing" or not (self.state_dir / "deep_research.md").is_file():
+            return True
+        if (status in ("degraded", "invalid_receipt")
+                and (self.state_dir / "deep_research_interaction.json").is_file()
+                and self.config.get("deep_research_backend", "auto") in ("auto", "gemini")):
+            return True
+        required = self.config.get("skip_deep_research") is False and (
+            self.config.get("layout_mode") == "strict"
+            or self.config.get("deep_research_backend") in ("gemini", "openrouter"))
+        return required and status in ("degraded", "invalid_receipt")
+
     def _should_run_research_phase(self) -> bool:
         """Check if the Research Phase should run.
 
@@ -909,8 +1022,7 @@ class PipelineMixin:
         # of experimenting (1c9e7020, first corrective pass). Treat the flag as
         # "the DR sub-step is already done", nothing more.
         idea_done = (self.state_dir / "idea.md").exists()
-        dr_done = ((self.state_dir / "deep_research.md").exists()
-                   or self.config.get("skip_deep_research", False))
+        dr_done = not self._needs_deep_research()
         ctx_done = (self.state_dir / "project_context.md").exists()
 
         if idea_done and dr_done and ctx_done:
@@ -1068,10 +1180,10 @@ What experiments do the authors plan? What data? What metrics? What baselines?
 After writing idea.md, output a focused deep research query for Gemini.
 The query should:
 - Summarize the research topic for a literature search engine
-- Ask 5-8 specific questions about related work, baselines, benchmarks
-- Ask about the external systems mentioned (what they are, how to install them, alternatives)
-- Ask about concrete experimental methodology for this type of research
-- Request a section on "Required Systems & Setup" with install instructions
+- Ask about the foundational studies and closest primary comparisons, including their assumptions.
+- Ask how the dataset, methods and evaluation bear on the scientific question.
+- Seek competing explanations and the limits of transferring published results to this design.
+- Keep operational setup in the project context unless that system is itself being studied.
 
 Output the query as plain text at the END of your response, after a line that says
 "DEEP_RESEARCH_QUERY:" — everything after that line is the query.
@@ -1118,7 +1230,7 @@ Be thorough and faithful to the proposal.
         dr_file = self.state_dir / "deep_research.md"
         if self.config.get("skip_deep_research", False):
             pass
-        elif not dr_file.exists():
+        elif self._needs_deep_research():
             import os as _os
             from ark.deep_research import (
                 run_deep_research, run_deep_research_openrouter, get_gemini_api_key,
@@ -1130,7 +1242,13 @@ Be thorough and faithful to the proposal.
             # deep_research_backend` (openrouter|gemini|auto) can force one.
             or_key = _os.environ.get("OPENROUTER_API_KEY", "") or self.config.get("openrouter_api_key", "")
             gem_key = self.config.get("gemini_api_key", "") or get_gemini_api_key()
-            use_or, use_gem, or_low = self._deep_research_route(or_key, gem_key)
+            if ((self.state_dir / "deep_research_interaction.json").is_file()
+                    and self.config.get("deep_research_backend", "auto") in ("auto", "gemini")):
+                # Keep polling a submitted Google survey, even when a newly
+                # available OpenRouter key would normally win in auto mode.
+                use_or, use_gem, or_low = False, bool(gem_key), None
+            else:
+                use_or, use_gem, or_low = self._deep_research_route(or_key, gem_key)
             label = ("OpenRouter" if use_or else "Gemini" if use_gem
                      else "literature search")
             self.log_step_header(2, 4, f"Deep Research ({label})")
@@ -1150,13 +1268,12 @@ Be thorough and faithful to the proposal.
                         f"I am writing an academic paper titled \"{title}\" targeting {venue}.\n\n"
                         f"Research summary:\n{idea_content[:6000]}\n\n"
                         "Please conduct comprehensive research. I need:\n"
-                        "1. Literature review of relevant recent papers (2022-2026)\n"
+                        "1. Foundational sources, closest prior work and relevant recent comparisons\n"
                         "2. State-of-the-art approaches, benchmarks, and baselines\n"
                         "3. Key technical challenges and open problems\n"
-                        "4. External systems/tools this research depends on, with install instructions\n"
-                        "5. Concrete experimental methodology and evaluation metrics\n"
-                        "6. API keys or credentials needed\n\n"
-                        "Include a '## Required Systems & Setup' section."
+                        "4. Original sources for the methods, dataset and evaluation metrics\n"
+                        "5. Evidence that challenges the proposed explanation and its limits.\n"
+                        "Keep routine installation, compute and manuscript production out of the literature review."
                     )
 
                 try:
@@ -1179,6 +1296,10 @@ Be thorough and faithful to the proposal.
                             custom_query=query,
                         )
                     if result:
+                        if use_or:
+                            # A successful OpenRouter replacement has no Google receipt.
+                            (self.state_dir / "deep_research_receipt.json").unlink(missing_ok=True)
+                        (self.state_dir / "research_degraded.txt").unlink(missing_ok=True)
                         self.log(f"Deep Research completed ({label}): {result}", "INFO")
                         # Fold the provider-billed DR cost into the ledger as
                         # its own line item (deep_research.py writes the
@@ -1205,10 +1326,12 @@ Be thorough and faithful to the proposal.
                     else:
                         if use_or or use_gem:
                             self.log("Deep Research returned no result.", "WARN")
-                        self._fallback_literature_survey(query)
+                        if not dr_file.is_file() or not dr_file.stat().st_size:
+                            self._fallback_literature_survey(query)
                 except Exception as e:
                     self.log(f"Deep Research failed: {e}", "WARN")
-                    self._fallback_literature_survey(query)
+                    if not dr_file.is_file() or not dr_file.stat().st_size:
+                        self._fallback_literature_survey(query)
             else:
                 self.log("No Deep Research key (OpenRouter/Gemini) — skipping", "WARN")
 
@@ -2199,7 +2322,7 @@ checks forward without presenting them as verified.
                       f"found (report is thinner than Deep Research)", "success")
         return True
 
-    def _bootstrap_citations_from_deep_research(self):
+    def _bootstrap_citations_from_deep_research(self, *, recheck_keys=()):
         r"""Extract paper titles from Deep Research report via LLM, then fetch BibTeX via API.
 
         1. Merge any venue-template .bib files (e.g. ACL's `custom.bib`)
@@ -2232,7 +2355,10 @@ checks forward without presenting them as verified.
         self.log_step("Extracting citations from Deep Research report...", "progress")
 
         # Step 1: LLM extracts paper titles from the report
-        extract_prompt = """Extract ALL academic papers mentioned in the Deep Research report.
+        extract_prompt = """Identify the primary papers supporting or challenging this project's claims,
+including its closest prior work, methods, dataset and evaluation. Exclude unrelated tools mentioned
+in passing. Verify the exact title and authors against the original source linked in the report.
+If a claim cannot be traced to its original paper, leave it out of the verified list.
 
 ## Source Material (MANDATORY — Read in full before extracting)
 - `auto_research/state/deep_research.md` — the report
@@ -2247,8 +2373,9 @@ For each paper, return a JSON object with these fields:
   "Anonymous", or any other placeholder. Placeholder names get written verbatim
   into the bibliography and a reviewer will treat them as an unfinished manuscript.
 - "year": publication year as integer (e.g. 2017). Use 0 if the year is not given.
+- "doi": exact DOI for THIS work when the report identifies it. Leave it empty if uncertain. Never copy a related work's DOI from the surrounding claim.
 - "query": a search query to find it (title + author + year)
-- "context": a 1-2 sentence summary of what the report says about this paper (what it does, why it matters)
+- "context": a 1-2 sentence summary of what the supported finding, its original section/table or official URL when supplied, and the limits of applying it here
 
 Return a JSON array. Example:
 [
@@ -2265,6 +2392,19 @@ Rules:
 - Do NOT invent papers not mentioned in the report
 - If no papers are mentioned, return []
 """
+        if recheck_keys:
+            extract_prompt += (
+                "\nResolve the manuscript passages citing these keys: " + ", ".join(recheck_keys)
+                + ". The current records and survey may have shortened titles or misattributed an author. "
+                  "Open the original paper or publisher metadata. Search by the method and specific finding "
+                  "when its quoted title fails. Confirm the full title, lead author, official URL or DOI "
+                  "and supporting passage. Include foundational or competing original work needed to "
+                  "ground the claim. Cover the original method, benchmark and closest alternatives "
+                  "where appropriate. The prior shortlist can be wrong or incomplete. Use the web or public "
+                  "scholarly APIs to locate original work absent from the survey, including foundational "
+                  "papers predating its recent examples. Distinguish these new sources in the context "
+                  "field. Leave uncertain identities unresolved."
+            )
         agent_output = self.run_agent("researcher", extract_prompt, timeout=defaults.TIMEOUT_CITATIONS_EXTRACT)
 
         # Parse the JSON array from agent output
@@ -2284,7 +2424,7 @@ Rules:
         result = bootstrap_citations(
             titles, bib_path, literature_path,
             search_queries=queries, authors=authors_list, years=years_list,
-            contexts=contexts_list,
+            contexts=contexts_list, dois=[p.get("doi", "") for p in papers_info],
         )
 
         # Step 3: Log results
@@ -2311,6 +2451,8 @@ Rules:
             f"{found}/{total} resolved, {missing} needs-check",
             level="done" if missing == 0 else "warn",
         )
+
+        return result
 
     def _parse_title_list(self, agent_output: str) -> list:
         """Parse a JSON array of paper titles from LLM output.
@@ -2383,6 +2525,7 @@ Rules:
                                 "authors": p.get("authors", ""),
                                 "year": p.get("year", 0),
                                 "context": p.get("context", ""),
+                                "doi": p.get("doi", ""),
                             }
                             for p in parsed
                             if isinstance(p, dict) and p.get("title")
@@ -3266,13 +3409,13 @@ quantity and units you describe. If the required display is missing, identify wh
 ## MANDATORY — every item below is required, NO exceptions:
 
 ### 1. All sections must be fully written (zero placeholders)
-- Abstract (150-250 words): problem, method, key results with actual numbers
+- Abstract: follow the venue limit. For a short paper, use one compact paragraph with the question, the most informative measured comparison, and its scope
 - Introduction: motivation, question, and contributions supported by this study
 - Related Work: cite verified sources relevant to the closest competing explanations
 - Method: full technical description, equations where appropriate
 - Experiments: setup, measured baselines, main results and any ablations actually run
 - Analysis/Discussion: explain WHY results are good/bad, failure cases
-- Conclusion: 1 paragraph summary + 1 paragraph future work
+- Conclusion: answer the question in the space the result warrants. Distinguish what the design identifies from explanations it leaves open
 - Acknowledgments: keep the pre-inserted `\\section*{{Acknowledgments}}` block VERBATIM. It is *endmatter* — ARK's post-processing will automatically place it on the references page (after the body `\\clearpage`, before `\\bibliography`), and it does NOT count toward the body page limit. Do NOT rewrite, edit, translate, remove, or wrap it in `\\clearpage` yourself.
 
 ### 2. Appendix policy (use `\\appendix` only when content genuinely belongs there)
@@ -3301,6 +3444,15 @@ quantity and units you describe. If the required display is missing, identify wh
 Produce the complete paper. Do not stop until all sections are written and it compiles.
 """
 
+        if (self.code_dir / "auto_research/state/deep_research.md").is_file():
+            prompt += ("\nRead auto_research/state/deep_research.md and literature.yaml in that directory, "
+                       "plus the source-specific findings in project_context.md and the managed bibliography. For each outside claim that matters to the argument, "
+                       "check the original paper and the conditions of its result. Cite the supported claim at "
+                       "its point of use. Cover relevant competing approaches and limitations; omit unsupported "
+                       "claims even when the survey recommends the citation. Leave uncited records marked "
+                       "[NEEDS-CHECK]. In a reproducibility appendix, specify the actual worker entrypoint, "
+                       "inputs, outputs, software and how to regenerate the key result. Link it where the "
+                       "body first relies on these details.")
         state = self._load_dev_phase_state()
         gaps = state.get("evidence_gaps") or []
         if state.get("comparison_controls"):
@@ -3961,7 +4113,7 @@ provide the title.
         lines = []
         missing_ai_figs = []
         for f in sorted(self.figures_dir.iterdir()):
-            if f.suffix not in (".png", ".pdf"):
+            if f.suffix.lower() not in (".png", ".jpg", ".jpeg", ".pdf"):
                 continue
             size_kb = f.stat().st_size // 1024
 
@@ -4030,6 +4182,12 @@ provide the title.
                 f"- {f.name} ({size_kb}KB, {tag_prefix}; "
                 f"placement={placement} → use {latex_env}; {scale_note}{labels}{overprint})"
             )
+
+            if info.get("representation") == "subject_with_comparison_panel":
+                lines.append("  This figure illustrates the study subject. The adjoining labels compare the "
+                             "conditions. Explain the full design in its caption and methods prose; "
+                             "avoid describing a flowchart. Reviewed caption guidance: "
+                             + str(info.get("panel_plan", {}).get("caption", "")))
 
         if missing_ai_figs:
             lines.append("")
@@ -4549,14 +4707,11 @@ provide the title.
                    kind="message")
 
     def _report_delivery_checks(self):
-        # Delivery contract (observe-only v1): the gates above FIX; this
-        # VERIFIES their outcome on the final artifacts and persists a report.
-        # Violations are surfaced (log + chat), never blocking — enforcement
-        # comes after fleet reports establish the false-positive rate.
+        """Persist the audit of the current PDF and return it to the delivery decision."""
         try:
             from ark.delivery_contract import evaluate, write_report
             _dr = evaluate(Path(self.code_dir),
-                           venue_pages=int(self.config.get("venue_pages") or 0))
+                           venue_pages=int(self.config.get("venue_pages") or 0), config=self.config)
             write_report(Path(self.code_dir), _dr)
             if _dr.violations:
                 _summary = "; ".join(f"{f.check}: {f.detail}" for f in _dr.violations)
@@ -4566,19 +4721,36 @@ provide the title.
                            f"⚠ Delivery checks flagged {len(_dr.violations)} issue(s): "
                            f"{_summary[:200]}", kind="notice")
             else:
-                self.log("Delivery contract: all checks passed", "INFO")
+                skipped = sum(f.status == "skipped" for f in _dr.findings)
+                self.log(f"Delivery contract: no violations ({skipped} checks skipped)", "INFO")
+            return _dr
         except Exception as _e:
             self.log(f"Delivery contract evaluation failed (non-fatal): {_e}", "WARN")
 
     def _compile_edited_paper(self):
+        self._repair_cited_sources()
         self._ensure_clearpage_before_bibliography()
         if not self.compile_latex():
             raise RuntimeError("The edited paper failed to compile. Check the LaTeX build log.")
         limit = self.config.get("venue_pages")
-        if (self.config.get("layout_mode") == "strict" and limit
-                and self._body_page_count > int(limit)):
-            self._enforce_page_count(context="after requested edit")
-        self._report_delivery_checks()
+        if self.config.get("layout_mode") == "strict" and limit and self._body_page_count:
+            from ark.latex_geometry import get_geometry
+            columns = get_geometry(self.config.get("venue_format", ""), paper_dir=self.latex_dir).get("columns", 1)
+            min_pages = int(limit) - (0.15 if columns >= 2 else 0.3)
+            if not min_pages <= self._body_page_count <= int(limit):
+                if self._enforce_page_count(context="after requested edit") is False:
+                    raise RuntimeError(f"Edited paper did not fit the strict layout "
+                                       f"({self._body_page_count:.2f}/{limit} body pages).")
+        if self.config.get("layout_mode") == "strict":
+            self._repair_cited_sources(recheck_database=False)
+            self._fix_overfull(context="after requested edit")
+            if not self.compile_latex():
+                raise RuntimeError("Could not compile the final edited manuscript.")
+        report = self._report_delivery_checks()
+        if report is None:
+            raise RuntimeError("Could not verify the edited manuscript.")
+        if problems := report.delivery_blockers(self.config):
+            raise RuntimeError("Edited manuscript checks: " + "; ".join(f.detail for f in problems))
 
     def _apply_edit(self, instruction: str):
         """One focused writer/coder pass + recompile."""

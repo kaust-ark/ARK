@@ -3298,6 +3298,16 @@ def main():
                 final_error = ("Run ended without a deliverable "
                                f"(pdf={'present' if _pdf.exists() else 'missing'}, "
                                f"score={_score}) — see the run log for the root cause.")
+            else:
+                # A resumed or exhausted iteration can leave the review loop
+                # without finalizing. Check the actual artifact before publishing done.
+                report = orchestrator._report_delivery_checks()
+                if report is None:
+                    final_status, final_error = "failed", "Could not verify the final manuscript."
+                elif problems := report.delivery_blockers(orchestrator.config):
+                    final_status = "failed"
+                    final_error = ("Final manuscript checks: " + "; ".join(
+                        f"{f.check}: {f.detail}" for f in problems))[:400]
     except KeyboardInterrupt:
         final_status = "stopped"
     except Exception as e:

@@ -17,6 +17,7 @@ set -x
 # Heavy (~GBs) but paid once at bake time. latexmk/biber are already in texlive-full;
 # kept explicit for clarity.
 sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+    tesseract-ocr tesseract-ocr-eng \
     texlive-full \
     latexmk \
     biber \

@@ -3,8 +3,7 @@
 One source of truth for "what a deliverable paper must look like", consumed by
 three callers with zero logic duplication:
 
-  1. the pipeline's pre-delivery step (observe-only in v1: report + log, never
-     block — enforcement decisions come after a week of fleet reports);
+  1. the pipeline's pre-delivery step and its completion decision;
   2. ``ark audit`` (batch verification over historical projects, with
      ``--repair`` for the mechanical fixes);
   3. dashboards/ops reading the persisted ``delivery_report.yaml``.
@@ -23,6 +22,8 @@ references.bib, figures generated but never referenced, stub runs marked done).
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -119,6 +120,23 @@ class DeliveryReport:
     def hard_violations(self) -> list:
         return [f for f in self.violations if f.severity == "hard"]
 
+    def delivery_blockers(self, config: dict) -> list[Finding]:
+        """Failures confirmed on the artifact; heuristic warnings remain visible in the report."""
+        required = {"pdf_exists", "pdf_readable", "author_metadata", "disclosure_present",
+                    "citations_resolved"}
+        if config.get("layout_mode") == "strict":
+            required.update({"page_budget", "cited_sources_verified", "column_overflow"})
+        if config.get("figure_generation") == "nano_banana":
+            required.add("concept_figure_embedded")
+        if config.get("skip_deep_research") is False and (
+                config.get("layout_mode") == "strict"
+                or config.get("deep_research_backend") in {"gemini", "openrouter"}):
+            required.add("research_grounded")
+        blockers = [f for f in self.violations if f.check in required]
+        if config.get("figure_generation") == "nano_banana":
+            blockers.extend(f for f in self.findings if f.check == "concept_figure_science" and f.status != "pass")
+        return blockers
+
     def to_dict(self) -> dict:
         return {"schema_version": 2, "findings": [asdict(f) for f in self.findings],
                 "violations": len(self.violations),
@@ -136,7 +154,7 @@ def _pdf_text(pdf: Path) -> Optional[str]:
         return None
 
 
-def _page_budget(pdf: Path, tex: str, limit: int) -> Finding:
+def _page_budget(pdf: Path, tex: str, limit: int, *, strict: bool = False) -> Finding:
     from ark.latex.utils import body_page_boundary
     try:
         import fitz
@@ -161,6 +179,9 @@ def _page_budget(pdf: Path, tex: str, limit: int) -> Finding:
                 page_index, body_bottoms = boundary
                 body = page_index + int(any(body_bottoms))
         detail = f"{body} body pages / limit {limit} ({total} total pages)"
+        if strict and body < limit:
+            return Finding("page_budget", "violated", "soft",
+                           f"{detail}, short of the requested strict body length.")
         if body > limit:
             over = body - limit
             return Finding("page_budget", "violated", "soft",
@@ -185,27 +206,53 @@ def _dangling_refs(tex: str) -> set:
     return refs - labels
 
 
-def _concept_figure_in_pdf(pdf: Path, figures_dir: Path) -> Finding:
+def _concept_figure_in_pdf(pdf: Path, figures_dir: Path, *, semantic_state: Path | None = None) -> Finding:
     """Match the registered concept art to pixels actually painted in the paper."""
     import fitz
 
     from ark.figure_manifest import AI_SOURCES, load_manifest
 
-    check = "concept_figure_embedded"
+    from ark.latex.utils import body_page_boundary
+
+    check = "concept_figure_science" if semantic_state is not None else "concept_figure_embedded"
     figures = load_manifest(figures_dir, infer_existing=False).get("figures", {})
     sources = [figures_dir / name for name, info in figures.items()
                if isinstance(info, dict) and info.get("source") in AI_SOURCES
                and Path(name).name == name]
     if not sources:
-        return Finding(check, "violated", "soft", "No concept artwork registered for the selected figure mode")
+        return Finding(check, "skipped" if semantic_state is not None else "violated", "soft",
+                       "No concept artwork registered for the selected figure mode")
     try:
         with fitz.open(pdf) as doc:
-            pages = {image["digest"]: page.number + 1 for page in doc
-                     for image in page.get_image_info(hashes=True)}
+            boundary = body_page_boundary(doc)
+            pages = {}
+            for page in doc:
+                if boundary and page.number > boundary[0]:
+                    break
+                for image in page.get_image_info(hashes=True):
+                    if boundary and page.number == boundary[0]:
+                        col = int(image["bbox"][0] >= page.rect.width / 2)
+                        if image["bbox"][3] > boundary[1][col]:
+                            continue
+                    pages.setdefault(image["digest"], page.number + 1)
     except (OSError, RuntimeError, ValueError) as error:
         return Finding(check, "skipped", "soft", f"Could not inspect PDF images: {error}")
+    mismatched = []
+    inspected, pending = [], []
+    specs = {}
+    if semantic_state is not None:
+        from ark.nano_banana import concept_design, SEMANTIC_REVIEW_VERSION, semantic_verdict
+        try:
+            specs = {row["name"]: row for row in json.loads((figures_dir / "concept_figures.json").read_text())
+                     if isinstance(row, dict) and isinstance(row.get("name"), str)}
+        except (ValueError, OSError, TypeError):
+            pass
     for source in sources:
         try:
+            digest = figures[source.name].get("artifact_sha256")
+            if digest and hashlib.sha256(source.read_bytes()).hexdigest() != digest:
+                mismatched.append(source.name)
+                continue
             pixels = fitz.Pixmap(str(source))
             if pixels.alpha:
                 pixels = fitz.Pixmap(pixels, 0)
@@ -213,14 +260,56 @@ def _concept_figure_in_pdf(pdf: Path, figures_dir: Path) -> Finding:
             continue
         page_number = pages.get(pixels.digest)
         if page_number:
-            return Finding(check, "pass", "soft", f"{source.name} matches PDF pixels on page {page_number}")
-    return Finding(check, "violated", "soft", "Could not match any registered concept artwork to images in the PDF")
+            if semantic_state is None:
+                return Finding(check, "pass", "soft", f"{source.name} matches PDF pixels on page {page_number}")
+            review = figures[source.name].get("semantic_review") or {}
+            spec = specs.get(source.stem)
+            bound = (spec and review.get("version") == SEMANTIC_REVIEW_VERSION
+                     and review.get("artifact_sha256") == hashlib.sha256(source.read_bytes()).hexdigest()
+                     and review.get("design_sha256") == hashlib.sha256(concept_design(spec, semantic_state).encode()).hexdigest())
+            if bound and figures[source.name].get("representation") == "subject_with_comparison_panel":
+                raw = Path(figures[source.name].get("illustration_file") or "")
+                root = (figures_dir / ".concept_sources").resolve()
+                location = (figures_dir / raw).resolve()
+                bound = (location.is_relative_to(root) and location.is_file() and
+                         hashlib.sha256(location.read_bytes()).hexdigest() == figures[source.name].get("payload_sha256"))
+            if not bound:
+                pending.append(f"{source.name}: final review missing or no longer matches image/design")
+            elif review.get("status") == "contradiction":
+                conflicts = (review.get("label_verification") or {}).get("conflicts") or []
+                if conflicts:
+                    item = conflicts[0]
+                    return Finding(check, "violated", "soft", f"{source.name}: printed label {item.get('read_label')!r} "
+                                   f"disagrees with the reviewed transcription {item.get('model_label')!r}")
+                return Finding(check, "violated", "soft", f"{source.name}: the final image contradicts the study design")
+            elif review.get("status") == "passed" and semantic_verdict(review.get("checks")) != "passed":
+                pending.append(f"{source.name}: final visual check records incomplete")
+            elif review.get("status") != "passed":
+                pending.append(f"{source.name}: final visual check {review.get('status', 'unavailable')}")
+            else:
+                coverage = (review.get("label_verification") or {}).get("coverage", "not recorded")
+                inspected.append(f"{source.name} (independent label check: {coverage})")
+    if semantic_state is not None:
+        if pending or not inspected:
+            return Finding(check, "skipped", "soft", "; ".join(pending) or "No verified final artwork to assess")
+        return Finding(check, "pass", "soft", "Final image and study design reviewed: " + ", ".join(inspected))
+    detail = "Could not match registered concept artwork to an image in the body of the PDF"
+    if mismatched:
+        detail += ". Files changed since generation: " + ", ".join(mismatched)
+    return Finding(check, "violated", "soft", detail)
 
 
-def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
+def evaluate(project_dir: Path, venue_pages: int = 0, *, config: Optional[dict] = None) -> DeliveryReport:
     """Run every acceptance check over the project's final artifacts."""
     project_dir = Path(project_dir)
-    paper_dir = project_dir / "paper"
+    if config is None:
+        try:
+            config = yaml.safe_load((project_dir / "config.yaml").read_text()) or {}
+        except (OSError, yaml.YAMLError):
+            config = {}
+        if not isinstance(config, dict):
+            config = {}
+    paper_dir = project_dir / (config.get("latex_dir") or "paper")
     pdf = paper_dir / "main.pdf"
     tex_path = paper_dir / "main.tex"
     rep = DeliveryReport()
@@ -269,6 +358,15 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     else:
         rep.findings.append(Finding("author_metadata", "pass", "hard"))
 
+    log = paper_dir / "main.log"
+    if log.is_file():
+        log_text = log.read_text(errors="replace")
+        sizes = [float(pt) for pt in re.findall(r"Overfull \\hbox \(([0-9.]+)pt too wide\)", log_text)]
+        over = [pt for pt in sizes if pt > 3]
+        rep.findings.append(Finding("column_overflow", "violated" if over else "pass", "soft",
+            f"{len(over)} boxes extend more than 3 pt beyond a column; largest {max(over):.2f} pt."
+            if over else "No significant column overflow in the final build log."))
+
     # ── citations resolved ────────────────────────────────────────────────
     n_unresolved = len(_UNRESOLVED_CITE_RE.findall(text))
     if n_unresolved:
@@ -277,6 +375,13 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
             f"{n_unresolved} unresolved '?' citation markers in the PDF"))
     else:
         rep.findings.append(Finding("citations_resolved", "pass", "hard"))
+
+    from ark.citation import unconfirmed_citations
+    unconfirmed = unconfirmed_citations(paper_dir)
+    rep.findings.append(Finding(
+        "cited_sources_verified", "violated" if unconfirmed else "pass", "soft",
+        "Cited records still marked unconfirmed: " + ", ".join(unconfirmed)
+        if unconfirmed else "No explicitly unconfirmed records cited."))
 
     # ── references exist when the paper cites ─────────────────────────────
     # Shared extractor: a literal r"\\cite" scan misses biblatex's \parencite /
@@ -305,22 +410,24 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
     # to pass silently, and a paper written on no literature at all looked
     # exactly like one written on a full survey.
     state = project_dir / "auto_research" / "state"
-    try:
-        config = yaml.safe_load((project_dir / "config.yaml").read_text()) or {}
-    except (OSError, yaml.YAMLError):
-        config = {}
-    if not isinstance(config, dict):
-        config = {}
-    degraded = state / "research_degraded.txt"
-    report = state / "deep_research.md"
-    if degraded.is_file():
-        rep.findings.append(Finding(
-            "research_grounded", "violated", "soft",
-            degraded.read_text(errors="replace").strip()[:200]))
+    from ark.deep_research import research_report_status
+
+    research_status = research_report_status(state)
+    if research_status == "degraded":
+        marker = state / "research_degraded.txt"
+        detail = (marker.read_text(errors="replace").strip()[:200] if marker.is_file()
+                  else "Literature assembled from search APIs after Deep Research failed")
+        rep.findings.append(Finding("research_grounded", "violated", "soft", detail))
     elif config.get("skip_deep_research"):
         rep.findings.append(Finding("research_grounded", "skipped", "soft",
                                     "Deep Research disabled in project settings"))
-    elif report.is_file() and report.read_text(errors="replace").strip():
+    elif research_status in ("verified", "invalid_receipt"):
+        matched = research_status == "verified"
+        rep.findings.append(Finding(
+            "research_grounded", "pass" if matched else "violated", "soft",
+            "Google research receipt matches the saved report" if matched
+            else "Google research completion receipt or its report digest could not be verified"))
+    elif research_status in ("available", "legacy"):
         rep.findings.append(Finding("research_grounded", "pass", "soft",
                                     "Literature report present in project artifacts"))
     else:
@@ -329,7 +436,7 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
                                     "No literature report available in project artifacts"))
 
     # ── generated figures actually used ───────────────────────────────────
-    figs_dir = paper_dir / "figures"
+    figs_dir = project_dir / config["figures_dir"] if config.get("figures_dir") else paper_dir / "figures"
     figs = ([f for f in figs_dir.glob("*")
              if f.suffix in (".png", ".pdf") and f.stat().st_size > MIN_FIG_BYTES]
             if figs_dir.exists() else [])
@@ -363,9 +470,10 @@ def evaluate(project_dir: Path, venue_pages: int = 0) -> DeliveryReport:
 
     if config.get("figure_generation") == "nano_banana":
         rep.findings.append(_concept_figure_in_pdf(pdf, figs_dir))
+        rep.findings.append(_concept_figure_in_pdf(pdf, figs_dir, semantic_state=state))
 
     # ── page budget ───────────────────────────────────────────────────────
-    rep.findings.append(_page_budget(pdf, tex, venue_pages))
+    rep.findings.append(_page_budget(pdf, tex, venue_pages, strict=config.get("layout_mode") == "strict"))
 
     # ── vector figures not upscaled at insertion ──────────────────────────
     # matplotlib PDFs are saved at print size; inserting a small one at

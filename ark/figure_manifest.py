@@ -132,7 +132,7 @@ def load_manifest(figures_dir: Path, *, infer_existing: bool = True) -> dict:
         except (json.JSONDecodeError, OSError):
             data = None
         if isinstance(data, dict):
-            figs = data.get("figures", {})
+            figs = data.setdefault("figures", {})
             if isinstance(figs, list):
                 coerced = {}
                 for entry in figs:
@@ -154,7 +154,8 @@ def load_manifest(figures_dir: Path, *, infer_existing: bool = True) -> dict:
 def save_manifest(figures_dir: Path, manifest: dict) -> None:
     """Write manifest to disk."""
     manifest_path = figures_dir / MANIFEST_FILE
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    from ark.orchestrator.state import _atomic_write_text
+    _atomic_write_text(manifest_path, json.dumps(manifest, indent=2) + "\n")
 
 
 def register_figure(manifest: dict, filename: str, source: str,

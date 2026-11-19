@@ -135,6 +135,42 @@ class CompilerMixin:
         """Programmatic fixes for common LaTeX compilation issues."""
         latex_utils.auto_fix_latex(self.latex_dir, log_fn=self.log)
 
+    def _disclose_study_panel_art(self, source):
+        """Identify synthetic subject artwork at its point of use in the paper."""
+        from ark.figure_manifest import load_manifest
+        figures = getattr(self, "figures_dir", None)
+        if not isinstance(figures, Path):
+            return
+        language = str(getattr(self, "config", {}).get("language") or "en").lower()
+        if language.startswith("en"):
+            note = ("The AI-generated artwork is a conceptual illustration. Any shapes or axis "
+                    "markings in it are illustrative. Measurements are reported in the results. ")
+        elif language.startswith(("zh", "chinese")):
+            note = "图中 AI 生成的部分是概念示意，图形和坐标刻度仅作说明。实验测量值见结果部分。"
+        else:
+            return
+        artifacts = load_manifest(figures, infer_existing=False)["figures"]
+        panels = {Path(name).stem for name, item in artifacts.items()
+                  if isinstance(item, dict) and item.get("representation") == "subject_with_comparison_panel"}
+        if not panels:
+            return
+
+        def annotate(match):
+            block = match.group()
+            included = re.findall(r"\\includegraphics\*?(?:\s*\[[^]]*\])?\s*\{([^{}]+)\}", block)
+            if not any(Path(name).stem in panels and (Path(name).parent == Path(".") or
+                       (source.parent / Path(name).parent).resolve() == figures.resolve()) for name in included):
+                return block
+            if note.strip() in block or (re.search(r"illustrative|conceptual", block, re.I)
+                    and re.search(r"not (?:an? )?(?:observed|measured|experimental|empirical|data)", block, re.I)):
+                return block
+            return re.sub(r"(\\caption(?:\s*\[[^]]*\])?\s*\{)", lambda m: m[0] + note, block, count=1)
+
+        original = source.read_text(errors="replace")
+        updated = re.sub(r"\\begin\{figure(\*?)\}.*?\\end\{figure\1\}", annotate, original, flags=re.S)
+        if updated != original:
+            source.write_text(updated)
+
     def compile_latex(self) -> bool:
         """Compile the LaTeX paper.
 
@@ -152,6 +188,7 @@ class CompilerMixin:
             self._last_compile_errors = ["main.tex is missing"]
             self.log("LaTeX compilation failed: main.tex is missing", "ERROR")
             return False
+        self._disclose_study_panel_art(source_path)
         pdf_path = self.latex_dir / "main.pdf"
         # Strip phantom citations (cite keys that don't exist in
         # references.bib) before invoking pdflatex/bibtex. Without this,
@@ -734,6 +771,14 @@ class CompilerMixin:
         try:
             self.figures_dir.mkdir(parents=True, exist_ok=True)
 
+            from ark.figure_manifest import load_manifest, register_figure, save_manifest
+            import hashlib
+
+            def figure_versions():
+                return {p: p.stat().st_mtime_ns for p in self.figures_dir.iterdir()
+                        if p.is_file() and p.suffix.lower() in {".png", ".pdf", ".jpg", ".jpeg"}}
+
+            before = figure_versions()
             # Run the plotting script with the orchestrator's own interpreter
             # (the project-local conda env, which ships matplotlib/numpy/pandas).
             # Avoid `mamba activate` in a non-init shell — it emits a "libmamba
@@ -747,6 +792,16 @@ class CompilerMixin:
             )
 
             if result.returncode == 0:
+                # Record files this script actually produced, including descriptive
+                # names. The first draft also uses this entrypoint before any review.
+                manifest = load_manifest(self.figures_dir, infer_existing=False)
+                for path, updated in figure_versions().items():
+                    entry = manifest["figures"].get(path.name, {})
+                    if updated == before.get(path) or entry.get("source") not in (None, "matplotlib"):
+                        continue
+                    register_figure(manifest, path.name, "matplotlib", figures_dir=self.figures_dir,
+                                    script=str(script_path), artifact_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+                save_manifest(self.figures_dir, manifest)
                 self.log("Figure generation completed successfully", "INFO")
                 self._precheck_figure_quality()
                 return True
@@ -849,6 +904,9 @@ class CompilerMixin:
             # Restore any AI-generated files overwritten by the script
             restore_protected(self.figures_dir, backups, log_fn=self.log)
 
+            # Merge outputs registered by the stock generator before accounting
+            # for older project hooks that only write files to disk.
+            manifest["figures"].update(load_manifest(self.figures_dir, infer_existing=False)["figures"])
             # Register matplotlib outputs in manifest. Pass figures_dir so
             # register_figure can read the actual PDF width (in inches) from
             # disk — that width is what decides placement single vs full,
@@ -1226,7 +1284,116 @@ Write a brief sentence or clause that naturally incorporates each \\cite{{}} com
 Do NOT remove any existing citations. Do NOT modify references.bib.
 """, timeout=600)
 
+    def _check_final_concept_image(self, fig, path, manifest, api_key, aspect_ratio):
+        """Check the registered candidate, editing it at most once for this study design."""
+        from hashlib import sha256
+        from ark.figure_manifest import save_manifest
+        from ark.nano_banana import (concept_design, review_concept_image, repair_concept_image,
+                                     create_study_panel, SEMANTIC_REVIEW_VERSION, semantic_verdict, verify_printed_labels, IMAGE_MODELS)
+
+        entry = manifest["figures"][path.name]
+        design = concept_design(fig, getattr(self, "state_dir", None))
+        design_digest = sha256(design.encode()).hexdigest()
+        image_digest = sha256(path.read_bytes()).hexdigest()
+        provider = entry.get("provider") or ("google" if api_key else "openrouter")
+        key = os.environ.get("OPENROUTER_API_KEY") if provider == "openrouter" else api_key
+        model = self.config.get("paperbanana_text_model") or os.getenv("MAIN_MODEL_NAME") or "gemini-flash-latest"
+        if provider == "openrouter":
+            model = model.removeprefix("openrouter/")
+            if "/" not in model:
+                model = "google/" + model
+        else:
+            model = model.removeprefix("google/").removeprefix("gemini/")
+        old = entry.get("semantic_review") or {}
+        same_design = old.get("design_sha256") == design_digest
+        cached = None
+        if (same_design and old.get("version") == SEMANTIC_REVIEW_VERSION
+                and old.get("artifact_sha256") == image_digest and old.get("model") == model
+                and old.get("status") in ("passed", "unclear", "contradiction")
+                and (old.get("status") != "passed" or semantic_verdict(old.get("checks")) == "passed")):
+            cached = verify_printed_labels(path, old, entry, aspect_ratio)
+            if cached["status"] == old["status"]:
+                if cached != old:
+                    entry["semantic_review"] = cached
+                    save_manifest(self.figures_dir, manifest)
+                return old["status"] == "passed"
+
+        def persist(review):
+            review.update(version=SEMANTIC_REVIEW_VERSION, artifact_sha256=sha256(path.read_bytes()).hexdigest(),
+                          design_sha256=design_digest)
+            entry["semantic_review"] = review
+            save_manifest(self.figures_dir, manifest)
+
+        def inspect():
+            if not key:
+                return {"status": "unavailable", "model": model, "provider": provider}
+            goal = design
+            if entry.get("representation") == "subject_with_comparison_panel":
+                goal += ("\nPresentation: a subject-only illustration and bounded typeset comparison panels. "
+                         "Compare all visible groups and every panel statement to the ORIGINAL design. The "
+                         "full protocol belongs in the caption/methods, so no arrows or extra workflow stages "
+                         "are required. Assess the entire image; reject invented groups or labels. Also verify the "
+                         "proposed caption against the design: " + str(entry.get("panel_plan", {}).get("caption") or ""))
+            review = review_concept_image(path, goal, provider, key, model)
+            return verify_printed_labels(path, review, entry, aspect_ratio)
+
+        attempted = self.__dict__.setdefault("_concept_review_attempts", set())
+        attempt = (path, image_digest, design_digest, model)
+        if attempt in attempted and old.get("status") == "unavailable":
+            return False
+        attempted.add(attempt)
+        history = {k: old[k] for k in ("repair_attempted", "initial_review", "panel_attempted", "edited_review")
+                   if same_design and k in old}
+        review = cached or inspect()
+        if review["status"] == "contradiction" and not history.get("repair_attempted"):
+            persist(review)
+            history.update(repair_attempted=True, initial_review=dict(review))
+            persist({**review, **history})
+            image_model = entry.get("image_model") or self.config.get("paperbanana_image_model") or IMAGE_MODELS["flash"]
+            receipt = {}
+            if repair_concept_image(path, design, review, provider, key, image_model, aspect_ratio, receipt):
+                entry["before_semantic_edit"] = {k: entry[k] for k in (
+                    "source", "provider", "image_model", "model_version", "response_id", "payload_source",
+                    "artifact_sha256", "payload_sha256", "selected_candidate") if k in entry}
+                entry.update(receipt, source="nano_banana", selected_candidate="semantic_edit")
+                persist({"status": "unavailable", "model": model, "provider": provider, **history})
+                review = inspect()
+            else:
+                review["repair_status"] = "unavailable"
+
+        if (review["status"] == "contradiction" and entry.get("selected_candidate") == "semantic_edit"
+                and not history.get("panel_attempted")
+                and (history.get("initial_review") or {}).get("status") == "contradiction"):
+            # Two distinct reviewed images contradicted the design. Stop using
+            # freeform visual relationships and typeset the supported conditions.
+            persist({**review, **history})
+            history.update(panel_attempted=True, edited_review=dict(entry["semantic_review"]))
+            persist({**review, **history})
+            receipt = create_study_panel(path, design, provider, key, model, aspect_ratio)
+            if receipt:
+                entry["before_study_panel"] = {k: entry[k] for k in (
+                    "provider", "image_model", "response_id", "payload_source", "artifact_sha256",
+                    "payload_sha256", "selected_candidate") if k in entry}
+                entry.update(receipt, source="nano_banana")
+                persist({"status": "unavailable", "model": model, "provider": provider, **history})
+                review = inspect()
+            else:
+                review["panel_status"] = "unavailable"
+        attempted.add((path, sha256(path.read_bytes()).hexdigest(), design_digest, model))
+        review.update(history)
+        persist(review)
+        self.log(f"Final concept review for {path.name}: {review['status']}", "INFO")
+        return review["status"] == "passed"
+
     def _generate_nano_banana_figures(self) -> int:
+        import fcntl
+        self.figures_dir.mkdir(parents=True, exist_ok=True)
+        with (self.figures_dir / ".concept-review.lock").open("a") as lock:
+            # Two overlapping workers must share a single repair allowance.
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return self._generate_and_review_concept_figures()
+
+    def _generate_and_review_concept_figures(self) -> int:
         """Generate AI concept figures using PaperBanana pipeline or Nano Banana fallback.
 
         All concept figure data lives in figures_dir (paper/figures/):
@@ -1244,33 +1411,50 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
         Returns:
             Number of concept figures available (existing + newly generated).
         """
-        from ark.nano_banana import get_api_key
+        from ark.nano_banana import DEFAULT_MODEL, get_api_key
         from ark.figure_manifest import load_manifest, save_manifest, register_figure, AI_SOURCES
 
         spec_path = self.figures_dir / "concept_figures.json"
-        manifest = load_manifest(self.figures_dir)
+        manifest = load_manifest(self.figures_dir, infer_existing=False)
 
-        # ── Phase 0: Check if all concept figures already exist ──
-        if spec_path.exists():
+        def reusable(name):
+            import hashlib
+            from PIL import Image
+
+            path = self.figures_dir / f"{name}.png"
+            entry = manifest.get("figures", {}).get(path.name)
+            if not isinstance(entry, dict) or entry.get("source") not in AI_SOURCES:
+                return False
             try:
-                figures = json.loads(spec_path.read_text())
-                if isinstance(figures, list) and figures:
-                    all_done = all(
-                        (self.figures_dir / f"{fig.get('name', '')}.png").exists()
-                        and manifest.get("figures", {}).get(f"{fig.get('name', '')}.png", {}).get("source") in AI_SOURCES
-                        for fig in figures if isinstance(fig, dict)
-                    )
-                    if all_done:
-                        self.log(f"All {len(figures)} concept figures already exist, skipping", "INFO")
-                        return len(figures)
-            except (json.JSONDecodeError, OSError):
-                pass  # Spec file corrupt, will re-generate
+                if entry.get("artifact_sha256"):
+                    return hashlib.sha256(path.read_bytes()).hexdigest() == entry["artifact_sha256"]
+                # Older generated projects have no digest. Preserve their
+                # recorded assets when the image still decodes.
+                with Image.open(path) as image:
+                    image.verify()
+                return True
+            except (OSError, ValueError, SyntaxError):
+                return False
 
+        def valid_specs(specs):
+            return isinstance(specs, list) and bool(specs) and all(
+                isinstance(fig, dict) and isinstance(fig.get("name"), str)
+                and fig["name"] and Path(fig["name"]).name == fig["name"] for fig in specs)
+
+        saved_figures = []
+        if spec_path.is_file():
+            try:
+                candidate = json.loads(spec_path.read_text())
+                if valid_specs(candidate):
+                    saved_figures = candidate
+            except (ValueError, OSError):
+                pass
         # ── Phase 1: Get API key ──
         # PaperBanana can route image generation through OpenRouter, so an
         # OpenRouter key alone is enough — a Gemini key is no longer required.
         api_key = get_api_key()
-        if not api_key and not os.environ.get("OPENROUTER_API_KEY"):
+        cached_candidates = bool(saved_figures) and all(reusable(fig["name"]) for fig in saved_figures)
+        if not cached_candidates and not api_key and not os.environ.get("OPENROUTER_API_KEY"):
             self.log("No Gemini or OpenRouter API key found, skipping AI figure generation", "WARN")
             # Tell the USER, not just the log — an OpenAI-only user silently got
             # papers without concept figures and had no idea why (d239c708).
@@ -1292,7 +1476,7 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
         # falling back. With a Gemini key, go straight to the Gemini-direct
         # Nano Banana path; without one, say why the figures are missing.
         skip_paperbanana = False
-        if os.environ.get("OPENROUTER_API_KEY"):
+        if not cached_candidates and os.environ.get("OPENROUTER_API_KEY"):
             from ark.provider_billing import openrouter_too_low_for_side_tasks
             or_low = openrouter_too_low_for_side_tasks()
             if or_low is not None:
@@ -1345,7 +1529,7 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
 
         # ── Phase 3: Run planner agent ──
         figures_dir_rel = self.figures_dir.relative_to(self.code_dir) if self.figures_dir.is_relative_to(self.code_dir) else self.figures_dir
-        analysis_output = self.run_agent("planner", f"""Based on the research described below, identify concept figures that should be
+        analysis_output = "" if saved_figures else self.run_agent("planner", f"""Based on the research described below, identify concept figures that should be
 AI-generated for this paper. These are architecture diagrams, system overviews, pipeline illustrations,
 mechanism diagrams — NOT data plots (bar charts, line charts etc. are handled separately).
 
@@ -1353,8 +1537,10 @@ mechanism diagrams — NOT data plots (bar charts, line charts etc. are handled 
 {paper_context}
 
 ## Your Task
-Identify 1-3 concept figures that would best illustrate this research. Every paper needs at least
-one system overview/architecture figure.
+Select the concept figure that best explains the study's central comparison, mechanism or design.
+Additional distinct figures should answer a different reader question and fit the page budget.
+For empirical studies use the actual data flow, contrasts or evaluation design. Do not invent
+an architecture, learned component or quantitative result to make a diagram look more complex.
 
 IMPORTANT: Save the JSON array to the file: {figures_dir_rel}/concept_figures.json
 Also output the same JSON in your response text.
@@ -1381,7 +1567,7 @@ Output up to 3 figures maximum. If the research truly has no visual architecture
 output: NO_CONCEPT_FIGURES
 """, timeout=600)
 
-        if not analysis_output or "NO_CONCEPT_FIGURES" in analysis_output:
+        if not saved_figures and (not analysis_output or "NO_CONCEPT_FIGURES" in analysis_output):
             # Quality floor: a paper with any system / method / pipeline almost
             # always wants one overview figure — a weak model emitting
             # NO_CONCEPT_FIGURES is usually a miss, not a real absence (this is
@@ -1408,7 +1594,7 @@ and also output it in your response. Format:
 [{{"name": "fig_overview", "caption": "...", "section_context": "Be specific: the system's components, stages, connections, and data flow.", "latex_label": "fig:overview", "placement": "full_width"}}]
 ```
 """, timeout=600)
-            if not analysis_output or "NO_CONCEPT_FIGURES" in analysis_output:
+            if not saved_figures and (not analysis_output or "NO_CONCEPT_FIGURES" in analysis_output):
                 self.log("Repair still produced none — synthesizing a default overview figure spec.", "WARN")
                 fallback_fig = [{
                     "name": "fig_overview",
@@ -1429,13 +1615,13 @@ and also output it in your response. Format:
             # fall through to Phase 4 — spec_path / analysis_output now hold a figure
 
         # ── Phase 4: Read concept figure spec (2-level fallback) ──
-        figures = []
+        figures = saved_figures
 
         # Level 1: Read from designated path (agent was told to save here)
-        if spec_path.exists():
+        if not figures and spec_path.exists():
             try:
                 parsed = json.loads(spec_path.read_text())
-                if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                if valid_specs(parsed):
                     figures = parsed
                     self.log(f"Loaded concept figures from {spec_path}", "INFO")
             except (json.JSONDecodeError, OSError):
@@ -1449,7 +1635,7 @@ and also output it in your response. Format:
                     continue
                 try:
                     parsed = json.loads(block)
-                    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                    if valid_specs(parsed):
                         figures = parsed
                         self.log("Parsed concept figures from planner text output", "INFO")
                         break
@@ -1484,13 +1670,6 @@ and also output it in your response. Format:
             placement = fig.get("placement", "full_width")
             output_path = self.figures_dir / f"{name}.png"
 
-            # Skip if already registered in manifest as AI-generated
-            fig_info = manifest.get("figures", {}).get(f"{name}.png", {})
-            if fig_info.get("source") in AI_SOURCES and output_path.exists():
-                self.log(f"  Skipping {name}: already in manifest as {fig_info['source']}", "INFO")
-                skipped += 1
-                continue
-
             # Determine aspect ratio and width based on placement
             if columns == 1:
                 fig_width = text_w
@@ -1508,9 +1687,15 @@ and also output it in your response. Format:
                     f"must be one of {sorted(GEMINI_IMAGE_ASPECT_RATIOS)}"
                 )
 
+            if reusable(name):
+                if self._check_final_concept_image(fig, output_path, manifest, api_key, aspect_ratio):
+                    skipped += 1
+                continue
+
             self.log(f"  Generating: {name} (placement={placement}, {fig_width:.1f}in, ratio={aspect_ratio})...", "INFO")
 
             # Try PaperBanana pipeline first (best quality)
+            receipt = {}
             source = "paperbanana"
             ok = (not skip_paperbanana) and self._try_paperbanana(
                 name=name,
@@ -1519,6 +1704,7 @@ and also output it in your response. Format:
                 output_path=output_path,
                 api_key=api_key,
                 aspect_ratio=aspect_ratio,
+                receipt=receipt,
             )
 
             # Fallback to our Nano Banana pipeline
@@ -1532,14 +1718,15 @@ and also output it in your response. Format:
                     paper_context=section_ctx or paper_text[:2000],
                     output_path=output_path,
                     api_key=api_key,
-                    model=self.config.get("nano_banana_model", "pro"),
+                    model=self.config.get("nano_banana_model") or DEFAULT_MODEL,
                     venue=venue,
                     column_width_in=fig_width,
                     max_critic_rounds=self.config.get("nano_banana_critic_rounds", 3),
                     log_fn=self.log,
+                    aspect_ratio=aspect_ratio,
+                    receipt=receipt,
                 )
             if ok:
-                generated += 1
                 self.log(f"  Generated: {output_path.name}", "INFO")
                 # Pass the authoritative placement (from concept_figures.json)
                 # and actual rendered width through to the manifest, so the
@@ -1551,9 +1738,12 @@ and also output it in your response. Format:
                     figures_dir=self.figures_dir,
                     width_in=fig_width,
                     placement=placement,
+                    **receipt,
                     # scalable defaults to True for AI sources (bitmap)
                 )
                 save_manifest(self.figures_dir, manifest)
+                if self._check_final_concept_image(fig, output_path, manifest, api_key, aspect_ratio):
+                    generated += 1
             else:
                 self.log(f"  Failed: {name}", "WARN")
 
@@ -1578,7 +1768,8 @@ and also output it in your response. Format:
         return generated + skipped
 
     def _try_paperbanana(self, name: str, caption: str, paper_context: str,
-                          output_path, api_key: str, aspect_ratio: str = "16:9") -> bool:
+                          output_path, api_key: str, aspect_ratio: str = "16:9",
+                          receipt: dict | None = None) -> bool:
         """Try to generate a concept figure using PaperBanana's full pipeline.
 
         PaperBanana uses: Retriever → Planner → Stylist → Visualizer → Critic (×3 rounds)
@@ -1587,6 +1778,7 @@ and also output it in your response. Format:
         Returns True if figure was generated successfully, False if PaperBanana unavailable.
         """
         import asyncio
+        output_path = Path(output_path)
 
         # Set API key BEFORE importing PaperBanana — its generation_utils
         # module calls reinitialize_clients() at import time, which reads
@@ -1594,23 +1786,18 @@ and also output it in your response. Format:
         import os
         if api_key:
             os.environ["GOOGLE_API_KEY"] = api_key
-        # When an OpenRouter key is present, PaperBanana prefers OpenRouter for
-        # routing. Pin it to tested OpenRouter slugs so it doesn't fall back to
-        # bare Gemini model names (which logged "not configured" warnings and a
-        # spurious "returned no images" retry). One key (OpenRouter) then covers
-        # figure generation, and the cost lands on the OpenRouter bill.
-        if os.environ.get("OPENROUTER_API_KEY"):
-            # Route through OpenRouter with explicit slugs (no "not configured"
-            # warning). Concept figures are few (1-3/paper) but the most visible
-            # part of the paper, and the FLASH image tier was the bottleneck: it
-            # received a correct, detailed, paper-specific spec but rendered a
-            # generic stereotyped diagram (couldn't follow it). Use the PRO image
-            # tier, which follows structured diagram specs far more faithfully.
-            # Both overridable via config for cost tuning.
-            os.environ["MAIN_MODEL_NAME"] = self.config.get(
-                "paperbanana_text_model", "google/gemini-3.1-pro-preview")
-            os.environ["IMAGE_GEN_MODEL_NAME"] = self.config.get(
-                "paperbanana_image_model", "google/gemini-3-pro-image")
+        from ark.nano_banana import IMAGE_MODELS, _save_generated_image
+
+        openrouter = bool(os.environ.get("OPENROUTER_API_KEY"))
+        text_default = "google/gemini-3.1-pro-preview" if openrouter else "gemini-3.1-pro-preview"
+        # Respect explicit project overrides on either route. Keep historical
+        # OpenRouter Pro / native Flash defaults unless the owner selected a tier.
+        tier = self.config.get("nano_banana_model") or ("pro" if openrouter else "flash")
+        image_default = IMAGE_MODELS.get(tier, tier)
+        if openrouter:
+            image_default = "google/" + image_default.removeprefix("google/")
+        text_model = self.config.get("paperbanana_text_model") or os.getenv("MAIN_MODEL_NAME") or text_default
+        image_model = self.config.get("paperbanana_image_model") or os.getenv("IMAGE_GEN_MODEL_NAME") or image_default
 
         try:
             import sys
@@ -1632,6 +1819,7 @@ and also output it in your response. Format:
             from agents.stylist_agent import StylistAgent
             from agents.critic_agent import CriticAgent
             from agents.retriever_agent import RetrieverAgent
+            from utils import generation_utils
             from utils.config import ExpConfig
             from utils.paperviz_processor import PaperVizProcessor
         except ImportError as e:
@@ -1647,6 +1835,17 @@ and also output it in your response. Format:
             self.log(f"  Using PaperBanana without reference retrieval", "INFO")
 
         try:
+            # PaperBanana is also a standalone tool: a missing environment key
+            # falls back to its checkout-wide YAML, and its router prefers any
+            # OpenRouter client it finds. Project workers must use owner keys.
+            # Rebind its cached clients before invoking any vendor agents.
+            file_config = generation_utils.model_config
+            generation_utils.model_config = {k: v for k, v in file_config.items() if k != "api_keys"}
+            try:
+                generation_utils.reinitialize_clients()
+            finally:
+                generation_utils.model_config = file_config
+
             # Pass the models EXPLICITLY. PaperBanana's ExpConfig otherwise loads
             # configs/model_config.yaml, whose `main_model_name: gemini-flash-latest`
             # (an invalid OpenRouter slug) takes precedence over our env vars — it
@@ -1658,12 +1857,18 @@ and also output it in your response. Format:
                 task_name="diagram",
                 exp_mode="demo_full",
                 retrieval_setting=retrieval,
-                max_critic_rounds=3,
+                max_critic_rounds=self.config.get("nano_banana_critic_rounds", 3),
                 work_dir=pb_dir,
-                main_model_name=os.environ.get("MAIN_MODEL_NAME") or "gemini-3.1-pro-preview",
-                image_gen_model_name=os.environ.get("IMAGE_GEN_MODEL_NAME") or "gemini-3.1-flash-image-preview",
+                main_model_name=text_model,
+                image_gen_model_name=image_model,
             )
 
+            retriever = RetrieverAgent(exp_config=exp_config)
+            if tier == "flash":
+                # PaperBanana sends every candidate's entire method section to
+                # the selector (809k input tokens on a four-page evaluation).
+                # The Flash tier still selects ten visual references.
+                retriever.task_config["ref_limit"] = 24
             processor = PaperVizProcessor(
                 exp_config=exp_config,
                 vanilla_agent=None,
@@ -1671,14 +1876,14 @@ and also output it in your response. Format:
                 visualizer_agent=VisualizerAgent(exp_config=exp_config),
                 stylist_agent=StylistAgent(exp_config=exp_config),
                 critic_agent=CriticAgent(exp_config=exp_config),
-                retriever_agent=RetrieverAgent(exp_config=exp_config),
+                retriever_agent=retriever,
                 polish_agent=None,
             )
 
             data = {
                 "candidate_id": name,
                 "content": paper_context,
-                "visual_intent": f"{caption} STYLE: Labels MAX 3-5 words, NO sentences inside components. BUT make icons detailed and elaborate (not simple flat shapes). Layout should be COMPACT — minimize whitespace, pack components closely. The figure should feel dense and information-rich through its visual elements, not through text.",
+                "visual_intent": f"{caption} Use brief legible labels, clear reading order and only the elements needed to explain the stated comparison or mechanism. Keep experimental measurements in the data plots.",
                 "additional_info": {"rounded_ratio": aspect_ratio},
             }
 
@@ -1687,27 +1892,31 @@ and also output it in your response. Format:
                 return await processor.process_single_query(data, do_eval=False)
 
             try:
-                result = asyncio.run(_run())
+                asyncio.get_running_loop()
             except RuntimeError:
-                # Already in an event loop (e.g., webapp context)
-                loop = asyncio.get_event_loop()
-                result = loop.run_until_complete(_run())
+                result = asyncio.run(_run())
+            else:
+                # This synchronous mixin can also be invoked by an async host.
+                # Use another loop without retrying an already-started paid run.
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    result = executor.submit(lambda: asyncio.run(_run())).result()
 
-            # Extract best image
+            # The critic chooses this field, including when it rolls back after
+            # a failed revision. Sorting all base64 fields picks the stylist's
+            # draft before the critic's revision and can even select a reference.
             import base64
-            eval_field = result.get("eval_image_field", "")
-            for key in sorted(result.keys(), reverse=True):
-                if "base64_jpg" in key and result[key] and len(result[key]) > 100:
-                    if key == eval_field or True:  # Use the last valid image
-                        img_data = base64.b64decode(result[key])
-                        output_path = Path(output_path)
-                        output_path.parent.mkdir(parents=True, exist_ok=True)
-                        output_path.write_bytes(img_data)
-                        self.log(f"  PaperBanana generated: {output_path.name} ({len(img_data)} bytes)", "INFO")
-                        return True
-
-            self.log("  PaperBanana ran but produced no valid image", "WARN")
-            return False
+            selected = result.get("eval_image_field", "")
+            encoded = result.get(selected) if selected.endswith("_base64_jpg") else None
+            if not encoded:
+                self.log("PaperBanana returned no selected image", "WARN")
+                return False
+            _save_generated_image(base64.b64decode(encoded, validate=True), output_path, receipt,
+                                  provider="openrouter" if openrouter else "google",
+                                  image_model=image_model, selected_candidate=selected,
+                                  payload_source="paperbanana_selected_image")
+            self.log(f"  PaperBanana generated {output_path.name} with {image_model} ({selected})", "INFO")
+            return True
 
         except Exception as e:
             self.log(f"  PaperBanana error: {e}", "WARN")
