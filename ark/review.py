@@ -239,6 +239,8 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
                         tables = []
                     if tables and len(_canonical(tables[:8])) <= VIEW_SIZE:
                         scope = {"version": 4, "tables": tables[:8]}
+                        if clauses := _conclusion_clauses(conclusion):
+                            scope["conclusion_clauses"] = clauses
                         if passage := _attribution_passage({**manifest, "project": str(root)}, pdf):
                             scope["attribution"] = passage
                         manifest["evidence_scope"] = scope
@@ -290,6 +292,29 @@ def _rendered_conclusion(snapshot, pdf):
                     headings.append({"version": 2, "artifact": pdf, "page": index + 1, "start": offset + 1,
                                      "quote": quote} if len(quote) >= 4 and offset >= 0 else None)
         return headings[0] if len(headings) == 1 else None
+
+
+def _conclusion_sentences(text):
+    return re.split(r'(?<=[.!?])\s+(?=[A-Z“"‘])', text.strip())
+
+
+def _conclusion_clauses(conclusion):
+    """Locate mixed outcome/explanation sentences. The reviewer judges the relation."""
+    result_verb = re.compile(r"\b(?:improv|degrad|reduc|increas|decreas|declin|worsen|enhanc|accelerat)\w*\b", re.I)
+    connector = re.compile(r"\b(?:because(?: of)?|owing to|due to|as a result of|through)\b", re.I)
+    temporal = re.compile(r"\s+(?:(?:the|this)\s+)?(?:\d|end\b|follow.up\b|time\b|day\b|week\b|month\b|year\b|epoch\b|round\b)", re.I)
+    clauses = []
+    for n, sentence in enumerate(_conclusion_sentences(conclusion["quote"]), 1):
+        for link in connector.finditer(sentence):
+            effect = sentence[:link.start()].rstrip(" ,")
+            if not effect or (link[0].lower() == "through" and (
+                    not result_verb.search(effect) or temporal.match(sentence[link.end():]))):
+                continue
+            clauses.append({"sentence":n, "result":effect, "continuation":sentence[link.start():]})
+            break
+        if len(clauses) == 2:
+            break
+    return clauses
 
 
 def _attribution_passage(snapshot, pdf):
@@ -581,6 +606,12 @@ def claim_instructions(snapshot):
         "claim's exact author words and evidence; give your own issue ID, status, severity, domain, reason and fix.")
     if snapshot["evidence_scope"].get("attribution"):
         text += ' Use passage={"selector":"attribution"} to assess the located author attribution as an explanation.'
+    for parts in snapshot["evidence_scope"].get("conclusion_clauses", ()):
+        text += (f' Conclusion sentence {parts["sentence"]} joins an outcome to a further claim. Use '
+                 f'passage={{"selector":"conclusion","sentence":{parts["sentence"]}}} for its own '
+                 'explanation judgment. A judgment from a different page cannot settle this wording. '
+                 'Where the continuation only specifies how the experiment was performed, '
+                 'basis=procedure requires a reference to the actual protocol or method.')
     if snapshot["evidence_scope"].get("version") == 4:
         text += (
             "\nRead each explanation as an inference. What quantity was actually observed or derived? What "
@@ -841,7 +872,7 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
                     "page" in ref and (type(ref["page"]) is not int or ref["page"] != located["page"])):
                 raise ValueError("The supplied passage locator conflicts with the observed PDF artifact or page.")
             if sentence is not None:
-                parts = re.split(r'(?<=[.!?])\s+(?=[A-Z“"‘])', located["quote"].strip())
+                parts = _conclusion_sentences(located["quote"])
                 if not 1 <= sentence <= len(parts):
                     raise ValueError(f"Select a conclusion sentence between 1 and {len(parts)}.")
                 located = {**located, "quote":parts[sentence - 1]}
@@ -1069,7 +1100,7 @@ def _manuscript_claims(snapshot, values, observed, blind):
             raise ValueError("Identify each manuscript claim as a result or an explanation.")
         kind, basis = value["kind"], value.get("basis")
         if basis not in (("measurement", "unsupported") if kind == "result" else
-                         ("control", "derivation", "qualified", "unsupported")):
+                         ("control", "derivation", "qualified", "unsupported", "procedure")):
             raise ValueError("Match the claim basis to its kind. A measured outcome alone cannot establish its explanation.")
         passage = reviewed_claim_passage(snapshot, value.get("passage"), observed)
         evidence = _references(snapshot, value.get("evidence"), observed, blind, required=True)
@@ -1078,6 +1109,14 @@ def _manuscript_claims(snapshot, values, observed, blind):
         claim = dict(kind=kind, passage=passage, basis=basis, evidence=evidence, reason=reason)
         if basis == "measurement" and not measured:
             raise ValueError("Cite the observed outcome for the measured result.")
+        if basis == "procedure":
+            procedural = any(parts["continuation"].split(maxsplit=1)[0].casefold() == "through"
+                             and _contains_observed_quote(passage["quote"], parts["continuation"])
+                             for parts in snapshot["evidence_scope"].get("conclusion_clauses", ()))
+            if (passage["page"] != snapshot["conclusion"]["page"] or not procedural or not any(
+                    ref.get("quote") and snapshot["artifacts"][ref["artifact"]]["kind"] in ("method", "protocol")
+                    for ref in evidence)):
+                raise ValueError("Use procedure only for a through-clause describing the observed protocol or implementation.")
         if basis == "control" and not (measured and any(
                 snapshot["artifacts"][ref["artifact"]]["kind"] == "method" and ref.get("quote") for ref in evidence)):
             raise ValueError("For a control cite the measured comparison and the observed method that distinguishes the mechanism.")
@@ -1104,6 +1143,20 @@ def _manuscript_claims(snapshot, values, observed, blind):
         claims.append(claim)
     if not any(c["kind"] == "result" for c in claims):
         raise ValueError("Identify the empirical result separately from its explanation.")
+    target = snapshot["conclusion"]
+    for parts in snapshot["evidence_scope"].get("conclusion_clauses", ()):
+        def covers(claim, wording):
+            return (claim["passage"]["page"] == target["page"]
+                    and _contains_observed_quote(claim["passage"]["quote"], wording))
+        if not any(c["kind"] == "explanation" and covers(c, parts["continuation"]) for c in claims):
+            raise ValueError(f'Assess the continuation on page {target["page"]} separately. Use kind=explanation '
+                             f'and passage={{"selector":"conclusion","sentence":{parts["sentence"]}}}. '
+                             'Rows supporting the outcome cannot by themselves support the rest of the sentence.')
+        for claim in claims:
+            if claim["kind"] == "result" and covers(claim, parts["continuation"]):
+                if not covers(claim, parts["result"]):
+                    raise ValueError("Cite the observed outcome clause for the result.")
+                claim["passage"] = {**claim["passage"], "quote":parts["result"]}
     locator = snapshot["evidence_scope"].get("attribution")
     if locator and not any(c["kind"] == "explanation" and _quotes_conclusion([c["passage"]], locator) for c in claims):
         raise ValueError('Assess the located attribution separately as an explanation with passage={"selector":"attribution"}.')
@@ -1488,8 +1541,9 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
     conclusion = snapshot.get("conclusion")
     if conclusion:
         if scope := snapshot.get("evidence_scope"):
-            for previous_version in (2, 3):
-                old_claims = {**inputs, "conclusion":conclusion, "evidence_scope":{**scope, "version":previous_version}}
+            previous_scope = {key: value for key, value in scope.items() if key != "conclusion_clauses"}
+            for previous_version in (2, 3, 4):
+                old_claims = {**inputs, "conclusion":conclusion, "evidence_scope":{**previous_scope, "version":previous_version}}
                 if _digest(_canonical(old_claims)) == revision:
                     return True
             old = {**inputs, "conclusion": conclusion, "evidence_scope":{"version":1, "tables":scope["tables"]}}

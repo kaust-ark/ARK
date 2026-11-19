@@ -27,10 +27,12 @@ def test_delivered_signature_survives_only_changes_to_review_checks():
     older = {**published, "conclusion":locator}
     prior = {**published, "conclusion":{**locator, "version":2}}
     manifest = {**prior, "evidence_scope":{"version":1,"tables":[{"columns":["trial","error"]}]}}
-    latest = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":4}}
+    previous_policy = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":4}}
+    latest = {**previous_policy, "evidence_scope":{**previous_policy["evidence_scope"], "conclusion_clauses":[
+        {"sentence":1,"result":"The outcome increased","continuation":"because uptake improved."}]}}
     current = {**latest, "revision":fingerprint(latest), "project":"/somewhere/else"}
     archived_claims = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":3}}
-    for fmt in (early, published, older, prior, archived_claims):
+    for fmt in (early, published, older, prior, archived_claims, previous_policy):
         revision = fingerprint(fmt)
         signed = dict(version=1, revision=revision, verdict="accept", deliverable=True, paper_pdf_sha256="a" * 64,
                       artifact_hashes={p: meta["sha256"] for p, meta in artifacts.items()})
@@ -401,11 +403,39 @@ def test_result_and_explanation_require_separate_observed_support(tmp_path):
     qualified = dict(causal, passage={"artifact":filename,"page":1,"quote":"Root uptake is one possible explanation."},
                      basis="qualified", qualification="possible")
     assert _manuscript_claims(fixed,[result,qualified],evidence,"")[1]["qualification"] == "possible"
+
     fixed_answer,seen = record(fixed, pair, "clean", "")
     fixed_answer["checks"]["experiment"]["evidence"] = [row]
     fixed_answer["checks"]["manuscript"].update(evidence=[{"selector":"conclusion"},row],
         conclusion_support="measured", claims=[result,qualified])
     assert validate_review(fixed,fixed_answer,observed=[*evidence,*seen])["deliverable"]
+
+    # One hedged passage must not cover an assertion on another page.
+    outcome = "The plots reduced mass loss through increased root uptake."
+    mixed = make_snapshot("Root uptake is one possible explanation.")
+    seen = [read_evidence(mixed, filename, page=n)["receipt"] for n in (1,2)] + [
+        read_evidence(mixed, measured)["receipt"], read_evidence(mixed, method)["receipt"]]
+    with pytest.raises(ValueError, match="continuation on page 2"):
+        _manuscript_claims(mixed,[result,qualified],seen,"")
+    disputed = dict(causal, basis="unsupported", passage={"selector":"conclusion","sentence":1})
+    separated = _manuscript_claims(mixed,[result,qualified,disputed],seen,"")
+    assert separated[0]["passage"]["quote"] == "The plots reduced mass loss"
+    assert separated[2]["passage"]["quote"] == outcome
+    assert separated[2]["basis"] == "unsupported"
+    with pytest.raises(ValueError, match="observed protocol"):
+        _manuscript_claims(mixed,[result,dict(disputed,basis="procedure")],seen,"")
+
+    # A follow-up window and a purely descriptive conclusion stay descriptive.
+    for outcome in ("Loss decreased through week six.", "Loss fell in both conditions."):
+        descriptive = make_snapshot("The study reports losses.")
+        assert "conclusion_clauses" not in descriptive["evidence_scope"]
+    outcome = "Coverage improved through sequential sampling."
+    (tmp_path / method).write_text("samples = sequential_sample(population)")
+    procedural = make_snapshot("The study reports coverage.")
+    seen = [read_evidence(procedural, filename, page=2)["receipt"],
+            read_evidence(procedural, measured)["receipt"], read_evidence(procedural, method)["receipt"]]
+    stated_method = dict(disputed, basis="procedure", evidence=[{"artifact":method,"quote":"sequential_sample(population)"}])
+    assert _manuscript_claims(procedural,[result,stated_method],seen,"")[1]["basis"] == "procedure"
 
 
 def test_conclusion_selector_verifies_the_observed_page_window_and_pdf_digest(tmp_path):

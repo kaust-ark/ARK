@@ -16,6 +16,7 @@ const researchLabels = {
   claim_basis: ['Reviewer’s basis: %s','评审依据：%s','أساس حكم المراجع: %s'],
   basis_measurement: ['measurement','实测数据','القياس'],
   basis_control: ['control comparison','对照比较','المقارنة الضابطة'],
+  basis_procedure: ['study procedure','实验步骤','إجراء الدراسة'],
   basis_derivation: ['derivation','推导','الاشتقاق'],
   basis_qualified: ['qualified wording','作者的限定措辞','صياغة المؤلف المشروطة'],
   basis_unsupported: ['insufficient evidence','证据不足','أدلة غير كافية'],

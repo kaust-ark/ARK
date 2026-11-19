@@ -339,7 +339,7 @@ def review_summary(root, review, *, delivered=False):
                         source = references([passage], revision, False, signed_only=True)
                         kind, basis = claim.get("kind"), claim.get("basis")
                         reason = _text(claim.get("reason"), 4000)
-                        if (kind in ("result", "explanation") and basis in ("measurement", "control", "derivation", "qualified", "unsupported")
+                        if (kind in ("result", "explanation") and basis in ("measurement", "control", "derivation", "qualified", "unsupported", "procedure")
                                 and reason and source and source[0]["quote"] and (source[0]["page"] or 0) > 0
                                 and source[0]["sha256"] == review.get("paper_pdf_sha256")):
                             claims.append({"kind": kind, "passage": source[0], "basis": basis, "reason": reason,
