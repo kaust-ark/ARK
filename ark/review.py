@@ -237,23 +237,23 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
     if pdf in artifacts and any(meta["kind"] == "measurement" for meta in artifacts.values()):
         if conclusion := _rendered_conclusion({**manifest, "project": str(root)}, pdf):
             manifest["conclusion"] = conclusion
-            worker = manifest.get("worker_measurement", {})
-            if worker.get("verified") and expected_measurement.endswith(".json"):
-                from ark.measurement_table import describe
-                path = _inside(root, expected_measurement)
-                if path.stat().st_size <= 4 * 1024 * 1024:
-                    data, _ = _artifact({**manifest, "project": str(root)}, expected_measurement)
-                    try:
-                        tables = describe(json.loads(data))
-                    except (ValueError, UnicodeDecodeError, RecursionError):
-                        tables = []
-                    if tables and len(_canonical(tables[:8])) <= VIEW_SIZE:
-                        scope = {"version": 4, "tables": tables[:8]}
-                        if clauses := _conclusion_clauses(conclusion):
-                            scope["conclusion_clauses"] = clauses
-                        if passage := _attribution_passage({**manifest, "project": str(root)}, pdf):
-                            scope["attribution"] = passage
-                        manifest["evidence_scope"] = scope
+        worker = manifest.get("worker_measurement", {})
+        if worker.get("verified") and expected_measurement.endswith(".json"):
+            from ark.measurement_table import describe
+            path = _inside(root, expected_measurement)
+            if path.stat().st_size <= 4 * 1024 * 1024:
+                data, _ = _artifact({**manifest, "project": str(root)}, expected_measurement)
+                try:
+                    tables = describe(json.loads(data))
+                except (ValueError, UnicodeDecodeError, RecursionError):
+                    tables = []
+                if tables and len(_canonical(tables[:8])) <= VIEW_SIZE:
+                    scope = {"version": 4, "tables": tables[:8]}
+                    if conclusion and (clauses := _conclusion_clauses(conclusion)):
+                        scope["conclusion_clauses"] = clauses
+                    if passage := _attribution_passage({**manifest, "project": str(root)}, pdf):
+                        scope["attribution"] = passage
+                    manifest["evidence_scope"] = scope
     return {**manifest, "project": str(root), "revision": _digest(_canonical(manifest))}
 
 
@@ -339,7 +339,12 @@ def _attribution_passage(snapshot, pdf):
         re.compile(r"\b(?:mediated by|attributable to|explained by|caused by|driven by)\b", re.I),
     )
     best = None
-    with fitz.open(stream=_artifact(snapshot, pdf)[0], filetype="pdf") as doc:
+    data, _ = _artifact(snapshot, pdf)
+    try:
+        document = fitz.open(stream=data, filetype="pdf")
+    except (RuntimeError, ValueError):
+        return None
+    with document as doc:
         boundary = body_page_boundary(doc)
         end = min(len(doc), boundary[0] + int(any(boundary[1]))) if boundary else len(doc)
         for page in range(end):
@@ -610,9 +615,14 @@ def claim_instructions(snapshot):
     parts = [
         "Return checks.manuscript with status, reason and claims. For each claim supply kind, passage, basis, "
         "evidence and reason. Give the result its own assessment using an observed worker row. "
-        "Use the conclusion sentence selector or an observed PDF passage. "
         "A clearly descriptive paper needs only its result.",
     ]
+    if snapshot.get("conclusion"):
+        parts.append("Use the conclusion sentence selector or an observed PDF passage.")
+    else:
+        parts.append("Select the paper's principal empirical claim from the rendered abstract, results or discussion. "
+                     "Open its page and use the actual PDF passage with artifact, page and quote. Check any "
+                     "substantive explanation separately. A section heading is optional.")
     if requests:
         parts.append("Complete the following passage judgments individually. Use these kind and passage values "
                      "as printed. Each needs its own basis and reason. " + json.dumps(requests, separators=(",", ":")))
@@ -1158,13 +1168,14 @@ def _interpretation_wording(target, evidence):
 
 def reviewed_claim_passage(snapshot, ref, observed):
     passage, = _references(snapshot, [ref], observed, "", required=True)
-    if passage["artifact"] != snapshot["conclusion"]["artifact"] or not passage.get("quote"):
+    pdf = (snapshot.get("conclusion") or {}).get("artifact") or _submission(snapshot)[1]
+    if passage["artifact"] != pdf or not passage.get("quote"):
         raise ValueError("Locate the author's actual claim in observed text of the submitted PDF.")
     return passage
 
 
 def _procedure_passage(snapshot, passage):
-    return passage["page"] == snapshot["conclusion"]["page"] and any(
+    return passage["page"] == (snapshot.get("conclusion") or {}).get("page") and any(
         parts["continuation"].split(maxsplit=1)[0].casefold() == "through"
         and _contains_observed_quote(passage["quote"], parts["continuation"])
         for parts in snapshot["evidence_scope"].get("conclusion_clauses", ()))
@@ -1263,7 +1274,7 @@ def _manuscript_claims(snapshot, values, observed, blind):
         claims.append(claim)
     if not any(c["kind"] == "result" for c in claims):
         raise ValueError("Identify the empirical result separately from its explanation.")
-    target = snapshot["conclusion"]
+    target = snapshot.get("conclusion")
     for parts in snapshot["evidence_scope"].get("conclusion_clauses", ()):
         def covers(claim, wording):
             return (claim["passage"]["page"] == target["page"]
@@ -1386,8 +1397,8 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
         claims = None
         if domain == "manuscript" and assessed and snapshot.get("evidence_scope", {}).get("version") in (3, 4):
             claims = _manuscript_claims(snapshot, check.get("claims"), observed, blind)
-            target = snapshot["conclusion"]
-            if not any(c["passage"]["page"] == target["page"] and _contains_observed_quote(
+            target = snapshot.get("conclusion")
+            if target and not any(c["passage"]["page"] == target["page"] and _contains_observed_quote(
                     target["quote"], c["passage"]["quote"]) for c in claims):
                 raise ValueError('Locate at least one assessed claim in the observed conclusion with the sentence selector.')
             refs = []

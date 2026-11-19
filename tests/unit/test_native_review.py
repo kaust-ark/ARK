@@ -210,6 +210,42 @@ def test_blind_packet_contains_no_private_values_or_score(tmp_path):
         read_evidence(snapshot, "../secret")
 
 
+def test_verified_empirical_paper_requires_claim_review_without_a_conclusion_heading(tmp_path):
+    from ark import review
+
+    statement = "The treatment group has lower mean loss."
+    pair = dict(domain="experiment", clean=statement, table="trial,loss\n1,2.1\n", question="What changed?",
+                defect="Variation could still explain the result.")
+    project(tmp_path, pair, "clean")
+    filename = "results/paired.json"
+    path = tmp_path / filename
+    path.write_text('[{"trial":1,"loss":2.1,"control_loss":3.5}]')
+    with fitz.open() as doc:
+        page = doc.new_page()
+        page.insert_text((50, 45), "Discussion and Future Work")
+        page.insert_text((50, 75), statement)
+        doc.save(tmp_path / "paper/main.pdf")
+    worker = {"artifact": filename, "status": "completed", "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    snap = build_snapshot(tmp_path, expected_measurement=filename, measurement_run=worker)
+    assert "conclusion" not in snap
+    assert "loss" in review.evidence_scope_brief(snap) and statement not in review.evidence_scope_brief(snap)
+    assert "principal empirical claim" in review.claim_instructions(snap)
+    verdict, _ = record(snap, pair, "clean", "")
+    data = read_evidence(snap, filename)
+    page = read_evidence(snap, "paper/main.pdf", page=1)
+    observation = {"artifact": filename, "quote": data["text"]}
+    passage = {"artifact": "paper/main.pdf", "page": 1, "quote": statement}
+    verdict["checks"]["experiment"]["evidence"] = [observation]
+    with pytest.raises(ValueError, match="manuscript.claims"):
+        validate_review(snap, verdict, observed=[page["receipt"], data["receipt"]])
+    verdict["checks"]["manuscript"]["claims"] = [
+        {"kind": "result", "passage": passage, "basis": "measurement", "evidence": [observation],
+         "reason": "The paired treated loss is lower than the control."}]
+    assert validate_review(snap, verdict, observed=[page["receipt"], data["receipt"]])["deliverable"]
+    with pytest.raises(ValueError, match="Unobserved"):
+        validate_review(snap, verdict, observed=[data["receipt"]])
+
+
 def test_conclusion_reviewer_checks_the_whole_observed_paragraph_against_results(tmp_path):
     pair = {"domain": "experiment", "clean": "Table 1 reports loss in treated and control plots.",
             "table": "trial,treated_loss,control_loss\n1,2.1,3.5\n2,2.2,3.1\n",
