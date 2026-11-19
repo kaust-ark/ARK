@@ -162,6 +162,7 @@ def _check_friedman_tables(doc, rows):
             for name in aliases:
                 labels[f"{metric} ({name})"] = f"{metric}_{arm}"
     errors = []
+    observed = {}
     for page in doc:
         for block in page.get_text("dict", flags=0)["blocks"]:
             lines = [("".join(s["text"] for s in line["spans"]).strip().lower(), line["bbox"])
@@ -183,6 +184,7 @@ def _check_friedman_tables(doc, rows):
                     identifier = re.sub(r"\.0+$", "", cells[columns.index("seed")])
                     if not identifier.isdigit() or int(identifier) not in rows:
                         break
+                    observed[int(identifier)] = {"page": page.number + 1, "row": line}
                     row = rows[int(identifier)]
                     for field, printed in zip(columns, cells):
                         if field != "seed" and not printed_value_matches(printed, row[field]):
@@ -190,15 +192,16 @@ def _check_friedman_tables(doc, rows):
                                           f"reference {row[field]:.6g}")
     if errors:
         raise ValueError("Conflicting rendered measurements: " + "; ".join(errors[:12]))
+    return observed
 
 
 def displayed_metrics(doc, case, rows):
-    if case == "friedman":
-        _check_friedman_tables(doc, rows)
+    result = _check_friedman_tables(doc, rows) if case == "friedman" else {}
     fields = ("nll_raw", "nll_cal") if case == "digits" else ("rmse_all", "rmse_signal")
     lines = list(pdf_rows(doc))
-    result = {}
     for seed, row in rows.items():
+        if seed in result:
+            continue
         for page, line in lines:
             line = re.sub(r"(\d+(?:\.\d+)?)\s*×\s*10\s*\^?\s*([+−-]?\d{1,2})(?!\d)",
                           lambda m: f"{m[1]}e{m[2].replace('−', '-')}", line)
@@ -276,6 +279,8 @@ def check_sources(doc, paper, state, provider_response):
         arxiv_id = fields.get("eprint", "")
         if not arxiv_id and "arxiv.org/" in fields.get("url", "").lower():
             arxiv_id = fields["url"]
+        if not arxiv_id and fields.get("doi", "").lower().startswith("10.48550/arxiv."):
+            arxiv_id = fields["doi"].split("/", 1)[1]
         arxiv = re.search(r"\b(\d{4}\.\d{4,5})(?:v\d+)?\b", arxiv_id, re.I)
         if key in body_links and ((len(title.split()) >= 4 and f" {title} " in report_text)
                                   or (doi.startswith("10 ") and f" {doi} " in report_text)

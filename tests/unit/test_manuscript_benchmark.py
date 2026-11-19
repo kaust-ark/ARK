@@ -42,7 +42,7 @@ def test_correct_rendered_table_cannot_mask_other_conflicting_cells():
             for x, name in [(230, "Seed"), (280, "MAE (5)"), (355, "RMSE (5)"), (430, "RMSE (10)")]:
                 page.insert_text((x, 100), name)
             for index in (0, 1):
-                values = [str(index), "1.99" if wrong_cell and index else f'{rows[index]["mae_signal"]:.2f}',
+                values = [f"{index:.2f}", "1.99" if wrong_cell and index else f'{rows[index]["mae_signal"]:.2f}',
                           f'{rows[index]["rmse_signal"]:.2f}', f'{rows[index]["rmse_all"]:.2f}']
                 for x, text in zip((230, 280, 355, 430), values):
                     page.insert_text((x, 116 + 16 * index), text)
@@ -102,7 +102,7 @@ def test_google_report_must_match_receipt_and_citations_in_body(tmp_path):
     state = tmp_path / "state"
     state.mkdir()
     report = state / "deep_research.md"
-    report.write_text("**Interaction ID**: e123\nA survey of probability calibration. DOI 10.1234/tests.")
+    report.write_text("**Interaction ID**: e123\nA survey of probability calibration. DOI 10.1234/tests. arXiv:2608.17573.")
     receipt = {"provider": "google", "agent": "deep-research-preview-test", "interaction_id": "e123", "status": "completed",
                "report_sha256": benchmark.sha256(report)}
     (state / "deep_research_receipt.json").write_text(json.dumps(receipt))
@@ -142,6 +142,11 @@ def test_google_report_must_match_receipt_and_citations_in_body(tmp_path):
         benchmark.check_sources(Document([Page("a")] * 4 + [Page("b")] * 3), tmp_path, state, raw)
     bib = tmp_path / "references.bib"
     verified = bib.read_text()
+    bib.write_text(verified.replace("10.1234/tests", "10.48550/ARXIV.2608.17573"))
+    assert len(benchmark.check_sources(doc, tmp_path, state, raw)["research_sources_used"]) == 2
+    bib.write_text(verified.replace("10.1234/tests", "10.1234/ARXIV.2608.17573"))
+    with pytest.raises(ValueError, match="Fewer than two"):
+        benchmark.check_sources(doc, tmp_path, state, raw)
     bib.write_text(verified.replace("@article{b", "% [NEEDS-CHECK: citation not verified]\n@article{b"))
     with pytest.raises(ValueError, match="unresolved or unattributed"):
         benchmark.check_sources(doc, tmp_path, state, raw)
