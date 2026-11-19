@@ -156,6 +156,55 @@ def journal(root, after=None, before=None):
     return cursor, events if after is not None else events[-32:]
 
 
+@lru_cache(maxsize=128)
+def _review_activity(root, revision, size, inode, mtime):
+    """Find this attempt's last scientific action even after a long tail of owner/transport events."""
+    before, interruption, latest = size, None, None
+    while before:
+        _, events = journal(root, before=before)
+        if not events or events[0]["offset"] >= before:
+            break
+        for event in reversed(events):
+            if event["phase"] != "review":
+                continue
+            action = event["action"]
+            if action in ("manuscript_reviewed", "turn/end", "turn_end") or (event["revision"] and event["revision"] != revision):
+                return None
+            if not interruption and (action == "review_repair_requested" or
+                                     (action == "quota" and event["status"] == "quota_paused")):
+                interruption = action
+            if not latest and action in {
+                "review_started", "evidence_scope_committed", "review_repair_requested", "method_control_started",
+                "method_control_finished", "measurement_reproduction_started", "measurement_reproduction_finished",
+                "measurement_reproduction_failed", "measurement_reproduction_unavailable",
+                "inference_test_started", "inference_test_finished", "inference_test_failed",
+            }:
+                latest = event
+            if action == "review_started":
+                return {"status": interruption, "latest": latest} if interruption and event["revision"] == revision else None
+        before = events[0]["offset"]
+    return None
+
+
+def unfinished_review(root, native, signed):
+    attempts = native.get("review_attempts")
+    if not isinstance(attempts, dict) or not attempts or native.get("state") not in ("running", "paused"):
+        return None
+    revision = next(reversed(attempts.values()))
+    if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{64}", revision) or revision == signed.get("revision"):
+        return None
+    try:
+        with open_project_file(root, JOURNAL) as stream:
+            st = os.fstat(stream.fileno())
+        activity = _review_activity(root, revision, st.st_size, st.st_ino, st.st_mtime_ns)
+    except (ValueError, OSError):
+        return None
+    if activity and ((activity["status"] == "quota" and native.get("state") == "paused" and native.get("pause_reason") == "quota")
+                     or (activity["status"] == "review_repair_requested" and native.get("state") == "running")):
+        return activity
+    return None
+
+
 def snapshot(session, project, root, *, manage, has_pdf):
     evidence = {}
     def add(key, label=None):
@@ -211,6 +260,7 @@ def snapshot(session, project, root, *, manage, has_pdf):
         "working_review": working if delivered and working and (
             working["revision"] != delivered["revision"] or working["stale"]) else None,
         "has_working_pdf": has_pdf,
+        "unfinished_review": unfinished_review(root, read_record(root, "auto_research/state/native_project.json"), review),
     }
 
 
@@ -342,8 +392,15 @@ def review_summary(root, review, *, delivered=False):
                         if (kind in ("result", "explanation") and basis in ("measurement", "control", "derivation", "qualified", "unsupported", "procedure")
                                 and reason and source and source[0]["quote"] and (source[0]["page"] or 0) > 0
                                 and source[0]["sha256"] == review.get("paper_pdf_sha256")):
-                            claims.append({"kind": kind, "passage": source[0], "basis": basis, "reason": reason,
-                                           "evidence": references(claim.get("evidence"), revision, False, signed_only=True)})
+                            refs = references(claim.get("evidence"), revision, False, signed_only=True)
+                            entry = {"kind": kind, "passage": source[0], "basis": basis, "reason": reason, "evidence": refs}
+                            for field, quotes in (("bridge", refs), ("qualification", source)):
+                                words = " ".join(_text(claim.get(field), 1200).split())
+                                if words and any(words in " ".join(ref.get("quote", "").split()) for ref in quotes):
+                                    entry[field] = words
+                            if basis == "derivation" and (calculation := _text(claim.get("independent_derivation"), 2400)):
+                                entry["independent_derivation"] = calculation
+                            claims.append(entry)
                     if claims:
                         item["claims"] = claims
                 scope = review.get("evidence_scope")

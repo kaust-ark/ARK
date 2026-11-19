@@ -291,7 +291,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
         throw new Error('Repeated unsupported review without further evidence: ' + diagnostic)
       }
       lastRejected = {output, observations:observed.length}
-      agent.steer(createUserMessage({source:{kind:'idea2paper-review', form:'instructions'}, content:[{
+      agent.steer(createUserMessage({source:{kind:'idea2paper-review-repair', form:'instructions'}, content:[{
         type:'text', text:'Review evidence check: ' + diagnostic + (disclosed ? '\nInspect the relevant originals with read_evidence as needed. Return the corrected verdict or, after a rejected draft, {"amend":{...}} containing only the changed fields. Under checks, send complete replacements for changed domains. To change issues, replace the issues array. The whole verdict is checked again.' : ''),
       }]}))
     })
@@ -457,6 +457,9 @@ function nativeEvent(session, event, role) {
   const data = event.data || {}
   const base = { session_id: session.id, seq: event.seq, role, kind: event.type, time: event.time }
   switch (event.type) {
+    case 'user/message':
+      return role === 'reviewer' && data.source?.kind === 'idea2paper-review-repair'
+        ? { ...base, kind:'review_repair_requested' } : null
     case 'tool/call':
       return { ...base, title: role + ' called ' + data.name, detail: '', tool: data.name }
     case 'tool/result':
@@ -490,7 +493,7 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
     seen.set(session.id, event.seq)
     writeEvents = writeEvents.then(async () => {
       const ack = await domain.call('project_event', record)
-      if (!ack?.duplicate && record.kind !== 'assistant/message' && record.kind !== 'assistant/attempt') display(record.kind, record.title, record.detail)
+      if (!ack?.duplicate && record.title && record.kind !== 'assistant/message' && record.kind !== 'assistant/attempt') display(record.kind, record.title, record.detail)
     }).catch(error => { projectionFailure ??= error })
   }
   let readCommands = Promise.resolve()

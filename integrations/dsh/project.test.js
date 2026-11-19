@@ -562,6 +562,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
     clearTimeout(watchdog)
     if (failure) throw failure
     assert.equal(code,0,home + '\n' + log)
+    assert.doesNotMatch(log, /\[review_repair_requested\] undefined/)
   }
   await launch('run',project,'parent-scientific-private')
   if (google) {
@@ -594,6 +595,10 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
   assert.equal(calls.filter(op => op === 'reproduce_measurement').length,1)
   assert.equal(calls.filter(op => op === 'check_review').length,scenario === 'program' ? 3 : 2)
   assert.notEqual(recorded.session_id,first.owner_session_id)
+  const repairs = events.filter(e => e.kind === 'review_repair_requested')
+  assert.ok(repairs.length > 0, 'reviewer accepted a correction request')
+  assert.ok(repairs.every(e => e.role === 'reviewer' && e.session_id === recorded.session_id && Number.isInteger(e.seq)))
+  assert.ok(repairs.every(e => !Object.hasOwn(e, 'detail') && !Object.hasOwn(e, 'title') && !Object.hasOwn(e, 'content')))
   assert.ok(events.some(e => e.role === 'reviewer' && e.kind === 'tool/call'))
   assert.deepEqual([...new Set(events.filter(e => e.role === 'reviewer').map(e => e.session_id))], [recorded.session_id])
   if (google) return

@@ -19,6 +19,9 @@ const researchLabels = {
   basis_procedure: ['study procedure','实验步骤','إجراء الدراسة'],
   basis_derivation: ['derivation','推导','الاشتقاق'],
   basis_qualified: ['qualified wording','作者的限定措辞','صياغة المؤلف المشروطة'],
+  claim_bridge: ['Step cited by the reviewer','评审引用的推导步骤','خطوة الاستدلال التي استشهد بها المراجع'],
+  claim_qualification: ['Words the reviewer considered sufficient','评审认定足以限定结论的原文','العبارة التي اعتبرها المراجع تقييدًا كافيًا'],
+  claim_independent_derivation: ['Reviewer’s own calculation','评审独立写出的推导','حساب المراجع المستقل'],
   basis_unsupported: ['insufficient evidence','证据不足','أدلة غير كافية'],
   question_draft: ['What evidence supports this judgment about the quoted passage?','哪些证据支持评审对这段原文的判断？','ما الأدلة التي تدعم هذا الحكم على المقطع المقتبس؟'],
   decision_before_question: ['Answer the open decision before sending this question.','请先答复待处理的决定，再发送这个问题。','أجب عن القرار المعلّق قبل إرسال هذا السؤال.'],
@@ -81,6 +84,9 @@ const researchLabels = {
   reviewed_sources: ['Evidence inspected (%s)','查看评审依据（%s）','الأدلة المفحوصة (%s)'],
   method_controls: ['Experimental controls (%s)','实验控制项（%s）','ضوابط التجربة (%s)'],
   matches_control: ['Matches','一致','مطابق'], differs_control: ['Mismatch','不一致','غير مطابق'],
+  review_quota: ['Review paused before a verdict','评审因配额暂停，尚未签字','توقفت المراجعة بسبب الحصة قبل إصدار الحكم'],
+  review_repair: ['Awaiting a corrected review','评审意见待修正，尚未签字','بانتظار تصحيح المراجعة قبل التوقيع'],
+  event_review_repair_requested: ['Reviewer received a request to correct the draft','评审已收到草稿修正请求','تلقّى المراجع طلبًا لتصحيح المسودة'],
   event_review_started: ['Independent review opened','独立评审已开始','بدأت المراجعة المستقلة'],
   event_evidence_scope_committed: ['Reviewer recorded the pre-reading judgment','评审已记录读稿前的判断','سجّل المراجع تقديره قبل قراءة الورقة'],
   event_inference_test_started: ['Testing the claim in two hypothetical cases','正在用两种假想情形检验主张','يجري اختبار الادعاء في حالتين افتراضيتين'],
@@ -203,7 +209,7 @@ function reviewHandoff(recent) {
 }
 
 function observationText(event, withValues=true) {
-  if (['evidence_scope_committed','inference_test_started','inference_test_failed'].includes(event?.action)) return reviewEventLabel(event);
+  if (['review_started','evidence_scope_committed','review_repair_requested','inference_test_started','inference_test_failed'].includes(event?.action)) return reviewEventLabel(event);
   if (event?.action === 'delivered' && event.artifact === 'paper/main.pdf' && /^[a-f0-9]{64}$/.test(event.revision))
     return rt('delivery_verified');
   if (event?.action === 'manuscript_reviewed' && ['accept','revise','unassessed'].includes(event.observation))
@@ -388,9 +394,13 @@ function renderResearch(animate=false) {
   const p = researchProject, events = [...researchEvents.values()], last = events.at(-1);
   const recent = events.slice().reverse();
   const observations = recent.filter(e => e.observation && !['tool/call','tool/result','turn/end','turn_end'].includes(e.action));
-  const obs = observations[0] || recent.find(e => e.observation && e.action !== 'tool/call');
+  const unfinished = researchData.unfinished_review;
+  const desk = re('research-desk');
+  desk.classList.toggle('live-review-change', animate && !disconnected);
+  desk.dataset.reviewState = unfinished?.status || '';
+  const obs = unfinished?.latest || observations[0] || recent.find(e => e.observation && e.action !== 'tool/call');
   renderObservationTrail(observations, animate);
-  const rawPhase = recent.find(e => e.phase && e.phase !== 'work')?.phase || p.phase_status?.phase;
+  const rawPhase = unfinished?.latest?.phase || recent.find(e => e.phase && e.phase !== 'work')?.phase || p.phase_status?.phase;
   const phase = researchPhase(rawPhase);
   const rail = re('research-phases');
   const visited = new Set(events.map(e => researchPhase(e.phase)).filter(Boolean));
@@ -425,15 +435,17 @@ function renderResearch(animate=false) {
   re('research-stop').hidden = !!window.SHARE_MODE || !['queued','running'].includes(p.status);
   const active = ['initializing','queued','pending','running'].includes(p.status);
   const waiting = p.pending_decision && p.pending_decision.id !== _lastAnsweredDecision;
-  const quota = /quota[_ -]?(paused|exhausted)|insufficient[_ ]balance/i.test(
-    [p.control_state, last?.status, last?.action === 'quota' ? 'quota_paused' : '', p.error_message].filter(Boolean).join(' '));
+  // Older workers recorded provider quota failures only in the project error.
+  const quota = unfinished ? unfinished.status === 'quota' : ['quota_paused','quota_exhausted'].includes(p.control_state) ||
+    last?.status === 'quota_paused' || last?.action === 'quota' ||
+    /quota[_ -]?(paused|exhausted)|insufficient[_ ]balance/i.test(p.error_message || '');
   const paused = p.control_state === 'paused';
   const label = t('status_' + p.status);
   const state = (quota ? rt('quota') : active && waiting ? rt('waiting') : paused ? rt('paused') :
     label.startsWith('status_') ? (p.status || '') : label).replace(/^[^\p{L}\p{N}]+/u, '');
   const delivered = p.status === 'done' && researchData.evidence?.find(item => item.edition === 'delivered');
-  re('research-state').textContent = disconnected ? rt('disconnected') : state;
-  re('research-state').hidden = Boolean(delivered && !disconnected);
+  re('research-state').textContent = disconnected ? rt('disconnected') : unfinished?.status === 'quota' ? rt('check_quota') : state;
+  re('research-state').hidden = Boolean(delivered && !unfinished && !disconnected);
   const paper = re('research-read-paper');
   paper.hidden = !delivered;
   if (delivered) {
@@ -459,9 +471,10 @@ function renderResearch(animate=false) {
     paper.removeAttribute('href');
     paper.querySelector('img').removeAttribute('src');
   }
-  const action = quota ? rt('check_quota') : active && waiting ? decisionQuestion(p.pending_decision) : !active || paused ? state :
+  const action = quota ? rt(window.SHARE_MODE ? 'quota' : 'check_quota') : active && waiting ? decisionQuestion(p.pending_decision) : !active || paused ? state :
     (p.status === 'running' && reviewHandoff(recent)) || p.activity || reviewEventLabel(last) || (last?.status === 'running' && (last.action === 'tool/call' ? last.observation : last.action)) || (p.status !== 'running' ? state : rt('idle'));
-  re('research-action').textContent = delivered ? rt('paper_delivered') : action;
+  re('research-action').textContent = unfinished && !waiting ? rt(unfinished.status === 'quota' ? 'review_quota' : 'review_repair') :
+    delivered ? rt('paper_delivered') : action;
   const artifact = researchData.evidence?.[0];
   const fallback = artifact?.key === 'paper/main.pdf' ? rt('paper_ready') :
     artifact ? rt('file_ready', artifact.label) : rt('empty');
@@ -755,8 +768,20 @@ function renderReview() {
         const actions = document.createElement('div');
         actions.className = 'review-controls';
         actions.append(reviewReference(claim.passage));
-        if (!window.SHARE_MODE) actions.append(questionButton(claim.passage, [heading.textContent, basis.textContent, claim.reason].join('\n'), 'question_' + claim.kind));
-        row.append(heading, quote, basis, reason, actions);
+        row.append(heading, quote, basis, reason);
+        const discussion = [heading.textContent, basis.textContent, claim.reason];
+        for (const field of ['bridge','qualification','independent_derivation']) {
+          if (!claim[field]) continue;
+          const label = document.createElement('p'), excerpt = document.createElement('blockquote');
+          label.className = 'claim-evidence-label';
+          label.textContent = rt('claim_' + field);
+          excerpt.dir = 'auto';
+          excerpt.textContent = claim[field];
+          row.append(label, excerpt);
+          discussion.push(label.textContent + '\n' + excerpt.textContent);
+        }
+        if (!window.SHARE_MODE) actions.append(questionButton(claim.passage, discussion.join('\n'), 'question_' + claim.kind));
+        row.append(actions);
         if (claim.evidence.length) row.append(reviewSources(claim.evidence));
         list.append(row);
       }

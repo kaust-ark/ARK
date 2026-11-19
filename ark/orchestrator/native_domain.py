@@ -494,7 +494,12 @@ class NativeProject(CompilerMixin):
             for name, count in usage.items():
                 if isinstance(count, (float, int)) and count >= 0:
                     totals[name] = totals.get(name, 0) + count
-        if kind in {"turn/end", "turn_end", "tool/call", "tool/result", "failure", "quota", "stopped"}:
+        if kind == "review_repair_requested" and args.get("role") == "reviewer":
+            revision = self.state.get("review_attempts", {}).get(sid)
+            if revision and type(seq) is int:
+                self.event("review", kind, "The reviewer received a request to correct the unsigned review.",
+                           revision=revision, id=hashlib.sha256(f"{sid}/{seq}".encode()).hexdigest())
+        elif kind in {"turn/end", "turn_end", "tool/call", "tool/result", "failure", "quota", "stopped"}:
             # Detailed tool output can contain manuscript text and user credentials.
             title = (
                 "Provider quota reached. Continue after checking the account."
@@ -2358,7 +2363,7 @@ class NativeProject(CompilerMixin):
             record = review.validate_review(snapshot, args["verdict"], previous=previous, observed=observed)
         except ValueError as exc:
             if check_only:
-                feedback = review.draft_evidence_feedback(snapshot, args["verdict"], observed, str(exc))
+                feedback = review.draft_evidence_feedback(snapshot, args["verdict"], observed, str(exc), previous)
                 return {"valid": False, "diagnostic": feedback}
             raise
         if check_only:

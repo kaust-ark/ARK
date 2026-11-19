@@ -19,6 +19,10 @@
 .research-focus { display:grid; grid-template-columns:1.06fr 1fr; }
 .research-action, .research-observation { padding:clamp(18px,3vw,30px); min-width:0; overflow-wrap:anywhere; }
 .research-action { color:#f7fffb; background:#173f3b; }
+#research-desk[data-review-state="quota"] .research-action { background:#503d29; }
+#research-desk[data-review-state="quota"] .research-action .research-label { color:#f2d8af; }
+#research-desk[data-review-state="quota"] #research-state { color:#fff2dc; border-color:#a88b67; }
+#research-desk[data-review-state="quota"] .research-action .research-label::before { content:""; display:inline-block; width:4px; height:9px; margin-inline-end:6px; border-inline:2px solid currentColor; vertical-align:baseline; }
 #research-read-paper { display:inline-flex; align-items:center; gap:12px; margin-top:14px; min-height:44px; color:#fff; font-size:.9rem; font-weight:600; text-underline-offset:4px; }
 #research-read-paper img { width:50px; height:66px; object-fit:contain; background:#fff; border-radius:2px; box-shadow:0 2px 6px #082a2560; }
 #research-read-paper:focus-visible { outline:2px solid #c2f2dc; outline-offset:4px; }
@@ -104,6 +108,7 @@
 #review-coverage .review-claims>li+li { margin-block-start:12px; }
 .review-claims blockquote { margin:4px 0 8px; color:var(--ink); white-space:pre-wrap; }
 .review-claims p { margin:3px 0; }
+.review-claims .claim-evidence-label { margin-top:9px; font-size:.78rem; color:var(--muted); }
 .review-scope { margin-block:8px; }
 .review-scope dl { margin:6px 0; padding-inline-start:10px; border-inline-start:2px solid var(--line); }
 .review-scope dt { font-weight:600; color:var(--ink); }
@@ -155,6 +160,7 @@ body.share-mode .research-workspace { grid-template-columns:1fr; }
 }
 
 @media (prefers-reduced-motion:no-preference) {
+  #research-desk.live-review-change .research-action { transition:background-color .26s ease-out; }
   .research-count-live span { transition:transform .36s cubic-bezier(.2,.7,.3,1); }
   .research-arrived { animation:research-arrive .22s ease-out; }
   #research-history[open] ol, .history-comparison[open] dl, .review-passages[open]>div, #preview-content img { animation:research-reveal .26s cubic-bezier(.2,.7,.3,1); }

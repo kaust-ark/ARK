@@ -124,6 +124,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                       "evidence": [measurement_ref, {**measurement_ref, "sha256": "0" * 64, "quote": "Unverified evidence"}]}
             explanation = {"kind": "explanation", "basis": "qualified", "reason": "The authors explicitly say ‘could explain’.",
                            "passage": {**result["passage"], "quote": explanation_sentence},
+                           "qualification": "could explain",
                            "evidence": [{**result["passage"], "quote": explanation_sentence}]}
             record["checks"]["manuscript"]["claims"] = [
                 result, explanation, {**result, "passage": {**result["passage"], "sha256": "0" * 64}},
@@ -283,6 +284,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     assert box.evaluate("el => el === document.activeElement")
                     assert revision in box.input_value() and explanation_sentence in box.input_value() and result_sentence not in box.input_value()
                     assert "Reviewer’s basis: qualified wording" in box.input_value()
+                    assert "Words the reviewer considered sufficient\ncould explain" in box.input_value()
                     assert page.locator("#hitl-send").is_disabled() and page.locator("#decision-text").input_value() == draft
                     # Guard against a decision arriving between the last UI update and an explicit send.
                     assert page.request.post(base + f"/dashboard/api/projects/{pid}/message",
@@ -315,7 +317,8 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert judgment.evaluate("el => getComputedStyle(el).display") == "block"
                 assert record["checks"]["manuscript"]["reason"] in judgment.locator("..").inner_text()
                 claim_rows = page.locator(".review-claims > li")
-                assert claim_rows.locator("blockquote").all_text_contents() == [result_sentence, explanation_sentence]
+                assert claim_rows.locator("blockquote").all_text_contents() == [
+                    result_sentence, explanation_sentence, "could explain"]
                 first = claim_rows.first
                 sources = first.locator(".review-passages")
                 sources.locator("summary").press("Enter")
@@ -555,12 +558,18 @@ def test_live_research_desk(tmp_path, monkeypatch):
             assert shared.request.get(shared_pdf).status == 409
             assert shared.request.get(api + "/pdf").status == 409
             assert not shared.request.get(api).json()["has_pdf"]
-            notice = "Update your key in Settings > API Keys. <i id='quota-fixture'>Continue</i>"
+            notice = "Insufficient Balance. Update your key in Settings > API Keys. <i id='quota-fixture'>Continue</i>"
             with db.get_session(settings.db_path) as session:
                 db.update_project(session, db.get_project(session, pid), status="failed", error_message=notice)
             owner_page.reload(wait_until="domcontentloaded")
             owner_page.locator("#detail-info").get_by_text(notice, exact=False).wait_for()
             assert owner_page.locator("#quota-fixture").count() == 0
+            assert owner_page.locator("#research-action").inner_text() == "Check your provider balance, then select Continue"
+            with db.get_session(settings.db_path) as session:
+                db.update_project(session, db.get_project(session, pid), error_message="insufficient_balance_error")
+            shared.reload(wait_until="domcontentloaded")
+            shared.locator("#research-action").get_by_text("Paused for API quota", exact=True).wait_for()
+            assert shared.get_by_role("button", name="Continue", exact=True).count() == 0
 
             # Resume an active manuscript without a delivered edition. A tool's proposed
             # acceptance and an unpaired event cannot establish review completion.
@@ -571,7 +580,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
             (saved.parent/"review.json").write_text(json.dumps(signed))
             (state/"native_review.json").write_text(json.dumps(signed))
             with db.get_session(settings.db_path) as session:
-                db.update_project(session, db.get_project(session, pid), status="running", activity="Checking the experimental results")
+                db.update_project(session, db.get_project(session, pid), status="running", error_message="", activity="Checking the experimental results")
             event("draft-proposal","review","accept",action="tool/result")
             event("unpaired-review","review","accept",action="manuscript_reviewed",revision=delivered_revision)
             owner_page.reload(wait_until="domcontentloaded")
@@ -600,6 +609,39 @@ def test_live_research_desk(tmp_path, monkeypatch):
                   artifact="auto_research/state/reviews/" + revised + "/main.pdf")
             action.get_by_text("The reviewer requested a revision.", exact=True).wait_for()
             assert owner_page.locator("#research-read-paper").is_hidden()
+            # A reviewer's private correction is never a signed verdict. After reconnecting, the
+            # owner can still see the last scientific step even if transport events fill a page.
+            from ark.orchestrator.native_domain import NativeProject
+            current = "d" * 64
+            receipt.write_text(json.dumps({"state":"running","review_attempts":{"reader":current}}))
+            native = NativeProject(root)
+            event("review-in-progress","review","Review opened.",action="review_started",revision=current)
+            repair = {"role":"reviewer","session_id":"reader","seq":14,"kind":"review_repair_requested",
+                      "title":"private-proposal-sentinel","detail":"private-trace-sentinel"}
+            with db.get_session(settings.db_path) as session:
+                db.update_project(session, db.get_project(session, pid), error_message="old insufficient_balance_error")
+            native.project_event(repair)
+            assert native.project_event(repair) == {"duplicate": True}
+            owner_page.reload(wait_until="domcontentloaded")
+            action.get_by_text("Awaiting a corrected review", exact=True).wait_for()
+            assert "quota" not in owner_page.locator("#research-state").inner_text().lower()
+            assert owner_page.locator("#research-observation").inner_text() == "Reviewer received a request to correct the draft"
+            event("new-scope","review","Compared the intended conditions.",action="evidence_scope_committed",revision=current)
+            native.project_event({"role":"reviewer","session_id":"reader","seq":15,"kind":"quota"})
+            for i in range(40):
+                event(f"transport-{i}","work","owner tool returned",action="tool/result")
+            owner_page.reload(wait_until="domcontentloaded")
+            action.get_by_text("Review paused before a verdict", exact=True).wait_for()
+            assert owner_page.locator('#research-desk').get_attribute('data-review-state') == 'quota'
+            assert owner_page.locator('#research-phases [aria-current="step"]').inner_text() == "Review"
+            assert owner_page.locator("#research-observation").inner_text() == "Reviewer recorded the pre-reading judgment"
+            data = owner_page.request.get(api).json()["research"]
+            assert data["unfinished_review"]["latest"]["id"] == "new-scope"
+            assert all(e["phase"] == "work" for e in data["events"])
+            assert "private-proposal-sentinel" not in journal.read_text() and "private-trace-sentinel" not in journal.read_text()
+            assert "unfinished_review" not in shared.request.get(api).json()["research"]
+            receipt.write_text(json.dumps({"state":"running","review_attempts":{"reader":current}}))
+            assert not owner_page.request.get(api).json()["research"]["unfinished_review"]
             browser.close()
         with db.get_session(settings.db_path) as session:
             assert db.get_decision(session, decision).answer_text == draft

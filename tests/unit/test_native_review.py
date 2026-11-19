@@ -322,6 +322,7 @@ def test_result_and_explanation_require_separate_observed_support(tmp_path):
         with fitz.open() as doc:
             p = doc.new_page()
             p.insert_text((40, 50), assertion)
+            p.insert_text((40, 140), "Mass loss equals uptake plus evaporation.")
             p = doc.new_page()
             p.insert_text((40, 50), "Conclusion")
             p.insert_text((40, 90), outcome)
@@ -362,6 +363,26 @@ def test_result_and_explanation_require_separate_observed_support(tmp_path):
         _manuscript_claims(snap,[result,{**derivation, "bridge":"uptake dominates"}],[*receipts,seen_method],"")
     check = dict(control=3, revision=snap["revision"], passage=claims[1]["passage"], same_premise=True,
                  distinguishable_outcome=True, cases={"A":{"premise":6,"outcome":4},"B":{"premise":6,"outcome":5}})
+    # A relation in the submitted PDF can be true without identifying the claimed contribution.
+    bridge = "Mass loss equals uptake plus evaporation."
+    self_cited = dict(causal, basis="derivation", bridge=bridge,
+                      evidence=[{"artifact":filename, "page":1, "quote":bridge}])
+    empirical = dict(snap, method_control={"available":True})
+    def derived(claim, observations):
+        return _manuscript_claims(empirical, [result, claim], observations, "")[1]
+    with pytest.raises(ValueError, match="independent_derivation"):
+        derived(self_cited, receipts)
+    with pytest.raises(ValueError, match="independent_derivation"):
+        derived(dict(self_cited, independent_derivation=bridge, evidence=[*self_cited["evidence"], method_ref]),
+                [*receipts, seen_method])
+    with pytest.raises(ValueError, match="independent_derivation"):
+        derived(self_cited, [*receipts, {**check, "passage":claims[0]["passage"]}])
+    with pytest.raises(ValueError, match="counterexample"):
+        derived(self_cited, [*receipts, check])
+    working = "At fixed evaporation E, subtracting the equations gives U2 - U1 = L2 - L1."
+    assert derived(dict(self_cited, independent_derivation=working), receipts)["independent_derivation"] == working
+    assert derived(self_cited, [*receipts, {**check, "distinguishable_outcome":False}])["bridge"] == bridge
+    assert _manuscript_claims(dict(snap, method_control=None), [result, self_cited], receipts, "")[1]["bridge"] == bridge
     with pytest.raises(ValueError, match="counterexample"):
         _manuscript_claims(snap,[result,{**causal,"evidence":[row,method_ref]}],[*receipts,seen_method,check],"")
 
@@ -386,6 +407,20 @@ def test_result_and_explanation_require_separate_observed_support(tmp_path):
     assert revised["verdict"] == "revise" and "conclusion_support" not in revised["checks"]["manuscript"]
     assert revised["issues"][0]["evidence"][0] == revised["checks"]["manuscript"]["claims"][1]["passage"]
     assert revised["issues"][0]["claim"] == explanation
+    inline = copy.deepcopy(answer)
+    original = inline["issues"].pop()
+    inline_claim = inline["checks"]["manuscript"]["claims"][1]
+    inline_claim.update(finding={"id":original["id"],"fix":original["fix"]},reason=original["reason"])
+    inline_claim["passage"]["sentence"] = 1
+    from_inline = validate_review(snap,inline,observed=[*receipts,*seen])
+    assert from_inline["issues"] == revised["issues"] and from_inline["verdict"] == "revise"
+    assert validate_review(snap,inline,previous=from_inline,observed=[*receipts,*seen])["issues"][0]["status"] == "still_present"
+    with pytest.raises(ValueError,match="unique"):
+        validate_review(snap,{**inline,"issues":[original]},observed=[*receipts,*seen])
+    wrong = copy.deepcopy(inline)
+    wrong["checks"]["manuscript"]["claims"][0]["finding"] = {"id":"R2","fix":"change"}
+    with pytest.raises(ValueError,match="unsupported claim"):
+        validate_review(snap,wrong,observed=[*receipts,*seen])
     contested = validate_review(snap,answer,observed=[*receipts,*seen,check,check])
     assert contested["checks"]["manuscript"]["inference_tests"] == [check]
     assert "inference_tests" not in revised["checks"]["manuscript"]
@@ -415,6 +450,17 @@ def test_result_and_explanation_require_separate_observed_support(tmp_path):
     mixed = make_snapshot("Root uptake is one possible explanation.")
     seen = [read_evidence(mixed, filename, page=n)["receipt"] for n in (1,2)] + [
         read_evidence(mixed, measured)["receipt"], read_evidence(mixed, method)["receipt"]]
+    from ark.review import draft_evidence_feedback
+    # One repair round should surface independent errors in a first review.
+    flawed_draft = {"checks":{"manuscript":{"status":"assessed","claims":[
+        dict(result,passage={"selector":"experiments"}),
+        dict(qualified,basis="procedure",evidence=[{"artifact":filename,"page":1}])]}},
+        "issues":[{"id":"R1","status":"resolved"}]}
+    before = copy.deepcopy(flawed_draft)
+    feedback = draft_evidence_feedback(mixed,flawed_draft,seen,"The verdict is invalid.")
+    for field in ("claim 1 passage","claim 2 basis","claim 2 evidence","page 2","R1 has invalid revision history"):
+        assert field in feedback
+    assert flawed_draft == before
     with pytest.raises(ValueError, match="continuation on page 2"):
         _manuscript_claims(mixed,[result,qualified],seen,"")
     disputed = dict(causal, basis="unsupported", passage={"selector":"conclusion","sentence":1})
