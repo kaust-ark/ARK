@@ -170,6 +170,47 @@ def test_hosted_uses_native_for_fresh_project_and_retains_legacy(tmp_path, monke
     assert not uses_native_project(project)
 
 
+def test_hosted_retains_early_legacy_worker_after_log_rotation(tmp_path, monkeypatch):
+    from ark.orchestrator.dsh_workflow import uses_native_project
+
+    state = tmp_path / "auto_research/state"
+    state.mkdir(parents=True)
+    logs = state.parent / "logs"
+    logs.mkdir()
+    own = logs / "hosted-id_paper_20261119_183132.log"
+    project = SimpleNamespace(code_dir=tmp_path, state_dir=state, _project_id="hosted-id", log_file=own)
+    (state / "idea.md").write_text("Copied project idea")
+    (state / "user_prefs.yaml").write_text("mode: paper")
+    gate = state / "ethical_review.json"
+    gate.write_text('{"verdict":"proceed"}')
+    (logs / "other-id_paper_20261119_183132.log").write_text("another project")
+    (logs / "hosted-id_paper_notes.log").write_text("copied notes")
+    (logs / "hosted-id_paper_20261119_180000.log").mkdir()
+    (logs / "hosted-id_paper_20261119_180001.log").symlink_to(own)
+    os.mkfifo(logs / "hosted-id_paper_20261119_180002.log")
+    own.write_text("Current worker started")
+    assert uses_native_project(project)
+
+    old = logs / "hosted-id_paper_20261119_183100.log"
+    with old.open("wb") as stream:
+        stream.truncate(2**32)
+    old.chmod(0)
+    assert not uses_native_project(project)
+    old.unlink()
+    gate.write_text('{"verdict":"proceed","reviewed":true}')
+    assert not uses_native_project(project)
+
+    pin = tmp_path / ".dsh/native/home/profiles/idea2paper/bundle.sha256"
+    pin.parent.mkdir(parents=True)
+    pin.write_text("a" * 64)
+    monkeypatch.setenv("ARK_WORKFLOW_RUNTIME", "legacy")
+    assert hosted_workflow_enabled("hosted-id", project)
+    assert uses_native_project(project)
+    pin.unlink()
+    (tmp_path / "workflow.json").write_text('{"version":3}')
+    assert uses_native_project(project)
+
+
 def test_installed_bundle_retains_verified_project_pin_across_rollout(
     tmp_path, monkeypatch
 ):

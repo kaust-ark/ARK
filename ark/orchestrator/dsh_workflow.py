@@ -6,8 +6,10 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
+import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tarfile
@@ -19,18 +21,21 @@ from ark.engines.dsh_runtime import SDK_VERSION, dsh_interpreter
 from ark.workflow import WorkflowSteps
 
 
-def _checkpoint_version(project):
+def _recorded_native_runner(project):
     folder = getattr(project, "code_dir", None)
     if folder is None:
         return None
     checkpoint = Path(folder) / "workflow.json"
     if checkpoint.is_file():
-        return json.loads(checkpoint.read_text()).get("version", 0)
+        return json.loads(checkpoint.read_text()).get("version") == 3
+    # Bootstrap pins the bundle before its owner writes workflow.json.
+    if (Path(folder) / ".dsh/native/home/profiles/idea2paper/bundle.sha256").is_file():
+        return True
     return None
 
 
 def hosted_workflow_enabled(project_id, project=None):
-    if _checkpoint_version(project) == 3:
+    if _recorded_native_runner(project) is True:
         return True
     choice = os.environ.get("ARK_WORKFLOW_RUNTIME", "").strip().lower()
     if choice not in ("", "python", "dsh", "native", "legacy"):
@@ -100,14 +105,14 @@ def _run_legacy_workflow(project):
 
 def uses_native_project(project):
     """New projects use the shared bundle; a checkpoint retains its original runner."""
-    version = _checkpoint_version(project)
-    if version is not None:
-        return version == 3
+    recorded = _recorded_native_runner(project)
+    if recorded is not None:
+        return recorded
     choice = os.getenv("ARK_WORKFLOW_RUNTIME", "").lower().strip()
     state = getattr(project, "state_dir", None)
     if state is None or choice in ("python", "legacy") or selected_agent_runtime() != "dsh":
         return False
-    return not any(
+    if any(
         (state / name).is_file()
         for name in (
             "checkpoint.yaml",
@@ -115,7 +120,41 @@ def uses_native_project(project):
             "paper_state.yaml",
             "research_pipeline_state.yaml",
         )
-    )
+    ):
+        return False
+
+    # Gate A persists its verdict before the first stage checkpoint. Native
+    # workers already have a bundle pin at this point, including on a crash.
+    gate = state / "ethical_review.json"
+    if gate.is_file() and not gate.is_symlink():
+        try:
+            review = json.loads(gate.read_text())
+        except (ValueError, FileNotFoundError):
+            review = None
+        if (isinstance(review, dict) and isinstance(review.get("reviewed"), bool)
+                and review.get("verdict") in ("proceed", "refine")):
+            return False
+
+    # Before Gate A, v0.5.48 still created a project-ID-scoped run log. Native
+    # bootstrap pins its bundle before Orchestrator creates that file. Match
+    # the worker's own naming convention without reading log contents.
+    project_id = getattr(project, "_project_id", None)
+    if project_id:
+        logs = state.parent / "logs"
+        name = re.compile(re.escape(project_id) + r"_paper_\d{8}_\d{6}\.log")
+        try:
+            for log in logs.iterdir():
+                if log == getattr(project, "log_file", None) or not name.fullmatch(log.name):
+                    continue
+                try:
+                    info = log.lstat()
+                except FileNotFoundError:
+                    continue  # The worker rotates its old logs.
+                if stat.S_ISREG(info.st_mode) and info.st_size:
+                    return False
+        except FileNotFoundError:
+            pass  # No worker has initialized the log directory.
+    return True
 
 
 def native_interpreter(project):

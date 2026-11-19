@@ -364,13 +364,13 @@ export const operations = {
   read_project_file: ['Read up to 6000 characters of a manuscript, result, skill, original brief (auto_research/state/idea.md), experiment_plan.yaml or deep_research.md in that directory, or sources/<id>.txt from verify_citations. Supply next_offset as offset to continue, or find a passage to get its match_line. Use start_line to read up to 40 numbered lines. sha256 covers the entire file. For paper/main.tex, list_revisions lists saved digests and revision_sha256 reads a saved version.', { path: str, offset: num, find: str, start_line: num, revision_sha256: str, list_revisions: bool }, ['path']],
   write_project_file: ['Write a manuscript or script. To edit lines of paper/main.tex, read the numbered lines and send inclusive start_line/end_line with just the new text. The last numbered view supplies its revision; alternatively provide the exact current base_sha256. A TeX error introduced into a compiling draft rejects the edit. For a section edit use replace, insert_before or insert_after with an exact unique passage or heading. Use expected_matches only to correct a known count of identical passages. Any edit that cuts over one fifth of a manuscript longer than 3500 characters needs its current base_sha256 and allow_shrink:true. Each changed manuscript saves previous_sha256. To restore it, supply only path, current base_sha256 and restore_sha256.', { path: str, content: str, start_line: num, end_line: num, replace: str, expected_matches: num, insert_before: str, insert_after: str, base_sha256: str, allow_shrink: bool, restore_sha256: str }, ['path']],
 }
-// The reviewer may revise its own rejected draft during this activation.
+// The reviewer may revise its own draft during this activation.
 export function reviewSubmission(message, previous, revision) {
   if (!message || !Object.hasOwn(message, 'amend')) return message
   const patch = message.amend
   if (!previous || previous.revision !== revision || Object.keys(message).length !== 1 ||
       !patch || typeof patch !== 'object' || Array.isArray(patch) || !Object.keys(patch).length) {
-    throw new Error('An amendment requires a rejected verdict for this revision and one amend object.')
+    throw new Error('An amendment requires an earlier verdict for this revision and one amend object.')
   }
   const allowed = ['summary', 'alternative', 'strengths', 'checks', 'issues', 'verdict', 'score']
   if (Object.keys(patch).some(field => !allowed.includes(field))) {
@@ -393,9 +393,9 @@ export const evidenceTool = ['Inspect a frozen artifact. For a disputed explanat
   artifact: str, page: num, start: num, visual: bool, statistic: str, column: str, rows_pointer: str, find: str,
 }, ['artifact']]
 
-export const methodControlTool = ['Test the frozen scientific worker on a small independently predicted example. Select a top-level function name (keyword arguments) or quote the complete exact expression from a return or assignment (named operands). inputs_json is a JSON object string. List names needing NumPy arrays in array_inputs. expected_json and alternative_json are numbers or flat numeric arrays encoded as JSON strings. Predict the first from the research definition and the second from a concrete competing calculation. Choose an input where they differ. Explain both predictions.', {
-  target: str, inputs_json: str, array_inputs: strings, expected_json: str, alternative_json: str, rationale: str,
-}, ['target', 'inputs_json', 'expected_json', 'alternative_json', 'rationale']]
+export const methodControlTool = ['Test a calculation from the frozen worker. Select a top-level function or quote an exact expression in a return or assignment. Bind its operands in inputs_json and list array_inputs needing NumPy conversion. For a calculated scalar result use prediction_program: define reproduce(inputs) returning {"expected": number, "alternative": number}. Derive both from those exact inputs according to the intended definition and a competing definition. Your program runs first in a separate CPU sandbox without the worker source or result. For simple exact predictions or arrays, give expected_json and alternative_json instead. Explain why the predictions differ in rationale.', {
+  target: str, inputs_json: str, array_inputs: strings, prediction_program: str, expected_json: str, alternative_json: str, rationale: str,
+}, ['target', 'inputs_json', 'rationale']]
 
 export const reproductionTool = ['Use the original research request to independently recompute the designated condition. Supply exactly one of program or unavailable. Python calls reproduce(identifiers) once with a dictionary for one condition. Each named identifier is a scalar. Return one flat dict with exactly the requested outcome keys and one finite Python number per key. The CPU sandbox provides the science image and identifiers, with no project files or network. If reproduction is infeasible, give the specific reason in unavailable. The submission opens after commitment, and the program cannot be changed after disclosure.', {program: str, unavailable: str}]
 

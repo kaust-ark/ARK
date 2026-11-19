@@ -626,6 +626,35 @@ def test_control_can_only_measure_the_frozen_calculation(monkeypatch):
     assert len(executions) == 1
 
 
+def test_method_control_derives_predictions_before_executing_the_worker(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    from ark.compute import review_control
+
+    calls = []
+    def execute(backend, image, payload, driver=review_control.DRIVER):
+        calls.append(payload)
+        run = subprocess.run([sys.executable, "-I", "-B", "-c", driver], input=json.dumps(payload),
+                             cwd=tmp_path, text=True, capture_output=True, check=True)
+        return json.loads(run.stdout)
+    monkeypatch.setattr(review_control, "_execute", execute)
+    source = b"def rmse(y, pred):\n    return (sum((a-b)**2 for a,b in zip(y,pred))/len(y))**0.5\n"
+    program = ("def reproduce(inputs):\n"
+               "    a, b = [abs(x-y) for x,y in zip(inputs['y'], inputs['pred'])]\n"
+               "    return {'expected': ((a*a+b*b)/2)**0.5, 'alternative': (a+b)/2}")
+    args = dict(target="rmse", inputs_json='{"y":[1,2],"pred":[2.5,1]}', prediction_program=program,
+                rationale="Compare quadratic and arithmetic means on the same two residuals.")
+    runtime = {"backend": "slurm"}
+    case = review_control.run(source, runtime, args)
+    assert case["matches"] and case["expected"] == pytest.approx(1.2747548783981961)
+    assert case["alternative"] == 1.25 and case["prediction_program"] == program
+    assert calls[0] == {"program": program, "identifiers": calls[1]["inputs"]}
+    assert calls[1]["source"] == source.decode()
+    with pytest.raises(ValueError, match="either"):
+        review_control.run(source, runtime, args | {"expected_json":"1.25"})
+    assert len(calls) == 2
+
+
 def test_isolated_control_driver_measures_unmodified_method_and_inline_expression(tmp_path):
     import subprocess
     import sys
@@ -836,6 +865,31 @@ def test_measured_recomputation_is_bound_to_rows_and_receipt(tmp_path):
     assert csv["text"] == "mean(cached_ms) = 10 over 3 recorded rows"
     with pytest.raises(ValueError, match="missing"):
         read_evidence(snap, "results/rows.csv", statistic="median", column="missing")
+
+
+def test_measurement_row_reference_binds_the_exact_visible_object(tmp_path, monkeypatch):
+    import ark.review as review
+    pair = PAIRS[0]
+    project(tmp_path, pair, "clean")
+    path = "results/splits.json"
+    first = '{"seed":0,"value":2.0e-2,"label":"contains }"}'
+    second = '{"seed":1,"value":1.0}'
+    (tmp_path / path).write_text(f"[ {first}, {second} ]")
+    snap = build_snapshot(tmp_path)
+    response, receipts = record(snap, pair, "clean", "")
+    check = response["checks"]["experiment"]
+    check["evidence"] = [{"artifact": path, "row": 1}]
+    monkeypatch.setattr(review, "VIEW_SIZE", len(first) + 8)
+    seen = read_evidence(snap, path)
+    assert seen["citable_rows"] == 1
+    with pytest.raises(ValueError, match="actually observed"):
+        validate_review(snap, response, observed=receipts)
+    signed = validate_review(snap, response, observed=[seen["receipt"]])
+    assert signed["checks"]["experiment"]["evidence"][0]["quote"] == first
+    for row in (0, 2, True):
+        check["evidence"][0]["row"] = row
+        with pytest.raises(ValueError, match="observed|one-based"):
+            validate_review(snap, response, observed=[seen["receipt"]])
 
 
 def test_json_quote_uses_only_contiguous_tokens_in_one_observed_window(tmp_path, monkeypatch):

@@ -386,9 +386,12 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         } else if (!history.includes('known-answer-receipt')) {
           response = {name:'run_method_control',args:{target:'mean',inputs_json:'{"values":[2,4]}',
             expected_json:'3',alternative_json:'6',rationale:'The mean of two and four is three. The sum is six.'}}
+        } else if (history.includes('Before signing your manuscript assessment')) {
+          assert.match(history, /different exposure still fits/)
+          response = JSON.stringify({amend:{verdict:'accept'}})
         } else if (history.includes('independently-read-primary-passage')) {
           const citations = {status:'assessed', evidence:[{artifact:'sources/paper.txt',quote:'independently-read-primary-passage'}]}
-          response = JSON.stringify(google ? {revision:'rev1', verdict:'accept', checks:{citations}} : {amend:{checks:{citations}}})
+          response = JSON.stringify(google ? {revision:'rev1', verdict:'unassessed', alternative:'different exposure still fits', checks:{citations,manuscript:{conclusion_support:'measured'}}} : {amend:{checks:{citations}}})
         } else if (history.includes('Cite an observed primary source')) {
           response = {name:'read_evidence',args:{artifact:'sources/paper.txt'}}
         } else if (history.includes('measured-observation')) {
@@ -569,7 +572,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
   assert.ok(delivered)
   assert.equal(calls.filter(op => op === 'review_snapshot').length,1)
   assert.equal(calls.filter(op => op === 'reproduce_measurement').length,1)
-  assert.equal(calls.filter(op => op === 'check_review').length,2)
+  assert.equal(calls.filter(op => op === 'check_review').length,scenario === 'program' ? 3 : 2)
   assert.notEqual(recorded.session_id,first.owner_session_id)
   assert.ok(events.some(e => e.role === 'reviewer' && e.kind === 'tool/call'))
   assert.deepEqual([...new Set(events.filter(e => e.role === 'reviewer').map(e => e.session_id))], [recorded.session_id])

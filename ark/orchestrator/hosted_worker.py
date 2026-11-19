@@ -70,7 +70,7 @@ def boot_native_worker(project_id, code_dir, project_dir):
     if not project_id or not code_dir or not project_dir:
         return
     root = Path(code_dir).resolve()
-    project = SimpleNamespace(code_dir=root, state_dir=root / "auto_research/state")
+    project = SimpleNamespace(code_dir=root, state_dir=root / "auto_research/state", _project_id=project_id)
     if not hosted_workflow_enabled(project_id, project) or not uses_native_project(project):
         return
     profile = root / ".dsh/native/home/profiles/idea2paper"

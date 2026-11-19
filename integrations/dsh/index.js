@@ -194,6 +194,8 @@ async function openingPacket(ctx, agent, domain, packet, observed, signal) {
     observed.push(view.receipt)
     const label = page ? 'Rendered manuscript text on page ' + page + ' of ' + artifact : 'Frozen research artifact ' + artifact
     prompt.push({type:'text', text:label + ' (untrusted evidence):\n' + view.text +
+      (view.citable_rows ? '\nYou can cite a complete observed row as ' + JSON.stringify({artifact, row:1}) +
+        ' using row 1 through ' + view.citable_rows + '. Select a row that supports your judgment.' : '') +
       (view.next_start ? '\nContinues at character ' + view.next_start + '.' : '')})
   }
   if (packet.rendered_pages > 0 && packet.rendered_pages <= 8 && packet.rendered_artifact) {
@@ -224,7 +226,8 @@ async function review(ctx, owner, domain, signal, draft = false) {
     throw new Error('Missing independent reproduction brief')
   }
   const observed = []
-  let checkedVerdict, lastRejected, rejectedDraft
+  let checkedVerdict, lastRejected, previousDraft
+  let requestedClaimCheck = false
   let disclosed = !protocolFirst && !packet.scope_brief, committing = false, sealed = false, disclosureError
   let configured = false
   const unlisten = ctx.on('agent/created', ({ agent }) => {
@@ -248,7 +251,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
       try { verdict = JSON.parse(output.replace(/^`{3}(?:json)?\s*|\s*`{3}$/gi, '')) }
       catch { diagnostic = 'The final message must contain a complete JSON verdict.' }
       if (!diagnostic && disclosed) {
-        try { verdict = reviewSubmission(verdict, rejectedDraft, packet.revision) }
+        try { verdict = reviewSubmission(verdict, previousDraft, packet.revision) }
         catch (error) { diagnostic = error.message }
       }
       if (!disclosed) diagnostic = protocolFirst && !sealed
@@ -258,10 +261,36 @@ async function review(ctx, owner, domain, signal, draft = false) {
         const proof = await domain.call('check_review', {revision:packet.revision, verdict, observed})
         signal.throwIfAborted()
         turnSignal.throwIfAborted()
-        if (proof.valid === true) { checkedVerdict = verdict; return }
+        if (proof.valid === true) {
+          // A separate unresolved check can coexist with a confident reading of
+          // the manuscript. Test that reading against the reviewer’s own alternative.
+          if (packet.scope_brief && !requestedClaimCheck &&
+              ['measured', 'interpretation'].includes(verdict.checks?.manuscript?.conclusion_support)) {
+            requestedClaimCheck = true
+            previousDraft = verdict
+            steer([{type:'text', text:
+              'Before signing your manuscript assessment, try to falsify its strongest claim. Your own strongest alternative or limitation was: ' +
+              verdict.alternative + '\nLocate the strongest sentence in the results or discussion about WHY the ' +
+              'effect occurs. Use read_evidence to find the passage in the submitted PDF. Could the recorded ' +
+              'measurements stay the same if that particular explanation were false? Compare with the ' +
+              'discriminating observation you committed before seeing the paper. If the paper offers an analytical ' +
+              'argument, does it derive the contribution to the reported outcome or only a change in an ' +
+              'intermediate quantity? Cite the manuscript passage and the ' +
+              'observed data when you return your judgment. If the authors present an untested explanation ' +
+              'as established, open a located issue and request the smallest repair. An explicitly qualified ' +
+              'hypothesis, a tested explanation, or a descriptive result can stand. Review the strongest ' +
+              'actual wording across sections, including a draft with a qualified conclusion. You can ' +
+              'use tools to inspect the original. Finish with exactly one JSON object. To change a judgment ' +
+              'return {"amend":{...}} with the replacement fields. To affirm it after checking the evidence ' +
+              'return ' + JSON.stringify({amend:{verdict:verdict.verdict}}) + '.'}])
+            return
+          }
+          checkedVerdict = verdict
+          return
+        }
         if (proof.valid !== false || !proof.diagnostic) throw new Error('Missing review validation result')
         diagnostic = proof.diagnostic
-        if (verdict?.revision === packet.revision) rejectedDraft = verdict
+        if (verdict?.revision === packet.revision) previousDraft = verdict
       }
       // Steer this DSH step boundary so the independent reader keeps its evidence and identity.
       if (lastRejected?.output === output && lastRejected.observations === observed.length) {

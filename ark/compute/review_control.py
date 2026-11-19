@@ -217,19 +217,33 @@ def run(source, runtime, args):
         if not isinstance(raw, str) or len(raw) > 4096:
             raise ValueError(f"Supply a small JSON string for {name}.")
         return json.loads(raw)
-    inputs, expected = parse("inputs_json"), parse("expected_json")
+    inputs = parse("inputs_json")
     if not isinstance(inputs, dict) or not inputs or not all(k.isidentifier() and not k.startswith("__") for k in inputs):
         raise ValueError("Bind named operands or function arguments to a small JSON object.")
     arrays = args.get("array_inputs", [])
     if not isinstance(arrays, list) or not all(isinstance(k, str) and isinstance(inputs.get(k), list) for k in arrays):
         raise ValueError("array_inputs must name list inputs that need NumPy conversion.")
-    alternative = parse("alternative_json")
-    if _matches(expected, alternative):
-        raise ValueError("Both explanations predict the same answer on this input. Choose a distinguishing case.")
     source = source.decode("utf-8")
     function = _target(source, target, inputs)
+    program = args.get("prediction_program")
+    if program is None:
+        expected, alternative = parse("expected_json"), parse("alternative_json")
+    else:
+        if not isinstance(program, str) or not 1 <= len(program.encode()) <= 4096:
+            raise ValueError("Supply a short independent prediction program.")
+        if "expected_json" in args or "alternative_json" in args:
+            raise ValueError("Choose either prediction_program or two literal predictions for this control.")
+        # Derive both expectations from the same operands. The independent
+        # process gets neither the worker's implementation nor its result.
+        predictions = _execute(runtime["backend"], runtime.get("image"),
+                               {"program": program, "identifiers": inputs}, driver=_REPRODUCTION_DRIVER)
+        if not isinstance(predictions, dict) or predictions.keys() != {"expected", "alternative"}:
+            raise ValueError("Return a dict with numeric expected and alternative predictions.")
+        expected, alternative = predictions["expected"], predictions["alternative"]
+    if _matches(expected, alternative):
+        raise ValueError("Both explanations predict the same answer on this input. Choose a distinguishing case.")
     result = _execute(runtime["backend"], runtime.get("image"), dict(source=source, function=function,
                       target=target, inputs=inputs, array_inputs=arrays))
     return dict(target=target, inputs=inputs, array_inputs=arrays, rationale=rationale.strip(), expected=expected,
                 alternative=alternative, observed=result, matches=_matches(expected, result), backend=runtime["backend"],
-                rel_tol=1e-6, abs_tol=1e-9)
+                rel_tol=1e-6, abs_tol=1e-9, **({"prediction_program": program} if program is not None else {}))

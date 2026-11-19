@@ -347,6 +347,31 @@ def _text_window(text, start):
     return text[start - 1:end], end
 
 
+def _visible_measurement_rows(text):
+    """Return the exact complete row objects at the start of an observed JSON array."""
+    pos = len(text) - len(text.lstrip())
+    if text[pos:pos + 1] != "[":
+        return []
+    rows = []
+    decoder = json.JSONDecoder()
+    for _ in range(64):
+        pos += 1  # Opening array or comma after the preceding row.
+        pos += len(text[pos:]) - len(text[pos:].lstrip())
+        if text[pos:pos + 1] != "{":
+            break
+        try:
+            _, end = decoder.raw_decode(text, pos)
+        except (ValueError, RecursionError):
+            break
+        if end - pos > 1200:  # Keep row references within the regular quotation limit.
+            break
+        rows.append(text[pos:end])
+        pos = end + len(text[end:]) - len(text[end:].lstrip())
+        if text[pos:pos + 1] != ",":
+            break
+    return rows
+
+
 def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, statistic=None, column="", rows_pointer="", find=None):
     """Return a bounded text excerpt or an actual rendered PDF page with a receipt."""
     if type(start) is not int or start < 1 or type(visual) is not bool:
@@ -404,6 +429,10 @@ def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, stati
             raise ValueError("Inspect figures on their rendered manuscript page")
         text = data.decode("utf-8", errors="replace")
     chunk, receipt["end"] = _text_window(text, start)
+    if start == 1 and ext == ".json" and meta["kind"] == "measurement":
+        rows = _visible_measurement_rows(chunk)
+        if rows:
+            result["citable_rows"] = len(rows)
     return {**result, "text": chunk, "next_start": start + len(chunk) if receipt["end"] < len(text) else None,
             "receipt": receipt}
 
@@ -710,6 +739,14 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
     for ref in refs:
         if not isinstance(ref, dict):
             raise ValueError("Expected an evidence reference")
+        if "row" in ref:
+            if ref.keys() != {"artifact", "row"} or not isinstance(ref["artifact"], str) or type(ref["row"]) is not int:
+                raise ValueError("For a measurement row supply only its artifact and one-based row number.")
+            view = read_evidence(snapshot, ref["artifact"])
+            if view["receipt"] not in observed or not 1 <= ref["row"] <= view.get("citable_rows", 0):
+                raise ValueError("Cite a complete measured row actually observed in this review.")
+            row = _visible_measurement_rows(view["text"])[ref["row"] - 1]
+            ref = {"artifact": ref["artifact"], "quote": row}
         if "selector" in ref:
             if ref["selector"] != "conclusion" or ref.keys() - {"selector", "artifact", "page"}:
                 raise ValueError('Use {"selector":"conclusion"} with only its optional artifact and page.')
