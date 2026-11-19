@@ -78,7 +78,7 @@ class QuietHandler(SimpleHTTPRequestHandler):
 def verify(bundle, target, package, commit, scratch):
     dsh = shutil.which("dsh")
     if not dsh:
-        raise SystemExit("Install DSH 0.2.1-rc.2 and put dsh on PATH.")
+        raise SystemExit(f"Install a supported DSH ({package['engines']['dsh']}) and put dsh on PATH.")
     env = {"PATH":os.environ["PATH"], "HOME":str(scratch), "DSH_HOME":str(scratch / "dsh"),
            "DSH_TELEMETRY_DISABLED":"1", "PIP_NO_INPUT":"1", "PYTHONNOUSERSITE":"1"}
     for key in ("PIP_CACHE_DIR", "PIP_INDEX_URL", "PIP_EXTRA_INDEX_URL", "PIP_CERT", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
@@ -91,7 +91,7 @@ def verify(bundle, target, package, commit, scratch):
             raise RuntimeError(result.stdout[-3000:])
         return result.stdout
 
-    if run("--version").strip() != package["engines"]["dsh"]:
+    if run("--version").strip() not in package["engines"]["dsh"].split(" || "):
         raise ValueError(f"Use DSH {package['engines']['dsh']}")
     public = scratch / "www"
     public.mkdir()

@@ -6,7 +6,9 @@ Give Idea2Paper a question and a new project directory. A persistent DSH session
 
 ## Install the prerelease
 
-Use Linux, Node.js 22.12 or newer, pnpm and DSH 0.2.1-rc.2. Python 3.10 or newer with venv and pip, TeX Live with pdflatex and BibTeX, and a working Docker daemon are needed for the local experiment. The first run installs the bundled Python wheel and its dependencies into a private cache and builds the experiment image. Budget disk space and package-download time for that setup. [DSH installation](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-rc.2)
+This source build supports two DSH runtimes on Linux with pnpm. Use Node.js 22.12 or newer for DSH 0.2.1-rc.2, and Node.js 24.9 or newer for DSH 0.2.2-rc.5. Resume each project with its original DSH version and profile. [DSH 0.2.1-rc.2](https://www.npmjs.com/package/@deepseek-ai/dsh/v/0.2.1-rc.2) · [DSH 0.2.2-rc.5](https://www.npmjs.com/package/@deepseek-ai/dsh/v/0.2.2-rc.5)
+
+Python 3.10 or newer with venv and pip, TeX Live with pdflatex and BibTeX, and a working Docker daemon are needed for the local experiment. The first run installs the bundled Python wheel and its dependencies into a private cache and builds the experiment image. Budget disk space and package-download time for that setup.
 
 Install version 0.2.0-alpha.6 into a dedicated profile with one command. The DSH Web Discover view requires the full upstream CLI with its Web profile.
 

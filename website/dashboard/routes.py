@@ -3111,12 +3111,27 @@ def _decision_to_dict(dec) -> Optional[dict]:
         options = json.loads(dec.options or "[]")
     except Exception:
         options = []
-    return {
+    result = {
         "id": dec.id, "kind": dec.kind, "question": dec.question,
         "options": options, "context": dec.context,
         "default_index": dec.default_index, "timeout_action": dec.timeout_action,
         "deadline_at": dec.deadline_at.replace(tzinfo=timezone.utc).isoformat() if dec.deadline_at else None,
     }
+    # The pending decision carries the plan at the time approval was requested.
+    # Legacy decisions may carry a prose digest instead.
+    context = dec.context or ""
+    if dec.kind == "experiment_approval" and len(context) <= 256_000 and "\nmechanism:" in context:
+        try:
+            plan = yaml.safe_load(context)
+        except (yaml.YAMLError, RecursionError, ValueError):
+            plan = None
+        mechanism = plan.get("mechanism") if isinstance(plan, dict) else None
+        fields = ("explanation", "alternative", "distinguishing_observation", "claim_without_it")
+        if isinstance(mechanism, dict) and all(isinstance(mechanism.get(k), str) and mechanism[k].strip() for k in fields):
+            result["mechanism"] = {k: mechanism[k] for k in fields}
+            if isinstance(plan.get("question"), str):
+                result["plan_question"] = plan["question"]
+    return result
 
 
 @router.post("/api/projects/{project_id}/command")

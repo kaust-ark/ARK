@@ -727,12 +727,17 @@ def test_reviewer_commits_scope_before_opening_paper_or_prior_findings(tmp_path,
     results = tmp_path / "results/loss.json"
     results.write_text('[{"trial":1,"treated":12.345,"control":18.765}]')
     run = {"status":"completed", "artifact":"results/loss.json", "sha256":domain._sha(results)}
+    script = tmp_path / "scripts" / "method.py"
+    script.parent.mkdir(exist_ok=True)
+    script.write_text("def measure(x): return sum(x)")
+    run.update(backend="slurm", script="scripts/method.py", code_sha256=domain._sha(script))
     snap = domain.review.build_snapshot(tmp_path, required=["experiment"], expected_measurement=run["artifact"],
                                         measurement_run=run)
     project.state["compiled_pdf_sha256"] = domain._sha(pdf)
     monkeypatch.setattr(project, "_check_compiled", lambda: None)
     monkeypatch.setattr(project, "_snapshot", lambda: snap)
     packet = project.review_snapshot({"session_id":"child1"})
+    assert packet["inference_test"] is True
     assert "treated" in packet["scope_brief"]
     for hidden in ("12.345", "improved uptake", "Author's explanation"):
         assert hidden not in packet["scope_brief"]
@@ -746,6 +751,20 @@ def test_reviewer_commits_scope_before_opening_paper_or_prior_findings(tmp_path,
     assert domain.review.record_is_current(snap, signed)
     assert not domain.review.record_is_current(snap, {**signed, "evidence_scope":{}})
     assert "improved uptake" in project.invoke("review_evidence", read)["text"]
+    calls = []
+    def calculate(runtime, program, ids, columns):
+        calls.append(ids["case"])
+        return {"premise":6, "outcome":4 if ids["case"] == "A" else 5}
+    monkeypatch.setattr(domain.review_control, "reproduce", calculate)
+    args = dict(revision=snap["revision"], passage={"selector":"conclusion"}, premise="sum", outcome="maximum",
+                assumptions="Two positive integers.", program="def reproduce(ids): return {}")
+    with pytest.raises(ValueError, match="current empirical review"):
+        project.invoke("test_inference", {**args, "revision":"stale"})
+    receipt = project.invoke("test_inference", args)["receipt"]
+    assert receipt["same_premise"] and receipt["distinguishable_outcome"]
+    assert receipt["passage"]["page"] == 1 and receipt["cases"]["B"]["outcome"] == 5
+    assert project.invoke("test_inference", args)["receipt"] == receipt
+    assert calls == ["A", "B"] and project.control_attempts == 1
     project.review_snapshot({"session_id":"child1"})
     with pytest.raises(ValueError, match="already committed"):
         project.invoke("commit_evidence_scope", {**note, "comparison":"Updated after reading.", "revision":snap["revision"]})
@@ -1185,6 +1204,16 @@ def test_plan_result_path_records_same_receipt_as_legacy_expected(tmp_path, monk
     with pytest.raises(ValueError, match="baseline, comparison, controls"):
         project.plan_experiment(placeholders)
     assert project.state["plan"] == old
+    mechanism = dict(explanation="Greater uptake reduces losses.", alternative="Reduced evaporation lowers losses.",
+                     distinguishing_observation="Measure uptake and evaporation separately in both conditions.",
+                     claim_without_it="Loss differs under treatment.")
+    project.plan_experiment(dict(current, mechanism=mechanism))
+    assert yaml.safe_load((project.state_dir / "experiment_plan.yaml").read_text())["mechanism"] == mechanism
+    assert domain.NativeProject(tmp_path).state["plan"]["mechanism"] == mechanism
+    for invalid in (None, {}, {**mechanism, "alternative":mechanism["explanation"]}):
+        with pytest.raises(ValueError):
+            project.plan_experiment(dict(current, mechanism=invalid))
+    assert project.state["plan"]["mechanism"] == mechanism
 
 
 @pytest.mark.parametrize(("reason", "expected"), [("owner_error", "running"), ("quota", "running"), ("ethics", "paused")])

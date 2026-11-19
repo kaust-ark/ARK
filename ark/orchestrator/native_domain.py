@@ -582,6 +582,14 @@ class NativeProject(CompilerMixin):
         ):
             raise ValueError("Declare the experimental controls as a list of strings.")
         plan["controls"] = controls
+        if "mechanism" in args:
+            mechanism = args["mechanism"]
+            fields = ("explanation", "alternative", "distinguishing_observation", "claim_without_it")
+            if not isinstance(mechanism, dict) or set(mechanism) != set(fields):
+                raise ValueError("For a mechanism study, describe the explanation, alternative, distinguishing_observation and claim_without_it.")
+            plan["mechanism"] = {key: _text(mechanism, key, limit=1200) for key in fields}
+            if plan["mechanism"]["explanation"].casefold() == plan["mechanism"]["alternative"].casefold():
+                raise ValueError("Describe a distinct competing explanation.")
         if not re.fullmatch(r"scripts/[\w-]+\.py", plan["script"], re.ASCII):
             raise ValueError('script must be one Python file path such as "scripts/experiment.py".')
         if not re.fullmatch(r"results/[\w-]+\.json", plan["expected"], re.ASCII):
@@ -2101,7 +2109,9 @@ class NativeProject(CompilerMixin):
             result["reproduction_brief"] = review.reproduction_brief(snapshot)
         if snapshot.get("evidence_scope"):
             result["scope_brief"] = review.evidence_scope_brief(snapshot)
-            if snapshot["evidence_scope"].get("version") == 3:
+            if snapshot.get("method_control") and snapshot["evidence_scope"].get("version") == 4:
+                result["inference_test"] = True
+            if snapshot["evidence_scope"].get("version") in (3, 4):
                 result["claim_instructions"] = review.claim_instructions(snapshot)
             result["brief"] += ("\nRevisit your independent prediction of evidential scope. Check every part "
                                 "of the strongest conclusion against the observations. If additional evidence "
@@ -2209,6 +2219,43 @@ class NativeProject(CompilerMixin):
         self.review_receipts.append(receipt)
         self.event("review", "method_control_finished",
                    f"{result['target']}: predicted {result['expected']}, measured {result['observed']}.",
+                   revision=snap["revision"])
+        return {"receipt": receipt}
+
+    def test_inference(self, args):
+        """Evaluate the reviewer's own pair of cases without reading the author's project."""
+        snap = self.snapshot
+        if (not snap or args.get("revision") != snap["revision"] or not snap.get("method_control")
+                or snap.get("evidence_scope", {}).get("version") != 4):
+            raise ValueError("Open the current empirical review before testing an inference.")
+        self._require_disclosure()
+        passage = review.reviewed_claim_passage(snap, args.get("passage"), self.review_receipts)
+        case = {key: _text(args, key, limit=1200) for key in ("premise", "outcome", "assumptions")}
+        program = _text(args, "program", limit=12000)
+        case.update(passage=passage, program=program)
+        for receipt in self.review_receipts:
+            if receipt.get("control") == 3 and all(receipt.get(k) == v for k, v in case.items()):
+                return {"receipt": receipt}
+        if self.control_attempts >= 4:
+            raise ValueError("The review has used its four control attempts. Report the available evidence.")
+        self.control_attempts += 1
+        self.event("review", "inference_test_started", "Reviewer is testing two cases against a manuscript claim.",
+                   revision=snap["revision"])
+        try:
+            outputs = {label: review_control.reproduce(snap["method_control"], program, {"case":label}, ["premise", "outcome"])
+                       for label in ("A", "B")}
+        except Exception:
+            self.event("review", "inference_test_failed", "The comparison did not return two numeric cases.",
+                       revision=snap["revision"])
+            raise
+        a, b = outputs["A"], outputs["B"]
+        receipt = dict(case, control=3, revision=snap["revision"], cases=outputs,
+                       same_premise=a["premise"] == b["premise"],
+                       distinguishable_outcome=not math.isclose(a["outcome"], b["outcome"], rel_tol=1e-6, abs_tol=1e-9),
+                       outcome_rel_tol=1e-6, outcome_abs_tol=1e-9)
+        self.review_receipts.append(receipt)
+        self.event("review", "inference_test_finished",
+                   f'{case["premise"]}: {a["premise"]}, {b["premise"]}. {case["outcome"]}: {a["outcome"]}, {b["outcome"]}.',
                    revision=snap["revision"])
         return {"receipt": receipt}
 
@@ -2438,6 +2485,7 @@ class NativeProject(CompilerMixin):
             "commit_evidence_scope",
             "review_evidence",
             "run_method_control",
+            "test_inference",
             "reproduce_measurement",
             "check_review",
             "record_review",

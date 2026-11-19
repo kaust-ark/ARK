@@ -1146,6 +1146,11 @@ Strict — hit the exact page limit (spends the most tokens).">
   <section id="hitl-decision" class="detail-card share-hide" hidden aria-labelledby="decision-heading">
     <h4 id="decision-heading" data-i18n="decision_needed">Your decision</h4>
     <strong id="decision-question"></strong>
+    <section id="decision-mechanism" hidden aria-labelledby="decision-plan-question">
+      <h3 id="decision-plan-question"></h3>
+      <dl></dl>
+    </section>
+    <details id="decision-full-plan" hidden><summary></summary><pre></pre></details>
     <div id="decision-context"></div>
     <p id="decision-default"></p>
     <form id="decision-form">
@@ -4441,6 +4446,11 @@ function hideThinking() {
 
 // A pending decision belongs to the project, even if its chat bubble has scrolled
 // out of the retained history or the worker stopped between opening and posting it.
+function decisionQuestion(decision) {
+  return decision.kind === 'experiment_approval' && decision.question === 'Experiment plan ready — approve and run it? (or type any changes)'
+    ? rt('approve_plan_question') : decision.question;
+}
+
 function renderDecision(decision, projectId) {
   const card = document.getElementById('hitl-decision');
   if (!decision || decision.id === _lastAnsweredDecision) {
@@ -4459,12 +4469,32 @@ function renderDecision(decision, projectId) {
   card.hidden = false;
   updateReviewDraft();
   const options = Array.isArray(decision.options) ? decision.options : [];
-  document.getElementById('decision-question').textContent = decision.question;
-  document.getElementById('decision-context').textContent = decision.context || '';
+  const experiment = decision.kind === 'experiment_approval';
+  const optionLabel = value => experiment && value === 'Approve — run the experiments as planned' ? rt('approve_plan') : value;
+  re('decision-question').textContent = decisionQuestion(decision);
+  const mechanism = decision.mechanism;
+  const panel = re('decision-mechanism'), fullPlan = re('decision-full-plan');
+  panel.hidden = fullPlan.hidden = !mechanism;
+  fullPlan.open = false;
+  re('decision-context').hidden = !!mechanism;
+  re('decision-context').textContent = mechanism ? '' : decision.context || '';
+  const fields = panel.querySelector('dl');
+  fields.replaceChildren();
+  fullPlan.querySelector('pre').textContent = mechanism ? decision.context : '';
+  if (mechanism) {
+    re('decision-plan-question').textContent = decision.plan_question || rt('approve_plan_question');
+    for (const key of ['explanation','alternative','distinguishing_observation','claim_without_it']) {
+      const group = document.createElement('div'), term = document.createElement('dt'), value = document.createElement('dd');
+      term.textContent = rt('plan_' + key);
+      value.dir = 'auto'; value.textContent = mechanism[key];
+      group.append(term, value); fields.append(group);
+    }
+    fullPlan.querySelector('summary').textContent = rt('plan_full');
+  }
   const deadline = decision.deadline_at;
   document.getElementById('decision-default').textContent =
     decision.timeout_action === 'proceed_default' && deadline && options[decision.default_index]
-      ? t('decision_default', fmtDate(deadline), options[decision.default_index]) :
+      ? t('decision_default', fmtDate(deadline), optionLabel(options[decision.default_index])) :
       decision.timeout_action === 'pause' && deadline ? rt('pause_at', fmtDate(deadline)) : '';
 
   const form = document.getElementById('decision-form');
@@ -4506,7 +4536,7 @@ function renderDecision(decision, projectId) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn-secondary';
-    btn.textContent = option;
+    btn.textContent = optionLabel(option);
     btn.onclick = () => answer(i, '');
     choices.appendChild(btn);
   });

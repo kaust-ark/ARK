@@ -6,7 +6,9 @@
 
 ## 安装预发布版
 
-本地实验需要 Linux、Node.js 22.12 或更高版本、pnpm、DSH 0.2.1-rc.2、含 venv 和 pip 的 Python 3.10 或更高版本、带 pdflatex 和 BibTeX 的 TeX Live，以及可用的 Docker daemon。首次运行会在独立缓存中安装随包分发的 Python wheel 及依赖，并构建实验镜像。请为首次下载和安装留出时间和磁盘空间。[DSH 安装指南](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-rc.2)
+此源码构建支持 Linux 和 pnpm 下的两个 DSH 版本。DSH 0.2.1-rc.2 需要 Node.js 22.12 或更高版本，DSH 0.2.2-rc.5 需要 Node.js 24.9 或更高版本。续接项目时请使用创建项目的 DSH 版本和 profile。[DSH 0.2.1-rc.2](https://www.npmjs.com/package/@deepseek-ai/dsh/v/0.2.1-rc.2) · [DSH 0.2.2-rc.5](https://www.npmjs.com/package/@deepseek-ai/dsh/v/0.2.2-rc.5)
+
+本地实验还需要含 venv 和 pip 的 Python 3.10 或更高版本、带 pdflatex 和 BibTeX 的 TeX Live，以及可用的 Docker daemon。首次运行会在独立缓存中安装随包分发的 Python wheel 及依赖，并构建实验镜像。请为首次下载和安装留出时间和磁盘空间。
 
 用这一条命令将 0.2.0-alpha.6 安装到专用 profile。使用 DSH Web Discover 需要上游带 Web profile 的完整 CLI。
 

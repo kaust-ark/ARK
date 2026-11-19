@@ -322,6 +322,9 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
       const body = JSON.parse(raw)
       const tools = (google ? body.tools?.flatMap(t => t.functionDeclarations || []) : body.tools)?.map(t => t.name) || []
       const history = JSON.stringify(google ? body.contents : body.messages)
+      const inference = body.contents?.flatMap(message => message.parts || [])
+        .findLast(part => part.functionResponse?.name === 'test_inference')?.functionResponse
+      if (inference) assert.ok(!inference.response.error, inference.response.error)
       assert.ok(!history.includes('host-only-row-provenance'))
       if (google) assert.match(req.url, /\/models\/gemini-4-hydrogen:streamGenerateContent\b/)
       if (google && !parked && tools.includes('read_evidence') && history.includes('known-answer-receipt') && !followupRequest) {
@@ -367,7 +370,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         const submit = {name:'reproduce_measurement', args}
         response = commitment === 'unavailable' ? [submit, submit] : submit
       } else if (tools.includes('read_evidence')) {
-        assert.deepEqual(tools.toSorted(), [...(scenario === 'program' ? ['commit_evidence_scope'] : []), 'read_evidence', 'reproduce_measurement', 'run_method_control'])
+        assert.deepEqual(tools.toSorted(), [...(scenario === 'program' ? ['commit_evidence_scope'] : []), 'read_evidence', 'reproduce_measurement', 'run_method_control', ...(scenario === 'program' ? ['test_inference'] : [])])
         assert.ok(committed)
         for (const opening of ['frozen-source-only-for-independent-reader', 'reported-row-private',
              'prior-finding-private', 'manuscript-private', 'Rendered manuscript page 2 of 2']) {
@@ -387,6 +390,10 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         } else if (!history.includes('known-answer-receipt')) {
           response = {name:'run_method_control',args:{target:'mean',inputs_json:'{"values":[2,4]}',
             expected_json:'3',alternative_json:'6',rationale:'The mean of two and four is three. The sum is six.'}}
+        } else if (scenario === 'program' && !inference) {
+          response = {name:'test_inference',args:{passage:{selector:'conclusion'}, premise:'total', outcome:'largest',
+            assumptions:'Two positive values form a pair.',
+            program:'def reproduce(ids):\n    pair = [2, 4] if ids["case"] == "A" else [1, 5]\n    return {"premise": sum(pair), "outcome": max(pair)}'}}
         } else if (history.includes('Separate the result from its explanation')) {
           assert.match(history, /different exposure still fits/)
           response = JSON.stringify({amend:{verdict:'accept',checks:{manuscript:{claims:[{kind:'result'},{kind:'explanation'}]}}}})
@@ -401,7 +408,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         } else response = { name:'read_evidence',args:{artifact:'paper/main.pdf',page:1,visual:true} }
       } else {
         assert.ok(tools.includes('request_review'), JSON.stringify(tools))
-        assert.ok(!tools.includes('run_method_control') && !tools.includes('reproduce_measurement'))
+        assert.ok(!tools.includes('run_method_control') && !tools.includes('reproduce_measurement') && !tools.includes('test_inference'))
         if (reviewerError) {
           response = 'The reviewer stopped.'
         } else if (parked) {
@@ -431,7 +438,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         res.end('data: ' + JSON.stringify(chunk) + '\n\n')
       } else res.end(frames(body.model, response))
     } catch (error) {
-      failure = error
+      failure ??= error
       res.writeHead(400)
       res.end(JSON.stringify({error:{message:error.message}}))
     }
@@ -477,7 +484,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.equal(args.preflight, !parked)
         return {revision:'rev1',method_control:true,measurement_reproduction:true,rendered_pages:2,rendered_artifact:'paper/main.pdf',
           opening_evidence:['scripts/plot.py','results/data.json',{artifact:'paper/main.pdf',page:2}], brief:'manuscript-private; prior-finding-private',
-          ...((scenario === 'program' || parked) && {scope_brief:'schema-only-scope-brief', claim_instructions:'archive-each-claim-once'}),
+          ...((scenario === 'program' || parked) && {scope_brief:'schema-only-scope-brief', inference_test:scenario === 'program', claim_instructions:'archive-each-claim-once'}),
           ...(!parked && {reproduction_brief:'original protocol only: derive metric for seed'})}
       case 'commit_evidence_scope':
         assert.ok(committed || parked)
@@ -508,6 +515,11 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.ok(committed)
         assert.equal(args.revision, 'rev1')
         return {receipt:{control:1, artifact:'scripts/plot.py', marker:'known-answer-receipt', matches:true}}
+      case 'test_inference':
+        assert.equal(args.revision, 'rev1')
+        assert.equal(args.premise, 'total')
+        return {receipt:{...args,control:3,passage:{artifact:'paper/main.pdf',page:2,quote:'conclusion-passage-private'},
+          cases:{A:{premise:6,outcome:4},B:{premise:6,outcome:5}},same_premise:true,distinguishable_outcome:true}}
       case 'check_review':
         if (google && args.verdict.checks?.citations?.evidence?.length && !args.verdict.checks?.manuscript?.claims)
           return {valid:false, diagnostic:'Separate the result from its explanation'}
@@ -518,6 +530,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.equal(args.verdict.checks.citations.evidence[0].artifact, 'sources/paper.txt')
         assert.ok(args.observed.some(r => r.marker === 'known-answer-receipt'))
         assert.equal(args.observed.some(r => r.marker === 'host-only-row-provenance'), commitment === 'program')
+        assert.equal(args.observed.some(r => r.control === 3 && r.cases.B.outcome === 5), scenario === 'program')
         assert.ok(args.observed.every(Boolean))
         assert.ok(args.observed.some(receipt => receipt.artifact === 'scripts/plot.py'))
         assert.ok(args.observed.filter(receipt => receipt.artifact === 'paper/main.pdf' && receipt.visual).length >= 2)
@@ -572,6 +585,10 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
     }
   }
   const first = JSON.parse(await readFile(join(project,'workflow.json'),'utf8'))
+  const version = execFileSync(process.env.IDEA2PAPER_TEST_DSH, ['--version'], {
+    encoding:'utf8', env:{PATH:process.env.PATH, HOME:home, DSH_HOME:home, PKG_NATIVE_CACHE_PATH:process.env.PKG_NATIVE_CACHE_PATH},
+  }).trim()
+  assert.equal(first.runtime, version)
   assert.ok(delivered)
   assert.equal(calls.filter(op => op === 'review_snapshot').length,1)
   assert.equal(calls.filter(op => op === 'reproduce_measurement').length,1)

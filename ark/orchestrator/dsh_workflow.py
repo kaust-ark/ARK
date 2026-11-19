@@ -250,7 +250,7 @@ def _install_bundle(profile, *, archive=None):
         info = json.loads((unpacked / "package.json").read_text())
         if (
             info.get("name") != "idea2paper-dsh"
-            or info.get("engines", {}).get("dsh") != "0.2.1-rc.2"
+            or "0.2.1-rc.2" not in str(info.get("engines", {}).get("dsh", "")).split(" || ")
         ):
             raise ValueError("This bundle does not target the installed DSH runtime.")
         if not (unpacked / "node_modules/commander/package.json").is_file():

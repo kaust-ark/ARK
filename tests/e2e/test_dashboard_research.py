@@ -62,6 +62,8 @@ def test_live_research_desk(tmp_path, monkeypatch):
             f.write(json.dumps({"id": ident, "ts": datetime.now(timezone.utc).isoformat(), "action": "measurement",
                                 "phase": phase, "observation": message, **attrs}) + "\n")
 
+    inference = "Expected distance " + "(fixed coordinates) " * 38 + ": 1.0, 1.0. Neighborhood overlap: 0.9, 0.1."
+    event("case-comparison", "review", inference, action="inference_test_finished")
     event("scope-recorded", "review", "The reviewer recorded the comparison before reading.", action="evidence_scope_committed")
     event("old-comparison", "review", "Recomputed 128 items.", action="measurement_reproduction_finished",
           condition="128 items", differed=1, outcomes=2, metric="search_comparisons",
@@ -225,6 +227,9 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert result_file.evaluate("el => document.activeElement === el")
                 page.locator("#history-all").click()
                 assert experiment.get_attribute("aria-pressed") == "false"
+                cases = history.locator('li[data-event="case-comparison"]')
+                assert cases.locator("p").text_content() == inference
+                assert "Two hypothetical cases compared" in cases.text_content()
                 assert "Reviewer recorded the pre-reading judgment" in history.locator('li[data-event="scope-recorded"]').inner_text()
                 assert page.locator("#research-history li").filter(has_text="Second batch").count() == 1
                 archive_file = history.get_by_role("button", name="Open archived file · main.pdf")
@@ -396,6 +401,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     page.evaluate("setLang('zh')")
                     page.get_by_text("实验控制项（3）", exact=True).wait_for(state="attached")
                     history.get_by_text("打开归档文件 · main.pdf", exact=True).wait_for(state="attached")
+                    assert "已比较两种假想情形" in cases.text_content() and inference in cases.text_content()
                     assert "不一致" in controls.text_content() and "评审理由" in controls.text_content()
                     assert "评审依据：实测数据" in claim_rows.first.text_content()
                     assert "质疑第 1 页的这条解释" in claim_rows.last.text_content()

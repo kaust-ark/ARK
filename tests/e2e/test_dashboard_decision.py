@@ -1,6 +1,8 @@
 """Browser regression for approving a research plan when its chat history is empty."""
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 from urllib.parse import urlsplit
 
 import pytest
@@ -51,6 +53,7 @@ def test_decision_survives_reconnect_and_failed_submission():
         page.evaluate("navigate('detail', { id: 'owned' })")
         card = page.locator("#hitl-decision")
         card.get_by_role("button", name="Approve", exact=True).wait_for()
+        assert card.locator("#decision-mechanism").is_hidden()
         assert card.locator("#decision-context img").count() == 0
         assert "<img" in card.locator("#decision-context").inner_text()
         assert "2030" in card.locator("#decision-default").inner_text()
@@ -71,9 +74,35 @@ def test_decision_survives_reconnect_and_failed_submission():
         card.wait_for(state="hidden")
         assert posts == [{"decision_id": "plan1", "index": -1, "text": draft}] * 2
         assert page.locator("#hitl-compose").is_visible()
-        project["pending_decision"]["id"] = "plan2"
+        import json
+        import yaml
+        from ark.pipeline import PipelineMixin
+        from website.dashboard.routes import _decision_to_dict
+
+        mechanism = {"explanation": "The index reduces comparisons.", "alternative": "The inputs were cached.",
+                     "distinguishing_observation": "Count comparisons on warm and cold inputs.",
+                     "claim_without_it": "Report the observed time difference."}
+        native_plan = {"question": "Why was the indexed search faster?", "controls": ["Fixed keys. " * 60] * 5,
+                       "mechanism": mechanism}
+        ask = Mock(return_value=(0, ""))
+        PipelineMixin._experiment_approval_gate(SimpleNamespace(_should_ask=lambda _: True, ask_user_decision=ask),
+                                                yaml.safe_dump(native_plan, sort_keys=False))
+        request = ask.call_args.kwargs
+        assert len(request["what_happened"]) > 2400
+        decision = SimpleNamespace(id="plan2", kind=request["kind"], question=request["question"],
+                                   context=request["what_happened"], options=json.dumps(request["options"]),
+                                   default_index=0, timeout_action=request["timeout_action"], deadline_at=None)
+        project["pending_decision"] = _decision_to_dict(decision)
         page.evaluate("loadDetail('owned')")
-        card.get_by_role("button", name="Approve", exact=True).click()
+        panel = card.locator("#decision-mechanism")
+        panel.wait_for()
+        assert panel.locator("dd").all_text_contents() == list(mechanism.values())
+        assert panel.locator("h3").inner_text() == native_plan["question"]
+        full_plan = card.locator("#decision-full-plan")
+        full_plan.locator("summary").press("Enter")
+        assert yaml.safe_load(full_plan.locator("pre").inner_text()) == native_plan
+        assert len(posts) == 2
+        card.get_by_role("button", name="Approve and run the plan", exact=True).click()
         card.wait_for(state="hidden")
         assert posts[-1] == {"decision_id": "plan2", "index": 0, "text": ""}
         browser.close()

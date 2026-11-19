@@ -238,7 +238,7 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
                     except (ValueError, UnicodeDecodeError, RecursionError):
                         tables = []
                     if tables and len(_canonical(tables[:8])) <= VIEW_SIZE:
-                        scope = {"version": 3, "tables": tables[:8]}
+                        scope = {"version": 4, "tables": tables[:8]}
                         if passage := _attribution_passage({**manifest, "project": str(root)}, pdf):
                             scope["attribution"] = passage
                         manifest["evidence_scope"] = scope
@@ -581,6 +581,25 @@ def claim_instructions(snapshot):
         "claim's exact author words and evidence; give your own issue ID, status, severity, domain, reason and fix.")
     if snapshot["evidence_scope"].get("attribution"):
         text += ' Use passage={"selector":"attribution"} to assess the located author attribution as an explanation.'
+    if snapshot["evidence_scope"].get("version") == 4:
+        text += (
+            "\nRead each explanation as an inference. What quantity was actually observed or derived? What "
+            "quantity does the author claim this identifies? Could two cases obey the stated assumptions and "
+            "give the same first quantity but different answers to the second? If so the inference needs another "
+            "observation, even when the result itself is sound. A phrase expressing confidence only tells you how "
+            "sure the author sounds. Determine whether the paper actually leaves competing explanations open. "
+            "For basis=derivation give bridge, an exact excerpt from the cited reasoning that carries the result "
+            "to the claimed outcome. Quoting an intermediate calculation or repeating the conclusion supplies no "
+            "such step. For a genuine theorem a valid implication under the paper's assumptions is sufficient. "
+            "If the step is missing, use unsupported and open a located issue. Give the author a choice between "
+            "a narrower conclusion and a distinguishing measurement.")
+        if snapshot.get("method_control"):
+            text += (
+                " With a proposed numerical derivation, try test_inference on the disputed passage before defending "
+                "it. Work out the two cases yourself. Compare the actual quantity claimed at the end. A constructive "
+                "counterexample can refute the implication without measuring the mechanism in the original study. "
+                "If the actual study excludes a numerical counterexample you obtained, state why in "
+                "counterexample_limit and cite the assumption or control.")
     return text
 
 
@@ -610,7 +629,7 @@ def review_prompt(snapshot, previous=None):
             "test or narrower wording that would resolve it. Assess this conclusion paragraph on its own terms. "
             "If a different section makes an unsupported assertion, locate a separate finding on that page even "
             "when the conclusion is appropriately qualified. Mark manuscript unassessed if the evidence is unavailable.")
-    if snapshot.get("evidence_scope", {}).get("version") == 3:
+    if snapshot.get("evidence_scope", {}).get("version") in (3, 4):
         # The scoring contract is delivered separately from the untrusted manuscript.
         packet.pop("conclusion_assessment", None)
         if attribution := snapshot["evidence_scope"].get("attribution"):
@@ -900,7 +919,7 @@ def draft_evidence_feedback(snapshot, proposal, observed, first_error):
     blind = _blind_text(snapshot)
     repairs = [first_error]
     manuscript = checks.get("manuscript")
-    per_claim = snapshot.get("evidence_scope", {}).get("version") == 3
+    per_claim = snapshot.get("evidence_scope", {}).get("version") in (3, 4)
     if per_claim and isinstance(manuscript, dict) and manuscript.get("status") == "assessed" and not manuscript.get("claims"):
         repairs.append(claim_instructions(snapshot))
     if (not per_claim and snapshot.get("conclusion") and isinstance(manuscript, dict) and manuscript.get("status") == "assessed"
@@ -1034,10 +1053,16 @@ def _interpretation_wording(target, evidence):
                      "An unrelated sentence or future proposal cannot qualify the conclusion claim.")
 
 
+def reviewed_claim_passage(snapshot, ref, observed):
+    passage, = _references(snapshot, [ref], observed, "", required=True)
+    if passage["artifact"] != snapshot["conclusion"]["artifact"] or not passage.get("quote"):
+        raise ValueError("Locate the author's actual claim in observed text of the submitted PDF.")
+    return passage
+
+
 def _manuscript_claims(snapshot, values, observed, blind):
     if not isinstance(values, list) or not 1 <= len(values) <= 8:
         raise ValueError("Supply checks.manuscript.claims with the measured result and any separate explanation.")
-    pdf = snapshot["conclusion"]["artifact"]
     claims = []
     for value in values:
         if not isinstance(value, dict) or value.get("kind") not in ("result", "explanation"):
@@ -1046,9 +1071,7 @@ def _manuscript_claims(snapshot, values, observed, blind):
         if basis not in (("measurement", "unsupported") if kind == "result" else
                          ("control", "derivation", "qualified", "unsupported")):
             raise ValueError("Match the claim basis to its kind. A measured outcome alone cannot establish its explanation.")
-        passage, = _references(snapshot, [value.get("passage")], observed, blind, required=True)
-        if passage["artifact"] != pdf or not passage.get("quote"):
-            raise ValueError("Locate the author's actual claim in observed text of the submitted PDF.")
+        passage = reviewed_claim_passage(snapshot, value.get("passage"), observed)
         evidence = _references(snapshot, value.get("evidence"), observed, blind, required=True)
         reason = _string(value.get("reason"), "claim-specific reasoning")
         measured = _covers(snapshot, "experiment", evidence)
@@ -1058,11 +1081,22 @@ def _manuscript_claims(snapshot, values, observed, blind):
         if basis == "control" and not (measured and any(
                 snapshot["artifacts"][ref["artifact"]]["kind"] == "method" and ref.get("quote") for ref in evidence)):
             raise ValueError("For a control cite the measured comparison and the observed method that distinguishes the mechanism.")
-        if basis == "derivation" and not any(
-                ref.get("quote") and not _contains_observed_quote(passage["quote"], ref["quote"])
-                and snapshot["artifacts"][ref["artifact"]]["kind"] in ("submission", "primary_source", "method")
-                for ref in evidence):
-            raise ValueError("Cite a separate, observed derivation connecting the explanation to the measured outcome.")
+        if basis == "derivation":
+            reasoning = [ref["quote"] for ref in evidence if ref.get("quote")
+                         and not _contains_observed_quote(passage["quote"], ref["quote"])
+                         and snapshot["artifacts"][ref["artifact"]]["kind"] in ("submission", "primary_source", "method")]
+            if not reasoning:
+                raise ValueError("Cite a separate, observed derivation connecting the explanation to the measured outcome.")
+            if snapshot["evidence_scope"].get("version") == 4:
+                bridge = _string(value.get("bridge"), "bridge from the derivation to the claimed outcome", limit=1200)
+                if not any(_contains_observed_quote(quote, bridge) for quote in reasoning):
+                    raise ValueError("The bridge must quote the observed reasoning cited in this claim.")
+                claim["bridge"] = bridge
+        if kind == "explanation" and basis in ("derivation", "control") and any(
+                r.get("control") == 3 and r.get("revision") == snapshot["revision"] and r["passage"] == passage
+                and r["same_premise"] and r["distinguishable_outcome"] for r in observed):
+            claim["counterexample_limit"] = _string(value.get("counterexample_limit"),
+                                                      "reason the study excludes the constructed counterexample")
         if basis == "qualified":
             wording = _interpretation_wording(passage, {"claim":value.get("assertion", passage["quote"]),
                                                        "qualification":value.get("qualification")})
@@ -1177,7 +1211,7 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
             assessed, status = False, "unassessed"
             reason = "No primary-source passage is present in the snapshot. " + reason
         claims = None
-        if domain == "manuscript" and assessed and snapshot.get("evidence_scope", {}).get("version") == 3:
+        if domain == "manuscript" and assessed and snapshot.get("evidence_scope", {}).get("version") in (3, 4):
             claims = _manuscript_claims(snapshot, check.get("claims"), observed, blind)
             target = snapshot["conclusion"]
             if not any(c["passage"]["page"] == target["page"] and _contains_observed_quote(
@@ -1261,6 +1295,11 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                     raise ValueError("The overall conclusion assessment must reflect the qualified or unsupported claim within it.")
         if domain == "experiment" and (controls or reproductions):
             checks[domain]["controls"] = controls + reproductions
+        if domain == "manuscript":
+            cases = [receipt for receipt in observed if receipt.get("control") == 3
+                     and receipt.get("revision") == snapshot["revision"]]
+            if cases:
+                checks[domain]["inference_tests"] = list({_canonical(r): r for r in cases}.values())
         if origins:
             checks[domain]["series_origin"] = origins
 
@@ -1403,7 +1442,7 @@ def record_is_current(snapshot, record):
                 for key in ("comparison", "alternative", "discriminator")):
             return False
         manuscript = (record.get("checks") or {}).get("manuscript") or {}
-        if (snapshot["evidence_scope"].get("version") in (2,3) and manuscript.get("status") == "assessed"
+        if (snapshot["evidence_scope"].get("version") in (2, 3, 4) and manuscript.get("status") == "assessed"
                 and not manuscript.get("claims")):
             return False
     if snapshot.get("figure_methods") and record.get("verdict") == "accept":
@@ -1449,9 +1488,10 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
     conclusion = snapshot.get("conclusion")
     if conclusion:
         if scope := snapshot.get("evidence_scope"):
-            old_claims = {**inputs, "conclusion":conclusion, "evidence_scope":{**scope, "version":2}}
-            if _digest(_canonical(old_claims)) == revision:
-                return True
+            for previous_version in (2, 3):
+                old_claims = {**inputs, "conclusion":conclusion, "evidence_scope":{**scope, "version":previous_version}}
+                if _digest(_canonical(old_claims)) == revision:
+                    return True
             old = {**inputs, "conclusion": conclusion, "evidence_scope":{"version":1, "tables":scope["tables"]}}
             if _digest(_canonical(old)) == revision:
                 return True

@@ -2598,6 +2598,9 @@ Rules:
         (大实验前把关). Gated by autonomy level — skipped in full_auto."""
         if not self._should_ask("experiment_approval"):
             return
+        # The native caller supplies the proposed plan as YAML. Bind it to this
+        # decision before the worktree can advance to a different proposal.
+        native_summary = plan_summary
         plan_summary = plan_summary or self._experiment_plan_digest().strip()
         if not plan_summary:
             # Older projects used Markdown plans.
@@ -2608,13 +2611,13 @@ Rules:
                     continue
                 if plan_summary:
                     break
-        if len(plan_summary) > 2400:
+        if not native_summary and len(plan_summary) > 2400:
             plan_summary = plan_summary[:2399].rstrip() + "…"
         idx, reply = self.ask_user_decision(
             question="Experiment plan ready — approve and run it? (or type any changes)",
             options=["Approve — run the experiments as planned"],
-            what_happened="The planner finished the experiment plan; about to execute it.",
-            background=[plan_summary or "No readable plan summary is available."],
+            what_happened=native_summary or "The planner finished the experiment plan; about to execute it.",
+            background=None if native_summary else [plan_summary or "No readable plan summary is available."],
             timeout=defaults.TIMEOUT_HITL_DECISION, default=0,
             kind="experiment_approval", timeout_action="proceed_default",
             phase="experiment_approval",

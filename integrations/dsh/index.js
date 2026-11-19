@@ -3,18 +3,27 @@ import { writeFileSync } from 'node:fs'
 import { lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
+import sdk from '@deepseek-ai/dsh-agent/package.json' with { type: 'json' }
 import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Command } from 'commander'
 import { acquireLock, readJson, runLegacyWorkflow, writeJson } from './workflow.js'
-import { acknowledgeLocal, pendingCommands, queueCommand, reviewSubmission, reviewForAuthor, reproductionComparison, attachEvidence, evidenceTool, methodControlTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
+import { acknowledgeLocal, pendingCommands, queueCommand, reviewSubmission, reviewForAuthor, reproductionComparison, attachEvidence, evidenceTool, methodControlTool, inferenceTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
 
 export const name = 'idea2paper'
 export const inject = ['cmdlineArgs', 'agentDefaultModel', 'agents', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'subagents', 'llm', 'attachments']
+const isDsh021 = sdk.version === '0.2.1-rc.2'
+
+async function restrictToProjectTools(scope) {
+  scope.tools.restrict({ allow: [] })
+  if (isDsh021) scope.tools.presentAs('native')
+  else scope.plugin(await import('@deepseek-ai/dsh-tool-executor-native'))
+}
 const roleTimeout = 20 * 60_000
 const userMessage = text => createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] })
 
 export function apply(ctx) {
+  if (!isDsh021 && sdk.version !== '0.2.2-rc.5') throw new Error('Unsupported DSH version ' + sdk.version)
   const cli = new Command().name('dsh --profile idea2paper')
   const launch = (directory, options) => {
     void (async () => {
@@ -122,9 +131,11 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
     let checkpoint = await readJson(path)
     if (!checkpoint) {
       if (!idea) throw new Error('Project checkpoint does not exist')
-      checkpoint = { version: 3, runtime: '0.2.1-rc.2', id: randomUUID(), owner_session_id: randomUUID(), idea, selection, ready: false }
+      checkpoint = { version: 3, runtime: sdk.version, id: randomUUID(), owner_session_id: randomUUID(), idea, selection, ready: false }
       await writeJson(path, checkpoint)
-    } else if (checkpoint.version !== 3 || (checkpoint.runtime && checkpoint.runtime !== '0.2.1-rc.2') || typeof checkpoint.owner_session_id !== 'string' ||
+    } else if (checkpoint.runtime && checkpoint.runtime !== sdk.version) {
+      throw new Error('Resume this project with its original DSH ' + checkpoint.runtime + ' runtime.')
+    } else if (checkpoint.version !== 3 || typeof checkpoint.owner_session_id !== 'string' ||
                checkpoint.selection?.model !== selection.model || checkpoint.selection?.provider !== selection.provider ||
                (idea !== undefined && (!hosted || idea !== checkpoint.idea))) {
       throw new Error('Incompatible project checkpoint or model selection')
@@ -236,7 +247,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
   let checkedVerdict, lastRejected, previousDraft
   let disclosed = !protocolFirst && !packet.scope_brief, committing = false, sealed = false, disclosureError
   let configured = false
-  const unlisten = ctx.on('agent/created', ({ agent }) => {
+  const unlisten = ctx.on('agent/created', async ({ agent }) => {
     if (agent.id !== childId) return
     if (agent.session.header.parentSession !== owner.id || agent.session.header.isSeeded) throw new Error('Reviewer session isolation failed')
     const scope = agent.ctx
@@ -284,8 +295,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
         type:'text', text:'Review evidence check: ' + diagnostic + (disclosed ? '\nInspect the relevant originals with read_evidence as needed. Return the corrected verdict or, after a rejected draft, {"amend":{...}} containing only the changed fields. Under checks, send complete replacements for changed domains. To change issues, replace the issues array. The whole verdict is checked again.' : ''),
       }]}))
     })
-    scope.tools.presentAs('native')
-    scope.tools.restrict({ allow: [] })
+    await restrictToProjectTools(scope)
     function enableInspection() {
       registerTool(scope, 'read_evidence', evidenceTool, async (args, exec) => {
         const value = await attachEvidence(ctx, agent, args, exec.signal, () => domain.call('review_evidence', {
@@ -293,6 +303,13 @@ async function review(ctx, owner, domain, signal, draft = false) {
         }))
         if (value.receipt) observed.push(value.receipt)
         return value
+      }, roleTimeout)
+      if (packet.inference_test) registerTool(scope, 'test_inference', inferenceTool, async (args, exec) => {
+        exec.signal.throwIfAborted()
+        const value = await domain.call('test_inference', {...args, revision:packet.revision})
+        observed.push(value.receipt)
+        const {passage, premise, outcome, cases, same_premise, distinguishable_outcome} = value.receipt
+        return {passage, premise, outcome, cases, same_premise, distinguishable_outcome}
       }, roleTimeout)
       if (packet.method_control) registerTool(scope, 'run_method_control', methodControlTool, async (args, exec) => {
         exec.signal.throwIfAborted()
@@ -365,9 +382,10 @@ async function review(ctx, owner, domain, signal, draft = false) {
     const blindBrief = packet.reproduction_brief || packet.scope_brief
     const prompt = blindBrief ? [{type:'text', text:blindBrief}]
       : await openingPacket(ctx, owner, domain, packet, observed, signal)
+    const request = { parent: owner, maxDepth: 1, prompt }
     activation = await ctx.subagents.startActivation({
       provider: 'spawn', childId, label: 'Independent manuscript reviewer', delivery: 'caller', signal,
-      request: { parent: owner, maxDepth: 1, prompt },
+      ...(isDsh021 ? { request } : request),
     })
     if (!configured) throw new Error('Reviewer read-only tool scope was not established')
     signal.throwIfAborted()
@@ -488,10 +506,9 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
   try {
     const stored = await ctx.sessionPersistence.stat(sessionId, { signal: deadline })
     if (!stored && checkpoint.ready) throw new Error('Owner session missing from DSH persistence. Restore its original DSH home before continuing.')
-    const setup = (scope, agent) => {
+    const setup = async (scope, agent) => {
       installModelSelection(scope, { current: selected, assembled: undefined })
-      scope.tools.presentAs('native')
-      scope.tools.restrict({ allow: [] })
+      await restrictToProjectTools(scope)
       const files = projectEditor(directory)
       for (const [name, definition] of Object.entries(operations)) {
         registerTool(scope, name, definition, async (args, exec) => {

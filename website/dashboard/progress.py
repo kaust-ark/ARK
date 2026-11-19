@@ -131,6 +131,9 @@ def journal(root, after=None, before=None):
         e = {k: _text(event.get(k), 640) for k in
              ("id", "ts", "phase", "action", "observation", "status", "revision")}
         e["offset"] = offset
+        if e["action"] == "inference_test_finished":
+            # Both reviewer-defined labels can be 1,200 characters before the numeric outcomes.
+            e["observation"] = _text(event.get("observation"), 3000)
         for field in ("count", "total"):
             if type(event.get(field)) is int and event[field] >= 0:
                 e[field] = event[field]

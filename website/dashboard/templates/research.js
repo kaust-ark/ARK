@@ -1,6 +1,13 @@
 // Research milestones come from the durable project journal; transient token and log
 // traffic never changes the scientific state or triggers a screen-reader announcement.
 const researchLabels = {
+  approve_plan: ['Approve and run the plan','批准并运行实验','وافق على الخطة وشغّل التجربة'],
+  approve_plan_question: ['Review the experiment plan','审批实验计划','راجع خطة التجربة'],
+  plan_explanation: ['Proposed explanation','待检验的解释','التفسير المقترح'],
+  plan_alternative: ['Alternative explanation','另一种解释','التفسير البديل'],
+  plan_distinguishing_observation: ['What would distinguish the explanations?','什么观察能区分这两种解释？','ما الملاحظة التي تميّز بين التفسيرين؟'],
+  plan_claim_without_it: ['Conclusion supported without that observation','缺少该观测时可支持的结论','الاستنتاج الممكن دون تلك الملاحظة'],
+  plan_full: ['Full experiment plan','完整实验计划','خطة التجربة كاملة'],
   question_conclusion: ['Question the judgment on page %s','质疑第 %s 页的判断','ناقش الحكم على الصفحة %s'],
   question_result: ['Question this result on page %s','质疑第 %s 页的这条结果','ناقش هذه النتيجة في الصفحة %s'],
   question_explanation: ['Question this explanation on page %s','质疑第 %s 页的这条解释','ناقش هذا التفسير في الصفحة %s'],
@@ -75,6 +82,9 @@ const researchLabels = {
   matches_control: ['Matches','一致','مطابق'], differs_control: ['Mismatch','不一致','غير مطابق'],
   event_review_started: ['Independent review opened','独立评审已开始','بدأت المراجعة المستقلة'],
   event_evidence_scope_committed: ['Reviewer recorded the pre-reading judgment','评审已记录读稿前的判断','سجّل المراجع تقديره قبل قراءة الورقة'],
+  event_inference_test_started: ['Testing the claim in two hypothetical cases','正在用两种假想情形检验主张','يجري اختبار الادعاء في حالتين افتراضيتين'],
+  event_inference_test_finished: ['Two hypothetical cases compared','已比较两种假想情形','اكتملت مقارنة الحالتين الافتراضيتين'],
+  event_inference_test_failed: ['The two-case comparison could not finish','两种假想情形的比较未完成','تعذّرت المقارنة بين الحالتين الافتراضيتين'],
   event_measurement_reproduction_started: ['Recomputing a recorded result','正在独立复算','إعادة حساب نتيجة مسجلة'],
   event_measurement_reproduction_finished: ['Independent calculation complete','独立复算已完成','اكتملت إعادة الحساب'],
   event_measurement_reproduction_failed: ['Calculation could not finish','复算未完成','تعذر إكمال الحساب'],
@@ -192,7 +202,7 @@ function reviewHandoff(recent) {
 }
 
 function observationText(event, withValues=true) {
-  if (event?.action === 'evidence_scope_committed') return reviewEventLabel(event);
+  if (['evidence_scope_committed','inference_test_started','inference_test_failed'].includes(event?.action)) return reviewEventLabel(event);
   if (event?.action === 'delivered' && event.artifact === 'paper/main.pdf' && /^[a-f0-9]{64}$/.test(event.revision))
     return rt('delivery_verified');
   if (event?.action === 'manuscript_reviewed' && ['accept','revise','unassessed'].includes(event.observation))
@@ -448,7 +458,7 @@ function renderResearch(animate=false) {
     paper.removeAttribute('href');
     paper.querySelector('img').removeAttribute('src');
   }
-  const action = quota ? rt('check_quota') : active && waiting ? p.pending_decision.question : !active || paused ? state :
+  const action = quota ? rt('check_quota') : active && waiting ? decisionQuestion(p.pending_decision) : !active || paused ? state :
     (p.status === 'running' && reviewHandoff(recent)) || p.activity || reviewEventLabel(last) || (last?.status === 'running' && (last.action === 'tool/call' ? last.observation : last.action)) || (p.status !== 'running' ? state : rt('idle'));
   re('research-action').textContent = delivered ? rt('paper_delivered') : action;
   const artifact = researchData.evidence?.[0];

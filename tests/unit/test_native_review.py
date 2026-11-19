@@ -27,8 +27,10 @@ def test_delivered_signature_survives_only_changes_to_review_checks():
     older = {**published, "conclusion":locator}
     prior = {**published, "conclusion":{**locator, "version":2}}
     manifest = {**prior, "evidence_scope":{"version":1,"tables":[{"columns":["trial","error"]}]}}
-    current = {**manifest, "revision":fingerprint(manifest), "project":"/somewhere/else"}
-    for fmt in (early, published, older, prior):
+    latest = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":4}}
+    current = {**latest, "revision":fingerprint(latest), "project":"/somewhere/else"}
+    archived_claims = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":3}}
+    for fmt in (early, published, older, prior, archived_claims):
         revision = fingerprint(fmt)
         signed = dict(version=1, revision=revision, verdict="accept", deliverable=True, paper_pdf_sha256="a" * 64,
                       artifact_hashes={p: meta["sha256"] for p, meta in artifacts.items()})
@@ -349,6 +351,18 @@ def test_result_and_explanation_require_separate_observed_support(tmp_path):
     claims = assess([result,{**causal,"basis":"unsupported"}])
     assert claims[1]["passage"]["page"] == 1 and claims[0]["passage"]["page"] == 2
 
+    method_ref = {"artifact":method, "quote":"loss = initial_mass - final_mass"}
+    seen_method = read_evidence(snap,method)["receipt"]
+    derivation = dict(causal,basis="derivation",evidence=[method_ref])
+    with pytest.raises(ValueError, match="bridge"):
+        _manuscript_claims(snap,[result,derivation],[*receipts,seen_method],"")
+    with pytest.raises(ValueError, match="quote the observed reasoning"):
+        _manuscript_claims(snap,[result,{**derivation, "bridge":"uptake dominates"}],[*receipts,seen_method],"")
+    check = dict(control=3, revision=snap["revision"], passage=claims[1]["passage"], same_premise=True,
+                 distinguishable_outcome=True, cases={"A":{"premise":6,"outcome":4},"B":{"premise":6,"outcome":5}})
+    with pytest.raises(ValueError, match="counterexample"):
+        _manuscript_claims(snap,[result,{**causal,"evidence":[row,method_ref]}],[*receipts,seen_method,check],"")
+
     answer, seen = record(snap, pair, "clean", "")
     answer["checks"]["experiment"]["evidence"] = [row]
     answer["checks"]["manuscript"].update(evidence=[{"selector":"conclusion"},row],
@@ -370,6 +384,10 @@ def test_result_and_explanation_require_separate_observed_support(tmp_path):
     assert revised["verdict"] == "revise" and "conclusion_support" not in revised["checks"]["manuscript"]
     assert revised["issues"][0]["evidence"][0] == revised["checks"]["manuscript"]["claims"][1]["passage"]
     assert revised["issues"][0]["claim"] == explanation
+    contested = validate_review(snap,answer,observed=[*receipts,*seen,check,check])
+    assert contested["checks"]["manuscript"]["inference_tests"] == [check]
+    assert "inference_tests" not in revised["checks"]["manuscript"]
+
     for bad in (True, 0, 1, 3):
         invalid = copy.deepcopy(answer)
         invalid["issues"][0]["claim_ref"] = bad

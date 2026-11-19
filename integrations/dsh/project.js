@@ -334,12 +334,17 @@ export const operations = {
   project_status: ['Read current research state, outstanding prerequisites, budgets, skills and artifact paths.', {}],
   lookup_papers: ['Find primary records, abstracts and canonical BibTeX. Set add_to_bibliography with an exact title or DOI to save that work and receive its cite key for the manuscript.', { query: str, limit: num, add_to_bibliography: bool }, ['query']],
   research: ['Retrieve or reconcile the requested research report and primary sources.', { query: str }],
-  plan_experiment: ['Register the comparison and its two file paths. For a correction, reread auto_research/state/idea.md, check the disputed calculation on a discriminating input, and choose a fresh result_path. The script prints its JSON measurements to stdout.', {
+  plan_experiment: ['Register the comparison and its two file paths. When the study aims to explain why an outcome changes, include mechanism so the owner can approve the distinguishing measurement or a narrower conclusion. A descriptive study needs only its comparison. For a correction, reread auto_research/state/idea.md, check the disputed calculation on a discriminating input, and choose a fresh result_path. The script prints its JSON measurements to stdout.', {
     question: str,
     baseline: {type:'string', description:'The reference method, configuration or condition.'},
     comparison: {type:'string', description:'What changes in the comparison condition relative to the baseline.'},
     metric: {type:'string', description:'What is measured and in what units.'},
     controls: {type:'array', items:{type:'string'}, description:'Data, splits, settings or other conditions held fixed across the comparison.'},
+    mechanism: {type:'object', additionalProperties:false, properties:{
+      explanation:str, alternative:str,
+      distinguishing_observation:{type:'string', description:'Which observation would differ under these explanations? Specify the measure and their predictions.'},
+      claim_without_it:{type:'string', description:'The strongest conclusion the primary comparison alone can support.'},
+    }, required:['explanation','alternative','distinguishing_observation','claim_without_it']},
     script: {type:'string', description:'One project-relative Python filename, for example scripts/experiment.py.'},
     result_path: {type:'string', description:'One project-relative JSON output filename, for example results/measurements.json.'},
   }, ['question', 'baseline', 'comparison', 'metric', 'controls', 'script', 'result_path']],
@@ -398,6 +403,10 @@ export const methodControlTool = ['Test a calculation from the frozen worker. Se
 }, ['target', 'inputs_json', 'rationale']]
 
 export const reproductionTool = ['Use the original research request to independently recompute the designated condition. Supply exactly one of program or unavailable. Python calls reproduce(identifiers) once with a dictionary for one condition. Each named identifier is a scalar. Return one flat dict with exactly the requested outcome keys and one finite Python number per key. The CPU sandbox provides the science image and identifiers, with no project files or network. If reproduction is infeasible, give the specific reason in unavailable. The submission opens after commitment, and the program cannot be changed after disclosure.', {program: str, unavailable: str}]
+
+export const inferenceTool = ['Test whether the cited quantity determines the claimed outcome. Design two cases satisfying the stated assumptions using the same calculation. Define reproduce(ids) returning {"premise": number, "outcome": number} from the constructed data. The sandbox calls it independently with ids["case"] equal to "A" and "B". Name the quantities in premise and outcome. Locate the observed PDF sentence in passage (a selector or an artifact, page and exact quote). A test of two hypothetical cases is evidence about an implication. Interpret its relevance to the actual study separately.', {
+  passage:object, premise:str, outcome:str, assumptions:str, program:str,
+}, ['passage','premise','outcome','assumptions','program']]
 
 export function reproductionComparison(receipt) {
   const {artifact, identifiers, rows_pointer, columns, differences, observed, expected} = receipt
