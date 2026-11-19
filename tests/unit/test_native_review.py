@@ -33,9 +33,10 @@ def test_delivered_signature_survives_only_changes_to_review_checks():
     comparisons = {**latest, "evidence_scope":{**latest["evidence_scope"], "direction":locator}}
     neighbor_checks = {**comparisons, "evidence_scope":{**comparisons["evidence_scope"], "recheck_paragraphs":True}}
     bound = {**neighbor_checks, "evidence_scope":{**neighbor_checks["evidence_scope"], "recheck_paragraphs":{"version":2}}}
-    current = {**bound, "revision":fingerprint(bound), "project":"/somewhere/else"}
+    retention = {**bound, "evidence_scope":{**bound["evidence_scope"], "recheck_paragraphs":{"version":3}}}
+    current = {**retention, "revision":fingerprint(retention), "project":"/somewhere/else"}
     archived_claims = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":3}}
-    for fmt in (early, published, older, prior, archived_claims, previous_policy, latest, comparisons, neighbor_checks):
+    for fmt in (early, published, older, prior, archived_claims, previous_policy, latest, comparisons, neighbor_checks, bound):
         revision = fingerprint(fmt)
         signed = dict(version=1, revision=revision, verdict="accept", deliverable=True, paper_pdf_sha256="a" * 64,
                       artifact_hashes={p: meta["sha256"] for p, meta in artifacts.items()})
@@ -1164,6 +1165,39 @@ def test_resolving_manuscript_blocker_rechecks_surviving_paragraph_across_pages(
     issue["context_assessment"][0]["evidence"] = [row]
     with pytest.raises(ValueError, match="printed measured quantity"):
         validate_review(revised, raw, rejected, observed=seen)
+
+
+    # A real rewording can still make a categorical inference. Tie the objection
+    # to the new language, or to a changed worker observation.
+    stronger = "Cooling is the sole cause of the difference in retention."
+    revised = build(stronger, moved=True)
+    raw, ref, seen = response(revised, 2, stronger)
+    row = {"artifact":measured,"row":1}
+    issue = dict(id="R1", status="still_present", domain="manuscript", severity="blocker", claim=stronger,
+                 reason="The measured retention does not distinguish alternative causes.", fix="Qualify the inference.",
+                 evidence=[ref,row])
+    raw.update(issues=[issue],verdict="revise")
+    with pytest.raises(ValueError) as rejected_open:
+        validate_review(revised, raw, rejected, observed=seen)
+    assert "R1 on page 2" in str(rejected_open.value) and neighbor in str(rejected_open.value)
+    assert "revision_comparison" in str(rejected_open.value) and "unassessed" in str(rejected_open.value)
+    issue["revision_comparison"] = {"previous":"proved","current":"sole cause",
+                                 "reason":"The new words 'sole cause' still exclude every alternative explanation."}
+    upheld = validate_review(revised, raw, rejected, observed=seen)
+    assert upheld["verdict"] == "revise" and upheld["issues"][0]["revision_comparison"] == issue["revision_comparison"]
+    issue["revision_comparison"]["current"] = "unwritten words"
+    with pytest.raises(ValueError, match="revision_comparison"):
+        validate_review(revised, raw, rejected, observed=seen)
+    issue.pop("revision_comparison")
+    issue["status"],raw["verdict"] = "unassessed","unassessed"
+    assert validate_review(revised, raw, rejected, observed=seen)["verdict"] == "unassessed"
+    (tmp_path / measured).write_text('[{"treated":2,"control":2}]')
+    worker["sha256"] = hashlib.sha256((tmp_path / measured).read_bytes()).hexdigest()
+    changed = build(stronger, moved=True)
+    raw, ref, seen = response(changed, 2, stronger)
+    issue.update(status="still_present", evidence=[ref,row], reason="The new paired measurements now agree.")
+    raw.update(verdict="revise",issues=[issue])
+    assert validate_review(changed, raw, rejected, observed=seen)["verdict"] == "revise"
 
 
 def test_remaining_measured_sentence_binds_an_observed_metric_alias_and_preserves_abstention(tmp_path):

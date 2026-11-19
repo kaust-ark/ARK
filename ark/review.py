@@ -248,7 +248,7 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
                 except (ValueError, UnicodeDecodeError, RecursionError):
                     tables = []
                 if tables and len(_canonical(tables[:8])) <= VIEW_SIZE:
-                    recheck = {"version":2}
+                    recheck = {"version":3}
                     if manifest.get("registered_design"):
                         recheck["plan_sha256"] = run["plan_sha256"]
                     scope = {"version": 4, "tables": tables[:8], "recheck_paragraphs":recheck}
@@ -781,13 +781,19 @@ def review_prompt(snapshot, previous=None):
         contexts = revision_paragraphs(snapshot, previous)
         if contexts:
             packet["revised_paragraphs"] = {
-                key: {k:v for k,v in context.items() if k != "paragraph"} | {"end":context["start"] + len(context["paragraph"]) - 1}
+                key: {k:v for k,v in context.items() if k not in ("paragraph", "surviving")} | {"end":context["start"] + len(context["paragraph"]) - 1}
                 for key, context in contexts.items()
             }
             instructions += ("\nRead the complete revised paragraph for each linked blocker. Compare the remaining "
                              "numbered sentences (one-based, in the remaining array) with the original evidence gap. "
                              "If any still asserts the unsupported inference, keep the blocker still_present and cite "
-                             "the surviving words. To resolve it, give the issue a context_assessment array with one "
+                             "the surviving sentence as the issue claim with current PDF evidence. When the old claim changed "
+                             "and you dispute its replacement, compare the changed words in issue.revision_comparison "
+                             "with previous, current and reason. Quote words specific to each version and explain why the "
+                             "change still leaves an unsupported implication. Give the full current sentence in claim "
+                             "and cite the relevant observation. Newly changed evidence may also establish a current defect. "
+                             "If you cannot locate one, assess resolution or mark it unassessed. "
+                             "To resolve it, give the issue a context_assessment array with one "
                              "entry per remaining sentence: {sentence, judgment, reason}. Use limited with qualification "
                              "quoting the author's limiting words at that inference. Use measured with quantity (the "
                              "printed metric name), measured_columns and this entry's own evidence citing those worker "
@@ -1402,6 +1408,7 @@ def _passage_survives(snapshot, ref):
 
 def revision_paragraphs(snapshot, previous):
     """Locate surviving neighbors of disputed sentences in the current rendered body."""
+    from difflib import SequenceMatcher
     import fitz
     from ark.latex.utils import body_page_boundary
 
@@ -1473,6 +1480,15 @@ def revision_paragraphs(snapshot, previous):
                 selected = list(dict.fromkeys([*([following] if following is not None else []), *ranked]))[:2]
                 result[issue["id"]] = {"artifact":pdf, "page":new_page, "start":start,
                                        "paragraph":paragraph, "remaining":[keys[sentences[i]] for i in selected]}
+                if not any(claim in wording(block[2]) for block in blocks):
+                    # A paragraph can acquire several unrelated sentences. Locate
+                    # the edit aligned to the original assertion between stable neighbors.
+                    current = _conclusion_sentences(paragraph)
+                    alignment = SequenceMatcher(None, sentences, [wording(q) for q in current], autojunk=False)
+                    result[issue["id"]]["replacement"] = [
+                        q for op, i, j, a, b in alignment.get_opcodes() if op == "replace" and i <= disputed < j
+                        for q in current[a:b] if len(q) <= 1200]
+                    result[issue["id"]]["surviving"] = [keys[sentences[i]] for i in surviving]
                 break
     return result
 
@@ -1581,6 +1597,10 @@ def _resolution_changed(snapshot, previous, old, refs):
     # A previously missing control or source can support an unchanged claim.
     # Require a changed *evidence artifact* and a newly located observation;
     # changing an unrelated sentence in the TeX file cannot clear a blocker.
+    return _new_finding_evidence(previous, old, refs, submission)
+
+
+def _new_finding_evidence(previous, old, refs, submission):
     def observation(r):
         quote = r.get("quote")
         if r["artifact"].lower().endswith(".json"):
@@ -1591,6 +1611,39 @@ def _resolution_changed(snapshot, previous, old, refs):
     return any(r["artifact"] not in submission and
                r["sha256"] != previous["artifact_hashes"].get(r["artifact"]) and
                observation(r) not in prior_observations for r in refs)
+
+
+def _retained_comparison(snapshot, previous, old, issue, refs, context):
+    """A revised passage can still be disputed. Tie that judgment to what it now says."""
+    claim = _normalized_quote(_string(issue.get("claim"), "current disputed assertion", limit=1200))
+    at_paragraph = any(r["artifact"] == context["artifact"] and r.get("page") == context["page"]
+                       and _contains_observed_quote(r.get("quote", ""), claim) for r in refs)
+    if at_paragraph and any(claim == _normalized_quote(q) for q in context["surviving"]):
+        return {}
+    if (at_paragraph and any(claim == _normalized_quote(q) for q in _conclusion_sentences(context["paragraph"]))
+            and _new_finding_evidence(previous, old, refs, _submission(snapshot))):
+        return {}
+    comparison = issue.get("revision_comparison")
+    if at_paragraph and isinstance(comparison, dict) and any(claim == _normalized_quote(q) for q in context["replacement"]):
+        earlier, later, reason = (comparison.get(k) for k in ("previous", "current", "reason"))
+        if (all(isinstance(v, str) and 2 <= len(v.strip()) <= limit
+                for v, limit in ((earlier, 1200), (later, 1200), (reason, 4000)))
+                and _contains_observed_quote(old["claim"], earlier) and _contains_observed_quote(claim, later)
+                and _normalized_quote(earlier) != _normalized_quote(later)
+                and (not _contains_observed_quote(claim, earlier) or not _contains_observed_quote(old["claim"], later))
+                and _contains_observed_quote(reason, later) and _normalized_quote(reason) != _normalized_quote(later)
+                and any(snapshot["artifacts"][r["artifact"]]["kind"] in
+                        ("measurement", "protocol", "method", "primary_source") and r.get("quote") for r in refs)):
+            return {"revision_comparison":{"previous":earlier, "current":later, "reason":reason}}
+    remaining = json.dumps(context["remaining"], ensure_ascii=False)
+    raise ValueError(f"{issue['id']} on page {context['page']}: the previous disputed sentence changed. Recheck "
+                     f"these surviving sentences: {remaining}. For still_present, quote the complete current "
+                     "assertion in claim and cite it on its PDF page. If the replacement itself remains unsupported, "
+                     "use an explicit issue with revision_comparison: previous and current quote the changed words "
+                     "of each version; reason explains why the current words still overclaim, quoting them. "
+                     "Cite a measured row, protocol, method or original source needed to judge that inference. "
+                     "Fresh contradictory evidence can also support a located current defect. Otherwise assess "
+                     "the remaining context for resolution, or return unassessed.")
 
 
 def _score(value):
@@ -1746,7 +1799,9 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
         raise ValueError("Expected an array of at most 32 review findings")
     issues = []
     contexts = revision_paragraphs(snapshot, previous) if any(
-        isinstance(i, dict) and i.get("status") == "resolved" and i.get("domain") == "manuscript" for i in raw_issues) else {}
+        isinstance(i, dict) and i.get("status") in ("resolved", "still_present")
+        and i.get("domain") == "manuscript" for i in raw_issues) else {}
+    retention_errors = []
     missing_observations = False
     used = set()
     for issue in raw_issues:
@@ -1797,6 +1852,13 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                 checks[domain]["status"] != "assessed" or not _covers(snapshot, domain, refs)):
             raise ValueError(f"Missing {domain} observation for blocking finding {ident}")
         assessment = []
+        comparison = {}
+        context = contexts.get(ident, {})
+        if status == "still_present" and "replacement" in context:
+            try:
+                comparison = _retained_comparison(snapshot, previous, old, issue, refs, context)
+            except ValueError as exc:
+                retention_errors.append(str(exc))
         if status == "resolved":
             if checks[domain]["status"] != "assessed" or not _covers(snapshot, domain, refs):
                 raise ValueError(f"Resolving {ident} requires new verified evidence")
@@ -1824,7 +1886,9 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                     assessment.append(entry)
         issues.append({"id": ident, "status": status, "severity": severity, "domain": domain,
                        **{k: _string(issue.get(k), k) for k in ("claim", "reason", "fix")}, "evidence": refs,
-                       **({"context_assessment":assessment} if assessment else {})})
+                       **({"context_assessment":assessment} if assessment else {}), **comparison})
+    if retention_errors:
+        raise ValueError("\n".join(retention_errors))
     if not prior_open.issubset(used):
         raise ValueError("Recheck every open finding from the preceding revision")
     if checks["manuscript"].get("conclusion_support") == "needs_evidence" and not any(
@@ -1942,6 +2006,11 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
     original_scope = snapshot.get("evidence_scope", {})
     if "recheck_paragraphs" in original_scope:
         older = {k: v for k, v in snapshot.items() if k not in ("project", "revision")}
+        policy = original_scope["recheck_paragraphs"]
+        if isinstance(policy, dict) and policy.get("version") == 3:
+            older["evidence_scope"] = {**original_scope, "recheck_paragraphs":{**policy, "version":2}}
+            if _digest(_canonical(older)) == revision:
+                return True
         older["evidence_scope"] = {**original_scope, "recheck_paragraphs":True}
         if _digest(_canonical(older)) == revision:
             return True
