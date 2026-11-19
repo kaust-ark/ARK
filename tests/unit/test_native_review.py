@@ -174,6 +174,8 @@ def test_conclusion_reviewer_checks_the_whole_observed_paragraph_against_results
                   "interpretation": "The comparison measures loss. The paper offers uptake as a possibility.",
                   "needs_evidence": "The losses are observed but the study does not measure root uptake."}
         answer["checks"]["manuscript"].update(evidence=[ref, result], conclusion_support=level, reason=reason[level])
+        if level == "interpretation":
+            answer["checks"]["manuscript"]["interpretation"] = {"claim":"Root uptake", "qualification":"might"}
         return answer, [*observed, page["receipt"]]
 
     snap = paper(effect + " " + mechanism)
@@ -198,6 +200,13 @@ def test_conclusion_reviewer_checks_the_whole_observed_paragraph_against_results
     proposal.update(issues=[issue], verdict="revise")
     rejected = validate_review(snap, proposal, observed=observed)
     assert rejected["verdict"] == "revise"
+    short = copy.deepcopy(proposal)
+    short["checks"]["manuscript"]["evidence"][0]["quote"] = mechanism
+    short["issues"][0]["evidence"] = copy.deepcopy(short["checks"]["manuscript"]["evidence"])
+    assert validate_review(snap, short, observed=observed)["verdict"] == "revise"
+    short["issues"][0]["claim"] = effect
+    with pytest.raises(ValueError, match="open blocker"):
+        validate_review(snap, short, observed=observed)
     (tmp_path / "paper/main.tex").write_text(pair["clean"] + "\nChanged punctuation elsewhere.")
     unchanged = build_snapshot(tmp_path, required=["experiment"])
     proposal, observed = assess(unchanged, "measured")
@@ -210,10 +219,91 @@ def test_conclusion_reviewer_checks_the_whole_observed_paragraph_against_results
         proposal, observed = assess(clean, support)
         proposal["issues"] = [dict(issue, status="resolved", evidence=proposal["checks"]["manuscript"]["evidence"])]
         assert validate_review(clean, proposal, rejected, observed=observed)["deliverable"]
+        check = proposal["checks"]["manuscript"]
+        check["evidence"][0] = {"selector":"conclusion"}
+        decided = validate_review(clean, proposal, rejected, observed=observed)
+        assert decided["deliverable"] and decided["checks"]["manuscript"]["evidence"][0]["quote"] == clean["conclusion"]["quote"]
+        if support == "interpretation":
+            wording = check.pop("interpretation")
+            assert decided["checks"]["manuscript"]["interpretation"] == wording
+            with pytest.raises(ValueError, match="qualification"):
+                validate_review(clean, proposal, rejected, observed=observed)
+            check["interpretation"] = wording
+        check["evidence"].pop()
+        with pytest.raises(ValueError, match="observed result"):
+            validate_review(clean, proposal, rejected, observed=observed)
 
     assert "conclusion" not in paper(effect, "Results")
     (tmp_path / "results/rows.csv").unlink()
     assert "conclusion" not in paper(effect)
+
+
+def test_conclusion_selector_verifies_the_observed_page_window_and_pdf_digest(tmp_path):
+    from ark import review
+
+    artifact = "paper/main.pdf"
+    (tmp_path / "paper").mkdir()
+    data = tmp_path / "results/rows.csv"
+    data.parent.mkdir()
+    data.write_text("value\n5\n")
+    paragraph = "The estimated loss changed. The pathway remains uncertain."
+    with fitz.open() as doc:
+        doc.new_page().insert_text((40, 40), paragraph)
+        page = doc.new_page()
+        page.insert_text((40, 40), "Conclusion")
+        page.insert_text((40, 70), paragraph)
+        page.insert_text((40, 150), paragraph)  # Identical words at a different position.
+        doc.save(tmp_path / artifact)
+    snap = build_snapshot(tmp_path)
+    target = snap["conclusion"]
+    selector = {"selector":"conclusion"}
+    def resolve(ref, receipts):
+        return review._references(snap, [ref], receipts, "", required=True)[0]
+    original = {k:target[k] for k in ("artifact", "page", "quote")}
+    seen = read_evidence(snap, artifact, page=2, start=target["start"])["receipt"]
+    canonical = resolve(original, [seen])
+    assert resolve(selector, [seen]) == canonical
+    assert canonical["quote"] == paragraph and canonical["sha256"] == snap["artifacts"][artifact]["sha256"]
+    assert resolve(selector, [read_evidence(snap, artifact, page=2)["receipt"]]) == canonical
+    for bad in ([], [dict(seen, end=seen["end"] - 1)], [dict(seen, revision="older")],
+                [dict(seen, sha256="0"*64)], [dict(seen, end=float(seen["end"]))],
+                [dict(seen, visual=False)], [read_evidence(snap, artifact, page=1)["receipt"]],
+                [read_evidence(snap, artifact, page=2, visual=True)["receipt"]],
+                [read_evidence(snap, artifact, page=2, start=target["start"]+1)["receipt"]]):
+        with pytest.raises(ValueError, match="observed text window"):
+            resolve(selector, bad)
+    for extra in ({"quote":paragraph}, {"artifact":artifact}, {"page":2}, {"visual":True}, {"sha256":"fake"},
+                  {"receipt":seen}, {"selector":"previous_conclusion"}):
+        with pytest.raises(ValueError, match="alone"):
+            resolve({**selector, **extra}, [seen])
+    with pytest.raises(ValueError, match="no conclusion selector"):
+        review._references(dict(snap, conclusion=None), [selector], [seen], "", required=True)
+    (tmp_path / artifact).write_bytes(b"replacement")
+    with pytest.raises(ValueError, match="changed since review"):
+        resolve(selector, [seen])
+
+
+def test_interpretation_requires_authors_qualification_at_the_disputed_assertion():
+    from ark.review import _interpretation_wording
+
+    def check(paragraph, claim, qualification):
+        return _interpretation_wording({"quote":paragraph}, {"claim":claim, "qualification":qualification})
+
+    effect = "Prediction error increased on all five splits. "
+    assert check(effect + "Changed neighborhoods are a possible explanation.", "Changed neighborhoods", "possible")
+    assert check("The correlation is compatible with faster repair.", "faster repair", "compatible with")
+    assert check("Changed neighborhoods account for the result. This explanation remains a hypothesis.",
+                 "Changed neighborhoods", "This explanation remains a hypothesis.")
+    for paragraph, wording in (
+        ("We demonstrate degradation through contamination. Future work could address contamination.", "could"),
+        ("We demonstrate degradation through contamination. Future work could address contamination.",
+         "Future work could address contamination."),
+        ("We demonstrate degradation through contamination, but future work could address it.", "could"),
+        ("We demonstrate degradation through contamination. Future work may test the explanation.", "Future work may"),
+        ("We demonstrate degradation through contamination.", "possible"),
+    ):
+        with pytest.raises(ValueError, match="actually limit"):
+            check(paragraph, "contamination", wording)
 
 
 def test_observed_quote_and_current_revision_required(tmp_path):

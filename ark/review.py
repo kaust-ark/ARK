@@ -270,7 +270,9 @@ def _rendered_conclusion(snapshot, pdf):
                     text = page.get_text()
                     title = text.find(match[0])
                     offset = text.find(quote, title + len(match[0])) if title >= 0 else -1
-                    headings.append({"artifact": pdf, "page": index + 1, "start": offset + 1,
+                    # Changing the required review evidence opens a new revision
+                    # without replacing a previously delivered archived verdict.
+                    headings.append({"version": 2, "artifact": pdf, "page": index + 1, "start": offset + 1,
                                      "quote": quote} if len(quote) >= 4 and offset >= 0 else None)
         return headings[0] if len(headings) == 1 else None
 
@@ -458,11 +460,17 @@ def review_prompt(snapshot, previous=None):
     if target := snapshot.get("conclusion"):
         packet["conclusion_to_check"] = target
         packet["conclusion_assessment"] = (
-            "In checks.manuscript.evidence quote the supplied conclusion paragraph from its observed PDF page "
-            "and cite the measured result used to judge it. In reason distinguish what the study measured from "
+            'In checks.manuscript.evidence use {"selector":"conclusion"} for the observed paragraph and '
+            "cite the measured result used to judge it. The selector also works in a finding and saves retyping "
+            "the PDF. A finding may instead cite the complete sentence containing its disputed words. "
+            "In reason distinguish what the study measured from "
             "what the authors infer. Set conclusion_support to measured if the evidence directly tests the whole claim, "
             "interpretation if the paper presents the inference as a possibility, or needs_evidence if it asserts an "
-            "untested explanation. For needs_evidence quote the disputed words in an open blocker's claim, cite "
+            'untested explanation. For interpretation add interpretation={"claim":"verbatim explanatory claim",'
+            '"qualification":"author\'s exact words limiting that claim"} inside checks.manuscript. Cite the '
+            "qualification on the same assertion, or quote the complete following sentence that explicitly refers back to it. "
+            "A proposal for future work cannot qualify an earlier assertion. Without such wording, show a direct "
+            "measurement or report the unsupported extension. For needs_evidence quote the disputed words in an open blocker's claim, cite "
             "the paragraph and result, and specify the "
             "test or narrower wording that would resolve it. Mark manuscript unassessed if the evidence is unavailable.")
     if conflicts := reported_change_conflicts(packet["manuscript_excerpt"]):
@@ -628,7 +636,21 @@ def _observed_pdf_windows(snapshot, artifact, observed):
                     continue
                 window, expected_end = _text_window(text, start)
                 if expected_end == end:
-                    yield page, window
+                    yield page, start, window
+
+
+def _observed_conclusion(snapshot, observed):
+    target = snapshot.get("conclusion")
+    if not target:
+        raise ValueError("This snapshot has no conclusion selector.")
+    artifact, quote = target["artifact"], target["quote"]
+    for page, start, window in _observed_pdf_windows(snapshot, artifact, observed):
+        offset = target["start"] - start
+        if page == target["page"] and offset >= 0 and window[offset:offset + len(quote)] == quote:
+            return {"artifact": artifact, "page": page, "quote": quote,
+                    "sha256": snapshot["artifacts"][artifact]["sha256"]}
+    raise ValueError(f'The conclusion selector needs an observed text window from this revision. '
+                     f'Read {artifact}, page {target["page"]}, start {target["start"]}, visual=false.')
 
 
 def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
@@ -639,6 +661,11 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
     for ref in refs:
         if not isinstance(ref, dict):
             raise ValueError("Expected an evidence reference")
+        if "selector" in ref:
+            if ref != {"selector": "conclusion"}:
+                raise ValueError('Use {"selector":"conclusion"} alone. Other selectors or fields are invalid.')
+            verified.append(_observed_conclusion(snapshot, observed))
+            continue
         artifact = _string(ref.get("artifact"), "artifact path")
         info = snapshot["artifacts"].get(artifact)
         if not info:
@@ -681,13 +708,16 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
             if page is not None and pdf_windows is not None:
                 if artifact not in pdf_windows:
                     pdf_windows[artifact] = list(_observed_pdf_windows(snapshot, artifact, observed))
-                matches = {p for p, text in pdf_windows[artifact] if p != page and quote in text}
+                matches = {p for p, _, text in pdf_windows[artifact] if p != page and quote in text}
                 if len(matches) == 1:
                     raise ValueError(f"Retry the quote with observed page {matches.pop()} "
                                      f"(cited page {page}) in {artifact}: {quote[:100]}")
-                if any(p == page for p, _ in pdf_windows[artifact]):
+                if any(p == page for p, _, _ in pdf_windows[artifact]):
+                    target = snapshot.get("conclusion") or {}
+                    hint = (' For the observed conclusion paragraph use {"selector":"conclusion"}.'
+                            if (artifact, page) == (target.get("artifact"), target.get("page")) else "")
                     raise ValueError(f"Quote the delivered text of page {page} verbatim, or read another text window "
-                                     f"from {artifact}. Unlocated quote: {quote[:100]}")
+                                     f"from {artifact}. Unlocated quote: {quote[:100]}{hint}")
                 if any(r.get("visual") is True and r.get("image_sha256") for r in page_receipts):
                     raise ValueError(f"Only pixels were observed on page {page}. Call "
                                      f"read_evidence(artifact={json.dumps(artifact)}, page={page}, visual=false) "
@@ -776,17 +806,61 @@ def _copied_series_page(snapshot, refs, check):
     return pages[0] if len(pages) == 1 else None
 
 
-def _contains_observed_quote(text, quote):
+def _normalized_quote(value):
     # PDF extraction can change a printed ligature or wrap a line. Keep numbers,
     # units, words and mathematical relations intact when locating the passage.
-    def normalized(value):
-        return " ".join(unicodedata.normalize("NFKC", value).replace("\u00ad", "").split())
-    return normalized(quote) in normalized(text)
+    return " ".join(unicodedata.normalize("NFKC", value).replace("\u00ad", "").split())
 
 
-def _quotes_conclusion(refs, target):
-    return any(r["artifact"] == target["artifact"] and r.get("page") == target["page"]
-               and _contains_observed_quote(r.get("quote", ""), target["quote"]) for r in refs)
+def _contains_observed_quote(text, quote):
+    return _normalized_quote(quote) in _normalized_quote(text)
+
+
+def _quotes_conclusion(refs, target, *, disputed=None):
+    paragraph = _normalized_quote(target["quote"])
+    for ref in refs:
+        if ref["artifact"] != target["artifact"] or ref.get("page") != target["page"]:
+            continue
+        quote = _normalized_quote(ref.get("quote", ""))
+        if paragraph in quote:
+            return disputed is None or _normalized_quote(disputed) in paragraph
+        if (disputed is not None and _normalized_quote(disputed) in quote and quote.endswith((".", "!", "?"))
+                and re.search(r"(?:^|(?<=[.!?]) )" + re.escape(quote) + r"(?= |$)", paragraph)):
+            return True
+    return False
+
+
+def _interpretation_wording(target, evidence):
+    """Bind the reviewer's reading to the author's words without classifying scientific prose."""
+    if not isinstance(evidence, dict) or evidence.keys() != {"claim", "qualification"}:
+        raise ValueError("For interpretation, give checks.manuscript.interpretation with verbatim claim and "
+                         "qualification. Without an author-qualified inference, substantiate it or report a blocker.")
+    claim = _string(evidence["claim"], "interpretation claim", limit=1200)
+    qualification = _string(evidence["qualification"], "author's qualification", limit=1200)
+    phrase, wording = _normalized_quote(claim), _normalized_quote(qualification)
+    sentences = re.split(r'(?<=[.!?]) +(?=[A-Z“"‘])', _normalized_quote(target["quote"]))
+    def located(excerpt, text):
+        return re.search(r"(?<!\w)" + re.escape(excerpt) + r"(?!\w)", text) is not None
+
+    if len(phrase) < 4 or not re.search(r"\w", wording):
+        raise ValueError("Quote the explanatory claim and the words that limit it.")
+    for i, sentence in enumerate(sentences):
+        if not located(phrase, sentence):
+            continue
+        clauses = re.split(r";\s*|,\s+(?=(?:and|but|whereas|while|yet)\b)", sentence, flags=re.I)
+        if phrase != wording and any(located(phrase, clause) and located(wording, clause) for clause in clauses):
+            return {"claim": claim, "qualification": qualification}
+        # A separate qualifying sentence can repeat the referent or explicitly
+        # point back to it. An unrelated later use of the same term cannot qualify
+        # its first assertion.
+        following = sentences[i + 1] if i + 1 < len(sentences) else ""
+        refers_back = re.match(r"^(?:it\b|(?:this|that|these|those) "
+                               r"(?:explanations?|interpretations?|hypothes[ei]s|claims?|accounts?)\b)", wording, re.I)
+        if following == wording and (wording.casefold().startswith(phrase.casefold()) or refers_back):
+            return {"claim": claim, "qualification": qualification}
+        break
+    raise ValueError("Quote the author's qualifying words at the assertion they actually limit. "
+                     "An unrelated sentence or future proposal cannot qualify the conclusion claim.")
 
 
 def _passage_survives(snapshot, ref):
@@ -928,14 +1002,19 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                     raise ValueError("Rendered layout was not observed on every manuscript page")
         checks[domain] = {"status": status, "reason": reason, "evidence": refs}
         if domain == "manuscript" and assessed and (target := snapshot.get("conclusion")):
-            if not _quotes_conclusion(refs, target) or not _covers(snapshot, "experiment", refs):
-                raise ValueError(f"In checks.manuscript.evidence cite the supplied conclusion paragraph on PDF page "
-                                 f"{target['page']} and an observed result that lets you judge its scope.")
             support = check.get("conclusion_support")
+            if (not _quotes_conclusion(refs, target, disputed="" if support == "needs_evidence" else None)
+                    or not _covers(snapshot, "experiment", refs)):
+                raise ValueError(f"In checks.manuscript.evidence cite the supplied conclusion paragraph on PDF page "
+                                 f'{target["page"]} with {{"selector":"conclusion"}} and cite an observed result.')
+            if support == "needs_evidence" and not _quotes_conclusion(refs, target):
+                _observed_conclusion(snapshot, observed)  # Check the context of a shorter disputed sentence.
             if support not in ("measured", "interpretation", "needs_evidence"):
                 raise ValueError("Set checks.manuscript.conclusion_support to measured, interpretation, or "
                                  "needs_evidence, and explain the relationship to the measured result in reason.")
             checks[domain]["conclusion_support"] = support
+            if support == "interpretation":
+                checks[domain]["interpretation"] = _interpretation_wording(target, check.get("interpretation"))
         if domain == "experiment" and (controls or reproductions):
             checks[domain]["controls"] = controls + reproductions
         if origins:
@@ -998,8 +1077,8 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
         raise ValueError("Recheck every open finding from the preceding revision")
     if checks["manuscript"].get("conclusion_support") == "needs_evidence" and not any(
         issue["severity"] == "blocker" and issue["status"] in ("new", "still_present")
-        and _quotes_conclusion(issue["evidence"], snapshot["conclusion"])
-        and _contains_observed_quote(snapshot["conclusion"]["quote"], issue["claim"])
+        and _quotes_conclusion(issue["evidence"], snapshot["conclusion"], disputed=issue["claim"])
+        and _quotes_conclusion(checks["manuscript"]["evidence"], snapshot["conclusion"], disputed=issue["claim"])
         and _covers(snapshot, "experiment", issue["evidence"])
         for issue in issues
     ):
