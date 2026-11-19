@@ -399,8 +399,10 @@ def reproduction_brief(snapshot):
         "Return a flat Python dict mapping every outcome column to one finite number. "
         "For example, a hypothetical trial/loss interface reads trial = identifiers['trial'] and returns "
         "{'loss': float(computed_loss)}. Use the actual field names below. "
-        "Follow the protocol's exact objectives, units, data splits "
-        "and numerical requirements. The host chooses the condition and will freeze your working program "
+        "Follow the protocol's objectives, data splits and numerical requirements. Before submitting, use a "
+        "small boundary case with a known answer to check each metric's definition and units in final reporting. "
+        "If a metric also drives selection, check that calculation on the same case. "
+        "The host chooses the condition and will freeze your working program "
         "before showing the author's measurements, manuscript, code or prior reviews. If the task, data or "
         "available compute is insufficient, call the same tool with unavailable and a concrete reason. "
         "A failed execution can be corrected while the submission is still hidden.\n"
@@ -449,9 +451,14 @@ def review_prompt(snapshot, previous=None):
         packet["independent_reproduction"] = {"artifact": task["artifact"], "rows_pointer": task["rows_pointer"],
                                                "identifier_fields": list(task["identifiers"]), "columns": task["columns"]}
         packet["reproduction_instructions"] = (
-            "You have finished the protocol-only part of this review. Compare the frozen independent calculation "
-            "with the worker's original rows. If they differ, locate the affected scientific claim and "
-            "implementation; if the independent run was unavailable, mark the experiment unassessed. "
+            "The comparison labels each value by its source. Agreement uses the host's numerical tolerance. "
+            "Both implementations can share an error. Cite the worker's recorded value and your "
+            "independently recomputed value by name. Investigate any disagreement against the original "
+            "metric definition and the executed source. Your own program can also be wrong. Report a blocker "
+            "when the evidence locates a defect in the submission. Attach the relevant original definition, "
+            "executed operation and measured row to that finding so the author can inspect the diagnosis. "
+            "If the cause is unresolved, your program "
+            "is unsound, or independent reproduction was unavailable, mark the experiment unassessed and explain. "
             "Use run_method_control for an additional small example when it helps diagnose the cause.")
     if snapshot.get("figure_methods"):
         packet["figure_methods"] = snapshot["figure_methods"]
@@ -938,10 +945,24 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
             raise ValueError(f"Report the copied empirical series in {name} as a reproducibility blocker. "
                              "Cite the plotting source and the figure's manuscript passage or rendered page.")
     if any(not case["matches"] for case in controls + reproductions) and checks["experiment"]["status"] == "assessed":
-        if not any(i["domain"] == "experiment" and i["severity"] == "blocker"
-                   and i["status"] in ("new", "still_present") for i in issues):
-            raise ValueError("The frozen calculation disagreed with a predicted control. Locate the discrepancy "
-                             "as an experiment blocker, or mark experiment unassessed and explain the uncertainty.")
+        blockers = [i for i in issues if i["domain"] == "experiment" and i["severity"] == "blocker"
+                    and i["status"] in ("new", "still_present")]
+        if not blockers:
+            raise ValueError("The worker and reviewer disagreed. Check both calculations against the original "
+                             "definition. Locate a supported submission defect as an experiment blocker, or "
+                             "mark experiment unassessed and explain the discrepancy.")
+        if any(not case["matches"] for case in reproductions):
+            method = snapshot["measurement_method"]
+            sources = {task["artifact"], method["artifact"]}
+            if method.get("request"):
+                sources.add(method["request"])
+            if not any(sources <= {r["artifact"] for r in i["evidence"]}
+                       and not _delegated_calculation(snapshot, method["artifact"], i["evidence"]) for i in blockers):
+                raise ValueError("The reproduced row differs. In the finding that attributes the defect to "
+                                 "the submission, cite the measured row and the executed operation against "
+                                 "its requested definition. Use the observed passages from "
+                                 "checks.experiment.evidence. If the cause is unresolved, mark experiment "
+                                 "unassessed and explain the two observations.")
     if any(i["severity"] == "blocker" and i["status"] in ("new", "still_present") for i in issues):
         verdict = "revise"
     elif any(checks[d]["status"] == "unassessed" for d in snapshot["required"]) or any(

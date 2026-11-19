@@ -8,9 +8,26 @@ import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { projectFile, projectEditor, readProjectFile, reviewSubmission } from './project.js'
+import { projectFile, projectEditor, readProjectFile, reproductionComparison, reviewForAuthor, reviewSubmission } from './project.js'
 
 const bundle = dirname(fileURLToPath(import.meta.url))
+
+test('worker and reviewer values retain their source and the host tolerance decision', () => {
+  const row = {control:2, artifact:'results/values.json', rows_pointer:'/rows', identifiers:{seed:2},
+    columns:['temperature','accuracy'], differences:['temperature'], observed:{temperature:16,accuracy:0.883333},
+    expected:{temperature:64,accuracy:0.8833331}, program:'sealed program'}
+  const result = {artifact:row.artifact, rows_pointer:'/rows', identifiers:{seed:2}, metrics:[
+    {metric:'temperature', reported_by_worker:16, independently_recomputed_by_reviewer:64, agrees:false},
+    {metric:'accuracy', reported_by_worker:0.883333, independently_recomputed_by_reviewer:0.8833331, agrees:true},
+  ]}
+  assert.deepEqual(reproductionComparison(row), result)
+  const control = {control:1, target:'f', expected:2, observed:3}
+  const record = {checks:{experiment:{status:'assessed',controls:[control,row]}}}
+  assert.deepEqual(reviewForAuthor(record).checks.experiment.controls, [control,result])
+  assert.strictEqual(record.checks.experiment.controls[1], row)
+  const old = {checks:{experiment:{controls:[control]}}}
+  assert.strictEqual(reviewForAuthor(old), old)
+})
 test('author can edit sources but cannot rewrite evidence, credentials or linked paths', async t => {
   const root = await mkdtemp(join(tmpdir(), 'research-files-'))
   t.after(() => rm(root, { recursive: true, force: true }))
@@ -99,6 +116,16 @@ test('a complete main.tex survives truncated output even with its correct base h
     await assert.rejects(projectFile(root, path, shell, undefined, edit), /allow_shrink:true/)
   }
   assert.equal((await projectFile(root, path)).content, original)
+  const longParagraph = 'Repeated scientific observation. '.repeat(500)
+  for (const [passage, edit] of [
+    [longParagraph, {base_sha256:sha256}],
+    [undefined, {base_sha256:sha256, start_line:7, end_line:7}],
+  ]) {
+    await assert.rejects(projectFile(root, path, 'Short result.', passage, edit), /allow_shrink:true/)
+    assert.equal((await projectFile(root, path)).sha256, sha256)
+  }
+  const short = await projectFile(root, path, 'Short result.', longParagraph, {base_sha256:sha256, allow_shrink:true})
+  await projectFile(root, path, undefined, undefined, {base_sha256:short.sha256, restore_sha256:sha256})
   const piece = await projectFile(root, path, '\\section{Approach}', '\\section{Methods}')
   assert.equal(piece.previous_sha256, sha256)
   assert.equal((await projectFile(root, path)).content, original.replace('Methods', 'Approach'))
@@ -205,6 +232,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
       const body = JSON.parse(raw)
       const tools = (google ? body.tools?.flatMap(t => t.functionDeclarations || []) : body.tools)?.map(t => t.name) || []
       const history = JSON.stringify(google ? body.contents : body.messages)
+      assert.ok(!history.includes('host-only-row-provenance'))
       if (google) assert.match(req.url, /\/models\/gemini-4-hydrogen:streamGenerateContent\b/)
       if (google && !parked && tools.includes('read_evidence') && history.includes('known-answer-receipt') && !followupRequest) {
         if (!failedRequest || scenario === 'server-exhausted') {
@@ -249,6 +277,10 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
           assert.equal(history.split(opening).length - 1, 1, opening)
         }
         assert.ok(!history.includes('parent-scientific-private'))
+        if (commitment === 'program') {
+          assert.match(history, /reported_by_worker/)
+          assert.match(history, /independently_recomputed_by_reviewer/)
+        }
         assert.match(history, google ? /"inlineData"/ : /"type":"image"/)
         if (!attemptedAfterDisclosure) {
           attemptedAfterDisclosure = true
@@ -280,6 +312,10 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
           phase = 'deliver'
           response = {name:'request_review',args:{}}
         } else if (phase === 'deliver') {
+          if (commitment === 'program') {
+            assert.match(history, /reported_by_worker/)
+            assert.match(history, /independently_recomputed_by_reviewer/)
+          }
           phase = 'done'
           response = {name:'deliver',args:{}}
         } else response = 'The project delivered.'
@@ -353,7 +389,9 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.deepEqual(Object.keys(args).sort(), [commitment, 'revision'].sort())
         committed = true
         if (commitment === 'unavailable') return {unavailable:args.unavailable}
-        return {receipt:{control:2, artifact:'results/data.json', marker:'independent-row-receipt', matches:true}}
+        return {receipt:{control:2, artifact:'results/data.json', rows_pointer:'', identifiers:{seed:2},
+          columns:['metric'], expected:{metric:4}, observed:{metric:4}, differences:[], matches:true,
+          marker:'host-only-row-provenance', program:args.program}}
       case 'run_method_control':
         assert.ok(committed)
         assert.equal(args.revision, 'rev1')
@@ -365,12 +403,12 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.equal(args.verdict.verdict, 'accept')
         assert.equal(args.verdict.checks.citations.evidence[0].artifact, 'sources/paper.txt')
         assert.ok(args.observed.some(r => r.marker === 'known-answer-receipt'))
-        assert.equal(args.observed.some(r => r.marker === 'independent-row-receipt'), commitment === 'program')
+        assert.equal(args.observed.some(r => r.marker === 'host-only-row-provenance'), commitment === 'program')
         assert.ok(args.observed.every(Boolean))
         assert.ok(args.observed.some(receipt => receipt.artifact === 'scripts/plot.py'))
         assert.ok(args.observed.filter(receipt => receipt.artifact === 'paper/main.pdf' && receipt.visual).length >= 2)
         recorded = args
-        return { accepted:true }
+        return { accepted:true, checks:{experiment:{controls:args.observed.filter(r => r.control)}} }
       case 'deliver': assert.ok(recorded); delivered=true; return {delivered}
       default: throw new Error('unexpected op ' + op)
     }

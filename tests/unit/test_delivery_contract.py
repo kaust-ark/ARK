@@ -833,6 +833,10 @@ def test_unresolved_table_reference_in_the_final_tex_pass_blocks_delivery(tmp_pa
         failures = evaluate(project, config=config).delivery_blockers(config)
         issue, = [f for f in failures if f.check == "cross_references_resolved"]
         assert issue.severity == "hard" and "tab:results (page 2, input line 102)" in issue.detail
+    with log.open("a") as f:
+        f.write("LaTeX Warning: Label `tab:i2p-measurements' multiply defined.\n")
+    issue, = [f for f in evaluate(project).delivery_blockers({}) if f.check == "cross_references_resolved"]
+    assert "tab:i2p-measurements" in issue.detail and "tab:results" in issue.detail
     log.write_text("LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.\n")
     assert not any(f.check == "cross_references_resolved" for f in evaluate(project).delivery_blockers({}))
 

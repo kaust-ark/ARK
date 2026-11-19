@@ -58,6 +58,7 @@ const researchLabels = {
   row_values: ['%s was reported as %s and recomputed as %s.','%s 的论文报告值为 %s，独立复算为 %s。','%s: القيمة المسجلة %s وإعادة الحساب %s.'],
   control_metric: ['Outcome','指标','المقياس'], control_recomputed: ['Recomputed','独立复算','أُعيد حسابه'],
   compared_metric: ['Recomputed metric','复算指标','المقياس المُعاد حسابه'],
+  compare_values: ['Compare values','查看数值对比','مقارنة القيم'],
   control_reported: ['Reported','论文报告值','المسجل'], control_result: ['Comparison','比较','المقارنة'],
   control_expected: ['Expected','预期值','المتوقع'], control_observed: ['Observed','观察值','المرصود'],
   control_rationale: ['Reviewer’s rationale','评审理由','تعليل المراجع'], control_source: ['Source','证据来源','المصدر'],
@@ -138,11 +139,23 @@ function observationText(event, withValues=true) {
     if (event.differed === 0) return rt('row_match', event.condition, event.outcomes);
     if (event.differed > 0 && event.differed <= event.outcomes) {
       const summary = rt('row_diff', event.condition, event.differed, event.outcomes);
-      return withValues && event.metric && event.reported_value && event.independent_value
+      return withValues && hasComparison(event)
         ? summary + ' ' + rt('row_values', event.metric, event.reported_value, event.independent_value) : summary;
     }
   }
   return event?.observation || '';
+}
+
+function hasComparison(event) {
+  return event?.action === 'measurement_reproduction_finished' && event.condition &&
+    Number.isInteger(event.outcomes) && event.differed > 0 && event.differed <= event.outcomes &&
+    event.metric && event.reported_value && event.independent_value;
+}
+
+function fillComparison(values, event) {
+  const [reported, independent] = values.querySelectorAll('dd');
+  if (reported.textContent !== event.reported_value) reported.textContent = event.reported_value;
+  if (independent.textContent !== event.independent_value) independent.textContent = event.independent_value;
 }
 
 function renderHistory() {
@@ -179,8 +192,19 @@ function renderHistory() {
       }
       const observation = document.createElement('p');
       const progress = e.count != null && e.total > 0 ? ' (' + e.count + '/' + e.total + ')' : '';
-      observation.textContent = (observationText(e) || e.action) + progress;
+      observation.textContent = (observationText(e, false) || e.action) + progress;
       row.append(meta, observation);
+      if (hasComparison(e)) {
+        const details = document.createElement('details'), summary = document.createElement('summary');
+        details.className = 'history-comparison';
+        const metric = document.createElement('bdi');
+        metric.textContent = e.metric;
+        summary.append(rt('compare_values') + ' · ', metric);
+        const values = re('research-comparison').querySelector('dl').cloneNode(true);
+        fillComparison(values, e);
+        details.append(summary, values);
+        row.append(details);
+      }
       if (e.artifact && !window.SHARE_MODE) {
         const key = e.artifact, name = key.split('/').pop();
         const button = document.createElement('button');
@@ -299,13 +323,11 @@ function renderResearch(animate=false) {
     observationText(obs) || researchData.milestone?.text || fallback;
   const comparison = re('research-comparison');
   const summary = observationText(obs, false);
-  const showValues = obs?.action === 'measurement_reproduction_finished' && !!summary && summary !== observed;
+  const showValues = hasComparison(obs);
   comparison.hidden = !showValues;
   if (showValues) {
-    const fields = comparison.querySelectorAll('bdi, dd');
-    [obs.metric, obs.reported_value, obs.independent_value].forEach((value, i) => {
-      if (fields[i].textContent !== value) fields[i].textContent = value;
-    });
+    comparison.querySelector('bdi').textContent = obs.metric;
+    fillComparison(comparison, obs);
   }
   const measured = Number.isInteger(obs?.count) && Number.isInteger(obs.total) &&
     obs.count >= 0 && obs.total > 0 && obs.count <= obs.total;

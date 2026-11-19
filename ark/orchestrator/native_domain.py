@@ -38,7 +38,7 @@ from ark import (
 )
 from ark.compute import native_experiment, review_control
 from ark.execution import ExecutionMixin
-from ark.latex.compiler import CompilerMixin, body_sections_and_figures, rendered_body_images
+from ark.latex.compiler import CompilerMixin, body_repetition_notes, body_sections_and_figures, rendered_body_images
 from ark.latex.utils import body_page_boundary, extract_latex_errors, parse_overfull_warnings
 from ark.orchestrator.state import _atomic_write_text
 
@@ -118,7 +118,7 @@ def _stage_tex(paper, staging):
     return env
 
 
-def _manuscript_first_pass(paper, content):
+def _manuscript_first_pass(paper, content, *, check_headings=False):
     with tempfile.TemporaryDirectory(prefix="idea2paper-edit-") as tmp:
         staging = Path(tmp)
         env = _stage_tex(paper, staging)
@@ -134,6 +134,8 @@ def _manuscript_first_pass(paper, content):
         pdf = staging / "main.pdf"
         if not pdf.is_file() or not pdf.stat().st_size:
             return "pdflatex produced no manuscript pages."
+        if check_headings and (notes := body_repetition_notes(staging, empty_headings_only=True)):
+            return notes[0]
         return None
 
 
@@ -1383,10 +1385,21 @@ class NativeProject(CompilerMixin):
             return
         source = self.latex_dir / "main.tex"
         tex = source.read_text()
-        used = {file.relative_to(self.latex_dir).as_posix() for file, _ in citation.active_tex_sources(self.latex_dir)}
-        if any(row["path"] in used for row in tables.values()):
-            return
+        sources = dict(citation.active_tex_sources(self.latex_dir))
+        used = {file.relative_to(self.latex_dir).as_posix() for file in sources}
+        caption = r"\caption{Recorded experimental measurements.}\label{tab:i2p-measurements}"
+        legacy_start = "\n".join([r"\begin{table*}[t]", r"\centering", r"\small", caption])
+        active = [row for row in tables.values() if row["path"] in used]
         latest = next(reversed(tables.values()))
+        if active:
+            # Only migrate the exact wrapper the host previously emitted.
+            for row in active:
+                old = "\n".join([legacy_start, r"\input{" + row["path"] + "}", r"\end{table*}"])
+                if old in sources.get(source, "") and tex.count(old) == 1:
+                    latest = row
+                    break
+            else:
+                return
         path = self.latex_dir / latest["path"]
         measurement = self.state.get("experiment") or {}
         if (
@@ -1395,18 +1408,41 @@ class NativeProject(CompilerMixin):
             or latest["input_sha256"] != measurement.get("sha256")
         ):
             return
-        table = "\n".join(
-            [
-                "",
-                r"\begin{table*}[t]",
-                r"\centering",
-                r"\small",
-                r"\caption{Recorded experimental measurements.}\label{tab:i2p-measurements}",
-                r"\input{" + latest["path"] + "}",
-                r"\end{table*}",
-                "",
-            ]
-        )
+        include = r"\input{" + latest["path"] + "}"
+        table = "\n".join([
+            r"\begingroup",
+            r"\newsavebox{\iipMeasuredBox}",
+            r"\sbox{\iipMeasuredBox}{\small" + include + "}",
+            r"\def\iipMeasuredTable#1#2{\begin{#1}[#2]",
+            r"\centering",
+            r"\small",
+            caption,
+            r"\usebox{\iipMeasuredBox}",
+            r"\end{#1}}",
+            r"\ifdim\wd\iipMeasuredBox>\columnwidth",
+            r"  \iipMeasuredTable{table*}{t}",
+            r"\else",
+            r"  \iipMeasuredTable{table}{!htbp}",
+            r"\fi",
+            r"\endgroup",
+        ])
+        if active:
+            _atomic_write_text(source, tex.replace(old, table, 1))
+            return
+        # Preserve authored floats that reuse a managed label. Restore an
+        # input only when its removal is the sole change to a known wrapper.
+        occupied = re.compile(r"\\label\s*\{(?:tab:i2p-measurements|app:i2p-measured-results)\}")
+        if any(occupied.search(text) for text in sources.values()):
+            legacy_empty = re.search(re.escape(legacy_start) + r"\s*\\end\{table\*\}", tex)
+            empty_blocks = [table.replace(include, "")]
+            if legacy_empty:
+                empty_blocks.append(legacy_empty[0])
+            for empty in empty_blocks:
+                if tex.count(empty) == 1 and empty in sources.get(source, ""):
+                    _atomic_write_text(source, tex.replace(empty, table, 1))
+                    break
+            return
+        table = "\n" + table + "\n"
         end = tex.rfind(r"\end{document}")
         if end < 0:
             return
@@ -1495,10 +1531,11 @@ class NativeProject(CompilerMixin):
         ):
             return {"ok": True, "checked": False, "reason": "No verified prior build."}
         try:
-            failure = _manuscript_first_pass(self.latex_dir, candidate)
+            strict = self.config.get("layout_mode") == "strict"
+            failure = _manuscript_first_pass(self.latex_dir, candidate, check_headings=strict)
             if failure is None:
                 return {"ok": True, "checked": True}
-            baseline_failure = _manuscript_first_pass(self.latex_dir, previous)
+            baseline_failure = _manuscript_first_pass(self.latex_dir, previous, check_headings=strict)
         except subprocess.TimeoutExpired:
             return {"ok": False, "checked": False, "diagnostic": "The manuscript check timed out after 90 seconds."}
         except OSError as exc:
@@ -1804,6 +1841,7 @@ class NativeProject(CompilerMixin):
             return []
         rendered = self.state.get("compile", {})
         issues = self._implementation_claims() + self._plot_caption_issues()
+        issues.extend(self._body_repetition_notes(empty_headings_only=True))
         main = self.latex_dir / "main.tex"
         if main.is_file() and main.resolve() == main:
             issues.extend(review.reported_change_conflicts(main.read_text()))
@@ -1886,7 +1924,11 @@ class NativeProject(CompilerMixin):
                 # transcription error when only the beginning of a result fits a chat turn.
                 if len(re.findall(r"(?m)^\s*\d+\s*&[^\n]*\d[^\n]*&[^\n]*\d", block)) >= 2:
                     hand_measured = True
-        if hand_measured and not used and measurement_table.describe(self._measurements()[0]):
+        if tables and not used:
+            latest = next(reversed(tables))
+            issues.append(f"The verified worker table {latest} is missing from the compiled manuscript. "
+                          f"Include \\input{{{latest}}} in the appropriate table float. Keep one caption and label.")
+        elif hand_measured and not used and measurement_table.describe(self._measurements()[0]):
             issues.append(
                 "A numbered results table has manually entered measurements. Use render_results_table "
                 "to select the matching worker rows and columns, then replace the tabular block with the returned input."

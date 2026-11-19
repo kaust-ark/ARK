@@ -6,7 +6,7 @@ import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Command } from 'commander'
 import { acquireLock, readJson, runLegacyWorkflow, writeJson } from './workflow.js'
-import { acknowledgeLocal, pendingCommands, queueCommand, reviewSubmission, attachEvidence, evidenceTool, methodControlTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
+import { acknowledgeLocal, pendingCommands, queueCommand, reviewSubmission, reviewForAuthor, reproductionComparison, attachEvidence, evidenceTool, methodControlTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
 
 export const name = 'idea2paper'
 export const inject = ['cmdlineArgs', 'agentDefaultModel', 'agents', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'subagents', 'llm', 'attachments']
@@ -287,7 +287,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
             disclosed = true
           } catch (error) { disclosureError = error; throw error }
         }
-        return value
+        return value.receipt ? reproductionComparison(value.receipt) : value
       } finally { committing = false }
     }, roleTimeout)
     configured = true
@@ -439,7 +439,10 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
               return validation
             })
           }
-          if (name === 'request_review') return review(ctx, agent, domain, AbortSignal.any([deadline, exec.signal]), args.draft === true)
+          if (name === 'request_review') {
+            const result = await review(ctx, agent, domain, AbortSignal.any([deadline, exec.signal]), args.draft === true)
+            return reviewForAuthor(result)
+          }
           return domain.call(name, args)
         }, roleTimeout)
       }

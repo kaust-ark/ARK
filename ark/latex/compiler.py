@@ -39,7 +39,7 @@ def body_sections_and_figures(root, sources):
         r"\\begin\{(?P<literal>verbatim\*?|lstlisting|minted|comment)\}.*?\\end\{(?P=literal)\}"
         r"|\\(?:input|include|subfile)\s*\{(?P<input>[^{}]+)\}"
         r"|(?P<appendix>\\appendix\b|\\begin\{appendices\})|(?P<end>\\end\{document\})"
-        r"|(?P<heading>\\section\s*(?:\[[^\]]*\]\s*)?\{\s*(?i:conclusions?)\s*\})"
+        r"|\\section\s*(?:\[[^\]]*\]\s*)?\{(?P<heading>[^{}\\%]{1,160})\}"
         r"|\\begin\{(?P<float>figure\*?)\}(?P<body>.*?)\\end\{(?P=float)\}", re.S)
     plain_figure = re.compile(
         r"\s*(?:\[[^\]]*\]\s*)?(?:\\centering\s*)?(?P<graphic>\\includegraphics)"
@@ -65,13 +65,19 @@ def body_sections_and_figures(root, sources):
                 yield path, source, event
 
     headings, figures = [], []
+    last_heading = None
     for path, source, event in walk(main, {main}):
         if event["appendix"]:
             break
         location = path.relative_to(root)
         if event["heading"]:
             line = source.count("\n", 0, event.start()) + 1
-            headings.append(f"{location}:{line}")
+            title = " ".join(event["heading"].split())
+            # An intervening label belongs to the heading, never to a paragraph.
+            empty = (last_heading is not None and last_heading[0] == path and
+                     re.fullmatch(r"(?:\s|\\label\s*\{[^{}]*\})*", source[last_heading[1]:event.start()]) is not None)
+            headings.append((title, f"{location}:{line}", empty))
+            last_heading = path, event.end()
         if not event["float"]:
             continue
         body = event["body"]
@@ -138,6 +144,58 @@ def _repeated_figure_notes(doc, figures, sources, root):
     return notes
 
 
+def body_repetition_notes(root, *, empty_headings_only=False) -> list[str]:
+    """Match duplicate source headings or image floats to their printed occurrences."""
+    root = root.resolve()
+    main = root / "main.tex"
+    notes = []
+    try:
+        sources = dict(active_tex_sources(root))
+        if main not in sources:
+            return []
+        headings, figures = body_sections_and_figures(root, sources)
+        groups = {}
+        previous = None
+        for title, location, empty in headings:
+            key = title.casefold()
+            if key == "conclusions":
+                key = "conclusion"
+            groups.setdefault(key, []).append((title, location, empty and key == previous))
+            previous = key
+        groups = {key: rows for key, rows in groups.items() if len(rows) > 1 and
+                  (any(empty for _, _, empty in rows) or (key == "conclusion" and not empty_headings_only))}
+        counts = Counter(figure.asset for figure in figures)
+        figures = [] if empty_headings_only else [figure for figure in figures if counts[figure.asset] > 1]
+        if not groups and not figures:
+            return []
+
+        import fitz
+        with fitz.open(root / "main.pdf") as doc:
+            for key, rows in groups.items():
+                name = r"conclusions?" if key == "conclusion" else re.escape(key)
+                heading = re.compile(rf"\s*(\d+)\.?\s+{name}\s*", re.I)
+                rendered = sorted((int(m[1]), i + 1) for i, page in enumerate(doc)
+                            for block in page.get_text("blocks", flags=0)
+                            if (m := heading.fullmatch(block[4])))
+                if len(rendered) != len(rows):
+                    continue
+                for i, (title, _, empty) in enumerate(rows):
+                    if empty and rendered[i][0] == rendered[i-1][0] + 1:
+                        notes.append(f"Empty repeated heading '{title}' in {rows[i-1][1]} and {rows[i][1]} "
+                                     f"(sections {rendered[i-1][0]} and {rendered[i][0]}, "
+                                     f"PDF p. {rendered[i][1]}). Keep one heading above the section text.")
+                if key == "conclusion" and not empty_headings_only and not any(r[2] for r in rows):
+                    where = ", ".join(f"section {n} (p. {p}, {loc})"
+                                      for (n, p), (_, loc, _) in zip(rendered, rows))
+                    notes.append(f"Repeated Conclusion heading in {where}. Merge the closing material into one section.")
+            if len(figures) > 1:
+                notes.extend(_repeated_figure_notes(doc, figures, sources, root))
+    except (ImportError, OSError, RuntimeError, ValueError):
+        # These optional notices require readable, matching typesetting artifacts.
+        pass
+    return notes
+
+
 class CompilerMixin:
     """Mixin providing LaTeX compilation and figure management.
 
@@ -181,37 +239,8 @@ class CompilerMixin:
         """Parse LaTeX log for structured error messages."""
         return latex_utils.extract_latex_errors(log_path)
 
-    def _body_repetition_notes(self) -> list[str]:
-        """Locate repeated conclusions and plain, separately numbered whole-image floats."""
-        root = self.latex_dir.resolve()
-        main = root / "main.tex"
-        notes = []
-        try:
-            sources = dict(active_tex_sources(root))
-            if main not in sources:
-                return []
-            headings, figures = body_sections_and_figures(root, sources)
-            counts = Counter(figure.asset for figure in figures)
-            figures = [figure for figure in figures if counts[figure.asset] > 1]
-            if len(headings) < 2 and len(figures) < 2:
-                return []
-
-            import fitz
-            with fitz.open(root / "main.pdf") as doc:
-                if len(headings) > 1:
-                    rendered = [(m[1], i + 1) for i, page in enumerate(doc)
-                                for block in page.get_text("blocks", flags=0)
-                                if (m := re.fullmatch(r"\s*(\d+)\.?\s+conclusions?\s*", block[4], re.I))]
-                    if len(rendered) == len(headings):
-                        where = ", ".join(f"section {n} (p. {p}, {loc})"
-                                          for (n, p), loc in zip(rendered, headings))
-                        notes.append(f"Repeated Conclusion heading in {where}. Merge the closing material into one section.")
-                if len(figures) > 1:
-                    notes.extend(_repeated_figure_notes(doc, figures, sources, root))
-        except (ImportError, OSError, RuntimeError, ValueError):
-            # These optional notices require readable, matching typesetting artifacts.
-            pass
-        return notes
+    def _body_repetition_notes(self, *, empty_headings_only=False) -> list[str]:
+        return body_repetition_notes(self.latex_dir, empty_headings_only=empty_headings_only)
 
     def _compile_until_success(self, context: str = "") -> bool:
         """Keep fixing and recompiling until LaTeX compiles successfully.

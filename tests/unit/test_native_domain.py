@@ -739,10 +739,58 @@ def test_measurement_table_uses_worker_decimal_values_even_beyond_model_excerpt(
     section.write_text("% The old table was removed")
     project._restore_measured_table()
     project._restore_measured_table()
-    assert main.read_text().count(r"\begin{table*}") == 1
+    assert main.read_text().count(r"\ifdim\wd\iipMeasuredBox>\columnwidth") == 1
+    restored = main.read_text()
+    include = r"\input{" + r["path"] + "}"
+    main.write_text(restored.replace(include, ""))
+    project._restore_measured_table()
+    assert main.read_text().count(include) == main.read_text().count(r"\label{tab:i2p-measurements}") == 1
+    authored = restored.replace(include, r"\begin{tabular}{rr}1&2\end{tabular}")
+    main.write_text(authored)
+    project._restore_measured_table()
+    assert main.read_text() == authored
+    legacy = "\n".join([r"\begin{table*}[t]", r"\centering", r"\small",
+                        r"\caption{Recorded experimental measurements.}\label{tab:i2p-measurements}",
+                        include, r"\end{table*}", r"\end{document}"])
+    for authored in (legacy.replace("[t]", "[b]"), legacy.replace("Recorded experimental", "Additional")):
+        main.write_text(authored)
+        project._restore_measured_table()
+        assert main.read_text() == authored
+    main.write_text(legacy)
+    project._restore_measured_table()
+    migrated = main.read_text()
+    assert migrated.count(include) == 1 and r"\iipMeasuredTable{table*}{t}" in migrated
+    assert r"\iipMeasuredTable{table}{!htbp}" in migrated
+    project._restore_measured_table()
+    assert main.read_text() == migrated
+    main.write_text(legacy.replace(include + "\n", ""))
+    project._restore_measured_table()
+    assert main.read_text() == migrated
     results.write_text('{"pairs":[]}')
     with pytest.raises(ValueError, match="worker receipt"):
         project.invoke("render_results_table", args)
+
+
+@pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
+def test_measured_float_uses_actual_column_width(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    source = project.latex_dir / "main.tex"
+    source.write_text(r"""\documentclass[twocolumn]{article}
+\AddToHook{env/table/begin}{\typeout{MEASURED-FLOAT-SINGLE}}
+\AddToHook{env/table*/begin}{\typeout{MEASURED-FLOAT-WIDE}}
+\begin{document}\section{Results}Measured loss.\end{document}""")
+    rows = tmp_path / "results/pairs.json"
+    rows.write_text('[{"loss": 0.5}]')
+    project.state["experiment"] = {"status": "completed", "artifact": "results/pairs.json",
+                                   "sha256": hashlib.sha256(rows.read_bytes()).hexdigest()}
+    for label, expected in [("Loss", "SINGLE"), ("W" * 32, "WIDE")]:
+        project.render_results_table({"name": "loss", "columns": [{"path": "loss", "label": label}]})
+        result = project.invoke("compile_paper", {})
+        assert result["ok"] and "tables/loss.tex" in result["inputs"]
+        log = (project.latex_dir / "main.log").read_text()
+        assert [line for line in log.splitlines() if line.startswith("MEASURED-FLOAT-")] == [
+            "MEASURED-FLOAT-" + expected
+        ]
 
 
 def test_strict_table_keeps_worker_conditions_across_render_and_resume(tmp_path, monkeypatch):

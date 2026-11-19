@@ -56,6 +56,9 @@ def test_live_research_desk(tmp_path, monkeypatch):
             f.write(json.dumps({"id": ident, "ts": datetime.now(timezone.utc).isoformat(), "action": "measurement",
                                 "phase": phase, "observation": message, **attrs}) + "\n")
 
+    event("old-comparison", "review", "Recomputed 128 items.", action="measurement_reproduction_finished",
+          condition="128 items", differed=1, outcomes=2, metric="search_comparisons",
+          reported_value="7", independent_value="0")
     event("observed", "experiments", "Recorded search comparisons for 128 items.", artifact="results/experiment.json")
     previous = None
     for label, claim in [("Reversed", "Arrow points to the wrong series"), ("Corrected", "Arrow points to the baseline")]:
@@ -189,7 +192,21 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert hashlib.sha256(page.request.get(base + archive_url).body()).hexdigest() == archived_digest
                 page.locator("#evidence-close").click()
                 assert archive_file.evaluate("el => document.activeElement === el")
-                page.locator("#research-history summary").click()
+                earlier = history.locator('li[data-event="old-comparison"] details')
+                earlier.locator("summary").focus()
+                page.keyboard.press("Enter")
+                assert earlier.locator("bdi").inner_text() == "search_comparisons"
+                assert earlier.locator("dd").all_inner_texts() == ["7", "0"]
+                assert earlier.locator("dl").evaluate("el => getComputedStyle(el).animationName") == "none"
+                if width == 390:
+                    event("new-match", "review", "Recomputed 256 items.",
+                          action="measurement_reproduction_finished", condition="256 items", differed=0, outcomes=2)
+                    page.locator("#research-observation").get_by_text("256 items · All 2 outcomes matched.").wait_for()
+                    assert page.locator("#research-comparison").is_hidden()
+                    assert earlier.locator("dd").first.is_visible()
+                    assert earlier.locator("summary").evaluate("el => el === document.activeElement")
+                    assert history.locator('li[data-event="new-match"] details').count() == 0
+                history.locator(":scope > summary").click()
                 if width == 1300:
                     draft = "Add 256 items before doubling again."
                     page.locator("#decision-text").fill(draft)

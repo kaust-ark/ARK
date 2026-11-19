@@ -272,7 +272,7 @@ def test_known_answer_experiment_control_is_bound_to_worker_and_verdict(tmp_path
     result = validate_review(snap, response, observed=[*receipts, case])
     assert result["deliverable"] and result["checks"]["experiment"]["controls"] == [case]
     mismatch = dict(case, observed=5, matches=False)
-    with pytest.raises(ValueError, match="disagreed with a predicted control"):
+    with pytest.raises(ValueError, match="worker and reviewer disagreed"):
         validate_review(snap, response, observed=[*receipts, mismatch, case])
     response["issues"] = record(snap, pair, "clean", "new")[0]["issues"]
     response["verdict"] = "revise"
@@ -315,6 +315,13 @@ def test_unchanged_measured_rows_require_an_independent_reproduction_before_acce
     row = dict(control=2, revision=snap["revision"], artifact=measured, sha256=sha, matches=False)
     with pytest.raises(ValueError, match="disagreed"):
         validate_review(snap, response, observed=[*receipts, row])
+    dispute, _ = record(snap, pair, "clean", "new")
+    dispute["checks"] = response["checks"]
+    dispute["issues"][0]["evidence"] = [dispute["issues"][0]["evidence"][0], exp["evidence"][0]]
+    with pytest.raises(ValueError, match="executed operation"):
+        validate_review(snap, dispute, observed=[*receipts, row])
+    dispute["issues"][0]["evidence"].append(exp["evidence"][1])
+    assert validate_review(snap, dispute, observed=[*receipts, row])["verdict"] == "revise"
     assert validate_review(snap, response, observed=[*receipts, dict(row, matches=True)])["deliverable"]
     assert validate_review(snap, response, observed=[*receipts[:-1], dict(row, matches=True)])["deliverable"]
 
@@ -324,6 +331,8 @@ def test_unchanged_measured_rows_require_an_independent_reproduction_before_acce
     from unittest.mock import patch
     blind = review.reproduction_brief(snap)
     assert "outcome_columns" in blind and "return a * 2" not in blind and "4.5" not in blind
+    assert "boundary case with a known answer" in blind and "final reporting" in blind
+    assert "Your own program can also be wrong" in prompt["reproduction_instructions"]
     host = NativeProject(tmp_path)
     host.snapshot = snap
     host.reproduction_decision = None

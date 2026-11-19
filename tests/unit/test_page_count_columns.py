@@ -127,6 +127,34 @@ def test_rendered_body_repetition_in_split_manuscript(compiler, tmp_path, repeat
         assert notes == []
 
 
+def test_empty_duplicate_heading_requires_source_and_printed_headings(compiler, tmp_path):
+    import shutil
+    import subprocess
+
+    if not shutil.which("pdflatex"):
+        pytest.skip("pdflatex unavailable")
+    pytest.importorskip("fitz")
+    compiler.latex_dir = tmp_path
+    (tmp_path / "main.tex").write_text(r"""\documentclass{article}
+\begin{document}
+\section{Methodology}\label{sec:methods}
+% There is no section text here.
+\section{Methodology}
+Model specification.
+\section{Evaluation}
+First study.
+\section{Evaluation}
+Second study.
+\iffalse\section{Hidden}\section{Hidden}\fi
+\appendix\section{Methodology}
+Details.\end{document}
+""")
+    subprocess.run(["pdflatex", "-no-shell-escape", "-halt-on-error", "-interaction=batchmode", "main.tex"],
+                   cwd=tmp_path, check=True, capture_output=True, timeout=30)
+    note, = compiler._body_repetition_notes(empty_headings_only=True)
+    assert "Methodology" in note and "main.tex:3 and main.tex:5" in note and "PDF p. 1" in note
+
+
 # ── _is_two_column_doc ───────────────────────────────────────────────
 
 

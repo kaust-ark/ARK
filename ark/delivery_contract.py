@@ -221,7 +221,8 @@ def _ack_block(tex: str) -> str:
 
 
 def cross_reference_warning(final_log: str) -> str:
-    """Describe unresolved references after the final TeX pass."""
+    """Describe undefined references and ambiguous labels after the final TeX pass."""
+    problems = []
     warnings = re.findall(
         r"^LaTeX Warning: Reference [`']([^'\n]+)'\s+on page (\S+)\s+undefined"
         r"(?:\s+on\s+input\s+line\s+(\d+))?", final_log, flags=re.M)
@@ -230,11 +231,17 @@ def cross_reference_warning(final_log: str) -> str:
             f"{label} (page {page}" + (f", input line {line})" if line else ")")
             for label, page, line in warnings
         ))
-        return ("Unresolved LaTeX cross-reference: " + ", ".join(locations[:8]) +
-                ". Check the reference and the label on the intended table, figure or section, then recompile.")
-    if "LaTeX Warning: There were undefined references." in final_log:
-        return "LaTeX reports unresolved references in the final pass. Inspect main.log, fix the references and recompile."
-    return ""
+        problems.append("Unresolved LaTeX cross-reference: " + ", ".join(locations[:8]) +
+                        ". Check the reference and the label on the intended table, figure or section, then recompile.")
+    elif "LaTeX Warning: There were undefined references." in final_log:
+        problems.append("LaTeX reports unresolved references in the final pass. Inspect main.log, fix the references and recompile.")
+    repeated = dict.fromkeys(re.findall(r"^LaTeX Warning: Label [`']([^'\n]+)' multiply defined\.", final_log, re.M))
+    if repeated:
+        problems.append("Multiply defined LaTeX labels: " + ", ".join(list(repeated)[:8]) +
+                        ". Give each referenced object a unique label and recompile.")
+    elif "LaTeX Warning: There were multiply-defined labels." in final_log:
+        problems.append("LaTeX reports multiply-defined labels in the final pass. Correct the label collisions and recompile.")
+    return " ".join(problems)
 
 
 def _dangling_refs(tex: str) -> set:

@@ -238,10 +238,9 @@ async function accessFile(directory, path, content, replace, edit = {}, checkMan
     if (!restoring && completeDocument(previous.content) && !completeDocument(content)) {
       throw new Error('Edit would replace a complete paper/main.tex with an incomplete document. Use an anchored section edit or supply the complete LaTeX document.')
     }
-    const fullRewrite = range ? edit.start_line === 1 && edit.end_line === sourceLines(previous.content).length : replace === undefined || previous.content.trim() === replace.trim()
-    if (!restoring && fullRewrite && previous.content.length > 3500 && content.length < previous.content.length * 0.80 &&
+    if (!restoring && previous.content.length > 3500 && content.length < previous.content.length * 0.80 &&
         (!edit.base_sha256 || edit.allow_shrink !== true)) {
-      throw new Error('This full rewrite removes over one fifth of the manuscript. Use a section edit, or deliberately pass both the current base_sha256 and allow_shrink:true.')
+      throw new Error(`This edit would shrink paper/main.tex from ${previous.content.length} to ${content.length} characters. Narrow the edit to the intended passage. For a deliberate cut of over one fifth, pass the current base_sha256 and allow_shrink:true.`)
     }
     if (!restoring && checkManuscript && completeDocument(previous.content)) {
       const check = await checkManuscript({content, base_sha256:previous.sha256})
@@ -362,7 +361,7 @@ export const operations = {
   request_review: ['Request an independent, blind submission review after artifact checks. Use draft only for early scientific feedback on an incomplete manuscript.', { draft: bool }],
   deliver: ['Verify the current reviewed revision and publish the checked project deliverables.', {}],
   read_project_file: ['Read up to 6000 characters of a manuscript, result, skill, original brief (auto_research/state/idea.md), experiment_plan.yaml or deep_research.md in that directory, or sources/<id>.txt from verify_citations. Supply next_offset as offset to continue, or find a passage to get its match_line. Use start_line to read up to 40 numbered lines. sha256 covers the entire file. For paper/main.tex, list_revisions lists saved digests and revision_sha256 reads a saved version.', { path: str, offset: num, find: str, start_line: num, revision_sha256: str, list_revisions: bool }, ['path']],
-  write_project_file: ['Write a manuscript or script. To edit lines of paper/main.tex, read the numbered lines and send inclusive start_line/end_line with just the new text. The last numbered view supplies its revision; alternatively provide the exact current base_sha256. A TeX error introduced into a compiling draft rejects the edit. For a section edit use replace, insert_before or insert_after with an exact unique passage or heading. Use expected_matches only to correct a known count of identical passages. A substantial full shrink of paper/main.tex needs its current base_sha256 and allow_shrink:true. Each changed manuscript saves previous_sha256. To restore it, supply only path, current base_sha256 and restore_sha256.', { path: str, content: str, start_line: num, end_line: num, replace: str, expected_matches: num, insert_before: str, insert_after: str, base_sha256: str, allow_shrink: bool, restore_sha256: str }, ['path']],
+  write_project_file: ['Write a manuscript or script. To edit lines of paper/main.tex, read the numbered lines and send inclusive start_line/end_line with just the new text. The last numbered view supplies its revision; alternatively provide the exact current base_sha256. A TeX error introduced into a compiling draft rejects the edit. For a section edit use replace, insert_before or insert_after with an exact unique passage or heading. Use expected_matches only to correct a known count of identical passages. Any edit that cuts over one fifth of a manuscript longer than 3500 characters needs its current base_sha256 and allow_shrink:true. Each changed manuscript saves previous_sha256. To restore it, supply only path, current base_sha256 and restore_sha256.', { path: str, content: str, start_line: num, end_line: num, replace: str, expected_matches: num, insert_before: str, insert_after: str, base_sha256: str, allow_shrink: bool, restore_sha256: str }, ['path']],
 }
 // The reviewer may revise its own rejected draft during this activation.
 export function reviewSubmission(message, previous, revision) {
@@ -398,6 +397,21 @@ export const methodControlTool = ['Test the frozen scientific worker on a small 
 }, ['target', 'inputs_json', 'expected_json', 'alternative_json', 'rationale']]
 
 export const reproductionTool = ['Use the original research request to independently recompute the designated condition. Supply exactly one of program or unavailable. Python calls reproduce(identifiers) once with a dictionary for one condition. Each named identifier is a scalar. Return one flat dict with exactly the requested outcome keys and one finite Python number per key. The CPU sandbox provides the science image and identifiers, with no project files or network. If reproduction is infeasible, give the specific reason in unavailable. The submission opens after commitment, and the program cannot be changed after disclosure.', {program: str, unavailable: str}]
+
+export function reproductionComparison(receipt) {
+  const {artifact, identifiers, rows_pointer, columns, differences, observed, expected} = receipt
+  return {artifact, rows_pointer, identifiers, metrics: columns.map(metric => ({
+    metric, reported_by_worker: observed[metric], independently_recomputed_by_reviewer: expected[metric],
+    agrees: !differences.includes(metric),
+  }))}
+}
+
+export function reviewForAuthor(review) {
+  const experiment = review.checks?.experiment
+  if (!experiment?.controls?.some(r => r.control === 2)) return review
+  const controls = experiment.controls.map(r => r.control === 2 ? reproductionComparison(r) : r)
+  return {...review, checks: {...review.checks, experiment: {...experiment, controls}}}
+}
 
 function render(_args, value) {
   const { attachment, ...details } = value
