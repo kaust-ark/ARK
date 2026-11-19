@@ -225,6 +225,100 @@ def test_actual_compile_fingerprint_and_stale_delivery(tmp_path, monkeypatch):
         project.invoke("review_snapshot", {})
 
 
+def test_manuscript_check_bootstrap_receipt_and_base_digest(tmp_path, monkeypatch):
+    project = domain.NativeProject(tmp_path)
+    args = {"content": "draft"}
+    monkeypatch.setattr(domain, "_manuscript_first_pass", lambda *a: pytest.fail("unexpected pdflatex trial"))
+    assert project.invoke("check_manuscript_edit", args)["checked"] is False
+    assert list(tmp_path.iterdir()) == []
+    assert not project.invoke("check_manuscript_edit", {**args, "base_sha256": "0" * 64})["ok"]
+
+    project.latex_dir.mkdir()
+    main = project.latex_dir / "main.tex"
+    main.write_text("current draft")
+    pdf = project.latex_dir / "main.pdf"
+    pdf.write_bytes(b"older PDF")
+    digest = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    project.state.update(state="running", compiled_pdf_sha256=digest, compile={"ok": True, "pdf_sha256": digest})
+    assert not project.invoke("check_manuscript_edit", {**args, "base_sha256": "0" * 64})["ok"]
+    pdf.write_bytes(b"different file")
+    skipped = project.invoke("check_manuscript_edit", args)
+    assert skipped["ok"] and not skipped["checked"]
+    pdf.write_bytes(b"older PDF")
+    project.state["compile"]["ok"] = False
+    project.state["state"] = "paused"
+    skipped = project.invoke("check_manuscript_edit", args)
+    assert skipped["ok"] and not skipped["checked"]
+
+
+@pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
+def test_manuscript_check_trials_the_actual_edit_without_publishing(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    section = project.latex_dir / "sections/score.tex"
+    section.parent.mkdir()
+    section.write_text("Score: one.")
+    main = project.latex_dir / "main.tex"
+    main.write_text(r"\documentclass{article}\begin{document}\input{sections/score}\end{document}")
+    assert project.invoke("compile_paper", {})["ok"]
+    # An ordinary edit after the receipt keeps the archived PDF authenticated.
+    main.write_text(main.read_text().replace(r"\input", r"Results. \input"))
+    current = main.read_text()
+    base = hashlib.sha256(main.read_bytes()).hexdigest()
+    cited = current.replace(r"\input", r"\cite{newsource}\input")
+    broken = current.replace(r"\input", r"\undefinedTrialCommand\input")
+    (project.latex_dir / "ignored.txt").write_text("must stay outside the trial")
+
+    def files():
+        return {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+
+    before = files()
+    before_state = json.dumps(project.state, sort_keys=True)
+    monkeypatch.setattr(project, "verify_citations", lambda *_: pytest.fail("trial started citation resolution"))
+    subprocess_run = domain.subprocess.run
+    trials = []
+
+    def record_run(cmd, **kw):
+        work = kw["cwd"]
+        trials.append((work / "main.tex").read_text())
+        assert work != project.latex_dir and kw["env"]["HOME"] == str(work)
+        assert kw["timeout"] == 90 and kw["env"]["shell_escape"] == "f" and "-no-shell-escape" in cmd
+        assert not (work / "main.pdf").exists() and not (work / "main.log").exists()
+        assert not (work / "ignored.txt").exists()
+        return subprocess_run(cmd, **kw)
+
+    monkeypatch.setattr(domain.subprocess, "run", record_run)
+    assert project.invoke("check_manuscript_edit", {"content": cited, "base_sha256": base}) == {
+        "ok": True, "checked": True,
+    }
+    assert trials == [cited]
+    result = project.invoke("check_manuscript_edit", {"content": broken, "base_sha256": base})
+    assert result["ok"] is False and "Undefined control sequence" in result["diagnostic"]
+    assert trials == [cited, broken, current]
+    assert files() == before and json.dumps(project.state, sort_keys=True) == before_state
+
+    main.write_text(broken)
+    incremental = broken.replace("Results.", "Results changed.")
+    result = project.invoke("check_manuscript_edit", {"content": incremental})
+    assert result["ok"] and not result["checked"] and "also fails" in result["reason"]
+    assert trials[-2:] == [incremental, broken]
+    assert main.read_text() == broken and project.path.read_bytes() == before[project.path]
+
+
+def test_manuscript_check_handles_missing_tool_and_unsafe_assets(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    pdf = project.latex_dir / "main.pdf"
+    pdf.write_bytes(b"prior build")
+    digest = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    project.state.update(compiled_pdf_sha256=digest, compile={"ok": True, "pdf_sha256": digest})
+    args = {"content": "draft"}
+    monkeypatch.setenv("PATH", str(tmp_path))
+    result = project.invoke("check_manuscript_edit", args)
+    assert not result["ok"] and not result["checked"] and "pdflatex" in result["diagnostic"]
+    (project.latex_dir / "linked").symlink_to(project.state_dir, target_is_directory=True)
+    with pytest.raises(ValueError, match="regular files inside paper"):
+        project.invoke("check_manuscript_edit", args)
+
+
 def test_transport_carries_only_requested_result(tmp_path):
     reader = io.StringIO('{"id":"bad","op":"eval","args":{}}\n{"id":"read","op":"inspect_project"}\n')
     writer = io.StringIO()
@@ -320,6 +414,35 @@ def test_measurement_table_uses_worker_decimal_values_even_beyond_model_excerpt(
         project.invoke("render_results_table", args)
 
 
+def test_render_plot_discovery_and_strict_delivery_require_actual_read(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    registered = plan()
+    project.state["plan"] = registered
+    results = tmp_path / registered["expected"]
+    results.write_text('[{"arm": {"loss": 0.738421}, "n": 2}]')
+    sha = hashlib.sha256(results.read_bytes()).hexdigest()
+    project.state["experiment"] = {"status": "completed", "artifact": registered["expected"], "sha256": sha}
+    assert project.invoke("render_plot", {})["available"] == [{"rows_pointer": "", "rows": 1, "columns": ["arm.loss", "n"]}]
+    args = {"filename": "loss.png", "kind": "points", "x": {"path": "n"}, "series": [{"path": "arm.loss"}]}
+    with pytest.raises(ValueError, match="Missing measured column"):
+        project.invoke("render_plot", {**args, "series": [{"path": "arm.other"}]})
+
+    image = project.figures_dir / args["filename"]
+    image.write_bytes(b"published fixture")
+    record = {"status": "completed", "backend": "local", "job_id": "123", "artifact": "paper/figures/loss.png",
+              "sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "input_sha256": sha}
+    monkeypatch.setattr(domain.native_experiment, "execute", lambda *a, **kw: dict(record))
+    legacy = project.invoke("render_plot", {"script": "scripts/old.py", "filename": "loss.png"})
+    assert "no measurement-read evidence" in legacy["measurement_note"]
+    project.state["compile"] = {"inputs": ["figures/loss.png"]}
+    assert any("read /study/results.json" in i for i in project._strict_paper_issues())
+    record["input_access"] = "worker_observed_read"
+    assert project.invoke("render_plot", args)["input_access"] == "worker_observed_read"
+    assert project._strict_paper_issues() == []
+    project.state["compile"]["inputs"] = []
+    assert any("Include a scientific plot" in i for i in project._strict_paper_issues())
+
+
 def test_detects_named_optimizer_absent_from_worker(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     script = tmp_path / "scripts/fit.py"
@@ -378,6 +501,105 @@ def test_verified_concept_can_be_reused_without_charging_or_loading_a_key(tmp_pa
     with pytest.raises(RuntimeError,match="Google key"):
         project.invoke("generate_concept_figure",args)
 
+
+@pytest.mark.parametrize("verdict", ["passed", "contradiction"])
+def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_path, monkeypatch, verdict):
+    from google import genai
+    from PIL import Image
+    from ark import nano_banana
+
+    project = open_project(tmp_path, monkeypatch)
+    approved = project.invoke("plan_experiment", plan())
+    artifact = tmp_path / approved["expected"]
+    artifact.write_text('{"summary": {"paired_probes": 8}}')
+    project.state["experiment"] = {
+        "status": "completed", "artifact": approved["expected"], "sha256": domain._sha(artifact),
+        "plan_sha256": hashlib.sha256(json.dumps(approved, sort_keys=True).encode()).hexdigest(),
+    }
+    project.save()
+    (project.state_dir / "experiment_plan.yaml").write_text("unsupported class clusters")
+    args = {"name": "method", "caption": "Unsupported class clusters.", "description": "Depict class clusters."}
+    panel = {
+        "subject": "An ordered row of search inputs.",
+        "groups": [
+            {"label": "Linear search", "description": "Scan the common input.", "evidence": "linear"},
+            {"label": "Binary search", "description": "Bisect the common input.", "evidence": "binary"},
+        ],
+        "caption": "Count comparisons on the same sorted input and target.",
+    }
+    monkeypatch.setattr(domain.deep_research, "get_gemini_api_key", lambda: "fixture")
+    monkeypatch.setattr(genai, "Client", lambda **kw: object())
+    monkeypatch.setattr(nano_banana, "repair_concept_image", lambda *a: pytest.fail("redrew a typeset image"))
+    prompts, draws, reviews = [], [], []
+
+    def plan_panel(client, model, prompt):
+        assert all(s in prompt for s in ("linear", "binary", "paired_probes"))
+        assert "class clusters" not in prompt
+        prompts.append(prompt)
+        return json.dumps(panel)
+
+    def draw(prompt, path, key, model, *, aspect_ratio, receipt):
+        draws.append(prompt)
+        if path.suffix == ".image":
+            assert aspect_ratio == "1:1" and "An ordered row" in prompt
+        else:
+            assert aspect_ratio == "16:9" and "Requested presentation" in prompt
+        buf = io.BytesIO()
+        Image.new("RGB", (50, 40), "silver").save(buf, "PNG")
+        nano_banana._save_generated_image(buf.getvalue(), path, receipt, provider="google", image_model=model)
+        return True
+
+    def inspect(path, design, provider, key, model):
+        reviews.append(domain._sha(path))
+        checks = {name: {"status": "consistent", "observed": "Approved condition."}
+                  for name in nano_banana._SEMANTIC_CHECKS}
+        checks["printed_labels"]["transcription"] = [g["label"] for g in panel["groups"]]
+        if "subject-only illustration" in design:
+            assert panel["caption"] in design and "Unsupported class clusters." not in design
+            if verdict == "contradiction":
+                checks["comparison_groups"].update(status="contradiction", expected="Only two conditions.",
+                                                   correction="Remove the unsupported third condition.")
+        return {"status": nano_banana.semantic_verdict(checks), "model": model, "provider": provider, "checks": checks}
+
+    monkeypatch.setattr(nano_banana, "_call_gemini_text", plan_panel)
+    monkeypatch.setattr(nano_banana, "generate_figure", draw)
+    monkeypatch.setattr(nano_banana, "review_concept_image", inspect)
+    result = project.invoke("generate_concept_figure", args)
+    path = tmp_path / result["path"]
+    get_entry = lambda: domain.figure_manifest.load_manifest(project.figures_dir)["figures"][path.name]
+    entry = get_entry()
+    assert len(prompts) == len(draws) == len(reviews) == 1
+    assert result["representation"] == "study_panel" and result["semantic_pass"] == (verdict == "passed")
+    assert result.get("caption") == (panel["caption"] if verdict == "passed" else None)
+    assert domain._sha(path) == result["sha256"] == entry["artifact_sha256"]
+    assert domain._sha(path.parent / entry["illustration_file"]) == entry["payload_sha256"]
+    assert entry["semantic_review"]["label_verification"]["coverage"] == "reproduced_typeset"
+    assert project.invoke("generate_concept_figure", args)["semantic_pass"] == (verdict == "passed")
+    assert len(prompts) == len(draws) == len(reviews) == 1
+
+    schematic = project.invoke("generate_concept_figure", {**args, "representation": "schematic"})
+    assert schematic["representation"] == "schematic" and schematic["semantic_pass"]
+    assert get_entry()["native_description"] != entry["native_description"]
+    assert len(prompts) == 1 and len(draws) == len(reviews) == 2
+    artifact.write_text('{"summary": "tampered"}')
+    assert "tampered" not in nano_banana.native_study_design(project.state, project.state_dir)
+
+
+def test_unavailable_initial_panel_does_not_trigger_a_second_image(tmp_path, monkeypatch):
+    from ark import nano_banana
+
+    project = open_project(tmp_path, monkeypatch)
+    project.invoke("plan_experiment", plan())
+    args = {"name": "method", "caption": "A comparison", "description": "Two conditions"}
+    monkeypatch.setattr(domain.deep_research, "get_gemini_api_key", lambda: "fixture")
+    monkeypatch.setattr(nano_banana, "create_study_panel", lambda *a: None)
+    monkeypatch.setattr(nano_banana, "generate_figure", lambda *a, **kw: pytest.fail("unexpected fallback image"))
+    with pytest.raises(RuntimeError, match="No source-grounded study panel"):
+        project.invoke("generate_concept_figure", args)
+    with pytest.raises(RuntimeError, match="ambiguous"):
+        project.invoke("generate_concept_figure", args)
+    assert "concept" not in project.state
+
 def test_fenced_source_repair_preserves_code_and_ordinary_tex(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     issue = "./main.tex:3: Missing $ inserted"
@@ -388,3 +610,40 @@ def test_fenced_source_repair_preserves_code_and_ordinary_tex(tmp_path, monkeypa
     assert edit["content"].splitlines() == [r"\begin{verbatim}", "score_per_seed = [4, 6]", r"\end{verbatim}"]
     main.write_text("x\ny\nz\n")
     assert project._suggest_tex_edit(project.latex_dir, issue) is None
+
+
+def test_plan_result_path_records_same_receipt_as_legacy_expected(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    old = plan()
+    current = {k: v for k, v in old.items() if k != "expected"}
+    current["result_path"] = old["expected"]
+    assert project.plan_experiment(current) == old
+    assert project.plan_experiment(old) == old
+    with pytest.raises(ValueError, match="Conflicting output filenames"):
+        project.plan_experiment(dict(current, expected="results/else.json"))
+    with pytest.raises(ValueError, match="result_path must be one output file path"):
+        project.plan_experiment(dict(current, result_path="hypothesized improvement"))
+
+
+@pytest.mark.parametrize(("reason", "expected"), [("owner_error", "running"), ("quota", "running"), ("ethics", "paused")])
+def test_one_continue_after_stopping_an_already_paused_owner(tmp_path, monkeypatch, reason, expected):
+    project = open_project(tmp_path, monkeypatch)
+    project.state.update(state="paused", pause_reason=reason)
+    project.save()
+    project.invoke("stop", {})
+    reopened = domain.NativeProject(tmp_path)
+    assert reopened.invoke("continue_project", {})["state"] == expected
+    assert domain.NativeProject(tmp_path).state["state"] == expected
+
+
+def test_compiler_reports_first_source_error_instead_of_memory_statistics(tmp_path):
+    log = tmp_path / "main.log"
+    log.write_text(
+        "./main.tex:56: Argument of \\caption has an extra }.\n"
+        "<inserted text>\n  \\par\nl.56 ... caption ...\n"
+        "\n 75i,7n,79p,1001b,630s stack positions out of 10000i\n"
+        "./main.tex:56:  ==> Fatal error occurred, no output PDF file produced!\n"
+    )
+    detail = domain.extract_latex_errors(log)
+    assert "./main.tex:56: Argument" in detail
+    assert "stack positions" not in detail and "Fatal error" not in detail

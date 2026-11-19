@@ -1,6 +1,9 @@
 // Research milestones come from the durable project journal; transient token and log
 // traffic never changes the scientific state or triggers a screen-reader announcement.
 const researchLabels = {
+  build_error: ['The manuscript did not compile','稿件编译失败','تعذّر تجميع المخطوطة'],
+  build_location: ['Typesetting error in %s, line %s','排版错误，位于 %s 第 %s 行','خطأ تنضيد في %s، السطر %s'],
+  build_details: ['Compiler details','编译详情','تفاصيل التجميع'],
   paper_ready: ['Paper PDF available','论文 PDF 已生成','ملف الورقة متاح'],
   file_ready: ['Published %s','已生成证据文件 %s','ملف الأدلة متاح %s'],
   view_evidence: ['View evidence files','查看证据文件','عرض ملفات الأدلة'],
@@ -189,7 +192,17 @@ function renderResearch(animate=false) {
   const artifact = researchData.evidence?.[0];
   const fallback = artifact?.key === 'paper/main.pdf' ? rt('paper_ready') :
     artifact ? rt('file_ready', artifact.label) : rt('empty');
-  const observed = obs?.observation || researchData.milestone?.text || fallback;
+  const diagnostic = obs?.action === 'paper_compile_failed' ? obs.observation : '';
+  const location = diagnostic?.match(/(?:^|\s)(?:\.\/)?([\w./-]+\.(?:tex|sty|bbl|cls)):(\d+):/m);
+  const details = re('research-build-details');
+  if (details.dataset.event !== (diagnostic ? obs.id : '')) {
+    details.dataset.event = diagnostic ? obs.id : '';
+    details.open = false;
+    details.querySelector('pre').textContent = diagnostic || '';
+  }
+  details.hidden = !diagnostic;
+  const observed = diagnostic ? (location ? rt('build_location',location[1],location[2]) : rt('build_error')) :
+    obs?.observation || researchData.milestone?.text || fallback;
   const measured = Number.isInteger(obs?.count) && Number.isInteger(obs.total) &&
     obs.count >= 0 && obs.total > 0 && obs.count <= obs.total;
   const counter = measured ? ' (' + obs.count + '/' + obs.total + ')' : '';

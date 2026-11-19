@@ -24,6 +24,7 @@
 #research-action { font-size:clamp(1.25rem,2.4vw,1.8rem); line-height:1.21; font-weight:600; letter-spacing:-.028em; }
 #research-state { display:inline-flex; margin-top:16px; padding:3px 8px; border:1px solid #698d82; border-radius:5px; font-size:.76rem; color:#e3efe8; }
 #research-observation { color:var(--ink); font-size:1.03rem; line-height:1.55; }
+#research-build-details pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:.78rem; }
 #research-count { height:4px; margin-top:12px; background:#dfebe5; border-radius:3px; overflow:hidden; }
 #research-count span { display:block; height:100%; background:#237a65; transform-origin:left; }
 #research-count:dir(rtl) span { transform-origin:right; }

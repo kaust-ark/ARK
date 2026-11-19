@@ -243,9 +243,15 @@ def extract_latex_errors(log_path: Path) -> str:
 
     lines = log_text.splitlines()
     error_markers = []
+    terminal_markers = []
     for i, line in enumerate(lines):
-        if (line.startswith("!")
-                or "Fatal error" in line
+        if "==> Fatal error occurred" in line:
+            terminal_markers.append(i)
+            continue
+        # With -file-line-error, TeX can omit the traditional leading bang.
+        located = re.match(r"^(?:\./)?[^:\n]+\.(?:tex|sty|cls|bbl):\d+:\s+(.+)", line)
+        if (located and not re.match(r"(?:warning|info)\b", located[1], re.I)
+                or line.startswith("!")
                 or "Emergency stop" in line
                 or "Undefined control sequence" in line
                 or "LaTeX Error:" in line
@@ -261,6 +267,7 @@ def extract_latex_errors(log_path: Path) -> str:
                 or "Paragraph ended before" in line):
             error_markers.append(i)
 
+    error_markers = error_markers or terminal_markers
     if not error_markers:
         return "Compilation failed but no specific errors found in main.log."
 
@@ -273,7 +280,7 @@ def extract_latex_errors(log_path: Path) -> str:
 
     blocks = []
     for idx in error_markers:
-        start = max(0, idx - 1)
+        start = idx
         end = min(len(lines), idx + 4)
         block = "\n".join(lines[start:end])
         blocks.append(block)

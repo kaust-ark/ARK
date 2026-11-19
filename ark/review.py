@@ -307,6 +307,45 @@ def _string(value, field, *, limit=4000):
     return value.strip()
 
 
+_JSON_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[{}\[\],:]|[^"{}\[\],: \t\r\n]+')
+_JSON_STRING_MARK = re.compile(r'\\.|"')
+
+
+def _json_container_tokens(quote):
+    if not quote or quote[0] not in "{[":
+        return ()
+    try:
+        json.loads(quote)
+    except (ValueError, RecursionError):
+        return ()
+    tokens = tuple(_JSON_TOKEN.findall(quote))
+    return () if any(t in ("NaN", "Infinity", "-Infinity") for t in tokens) else tokens
+
+
+def _json_quote_observed(snapshot, artifact, view, quote):
+    tokens = _json_container_tokens(quote)
+    if not tokens:
+        return quote in view["text"]
+    pattern = re.compile(r"[ \t\r\n]*".join(map(re.escape, tokens)))
+    start = view["receipt"]["start"] - 1
+    source = view["text"]
+    inside_string = False
+    cursor = 0
+    for match in pattern.finditer(view["text"]):
+        if start and not cursor:
+            # A partial window can begin inside a string. Its prefix establishes
+            # lexical context only; the complete match must lie inside this view.
+            source = _artifact(snapshot, artifact)[0].decode("utf-8", errors="replace")
+        offset = start + match.start()
+        for mark in _JSON_STRING_MARK.finditer(source, cursor, offset):
+            if mark[0] == '"':
+                inside_string = not inside_string
+        if not inside_string:
+            return True
+        cursor = offset
+    return False
+
+
 def _references(snapshot, refs, observed, blind, *, required):
     if not isinstance(refs, list) or len(refs) > 24 or (required and not refs):
         raise ValueError("Provide specific evidence for this judgment")
@@ -344,7 +383,12 @@ def _references(snapshot, refs, observed, blind, *, required):
                 break
             options = {k: r[k] for k in ("statistic", "column", "rows_pointer") if k in r}
             view = read_evidence(snapshot, artifact, page=page, start=r.get("start", 1), **options)
-            located = view["receipt"] == r and _contains_observed_quote(view["text"], quote)
+            if view["receipt"] != r:
+                continue
+            if Path(artifact).suffix.lower() == ".json" and not options:
+                located = _json_quote_observed(snapshot, artifact, view, quote)
+            else:
+                located = _contains_observed_quote(view["text"], quote)
             if located:
                 calculation = options
         if not located:
@@ -405,10 +449,16 @@ def _resolution_changed(snapshot, previous, old, refs):
     # A previously missing control or source can support an unchanged claim.
     # Require a changed *evidence artifact* and a newly located observation;
     # changing an unrelated sentence in the TeX file cannot clear a blocker.
-    prior_observations = {(r["artifact"], r.get("page"), r.get("quote")) for r in old["evidence"]}
+    def observation(r):
+        quote = r.get("quote")
+        if r["artifact"].lower().endswith(".json"):
+            quote = _json_container_tokens(quote) or quote
+        return r["artifact"], r.get("page"), quote
+
+    prior_observations = {observation(r) for r in old["evidence"]}
     return any(r["artifact"] not in submission and
                r["sha256"] != previous["artifact_hashes"].get(r["artifact"]) and
-               (r["artifact"], r.get("page"), r.get("quote")) not in prior_observations for r in refs)
+               observation(r) not in prior_observations for r in refs)
 
 
 def _score(value):

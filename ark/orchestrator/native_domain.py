@@ -76,27 +76,63 @@ def install_skills(root):
             shutil.copytree(skill.parent, dest)
 
 
+_PAPER_EXTENSIONS = {".tex", ".sty", ".bst", ".bib", ".cls", ".png", ".jpg", ".jpeg", ".pdf"}
+_PDFLATEX = (
+    "pdflatex", "-file-line-error", "-recorder", "-no-shell-escape",
+    "-halt-on-error", "-interaction=nonstopmode", "main.tex",
+)
+
+
+def _paper_inputs(paper):
+    if paper.resolve() != paper:
+        raise ValueError("Paper assets must be regular files inside paper/.")
+    for path in sorted(paper.rglob("*")):
+        if path == paper / "main.pdf":
+            continue
+        if path.is_symlink() and (path.suffix.lower() in _PAPER_EXTENSIONS or path.is_dir()):
+            raise ValueError("Paper assets must be regular files inside paper/.")
+        if path.suffix.lower() in _PAPER_EXTENSIONS and path.is_file():
+            if path.resolve() != path:
+                raise ValueError("Paper assets must be regular files inside paper/.")
+            yield path
+
+
 def _paper_sources(paper):
     digest = hashlib.sha256()
-    for path in sorted(paper.rglob("*")):
-        if path.suffix.lower() not in {
-            ".tex",
-            ".sty",
-            ".bst",
-            ".bib",
-            ".cls",
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".pdf",
-        }:
-            continue
-        if path == paper / "main.pdf" or not path.is_file():
-            continue
-        if path.is_symlink() or not path.resolve().is_relative_to(paper.resolve()):
-            raise ValueError("Paper assets must be regular files inside paper/.")
+    for path in _paper_inputs(paper):
         digest.update(str(path.relative_to(paper)).encode() + b"\0" + bytes.fromhex(_sha(path)))
     return digest.hexdigest()
+
+
+def _stage_tex(paper, staging):
+    for path in _paper_inputs(paper):
+        target = staging / path.relative_to(paper)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+    env = {k: os.environ[k] for k in ("PATH", "LANG", "TEXMFCNF") if k in os.environ}
+    env.update(
+        HOME=str(staging), openin_any="p", openout_any="p", shell_escape="f", SOURCE_DATE_EPOCH="1609459200"
+    )
+    return env
+
+
+def _manuscript_first_pass(paper, content):
+    with tempfile.TemporaryDirectory(prefix="idea2paper-edit-") as tmp:
+        staging = Path(tmp)
+        env = _stage_tex(paper, staging)
+        (staging / "main.tex").write_bytes(content)
+        run = subprocess.run(
+            _PDFLATEX, cwd=staging, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=90
+        )
+        if run.returncode:
+            log = staging / "main.log"
+            if log.is_file():
+                return extract_latex_errors(log)[:2000]
+            return (run.stdout + run.stderr).decode(errors="replace").strip()[-2000:] or "pdflatex failed."
+        pdf = staging / "main.pdf"
+        if not pdf.is_file() or not pdf.stat().st_size:
+            return "pdflatex produced no manuscript pages."
+        return None
 
 
 class NativeProject(CompilerMixin):
@@ -342,14 +378,13 @@ class NativeProject(CompilerMixin):
         status = self.state.get("state")
         if status == "stopped":
             native_experiment.cancel(self.root)
-            record = self._measurement_receipt()
-            if record:
+            if record := self._measurement_receipt():
                 self.state["experiment"] = record
             self.state["state"] = self.state.pop("state_before_stop", "running")
-            self.save()
-        elif status == "paused" and self.state.get("pause_reason") in {"quota", "owner_error"}:
-            self.state["state"] = "running"
+        if self.state.get("state") == "paused" and self.state.get("pause_reason") in {"quota", "owner_error"}:
+            self.state.update(state="running")
             self.state.pop("pause_reason", None)
+        if self.state.get("state") != status:
             self.save()
         return self.project_status(args)
 
@@ -479,9 +514,12 @@ class NativeProject(CompilerMixin):
                 "Google Deep Research report verified.",
                 artifact="auto_research/state/deep_research.md",
             )
+        report = (self.state_dir / "deep_research.md").read_text()
         return {
             "path": "auto_research/state/deep_research.md",
-            "report": (self.state_dir / "deep_research.md").read_text()[:28000],
+            "report": report[:28000],
+            "total_chars": len(report),
+            "next_offset": 28000 if len(report) > 28000 else None,
             "interaction_id": receipt["interaction_id"],
         }
 
@@ -493,8 +531,11 @@ class NativeProject(CompilerMixin):
             raise ValueError("Obtain a verified Deep Research report before declaring this experiment.")
         plan = {
             key: _text(args, key)
-            for key in ("question", "baseline", "comparison", "metric", "script", "expected")
+            for key in ("question", "baseline", "comparison", "metric", "script")
         }
+        if "result_path" in args and "expected" in args and args["result_path"] != args["expected"]:
+            raise ValueError("Conflicting output filenames in result_path and legacy expected.")
+        plan["expected"] = _text(args, "result_path" if "result_path" in args else "expected")
         controls = args.get("controls")
         if (
             not isinstance(controls, list)
@@ -503,10 +544,10 @@ class NativeProject(CompilerMixin):
         ):
             raise ValueError("Declare the experimental controls as a list of strings.")
         plan["controls"] = controls
-        if not re.fullmatch(r"scripts/[\w-]+\.py", plan["script"], re.ASCII) or not re.fullmatch(
-            r"results/[\w-]+\.json", plan["expected"], re.ASCII
-        ):
-            raise ValueError("Choose scripts/<name>.py and results/<name>.json.")
+        if not re.fullmatch(r"scripts/[\w-]+\.py", plan["script"], re.ASCII):
+            raise ValueError('script must be one Python file path such as "scripts/experiment.py".')
+        if not re.fullmatch(r"results/[\w-]+\.json", plan["expected"], re.ASCII):
+            raise ValueError('result_path must be one output file path such as "results/measurements.json".')
         existing = self._measurement_receipt() or self.state.get("experiment")
         pending = self.state.get("pending_plan_change", {})
         if pending.get("plan") == plan:
@@ -550,8 +591,9 @@ class NativeProject(CompilerMixin):
             raise ValueError("Revise the experiment plan to address the requested change before execution.")
         if not (plan := self.state.get("plan")):
             raise ValueError("Declare the question, baseline, metric and paired controls before executing.")
-        script = _text(args, "script") if plot else plan["script"]
+        script = plan["script"]
         filename = _text(args, "filename") if plot else None
+        options = {}
         if not plot:
             source = (self.root / script).resolve()
             if source.parent != self.root / "scripts":
@@ -561,12 +603,23 @@ class NativeProject(CompilerMixin):
                 raise ValueError("The submitted code changed. Restore the original script before polling.")
             self.state["sealed_script"] = code_hash
             self.save()
-        elif self.state.get("experiment", {}).get("status") != "completed":
-            raise ValueError("Complete the research experiment before rendering its measured results.")
+        else:
+            receipt = self.state.get("experiment") or {}
+            if (
+                receipt.get("status") != "completed"
+                or receipt.get("artifact") != plan["expected"]
+                or not receipt.get("sha256")
+            ):
+                raise ValueError("Complete the planned experiment before rendering its measured results.")
+            script = _text(args, "script") if "script" in args else None
+            selection = {k: v for k, v in args.items() if k not in {"script", "filename"}}
+            if not script and not selection:
+                raise ValueError("Choose measured x and series fields, or supply a plotting script.")
+            options = {"selection": selection or None, "measurement_sha256": receipt["sha256"]}
         before = self.state.get("plots", {}).get(filename) if plot else self.state.get("experiment")
         deadline = time.monotonic() + 20
         while True:
-            record = native_experiment.execute(self.root, self.config, plan, script, plot=filename)
+            record = native_experiment.execute(self.root, self.config, plan, script, plot=filename, **options)
             if (
                 record["status"] in {"completed", "failed", "cancelled", "cancelling"}
                 or time.monotonic() >= deadline
@@ -575,7 +628,7 @@ class NativeProject(CompilerMixin):
             time.sleep(2)
         if plot:
             self.state.setdefault("plots", {})[filename] = record
-            if record["status"] == "completed":
+            if record["status"] == "completed" and record.get("input_access") == "worker_observed_read":
                 manifest = figure_manifest.load_manifest(self.figures_dir, infer_existing=False)
                 figure_manifest.register_figure(
                     manifest,
@@ -583,8 +636,10 @@ class NativeProject(CompilerMixin):
                     "matplotlib",
                     figures_dir=self.figures_dir,
                     input_sha256=record["input_sha256"],
+                    input_access=record["input_access"],
                     script=script,
                     artifact_sha256=record["sha256"],
+                    **({"plot_spec": record["plot_spec"]} if "plot_spec" in record else {}),
                 )
                 figure_manifest.save_manifest(self.figures_dir, manifest)
         else:
@@ -608,6 +663,12 @@ class NativeProject(CompilerMixin):
                 "result_arrays": measurement_table.describe(data),
                 "measurements_excerpt": (self.root / record["artifact"]).read_text()[:16000],
                 "table_tool": "Use render_results_table to format measured columns in the paper without transcription.",
+            }
+        if plot and record["status"] == "completed" and not record.get("input_access"):
+            return {
+                **record,
+                "measurement_note": "This earlier plot receipt has no measurement-read evidence. "
+                "Use render_plot with measured columns, or explicitly render a custom plot under a new filename.",
             }
         return record
 
@@ -649,6 +710,8 @@ class NativeProject(CompilerMixin):
         return {**record, "include": r"\input{" + record["path"] + "}", "preview": tex[:4000]}
 
     def render_plot(self, args):
+        if not args:
+            return {"available": measurement_table.describe(self._measurements()[0])}
         return self._execute(args, plot=True)
 
     def generate_concept_figure(self, args):
@@ -663,11 +726,18 @@ class NativeProject(CompilerMixin):
             raise ValueError("Choose a simple figure basename.")
         caption = _text(args, "caption", limit=1000)
         description = _text(args, "description", limit=9000)
+        representation = args.get("representation", "study_panel")
+        if representation not in ("study_panel", "schematic"):
+            raise ValueError("Choose study_panel for comparison arms or schematic for a mechanism diagram.")
         spec = {"name": name, "caption": caption, "section_context": description, "placement": "full_width"}
         path = self.figures_dir / (name + ".png")
         manifest = figure_manifest.load_manifest(self.figures_dir, infer_existing=False)
         entry = manifest["figures"].get(path.name) or {}
-        fingerprint = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
+        legacy_fingerprint = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
+        spec["representation"] = representation
+        design = nano_banana.native_study_design(self.state, self.state_dir)
+        design_sha = hashlib.sha256(design.encode()).hexdigest()
+        fingerprint = hashlib.sha256(json.dumps([spec, design_sha], sort_keys=True).encode()).hexdigest()
         previous = _load(self.state_dir / "native_review.json", {})
         reviewed = previous.get("artifact_hashes", {}).get(str(path.relative_to(self.root)))
         current = self.state.get("concept") or {}
@@ -678,13 +748,24 @@ class NativeProject(CompilerMixin):
             and entry.get("source") == "nano_banana" and entry.get("provider") == "google"
             and current.get("semantic_pass")
         )
-        if verified_image and reviewed and reviewed != actual_sha:
+        existing_kind = "study_panel" if entry.get("representation") == "subject_with_comparison_panel" else "schematic"
+        legacy = not entry.get("native_design_sha256") and (
+            "representation" not in args or representation == existing_kind
+        )
+        same_request = entry.get("native_description") == fingerprint
+        if verified_image:
+            current = {**current, "representation": existing_kind}
+            if existing_kind == "study_panel" and (entry.get("panel_plan") or {}).get("caption"):
+                current["caption"] = entry["panel_plan"]["caption"]
+        legacy_request = legacy and entry.get("native_description") == legacy_fingerprint
+        unversioned = legacy and not entry.get("native_description") and "representation" not in args
+        if verified_image and reviewed and reviewed != actual_sha and (same_request or legacy_request or unversioned):
             return {
                 **current,
                 "already_revised": True,
                 "next": "This image changed after the recorded review. Compile and inspect the updated PDF.",
             }
-        if verified_image and entry.get("native_description") == fingerprint:
+        if verified_image and (same_request or legacy_request):
             return {**current, "cached": True}
         key = deep_research.get_gemini_api_key()
         if not key:
@@ -701,14 +782,20 @@ class NativeProject(CompilerMixin):
             self.state["image_intent"] = fingerprint
             self.save()
             receipt = {}
-            model = self.config.get("nano_banana_model") or "flash"
-            if not nano_banana.generate_figure(
+            if representation == "study_panel":
+                text_model = self.config.get("paperbanana_text_model") or nano_banana.TEXT_MODELS["flash"]
+                receipt = nano_banana.create_study_panel(
+                    path, design, "google", key, text_model.removeprefix("google/").removeprefix("gemini/"), "16:9"
+                )
+                if not receipt:
+                    raise RuntimeError("No source-grounded study panel was produced. Check the plan and image receipt.")
+            elif not nano_banana.generate_figure(
                 "Create a method illustration. Show the experimental design. Omit numerical outcomes, fitted values, "
                 "probability scores and performance trends. The data-derived plot reports measured results.\n"
-                + description,
+                + design + "\nRequested presentation (use only supported facts):\n" + description,
                 path,
                 key,
-                model,
+                self.config.get("nano_banana_model") or "flash",
                 aspect_ratio="16:9",
                 receipt=receipt,
             ):
@@ -720,18 +807,19 @@ class NativeProject(CompilerMixin):
                 figures_dir=self.figures_dir,
                 placement="full_width",
                 native_description=fingerprint,
+                native_design_sha256=design_sha,
                 **receipt,
             )
             figure_manifest.save_manifest(self.figures_dir, manifest)
+        entry = manifest["figures"][path.name]
+        if entry.get("representation") == "subject_with_comparison_panel":
+            spec["caption"] = entry["panel_plan"]["caption"]
+            spec["section_context"] = "Subject illustration with typeset comparison arms from the approved experiment."
         specs_file = self.figures_dir / "concept_figures.json"
         specs = [s for s in _load(specs_file, []) if s.get("name") != name] + [spec]
         _json(specs_file, specs)
         passed = self._check_final_concept_image(spec, path, manifest, key, "16:9")
-        self.state["concept"] = {
-            "path": str(path.relative_to(self.root)),
-            "sha256": _sha(path),
-            "semantic_pass": passed,
-        }
+        self.state["concept"] = self._concept_record(path, entry, passed)
         self.save()
         self.event(
             "figures",
@@ -740,6 +828,16 @@ class NativeProject(CompilerMixin):
             artifact=str(path.relative_to(self.root)),
         )
         return self.state["concept"]
+
+    def _concept_record(self, path, entry, passed):
+        panel = entry.get("representation") == "subject_with_comparison_panel"
+        record = {
+            "path": str(path.relative_to(self.root)), "sha256": _sha(path), "semantic_pass": passed,
+            "representation": "study_panel" if panel else "schematic",
+        }
+        if passed and panel and (caption := (entry.get("panel_plan") or {}).get("caption")):
+            record["caption"] = caption
+        return record
 
     def lookup_papers(self, args):
         query = _text(args, "query", limit=500)
@@ -913,7 +1011,7 @@ class NativeProject(CompilerMixin):
             return
         key = deep_research.get_gemini_api_key()
         passed = self._check_final_concept_image(spec, path, manifest, key, "16:9")
-        concept.update(semantic_pass=passed, sha256=_sha(path))
+        self.state["concept"] = self._concept_record(path, manifest["figures"][path.name], passed)
         self.save()
 
     def _rendered_body_length(self):
@@ -1125,6 +1223,48 @@ class NativeProject(CompilerMixin):
         return {"path": str(file.relative_to(self.root)), "replace": literal,
                 "content": amended, "expected_matches": source.count(literal)}
 
+    def check_manuscript_edit(self, args):
+        """Allow incremental drafting, but catch edits that break a previously built paper."""
+        content = args.get("content")
+        if not isinstance(content, str):
+            raise ValueError("Expected the full proposed main.tex as UTF-8 text.")
+        candidate = content.encode()
+        if len(candidate) > 512 * 1024:
+            raise ValueError("Expected the proposed main.tex as UTF-8 text up to 512 KiB.")
+        source = self.latex_dir / "main.tex"
+        if source.resolve() != source:
+            raise ValueError("The manuscript must be a regular file inside paper/.")
+        previous = source.read_bytes() if source.is_file() else None
+        if "base_sha256" in args and (
+            previous is None or hashlib.sha256(previous).hexdigest() != args["base_sha256"]
+        ):
+            return {"ok": False, "checked": False, "diagnostic": "The manuscript changed. Reopen the current revision."}
+        pdf = self.latex_dir / "main.pdf"
+        receipt = self.state.get("compile") or {}
+        digest = self.state.get("compiled_pdf_sha256")
+        if (
+            previous is None or receipt.get("ok") is not True or not digest or receipt.get("pdf_sha256") != digest
+            or pdf.is_symlink() or not pdf.is_file() or _sha(pdf) != digest
+        ):
+            return {"ok": True, "checked": False, "reason": "No verified prior build."}
+        try:
+            failure = _manuscript_first_pass(self.latex_dir, candidate)
+            if failure is None:
+                return {"ok": True, "checked": True}
+            baseline_failure = _manuscript_first_pass(self.latex_dir, previous)
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "checked": False, "diagnostic": "The manuscript check timed out after 90 seconds."}
+        except OSError as exc:
+            return {"ok": False, "checked": False, "diagnostic": f"The manuscript check could not run: {exc}"}
+        if baseline_failure is not None:
+            return {
+                "ok": True, "checked": False,
+                "reason": "The current manuscript also fails its first TeX pass. Incremental repair is allowed.",
+                "diagnostic": failure,
+                "baseline_diagnostic": baseline_failure,
+            }
+        return {"ok": False, "checked": True, "diagnostic": failure}
+
     def compile_paper(self, args):
         self._fit_overfull_tables()
         citation_proof = None
@@ -1147,37 +1287,13 @@ class NativeProject(CompilerMixin):
                 return self.state["compile"]
         with tempfile.TemporaryDirectory(prefix="idea2paper-tex-") as tmp:
             staging = Path(tmp)
-
-            def ignore(directory, names):
-                return [
-                    n
-                    for n in names
-                    if (Path(directory) / n).is_file()
-                    and (
-                        n == "main.pdf"
-                        or Path(n).suffix.lower()
-                        not in (".tex", ".sty", ".bib", ".bst", ".cls", ".png", ".jpg", ".pdf", ".jpeg")
-                    )
-                ]
-
-            shutil.copytree(self.latex_dir, staging, dirs_exist_ok=True, ignore=ignore)
-            env = {k: os.environ[k] for k in ("PATH", "LANG", "TEXMFCNF", "TEXMFVAR") if k in os.environ}
-            env.update(
-                HOME=tmp, openin_any="p", openout_any="p", shell_escape="f", SOURCE_DATE_EPOCH="1609459200"
-            )
-            latex = [
-                "pdflatex",
-                "-file-line-error",
-                "-recorder",
-                "-no-shell-escape",
-                "-halt-on-error",
-                "-interaction=nonstopmode",
-                "main.tex",
-            ]
+            env = _stage_tex(self.latex_dir, staging)
+            if "TEXMFVAR" in os.environ:
+                env["TEXMFVAR"] = os.environ["TEXMFVAR"]
             commands = (
-                [latex, ["bibtex", "main"], latex, latex]
+                [_PDFLATEX, ["bibtex", "main"], _PDFLATEX, _PDFLATEX]
                 if re.search(r"\\bibliography\s*\{", source.read_text())
-                else [latex, latex]
+                else [_PDFLATEX, _PDFLATEX]
             )
             for cmd in commands:
                 edit = None
@@ -1343,6 +1459,28 @@ class NativeProject(CompilerMixin):
         measurement = self.state.get("experiment") or {}
         if measurement.get("status") != "completed":
             return issues
+        plots = self.state.get("plots", {})
+        inputs = set(rendered.get("inputs", []))
+        manifest = figure_manifest.load_manifest(self.figures_dir, infer_existing=False)
+        names = set(plots) | {
+            name for name, entry in manifest["figures"].items()
+            if isinstance(entry, dict) and entry.get("source") == "matplotlib"
+        }
+        included = sorted(name for name in names if "figures/" + name in inputs)
+        if not included:
+            issues.append("Include a scientific plot generated from the current worker measurements in the rendered PDF.")
+        for name in included:
+            row = plots.get(name, {})
+            path = self.figures_dir / name
+            if (
+                row.get("status") != "completed"
+                or row.get("input_access") != "worker_observed_read"
+                or row.get("input_sha256") != measurement.get("sha256")
+                or row.get("artifact") != "paper/figures/" + name
+                or path.resolve() != path or not path.is_file() or _sha(path) != row.get("sha256")
+            ):
+                issues.append(f"Render {name} from the current worker measurements with render_plot. "
+                              "Its receipt must confirm that the worker read /study/results.json.")
         tables = {row["path"]: row for row in self.state.get("tables", {}).values()}
         hand_measured = False
         used = []
@@ -1370,6 +1508,24 @@ class NativeProject(CompilerMixin):
                 "to select the matching worker rows and columns, then replace the tabular block with the returned input."
             )
         return issues
+
+    def _opening_review_evidence(self, snapshot):
+        """Put measured inputs, plotting code and cited originals in the blind reader's first turn."""
+        assets = snapshot["artifacts"]
+        def select(names, kind, limit):
+            return list(dict.fromkeys(n for n in names if assets.get(n, {}).get("kind") == kind))[:limit]
+
+        measured = (self.state.get("experiment") or {}).get("artifact")
+        measurements = select([measured, *sorted(assets)], "measurement", 1)
+        registered = [item.get("script") for item in (self.state.get("plots") or {}).values()]
+        # Imported manuscripts may have a plot script and no native run receipt.
+        candidates = [name for name in sorted(assets) if re.search(r"plot|figure", Path(name).stem, re.I)]
+        methods = select([*registered, *candidates], "method", 1)
+        citations = _load(self.state_dir / "native_citations.json", {}).get("checked", {})
+        originals = select([record.get("source") for record in citations.values()] + sorted(assets),
+                           "primary_source", 2)
+        # PDFs need a page selector. The reviewer can request them through read_evidence.
+        return [path for path in [*methods, *measurements, *originals] if Path(path).suffix.lower() != ".pdf"]
 
     def review_snapshot(self, args):
         self._check_compiled()
@@ -1419,6 +1575,7 @@ class NativeProject(CompilerMixin):
             "brief": review.review_prompt(snapshot, previous=previous),
             "rendered_artifact": f"{snapshot.get('paper_dir', 'paper')}/main.pdf",
             "rendered_pages": pages,
+            "opening_evidence": self._opening_review_evidence(snapshot),
             "evidence_refs": sorted(snapshot["artifacts"]),
         }
         if record and review.record_is_current(snapshot, record):
@@ -1541,22 +1698,6 @@ class NativeProject(CompilerMixin):
             parts = re.split(r"\\appendix\b", tex, maxsplit=1)
             if len(parts) < 2 or not re.search(r"\\(?:sub)*section\*?\{[^}]+\}", parts[1]):
                 problems.append("Include a reproducibility appendix with a substantive section.")
-            plotted = [r for r in self.state.get("plots", {}).values() if r.get("status") == "completed"]
-
-            def included_plot(row):
-                path = self.root / row["artifact"]
-                return (
-                    path.is_relative_to(self.latex_dir)
-                    and path.relative_to(self.latex_dir).as_posix() in compiled_files
-                    and path.is_file()
-                    and _sha(path) == row.get("sha256")
-                    and row.get("input_sha256") == measurement.get("sha256")
-                )
-
-            if not any(included_plot(r) for r in plotted):
-                problems.append(
-                    "Include a scientific plot generated from the current worker measurements in the rendered PDF."
-                )
         report = delivery_contract.evaluate(self.root, self.config.get("venue_pages", 4), config=self.config)
         delivery_contract.write_report(self.root, report)
         problems += [f"{x.check}: {x.detail}" for x in report.delivery_blockers(self.config)]
@@ -1595,6 +1736,7 @@ class NativeProject(CompilerMixin):
             "generate_concept_figure",
             "lookup_papers",
             "verify_citations",
+            "check_manuscript_edit",
             "compile_paper",
             "review_snapshot",
             "review_evidence",
@@ -1603,11 +1745,12 @@ class NativeProject(CompilerMixin):
         }
         if op not in allowed or not isinstance(args, dict):
             raise ValueError("Unknown project operation or invalid arguments.")
-        if not self.state and op not in {"project_status", "inspect_project"}:
+        if not self.state and op not in {"project_status", "inspect_project", "check_manuscript_edit"}:
             raise ValueError("Open the project before starting research.")
         if self.state.get("state") in {"paused", "stopped"} and op not in {
             "project_status",
             "inspect_project",
+            "check_manuscript_edit",
             "project_event",
             "ack_command",
             "stop",

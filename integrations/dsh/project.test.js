@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { projectFile, readProjectFile } from './project.js'
+import { projectFile, projectEditor, readProjectFile } from './project.js'
 
 const bundle = dirname(fileURLToPath(import.meta.url))
 test('author can edit sources but cannot rewrite evidence, credentials or linked paths', async t => {
@@ -204,6 +204,7 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
       let response
       if (tools.includes('read_evidence')) {
         assert.deepEqual(tools, ['read_evidence'])
+        assert.ok(history.includes('frozen-source-only-for-independent-reader'))
         assert.ok(!history.includes('parent-scientific-private'))
         assert.match(history, /Rendered manuscript page 2 of 2/)
         assert.match(history, /"type":"image"/)
@@ -247,13 +248,13 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
       case 'stop': stopped = true; return {state:'stopped'}
       case 'project_status': return { state:stopped?'stopped':delivered?'delivered':'running', delivered, commands:[] }
       case 'project_event': events.push(args); return {}
-      case 'review_snapshot': return {revision:'rev1',rendered_pages:2,rendered_artifact:'paper/main.pdf',brief:'Blind reviewer. Inspect results/data.json using read_evidence.'}
-      case 'review_evidence': return {text:'measured-observation',receipt:{artifact:'paper/main.pdf',visual:true},
+      case 'review_snapshot': return {revision:'rev1',rendered_pages:2,rendered_artifact:'paper/main.pdf',opening_evidence:['scripts/plot.py'],brief:'Blind reviewer. Inspect results/data.json using read_evidence.'}
+      case 'review_evidence': if (args.artifact === 'scripts/plot.py') return {text:'frozen-source-only-for-independent-reader',receipt:{artifact:args.artifact,revision:'rev1'}}; return {text:'measured-observation',receipt:{artifact:'paper/main.pdf',visual:true},
         mime_type:'image/png',image_base64:'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAIklEQVR4nGNkYGhgoAZgooopowaNGjRq0KhBowaNGkQRAAAV1ACwA5vbQAAAAABJRU5ErkJggg=='}
       case 'record_review':
         assert.equal(args.verdict.verdict, 'accept')
-        assert.equal(args.observed[0].artifact, 'paper/main.pdf')
-        assert.ok(args.observed.length >= 2)
+        assert.ok(args.observed.some(receipt => receipt.artifact === 'scripts/plot.py'))
+        assert.ok(args.observed.filter(receipt => receipt.artifact === 'paper/main.pdf' && receipt.visual).length >= 2)
         recorded = args
         return { accepted:true }
       case 'deliver': assert.ok(recorded); delivered=true; return {delivered}
@@ -277,7 +278,7 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
     lines.on('line', line => {
       const request = JSON.parse(line)
       try { child.stdio[3].write(JSON.stringify({id:request.id,ok:true,result:domain(request)}) + '\n') }
-      catch(error) { failure=error; child.stdio[3].write(JSON.stringify({id:request.id,ok:false,error:error.message}) + '\n') }
+      catch(error) { failure ??= error; child.stdio[3].write(JSON.stringify({id:request.id,ok:false,error:error.message}) + '\n') }
     })
     const code = await new Promise(resolve => child.once('close',resolve))
     clearTimeout(watchdog)
@@ -302,4 +303,85 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
   await active
   assert.equal(calls.filter(op => op === 'stop').length,1)
   assert.ok(stopped)
+})
+
+test('line edits use displayed one-based positions and a digest, preserving other bytes', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'paper-line-edits-'))
+  t.after(() => rm(root, {recursive:true, force:true}))
+  const path = 'paper/main.tex'
+  const source = 'préambule\r\nfirst 🧪\r\nsame\r\nsame\r\nlast'
+  const {sha256} = await projectFile(root, path, source)
+  const view = await readProjectFile(root, {path, start_line:2})
+  assert.equal(view.sha256, sha256)
+  assert.deepEqual(view.lines.map(l => [l.line,l.text]), [[2,'first 🧪'],[3,'same'],[4,'same'],[5,'last']])
+  assert.equal((await readProjectFile(root, {path, find:'same'})).match_line, 3)
+  assert.equal(view.next_line, null)
+  await assert.rejects(projectFile(root, path, 'edited', undefined, {start_line:2,end_line:2}), /base_sha256/)
+  const edit = {start_line:3,end_line:3,base_sha256:sha256}
+  const after = await projectFile(root, path, 'edited', undefined, edit)
+  assert.equal((await projectFile(root,path)).content, source.replace('same','edited'))
+  await assert.rejects(projectFile(root, path, 'stale', undefined, edit), /changed/)
+  const end = await projectFile(root, path, '', undefined, {start_line:4,end_line:5,base_sha256:after.sha256})
+  assert.equal(end.previous_sha256, after.sha256)
+  assert.equal((await projectFile(root,path)).content, 'préambule\r\nfirst 🧪\r\nedited\r\n')
+})
+
+test('native manuscript preflight precedes publication and detects concurrent external changes', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'paper-edit-trial-'))
+  t.after(() => rm(root, {recursive:true, force:true}))
+  const path = 'paper/main.tex'
+  const previous = manuscript('old paragraph')
+  const {sha256} = await projectFile(root, path, previous)
+  const candidate = previous.replace('old paragraph','bad formula')
+  const rejectEdit = async data => {
+    assert.deepEqual(data, {content:candidate,base_sha256:sha256})
+    return {ok:false,diagnostic:'extra closing brace on line 3'}
+  }
+  await assert.rejects(projectFile(root,path,'bad formula','old paragraph',{},rejectEdit), /not saved.*closing brace/)
+  assert.equal((await projectFile(root,path)).sha256, sha256)
+  assert.deepEqual((await readProjectFile(root,{path,list_revisions:true})).revisions, [])
+  const external = manuscript('concurrent draft')
+  const race = async () => {
+    await writeFile(join(root,path),external)
+    return {ok:true}
+  }
+  await assert.rejects(projectFile(root,path,'good formula','old paragraph',{},race), /changed during/)
+  assert.equal((await projectFile(root,path)).content, external)
+})
+
+test('implicit line revisions bind only the lines seen by the same owner', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'paper-owner-view-'))
+  t.after(() => rm(root, {recursive:true, force:true}))
+  const path = 'paper/main.tex'
+  const source = Array.from({length:60}, (_,i) => 'Line ' + i).join('\n')
+  const {sha256} = await projectFile(root,path,source)
+  const first=projectEditor(root), second=projectEditor(root)
+  const args={path,start_line:4,end_line:4,content:'changed'}
+  await first.read({path,start_line:1})
+  await assert.rejects(second.write(args), /Read these numbered lines/)
+  await assert.rejects(first.write({...args,end_line:41}), /Read these numbered lines/)
+  await projectFile(root,path,'concurrent','Line 57')
+  await assert.rejects(first.write(args), /changed since/)
+  await first.read({path,start_line:3})
+  await first.write(args)
+  await assert.rejects(first.write(args), /Read these numbered lines/)
+  await second.read({path,start_line:2,revision_sha256:sha256})
+  await assert.rejects(second.write(args), /Read these numbered lines/)
+  assert.equal((await projectFile(root,path)).content,source.replace('Line 3','changed').replace('Line 57','concurrent'))
+})
+
+test('owner can continue the research report and inspect only allowlisted read-only source records', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'paper-research-references-'))
+  t.after(() => rm(root, {recursive:true, force:true}))
+  const path='auto_research/state/deep_research.md', source='sources/0123456789abcdef01234567.txt'
+  await mkdir(join(root,'auto_research/state'),{recursive:true})
+  await mkdir(join(root,'sources'))
+  await writeFile(join(root,path),'🌱'.repeat(28000)+'Prior work\nPrimary source')
+  await writeFile(join(root,source),'Journal paper\nMeasured effect')
+  assert.match((await readProjectFile(root,{path,offset:28000})).content,/Prior work/)
+  assert.match((await readProjectFile(root,{path:source})).content,/Measured effect/)
+  await assert.rejects(projectFile(root,path,'changed'), /Use paper/)
+  await assert.rejects(projectFile(root,source,'changed'), /Use paper/)
+  await assert.rejects(readProjectFile(root,{path:'auto_research/state/native_project.json'}), /Use paper/)
+  await assert.rejects(readProjectFile(root,{path:'sources/credentials.txt'}), /Use paper/)
 })

@@ -162,6 +162,17 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     page.locator("#evidence-close").click()
                     page.evaluate("window.scrollTo(0,0)")
                     page.screenshot(path=str(Path(output) / f"research-{width}.png"))
+                if width == 390:
+                    diagnostic = "./main.tex:56: Undefined control sequence."
+                    event("typeset", "writing", diagnostic, action="paper_compile_failed")
+                    page.locator("#research-observation").get_by_text(
+                        "Typesetting error in main.tex, line 56", exact=True
+                    ).wait_for()
+                    details = page.locator("#research-build-details")
+                    assert details.get_attribute("open") is None
+                    details.locator("summary").focus()
+                    page.keyboard.press("Enter")
+                    assert details.locator("pre").inner_text() == diagnostic
                 ctx.close()
 
             shared = browser.new_context().new_page()

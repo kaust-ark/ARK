@@ -1,6 +1,10 @@
+import base64
+import hashlib
+import io
 import json
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -120,3 +124,103 @@ def test_local_crash_cannot_be_resubmitted_on_another_daemon(monkeypatch, tmp_pa
     with pytest.raises(RuntimeError, match="Reconnect"):
         compute._check_daemon(frozen, path)
     assert json.loads(path.read_text()) == row
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the isolated science worker runs Linux")
+@pytest.mark.parametrize("read_input", [True, False])
+def test_worker_observes_actual_measurement_reads(tmp_path, read_input):
+    (tmp_path / "results.json").write_text('{"color": 73}')
+    color = "json.loads(Path('results.json').read_text())['color']" if read_input else "73"
+    (tmp_path / "main.py").write_text(
+        "import json\nfrom pathlib import Path\nfrom PIL import Image\n"
+        f"Image.new('L', (1, 1), {color}).save('figure.png')\n"
+    )
+    runner = compute.RUNNER.replace("/study", str(tmp_path)).replace("/output", str(tmp_path))
+    completed = subprocess.run([sys.executable, "-I", "-c", runner, "figure.png"], capture_output=True)
+    assert (tmp_path / "figure.png").is_file()
+    if read_input:
+        from PIL import Image
+        assert completed.returncode == 0 and completed.stdout.startswith(compute.PLOT_READ_HEADER)
+        with Image.open(io.BytesIO(base64.b64decode(completed.stdout.split(b"\n", 1)[1]))) as image:
+            assert image.getpixel((0, 0)) == 73
+    else:
+        assert completed.returncode != 0 and b"did not read" in completed.stderr
+        assert completed.stdout == b""
+
+
+def test_old_plot_receipt_resumes_once_without_inventing_read_evidence(tmp_path, monkeypatch):
+    plan = project(tmp_path)
+    cfg = {"experiment_compute_backend": {"type": "slurm"}}
+    (tmp_path / "results").mkdir()
+    (tmp_path / plan["expected"]).write_text("[1,2]")
+    filename = "past.png"
+    calls = []
+    def start(staging, conf, row, path, plot):
+        calls.append(row["identity"])
+        row["job_id"] = "42"
+        return "running"
+    monkeypatch.setattr(compute, "_slurm", start)
+    row = compute.execute(tmp_path, cfg, plan, plan["script"], plot=filename)
+    staging = tmp_path / "auto_research/state/native_runs" / row["identity"].removeprefix("i2p-")
+    row.pop("plot_protocol")
+    (staging / "receipt.json").write_text(json.dumps(row))
+
+    from PIL import Image
+    encoded = io.BytesIO()
+    Image.new("L", (1, 1)).save(encoded, "PNG")
+    (staging / "stdout").write_bytes(base64.b64encode(encoded.getvalue()))
+    with pytest.raises(ValueError, match="did not confirm"):
+        compute._publish(tmp_path, staging, tmp_path / "paper/figures" / filename, filename, {**row, "plot_protocol": 1})
+    def reconcile(staging, conf, old, path, plot):
+        calls.append(old["identity"])
+        assert old["job_id"] == "42"
+        return "computed"
+    monkeypatch.setattr(compute, "_slurm", reconcile)
+    saved = compute.execute(tmp_path, cfg, plan, plan["script"], plot=filename)
+    assert saved["status"] == "completed" and "input_access" not in saved
+    assert compute.execute(tmp_path, cfg, plan, plan["script"], plot=filename) == saved
+    assert calls == [row["identity"], row["identity"]]
+
+
+@pytest.mark.parametrize("kind", ["line", "points", "bar"])
+def test_declarative_plot_draws_unrounded_nested_columns(tmp_path, monkeypatch, kind):
+    from matplotlib.axes import Axes
+    import fitz
+    plan = project(tmp_path)
+    (tmp_path / "results").mkdir()
+    xs = [1, 2] if kind == "line" else ["Base", "Extended"]
+    data = {"batch/1": {"~pairs": [
+        {"n": x, "scores": {"baseline": a, "method": b}}
+        for x, a, b in zip(xs, [0.023417, 0.88706], [0.020395, 0.74456])
+    ]}}
+    measured = tmp_path / plan["expected"]
+    measured.write_text(json.dumps(data))
+    spec = {"kind": kind, "rows_pointer": "/batch~11/~0pairs", "x": {"path": "n", "label": "Condition"},
+            "series": [{"path": "scores.baseline", "label": "Comparator"}, {"path": "scores.method", "label": "Method"}],
+            "y_label": "Loss (units)"}
+    observed = {}
+    primitive = {"line": "plot", "points": "scatter", "bar": "bar"}[kind]
+    draw = getattr(Axes, primitive)
+    def observe(ax, x, y, *args, **kwargs):
+        if "label" in kwargs:
+            observed[kwargs["label"]] = list(y)
+        return draw(ax, x, y, *args, **kwargs)
+    monkeypatch.setattr(Axes, primitive, observe)
+    def render(staging, conf, row, path, filename):
+        assert b"0.023417" not in (staging / "input/main.py").read_bytes()
+        code = (staging / "input/main.py").read_text().replace("/study", str(staging / "input")).replace("/output", str(staging))
+        exec(compile(code, str(staging / "input/main.py"), "exec"), {})
+        (staging / "stdout").write_bytes(compute.PLOT_READ_HEADER + base64.b64encode((staging / filename).read_bytes()))
+        row["job_id"] = "42"
+        return "computed"
+    monkeypatch.setattr(compute, "_slurm", render)
+    cfg = {"experiment_compute_backend": {"type": "slurm"}}
+    with pytest.raises(ValueError, match="worker receipt"):
+        compute.execute(tmp_path, cfg, plan, None, plot="comparison.pdf", selection=spec, measurement_sha256="wrong")
+    row = compute.execute(tmp_path, cfg, plan, None, plot="comparison.pdf", selection=spec,
+                          measurement_sha256=hashlib.sha256(measured.read_bytes()).hexdigest())
+    assert row["input_access"] == "worker_observed_read" and row["plot_spec"]["kind"] == kind
+    assert observed == {"Comparator": [0.023417, 0.88706], "Method": [0.020395, 0.74456]}
+    with fitz.open(tmp_path / row["artifact"]) as doc:
+        for label in ("Comparator", "Method", "Condition", "Loss (units)"):
+            assert label in doc[0].get_text()

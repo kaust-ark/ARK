@@ -198,6 +198,63 @@ def test_measured_recomputation_is_bound_to_rows_and_receipt(tmp_path):
         read_evidence(snap, "results/rows.csv", statistic="median", column="missing")
 
 
+def test_json_quote_uses_only_contiguous_tokens_in_one_observed_window(tmp_path, monkeypatch):
+    import ark.review as review
+    pair = PAIRS[0]
+    project(tmp_path, pair, "clean")
+    path = "results/samples.json"
+    source = r'["text with an escaped \" and fake [7, 8]", {"n":1.00e+1,"label":"a  b"}, {"n":9,"label":"other"}]'
+    (tmp_path / path).write_text(source)
+    snapshot = build_snapshot(tmp_path)
+    response, _ = record(snapshot, pair, "clean", "")
+    ref = {"artifact": path}
+    response["checks"]["experiment"]["evidence"] = [ref]
+    monkeypatch.setattr(review, "VIEW_SIZE", len('{"n":1.00e+1,"label":"a  b"}') + 2)
+    receipt = read_evidence(snapshot, path, start=source.index('{"n"') + 1)["receipt"]
+    ref["quote"] = '{\n"n" : 1.00e+1,\t"label": "a  b"\n}'
+    assert validate_review(snapshot, response, observed=[receipt])["deliverable"]
+    with pytest.raises(ValueError, match="Unobserved"):
+        validate_review(snapshot, response)
+    for wrong in ['{"n":10,"label":"a  b"}', '{"n":1.00e+1,"label":"a b"}',
+                  '{"label":"a  b","n":1.00e+1}', '{"n":1.00e+1,"label":"other"}', '{"n":9}']:
+        ref["quote"] = wrong
+        with pytest.raises(ValueError, match="Unobserved"):
+            validate_review(snapshot, response, observed=[receipt])
+    start = source.index("[7, 8]") + 1
+    ref["quote"] = "[7,8]"
+    with pytest.raises(ValueError, match="Unobserved"):
+        validate_review(snapshot, response, observed=[read_evidence(snapshot, path, start=start)["receipt"]])
+    ref["quote"] = '[{"n":1.00e+1,"label":"a  b"},{"n":9,"label":"other"}]'
+    final = read_evidence(snapshot, path, start=source.rindex('{"n"') + 1)["receipt"]
+    with pytest.raises(ValueError, match="Unobserved"):
+        validate_review(snapshot, response, observed=[receipt, final])
+    ref["quote"] = source.replace("}, {", "},\n{")
+    windows = [read_evidence(snapshot, path, start=i)["receipt"] for i in range(1, len(source) + 1, review.VIEW_SIZE)]
+    with pytest.raises(ValueError, match="Unobserved"):
+        validate_review(snapshot, response, observed=windows)
+
+
+def test_formatting_an_old_json_observation_cannot_resolve_a_blocker(tmp_path):
+    pair = PAIRS[0]
+    project(tmp_path, pair, "flawed")
+    path = "results/samples.json"
+    artifact = tmp_path / path
+    artifact.write_text('[ [1, 2], 3 ]')
+    snap = build_snapshot(tmp_path)
+    response, _ = record(snap, pair, "flawed", "new")
+    ref = {"artifact": path, "quote": "[1,2]"}
+    response["checks"]["experiment"]["evidence"] = [ref]
+    response["issues"][0]["evidence"][1] = ref
+    original = validate_review(snap, response, observed=[read_evidence(snap, path)["receipt"]])
+    artifact.write_text('[ [ 1, 2 ], 4 ]')
+    revised = build_snapshot(tmp_path)
+    response.update(revision=revised["revision"], verdict="accept")
+    response["issues"][0]["status"] = "resolved"
+    ref["quote"] = "[ 1, 2 ]"
+    with pytest.raises(ValueError, match="No changed observation"):
+        validate_review(revised, response, original, observed=[read_evidence(revised, path)["receipt"]])
+
+
 def test_located_missing_observation_cannot_be_promoted_to_scientific_failure(tmp_path):
     pair = PAIRS[0]
     snapshot = project(tmp_path, pair, "flawed")

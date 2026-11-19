@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import tarfile
 
+from ark import measurement_table
 from ark.orchestrator.state import _atomic_write_text
 from ark.sandbox import apptainer_bin, sandbox_sif_path
 
@@ -29,6 +30,7 @@ RUN python -m pip install --no-cache-dir numpy==2.2.6 matplotlib==3.10.3 scikit-
 """
 MAX_BYTES = 12 * 1024 * 1024
 WIRE_LIMIT = ((MAX_BYTES + 2) // 3) * 4 + 64
+PLOT_READ_HEADER = b"results.json read v1\n"
 ACTIVE_SLURM = {"PENDING", "RUNNING", "REQUEUED", "REQUEUE_HOLD", "CONFIGURING", "COMPLETING",
                 "SUSPENDED", "RESIZING", "SIGNALING", "STAGE_OUT", "STOPPED"}
 # No host output directory is mounted in either backend. The trusted wrapper
@@ -39,25 +41,104 @@ limit = 12 * 1024 * 1024
 limit_fsize = (limit, limit)
 def limits():
     resource.setrlimit(resource.RLIMIT_FSIZE, limit_fsize)
+plot = len(sys.argv) == 2
+if plot:
+    # Observe reads in the outer worker, independent of the plotting library.
+    import ctypes, struct
+    IN_ACCESS = 0x00000001
+    libc = ctypes.CDLL(None)
+    watch = libc.inotify_init1(os.O_NONBLOCK | os.O_CLOEXEC)
+    if watch < 0 or libc.inotify_add_watch(watch, b"/study/results.json", IN_ACCESS) < 0:
+        sys.exit("Could not observe reads of the sealed /study/results.json.")
 with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
     rc = subprocess.run([sys.executable, "-I", "-B", "/study/main.py"], cwd="/output",
                         stdout=out, stderr=err, preexec_fn=limits).returncode
     if rc:
         err.seek(max(0, err.tell()-1000))
         sys.stderr.buffer.write(err.read(1000))
+        if plot:
+            sys.stderr.buffer.write(b"\nRead /study/results.json and save the requested figure under /output/.\n")
         sys.exit(rc if rc > 0 else 128-rc)
-    if len(sys.argv) == 2:
+    if plot:
+        try:
+            events = os.read(watch, 4096)
+        except BlockingIOError:
+            events = b""
+        os.close(watch)
+        # A watch on a single file has zero-length event names.
+        if not any(mask & IN_ACCESS for _, mask, _, _ in struct.iter_unpack("iIII", events)):
+            sys.exit("Plot did not read /study/results.json. Load the frozen measurements before plotting.")
         fd = os.open("/output/" + sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as f:
             info = os.fstat(f.fileno())
             if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
                 sys.exit("Missing or oversized plot")
-            payload = base64.b64encode(f.read(limit + 1))
+            payload = b"results.json read v1\n" + base64.b64encode(f.read(limit + 1))
     else:
         out.seek(0)
         payload = out.read(limit+1)
     sys.stdout.buffer.write(payload)
 """
+
+
+# Only the field selection and labels are embedded. Each worker reads all
+# coordinates from its immutable results.json at render time.
+MEASURED_PLOT = '''
+import json
+from functools import reduce
+from operator import getitem
+from textwrap import fill
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+with open("/study/results.json") as source:
+    rows = json.load(source)
+for key in spec["rows_pointer"].split("/")[1:]:
+    rows = rows[key.replace("~1", "/").replace("~0", "~")]
+
+def values(column):
+    return [reduce(getitem, column["path"].split("."), row) for row in rows]
+
+xs = values(spec["x"])
+kind = spec["kind"]
+categorical = kind == "bar" or isinstance(xs[0], str)
+positions = list(range(len(xs))) if categorical else xs
+series = spec["series"]
+width = 0.76 / len(series)
+markers = ("o", "s", "^", "D", "v", "P")
+plt.rcParams.update({"text.parse_math": False, "font.size": 9, "pdf.fonttype": 42})
+wide = len(series) > 3 or categorical and (len(xs) > 5 or max(len(str(x)) for x in xs) > 12)
+fig, ax = plt.subplots(figsize=(6.6, 3.0) if wide else (3.35, 2.6), constrained_layout=True)
+for index, column in enumerate(series):
+    ys = values(column)
+    label = fill(column["label"], 32)
+    if kind == "line":
+        order = sorted(range(len(xs)), key=positions.__getitem__)
+        ax.plot([positions[j] for j in order], [ys[j] for j in order],
+                marker=markers[index], markersize=4, linewidth=1.5, label=label)
+    else:
+        offset = (index - (len(series) - 1) / 2) * width if categorical else 0
+        xx = [v + offset for v in positions]
+        if kind == "bar":
+            ax.bar(xx, ys, width=width, label=label)
+        else:
+            ax.scatter(xx, ys, marker=markers[index], s=22, label=label)
+if categorical:
+    ticks = list(range(0, len(xs), max(1, (len(xs) + 9) // 10)))
+    labels = [fill(str(xs[i]), 18) for i in ticks]
+    rotate = len(ticks) > 6 or any(len(s) > 8 for s in labels)
+    ax.set_xticks(ticks, labels, rotation=35 if rotate else 0, ha="right" if rotate else "center")
+ax.set_xlabel(fill(spec["x"]["label"], 52))
+ax.set_ylabel(fill(spec["y_label"], 38))
+ax.grid(axis="y", alpha=0.22)
+ax.set_axisbelow(True)
+if len(series) > 1:
+    ax.legend(frameon=False, fontsize=8)
+metadata = {"CreationDate": None, "ModDate": None} if filename.endswith(".pdf") else {}
+fig.savefig("/output/" + filename, dpi=300, metadata=metadata)
+plt.close(fig)
+'''
 
 
 def _run(args, *, check=True, timeout=60, **kwargs):
@@ -342,6 +423,10 @@ def _docker(staging, row, path, plot):
 def _publish(root, staging, artifact, plot, row):
     payload = _read(staging / "stdout", WIRE_LIMIT if plot else MAX_BYTES)
     if plot:
+        if row.get("plot_protocol") == 1:
+            if not payload.startswith(PLOT_READ_HEADER):
+                raise ValueError("Worker did not confirm reading the frozen /study/results.json.")
+            payload = payload[len(PLOT_READ_HEADER):]
         data = base64.b64decode(payload, validate=True)
         if len(data) > MAX_BYTES:
             raise ValueError("Oversized plot")
@@ -368,6 +453,8 @@ def _publish(root, staging, artifact, plot, row):
             raise ValueError("A different experiment already owns this result path; declare a new filename")
     artifact.parent.mkdir(parents=True, exist_ok=True)
     _write(artifact, data)
+    if plot and row.get("plot_protocol") == 1:
+        row["input_access"] = "worker_observed_read"
     row.update(status="completed", artifact=str(artifact.relative_to(root)), sha256=hashlib.sha256(data).hexdigest())
 
 
@@ -424,11 +511,14 @@ def _cancel_one(row, path):
     _save(path, row)
 
 
-def execute(root, config, plan, script, *, plot=None):
+def execute(root, config, plan, script, *, plot=None, selection=None, measurement_sha256=None):
     """Start or poll exactly one operation for a fixed plan, script, and input."""
     root = Path(root).resolve()
-    if not isinstance(script, str) or not re.fullmatch(r"scripts/[\w-]+\.py", script, flags=re.ASCII):
-        raise ValueError("Choose a Python file directly under scripts/")
+    if selection is None:
+        if not isinstance(script, str) or not re.fullmatch(r"scripts/[\w-]+\.py", script, flags=re.ASCII):
+            raise ValueError("Choose a Python file directly under scripts/")
+    elif not plot or script is not None:
+        raise ValueError("Choose either measured columns or a custom plotting script.")
     if plot and not re.fullmatch(r"[A-Za-z0-9_-]{1,80}\.(?:pdf|png)", plot):
         raise ValueError("Choose a simple PDF or PNG filename")
     expected = plan["expected"]
@@ -439,9 +529,15 @@ def execute(root, config, plan, script, *, plot=None):
     if kind not in {"local", "slurm"}:
         raise ValueError(f"Native experiments support Docker and Slurm, received {kind}")
     with _locked(root) as runs:
-        code = _read(_safe(root, root / script))
         measurement = _safe(root, root / expected)
         inputs = _read(measurement) if plot else b""
+        if plot and measurement_sha256 and hashlib.sha256(inputs).hexdigest() != measurement_sha256:
+            raise ValueError("Measured artifact does not match its worker receipt.")
+        if selection is None:
+            code = _read(_safe(root, root / script))
+        else:
+            spec = measurement_table.plot_spec(json.loads(inputs), selection)
+            code = (f"spec = {spec!r}\nfilename = {plot!r}\n" + MEASURED_PLOT).encode()
         payload = json.dumps([str(root), plan, kind, plot], sort_keys=True).encode()
         token = hashlib.sha256(payload + b"\0" + code + b"\0" + inputs).hexdigest()[:24]
         staging = _safe(root, runs / token)
@@ -468,6 +564,9 @@ def execute(root, config, plan, script, *, plot=None):
                    "expected": expected}
             if plot:
                 row["input_sha256"] = hashlib.sha256(inputs).hexdigest()
+                row["plot_protocol"] = 1
+                if selection is not None:
+                    row["plot_spec"] = spec
             _save(path, row)
         if row["status"] in ("cancelling", "cancelled"):
             _cancel_one(row, path)

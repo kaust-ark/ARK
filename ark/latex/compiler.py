@@ -1345,7 +1345,8 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
         history = {k: old[k] for k in ("repair_attempted", "initial_review", "panel_attempted", "edited_review")
                    if same_design and k in old}
         review = cached or inspect()
-        if review["status"] == "contradiction" and not history.get("repair_attempted"):
+        if (review["status"] == "contradiction" and not history.get("repair_attempted")
+                and entry.get("representation") != "subject_with_comparison_panel"):
             persist(review)
             history.update(repair_attempted=True, initial_review=dict(review))
             persist({**review, **history})

@@ -220,10 +220,46 @@ SEMANTIC_REVIEW_VERSION = 2
 _SEMANTIC_CHECKS = ("arrows", "comparison_groups", "numbers", "data_separation", "stages_and_labels", "printed_labels")
 
 
+def _verified_worker_excerpt(state_dir, receipt):
+    relative = receipt.get("artifact", "")
+    if (receipt.get("status") == "completed" and isinstance(relative, str)
+            and re.fullmatch(r"results/[\w-]+\.json", relative)):
+        result = Path(state_dir).parent.parent / relative
+        if result.is_file() and result.resolve() == result and result.stat().st_size <= 16_000_000:
+            data = result.read_bytes()
+            if hashlib.sha256(data).hexdigest() == receipt.get("sha256"):
+                parsed = json.loads(data)
+                summary = parsed.get("summary", parsed) if isinstance(parsed, dict) else parsed
+                return "Verified worker measurements (excerpt):\n" + json.dumps(summary)[:2600]
+
+
+def native_study_design(state, state_dir):
+    """Only approved conditions and measurements bound to that experiment can ground a new native figure."""
+    plan = state.get("plan") or {}
+    conditions = {k: plan[k] for k in ("question", "baseline", "comparison", "controls", "metric") if k in plan}
+    design = "Approved experimental design:\n" + yaml.safe_dump(conditions, sort_keys=False, allow_unicode=True)
+    receipt = state.get("experiment") or {}
+    plan_hash = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+    if (receipt.get("plan_sha256") == plan_hash and receipt.get("artifact") == plan.get("expected")
+            and (not state.get("sealed_script") or receipt.get("code_sha256") == state["sealed_script"])):
+        if excerpt := _verified_worker_excerpt(state_dir, receipt):
+            design += "\n" + excerpt
+    return design
+
+
 def concept_design(fig: dict, state_dir: Path | None) -> str:
     """The same bounded study design is used for inspection, editing and cache identity."""
     parts = [json.dumps(fig, sort_keys=True, ensure_ascii=False)]
     if state_dir:
+        receipt_file = Path(state_dir) / "native_project.json"
+        if fig.get("representation") in ("study_panel", "schematic") and receipt_file.is_file():
+            design = native_study_design(json.loads(receipt_file.read_text()), state_dir)
+            return design + (
+                "\n\nProposed figure specification (presentation only). Check every illustrated condition and the "
+                "proposed caption against the approved design and verified evidence above. Treat artwork that "
+                "depicts unsupported classes, clusters or trends as a scientific contradiction. "
+                "This request supplies no additional experimental facts.\n" + parts[0]
+            )
         for name in ("idea.md", "project_context.md", "experiment_plan.yaml"):
             path = Path(state_dir) / name
             if not path.is_file():
@@ -238,18 +274,10 @@ def concept_design(fig: dict, state_dir: Path | None) -> str:
             parts.append(name + "\n" + "\n".join(lines)[:2200])
         # Scientific labels are checked against the measured outcome when available.
         # The result path and digest originate in the isolated worker's receipt.
-        receipt_file = Path(state_dir) / "native_project.json"
         if receipt_file.is_file():
             receipt = json.loads(receipt_file.read_text()).get("experiment") or {}
-            relative = receipt.get("artifact", "")
-            if receipt.get("status") == "completed" and re.fullmatch(r"results/[\w-]+\.json", relative):
-                result = Path(state_dir).parent.parent / relative
-                if result.is_file() and result.resolve() == result and result.stat().st_size <= 16_000_000:
-                    data = result.read_bytes()
-                    if hashlib.sha256(data).hexdigest() == receipt.get("sha256"):
-                        parsed = json.loads(data)
-                        summary = parsed.get("summary", parsed) if isinstance(parsed, dict) else parsed
-                        parts.append("Verified worker measurements (excerpt):\n" + json.dumps(summary)[:2600])
+            if excerpt := _verified_worker_excerpt(state_dir, receipt):
+                parts.append(excerpt)
     return "\n\n".join(parts)
 
 
@@ -558,7 +586,8 @@ def create_study_panel(path: Path, design: str, provider: str, key: str, model: 
         art_prompt = ("Create one clean, publication-quality scientific illustration of this single "
                       "study object, centered on white: " + plan["subject"] + ". No words, numerals, "
                       "letters, arrows, branches, workflows, charts, comparisons or layout panels. "
-                      "It illustrates the subject only. Do not present simulated data as an observation.")
+                      "It illustrates the subject only. For abstract inputs, depict their structure neutrally. "
+                      "Do not invent classes, clusters or trends or present simulated data as an observation.")
         flash = IMAGE_MODELS["flash"]
         original = path.parent / ".concept_sources" / (path.stem + "-" + hashlib.sha256(design.encode()).hexdigest()[:12] + ".image")
         receipt = {}
