@@ -181,3 +181,23 @@ def test_unlabelled_evidence_cannot_confirm_a_time_conversion(tmp_path):
     mixed = audit(times + " Scores: 6.789, 7.654, 8.765, 9.321, 5.431.", project)
     assert verdict(mixed)[0] is False
     assert not mixed.get("unverified") and mixed["untraced"][0]["number"] == "6.789"
+
+
+def test_thousands_separators_preserve_the_decimal_measurement(tmp_path):
+    root = _project(tmp_path, {"loss": [326062.283, -1234567.8895, 1234.56789, 0.12, 345.67]})
+    paper = r"""\section{Results}
+    Measured $326,062.28$, $-1{,}234{,}567.89$, and $1{,}234.57$.
+    Two ungrouped measurements $(0.12,345.67)$ remain separate.
+    """
+    assert [c[1] for c in claims(paper)] == ["326062.28", "-1234567.89", "1234.57", "0.12", "345.67"]
+    assert audit(paper, root)["ratio"] == 1
+    altered = paper.replace("326,062.28", "127,062.28")
+    assert any(r["number"] == "127062.28" for r in audit(altered, root)["untraced"])
+
+
+def test_unbraced_single_tex_exponent_is_a_single_measurement(tmp_path):
+    project = _project(tmp_path, {"nll": 2509863.25})
+    paper = r"\section{Results} $2.51 \times 10^6$ versus $2.51 \times 10^5$."
+    assert [item[1] for item in claims(paper)] == ["2.51e6", "2.51e5"]
+    row = audit(paper, project)
+    assert row["strong_traced"] == 1 and row["untraced"][0]["number"] == "2.51e5"

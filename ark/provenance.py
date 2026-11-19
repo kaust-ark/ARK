@@ -37,8 +37,11 @@ from pathlib import Path
 
 _COEFFICIENT = r"[+-]?(?:\d+(?:\.\d+)?|\.\d+)"
 _VALUE = rf"{_COEFFICIENT}(?:[eE][+-]?\d+)?"
+# Both 1,234.56 and TeX math's 1{,}234.56 print as a single scalar.
+# Keep comma-separated decimal values (0.12,345.67) distinct.
+_TEX_GROUPED = re.compile(r"(?<![\w.\\])([+-]?\d{1,3}(?:(?:,|\{,\})\d{3})+)(?!\d|(?:,|\{,\})\d)")
 _TEX_EXPONENT = re.compile(
-    rf"(?<![\w.\\])({_COEFFICIENT})\s*(?:\\times|\\cdot|×)\s*10\s*\^\s*\{{([+-]?\d+)\}}")
+    rf"(?<![\w.\\])({_COEFFICIENT})\s*(?:\\times|\\cdot|×)\s*10\s*\^\s*(?:\{{([+-]?\d+)\}}|(\d)(?!\d))")
 _NUM = re.compile(rf"(?<![\w.\\])({_VALUE})(\s*\\?%)?")
 _EVIDENCE_NUMBER = re.compile(_VALUE)
 _SI_QUANTITY = re.compile(rf"\\(?:SI|qty)\s*\{{\s*({_VALUE})\s*\}}\s*\{{([^{{}}]+)\}}")
@@ -60,7 +63,8 @@ def _strip(t: str) -> str:
                r"(\[[^\]]*\])*\{[^}]*\}", " ", t)
     t = re.sub(r"\\(begin|end)\{[^}]*\}(\[[^\]]*\])?(\{[^}]*\})?", " ", t)
     t = re.sub(r"\d+(\.\d+)?\s*(pt|cm|mm|in|em|ex)\b", " ", t)
-    t = _TEX_EXPONENT.sub(r"\g<1>e\g<2>", t)
+    t = _TEX_GROUPED.sub(lambda m: m[1].replace("{,}", "").replace(",", ""), t)
+    t = _TEX_EXPONENT.sub(lambda m: f"{m[1]}e{m[2] or m[3]}", t)
     return t.replace("--", " ")          # a range, not a minus sign
 
 
