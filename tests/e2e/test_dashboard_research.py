@@ -334,6 +334,58 @@ def test_live_research_desk(tmp_path, monkeypatch):
             assert shared.locator("#research-history .history-file").count() == 0
             assert shared.request.get(base + f"/dashboard/api/projects/{pid}/evidence?key=results/experiment.json").status == 404
             assert shared.request.get(base + f"/dashboard/api/projects/{pid}/research-history?before=10").status == 404
+
+            # A share can read an old project's paper. Once a delivery exists,
+            # later compiles and reviews belong to the owner's working copy.
+            api = base + f"/dashboard/api/projects/{pid}"
+            draft_pdf = data + b" " * 11000
+            (root / "paper/main.pdf").write_bytes(draft_pdf)
+            assert shared.request.get(api + "/pdf").body() == draft_pdf
+            published = data + b" " * 14000
+            (root / "paper/published.pdf").write_bytes(published)
+            with db.get_session(settings.db_path) as session:
+                db.register_artifact(session, pid, kind="pdf", key="paper/published.pdf",
+                                     content_type="application/pdf", size=len(published))
+            assert shared.request.get(api + "/pdf").body() == published
+            owner_ctx = browser.new_context()
+            owner_ctx.add_cookies([{"name":"session","value":cookie.decode(),"url":base}])
+            owner_page = owner_ctx.new_page()
+            owner_page.route("https://**", lambda r: r.abort())
+            receipt = state / "native_project.json"
+            receipt.write_text(json.dumps({"state":"running"}))
+            assert shared.request.get(api + "/pdf").body() == draft_pdf
+            owner_page.goto(base + f"/dashboard/#project/{pid}", wait_until="domcontentloaded")
+            owner_page.locator("#evidence-files").get_by_text("Working draft PDF", exact=True).wait_for()
+            saved = root / archived_pdf
+            delivered_revision = saved.parent.name
+            saved_review = json.loads((saved.parent / "review.json").read_text())
+            saved_review.update(verdict="accept", deliverable=True, summary="Accepted delivery before revision.")
+            saved_review["artifact_hashes"]["paper/main.pdf"] = archived_digest
+            (saved.parent / "review.json").write_text(json.dumps(saved_review))
+            receipt.write_text(json.dumps({"state":"paused","delivery_revision":delivered_revision}))
+            owner_page.get_by_role("heading", name="Review of the delivered paper").wait_for()
+            assert "Accepted delivery before revision." in owner_page.locator("#review-verdict").inner_text()
+            owner_page.get_by_role("button", name="Review of the working draft").click()
+            assert record["summary"] in owner_page.locator("#review-verdict").inner_text()
+            link = owner_page.locator("#detail-actions").get_by_role("link", name="Delivered PDF")
+            assert owner_page.request.get(base + link.get_attribute("href")).body() == saved.read_bytes()
+            working_link = owner_page.locator("#detail-actions").get_by_role("link", name="Working draft PDF")
+            assert owner_page.request.get(base + working_link.get_attribute("href")).body() == draft_pdf
+            shared.locator("#evidence-files").get_by_text("Delivered PDF", exact=True).click()
+            shared_pdf = base + shared.locator("#evidence-open").get_attribute("href").split("#")[0]
+            assert shared.request.get(shared_pdf).body() == saved.read_bytes()
+            assert shared.request.get(api + "/pdf?working=true").status == 404
+            assert shared.request.get(api + "/evidence?key=" + archived_pdf).status == 404
+            assert "review" not in shared.request.get(api).json()["research"]
+            assert shared.locator("#research-review").is_hidden()
+            (root / "paper/main.pdf").unlink()
+            assert shared.request.get(api).json()["has_pdf"]
+            assert shared.request.get(api + "/pdf").body() == saved.read_bytes()
+            saved.write_bytes(b"damaged archive")
+            (root / "paper/main.pdf").write_bytes(draft_pdf)
+            assert shared.request.get(shared_pdf).status == 409
+            assert shared.request.get(api + "/pdf").status == 409
+            assert not shared.request.get(api).json()["has_pdf"]
             browser.close()
         with db.get_session(settings.db_path) as session:
             assert db.get_decision(session, decision).answer_text == draft

@@ -179,6 +179,115 @@ def _tex(text):
     return "".join(escapes.get(c, "\\" + c if c in "{}&%$#_" else c) for c in text)
 
 
+_TABULAR = re.compile(r"\\begin\{tabular(?P<star>\*)?\}\s*(?(star)\{[^{}]*\}\s*)"
+                      r"(?:\[[tbc]\]\s*)?\{(?:[^{}]|\{[^{}]*\})*\}(.*?)\\end\{tabular(?(star)\*)\}", re.S)
+_PRINTED_NUMBER = re.compile(r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
+
+
+def _plain_cell(tex):
+    tex = re.sub(r"\\(?:textbf|textit|mathrm|mathbf|num)\{([^{}]*)\}", r"\1", tex.strip())
+    tex = re.sub(r"\\([%_&#])", r"\1", tex)
+    return " ".join(tex.strip("$").removeprefix(r"\(").removesuffix(r"\)").split())
+
+
+def _compare_printed_rows(headers, body, data, table):
+    columns = {_plain_cell(col.get("label") or col["path"]): col for col in table["columns"]}
+    # Require a one-to-one schema. A shared condition or metric name alone
+    # doesn't identify a projection, especially for summary and ablation tables.
+    if len(columns) != len(table["columns"]) or len(set(headers)) != len(headers) or set(headers) != columns.keys():
+        return None
+    ids = [i for i, h in enumerate(headers) if columns[h]["path"].split(".")[-1].lower() in ROW_IDENTIFIERS]
+    if not ids or len(ids) == len(headers) or any(columns[headers[i]].get("percent") for i in ids):
+        return None
+    rows = _rows(data, table.get("rows_pointer", ""))
+    numeric_ids = {i for i in ids if all(type(_value(row, columns[headers[i]]["path"])) is int for row in rows)}
+    by_condition = {}
+    for row in rows:
+        if not all(_has_scalar_id(row, columns[headers[i]]["path"]) for i in ids):
+            return None
+        key = tuple(_value(row, columns[headers[i]]["path"]) for i in ids)
+        if key in by_condition:
+            return None
+        by_condition[key] = row
+    seen = set()
+    conflicts = []
+    matched = False
+    for cells in body:
+        if len(cells) != len(headers):
+            return None
+        key = tuple(Decimal(cells[i].replace(",", "")) if i in numeric_ids and _PRINTED_NUMBER.fullmatch(cells[i])
+                    else cells[i] for i in ids)
+        if key not in by_condition or key in seen:
+            return None
+        seen.add(key)
+        before = len(conflicts)
+        numeric = False
+        for i, (header, printed) in enumerate(zip(headers, cells)):
+            if i in ids:
+                continue
+            col = columns[header]
+            value = _value(by_condition[key], col["path"])
+            if isinstance(value, str) and value == printed:
+                continue
+            if type(value) not in (int, float) or not _PRINTED_NUMBER.fullmatch(printed):
+                return None
+            numeric = True
+            places = len(printed.partition(".")[2])
+            expected = Decimal(str(value)) * (100 if col.get("percent") else 1)
+            if abs(Decimal(printed.replace(",", "")) - expected) > Decimal("0.5").scaleb(-places):
+                identity = ", ".join(f"{headers[j]}={cells[j]}" for j in ids)
+                conflicts.append(f"{identity}, {header} prints {printed} (worker {expected:.{places}f})")
+        matched |= numeric and len(conflicts) == before
+    # Without a matching measured row this may be another experiment using
+    # the same headers and condition labels. Leave that attribution to review.
+    return conflicts if matched and len(seen) >= 2 else []
+
+
+def transcription_issues(data, tables, sources, pdf):
+    """Check visible, hand-entered copies of compiled worker projections against raw rows."""
+    if not tables or not pdf.is_file():
+        return []
+    # Different filenames, column orders or display precision can still
+    # identify the same worker projection.
+    projections = {}
+    for table in tables:
+        schema = sorted((_plain_cell(c.get("label") or c["path"]), c["path"], c.get("percent", False))
+                        for c in table["columns"])
+        projections[table.get("rows_pointer", ""), tuple(schema)] = table
+    pages = None
+    issues = []
+    for name, source in sources.items():
+        for match in _TABULAR.finditer(source):
+            rows = []
+            for row in re.split(r"\\\\(?:\[[^\[\]]*\])?", match[2]):
+                row = re.sub(r"\\(?:toprule|midrule|bottomrule|hline)\b", "", row).strip()
+                if row:
+                    rows.append([_plain_cell(c) for c in re.split(r"(?<!\\)&", row)])
+            if len(rows) < 3:
+                continue
+            candidates = [(table, conflicts) for table in projections.values()
+                          if (conflicts := _compare_printed_rows(rows[0], rows[1:], data, table)) is not None]
+            if len(candidates) != 1 or not candidates[0][1]:
+                continue
+            if pages is None:
+                import fitz
+
+                with fitz.open(pdf) as doc:
+                    pages = [" " + " ".join(p.get_text().split()) + " " for p in doc]
+            # Compiling an input file does not prove every literal table in it
+            # was typeset (e.g. commented drafts and conditional branches).
+            printed = " " + " ".join(cell for row in rows for cell in row) + " "
+            page = next((i for i, text in enumerate(pages, 1) if printed in text), None)
+            if page is None:
+                continue
+            table, conflicts = candidates[0]
+            line = source.count("\n", 0, match.start()) + 1
+            issues.append(f"Table in {name}:{line} (PDF p. {page}) disagrees with the worker measurements. "
+                          + ". ".join(conflicts[:4]) + ". Correct the listed cells using the measured rows, "
+                          f"or use \\input{{{table['path']}}} for the worker projection.")
+    return issues
+
+
 def render(data, pointer, columns):
     rows = _rows(data, pointer)
     if not isinstance(columns, list) or not 1 <= len(columns) <= 12:

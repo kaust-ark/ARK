@@ -118,7 +118,7 @@ def _stage_tex(paper, staging):
     return env
 
 
-def _manuscript_first_pass(paper, content, *, check_headings=False):
+def _manuscript_first_pass(paper, content, *, check_headings=False, page_target=None):
     with tempfile.TemporaryDirectory(prefix="idea2paper-edit-") as tmp:
         staging = Path(tmp)
         env = _stage_tex(paper, staging)
@@ -129,14 +129,27 @@ def _manuscript_first_pass(paper, content, *, check_headings=False):
         if run.returncode:
             log = staging / "main.log"
             if log.is_file():
-                return extract_latex_errors(log)[:2000]
-            return (run.stdout + run.stderr).decode(errors="replace").strip()[-2000:] or "pdflatex failed."
+                return {"diagnostic": extract_latex_errors(log)[:2000]}
+            return {"diagnostic": (run.stdout + run.stderr).decode(errors="replace").strip()[-2000:] or "pdflatex failed."}
         pdf = staging / "main.pdf"
         if not pdf.is_file() or not pdf.stat().st_size:
-            return "pdflatex produced no manuscript pages."
+            return {"diagnostic": "pdflatex produced no manuscript pages."}
         if check_headings and (notes := body_repetition_notes(staging, empty_headings_only=True)):
-            return notes[0]
-        return None
+            return {"diagnostic": notes[0]}
+        if page_target:
+            import fitz
+
+            with fitz.open(pdf) as doc:
+                boundary = body_page_boundary(doc)
+            if boundary is not None:
+                end_page, body_bottoms = boundary
+                count = end_page + int(any(body_bottoms))
+                preview = {"body_pages": count, "target": page_target}
+                if count == page_target:
+                    preview["next"] = ("The first TeX pass reaches the requested body length. Run compile_paper "
+                                       "now to verify the final pagination, references and figures before further edits.")
+                return {"first_pass_preview": preview}
+        return {}
 
 
 class NativeProject(CompilerMixin):
@@ -1532,22 +1545,23 @@ class NativeProject(CompilerMixin):
             return {"ok": True, "checked": False, "reason": "No verified prior build."}
         try:
             strict = self.config.get("layout_mode") == "strict"
-            failure = _manuscript_first_pass(self.latex_dir, candidate, check_headings=strict)
-            if failure is None:
-                return {"ok": True, "checked": True}
-            baseline_failure = _manuscript_first_pass(self.latex_dir, previous, check_headings=strict)
+            trial = _manuscript_first_pass(self.latex_dir, candidate, check_headings=strict,
+                                           page_target=(self.config.get("venue_pages") or 4) if strict else None)
+            if "diagnostic" not in trial:
+                return {"ok": True, "checked": True, **trial}
+            baseline = _manuscript_first_pass(self.latex_dir, previous, check_headings=strict)
         except subprocess.TimeoutExpired:
             return {"ok": False, "checked": False, "diagnostic": "The manuscript check timed out after 90 seconds."}
         except OSError as exc:
             return {"ok": False, "checked": False, "diagnostic": f"The manuscript check could not run: {exc}"}
-        if baseline_failure is not None:
+        if "diagnostic" in baseline:
             return {
                 "ok": True, "checked": False,
                 "reason": "The current manuscript also fails its first TeX pass. Incremental repair is allowed.",
-                "diagnostic": failure,
-                "baseline_diagnostic": baseline_failure,
+                "diagnostic": trial["diagnostic"],
+                "baseline_diagnostic": baseline["diagnostic"],
             }
-        return {"ok": False, "checked": True, "diagnostic": failure}
+        return {"ok": False, "checked": True, "diagnostic": trial["diagnostic"]}
 
     def compile_paper(self, args):
         source = self.latex_dir / "main.tex"
@@ -1898,6 +1912,9 @@ class NativeProject(CompilerMixin):
         tables = {row["path"]: row for row in self.state.get("tables", {}).values()}
         hand_measured = False
         used = []
+        verified_tables = []
+        authored_sources = {}
+        data = None
         for name in rendered.get("inputs", []):
             path = self.latex_dir / name
             if path.suffix != ".tex" or not path.is_file() or path.resolve() != path:
@@ -1911,14 +1928,28 @@ class NativeProject(CompilerMixin):
                     issues.append(f"Regenerate {name} from the current worker results.")
                 elif table.get("columns"):
                     columns = table["columns"]
-                    expected = measurement_table.with_row_identifiers(self._measurements()[0], table.get("rows_pointer", ""), columns)
+                    if data is None:
+                        data, _ = self._measurements()
+                    pointer = table.get("rows_pointer", "")
+                    try:
+                        expected = measurement_table.with_row_identifiers(data, pointer, columns)
+                        regenerated = measurement_table.render(data, pointer, columns)
+                    except ValueError:
+                        issues.append(f"Regenerate {name} with a valid selection of worker rows and columns.")
+                        continue
                     if columns != expected:
                         missing = [c["path"] for c in expected if c not in columns]
                         issues.append(f"Rows in {name} omit their measured identifiers ({', '.join(missing)}). "
                                       "Regenerate this table with render_results_table so each row can be traced to its condition.")
+                    elif regenerated == path.read_text():
+                        verified_tables.append(table)
+                    else:
+                        issues.append(f"Regenerate {name} to match its recorded worker rows and columns.")
                 continue
+            source = re.sub(r"(?m)(?<!\\)%.*$", "", path.read_text())
+            authored_sources[name] = source
             for block in re.findall(
-                r"\\begin\{tabular\*?\}(.*?)\\end\{tabular\*?\}", path.read_text(), flags=re.S
+                r"\\begin\{tabular\*?\}(.*?)\\end\{tabular\*?\}", source, flags=re.S
             ):
                 # Consecutive indexed observations are particularly vulnerable to a
                 # transcription error when only the beginning of a result fits a chat turn.
@@ -1933,6 +1964,8 @@ class NativeProject(CompilerMixin):
                 "A numbered results table has manually entered measurements. Use render_results_table "
                 "to select the matching worker rows and columns, then replace the tabular block with the returned input."
             )
+        issues.extend(measurement_table.transcription_issues(data, verified_tables, authored_sources,
+                                                             self.latex_dir / "main.pdf"))
         return issues
 
     def _opening_review_evidence(self, snapshot, trace=None):
@@ -1959,8 +1992,25 @@ class NativeProject(CompilerMixin):
                            "primary_source", 2)
         # PDFs need a page selector. The reviewer can request them through read_evidence.
         comparison = select([(snapshot.get("measurement_comparison") or {}).get("previous")], "supporting_measurement", 1)
-        return [path for path in dict.fromkeys([*protocol, *methods, *measurements, *comparison, *originals])
-                if Path(path).suffix.lower() != ".pdf"]
+        opening = [path for path in dict.fromkeys([*protocol, *methods, *measurements, *comparison, *originals])
+                   if Path(path).suffix.lower() != ".pdf"]
+        if measured_method:
+            # A four-page paper can put its strongest claim beyond the 12k
+            # source excerpt. Supply quotable text from the rendered paper.
+            import fitz
+
+            pdf = self.latex_dir / "main.pdf"
+            key = pdf.relative_to(self.root).as_posix()
+            if key in assets and pdf.is_file():
+                heading = re.compile(r"(?:[\d.]+\s+|[IVX]+[. ]\s*)?(?:conclusions?(?: and future work)?|concluding remarks)", re.I)
+                with fitz.open(pdf) as doc:
+                    boundary = body_page_boundary(doc)
+                    end = min(len(doc), boundary[0] + int(any(boundary[1]))) if boundary else len(doc)
+                    pages = [index + 1 for index in range(end)
+                             if any(heading.fullmatch(line.strip()) for line in doc[index].get_text().splitlines())]
+                if len(pages) == 1:
+                    opening.append({"artifact": key, "page": pages[0]})
+        return opening
 
     def review_snapshot(self, args):
         self._check_compiled()

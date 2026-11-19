@@ -1,6 +1,9 @@
 // Research milestones come from the durable project journal; transient token and log
 // traffic never changes the scientific state or triggers a screen-reader announcement.
 const researchLabels = {
+  delivered_pdf: ['Delivered PDF','已交付 PDF','ملف PDF المُسلَّم'], working_pdf: ['Working draft PDF','工作稿 PDF','ملف PDF للمسودة الحالية'],
+  delivered_review: ['Review of the delivered paper','已交付稿评审','مراجعة الورقة المُسلَّمة'],
+  working_review: ['Review of the working draft','工作稿评审','مراجعة المسودة الحالية'],
   build_error: ['The manuscript did not compile','稿件编译失败','تعذّر تجميع المخطوطة'],
   build_location: ['Typesetting error in %s, line %s','排版错误，位于 %s 第 %s 行','خطأ تنضيد في %s، السطر %s'],
   build_details: ['Compiler details','编译详情','تفاصيل التجميع'],
@@ -79,6 +82,7 @@ const rt = (key, ...args) => t('research_' + key, ...args);
 const re = id => document.getElementById(id);
 let researchProject = {}, researchData = {}, researchEvents = new Map(), researchCursor = 0;
 let historyPhase = '';
+let showWorkingReview = false;
 let fileSignature = '', reviewSignature = '', preview = null, streamReady = false, disconnected = false;
 
 function resetResearch(project) {
@@ -86,6 +90,7 @@ function resetResearch(project) {
   researchProject = project;
   researchEvents.clear();
   historyPhase = '';
+  showWorkingReview = false;
   researchData = {};
   researchCursor = 0;
   fileSignature = reviewSignature = '';
@@ -105,7 +110,13 @@ function receiveResearch(record, animate) {
     changed = true;
   }
   researchCursor = record.cursor ?? researchCursor;
+  const primary = record.evidence?.find(item => item.key === 'paper/main.pdf');
+  const oldPrimary = researchData.evidence?.find(item => item.key === 'paper/main.pdf');
+  const pdfChanged = JSON.stringify(primary) !== JSON.stringify(oldPrimary) || record.has_working_pdf !== researchData.has_working_pdf;
   researchData = record;
+  researchProject.research = record;
+  researchProject.has_pdf = !!primary;
+  if (pdfChanged) renderDetailActions(researchProject);
   renderResearch(animate && changed);
   if (changed || !researchEvents.size) renderHistory();
   renderEvidence(animate && changed);
@@ -206,7 +217,9 @@ function renderHistory() {
         row.append(details);
       }
       if (e.artifact && !window.SHARE_MODE) {
-        const key = e.artifact, name = key.split('/').pop();
+        const delivered = e.action === 'delivered' && e.artifact === 'paper/main.pdf' && /^[a-f0-9]{64}$/.test(e.revision);
+        const key = delivered ? 'auto_research/state/reviews/' + e.revision + '/main.pdf' : e.artifact;
+        const name = key.split('/').pop();
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'history-file';
@@ -215,7 +228,7 @@ function renderHistory() {
         button.title = key;
         button.setAttribute('aria-controls','evidence-preview');
         button.setAttribute('aria-pressed','false');
-        button.onclick = () => openEvidence({key, label:name}, button);
+        button.onclick = () => openEvidence({key, label:name, edition:key === 'paper/main.pdf' ? 'working' : null}, button);
         row.append(button);
       }
       existing.get(e.id)?.replaceWith(row);
@@ -361,7 +374,9 @@ function renderResearch(animate=false) {
 
 function filesForProject() {
   const files = new Map();
-  for (const item of researchData.evidence || []) files.set(item.key, item);
+  for (const item of researchData.evidence || []) {
+    files.set(item.key, item.edition ? {...item, label:rt(item.edition + '_pdf')} : item);
+  }
   for (const e of [...researchEvents.values()].reverse()) {
     if (e.artifact && !files.has(e.artifact)) files.set(e.artifact, { key:e.artifact, label:e.revision ? e.artifact.split('/').pop() + ' · ' + e.revision.slice(0,10) : e.artifact.split('/').pop() });
   }
@@ -425,7 +440,9 @@ async function openEvidence(item, opener, page=1, compare=false) {
   opener.setAttribute('aria-pressed','true');
   const base = APP_BASE + '/api/projects/' + encodeURIComponent(detailProjectId);
   const media = item.type || ({pdf:'application/pdf',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg'})[item.key.split('.').pop()] || 'text/plain';
-  const url = item.key === 'paper/main.pdf' && !item.sha256 ? base + '/pdf' : base + '/evidence?key=' + encodeURIComponent(item.key) + (item.sha256 ? '&sha256=' + encodeURIComponent(item.sha256) : '');
+  const pdfQuery = item.delivered_sha256 ? '?delivered=' + encodeURIComponent(item.delivered_sha256) :
+    item.edition === 'working' && !window.SHARE_MODE ? '?working=true' : '';
+  const url = item.key === 'paper/main.pdf' && !item.sha256 ? base + '/pdf' + pdfQuery : base + '/evidence?key=' + encodeURIComponent(item.key) + (item.sha256 ? '&sha256=' + encodeURIComponent(item.sha256) : '');
   const href = media === 'application/pdf' ? url + '#page=' + Math.max(1,Number(page)||1) : url;
   re('evidence-preview').hidden = false;
   re('preview-name').textContent = item.label || item.key.split('/').pop();
@@ -478,11 +495,22 @@ async function openEvidence(item, opener, page=1, compare=false) {
 }
 
 function renderReview() {
-  const review = researchData.review, key = JSON.stringify([currentLang,review]);
+  const delivered = researchData.evidence?.some(item => item.edition === 'delivered');
+  const other = researchData.working_review;
+  if (!other) showWorkingReview = false;
+  const review = showWorkingReview ? other : researchData.review;
+  const key = JSON.stringify([currentLang,review,delivered,!!other,showWorkingReview]);
   if (key === reviewSignature) return;
   reviewSignature = key;
   re('research-review').hidden = !review || window.SHARE_MODE;
   if (!review) return;
+  re('review-heading').textContent = rt(delivered ? (showWorkingReview ? 'working_review' : 'delivered_review') : 'review_title');
+  const toggle = re('review-switch');
+  toggle.hidden = !other;
+  if (other) {
+    toggle.textContent = rt(showWorkingReview ? 'delivered_review' : 'working_review');
+    toggle.onclick = () => { showWorkingReview = !showWorkingReview; renderReview(); };
+  }
   const verdict = review.stale ? rt('stale') : (researchLabels[review.verdict] ? rt(review.verdict) : review.verdict);
   re('review-verdict').textContent = [verdict, review.revision?.slice(0,12), review.summary].filter(Boolean).join(' · ');
   const coverage = re('review-coverage');

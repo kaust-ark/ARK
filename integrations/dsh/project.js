@@ -245,6 +245,7 @@ async function accessFile(directory, path, content, replace, edit = {}, checkMan
     if (!restoring && checkManuscript && completeDocument(previous.content)) {
       const check = await checkManuscript({content, base_sha256:previous.sha256})
       if (check?.ok !== true) throw new Error('The manuscript edit was not saved. ' + (check?.diagnostic || 'TeX validation was unavailable.'))
+      if (check.first_pass_preview) result.first_pass_preview = check.first_pass_preview
     }
     await saveRevision(directory, previous)
     result.previous_sha256 = previous.sha256

@@ -135,3 +135,67 @@ def test_research_cursor_and_evidence_confinement(tmp_path):
     (results / "dir").symlink_to(state, target_is_directory=True)
     assert not progress.file_exists(tmp_path, "results/link.txt")
     assert not progress.file_exists(tmp_path, "results/dir/research_events.jsonl")
+
+
+def test_review_freshness_tracks_private_split_sources_by_content(tmp_path, monkeypatch):
+    import hashlib
+    from website.dashboard import progress
+
+    chapter = "paper/sections/results.tex"
+    hashes = {}
+    for key, content in {"paper/main.pdf": b"built", "paper/main.tex": b"manuscript", chapter: b"before"}.items():
+        path = tmp_path / key
+        path.parent.mkdir(exist_ok=True, parents=True)
+        path.write_bytes(content)
+        hashes[key] = hashlib.sha256(content).hexdigest()
+    review = {"revision": "f" * 64, "paper_pdf_sha256": hashes["paper/main.pdf"], "artifact_hashes": hashes}
+    assert progress.evidence_type(chapter) is None
+    assert not progress.review_summary(tmp_path, review)["stale"]
+    original = progress.hash_stream
+    reads = []
+
+    def count(stream):
+        reads.append(stream.fileno())
+        return original(stream)
+
+    monkeypatch.setattr(progress, "hash_stream", count)
+    newest = max((tmp_path / key).stat().st_ctime_ns for key in hashes)
+    monkeypatch.setattr(progress, "time_ns", lambda: newest + 3_000_000_000)
+    assert not progress.review_summary(tmp_path, review)["stale"]
+    reads.clear()
+    assert not progress.review_summary(tmp_path, review)["stale"] and not reads
+    monkeypatch.setattr(progress, "time_ns", lambda: newest)
+    (tmp_path / chapter).write_bytes(b"before")
+    assert not progress.review_summary(tmp_path, review)["stale"]
+    assert reads
+    (tmp_path / chapter).write_bytes(b"after!")
+    assert progress.review_summary(tmp_path, review)["stale"]
+    (tmp_path / chapter).unlink()
+    assert progress.review_summary(tmp_path, review)["stale"]
+
+
+def test_delivered_paper_requires_the_recorded_acceptance_and_pdf(tmp_path):
+    import hashlib
+    import json
+    from website.dashboard import progress
+
+    state = tmp_path / "auto_research/state"
+    revision = "a" * 64
+    archive = state / "reviews" / revision
+    archive.mkdir(parents=True)
+    pdf = archive / "main.pdf"
+    pdf.write_bytes(b"rendered paper")
+    digest = hashlib.sha256(pdf.read_bytes()).hexdigest()
+    (state / "native_project.json").write_text(json.dumps({"state":"running", "delivery_revision":revision}))
+    record = {"revision":revision, "verdict":"accept", "deliverable":True, "paper_pdf_sha256":digest,
+              "artifact_hashes":{"paper/main.pdf":digest}}
+    verdict = archive / "review.json"
+    for changed in ({"revision":"b" * 64}, {"verdict":"revise"}, {"deliverable":False},
+                    {"paper_pdf_sha256":"c" * 64}, {"artifact_hashes":{"paper/main.pdf":"d" * 64}}):
+        verdict.write_text(json.dumps({**record, **changed}))
+        assert progress.paper_edition(tmp_path) == ("unavailable", None)
+    verdict.write_text(json.dumps(record))
+    assert progress.paper_edition(tmp_path) == ("delivered", record)
+    pdf.rename(archive / "other.pdf")
+    pdf.symlink_to(archive / "other.pdf")
+    assert progress.paper_edition(tmp_path) == ("unavailable", None)

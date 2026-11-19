@@ -9,8 +9,10 @@ from contextlib import ExitStack
 from datetime import timezone
 from functools import lru_cache
 from pathlib import Path
+from time import time_ns
 
 from ark.artifacts.base import hash_stream
+from ark.review import MAX_ARTIFACTS, MAX_BYTES
 from sqlmodel import select
 
 from .db import Artifact, PendingDecision, ProjectCommand, ProjectMessage
@@ -79,14 +81,21 @@ def _text(s, limit=600):
     return s[:limit].strip() if isinstance(s, str) else ""
 
 
-def read_record(root, key):
+def read_record(root, key, *, missing=None):
     try:
         with open_project_file(root, key) as f:
-            payload = f.read(PAGE_BYTES + 1)
-            if len(payload) > PAGE_BYTES:
+            size = os.fstat(f.fileno()).st_size
+            # A full native review can exceed one journal page (quoted findings,
+            # independent controls and hashes of the complete submission).
+            if size > 8 * 1024 * 1024:
+                return {}
+            payload = f.read(size + 1)
+            if len(payload) != size:
                 return {}
             data = json.loads(payload)
         return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {} if missing is None else missing
     except (OSError, ValueError, RecursionError):
         return {}
 
@@ -151,8 +160,13 @@ def snapshot(session, project, root, *, manage, has_pdf):
         if media and key not in evidence:
             evidence[key] = {"key": key, "label": label or Path(key).name, "type": media}
 
-    if has_pdf:
+    edition, delivered = paper_edition(root)
+    if edition == "delivered" or (has_pdf and edition != "unavailable"):
         add("paper/main.pdf")
+        if edition:
+            evidence["paper/main.pdf"]["edition"] = edition
+        if delivered:
+            evidence["paper/main.pdf"]["delivered_sha256"] = delivered["paper_pdf_sha256"]
     if not manage:
         return {"evidence": list(evidence.values())}
 
@@ -184,40 +198,73 @@ def snapshot(session, project, root, *, manage, has_pdf):
         status = meta.get("status") if isinstance(meta, dict) and meta.get("decision_id") == decision.id else None
         receipt = status if status in ("consumed", "failed") else "recorded"
     review = read_record(root, "auto_research/state/native_review.json")
+    working = review_summary(root, review)
     return {
         "evidence": list(evidence.values()),
         "milestone": {"text": _text(last.text), "ts": last.created_at.replace(tzinfo=timezone.utc).isoformat()} if last else None,
         "decision_receipt": receipt,
         "command": {"kind": command.kind, "status": command.status} if command else None,
-        "review": review_summary(root, review),
+        "review": review_summary(root, delivered, delivered=True) if delivered else working,
+        "working_review": working if delivered and working and (
+            working["revision"] != delivered["revision"] or working["stale"]) else None,
+        "has_working_pdf": has_pdf,
     }
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def _digest_at_stat(root, key, dev, inode, mtime, ctime, size):
     with open_project_file(root, key) as f:
+        st = os.fstat(f.fileno())
+        if (st.st_dev, st.st_ino, st.st_mtime_ns, st.st_ctime_ns, st.st_size) != (dev, inode, mtime, ctime, size):
+            raise ValueError("Review artifact changed while opening it")
         return hash_stream(f)[1]
 
 
 def matches_file(root, key, digest):
-    if not re.fullmatch(r"[a-f0-9]{64}", digest or ""):
+    if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
         return False
     try:
         with open_project_file(root, key) as f:
             st = os.fstat(f.fileno())
-        if st.st_size > 64 * 1024 * 1024:
-            return False
+            if st.st_size > MAX_BYTES:
+                return False
+            # Rapid in-place writes can share inode, size and timestamps on
+            # coarse filesystems. Only cache versions older than that window.
+            if time_ns() - max(st.st_mtime_ns, st.st_ctime_ns) < 2_000_000_000:
+                return hash_stream(f)[1] == digest
         return _digest_at_stat(root, key, st.st_dev, st.st_ino, st.st_mtime_ns,
                                st.st_ctime_ns, st.st_size) == digest
     except (OSError, ValueError):
         return False
 
 
+def paper_edition(root):
+    """Resolve the last completed delivery independently of the active draft."""
+    state_key = "auto_research/state/native_project.json"
+    state = read_record(root, state_key, missing=False)
+    if state is False:
+        return None, None  # Legacy project or remote artifact store
+    if state and "delivery_revision" not in state:
+        return "working", None
+    revision = state.get("delivery_revision")
+    if isinstance(revision, str) and re.fullmatch(r"[a-f0-9]{64}", revision):
+        archive = f"auto_research/state/reviews/{revision}"
+        record = read_record(root, f"{archive}/review.json")
+        digest = record.get("paper_pdf_sha256")
+        hashes = record.get("artifact_hashes")
+        if (record.get("revision") == revision and record.get("deliverable") is True
+                and record.get("verdict") == "accept" and isinstance(hashes, dict)
+                and hashes.get("paper/main.pdf") == digest
+                and matches_file(root, f"{archive}/main.pdf", digest)):
+            return "delivered", record
+    return "unavailable", None
+
+
 def _rows(value):
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
 
-def review_summary(root, review):
+def review_summary(root, review, *, delivered=False):
     revision = _text(review.get("revision"))
     if not re.fullmatch(r"[a-f0-9]{64}", revision):
         return None
@@ -256,22 +303,14 @@ def review_summary(root, review):
         older = previous_issues.get(row["id"])
         row["evidence"] = (references(older, prior, True) if older else []) + references(issue, revision, False)
         issues.append(row)
-    stale = not matches_file(root, "paper/main.pdf", _text(review.get("paper_pdf_sha256")))
-    # The published PDF can still be the reviewed file while its source is being edited.
-    try:
-        with open_project_file(root, "auto_research/state/native_review.json") as f:
-            reviewed = os.fstat(f.fileno()).st_mtime_ns
-        files = review.get("artifact_hashes")
-        tracked = [key for key in files if evidence_type(key)] if isinstance(files, dict) else []
-        for key in {"paper/main.tex", "paper/references.bib", *tracked[:384]}:
-            try:
-                with open_project_file(root, key) as f:
-                    st = os.fstat(f.fileno())
-                    stale |= max(st.st_mtime_ns, st.st_ctime_ns) > reviewed
-            except FileNotFoundError:
-                stale |= key in tracked
-    except (OSError, ValueError):
-        stale = True
+    # Private inputs such as split TeX sources and method code also bind the
+    # review. Their hashes can be checked without granting download access.
+    hashes = review.get("artifact_hashes", {})
+    stale = not delivered and (
+        not matches_file(root, "paper/main.pdf", review.get("paper_pdf_sha256"))
+        or not isinstance(hashes, dict) or len(hashes) > MAX_ARTIFACTS
+        or any(not matches_file(root, key, digest) for key, digest in hashes.items())
+    )
     checks = review.get("checks")
     coverage = []
     if isinstance(checks, dict):

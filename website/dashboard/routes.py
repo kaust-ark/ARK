@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -34,6 +35,7 @@ MAX_CONCURRENT_REGULAR_GLOBAL = 3    # regular lane global cap
 MAX_CONCURRENT_ADMIN_GLOBAL = 5      # admin lane global cap
 MAX_CONCURRENT_GLOBAL = MAX_CONCURRENT_REGULAR_GLOBAL  # back-compat alias (regular lane)
 from ark.paths import get_ark_root as _get_ark_root
+from ark.review import MAX_BYTES as MAX_REVIEW_BYTES
 _DISABLED_FLAG = None  # lazy
 
 
@@ -2628,7 +2630,8 @@ async def api_list_projects(request: Request, scope: str = "mine"):
         for p in projects:
             pdir = _project_dir(settings, p.user_id, p.id)
             score = _read_project_score(pdir, project=p)
-            pdf = _find_pdf(pdir)
+            edition, _ = progress.paper_edition(pdir)
+            has_pdf = edition == "delivered" or (edition != "unavailable" and _find_pdf(pdir) is not None)
             # Sync paper_title from LaTeX into DB title+name if it differs
             paper_title = _read_paper_title(pdir)
             if paper_title and paper_title != p.title:
@@ -2643,7 +2646,7 @@ async def api_list_projects(request: Request, scope: str = "mine"):
                 "mode": p.mode,
                 "status": p.status,
                 "score": score,
-                "has_pdf": pdf is not None,
+                "has_pdf": has_pdf,
                 "has_pdf_upload": bool(p.has_pdf_upload),
                 "slurm_job_id": p.slurm_job_id,
                 "created_at": p.created_at.isoformat(),
@@ -3022,7 +3025,7 @@ async def api_get_project(project_id: str, request: Request):
             "layout_mode": getattr(project, "layout_mode", "balanced") or "balanced",
             "figure_generation": getattr(project, "figure_generation", None) or "nano_banana",
             "phase_status": _read_phase_status(pdir, project),
-            "has_pdf": has_pdf,
+            "has_pdf": any(item["key"] == "paper/main.pdf" for item in research["evidence"]),
             "research": research,
             "delivery_report": _read_delivery_report(pdir) if access == "manage" else None,
             "has_pdf_upload": bool(project.has_pdf_upload),
@@ -3829,27 +3832,55 @@ async def api_admin_access_decline(request: Request):
 
 
 @router.get("/api/projects/{project_id}/pdf")
-async def api_get_pdf(project_id: str, request: Request):
+def api_get_pdf(project_id: str, request: Request, working: bool = False, delivered: str = ""):
     settings = get_settings()
     with get_session(settings.db_path) as session:
         project = get_project(session, project_id)
-        if not project or not _can_read_project(request, project):
+        access = _project_read_access(request, project) if project else None
+        if not access or (working and access != "manage"):
             raise HTTPException(404)
         owner_id = project.user_id
         ref = _latest_artifact_ref(session, project_id, "pdf")
     pdir = _project_dir(settings, owner_id, project_id)
-    # Prefer a registered artifact (works for object storage / remote runs with
-    # no shared FS); fall back to scanning the project dir (local/SLURM, or
-    # before the first publish).
-    served = _serve_registered_artifact(pdir, ref, filename="main.pdf",
-                                        inline=True, min_size=10000)
-    if served is not None:
-        return served
+    prefer_draft = working
+    if not working or delivered:
+        edition, record = progress.paper_edition(pdir)
+        prefer_draft = edition == "working"
+        if delivered and (not record or delivered != record["paper_pdf_sha256"] or working):
+            raise HTTPException(409, "This delivered PDF is no longer available")
+        if edition == "unavailable":
+            raise HTTPException(409, "Could not verify the delivered PDF")
+        if record:
+            # Serve only the bytes verified on this file descriptor. The archive
+            # can be replaced between resolving a review and opening its PDF.
+            key = f"auto_research/state/reviews/{record['revision']}/main.pdf"
+            try:
+                with progress.open_project_file(pdir, key) as stream:
+                    size = os.fstat(stream.fileno()).st_size
+                    if size > MAX_REVIEW_BYTES:
+                        raise ValueError("PDF exceeds the review limit")
+                    data = stream.read(size + 1)
+            except (OSError, ValueError):
+                raise HTTPException(409, "Could not open the delivered PDF")
+            if len(data) != size or hashlib.sha256(data).hexdigest() != record["paper_pdf_sha256"]:
+                raise HTTPException(409, "Delivered PDF changed")
+            return Response(data, media_type="application/pdf", headers={
+                "Content-Disposition": 'inline; filename="main.pdf"', "Cache-Control": "private, no-store",
+            })
     pdf = _find_pdf(pdir)
+    # A local native draft may have advanced since the remote artifact was published.
+    # Older projects and remote-only runs keep their registered artifact preference.
+    if not prefer_draft or not pdf:
+        served = _serve_registered_artifact(pdir, ref, filename="main.pdf",
+                                            inline=True, min_size=10000)
+        if served is not None:
+            served.headers["Cache-Control"] = "private, no-store"
+            return served
     if not pdf:
         raise HTTPException(404, "PDF not ready")
     return FileResponse(pdf, media_type="application/pdf",
-                        filename=pdf.name, content_disposition_type="inline")
+                        filename=pdf.name, content_disposition_type="inline",
+                        headers={"Cache-Control": "private, no-store"})
 
 
 @router.get("/api/projects/{project_id}/research-history")

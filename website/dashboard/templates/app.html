@@ -1161,6 +1161,7 @@ Strict — hit the exact page limit (spends the most tokens).">
 
   <section id="research-review" class="detail-card share-hide" hidden aria-labelledby="review-heading">
     <h4 id="review-heading" data-i18n="research_review_title">Independent review</h4>
+    <button id="review-switch" type="button" class="btn-secondary" hidden></button>
     <p id="review-verdict"></p><ul id="review-issues"></ul>
     <details id="review-coverage" hidden><summary data-i18n="research_coverage">What the reviewer checked</summary><ul></ul></details>
   </section>
@@ -4305,11 +4306,16 @@ function renderDetailActions(p) {
   const zipTitle = zipReady ? '' : 'title="Available after first review completes"';
   let html = '';
   if (p.status !== 'waiting_template') {
-    const pdfReady = p.has_pdf;
+    const primary = p.research?.evidence?.find(item => item.key === 'paper/main.pdf');
+    const pdfReady = primary || p.has_pdf;
     const pdfTitle = pdfReady ? '' : 'title="Available after first iteration completes"';
-    html += `<a href="${APP_BASE}/api/projects/${p.id}/pdf" target="_blank"
-      class="btn-secondary ${pdfReady ? '' : 'btn-disabled'}" style="text-decoration:none"
-      ${pdfTitle}>${t('view_pdf')}</a>`;
+    const pdfUrl = APP_BASE + '/api/projects/' + encodeURIComponent(p.id) + '/pdf';
+    const pin = primary?.delivered_sha256 ? '?delivered=' + encodeURIComponent(primary.delivered_sha256) : '';
+    if (pdfReady || !p.research?.has_working_pdf)
+      html += `<a href="${pdfUrl}${pin}" target="_blank" class="btn-secondary ${pdfReady ? '' : 'btn-disabled'}"
+        style="text-decoration:none" ${pdfTitle}>${primary?.edition ? rt(primary.edition + '_pdf') : t('view_pdf')}</a>`;
+    if (!window.SHARE_MODE && p.research?.has_working_pdf && (pin || !pdfReady))
+      html += `<a href="${pdfUrl}?working=true" target="_blank" class="btn-secondary" style="text-decoration:none">${rt('working_pdf')}</a>`;
     html += `<a href="${APP_BASE}/api/projects/${p.id}/zip"
       class="btn-secondary ${zipReady ? '' : 'btn-disabled'}" style="text-decoration:none"
       ${zipTitle}>${t('download_zip')}</a>`;

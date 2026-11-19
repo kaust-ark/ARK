@@ -405,7 +405,7 @@ def test_manuscript_check_trials_the_actual_edit_without_publishing(tmp_path, mo
 
     monkeypatch.setattr(domain.subprocess, "run", record_run)
     assert project.invoke("check_manuscript_edit", {"content": cited, "base_sha256": base}) == {
-        "ok": True, "checked": True,
+        "ok": True, "checked": True, "first_pass_preview": {"body_pages": 1, "target": 4},
     }
     assert trials == [cited]
     result = project.invoke("check_manuscript_edit", {"content": broken, "base_sha256": base})
@@ -419,6 +419,20 @@ def test_manuscript_check_trials_the_actual_edit_without_publishing(tmp_path, mo
     assert result["ok"] and not result["checked"] and "also fails" in result["reason"]
     assert trials[-2:] == [incremental, broken]
     assert main.read_text() == broken and project.path.read_bytes() == before[project.path]
+
+    # A single edit can already have fixed the page budget. Count the body in
+    # the trial PDF and leave the public build and its receipt untouched.
+    main.write_text(current)
+    project.config["venue_pages"] = 2
+    with_endmatter = (r"\documentclass{article}\begin{document}First page.\newpage Second page."
+                      r"\newpage\section*{References}Original text.\end{document}")
+    preview = project.invoke("check_manuscript_edit", {"content": with_endmatter})["first_pass_preview"]
+    assert (preview["body_pages"], preview["target"]) == (2, 2) and "compile_paper" in preview["next"]
+    assert project.latex_dir.joinpath("main.pdf").read_bytes() == before[project.latex_dir / "main.pdf"]
+    project.config["venue_pages"] = 4
+    assert project.invoke("check_manuscript_edit", {"content": with_endmatter})["first_pass_preview"] == {
+        "body_pages": 2, "target": 4,
+    }
 
 
 def test_manuscript_check_handles_missing_tool_and_unsafe_assets(tmp_path, monkeypatch):
@@ -820,6 +834,50 @@ def test_strict_table_keeps_worker_conditions_across_render_and_resume(tmp_path,
     assert measurement_table.with_row_identifiers([{"seed": 7}, {"seed": 7}], "", columns) == columns
     project.config["layout_mode"] = "flexible"
     assert project.render_results_table(args)["columns"] == columns
+
+
+@pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
+def test_strict_compiled_table_cannot_hide_a_conflicting_transcription(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    rows = [{"fold": 1, "condition": "A", "time": 2.4689, "rate": 0.08761},
+            {"fold": 2, "condition": "A", "time": 3.14159, "rate": 0.12349},
+            {"fold": 1, "condition": "B", "time": 1.2349, "rate": 0.2345}]
+    measured = tmp_path / "results/pairs.json"
+    measured.write_text(json.dumps({"observations": rows}))
+    project.state["experiment"] = {"status": "completed", "artifact": "results/pairs.json",
+                                   "sha256": domain._sha(measured)}
+    args = {"name": "outcomes", "rows_pointer": "/observations", "columns": [
+        {"path": "time", "label": "Time"}, {"path": "rate", "label": "Rate %", "percent": True}]}
+    table = project.render_results_table(args)
+    source = project.latex_dir / "main.tex"
+    source.write_text(r"""\documentclass{article}
+\begin{document}\section{Results}
+\input{observations}
+\appendix\section{Measured outcomes}
+\input{tables/outcomes.tex}
+\end{document}""")
+    manuscript = project.latex_dir / "observations.tex"
+    # Reordered columns, a subset of the rows in reverse order, different
+    # precision from the generated input, and a composite row identifier.
+    body = r"""\begin{tabular}{lrrr}
+Condition & Rate \% & Time & Fold \\
+B & 23.5 & 1.235 & 1 \\
+A & 12.3 & 3.124 & 2 \\
+\end{tabular}"""
+    hidden = body.replace("3.124", "9.001")
+    other = body.replace("Rate", "Rank")
+    independent = body.replace("23.5", "88.1").replace("12.3", "89.2").replace("3.124", "3.142")
+    summary = body.replace("Fold", "Folds averaged")
+    manuscript.write_text("\n\n".join([body, r"\iffalse" + hidden + r"\fi", other, independent, summary]))
+
+    result = project.compile_paper({})
+    assert result["ok"] and table["path"] in result["inputs"]
+    issue, = [i for i in result["manuscript_issues"] if "disagrees with the worker measurements" in i]
+    assert "observations.tex:1 (PDF p. 1)" in issue and "Condition=A, Fold=2, Time prints 3.124 (worker 3.142)" in issue
+    assert issue in project.review_snapshot({"preflight": True})["blockers"]
+    assert "Rate %" not in issue and "1.235" not in issue
+    manuscript.write_text(manuscript.read_text().replace(body, body.replace("3.124", "3.142"), 1))
+    assert not any("disagrees with the worker measurements" in i for i in project.compile_paper({})["manuscript_issues"])
 
 
 def test_render_plot_discovery_and_strict_delivery_require_actual_read(tmp_path, monkeypatch):

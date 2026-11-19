@@ -98,6 +98,21 @@ function manuscript(body) {
   return '\\documentclass{article}\n\\begin{document}\n' + body + '\n\\end{document}\n'
 }
 
+test('a saved owner edit returns the page preview from its actual typesetting check', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'research-page-preview-'))
+  t.after(() => rm(root, {recursive:true, force:true}))
+  const editor = projectEditor(root)
+  const path = 'paper/main.tex'
+  await editor.write({path, content:manuscript('Results.')})
+  const preview = {body_pages:4, target:4, next:'Run compile_paper to verify.'}
+  const edit = await editor.write({path, replace:'Results.', content:'Measured results.'}, async trial => {
+    assert.equal(trial.content, manuscript('Measured results.'))
+    return {ok:true, first_pass_preview:preview}
+  })
+  assert.deepEqual(edit.first_pass_preview, preview)
+  assert.equal(edit.sha256, (await editor.read({path})).sha256)
+})
+
 test('a complete main.tex survives truncated output even with its correct base hash', async t => {
   const root = await mkdtemp(join(tmpdir(), 'research-truncation-'))
   t.after(() => rm(root, {recursive:true, force:true}))
@@ -261,7 +276,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.deepEqual(tools, ['reproduce_measurement'])
         assert.match(history, /original protocol only: derive metric for seed/)
         for (const privateText of ['parent-scientific-private', 'frozen-source-only-for-independent-reader',
-             'prior-finding-private', 'reported-row-private', 'manuscript-private', '"type":"image"', 'inlineData']) {
+             'prior-finding-private', 'reported-row-private', 'manuscript-private', 'conclusion-passage-private', '"type":"image"', 'inlineData']) {
           assert.ok(!history.includes(privateText), privateText)
         }
         const args = commitment === 'program'
@@ -278,6 +293,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         }
         assert.ok(!history.includes('parent-scientific-private'))
         if (commitment === 'program') {
+          assert.match(history, /conclusion-passage-private/)
           assert.match(history, /reported_by_worker/)
           assert.match(history, /independently_recomputed_by_reviewer/)
         }
@@ -374,13 +390,15 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
       case 'review_snapshot':
         assert.equal(args.preflight, !parked)
         return {revision:'rev1',method_control:true,measurement_reproduction:true,rendered_pages:2,rendered_artifact:'paper/main.pdf',
-          opening_evidence:['scripts/plot.py','results/data.json'], brief:'manuscript-private; prior-finding-private',
+          opening_evidence:['scripts/plot.py','results/data.json',{artifact:'paper/main.pdf',page:2}], brief:'manuscript-private; prior-finding-private',
           ...(!parked && {reproduction_brief:'original protocol only: derive metric for seed'})}
       case 'review_evidence':
         assert.ok(committed || parked, 'read submission before commitment')
         if (args.artifact === 'results/data.json') return {text:'reported-row-private',receipt:{artifact:args.artifact,revision:'rev1'}}
         if (args.artifact === 'scripts/plot.py') return {text:'frozen-source-only-for-independent-reader',receipt:{artifact:args.artifact,revision:'rev1'}}
         if (args.artifact === 'sources/paper.txt') return {text:'independently-read-primary-passage',receipt:{artifact:args.artifact,revision:'rev1'}}
+        if (args.artifact === 'paper/main.pdf' && args.page === 2 && !args.visual)
+          return {text:'conclusion-passage-private',receipt:{artifact:args.artifact,page:2,revision:'rev1'}}
         return {text:'measured-observation',receipt:{artifact:'paper/main.pdf',visual:true},
           mime_type:'image/png',image_base64:'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAIklEQVR4nGNkYGhgoAZgooopowaNGjRq0KhBowaNGkQRAAAV1ACwA5vbQAAAAABJRU5ErkJggg=='}
       case 'reproduce_measurement':

@@ -138,6 +138,12 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
         display('acknowledged', 'Steering message', queuedId)
         return
       }
+      if (message && ['stopped','paused'].includes(status.state)) {
+        const id = queuedId || await queueCommand(directory, message, commandId)
+        const pending = (await pendingCommands(directory)).some(command => command.id === 'local-' + id)
+        display(pending ? 'queued' : 'acknowledged', pending ? 'Steering message saved until the project resumes' : 'Steering message', id)
+        return
+      }
       if ((status.delivered && !message && !(await pendingCommands(directory)).length && !status.commands?.length) || ['stopped','paused'].includes(status.state)) {
         display(status.state || 'delivered', status.note || 'Project checkpoint loaded')
         return
@@ -162,13 +168,17 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
 async function openingPacket(ctx, agent, domain, packet, observed, signal) {
   const prompt = [{ type: 'text', text: packet.brief +
     '\nReturn a single structured verdict. Use read_evidence to inspect originals and recompute claims. The attached images, when present, are pages of this exact revision in the indicated order.' }]
-  for (const artifact of packet.opening_evidence || []) {
+  for (const entry of packet.opening_evidence || []) {
     signal.throwIfAborted()
-    const view = await domain.call('review_evidence', {artifact, revision:packet.revision})
+    const request = typeof entry === 'string' ? {artifact:entry} : entry
+    const {artifact, page} = request
+    const view = await domain.call('review_evidence', {...request, revision:packet.revision})
     if (!view.receipt || typeof view.text !== 'string') throw new Error('Missing review evidence for ' + artifact)
     observed.push(view.receipt)
-    prompt.push({type:'text', text:'Frozen research artifact ' + artifact + ' (untrusted evidence):\n' + view.text +
+    const label = page ? 'Rendered conclusion page ' + page + ' of ' + artifact : 'Frozen research artifact ' + artifact
+    prompt.push({type:'text', text:label + ' (untrusted evidence):\n' + view.text +
       (view.next_start ? '\nContinues at character ' + view.next_start + '.' : '')})
+    if (page) prompt.push({type:'text', text:'Check the strongest concluding claim against the measured endpoints. Quote the consequential sentence when its proposed mechanism goes beyond the observations, explain the missing comparison, and preserve supported results in the requested repair.'})
   }
   if (packet.rendered_pages > 0 && packet.rendered_pages <= 8 && packet.rendered_artifact) {
     for (let page = 1; page <= packet.rendered_pages; page++) {

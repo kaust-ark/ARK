@@ -127,11 +127,11 @@ def replay(raw, columns, oracle):
     return result
 
 
-def pdf_rows(doc):
+def pdf_rows(doc, clip=None):
     """Keep values bound to the same physical line; allow thousands separators."""
     for page in doc:
         lines = []
-        for x, y, _, bottom, token, *_ in sorted(page.get_text("words"), key=lambda w: (w[1], w[0])):
+        for x, y, _, bottom, token, *_ in sorted(page.get_text("words", clip=clip), key=lambda w: (w[1], w[0])):
             # Math exponents have a slightly higher baseline. Merge them with
             # the base while keeping adjacent table rows separate.
             if not lines or y - lines[-1][0] > max(2., .55 * (bottom - y)):
@@ -154,7 +154,47 @@ def printed_value_matches(token, expected):
             and abs(expected - observed) <= quantum * .500001)
 
 
+def _check_friedman_tables(doc, rows):
+    """Check each rendered per-seed table that labels both feature-space arms."""
+    labels = {"seed":"seed"}
+    for metric in ("rmse", "mae"):
+        for arm, aliases in (("all", ("10", "full")), ("signal", ("5", "signal"))):
+            for name in aliases:
+                labels[f"{metric} ({name})"] = f"{metric}_{arm}"
+    errors = []
+    for page in doc:
+        for block in page.get_text("dict", flags=0)["blocks"]:
+            lines = [("".join(s["text"] for s in line["spans"]).strip().lower(), line["bbox"])
+                     for line in block.get("lines", [])]
+            for title, box in lines:
+                if title != "seed":
+                    continue
+                header = sorted(((rect[0], labels[key], rect) for key, rect in lines
+                                 if key in labels and abs(rect[1] - box[1]) <= 2), key=lambda cell: cell[0])
+                columns = [cell[1] for cell in header]
+                if len(set(columns)) != len(columns) or not {"rmse_all", "rmse_signal"} <= set(columns):
+                    continue
+                clip = fitz.Rect(header[0][0] - 2, max(cell[2][3] for cell in header),
+                                 header[-1][2][2] + 2, page.rect.height)
+                for _, line in pdf_rows([page], clip):
+                    cells = line.split()
+                    if len(cells) != len(columns) or not all(re.fullmatch(r"\d+(?:\.\d+)?", v) for v in cells):
+                        break
+                    identifier = cells[columns.index("seed")]
+                    if not identifier.isdigit() or int(identifier) not in rows:
+                        break
+                    row = rows[int(identifier)]
+                    for field, printed in zip(columns, cells):
+                        if field != "seed" and not printed_value_matches(printed, row[field]):
+                            errors.append(f"page {page.number + 1}, seed {identifier}, {field}: printed {printed}, "
+                                          f"reference {row[field]:.6g}")
+    if errors:
+        raise ValueError("Conflicting rendered measurements: " + "; ".join(errors[:12]))
+
+
 def displayed_metrics(doc, case, rows):
+    if case == "friedman":
+        _check_friedman_tables(doc, rows)
     fields = ("nll_raw", "nll_cal") if case == "digits" else ("rmse_all", "rmse_signal")
     lines = list(pdf_rows(doc))
     result = {}

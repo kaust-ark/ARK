@@ -31,6 +31,26 @@ def test_shuffled_pdf_rows_do_not_match_split_values():
             benchmark.displayed_metrics(doc, "digits", {1: rows[0], 0: rows[1]})
 
 
+def test_correct_rendered_table_cannot_mask_other_conflicting_cells():
+    rows = {0: {"rmse_all": 2.10, "rmse_signal": 1.70, "mae_signal": 1.31},
+            1: {"rmse_all": 2.20, "rmse_signal": 1.80, "mae_signal": 1.42}}
+    with fitz.open() as doc:
+        for wrong_cell in (False, True):
+            page = doc.new_page()
+            page.insert_text((30, 116), "Other column: 1.42")
+            for x, name in [(230, "Seed"), (280, "MAE (5)"), (355, "RMSE (5)"), (430, "RMSE (10)")]:
+                page.insert_text((x, 100), name)
+            for index in (0, 1):
+                values = [str(index), "1.99" if wrong_cell and index else f'{rows[index]["mae_signal"]:.2f}',
+                          f'{rows[index]["rmse_signal"]:.2f}', f'{rows[index]["rmse_all"]:.2f}']
+                for x, text in zip((230, 280, 355, 430), values):
+                    page.insert_text((x, 116 + 16 * index), text)
+            if not wrong_cell:
+                assert set(benchmark.displayed_metrics(doc, "friedman", rows)) == set(rows)
+        with pytest.raises(ValueError, match="page 2, seed 1, mae_signal: printed 1.99"):
+            benchmark.displayed_metrics(doc, "friedman", rows)
+
+
 def test_plot_and_method_output_must_match_actual_body_pixels_and_vectors(tmp_path):
     figures = tmp_path / "figures"
     figures.mkdir()
