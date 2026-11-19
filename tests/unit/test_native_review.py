@@ -30,9 +30,10 @@ def test_delivered_signature_survives_only_changes_to_review_checks():
     previous_policy = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":4}}
     latest = {**previous_policy, "evidence_scope":{**previous_policy["evidence_scope"], "conclusion_clauses":[
         {"sentence":1,"result":"The outcome increased","continuation":"because uptake improved."}]}}
-    current = {**latest, "revision":fingerprint(latest), "project":"/somewhere/else"}
+    comparisons = {**latest, "evidence_scope":{**latest["evidence_scope"], "direction":locator}}
+    current = {**comparisons, "revision":fingerprint(comparisons), "project":"/somewhere/else"}
     archived_claims = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":3}}
-    for fmt in (early, published, older, prior, archived_claims, previous_policy):
+    for fmt in (early, published, older, prior, archived_claims, previous_policy, latest):
         revision = fingerprint(fmt)
         signed = dict(version=1, revision=revision, verdict="accept", deliverable=True, paper_pdf_sha256="a" * 64,
                       artifact_hashes={p: meta["sha256"] for p, meta in artifacts.items()})
@@ -337,6 +338,64 @@ def test_conclusion_reviewer_checks_the_whole_observed_paragraph_against_results
     assert "conclusion" not in paper(effect, "Results")
     (tmp_path / "results/rows.csv").unlink()
     assert "conclusion" not in paper(effect)
+
+
+def test_distinct_quantitative_comparisons_need_their_observed_columns(tmp_path):
+    from ark import review
+
+    pair = {"domain":"experiment", "clean":"Two arms were compared.", "table":"arm,score\nA,1\nB,2",
+            "question":"Which control tracks the target?", "defect":"No decomposition."}
+    project(tmp_path, pair, "clean")
+    pdf, data = "paper/main.pdf", "results/trials.json"
+    path = tmp_path / data
+    path.write_text('[{"uptake":4,"evaporation":2,"target_distance":1,"control_distance":3}]')
+    method = "scripts/worker.py"
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / method).write_text("distance = abs(sensor - reference)")
+    outcome = "The treated arm lost less mass."
+    cause = "The mass change is driven by treatment."
+    ordering = "The increase in uptake outweighs the change in evaporation."
+    direction = "The treated sensor is closer to the target than the control sensor."
+    with fitz.open() as doc:
+        for heading, lines in (("Results", [cause, direction]), ("Components", [ordering]),
+                               ("Conclusion", [outcome]), ("References", ["One term outweighs the other."])):
+            page = doc.new_page()
+            page.insert_text((50, 50), heading)
+            for line, text in enumerate(lines, 1):
+                page.insert_text((50, 50 + 25 * line), text)
+        doc.save(tmp_path / pdf)
+    snap = build_snapshot(tmp_path, expected_measurement=data, measurement_run={
+        "status":"completed", "artifact":data, "sha256":hashlib.sha256(path.read_bytes()).hexdigest()})
+    scope = snap["evidence_scope"]
+    assert [scope[k]["quote"] for k in ("attribution","direction","contribution")] == [cause, direction, ordering]
+    assert '"selector":"direction"' in review.claim_instructions(snap)
+    receipts = [read_evidence(snap, data)["receipt"], read_evidence(snap, method)["receipt"]]
+    receipts.extend(read_evidence(snap, pdf, page=n)["receipt"] for n in (1,2,3))
+    row = {"artifact":data, "row":1}
+    measured = {"kind":"result", "basis":"measurement", "passage":{"selector":"conclusion"},
+                "evidence":[row], "reason":"Measured losses differ."}
+    control = {"kind":"explanation", "basis":"control", "passage":{"selector":"attribution"},
+               "evidence":[row, {"artifact":method, "quote":"distance = abs(sensor - reference)"}],
+               "reason":"The protocol holds the reference fixed."}
+    def assess(*comparisons):
+        return review._manuscript_claims(snap, [measured, control, *comparisons], receipts, "")
+    with pytest.raises(ValueError, match="contribution.*page 2"):
+        assess()
+    ranking = dict(measured, passage={"selector":"contribution"}, measured_columns=["uptake","evaporation"])
+    with pytest.raises(ValueError, match="direction.*page 1"):
+        assess(ranking)
+    comparison = dict(control, passage={"selector":"direction"}, measured_columns=["target_distance","control_distance"],
+                      reason="Both distances use the same reference. The treated distance is one and the control is three.")
+    for columns in (None, ["unmeasured_distance"]):
+        with pytest.raises(ValueError, match="measured_columns"):
+            assess(ranking, dict(comparison, measured_columns=columns))
+    narrow = dict(comparison, evidence=[{"artifact":data,"quote":'"uptake":4'}, control["evidence"][1]])
+    with pytest.raises(ValueError, match="measured_columns"):
+        assess(ranking, narrow)
+    assert assess(ranking, comparison)[-1]["measured_columns"] == ["target_distance", "control_distance"]
+    analytic = dict(comparison, basis="derivation", evidence=[control["evidence"][1]],
+                    bridge="distance = abs(sensor - reference)", reason="The distances follow from the recorded definition.")
+    assert assess(ranking, analytic)[-1]["basis"] == "derivation"
 
 
 def test_result_and_explanation_require_separate_observed_support(tmp_path):

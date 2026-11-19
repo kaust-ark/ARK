@@ -3,6 +3,7 @@
 from decimal import Decimal, InvalidOperation
 import math
 import re
+import statistics
 
 
 def project_rows(data):
@@ -130,6 +131,36 @@ def _value(row, path):
 
 ROW_IDENTIFIERS = {"condition", "label", "seed", "fold", "split", "trial", "run", "replicate",
                    "condition_id", "fold_id", "split_id", "trial_id", "run_id", "sample_id"}
+
+
+def summarize(data, rows_pointer, column, reference=None):
+    """Calculate descriptive statistics over the same sealed rows, paired by row."""
+    rows = _rows(data, rows_pointer)
+
+    def series(path):
+        if not isinstance(path, str) or len(path) > 120 or not re.fullmatch(r"[\w-]+(?:\.[\w-]+)*", path):
+            raise ValueError("Choose a numeric column listed for this result table.")
+        numbers = [_value(row, path) for row in rows]
+        if not all(type(n) in (int, float) and math.isfinite(n) for n in numbers):
+            raise ValueError(f"Column {path} must contain a finite number in every selected row.")
+        return numbers
+
+    def describe_series(values):
+        return {"mean": statistics.mean(values), "min": min(values), "max": max(values),
+                "sample_sd": statistics.stdev(values) if len(values) > 1 else None}
+
+    values = series(column)
+    result = {"n": len(rows), "value": describe_series(values)}
+    if reference is not None:
+        if reference == column:
+            raise ValueError("Choose two different columns for a paired contrast.")
+        other = series(reference)
+        result["reference"] = describe_series(other)
+        result["paired_difference"] = describe_series([v - r for v, r in zip(values, other)])
+        baseline = result["reference"]["mean"]
+        if baseline:
+            result["percent_change_in_means"] = 100 * result["paired_difference"]["mean"] / baseline
+    return result
 
 
 def reproduction_row(data, unchanged, digest):

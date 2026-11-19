@@ -353,8 +353,8 @@ export const operations = {
     result_path: {type:'string', description:'One project-relative JSON output filename, for example results/measurements.json.'},
   }, ['question', 'baseline', 'comparison', 'metric', 'controls', 'script', 'result_path']],
   run_experiment: ['Run or reconcile the registered experiment. The isolated script writes measured JSON to the registered relative results path or prints it to stdout.', {}],
-  render_results_table: ['Typeset measured results from the worker JSON. Call with no columns to discover available rows and fields. Include the returned file in a LaTeX table.', {
-    name: str, rows_pointer: str, columns: { type: 'array', items: { type: 'object', properties: {
+  render_results_table: ['Inspect the sealed worker rows. With summarize=<numeric field> get mean, minimum, maximum and sample standard deviation across the rows. Add reference=<second field> for paired differences (value minus reference) and percentage change in means. Use the returned numbers and state what the uncertainty represents. With columns, typeset the rows and include the returned file in a LaTeX table. With no arguments discover fields.', {
+    name: str, rows_pointer: str, summarize: str, reference: str, columns: { type: 'array', items: { type: 'object', properties: {
       path: str, label: str, digits: num, percent: bool }, required: ['path'] } },
   }],
   render_plot: ['Plot sealed worker measurements. Call with no arguments to list columns. For a line, point or grouped bar plot provide filename, kind, x and series, with optional rows_pointer and y_label. Each path names a measured field. For a custom plot provide script and filename; read /study/results.json and save /output/<filename>.', {

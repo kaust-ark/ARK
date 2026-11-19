@@ -1367,3 +1367,32 @@ def test_compiler_reports_first_source_error_instead_of_memory_statistics(tmp_pa
     detail = domain.extract_latex_errors(log)
     assert "./main.tex:56: Argument" in detail
     assert "stack positions" not in detail and "Fatal error" not in detail
+
+
+def test_registered_paired_summary_recomputes_printed_uncertainty(tmp_path, monkeypatch):
+    from ark import provenance
+
+    project = open_project(tmp_path, monkeypatch)
+    artifact = tmp_path / "results/paired.json"
+    rows = [{"new": 1.21, "old": 0.1}, {"new": 2.21, "old": 0.3}, {"new": 3.21, "old": 0.8}]
+    artifact.write_text(json.dumps({"trials": rows}))
+    project.state["experiment"] = {"status": "completed", "artifact": "results/paired.json",
+                                   "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+    args = {"rows_pointer": "/trials", "summarize": "new", "reference": "old"}
+    record = project.invoke("render_results_table", args)
+    assert record["value"]["sample_sd"] == pytest.approx(1)
+    assert record["paired_difference"]["mean"] == pytest.approx(1.81)
+    assert record["percent_change_in_means"] == pytest.approx(452.5)
+    assert project.invoke("render_results_table", args) == record
+    assert len(project.state["measurement_summaries"]["recipes"]) == 1
+    tex = r"\section{Results} Across all three splits the mean was $2.210 \pm 1.000$ (sample SD)."
+    assert not provenance.audit(tex, tmp_path)["uncertainty_conflicts"]
+    bad = tex.replace("1.000", "0.981")
+    audit = provenance.audit(bad, tmp_path)
+    assert "sample SD is 1" in audit["uncertainty_conflicts"][0]
+    assert not provenance.verdict(audit)[0]
+    assert not provenance.audit(bad.replace("sample SD", "bootstrap confidence interval"), tmp_path)["uncertainty_conflicts"]
+    artifact.write_text(json.dumps({"trials": list(reversed(rows))}))
+    assert not provenance._registered_summaries(tmp_path, None)
+    with pytest.raises(ValueError, match="receipt"):
+        project.invoke("render_results_table", args)

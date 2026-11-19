@@ -251,8 +251,7 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
                     scope = {"version": 4, "tables": tables[:8]}
                     if conclusion and (clauses := _conclusion_clauses(conclusion)):
                         scope["conclusion_clauses"] = clauses
-                    if passage := _attribution_passage({**manifest, "project": str(root)}, pdf):
-                        scope["attribution"] = passage
+                    scope.update(_explanatory_passages({**manifest, "project": str(root)}, pdf))
                     manifest["evidence_scope"] = scope
     return {**manifest, "project": str(root), "revision": _digest(_canonical(manifest))}
 
@@ -327,23 +326,34 @@ def _conclusion_clauses(conclusion):
     return clauses
 
 
-def _attribution_passage(snapshot, pdf):
-    """Locate a strong explanatory assertion in the body for the reader to adjudicate."""
+COMPARISON_SELECTORS = ("contribution", "direction")
+
+
+def _explanatory_passages(snapshot, pdf):
+    """Locate at most one attribution, contribution ordering and directional comparison."""
     import fitz
     from ark.latex.utils import body_page_boundary
 
-    # These phrases select one passage for inspection. The reader decides what
-    # it means and whether the experiment or a derivation can support it.
-    priority = (
-        re.compile(r"\b(?:dominated by|dominant (?:cause|mechanism|contribution)|primarily (?:driven|caused|explained) by)\b", re.I),
-        re.compile(r"\b(?:mediated by|attributable to|explained by|caused by|driven by)\b", re.I),
-    )
-    best = None
+    patterns = {
+        "attribution": (
+            r"\b(?:dominated by|dominant (?:cause|mechanism|contribution)|primarily (?:driven|caused|explained) by)\b",
+            r"\b(?:mediated by|attributable to|explained by|caused by|driven by)\b",
+        ),
+        "contribution": (
+            r"\boutweigh(?:s|ed)?\b",
+            r"\b(?:accounts? for (?:more|less)|contributes? (?:more|less))\b.{1,100}\bthan\b",
+        ),
+        "direction": (
+            r"\b(?:closer to|farther from|further from)\b.{1,100}\bthan\b",
+            r"\b(?:shift(?:s|ed)?|moves?|moved)\b.{0,60}\btowards?\b",
+        ),
+    }
+    best = {}
     data, _ = _artifact(snapshot, pdf)
     try:
         document = fitz.open(stream=data, filetype="pdf")
     except (RuntimeError, ValueError):
-        return None
+        return {}
     with document as doc:
         boundary = body_page_boundary(doc)
         end = min(len(doc), boundary[0] + int(any(boundary[1]))) if boundary else len(doc)
@@ -359,13 +369,12 @@ def _attribution_passage(snapshot, pdf):
                     if offset < 0:
                         continue
                     words = _normalized_quote(sentence)
-                    for rank, pattern in enumerate(priority):
-                        if pattern.search(words) and (best is None or rank < best[0]):
-                            best = (rank, {"artifact":pdf, "page":page + 1, "start":offset + 1, "quote":sentence})
-                            if rank == 0:
-                                return best[1]
-                            break
-    return best[1] if best else None
+                    for selector, options in patterns.items():
+                        for rank, pattern in enumerate(options):
+                            if (selector not in best or rank < best[selector][0]) and re.search(pattern, words, re.I):
+                                best[selector] = (rank, {"artifact":pdf, "page":page + 1, "start":offset + 1, "quote":sentence})
+                                break
+    return {selector: passage for selector, (_, passage) in best.items()}
 
 
 def _page_index(number, count):
@@ -610,8 +619,9 @@ def claim_instructions(snapshot):
     for clause in scope.get("conclusion_clauses", ()):
         passage = {"selector":"conclusion", "sentence":clause["sentence"]}
         requests.extend(({"kind":"result","passage":passage}, {"kind":"explanation","passage":passage}))
-    if scope.get("attribution"):
-        requests.append({"kind":"explanation","passage":{"selector":"attribution"}})
+    for selector in ("attribution", *COMPARISON_SELECTORS):
+        if scope.get(selector):
+            requests.append({"kind":"explanation","passage":{"selector":selector}})
     parts = [
         "Return checks.manuscript with status, reason and claims. For each claim supply kind, passage, basis, "
         "evidence and reason. Give the result its own assessment using an observed worker row. "
@@ -645,6 +655,13 @@ def claim_instructions(snapshot):
         'For plain PDF evidence give artifact, page and a verbatim quote. A page number alone cannot identify '
         'words. A selector already identifies a passage.',
     ))
+    if any(scope.get(selector) for selector in COMPARISON_SELECTORS):
+        parts.append("For a contribution ordering or a directional comparison, identify the quantities compared. "
+                     "If you use control, give measured_columns listing the actual worker fields cited in your "
+                     "observed rows or statistics. Explain how the measurements distinguish the stated relation. "
+                     "A direct descriptive comparison may use kind=result and basis=measurement with measured_columns. "
+                     "An analytic implication may use derivation; a stated hypothesis may use qualified. "
+                     "If only an aggregate outcome or a proxy is available, identify the untested step.")
     if snapshot.get("method_control"):
         parts.append("If your derivation relies on the submission's own reasoning, independently check its "
                      "implication at the disputed passage. Use test_inference on two admissible cases and "
@@ -700,8 +717,9 @@ def review_prompt(snapshot, previous=None):
     if snapshot.get("evidence_scope", {}).get("version") in (3, 4):
         # The scoring contract is delivered separately from the untrusted manuscript.
         packet.pop("conclusion_assessment", None)
-        if attribution := snapshot["evidence_scope"].get("attribution"):
-            packet["attribution_to_check"] = attribution
+        for selector in ("attribution", *COMPARISON_SELECTORS):
+            if passage := snapshot["evidence_scope"].get(selector):
+                packet[selector + "_to_check"] = passage
     if conflicts := reported_change_conflicts(packet["manuscript_excerpt"]):
         packet["reported_changes_to_verify"] = conflicts[:8]
     if "worker_measurement" in snapshot:
@@ -869,8 +887,8 @@ def _observed_pdf_windows(snapshot, artifact, observed):
 
 
 def _observed_conclusion(snapshot, observed, selector="conclusion"):
-    target = (snapshot.get("evidence_scope", {}).get("attribution") if selector == "attribution"
-              else snapshot.get("conclusion"))
+    target = (snapshot.get("conclusion") if selector == "conclusion"
+              else snapshot.get("evidence_scope", {}).get(selector))
     if not target:
         raise ValueError(f"This snapshot has no {selector} selector.")
     artifact, quote = target["artifact"], target["quote"]
@@ -901,9 +919,9 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
             ref = {"artifact": ref["artifact"], "quote": row}
         if "selector" in ref:
             sentence = ref.get("sentence")
-            if (ref["selector"] not in ("conclusion", "attribution") or ref.keys() - {"selector", "artifact", "page", "sentence"}
+            if (ref["selector"] not in ("conclusion", "attribution", *COMPARISON_SELECTORS) or ref.keys() - {"selector", "artifact", "page", "sentence"}
                     or ("sentence" in ref and type(sentence) is not int)):
-                raise ValueError('Use only selector "conclusion" or "attribution" with optional artifact, page and one-based sentence number.')
+                raise ValueError('Use only a supplied conclusion, attribution, contribution or direction selector with optional artifact, page and one-based sentence number.')
             located = _observed_conclusion(snapshot, observed, ref["selector"])
             if ("artifact" in ref and ref["artifact"] != located["artifact"]) or (
                     "page" in ref and (type(ref["page"]) is not int or ref["page"] != located["page"])):
@@ -1188,6 +1206,29 @@ def _needs_inference_test(snapshot):
                 snapshot.get("evidence_scope", {}).get("conclusion_clauses"))
 
 
+def _cited_measurement_columns(snapshot, evidence):
+    from ark.measurement_table import describe
+
+    columns = set()
+    for ref in evidence:
+        if snapshot["artifacts"][ref["artifact"]]["kind"] != "measurement":
+            continue
+        if ref.get("column"):
+            columns.add(ref["column"])
+            continue
+        quote = ref.get("quote", "").strip()
+        try:
+            # A reviewer can cite a whole row, a single JSON field, or an entire table.
+            data = json.loads(quote if quote.startswith(("{", "[")) else "{" + quote + "}")
+        except (ValueError, RecursionError):
+            continue
+        tables = describe(data)
+        if isinstance(data, dict):
+            tables.extend(describe([data]))
+        columns.update(column for table in tables for column in table["columns"])
+    return columns
+
+
 def _manuscript_claims(snapshot, values, observed, blind):
     if not isinstance(values, list) or not 1 <= len(values) <= 8:
         raise ValueError("Supply checks.manuscript.claims with the measured result and any separate explanation.")
@@ -1215,6 +1256,17 @@ def _manuscript_claims(snapshot, values, observed, blind):
         if basis == "control" and not (measured and any(
                 snapshot["artifacts"][ref["artifact"]]["kind"] == "method" and ref.get("quote") for ref in evidence)):
             raise ValueError("For a control cite the measured comparison and the observed method that distinguishes the mechanism.")
+        if basis in ("control", "measurement") and any(
+                target and _quotes_conclusion([passage], target)
+                for target in (snapshot["evidence_scope"].get(key) for key in COMPARISON_SELECTORS)):
+            columns = value.get("measured_columns")
+            available = _cited_measurement_columns(snapshot, evidence)
+            if (not isinstance(columns, list) or not 1 <= len(columns) <= 16
+                    or not all(isinstance(c, str) and c in available for c in columns)):
+                raise ValueError("For this comparison, name the measured_columns that establish the stated relation "
+                                 "and cite those fields in an observed worker row or statistic. If the study "
+                                 "measured only a proxy, assess the unresolved claim.")
+            claim["measured_columns"] = list(dict.fromkeys(columns))
         inference_tests = [r for r in observed if r.get("control") == 3
                            and r.get("revision") == snapshot["revision"] and r.get("passage") == passage]
         if basis == "derivation":
@@ -1291,6 +1343,13 @@ def _manuscript_claims(snapshot, values, observed, blind):
     locator = snapshot["evidence_scope"].get("attribution")
     if locator and not any(c["kind"] == "explanation" and _quotes_conclusion([c["passage"]], locator) for c in claims):
         raise ValueError('Assess the located attribution separately as an explanation with passage={"selector":"attribution"}.')
+    missing = []
+    for selector in COMPARISON_SELECTORS:
+        target = snapshot["evidence_scope"].get(selector)
+        if target and not any(_quotes_conclusion([c["passage"]], target) and c["basis"] != "procedure" for c in claims):
+            missing.append(f'{selector} comparison on page {target["page"]} with passage={{"selector":"{selector}"}}')
+    if missing:
+        raise ValueError("Assess each located comparison separately: " + ", ".join(missing) + ".")
     return claims
 
 
@@ -1672,6 +1731,12 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
     if inputs_digest is not None:
         return digest == inputs_digest
 
+    original_scope = snapshot.get("evidence_scope", {})
+    if any(key in original_scope for key in COMPARISON_SELECTORS):
+        prior = {k: v for k, v in snapshot.items() if k not in ("project", "revision")}
+        prior["evidence_scope"] = {k: v for k, v in original_scope.items() if k not in COMPARISON_SELECTORS}
+        if _digest(_canonical(prior)) == revision:
+            return True
     # Historical receipts have only the hash of their original manifest. Reconstruct
     # published shapes so that a venue, worker or file change still fails comparison.
     if digest == revision:  # alpha.4
@@ -1679,7 +1744,7 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
     conclusion = snapshot.get("conclusion")
     if conclusion:
         if scope := snapshot.get("evidence_scope"):
-            previous_scope = {key: value for key, value in scope.items() if key != "conclusion_clauses"}
+            previous_scope = {key: value for key, value in scope.items() if key not in ("conclusion_clauses", *COMPARISON_SELECTORS)}
             for previous_version in (2, 3, 4):
                 old_claims = {**inputs, "conclusion":conclusion, "evidence_scope":{**previous_scope, "version":previous_version}}
                 if _digest(_canonical(old_claims)) == revision:

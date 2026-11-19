@@ -851,6 +851,22 @@ class NativeProject(CompilerMixin):
 
     def render_results_table(self, args):
         data, digest = self._measurements()
+        if "summarize" in args:
+            if args.get("columns"):
+                raise ValueError("Request a summary or render a table in each call.")
+            recipe = {"rows_pointer": args.get("rows_pointer", ""), "column": args["summarize"],
+                      "reference": args.get("reference")}
+            stats = measurement_table.summarize(data, **recipe)
+            record = self.state.get("measurement_summaries", {})
+            if record.get("input_sha256") != digest:
+                record = {"input_sha256": digest, "recipes": []}
+            if recipe not in record["recipes"]:
+                if len(record["recipes"]) >= 64:
+                    raise ValueError("This measurement already has 64 registered summaries.")
+                record["recipes"].append(recipe)
+                self.state["measurement_summaries"] = record
+                self.save()
+            return {"input_sha256": digest, **recipe, **stats}
         available = measurement_table.describe(data)
         if not args.get("columns"):
             return {"available": available}
@@ -2002,6 +2018,15 @@ class NativeProject(CompilerMixin):
         measurement = self.state.get("experiment") or {}
         if measurement.get("status") != "completed":
             return issues
+        if rendered.get("ok") and main.is_file() and main.resolve() == main:
+            from ark import provenance
+            numeric_audit = provenance.audit(main.read_text(), self.root)
+            ok, detail = provenance.verdict(numeric_audit)
+            if not ok and not numeric_audit.get("uncertainty_conflicts"):
+                issues.append(detail + " Use render_results_table(summarize=<column>, rows_pointer=..., "
+                              "reference=<optional paired column>) to recompute means, sample SDs and paired "
+                              "changes from the worker rows. Check the manuscript at its printed precision.")
+            issues.extend(numeric_audit.get("uncertainty_conflicts", []))
         plots = self.state.get("plots", {})
         inputs = set(rendered.get("inputs", []))
         manifest = figure_manifest.load_manifest(self.figures_dir, infer_existing=False)
@@ -2117,8 +2142,11 @@ class NativeProject(CompilerMixin):
                    if Path(path).suffix.lower() != ".pdf"]
         if conclusion := snapshot.get("conclusion"):
             opening.append({key: conclusion[key] for key in ("artifact", "page", "start")})
-        if attribution := snapshot.get("evidence_scope", {}).get("attribution"):
-            location = {key: attribution[key] for key in ("artifact", "page", "start")}
+        for selector in ("attribution", *review.COMPARISON_SELECTORS):
+            passage = snapshot.get("evidence_scope", {}).get(selector)
+            if not passage:
+                continue
+            location = {key: passage[key] for key in ("artifact", "page", "start")}
             if location not in opening:
                 opening.append(location)
         # Read current text at the last review's disputed locations. Page images cannot verify quotations.

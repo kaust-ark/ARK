@@ -28,6 +28,7 @@ thousands of files there on a shared filesystem.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -208,11 +209,74 @@ def _matches(printed: Decimal, values: list) -> bool:
     return False
 
 
+def _registered_summaries(root: Path, before):
+    """Recompute only the aggregates explicitly requested for the current worker artifact."""
+    from ark.measurement_table import summarize
+
+    state_file = root / "auto_research/state/native_project.json"
+    def eligible(path, limit):
+        return (path.resolve() == path and path.is_file() and path.stat().st_size <= limit
+                and (before is None or path.stat().st_mtime < before))
+
+    try:
+        if not eligible(state_file, 8 * 1024 * 1024):
+            return []
+        state = json.loads(state_file.read_bytes())
+        plans = state.get("measurement_summaries") or {}
+        receipt = state.get("experiment") or {}
+        name = receipt.get("artifact")
+        if (receipt.get("status") != "completed" or not isinstance(name, str)
+                or not re.fullmatch(r"results/[\w-]+\.json", name) or not plans.get("recipes")
+                or plans.get("input_sha256") != receipt.get("sha256")):
+            return []
+        path = root / name
+        if not eligible(path, 2_000_000):
+            return []
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != receipt["sha256"]:
+            return []
+        data = json.loads(raw)
+        return [summarize(data, **recipe) for recipe in plans["recipes"][:64]]
+    except (OSError, ValueError, TypeError, AttributeError, OverflowError, RecursionError):
+        return []
+
+
+def _uncertainty_conflicts(tex, series):
+    """Check a printed mean and spread together when its mean identifies a registered summary."""
+    pairs = re.compile(rf"(?<![\w.])({_VALUE})\s*(?:\\pm\b|±)\s*({_VALUE})(?![\w.])")
+    other_interval = re.compile(r"\b(?:confidence|credible|bootstrap|posterior|standard error|SEM|CI|IQR|"
+                                r"population (?:standard deviation|SD)|median absolute deviation)\b", re.I)
+    issues = []
+    for _, region in _regions(tex):
+        text = _strip(region)
+        for m in pairs.finditer(text):
+            if not _strong(m[1]) or other_interval.search(text[max(0,m.start()-160):m.end()+160]):
+                continue
+            matching = {Decimal(str(item["sample_sd"])) for item in series
+                        if item["sample_sd"] is not None and _matches(Decimal(m[1]), [Decimal(str(item["mean"]))])}
+            if len(matching) != 1 or _matches(Decimal(m[2]), list(matching)):
+                continue
+            sd = matching.pop()
+            issues.append(f"The printed {m[1]} ± {m[2]} matches a registered mean, whose sample SD is {sd:.7g}. "
+                          "Use the recomputed sample SD, or label and substantiate the other uncertainty measure.")
+    return list(dict.fromkeys(issues))
+
+
 def audit(tex: str, project_dir: Path, before: float | None = None) -> dict:
     """Trace the paper's numbers; `before` limits the evidence to older files."""
     found = _claims_with_units(tex)
     values, seconds, partial = _index(Path(project_dir), before,
                                       need_time=any(row[4] in _SECOND_POWERS for row in found))
+    series, derived = [], set()
+    for summary in _registered_summaries(Path(project_dir).resolve(), before):
+        for key in ("value", "reference", "paired_difference"):
+            if key in summary:
+                series.append(summary[key])
+                derived.update(Decimal(str(v)) for v in summary[key].values() if v is not None)
+        if "percent_change_in_means" in summary:
+            derived.add(Decimal(str(summary["percent_change_in_means"])))
+    if derived:
+        values = sorted(set(values) | derived)
     rows = []
     for where, s, pct, ctx, unit in found:
         traced = False
@@ -240,11 +304,14 @@ def audit(tex: str, project_dir: Path, before: float | None = None) -> dict:
             "ratio": round(traced / len(strong), 2) if strong else None,
             "evidence_values": len(values), "evidence_partial": partial,
             "unit_unverified": sum(r["unit_unverified"] for r in strong),
-            "untraced": missing[:10]}
+            "untraced": missing[:10],
+            "uncertainty_conflicts": _uncertainty_conflicts(tex, series) if series else []}
 
 
 def verdict(result: dict) -> tuple[bool, str]:
     """(ok, detail) for the delivery contract."""
+    if result.get("uncertainty_conflicts"):
+        return False, result["uncertainty_conflicts"][0]
     unit_unknown = result.get("unit_unverified", 0)
     if result["numbers"] >= 10 and result["evidence_values"] == 0:
         if result.get("evidence_partial"):

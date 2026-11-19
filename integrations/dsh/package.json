@@ -1,6 +1,6 @@
 {
   "name": "idea2paper-dsh",
-  "version": "0.2.0-alpha.18",
+  "version": "0.2.0-alpha.19",
   "description": "A persistent research agent, independently reviewed experiments and reproducible papers in DeepSeek Harness",
   "license": "Apache-2.0",
   "repository": {
