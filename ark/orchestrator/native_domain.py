@@ -2149,6 +2149,14 @@ class NativeProject(CompilerMixin):
             location = {key: passage[key] for key in ("artifact", "page", "start")}
             if location not in opening:
                 opening.append(location)
+        for context in review.revision_paragraphs(snapshot, previous).values():
+            # Existing opening windows may already contain this entire paragraph.
+            covered = any(isinstance(ref, dict) and ref.get("artifact") == context["artifact"]
+                          and ref.get("page") == context["page"] and ref.get("start", 1) <= context["start"]
+                          and context["start"] + len(context["paragraph"]) <= ref.get("start", 1) + review.VIEW_SIZE
+                          for ref in opening)
+            if not covered:
+                opening.append({key:context[key] for key in ("artifact", "page", "start")})
         # Read current text at the last review's disputed locations. Page images cannot verify quotations.
         if pages and previous and previous.get("revision") != snapshot["revision"]:
             pdf_key = f"{snapshot.get('paper_dir', 'paper')}/main.pdf"

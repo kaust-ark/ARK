@@ -306,8 +306,9 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 page.locator("#evidence-close").focus()
                 page.keyboard.press("Enter")
                 assert page.evaluate("document.activeElement.dataset.key") == "results/experiment.json"
-                before = page.locator("#review-issues button").filter(has_text="Previous revision · paper/main.pdf")
-                after = page.locator("#review-issues button").filter(has_text="Reviewed revision · paper/main.pdf")
+                finding = page.locator('#review-issues > li[data-issue="R1"]')
+                before = finding.get_by_role("button", name="Previous revision · PDF · Page 1", exact=True)
+                after = finding.get_by_role("button", name="Reviewed revision · PDF · Page 1", exact=True)
                 page.locator("#review-coverage > summary").click()
                 controls = page.locator(".method-controls")
                 controls.locator("summary").focus()
@@ -366,7 +367,13 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 page.wait_for_function("document.querySelector('#preview-content img')?.naturalWidth === 80")
                 assert figure_digest in page.locator("#preview-content img").get_attribute("src")
                 page.locator("#evidence-close").click()
-                assert "Blocking issue" in page.locator("#review-issues li strong").inner_text()
+                assert finding.locator(".review-finding-head strong").inner_text() == "R1 · Blocking issue"
+                assert finding.locator(".review-finding-head span").inner_text() == "Resolved"
+                assert finding.locator("blockquote").inner_text() == claim
+                issue_sources = finding.locator("details")
+                assert issue_sources.get_attribute("open") is None
+                issue_sources.locator("summary").press("Enter")
+                assert finding.locator("blockquote,pre").all_text_contents().count(claim) == 1
                 page.locator("#review-issues button").filter(has_text="Previous revision · paper/main.tex").click()
                 assert page.locator("#preview-content mark").inner_text() == "Arrow points to the wrong series"
                 assert "Author's newer draft" not in page.locator("#preview-content").inner_text()
@@ -621,8 +628,19 @@ def test_live_research_desk(tmp_path, monkeypatch):
             action.get_by_text(complete, exact=True).wait_for()
             event("new-writing","work","owner called write_project_file",action="tool/call",status="running")
             action.get_by_text("owner called write_project_file", exact=True).wait_for()
+            owner_page.emulate_media(reduced_motion="no-preference")
+            owner_page.wait_for_function("streamReady && !disconnected")
+            owner_page.evaluate("""() => {
+                window.findingMotion = [];
+                const original = Element.prototype.animate;
+                Element.prototype.animate = function(...args) {
+                    if (this.matches('#review-issues > li')) window.findingMotion.push(this.dataset.issue);
+                    return original.apply(this, args);
+                };
+            }""")
             revised = hashlib.sha256(b"new reviewed revision").hexdigest()
             signed.update(revision=revised,verdict="revise",deliverable=False)
+            signed["issues"] = [*signed["issues"], {**signed["issues"][0], "id":"R2", "status":"new"}]
             revised_archive = state/"reviews"/revised
             revised_archive.mkdir()
             (revised_archive/"main.pdf").write_bytes(saved.read_bytes())
@@ -632,6 +650,20 @@ def test_live_research_desk(tmp_path, monkeypatch):
                   artifact="auto_research/state/reviews/" + revised + "/main.pdf")
             action.get_by_text("The reviewer requested a revision.", exact=True).wait_for()
             assert owner_page.locator("#research-read-paper").is_hidden()
+            assert owner_page.evaluate("window.findingMotion") == ["R2"]
+            summary = owner_page.locator('#review-issues > li[data-issue="R2"] summary')
+            summary.press("Enter")
+            summary.evaluate("s => window.openFindingSource = s")
+            owner_page.evaluate("receiveResearch(researchData, true)")
+            assert summary.evaluate("s => s === window.openFindingSource && s.parentElement.open")
+            owner_page.emulate_media(reduced_motion="reduce")
+            owner_page.evaluate("""() => {
+                const review = researchData.review;
+                const issues = [...review.issues, {...review.issues[0], id:'R3', status:'new'}];
+                receiveResearch({...researchData, review:{...review, issues}}, true);
+            }""")
+            assert owner_page.locator('#review-issues > li[data-issue="R3"]').count() == 1
+            assert owner_page.evaluate("window.findingMotion") == ["R2"]
             # A reviewer's private correction is never a signed verdict. After reconnecting, the
             # owner can still see the last scientific step even if transport events fill a page.
             from ark.orchestrator.native_domain import NativeProject

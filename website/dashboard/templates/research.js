@@ -92,6 +92,9 @@ const researchLabels = {
   pause_at: ['Response deadline %s','答复截止时间 %s','الموعد النهائي للرد %s'],
   trial: ['Trial','试验','التجربة'], baseline: ['Baseline','基线','خط الأساس'], proposed: ['Proposed','所提方法','الطريقة المقترحة'],
   coverage: ['What the reviewer checked','评审检查了什么','ما الذي فحصه المراجع'],
+  issue_sources: ['Source details (%s)','查看来源（%s）','تفاصيل المصادر (%s)'],
+  issue_fix: ['Suggested change','修改建议','التعديل المقترح'],
+  issue_pdf_page: ['PDF · Page %s','PDF 第 %s 页','PDF · الصفحة %s'],
   reviewed_sources: ['Evidence inspected (%s)','查看评审依据（%s）','الأدلة المفحوصة (%s)'],
   method_controls: ['Experimental controls (%s)','实验控制项（%s）','ضوابط التجربة (%s)'],
   matches_control: ['Matches','一致','مطابق'], differs_control: ['Mismatch','不一致','غير مطابق'],
@@ -186,7 +189,7 @@ function receiveResearch(record, animate) {
   renderResearch(animate && changed);
   if (changed || !researchEvents.size) renderHistory();
   renderEvidence(animate && changed);
-  renderReview();
+  renderReview(animate && !disconnected);
   const cmd = record.command;
   const receipts = [];
   if (cmd) receipts.push([rt('command'),cmd.kind,researchLabels[cmd.status] ? rt(cmd.status) : cmd.status].join(' · '));
@@ -700,24 +703,25 @@ async function openEvidence(item, opener, page=1, compare=false) {
   } catch { if (!controller.signal.aborted) container.textContent = rt('unavailable'); }
 }
 
-function reviewReference(ref) {
+function reviewReference(ref, caption, finding) {
   const name = document.createElement(ref.key ? 'button' : 'strong');
-  name.textContent = [ref.artifact, ref.page && rt('page') + ' ' + ref.page].filter(Boolean).join(' · ');
+  name.textContent = caption || [ref.artifact, ref.page && rt('page') + ' ' + ref.page].filter(Boolean).join(' · ');
   if (ref.key) {
     name.type = 'button';
-    name.onclick = () => openEvidence({...ref, label:name.textContent}, name, ref.page);
+    name.onclick = () => openEvidence({...ref, label:name.textContent}, name, ref.page,
+      !!finding && preview?.opener?.closest('#review-issues > li') === finding);
   }
   return name;
 }
 
-function reviewSources(evidence, questionFor) {
+function reviewSources(evidence, {questionFor, reference=reviewReference, title='reviewed_sources'}={}) {
   const sources = document.createElement('details'), summary = document.createElement('summary');
   sources.className = 'review-passages';
-  summary.textContent = rt('reviewed_sources', evidence.length);
+  summary.textContent = rt(title, evidence.length);
   sources.append(summary);
   for (const ref of evidence) {
     const passage = document.createElement('div');
-    passage.append(reviewReference(ref));
+    passage.append(reference(ref));
     if (ref.quote) {
       const quote = document.createElement('pre');
       quote.dir = 'auto'; quote.textContent = ref.quote;
@@ -730,7 +734,7 @@ function reviewSources(evidence, questionFor) {
   return sources;
 }
 
-function renderReview() {
+function renderReview(animate=false) {
   const delivered = researchData.evidence?.some(item => item.edition === 'delivered');
   const other = researchData.working_review;
   if (!other) showWorkingReview = false;
@@ -739,7 +743,7 @@ function renderReview() {
   if (key === reviewSignature) return;
   reviewSignature = key;
   re('research-review').hidden = !review || window.SHARE_MODE;
-  if (!review) return;
+  if (!review) { re('review-issues').replaceChildren(); return; }
   re('review-heading').textContent = rt(delivered ? (showWorkingReview ? 'working_review' : 'delivered_review') : 'review_title');
   const toggle = re('review-switch');
   toggle.hidden = !other;
@@ -874,7 +878,7 @@ function renderReview() {
       details.append(summary, list); li.append(details);
     }
     if (check.evidence?.length) {
-      li.append(reviewSources(check.evidence, ref => passages.length > 1 && passages.includes(ref) && questionButton(ref)));
+      li.append(reviewSources(check.evidence, {questionFor:ref => passages.length > 1 && passages.includes(ref) && questionButton(ref)}));
     }
     if (check.figures?.length) {
       const figures = document.createElement('ul');
@@ -895,26 +899,67 @@ function renderReview() {
     }
     return li;
   }));
-  re('review-issues').replaceChildren(...(review.issues || []).map(issue => {
-    const li = document.createElement('li'), title = document.createElement('strong'), detail = document.createElement('p'), controls = document.createElement('div');
-    li.dataset.status = issue.status || '';
-    title.textContent = [issue.id, researchLabels[issue.severity] && rt(issue.severity), issue.claim, researchLabels[issue.status] ? rt(issue.status) : issue.status].filter(Boolean).join(' · ');
-    detail.textContent = [issue.reason,issue.fix].filter(Boolean).join(' ');
-    controls.className = 'review-controls';
-    for (const ref of issue.evidence || []) {
-      if (ref.quote) { const quote = document.createElement('p'); quote.textContent = ref.quote; li.append(quote); }
-      if (!ref.key) continue;
-      const btn = document.createElement('button'); btn.type = 'button';
-      btn.textContent = [ref.previous ? rt('before') : rt('after'),ref.artifact,ref.page && rt('page') + ' ' + ref.page].filter(Boolean).join(' · ');
-      btn.onclick = () => openEvidence({key:ref.key, sha256:ref.sha256, label:btn.textContent, quote:ref.quote},btn,ref.page,!!preview && preview.opener?.closest('li') === li);
-      controls.append(btn);
+  const list = re('review-issues');
+  const previous = new Map([...list.children].map(row => [row.dataset.issue, row]));
+  for (const [index, issue] of (review.issues || []).entries()) {
+    const old = previous.get(issue.id), fingerprint = JSON.stringify([currentLang,review.revision,issue]);
+    previous.delete(issue.id);
+    const row = old?.findingKey === fingerprint ? old : reviewFinding(issue);
+    row.findingKey = fingerprint;
+    if (row !== old && old) old.replaceWith(row);
+    if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
+    if (animate && !old && issue.status === 'new' && matchMedia('(prefers-reduced-motion: no-preference)').matches)
+      row.animate([{opacity:.55,transform:'translateY(3px)'},{opacity:1,transform:'none'}], {duration:220,easing:'ease-out'});
+  }
+  for (const row of previous.values()) row.remove();
+}
+
+function reviewFinding(issue) {
+  const row = document.createElement('li'), head = document.createElement('div');
+  row.dataset.issue = issue.id; row.dataset.status = issue.status || '';
+  head.className = 'review-finding-head';
+  const title = document.createElement('strong'), status = document.createElement('span');
+  title.textContent = [issue.id, researchLabels[issue.severity] ? rt(issue.severity) : issue.severity].filter(Boolean).join(' · ');
+  status.textContent = researchLabels[issue.status] ? rt(issue.status) : issue.status || '';
+  head.append(title, status); row.append(head);
+  if (issue.claim) {
+    const quote = document.createElement('blockquote');
+    quote.dir = 'auto'; quote.textContent = issue.claim; row.append(quote);
+  }
+  for (const [key, text] of [['control_rationale', issue.reason], ['issue_fix', issue.fix]]) {
+    if (!text) continue;
+    const paragraph = document.createElement('p'), label = document.createElement('b'), body = document.createElement('bdi');
+    label.textContent = rt(key); body.textContent = text;
+    paragraph.append(label, ' ', body); row.append(paragraph);
+  }
+
+  const controls = document.createElement('div'), references = issue.evidence || [], excerpts = [];
+  controls.className = 'review-controls';
+  const compare = references.some(ref => ref.previous);
+  const pages = new Set(), claim = (issue.claim || '').replace(/\s+/g, ' ').trim();
+  for (const ref of references) {
+    const pdf = ref.key && ref.artifact === 'paper/main.pdf' && ref.page > 0;
+    const edition = ref.previous ? rt('before') : rt('after');
+    if (pdf && !pages.has(ref.key + '#' + ref.page)) {
+      const caption = [compare && edition, rt('issue_pdf_page', ref.page)].filter(Boolean).join(' · ');
+      controls.append(reviewReference(ref, caption, row));
+      pages.add(ref.key + '#' + ref.page);
     }
-    const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = rt('steer');
-    btn.onclick = () => {
-      const input = re('hitl-decision').hidden ? re('hitl-input') : re('decision-text');
-      if (!input.value) input.value = [issue.id,issue.claim].join(' · ') + '\n';
-      input.dispatchEvent(new Event('input')); input.focus();
-    };
-    controls.append(btn); li.prepend(title,detail); li.append(controls); return li;
-  }));
+    const duplicate = ref.quote && ref.quote.replace(/\s+/g, ' ').trim() === claim;
+    if (!pdf || (ref.quote && !duplicate)) excerpts.push(duplicate ? {...ref, quote:''} : ref);
+  }
+  const discuss = document.createElement('button');
+  discuss.type = 'button'; discuss.textContent = rt('steer');
+  discuss.onclick = () => {
+    const input = re('hitl-decision').hidden ? re('hitl-input') : re('decision-text');
+    if (!input.value) input.value = [issue.id,issue.claim].join(' · ') + '\n';
+    input.dispatchEvent(new Event('input')); input.focus();
+  };
+  controls.append(discuss); row.append(controls);
+  if (excerpts.length) row.append(reviewSources(excerpts, {title:'issue_sources', reference:ref => {
+    const caption = [compare && (ref.previous ? rt('before') : rt('after')), ref.artifact,
+      ref.page && rt('page') + ' ' + ref.page].filter(Boolean).join(' · ');
+    return reviewReference(ref, caption, row);
+  }}));
+  return row;
 }

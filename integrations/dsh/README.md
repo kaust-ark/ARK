@@ -10,10 +10,10 @@ This source build supports two DSH runtimes on Linux with pnpm. Use Node.js 22.1
 
 Python 3.10 or newer with venv and pip, TeX Live with pdflatex and BibTeX, and a working Docker daemon are needed for the local experiment. The first run installs the bundled Python wheel and its dependencies into a private cache and builds the experiment image. Budget disk space and package-download time for that setup.
 
-Install version 0.2.0-alpha.19 into a dedicated profile with one command. The DSH Web Discover view requires the full upstream CLI with its Web profile.
+Install version 0.2.0-alpha.20 into a dedicated profile with one command. The DSH Web Discover view requires the full upstream CLI with its Web profile.
 
 ```sh
-dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.19/idea2paper-dsh-0.2.0-alpha.19.tgz
+dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.20/idea2paper-dsh-0.2.0-alpha.20.tgz
 ```
 
 To install a local build, run these commands from the source checkout.
@@ -25,7 +25,7 @@ dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-$version.tgz"
 dsh --profile idea2paper --help
 ```
 
-To see how a review changes across manuscript revisions, open the offline replay. It contains three PDFs, their reviewer findings and the measured rows. The archive reproduces the example first published with alpha.3 and requires no model key. [Download the review replay](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.19/review-replay.zip)
+To see how a review changes across manuscript revisions, open the offline replay. It contains three PDFs, their reviewer findings and the measured rows. The archive reproduces the example first published with alpha.3 and requires no model key. [Download the review replay](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.20/review-replay.zip)
 
 ## Run a small study
 
@@ -64,10 +64,10 @@ In the dashboard, expand **What the reviewer checked → Experimental controls**
 
 ## Discover
 
-In DSH Web, open **Plugins → More → Experimental plugins**, enable **Custom plugin markets**, and select **Discover → Add index source**. Enter the 0.2.0-alpha.19 index URL below. The card identifies the exact release package commit and its supported DSH version. Market sources and installations belong to the selected profile. Use the CLI install command for the `idea2paper` profile when browsing from a separate Web profile. [DSH Discover guide](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.md)
+In DSH Web, open **Plugins → More → Experimental plugins**, enable **Custom plugin markets**, and select **Discover → Add index source**. Enter the 0.2.0-alpha.20 index URL below. The card identifies the exact release package commit and its supported DSH version. Market sources and installations belong to the selected profile. Use the CLI install command for the `idea2paper` profile when browsing from a separate Web profile. [DSH Discover guide](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.md)
 
 ```text
-https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.19/index.json
+https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.20/index.json
 ```
 
 ## Verify and publish

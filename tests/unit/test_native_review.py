@@ -31,9 +31,10 @@ def test_delivered_signature_survives_only_changes_to_review_checks():
     latest = {**previous_policy, "evidence_scope":{**previous_policy["evidence_scope"], "conclusion_clauses":[
         {"sentence":1,"result":"The outcome increased","continuation":"because uptake improved."}]}}
     comparisons = {**latest, "evidence_scope":{**latest["evidence_scope"], "direction":locator}}
-    current = {**comparisons, "revision":fingerprint(comparisons), "project":"/somewhere/else"}
+    neighbor_checks = {**comparisons, "evidence_scope":{**comparisons["evidence_scope"], "recheck_paragraphs":True}}
+    current = {**neighbor_checks, "revision":fingerprint(neighbor_checks), "project":"/somewhere/else"}
     archived_claims = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":3}}
-    for fmt in (early, published, older, prior, archived_claims, previous_policy, latest):
+    for fmt in (early, published, older, prior, archived_claims, previous_policy, latest, comparisons):
         revision = fingerprint(fmt)
         signed = dict(version=1, revision=revision, verdict="accept", deliverable=True, paper_pdf_sha256="a" * 64,
                       artifact_hashes={p: meta["sha256"] for p, meta in artifacts.items()})
@@ -1077,6 +1078,68 @@ def test_linked_in_project_or_external_artifacts_not_followed(tmp_path):
     (root / "paper/main.tex").symlink_to(secret)
     with pytest.raises(ValueError, match="Linked"):
         build_snapshot(root)
+
+
+def test_resolving_manuscript_blocker_rechecks_surviving_paragraph_across_pages(tmp_path):
+    from ark import review
+
+    pair = {"domain":"experiment", "clean":"The treated arm lost less mass.", "table":"arm,loss\nA,1\nB,2",
+            "question":"Which arm lost less mass?", "defect":"The mechanism remains uncertain."}
+    project(tmp_path, pair, "clean")
+    measured, pdf = "results/paired.json", "paper/main.pdf"
+    (tmp_path / measured).write_text('[{"treated":1,"control":2}]')
+    worker = {"status":"completed", "artifact":measured, "sha256":hashlib.sha256((tmp_path / measured).read_bytes()).hexdigest()}
+    old_claim = "Cooling proved the material was retained."
+    corrected = "The measurements do not distinguish the two mechanisms."
+    neighbor = "Cooling may account for part of this difference."
+    procedural = "Both samples used the same type of enclosure."
+    def build(claim, moved=False):
+        with fitz.open() as doc:
+            if moved:
+                doc.new_page().insert_text((40,40), "Study design")
+            page = doc.new_page()
+            page.insert_textbox((40,40,460,300), "\n".join((procedural, claim, neighbor)))
+            page.insert_text((40,400), pair["clean"])
+            doc.save(tmp_path / pdf)
+        return build_snapshot(tmp_path, required=["experiment"], expected_measurement=measured, measurement_run=worker)
+    def response(snap, page, claim):
+        answer, _ = record(snap, pair, "clean", "")
+        manuscript, data = read_evidence(snap, pdf, page=page), read_evidence(snap, measured)
+        ref = {"artifact":pdf, "page":page, "quote":claim}
+        row = {"artifact":measured, "row":1}
+        answer["checks"]["manuscript"]["claims"] = [{"passage":{"artifact":pdf, "page":page, "quote":pair["clean"]},
+            "basis":"measurement", "kind":"result", "evidence":[row], "reason":"The measured losses differ."}]
+        answer["checks"]["experiment"]["evidence"] = [row]
+        return answer, ref, [manuscript["receipt"],data["receipt"]]
+
+    first = build(old_claim)
+    raw, ref, seen = response(first,1,old_claim)
+    raw.update(verdict="revise", issues=[{"id":"R1", "status":"new", "severity":"blocker", "domain":"manuscript",
+               "claim":old_claim, "fix":"Narrow the inference.", "reason":pair["defect"], "evidence":[ref]}])
+    rejected = validate_review(first, raw, observed=seen)
+    archive = tmp_path / review.STATE / "reviews" / first["revision"]
+    archive.mkdir(parents=True)
+    (archive / "main.pdf").write_bytes((tmp_path / pdf).read_bytes())
+
+    revised = build(corrected, moved=True)
+    ctx = review.revision_paragraphs(revised, rejected)["R1"]
+    assert ctx["page"] == 2 and ctx["remaining"] == [neighbor, procedural] and corrected in ctx["paragraph"]
+    assert neighbor in review_prompt(revised, rejected)
+    raw, ref, seen = response(revised,2,corrected)
+    issue = dict(id="R1", status="resolved", domain="manuscript", severity="blocker", claim=old_claim,
+                 reason="The authors state the limit of the comparison.", fix="Narrow the inference.", evidence=[ref])
+    raw["issues"] = [issue]
+    with pytest.raises(ValueError, match="context_assessment"):
+        validate_review(revised, raw, rejected, observed=seen)
+    issue["context_assessment"] = [{"sentence":1,"judgment":"limited","qualification":"may",
+                                    "reason":"A possible contribution is explicitly marked as uncertain."},
+                                   {"sentence":2,"judgment":"distinct","reason":"The enclosure describes the protocol."}]
+    accepted = validate_review(revised, raw, rejected, observed=seen)
+    check = accepted["issues"][0]["context_assessment"]
+    assert accepted["deliverable"] and check[0]["passage"]["quote"] == neighbor and check[0]["qualification"] == "may"
+    issue["context_assessment"][0].update(judgment="supported")
+    with pytest.raises(ValueError, match="verified evidence"):
+        validate_review(revised, raw, rejected, observed=seen)
 
 
 def test_resolving_a_claim_disputed_in_two_sections(tmp_path):

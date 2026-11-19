@@ -248,7 +248,7 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
                 except (ValueError, UnicodeDecodeError, RecursionError):
                     tables = []
                 if tables and len(_canonical(tables[:8])) <= VIEW_SIZE:
-                    scope = {"version": 4, "tables": tables[:8]}
+                    scope = {"version": 4, "tables": tables[:8], "recheck_paragraphs": True}
                     if conclusion and (clauses := _conclusion_clauses(conclusion)):
                         scope["conclusion_clauses"] = clauses
                     scope.update(_explanatory_passages({**manifest, "project": str(root)}, pdf))
@@ -775,6 +775,21 @@ def review_prompt(snapshot, previous=None):
     if not any(item["kind"] == "primary_source" for item in snapshot["artifacts"].values()):
         packet["primary_sources_available"] = False
     if previous:
+        contexts = revision_paragraphs(snapshot, previous)
+        if contexts:
+            packet["revised_paragraphs"] = {
+                key: {k:v for k,v in context.items() if k != "paragraph"} | {"end":context["start"] + len(context["paragraph"]) - 1}
+                for key, context in contexts.items()
+            }
+            instructions += ("\nRead the complete revised paragraph for each linked blocker. Compare the remaining "
+                             "numbered sentences (one-based, in the remaining array) with the original evidence gap. "
+                             "If any still asserts the unsupported inference, keep the blocker still_present and cite "
+                             "the surviving words. To resolve it, give the issue a context_assessment array with one "
+                             "entry per remaining sentence: {sentence, judgment, reason}. Use distinct for a separate factual "
+                             "observation or procedural detail, limited if the author qualifies the inference, or supported if "
+                             "verified evidence establishes it. A different unsupported explanation needs its own open blocker. Explain each decision. For limited supply qualification "
+                             "quoting the author's limiting words. For supported cite the relevant method, measurement, "
+                             "independent source or assessed derivation in the issue evidence.")
         packet["findings_to_recheck"] = [
             {k: issue[k] for k in ("id", "domain", "severity", "claim", "reason", "fix", "evidence")}
             for issue in previous["issues"] if issue["status"] != "resolved"
@@ -1377,6 +1392,83 @@ def _passage_survives(snapshot, ref):
     return _contains_observed_quote(text, ref["quote"])
 
 
+def revision_paragraphs(snapshot, previous):
+    """Locate surviving neighbors of disputed sentences in the current rendered body."""
+    import fitz
+    from ark.latex.utils import body_page_boundary
+
+    if (not previous or not snapshot.get("evidence_scope", {}).get("recheck_paragraphs")
+            or not re.fullmatch(r"[0-9a-f]{64}", str(previous.get("revision", "")))
+            or previous["revision"] == snapshot["revision"]):
+        return {}
+    pdf = _submission(snapshot)[1]
+    blockers = [i for i in previous.get("issues", []) if i["domain"] == "manuscript"
+                and i["severity"] == "blocker" and i["status"] != "resolved"]
+    if not blockers or not pdf:
+        return {}
+    archived = _inside(Path(snapshot["project"]), Path(STATE) / "reviews" / previous["revision"] / "main.pdf")
+    if not archived.is_file() or archived.stat().st_size > MAX_BYTES:
+        return {}
+    original = archived.read_bytes()
+    if _digest(original) != previous.get("artifact_hashes", {}).get(pdf):
+        raise ValueError("The archived PDF does not match the preceding review.")
+    # Match on complete sentences. TeX may hyphenate and paginate an unchanged
+    # sentence differently on a later build. Never credit a fuzzy quotation.
+    def wording(sentence):
+        return _normalized_quote(re.sub(r"(?<=\w)-[ \t]*\n(?=[a-z])", "", sentence))
+
+    result = {}
+    with fitz.open(stream=original, filetype="pdf") as old, fitz.open(stream=_artifact(snapshot, pdf)[0], filetype="pdf") as new:
+        boundary = body_page_boundary(new)
+        end = boundary[0] + int(any(boundary[1])) if boundary else len(new)
+        blocks = []
+        for index in range(min(len(new), end)):
+            page = new[index]
+            text = page.get_text()
+            for block in page.get_text("blocks"):
+                paragraph = block[4].strip()
+                if block[6] != 0 or not 30 <= len(paragraph) <= VIEW_SIZE:
+                    continue
+                offset = text.find(paragraph)
+                if offset >= 0:
+                    sentences = _conclusion_sentences(paragraph)
+                    blocks.append((index + 1, offset + 1, paragraph, {wording(q):q for q in sentences}))
+        for issue in blockers:
+            claim = wording(issue["claim"])
+            for ref in issue["evidence"]:
+                page = ref.get("page", 0)
+                if (ref["artifact"] != pdf or not 1 <= page <= len(old)
+                        or claim not in wording(ref.get("quote", ""))):
+                    continue
+                paragraphs = [block[4] for block in old[page - 1].get_text("blocks")
+                              if block[6] == 0 and claim in wording(block[4])]
+                if len(paragraphs) != 1:
+                    continue
+                sentences = [wording(q) for q in _conclusion_sentences(paragraphs[0])]
+                disputed = next((i for i, q in enumerate(sentences) if claim in q or q in claim), None)
+                if disputed is None:
+                    continue
+                neighbors = {q for q in sentences if q not in claim and 20 <= len(q) <= 1000}
+                matches = [(len(neighbors.intersection(keys)), n) for n, (_, _, _, keys) in enumerate(blocks)]
+                count = max((score for score, _ in matches), default=0)
+                best = [n for score, n in matches if score == count]
+                if not count or len(best) != 1:
+                    continue
+                new_page, start, paragraph, keys = blocks[best[0]]
+                terms = set(re.findall(r"[a-z]{4,}", (claim + " " + issue["reason"]).casefold()))
+                surviving = [i for i, q in enumerate(sentences) if q in neighbors and q in keys]
+                # Include the next surviving assertion and the statement most
+                # closely related to the old finding, even if it preceded the edit.
+                following = next((i for i in surviving if i > disputed), None)
+                ranked = sorted(surviving, key=lambda i: (
+                    -len(terms.intersection(re.findall(r"[a-z]{4,}", sentences[i].casefold()))), abs(i - disputed)))
+                selected = list(dict.fromkeys([*([following] if following is not None else []), *ranked]))[:2]
+                result[issue["id"]] = {"artifact":pdf, "page":new_page, "start":start,
+                                       "paragraph":paragraph, "remaining":[keys[sentences[i]] for i in selected]}
+                break
+    return result
+
+
 def _resolution_changed(snapshot, previous, old, refs):
     if previous["revision"] == snapshot["revision"]:
         return False
@@ -1560,6 +1652,8 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
     if len(raw_issues) > 32:
         raise ValueError("Expected an array of at most 32 review findings")
     issues = []
+    contexts = revision_paragraphs(snapshot, previous) if any(
+        isinstance(i, dict) and i.get("status") == "resolved" and i.get("domain") == "manuscript" for i in raw_issues) else {}
     missing_observations = False
     used = set()
     for issue in raw_issues:
@@ -1609,14 +1703,45 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
         if status != "unassessed" and severity == "blocker" and (
                 checks[domain]["status"] != "assessed" or not _covers(snapshot, domain, refs)):
             raise ValueError(f"Missing {domain} observation for blocking finding {ident}")
+        assessment = []
         if status == "resolved":
             if checks[domain]["status"] != "assessed" or not _covers(snapshot, domain, refs):
                 raise ValueError(f"Resolving {ident} requires new verified evidence")
             if not _resolution_changed(snapshot, previous, old, refs):
                 raise ValueError(f"No changed observation supports resolving {ident}. Recheck each cited "
                                  "occurrence of the disputed claim, or cite newly observed supporting evidence.")
+            if context := contexts.get(ident):
+                judgments = issue.get("context_assessment")
+                neighbors = context["remaining"]
+                if (not isinstance(judgments, list) or len(judgments) != len(neighbors)
+                        or any(not isinstance(j, dict) or type(j.get("sentence")) is not int for j in judgments)
+                        or sorted(j["sentence"] for j in judgments) != list(range(1, len(neighbors) + 1))):
+                    raise ValueError(f"Resolving {ident} requires a context_assessment of each remaining sentence "
+                                     f"in its revised paragraph on page {context['page']}. If the unsupported claim "
+                                     "survives, keep the blocker still_present and cite that sentence.")
+                for item in judgments:
+                    quote = neighbors[item["sentence"] - 1]
+                    ref, = _references(snapshot, [{"artifact":context["artifact"], "page":context["page"],
+                                                   "quote":quote}], observed, blind, required=True)
+                    judgment = item.get("judgment")
+                    entry = {"sentence":item["sentence"], "judgment":judgment, "passage":ref,
+                             "reason":_string(item.get("reason"), "reason for the remaining sentence")}
+                    if judgment == "limited":
+                        entry.update(_interpretation_wording({"quote":context["paragraph"]},
+                                     {"claim":quote, "qualification":item.get("qualification")}))
+                    elif judgment == "supported":
+                        backed = any(snapshot["artifacts"][r["artifact"]]["kind"] in
+                                     ("measurement", "method", "primary_source", "protocol") and r.get("quote") for r in refs)
+                        derived = any(c["basis"] == "derivation" and _quotes_conclusion([c["passage"]], ref)
+                                      for c in checks["manuscript"].get("claims", ()))
+                        if not backed and not derived:
+                            raise ValueError(f"Cite the verified evidence supporting the remaining claim in {ident}.")
+                    elif judgment != "distinct":
+                        raise ValueError("Give a supported, limited or distinct judgment for each remaining sentence.")
+                    assessment.append(entry)
         issues.append({"id": ident, "status": status, "severity": severity, "domain": domain,
-                       **{k: _string(issue.get(k), k) for k in ("claim", "reason", "fix")}, "evidence": refs})
+                       **{k: _string(issue.get(k), k) for k in ("claim", "reason", "fix")}, "evidence": refs,
+                       **({"context_assessment":assessment} if assessment else {})})
     if not prior_open.issubset(used):
         raise ValueError("Recheck every open finding from the preceding revision")
     if checks["manuscript"].get("conclusion_support") == "needs_evidence" and not any(
@@ -1732,9 +1857,14 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
         return digest == inputs_digest
 
     original_scope = snapshot.get("evidence_scope", {})
+    if "recheck_paragraphs" in original_scope:
+        older = {k: v for k, v in snapshot.items() if k not in ("project", "revision")}
+        older["evidence_scope"] = {k:v for k,v in original_scope.items() if k != "recheck_paragraphs"}
+        if _digest(_canonical(older)) == revision:
+            return True
     if any(key in original_scope for key in COMPARISON_SELECTORS):
         prior = {k: v for k, v in snapshot.items() if k not in ("project", "revision")}
-        prior["evidence_scope"] = {k: v for k, v in original_scope.items() if k not in COMPARISON_SELECTORS}
+        prior["evidence_scope"] = {k: v for k, v in original_scope.items() if k not in (*COMPARISON_SELECTORS, "recheck_paragraphs")}
         if _digest(_canonical(prior)) == revision:
             return True
     # Historical receipts have only the hash of their original manifest. Reconstruct
@@ -1744,7 +1874,7 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
     conclusion = snapshot.get("conclusion")
     if conclusion:
         if scope := snapshot.get("evidence_scope"):
-            previous_scope = {key: value for key, value in scope.items() if key not in ("conclusion_clauses", *COMPARISON_SELECTORS)}
+            previous_scope = {key: value for key, value in scope.items() if key not in ("conclusion_clauses", "recheck_paragraphs", *COMPARISON_SELECTORS)}
             for previous_version in (2, 3, 4):
                 old_claims = {**inputs, "conclusion":conclusion, "evidence_scope":{**previous_scope, "version":previous_version}}
                 if _digest(_canonical(old_claims)) == revision:
