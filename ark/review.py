@@ -347,7 +347,7 @@ def _text_window(text, start):
     return text[start - 1:end], end
 
 
-def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, statistic=None, column="", rows_pointer=""):
+def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, statistic=None, column="", rows_pointer="", find=None):
     """Return a bounded text excerpt or an actual rendered PDF page with a receipt."""
     if type(start) is not int or start < 1 or type(visual) is not bool:
         raise ValueError("Invalid evidence offset or mode")
@@ -355,6 +355,9 @@ def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, stati
     ext = Path(artifact).suffix.lower()
     receipt = {"revision": snapshot["revision"], "artifact": artifact, "sha256": meta["sha256"], "start": start}
     result = {"artifact": artifact, "sha256": meta["sha256"]}
+    if find is not None and (ext != ".pdf" or visual or statistic is not None or start != 1
+                             or not isinstance(find, str) or len(find.strip()) < 2 or len(find) > 160):
+        raise ValueError("Find a phrase of 2 to 160 characters in a PDF using text mode and optional starting page.")
     if statistic is not None:
         if meta["kind"] not in {"measurement", "supporting_measurement"} or visual or page is not None or start != 1:
             raise ValueError("Statistics operate on measured result artifacts only")
@@ -367,6 +370,22 @@ def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, stati
         import fitz
         with fitz.open(stream=data, filetype="pdf") as doc:
             page = 1 if page is None else page
+            if find is not None:
+                # Locations on other pages are navigation hints. Only the returned
+                # text window earns the existing revision- and page-bound receipt.
+                begin = _page_index(page, len(doc))
+                end = min(len(doc), begin + 32)
+                phrase = re.compile(r"\s+".join(map(re.escape, find.split())), re.I)
+                matches = []
+                for idx in range(begin, end):
+                    match = phrase.search(doc[idx].get_text())
+                    if match:
+                        matches.append({"page": idx + 1, "start": max(1, match.start() - 199)})
+                result.update(matching_pages=matches, next_search_page=end + 1 if end < len(doc) else None)
+                if not matches:
+                    return {**result, "text": ""}
+                page, start = matches[0]["page"], matches[0]["start"]
+                receipt["start"] = start
             pg = doc[_page_index(page, len(doc))]
             result.update(page=page, pages=len(doc))
             receipt["page"] = page
@@ -500,7 +519,9 @@ def review_prompt(snapshot, previous=None):
             "A proposal for future work cannot qualify an earlier assertion. Without such wording, show a direct "
             "measurement or report the unsupported extension. For needs_evidence quote the disputed words in an open blocker's claim, cite "
             "the paragraph and result, and specify the "
-            "test or narrower wording that would resolve it. Mark manuscript unassessed if the evidence is unavailable.")
+            "test or narrower wording that would resolve it. Assess this conclusion paragraph on its own terms. "
+            "If a different section makes an unsupported assertion, locate a separate finding on that page even "
+            "when the conclusion is appropriately qualified. Mark manuscript unassessed if the evidence is unavailable.")
     if conflicts := reported_change_conflicts(packet["manuscript_excerpt"]):
         packet["reported_changes_to_verify"] = conflicts[:8]
     if "worker_measurement" in snapshot:
@@ -1181,6 +1202,51 @@ def record_is_current(snapshot, record):
         return set(origins) == set(snapshot["figure_methods"]) and all(
             value in ("measured", "theoretical") for value in origins.values())
     return True
+
+
+def _delivery_inputs(snapshot):
+    # Page locators and blind-review instructions describe how to review the inputs.
+    # The scientific files, worker provenance, venue and required checks identify a delivery.
+    return {k: v for k, v in snapshot.items() if k not in ("project", "revision", "conclusion", "evidence_scope")}
+
+
+def delivery_inputs_digest(snapshot):
+    return _digest(_canonical(_delivery_inputs(snapshot)))
+
+
+def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
+    """Can an already completed delivery retain its original signature after a bundle upgrade?"""
+    if (not isinstance(record, dict) or record.get("revision") != revision or not revision
+            or record.get("version") != REVIEW_VERSION or record.get("deliverable") is not True
+            or record.get("verdict") != "accept"):
+        return False
+    if snapshot["revision"] == revision:
+        return record_is_current(snapshot, record)
+
+    hashes = {p: meta["sha256"] for p, meta in snapshot["artifacts"].items()}
+    pdf = hashes.get(_submission(snapshot)[1])
+    if (not pdf or record.get("paper_pdf_sha256") != pdf or record.get("artifact_hashes") != hashes
+            or snapshot.get("worker_measurement", {}).get("verified") is False):
+        return False
+    inputs = _delivery_inputs(snapshot)
+    digest = _digest(_canonical(inputs))
+    if inputs_digest is not None:
+        return digest == inputs_digest
+
+    # Historical receipts have only the hash of their original manifest. Reconstruct
+    # published shapes so that a venue, worker or file change still fails comparison.
+    if digest == revision:  # alpha.4
+        return True
+    conclusion = snapshot.get("conclusion")
+    if conclusion:
+        for locator in (conclusion, {k: v for k, v in conclusion.items() if k != "version"}):
+            if _digest(_canonical({**inputs, "conclusion": locator})) == revision:
+                return True
+    early = {k: inputs[k] for k in ("version", "paper_dir", "target_track", "required", "artifacts")}
+    # alpha.2 and .3 catalogued every result file as a measurement.
+    early["artifacts"] = {p: ({**meta, "kind":"measurement"} if meta["kind"] == "supporting_measurement" else meta)
+                          for p, meta in inputs["artifacts"].items()}
+    return _digest(_canonical(early)) == revision
 
 
 def main():

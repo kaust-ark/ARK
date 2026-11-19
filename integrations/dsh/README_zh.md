@@ -8,13 +8,13 @@
 
 本地实验需要 Linux、Node.js 22.12 或更高版本、pnpm、DSH 0.2.1-rc.2、含 venv 和 pip 的 Python 3.10 或更高版本、带 pdflatex 和 BibTeX 的 TeX Live，以及可用的 Docker daemon。首次运行会在独立缓存中安装随包分发的 Python wheel 及依赖，并构建实验镜像。请为首次下载和安装留出时间和磁盘空间。[DSH 安装指南](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.2.1-rc.2)
 
-用这一条命令将 0.2.0-alpha.4 安装到专用 profile。使用 DSH Web Discover 需要上游带 Web profile 的完整 CLI。
+用这一条命令将 0.2.0-alpha.5 安装到专用 profile。使用 DSH Web Discover 需要上游带 Web profile 的完整 CLI。
 
 ```sh
-dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.4/idea2paper-dsh-0.2.0-alpha.4.tgz
+dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.5/idea2paper-dsh-0.2.0-alpha.5.tgz
 ```
 
-源码分支包含 alpha.5 候选版，可在仓库根目录构建并安装。
+如需安装本地构建的版本，可在仓库根目录运行以下命令。
 
 ```sh
 python3 integrations/dsh/pack.py --out dist/dsh
@@ -22,7 +22,7 @@ dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-0.2.0-alpha.5.
 dsh --profile idea2paper --help
 ```
 
-离线示例包含三个版本的论文 PDF、各版的评审意见和测量数据。解压后即可对照查看同一问题如何在修订中得到解决，无需模型密钥。这份示例首次随 alpha.3 发布，本版沿用原始记录。[下载离线评审示例](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.4/review-replay.zip)
+离线示例包含三个版本的论文 PDF、各版的评审意见和测量数据。解压后即可对照查看同一问题如何在修订中得到解决，无需模型密钥。这份示例首次随 alpha.3 发布，本版沿用原始记录。[下载离线评审示例](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.5/review-replay.zip)
 
 ## 运行一个小实验
 
@@ -49,7 +49,11 @@ dsh --profile idea2paper resume search-study
 
 研究 agent 可直接用测量 JSON 的字段画折线图、点图和分组柱状图。自定义绘图脚本读取 `/study/results.json`，并把图存入 `/output/`。对照实验默认由 Nano Banana 绘制研究对象，再按已确认的实验方案排版各组条件。通过核查的图会返回对应图注，也可以按需绘制机制图。修订时可以直接编辑已读过的行，已有成功编译记录的稿件会在保存修改前由 TeX 试编译。
 
-### alpha.4 的独立评审
+### 独立评审
+
+对于有已核验测量表和结论段的论文，评审可以在读稿前记录比较对象、其他可能解释，以及能区分这些解释的观测。它可以在最终 PDF 中搜索短语，对照不同章节的表述。在托管版项目页展开评审判断，即可查看证据，并就引用的具体页面向研究者提问。
+
+在一次四页论文实测中，评审曾接受一条原始测量不足以证实的机制归因。使用科学结论前，请核对评审引用的证据。
 
 修改实验后，如果实测数据仍与上一版相同，reviewer 会先看原始研究任务、实验条件字段和指标名，并为一个真实条件编写独立复算程序。Bundle 锁定程序后，同一评审会话才会看到论文、作者的代码和结果。评审记录逐项保留复算值和实测值。如果缺少数据或算力，评审会标明缺失的证据。
 
@@ -57,10 +61,10 @@ dsh --profile idea2paper resume search-study
 
 ## 在 Discover 中查看
 
-在 DSH Web 打开 **Plugins → More → Experimental plugins**，启用 **Custom plugin markets**，再选择 **Discover → Add index source**。填入下方的 0.2.0-alpha.4 索引地址。插件卡片会显示精确的 Git 提交和兼容的 DSH 版本。索引和安装均属于当前 profile。如果 Web 使用单独的 profile，请用上面的 CLI 命令安装到 `idea2paper`。[DSH Discover 中文指南](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.zh.md)
+在 DSH Web 打开 **Plugins → More → Experimental plugins**，启用 **Custom plugin markets**，再选择 **Discover → Add index source**。填入下方的 0.2.0-alpha.5 索引地址。插件卡片会显示精确的 Git 提交和兼容的 DSH 版本。索引和安装均属于当前 profile。如果 Web 使用单独的 profile，请用上面的 CLI 命令安装到 `idea2paper`。[DSH Discover 中文指南](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.zh.md)
 
 ```text
-https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.4/index.json
+https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.5/index.json
 ```
 
 ## 验证和发布

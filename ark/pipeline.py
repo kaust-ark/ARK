@@ -4557,7 +4557,10 @@ provide the title.
             if (code == "DSH.QuotaExceeded" or
                     any(token in message for token in ("insufficient balance", "insufficient_balance", "insufficient_quota"))):
                 self._quota_exhausted = True
-                self._native_provider_error = f"Provider quota exceeded: {detail}. Check your provider balance or quota, then Continue."
+                self._native_provider_error = (
+                    "Provider quota exceeded. Your project is saved. Check your provider balance or update "
+                    "your key in Settings > API Keys, then select Continue."
+                )
         usage = event.get("usage")
         if not isinstance(usage, dict):
             return

@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -8,6 +9,41 @@ import pytest
 from ark.review import build_snapshot, read_evidence, record_is_current, review_prompt, validate_review
 
 PAIRS = json.loads((Path(__file__).parents[2] / "test_fixtures/peer_review/pairs.json").read_text())
+
+
+def test_delivered_signature_survives_only_changes_to_review_checks():
+    from ark.review import delivered_record_matches, delivery_inputs_digest
+
+    def fingerprint(manifest):
+        return hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    pdf = "paper/main.pdf"
+    rows = "results/data.json"
+    artifacts = {pdf: {"sha256": "a" * 64, "kind":"submission"},
+                 rows: {"sha256": "b" * 64, "kind":"measurement"}}
+    early = dict(version=1, artifacts=artifacts, required=["experiment","manuscript"], paper_dir="paper", target_track="short")
+    published = {**early, "worker_measurement":{"expected":rows,"verified":True}}
+    locator = {"artifact":pdf, "page":4, "start":1, "quote":"The treatment changes the outcome."}
+    older = {**published, "conclusion":locator}
+    prior = {**published, "conclusion":{**locator, "version":2}}
+    manifest = {**prior, "evidence_scope":{"version":1,"tables":[{"columns":["trial","error"]}]}}
+    current = {**manifest, "revision":fingerprint(manifest), "project":"/somewhere/else"}
+    for fmt in (early, published, older, prior):
+        revision = fingerprint(fmt)
+        signed = dict(version=1, revision=revision, verdict="accept", deliverable=True, paper_pdf_sha256="a" * 64,
+                      artifact_hashes={p: meta["sha256"] for p, meta in artifacts.items()})
+        assert delivered_record_matches(current, signed, revision)
+        assert not record_is_current(current, signed)  # A new delivery still needs the current reviewer.
+        assert delivered_record_matches(current, signed, revision, delivery_inputs_digest(current))
+        for changed in ({"target_track":"long"}, {"worker_measurement":{"expected":rows, "verified":False}},
+                        {"artifacts":{**artifacts, rows:{"sha256":"c" * 64, "kind":"measurement"}}}):
+            changed_manifest = {**manifest, **changed}
+            updated = {**changed_manifest, "revision":fingerprint(changed_manifest)}
+            assert not delivered_record_matches(updated, signed, revision)
+            assert not delivered_record_matches(updated, signed, revision, delivery_inputs_digest(current))
+        assert not delivered_record_matches(current, {**signed, "verdict":"revise"}, revision)
+        assert not delivered_record_matches(current, {**signed, "paper_pdf_sha256":"unknown"}, revision)
+        assert not delivered_record_matches(current, signed, "another revision")
 
 
 def project(tmp_path, pair, variant):
@@ -81,6 +117,31 @@ def test_review_feedback_returns_independent_repairs_without_accepting_the_draft
     assert response == original
     with pytest.raises(ValueError):
         validate_review(snap, response, observed=observed)
+
+
+def test_pdf_phrase_search_locates_other_sections_without_crediting_unread_pages(tmp_path):
+    from ark import review
+
+    paper = tmp_path / "paper"
+    paper.mkdir()
+    artifact = "paper/main.pdf"
+    with fitz.open() as doc:
+        for text in ("Root uptake may explain the result.", "Apply the same treatment.",
+                     "Root\nuptake explains all of the loss.", "Reproducibility appendix."):
+            doc.new_page().insert_text((50,60), text)
+        doc.save(tmp_path / artifact)
+    snap = build_snapshot(tmp_path)
+    first = read_evidence(snap, artifact, find="root uptake")
+    assert [m["page"] for m in first["matching_pages"]] == [1, 3]
+    assert "may explain" in first["text"] and first["receipt"]["page"] == 1
+    disputed = {"artifact":artifact, "page":3, "quote":"explains all of the loss"}
+    with pytest.raises(ValueError, match="Unobserved"):
+        review._references(snap, [disputed], [first["receipt"]], "", required=True)
+    on_page = read_evidence(snap, artifact, **first["matching_pages"][1])
+    assert review._references(snap, [disputed], [on_page["receipt"]], "", required=True)[0]["quote"] == disputed["quote"]
+    assert not read_evidence(snap, artifact, find="elsewhere").get("receipt")
+    with pytest.raises(ValueError, match="text mode"):
+        read_evidence(snap, artifact, find="root", visual=True)
 
 
 def test_pdf_quote_retry_hint_requires_a_unique_observed_literal_window(tmp_path):

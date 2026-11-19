@@ -1112,6 +1112,10 @@ def launch_local_job(
     ark_code_root = str(Path(__file__).resolve().parents[2])
     env["PYTHONPATH"] = ark_code_root + ((":" + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
     env["HOME"] = str(project_dir)
+    # Keep pinned bundles available to this owner across runs and outside the
+    # editable project even when the service has no configured XDG cache.
+    if not env.get("XDG_CACHE_HOME"):
+        env["XDG_CACHE_HOME"] = str(Path(project_dir).resolve().parent / ".cache")
     env["XDG_CONFIG_HOME"] = str(project_dir / ".config")
     env["TMPDIR"] = str(project_dir)
     # Disable Python's pip user-site discovery so projects are completely

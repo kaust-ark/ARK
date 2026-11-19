@@ -305,11 +305,8 @@ class NativeProject(CompilerMixin):
                 self._check_compiled()
                 current = self._snapshot()
                 verdict = _load(self.state_dir / "native_review.json", {})
-                if not (
-                    current["revision"] == self.state.get("delivery_revision")
-                    and review.record_is_current(current, verdict)
-                    and verdict.get("deliverable")
-                ):
+                if not review.delivered_record_matches(current, verdict, self.state.get("delivery_revision"),
+                                                       self.state.get("delivery_inputs_sha256")):
                     raise ValueError("Review is stale")
             except (FileNotFoundError, ValueError):
                 project_state = "running"
@@ -2180,8 +2177,10 @@ class NativeProject(CompilerMixin):
             statistic=args.get("statistic"),
             column=args.get("column", ""),
             rows_pointer=args.get("rows_pointer", ""),
+            find=args.get("find"),
         )
-        self.review_receipts.append(result["receipt"])
+        if receipt := result.get("receipt"):
+            self.review_receipts.append(receipt)
         return result
 
     def run_method_control(self, args):
@@ -2393,7 +2392,8 @@ class NativeProject(CompilerMixin):
         trace_details = {"research_citations": trace} if trace else {}
         if problems:
             return {"delivered": False, "blockers": problems, **trace_details}
-        self.state.update(state="delivered", delivery_revision=snap["revision"])
+        self.state.update(state="delivered", delivery_revision=snap["revision"],
+                          delivery_inputs_sha256=review.delivery_inputs_digest(snap))
         self.save()
         self.event(
             "delivery",

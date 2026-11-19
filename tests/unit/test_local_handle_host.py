@@ -111,6 +111,20 @@ def _launch(tmp_path, monkeypatch, *, check_env=None, **kw):
     return handle, captured["wrapper"]
 
 
+@pytest.mark.parametrize("configured", [None, "", "service-cache"])
+def test_local_worker_cache_is_outside_project(tmp_path, monkeypatch, configured):
+    if configured is None:
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    else:
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / configured) if configured else "")
+
+    def check_env(env):
+        assert env["HOME"] == str(tmp_path / "proj")
+        assert env["XDG_CACHE_HOME"] == str(tmp_path / (configured or ".cache"))
+
+    _launch(tmp_path, monkeypatch, check_env=check_env)
+
+
 def test_launch_returns_a_host_qualified_handle(tmp_path, monkeypatch):
     handle, wrapper = _launch(tmp_path, monkeypatch)
     assert handle == f"local:{HOST}:4242"

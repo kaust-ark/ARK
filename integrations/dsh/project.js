@@ -389,8 +389,8 @@ export function reviewSubmission(message, previous, revision) {
   return updated
 }
 
-export const evidenceTool = ['Inspect one named artifact from the blind review packet. Request an exact PDF page or image when checking visual presentation.', {
-  artifact: str, page: num, start: num, visual: bool, statistic: str, column: str, rows_pointer: str,
+export const evidenceTool = ['Inspect a frozen artifact. For a disputed explanation, find a distinctive phrase throughout the rendered PDF. The first matching page returns quotable text. Open other matching_pages by page and start to compare the claims; next_search_page continues the search. Use visual for the actual page image.', {
+  artifact: str, page: num, start: num, visual: bool, statistic: str, column: str, rows_pointer: str, find: str,
 }, ['artifact']]
 
 export const methodControlTool = ['Test the frozen scientific worker on a small independently predicted example. Select a top-level function name (keyword arguments) or quote the complete exact expression from a return or assignment (named operands). inputs_json is a JSON object string. List names needing NumPy arrays in array_inputs. expected_json and alternative_json are numbers or flat numeric arrays encoded as JSON strings. Predict the first from the research definition and the second from a concrete competing calculation. Choose an input where they differ. Explain both predictions.', {
