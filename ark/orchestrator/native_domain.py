@@ -338,6 +338,8 @@ class NativeProject(CompilerMixin):
         for key in (
             "plan",
             "experiment",
+            "previous_measurement",
+            "measurement_comparison",
             "research",
             "concept",
             "compiled_pdf_sha256",
@@ -587,7 +589,8 @@ class NativeProject(CompilerMixin):
             and existing.get("status") == "completed"
             and plan["expected"] == self.state["plan"]["expected"]
         ):
-            raise ValueError("Choose a distinct result filename to preserve prior measurements.")
+            raise ValueError("For a revised experiment, call plan_experiment with a new result_path, then "
+                             "run_experiment. Choose a distinct result filename to preserve prior measurements.")
         _atomic_write_text(self.state_dir / "experiment_plan.yaml", yaml.safe_dump(plan, allow_unicode=True))
         if self.host:
             adjustment = self.host._experiment_approval_gate(
@@ -598,6 +601,10 @@ class NativeProject(CompilerMixin):
                 self.save()
                 return {"approved": False, "requested_change": adjustment}
         self.state.pop("pending_plan_change", None)
+        if (existing and existing.get("status") == "completed" and existing.get("sha256")
+                and existing.get("artifact") == (self.state.get("plan") or {}).get("expected")):
+            self.state["previous_measurement"] = {k: existing[k] for k in ("artifact", "sha256")}
+        self.state.pop("measurement_comparison", None)
         self.state.update(plan=plan)
         self.state.pop("sealed_script", None)
         self.state.pop("experiment", None)
@@ -608,6 +615,10 @@ class NativeProject(CompilerMixin):
             plan["question"],
             artifact="auto_research/state/experiment_plan.yaml",
         )
+        if previous := self.state.get("previous_measurement"):
+            return {**plan, "previous_result": previous["artifact"], "revision_guidance":
+                    "For a scientific correction, first run a small case with independently known behavior through "
+                    "the same calculation used on the data. Record what distinguishes the old and intended methods."}
         return plan
 
     def _execute(self, args, *, plot=False):
@@ -624,6 +635,10 @@ class NativeProject(CompilerMixin):
                 raise ValueError("Invalid experiment script.")
             code_hash = _sha(source)
             if self.state.get("sealed_script") not in (None, code_hash):
+                if (self._measurement_receipt() or {}).get("status") == "completed":
+                    raise ValueError("The previous experiment completed with its original code. To test this "
+                                     "correction, call plan_experiment with a distinct result_path, then "
+                                     "run_experiment. Regenerate any table or plot that uses the revised rows.")
                 raise ValueError("The submitted code changed. Restore the original script before polling.")
             self.state["sealed_script"] = code_hash
             self.save()
@@ -674,13 +689,21 @@ class NativeProject(CompilerMixin):
         else:
             self.state["experiment"] = record
             attempt = record
+            if record["status"] == "completed" and self.state.get("previous_measurement"):
+                self._compare_revised_measurement(record)
         self.save()
         if attempt != before:
             tracking = attempt.get("job_id") or attempt["identity"]
+            observation = f"{attempt['backend']} {'job' if attempt.get('job_id') else 'submission'} {tracking}: {attempt['status']}"
+            comparison = self.state.get("measurement_comparison", {})
+            if not plot and attempt["status"] == "completed" and comparison.get("unchanged_arrays"):
+                count = sum(group["rows"] for group in comparison["unchanged_arrays"])
+                observation += (f". {count} result rows match {comparison['previous']} "
+                                "at relative tolerance 1e-12. Check what distinguishes the revised calculation.")
             self.event(
                 "experiments",
                 "plot" if plot else "measurement",
-                f"{attempt['backend']} {'job' if attempt.get('job_id') else 'submission'} {tracking}: {attempt['status']}",
+                observation,
                 status=attempt["status"],
                 id=hashlib.sha256(
                     f"{attempt.get('identity') or tracking}/{attempt['status']}".encode()
@@ -694,6 +717,7 @@ class NativeProject(CompilerMixin):
                 "result_arrays": measurement_table.describe(data),
                 "measurements_excerpt": (self.root / record["artifact"]).read_text()[:16000],
                 "table_tool": "Use render_results_table to format measured columns in the paper without transcription.",
+                **({"revision_check": self.state["measurement_comparison"]} if self.state.get("measurement_comparison") else {}),
             }
         if plot and record["status"] == "completed" and not record.get("input_access"):
             return {
@@ -705,6 +729,31 @@ class NativeProject(CompilerMixin):
 
     def run_experiment(self, args):
         return self._execute(args)
+
+    def _compare_revised_measurement(self, record):
+        prior = self.state["previous_measurement"]
+        name = prior.get("artifact", "")
+        if not re.fullmatch(r"results/[\w-]+\.json", name) or name == record["artifact"]:
+            return
+        path = self.root / name
+        try:
+            previous = native_experiment._read(path) if path.resolve() == path else None
+        except (OSError, ValueError):
+            previous = None
+        if previous is None or hashlib.sha256(previous).hexdigest() != prior.get("sha256"):
+            self.state.pop("measurement_comparison", None)
+            return
+        if (self.state.get("measurement_comparison") or {}).get("current_sha256") == record["sha256"]:
+            return
+        current, digest = self._measurements()
+        same = measurement_table.unchanged_result_arrays(json.loads(previous), current)
+        check = {"previous": name, "previous_sha256": prior["sha256"], "current": record["artifact"],
+                 "current_sha256": digest, "unchanged_arrays": same, "float_relative_tolerance": 1e-12}
+        if same:
+            check["observation"] = ("The listed arrays match the earlier rows at a relative tolerance of 1e-12. "
+                                    "If this change was meant to correct a measurement, test an input on which the old "
+                                    "and proposed calculations predict different values before calling it fixed.")
+        self.state["measurement_comparison"] = check
 
     def _measurements(self):
         receipt = self.state.get("experiment") or {}
@@ -1559,11 +1608,14 @@ class NativeProject(CompilerMixin):
         required = ["manuscript", "experiment"]
         if self.config.get("layout_mode") == "strict":
             required.extend(("citations", "visual"))
+        expected = (self.state.get("plan") or {}).get("expected")
         return review.build_snapshot(
             self.root,
             target_track=str(self.config.get("venue") or self.config.get("venue_format") or ""),
             required=required,
-            measurement_run=self.state.get("experiment"),
+            expected_measurement=expected,
+            measurement_comparison=self.state.get("measurement_comparison"),
+            measurement_run=self._measurement_receipt() if expected else self.state.get("experiment"),
             registered_plots={name: row["script"] for name, row in (self.state.get("plots") or {}).items()
                               if row.get("script") and row.get("status") == "completed"},
         )
@@ -1722,11 +1774,16 @@ class NativeProject(CompilerMixin):
         originals = select([*first_from_each, *source_paths, *(r.get("source") for r in citations.values()), *sorted(assets)],
                            "primary_source", 2)
         # PDFs need a page selector. The reviewer can request them through read_evidence.
-        return [path for path in dict.fromkeys([*protocol, *methods, *measurements, *originals])
+        comparison = select([(snapshot.get("measurement_comparison") or {}).get("previous")], "supporting_measurement", 1)
+        return [path for path in dict.fromkeys([*protocol, *methods, *measurements, *comparison, *originals])
                 if Path(path).suffix.lower() != ".pdf"]
 
     def review_snapshot(self, args):
         self._check_compiled()
+        snapshot = self._snapshot()
+        worker = snapshot.get("worker_measurement")
+        if args.get("preflight") and worker and not worker["verified"]:
+            return {"blockers": [f"Complete or recover the planned worker output {worker['expected']} before review."]}
         trace = self._research_citations()
         if args.get("preflight") and self.config.get("layout_mode") == "strict":
             audit = delivery_contract.evaluate(
@@ -1745,8 +1802,7 @@ class NativeProject(CompilerMixin):
             blockers.extend(self._strict_paper_issues())
             if blockers:
                 return {"blockers": blockers, **({"research_citations": trace} if trace else {})}
-        self.snapshot = self._snapshot()
-        snapshot = self.snapshot
+        self.snapshot = snapshot
         previous = _load(self.state_dir / "native_review.json")
         self.review_receipts = []
         archive = self.state_dir / "reviews" / snapshot["revision"]
@@ -1887,6 +1943,8 @@ class NativeProject(CompilerMixin):
             or not measured.is_file()
             or measured.is_symlink()
             or _sha(measured) != measurement.get("sha256")
+            or ("worker_measurement" in snap and (not snap["worker_measurement"]["verified"]
+                or measurement.get("artifact") != snap["worker_measurement"]["expected"]))
         ):
             problems.append("Missing or changed worker measurements.")
         if self.config.get("layout_mode") == "strict":

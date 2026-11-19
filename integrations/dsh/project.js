@@ -11,7 +11,7 @@ const packageDir = dirname(fileURLToPath(import.meta.url))
 const writable = /^(?:paper\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.(?:tex|bib)|scripts\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.py)$/
 const readable = /^(?:results\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.(?:json|csv|tsv|txt)|\.claude\/skills\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.md)$/
 
-const literatureSource = /^(?:auto_research\/state\/deep_research\.md|sources\/[a-f0-9]{24}\.txt)$/
+const researchSource = /^(?:auto_research\/state\/(?:idea\.md|experiment_plan\.yaml|deep_research\.md)|sources\/[a-f0-9]{24}\.txt)$/
 
 const mainSource = 'paper/main.tex'
 const revisionParts = ['.dsh', 'native', 'main-tex-revisions']
@@ -173,8 +173,8 @@ function sourceLines(content) {
 async function accessFile(directory, path, content, replace, edit = {}, checkManuscript) {
   const restoring = edit.restore_sha256 !== undefined
   const writing = restoring || content !== undefined || replace !== undefined
-  if (typeof path !== 'string' || path.length > 240 || !(writable.test(path) || (!writing && (readable.test(path) || literatureSource.test(path))))) {
-    throw new Error('Use paper/*.tex, paper/*.bib or scripts/*.py for authoring, or read a named result, project skill, Deep Research report or verified source passage.')
+  if (typeof path !== 'string' || path.length > 240 || !(writable.test(path) || (!writing && (readable.test(path) || researchSource.test(path))))) {
+    throw new Error('Use paper/*.tex, paper/*.bib or scripts/*.py for authoring, or read the original brief, approved plan, named result, project skill, Deep Research report or verified source passage.')
   }
   if (restoring && (path !== mainSource || !edit.base_sha256 || content !== undefined || replace !== undefined ||
       edit.insert_before !== undefined || edit.insert_after !== undefined || edit.expected_matches !== undefined || edit.allow_shrink !== undefined)) {
@@ -334,7 +334,7 @@ export const operations = {
   project_status: ['Read current research state, outstanding prerequisites, budgets, skills and artifact paths.', {}],
   lookup_papers: ['Find primary records, abstracts and canonical BibTeX. Set add_to_bibliography with an exact title or DOI to save that work and receive its cite key for the manuscript.', { query: str, limit: num, add_to_bibliography: bool }, ['query']],
   research: ['Retrieve or reconcile the requested research report and primary sources.', { query: str }],
-  plan_experiment: ['Register the comparison and its two file paths. The script prints its JSON measurements to stdout. The host saves them at result_path.', {
+  plan_experiment: ['Register the comparison and its two file paths. For a correction, reread auto_research/state/idea.md, check the disputed calculation on a discriminating input, and choose a fresh result_path. The script prints its JSON measurements to stdout.', {
     question: str,
     baseline: {type:'string', description:'The reference method, configuration or condition.'},
     comparison: {type:'string', description:'What changes in the comparison condition relative to the baseline.'},
@@ -357,7 +357,7 @@ export const operations = {
   compile_paper: ['Compile the current manuscript and inspect its figures, citations and layout. manuscript_revision identifies main.tex after typesetting adjustments.', {}],
   request_review: ['Request an independent, blind submission review after artifact checks. Use draft only for early scientific feedback on an incomplete manuscript.', { draft: bool }],
   deliver: ['Verify the current reviewed revision and publish the checked project deliverables.', {}],
-  read_project_file: ['Read up to 6000 characters of a manuscript, result, skill, auto_research/state/deep_research.md, or sources/<id>.txt from verify_citations. Supply next_offset as offset to continue, or find a passage to get its match_line. Use start_line to read up to 40 numbered lines. sha256 covers the entire file. For paper/main.tex, list_revisions lists saved digests and revision_sha256 reads a saved version.', { path: str, offset: num, find: str, start_line: num, revision_sha256: str, list_revisions: bool }, ['path']],
+  read_project_file: ['Read up to 6000 characters of a manuscript, result, skill, original brief (auto_research/state/idea.md), experiment_plan.yaml or deep_research.md in that directory, or sources/<id>.txt from verify_citations. Supply next_offset as offset to continue, or find a passage to get its match_line. Use start_line to read up to 40 numbered lines. sha256 covers the entire file. For paper/main.tex, list_revisions lists saved digests and revision_sha256 reads a saved version.', { path: str, offset: num, find: str, start_line: num, revision_sha256: str, list_revisions: bool }, ['path']],
   write_project_file: ['Write a manuscript or script. To edit lines of paper/main.tex, read the numbered lines and send inclusive start_line/end_line with just the new text. The last numbered view supplies its revision; alternatively provide the exact current base_sha256. A TeX error introduced into a compiling draft rejects the edit. For a section edit use replace, insert_before or insert_after with an exact unique passage or heading. Use expected_matches only to correct a known count of identical passages. A substantial full shrink of paper/main.tex needs its current base_sha256 and allow_shrink:true. Each changed manuscript saves previous_sha256. To restore it, supply only path, current base_sha256 and restore_sha256.', { path: str, content: str, start_line: num, end_line: num, replace: str, expected_matches: num, insert_before: str, insert_after: str, base_sha256: str, allow_shrink: bool, restore_sha256: str }, ['path']],
 }
 export const evidenceTool = ['Inspect one named artifact from the blind review packet. Request an exact PDF page or image when checking visual presentation.', {

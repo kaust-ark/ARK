@@ -41,6 +41,22 @@ def describe(data):
     ]
 
 
+def unchanged_result_arrays(previous, current):
+    """Compare like-shaped rows in their recorded order, preserving labels and integer identifiers."""
+    def matches(a, b):
+        if type(a) is dict and type(b) is dict:
+            return a.keys() == b.keys() and all(matches(a[k], b[k]) for k in a)
+        if type(a) is list and type(b) is list:
+            return len(a) == len(b) and all(matches(x, y) for x, y in zip(a, b))
+        if type(a) is float and type(b) is float:
+            return math.isfinite(a) and math.isfinite(b) and math.isclose(a, b, rel_tol=1e-12, abs_tol=0)
+        return type(a) is type(b) and a == b
+
+    old = project_rows(previous)
+    return [{"rows_pointer": path, "rows": len(rows)} for path, rows in project_rows(current).items()
+            if path in old and matches(old[path], rows)]
+
+
 def _rows(data, pointer):
     rows = project_rows(data).get(pointer) if isinstance(pointer, str) else None
     if rows is None:

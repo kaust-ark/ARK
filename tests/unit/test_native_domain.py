@@ -90,6 +90,47 @@ def test_user_can_change_plan_before_a_side_effect(tmp_path, monkeypatch):
     assert len(seen) == 2
 
 
+def test_revising_a_completed_study_reports_matching_rows_to_author_and_reviewer(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    original = project.invoke("plan_experiment", plan())
+    def result(name, rows):
+        data = json.dumps({"splits": rows}).encode()
+        (tmp_path / name).write_bytes(data)
+        return {"artifact": name, "sha256": hashlib.sha256(data).hexdigest(), "status": "completed"}
+
+    rows = [{"seed": 1, "loss": 0.75}, {"seed": 2, "loss": 1.25}]
+    old = result(original["expected"], rows)
+    project.state["experiment"] = old
+    revised = {**original, "expected": "results/revised.json"}
+    assert project.invoke("plan_experiment", revised)["previous_result"] == old["artifact"]
+    new = result(revised["expected"], [rows[0], {"seed": 2, "loss": 1.25 + 1e-15}])
+    new.update(backend="slurm", identity="i2p-" + "a" * 24, job_id="412")
+    (tmp_path / revised["script"]).write_text("print('measurement')")
+    monkeypatch.setattr(project, "_measurement_receipt", lambda: new)
+    monkeypatch.setattr(domain.native_experiment, "execute", lambda *args, **kwargs: new)
+    check = project.invoke("run_experiment", {})["revision_check"]
+    assert check["unchanged_arrays"] == [{"rows_pointer": "/splits", "rows": 2}]
+    events = [json.loads(row) for row in (project.state_dir / "research_events.jsonl").read_text().splitlines()]
+    assert "2 result rows match results/count.json" in events[-1]["observation"]
+    assert project.invoke("run_experiment", {})["revision_check"] == check
+    assert len(events) == len((project.state_dir / "research_events.jsonl").read_text().splitlines())
+    snap = project._snapshot()
+    assert snap["measurement_comparison"] == check
+    assert {old["artifact"], new["artifact"]} <= set(project._opening_review_evidence(snap))
+    result(old["artifact"], [{"seed": 4, "loss": 50}])
+    assert "measurement_comparison" not in project._snapshot()
+    project._compare_revised_measurement(new)
+    assert "measurement_comparison" not in project.state
+
+
+def test_unchanged_rows_preserve_identifiers_and_small_probabilities():
+    from ark.measurement_table import unchanged_result_arrays
+
+    old = [{"id": 10**18, "prob": 1e-300, "label": "test"}]
+    for delta in ({"id": 10**18 + 1}, {"prob": 2e-300}, {"label": "train"}, {"prob": True}):
+        assert not unchanged_result_arrays(old, [{**old[0], **delta}])
+
+
 def test_explicit_stop_before_cancel_and_same_plan_recovery(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     project.invoke("plan_experiment", plan())

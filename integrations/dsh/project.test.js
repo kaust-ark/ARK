@@ -398,6 +398,11 @@ test('owner can continue the research report and inspect only allowlisted read-o
   await writeFile(join(root,source),'Journal paper\nMeasured effect')
   assert.match((await readProjectFile(root,{path,offset:28000})).content,/Prior work/)
   assert.match((await readProjectFile(root,{path:source})).content,/Measured effect/)
+  for (const key of ['auto_research/state/idea.md','auto_research/state/experiment_plan.yaml']) {
+    await writeFile(join(root,key),'Use the prespecified measurement')
+    assert.match((await readProjectFile(root,{path:key})).content,/prespecified measurement/)
+    await assert.rejects(projectFile(root,key,'changed'), /Use paper/)
+  }
   await assert.rejects(projectFile(root,path,'changed'), /Use paper/)
   await assert.rejects(projectFile(root,source,'changed'), /Use paper/)
   await assert.rejects(readProjectFile(root,{path:'auto_research/state/native_project.json'}), /Use paper/)

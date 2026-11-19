@@ -41,6 +41,8 @@ If you cannot run an experiment:
 After each experiment:
 - Confirm the process actually ran (check logs, not just exit codes)
 - Spot-check output data for sanity
+- For a disputed calculation, choose a small input on which the competing methods give different answers. Work out the expected value independently, then run that input through the same function used for the reported measurements. Record the input, expected value and observed value.
+- When revising a completed experiment, retain its results and compare the old and new measurements. If the numbers agree, report what the discriminating input showed before claiming the correction worked.
 - If results look suspiciously perfect, investigate
 - If all results come from LLM API calls rather than running the target system, the experiment was not conducted
 

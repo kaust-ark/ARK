@@ -183,6 +183,35 @@ def test_review_uses_executed_code_and_requested_quantity_across_a_source_edit(t
     assert build_snapshot(tmp_path, measurement_run=run)["measurement_method"]["artifact"] == sealed
 
 
+def test_revised_plan_can_compare_old_rows_but_must_assess_current_output(tmp_path):
+    import hashlib
+
+    pair = PAIRS[0]
+    project(tmp_path, pair, "clean")
+    old = "results/rows.csv"
+    current = "results/revised.json"
+    rows = '[{"trials": 8}]'
+    (tmp_path / current).write_text(rows)
+    run = {"status": "completed", "artifact": current, "sha256": hashlib.sha256(rows.encode()).hexdigest()}
+    snap = build_snapshot(tmp_path, expected_measurement=current, measurement_run=run)
+    assert snap["artifacts"][old]["kind"] == "supporting_measurement"
+    assert snap["artifacts"][current]["kind"] == "measurement"
+    response, receipts = record(snap, pair, "clean", "")
+    with pytest.raises(ValueError, match="current worker output results/revised.json"):
+        validate_review(snap, response, observed=receipts)
+    response["checks"]["experiment"]["evidence"].append({"artifact": current, "quote": rows})
+    receipts.append(read_evidence(snap, current)["receipt"])
+    assert validate_review(snap, response, observed=receipts)["deliverable"]
+    for receipt in (None, {**run, "artifact": old}, {**run, "sha256": "0" * 64}):
+        invalid = build_snapshot(tmp_path, expected_measurement=current, measurement_run=receipt)
+        assert not invalid["worker_measurement"]["verified"]
+        assert invalid["revision"] != snap["revision"]
+        assert all(meta["kind"] != "measurement" for meta in invalid["artifacts"].values())
+        invalid_response, observed = record(invalid, pair, "clean", "")
+        with pytest.raises(ValueError, match="no verified worker output"):
+            validate_review(invalid, invalid_response, observed=observed)
+
+
 def test_review_of_measured_figure_needs_plotted_source_rows_and_pixels(tmp_path):
     from PIL import Image
 

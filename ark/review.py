@@ -157,7 +157,7 @@ def _figure_methods(root, paper, artifacts, registered):
 
 
 def build_snapshot(project, *, paper_dir="paper", target_track="", required=("manuscript", "experiment"),
-                   registered_plots=None, measurement_run=None):
+                   registered_plots=None, measurement_run=None, expected_measurement=None, measurement_comparison=None):
     """Fingerprint the submission and allowlisted evidence without exposing project secrets."""
     root = Path(project).resolve(strict=True)
     if not isinstance(required, (tuple, list)) or any(d not in DOMAINS for d in required):
@@ -174,6 +174,21 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
     manifest = {"version": REVIEW_VERSION, "artifacts": artifacts, "paper_dir": paper.as_posix(),
                 "target_track": target_track, "required": sorted(set(required) | {"manuscript"})}
     run = measurement_run or {}
+    if expected_measurement is not None:
+        # A revised plan preserves earlier and ancillary datasets in results/.
+        # Their contents can be compared, but only the current worker can attest to its output.
+        bound = (run.get("status") == "completed" and run.get("artifact") == expected_measurement
+                 and artifacts.get(expected_measurement) == {"kind": "measurement", "sha256": run.get("sha256")})
+        manifest["worker_measurement"] = {"expected": expected_measurement, "verified": bound}
+        for name, meta in artifacts.items():
+            if meta["kind"] == "measurement" and not (bound and name == expected_measurement):
+                meta["kind"] = "supporting_measurement"
+        comparison = measurement_comparison or {}
+        if (bound and comparison.get("unchanged_arrays") and comparison.get("current") == expected_measurement
+                and comparison.get("current_sha256") == run["sha256"]
+                and artifacts.get(comparison.get("previous")) == {
+                    "kind": "supporting_measurement", "sha256": comparison.get("previous_sha256")}):
+            manifest["measurement_comparison"] = comparison
     digest = run.get("code_sha256")
     if "experiment" in required and run.get("status") == "completed" and re.fullmatch(r"[0-9a-f]{64}", str(digest)):
         method = run.get("script")
@@ -272,7 +287,7 @@ def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, stati
     receipt = {"revision": snapshot["revision"], "artifact": artifact, "sha256": meta["sha256"], "start": start}
     result = {"artifact": artifact, "sha256": meta["sha256"]}
     if statistic is not None:
-        if meta["kind"] != "measurement" or visual or page is not None or start != 1:
+        if meta["kind"] not in {"measurement", "supporting_measurement"} or visual or page is not None or start != 1:
             raise ValueError("Statistics operate on measured result artifacts only")
         value = _measured_statistic(data, ext, statistic, column, rows_pointer)
         receipt.update(statistic=statistic, column=column, rows_pointer=rows_pointer)
@@ -361,6 +376,12 @@ def review_prompt(snapshot, previous=None):
               "manuscript_excerpt": _blind_text(snapshot), "available_artifacts": catalogue}
     if conflicts := reported_change_conflicts(packet["manuscript_excerpt"]):
         packet["reported_changes_to_verify"] = conflicts[:8]
+    if "worker_measurement" in snapshot:
+        packet["worker_measurement"] = snapshot["worker_measurement"]
+        packet["measurement_guidance"] = ("Cite the current worker output for the experiment and its plotted values. "
+                                          "Other result files are available for explicit comparisons.")
+    if "measurement_comparison" in snapshot:
+        packet["measured_revision_comparison"] = snapshot["measurement_comparison"]
     if snapshot.get("measurement_method"):
         packet["measurement_method"] = snapshot["measurement_method"]
         packet["experiment_evidence_required"] = (
@@ -660,6 +681,11 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
             reason = "No primary-source passage is present in the snapshot. " + reason
         refs = _references(snapshot, check.get("evidence", []), observed, blind, required=assessed)
         origins = None
+        if assessed and domain == "experiment" and (worker := snapshot.get("worker_measurement")):
+            if not worker["verified"]:
+                raise ValueError("The current plan has no verified worker output. Mark experiment unassessed.")
+            if not any(r["artifact"] == worker["expected"] for r in refs):
+                raise ValueError(f"Cite measured rows from the current worker output {worker['expected']}.")
         if assessed and not _covers(snapshot, domain, refs):
             raise ValueError(f"No observed {domain} evidence supports this assessment")
         if assessed and domain == "experiment" and (method := snapshot.get("measurement_method")):
