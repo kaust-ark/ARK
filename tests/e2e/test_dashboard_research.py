@@ -451,6 +451,29 @@ def test_live_research_desk(tmp_path, monkeypatch):
                           condition="seed 3", differed=0, outcomes=6)
                     comparison.wait_for(state="hidden")
                     assert "seed 3" in page.locator("#research-observation").inner_text()
+                    page.emulate_media(reduced_motion="reduce")
+                    worker_table = root / "results/contrast.json"
+                    worker_table.write_text(json.dumps({"rows": [{"label":"128 items", "baseline":128,
+                        "proposed":7, "neighbor_overlap":0.6}]}))
+                    for status, language, counts, expected_text in [
+                        ("recorded", "en", {"count":2,"total":2}, "Complete rows: 2/2."),
+                        ("partial", "zh", {"count":0,"total":2}, "完整行数：0/2。"),
+                        ("missing", "ar", {}, "لم تظهر المقارنة العددية المحددة مسبقًا كاملة في النتائج."),
+                        ("unspecified", "zh", {}, "计划未为此项观测指定数值对照。"),
+                    ]:
+                        page.evaluate("lang=>setLang(lang)", language)
+                        name = "contrast-" + status
+                        original = "Worker checked the registered numeric columns."
+                        event(name, "experiments", original, action="mechanism_observation", status=status,
+                              artifact=worker_table.relative_to(root).as_posix(), **counts)
+                        page.locator("#research-observation").get_by_text(expected_text, exact=False).wait_for()
+                        assert page.locator("#research-count").is_hidden()
+                        page.evaluate("selectHistoryPhase('')")
+                        row = history.locator(f'li[data-event="{name}"]')
+                        assert row.locator("p").inner_text() == page.locator("#research-observation").inner_text()
+                    row.locator("button.history-file").click()
+                    assert json.loads(page.locator("#preview-content pre").inner_text())["rows"][0]["neighbor_overlap"] == 0.6
+                    page.locator("#evidence-close").click()
                 ctx.close()
 
             shared = browser.new_context().new_page()

@@ -208,6 +208,59 @@ def test_revising_a_completed_study_reports_matching_rows_to_author_and_reviewer
     assert "measurement_comparison" not in project.state
 
 
+def test_registered_contrast_follows_the_worker_into_writing_and_review(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    mechanism = {"explanation": "Later targets are inspected after more comparisons.",
+                 "alternative": "Initialization sets the cost independently of target position.",
+                 "distinguishing_observation": "Compare first and last target probe counts for each size.",
+                 "claim_without_it": "Report the observed elapsed time only.",
+                 "measurement": {"rows_pointer": "/runs~1table/0", "columns": ["probes.first", "probes.last"]}}
+    planned = project.invoke("plan_experiment", {**plan(), "mechanism": mechanism})
+    rows = [{"probes": {"first": 0, "last": 8}}, {"probes": {"first": 1, "last": None}}]
+    result = tmp_path / planned["expected"]
+    result.write_text(json.dumps({"runs/table": [rows]}))
+    script = tmp_path / planned["script"]
+    script.parent.mkdir(exist_ok=True)
+    script.write_text("print('worker fixture')")
+    receipt = {"status":"completed", "identity":"i2p-" + "1"*24, "backend":"slurm",
+               "artifact": planned["expected"], "script":planned["script"], "code_sha256":domain._sha(script),
+               "sha256":domain._sha(result), "plan_sha256":domain.native_experiment.plan_digest(planned)}
+    monkeypatch.setattr(domain.native_experiment, "execute", lambda *a, **k: receipt)
+    monkeypatch.setattr(project, "_measurement_receipt", lambda: receipt)
+    context = project.invoke("run_experiment", {})["experiment_design"]
+    assert context["observation"] == {"status":"partial", "count":1, "total":2}
+    assert context == project._snapshot()["registered_design"]
+    project.invoke("run_experiment", {})
+    observed = [e for e in (json.loads(l) for l in (project.state_dir/"research_events.jsonl").read_text().splitlines())
+                if e["action"] == "mechanism_observation"]
+    assert len(observed) == 1 and observed[0]["count"] == 1
+    reopened = domain.NativeProject(tmp_path)
+    assert reopened.inspect_project({})["mechanism_observation"]["sha256"] == receipt["sha256"]
+    receipt["plan_sha256"] = "0"*64
+    assert "registered_design" not in project._snapshot()
+    receipt["plan_sha256"] = domain.native_experiment.plan_digest(planned)
+    result.write_text('{"runs/table":[[{"probes":{"first":1,"last":2}}]]}')
+    assert "registered_design" not in project._snapshot()
+
+
+def test_registered_numeric_columns_count_only_observed_finite_values():
+    measure = domain.measurement_table
+    spec = {"rows_pointer":"", "columns":["score"]}
+    mechanism = {"measurement": measure.planned_columns(spec)}
+    planned = {**plan(), "mechanism":mechanism}
+    assert measure.experiment_design(planned, [{"score":1e-30}, {"score":0}])["observation"] == {
+        "status":"recorded", "count":2, "total":2}
+    assert measure.experiment_design(planned, [{"score": True}, {"score": "3"}, {"score": float("inf")}])["observation"] == {
+        "status":"missing", "count":0, "total":3}
+    assert measure.experiment_design(planned, [])["observation"] == {"status":"missing"}
+    assert measure.experiment_design({**plan(), "mechanism":{"explanation":"legacy"}}, [])["observation"]["status"] == "unspecified"
+    assert "observation" not in measure.experiment_design(plan(), [])
+    for invalid in ({**spec, "rows_pointer":"counts"}, {**spec, "rows_pointer":"/a~2b"}, {**spec, "columns":[]},
+                    {**spec, "columns":["s", "s"]}, {**spec, "columns":[".x"]}):
+        with pytest.raises(ValueError):
+            measure.planned_columns(invalid)
+
+
 def test_unchanged_rows_preserve_identifiers_and_small_probabilities():
     from ark.measurement_table import unchanged_result_arrays
 

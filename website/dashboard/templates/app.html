@@ -4487,6 +4487,23 @@ function renderDecision(decision, projectId) {
       const group = document.createElement('div'), term = document.createElement('dt'), value = document.createElement('dd');
       term.textContent = rt('plan_' + key);
       value.dir = 'auto'; value.textContent = mechanism[key];
+      if (key === 'distinguishing_observation' && mechanism.measurement) {
+        const {artifact, rows_pointer, columns} = mechanism.measurement;
+        const location = artifact ? artifact + '#' + rows_pointer : rows_pointer || rt('plan_root_array');
+        const spec = document.createElement('div');
+        spec.className = 'plan-measurement';
+        for (const [label, entries] of [['plan_result_rows', [location]], ['plan_numeric_columns', columns]]) {
+          const line = document.createElement('p');
+          line.append(rt(label) + ' ');
+          for (const entry of entries) {
+            const code = document.createElement('code');
+            code.dir = 'auto'; code.textContent = entry;
+            line.append(code, ' ');
+          }
+          spec.append(line);
+        }
+        value.append(spec);
+      }
       group.append(term, value); fields.append(group);
     }
     fullPlan.querySelector('summary').textContent = rt('plan_full');

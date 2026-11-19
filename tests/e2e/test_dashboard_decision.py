@@ -105,4 +105,21 @@ def test_decision_survives_reconnect_and_failed_submission():
         card.get_by_role("button", name="Approve and run the plan", exact=True).click()
         card.wait_for(state="hidden")
         assert posts[-1] == {"decision_id": "plan2", "index": 0, "text": ""}
+        native_plan["expected"] = "results/paired.json"
+        native_plan["mechanism"]["measurement"] = {"rows_pointer": "/pairs", "columns": ["overlap", "rmse.delta"]}
+        decision.id = "plan3"
+        decision.context = yaml.safe_dump(native_plan, sort_keys=False)
+        project["pending_decision"] = _decision_to_dict(decision)
+        page.evaluate("loadDetail('owned')")
+        spec = panel.locator(".plan-measurement")
+        spec.wait_for()
+        assert spec.locator("code").all_text_contents() == ["results/paired.json#/pairs", "overlap", "rmse.delta"]
+        assert panel.locator("dl > div").nth(2).locator(".plan-measurement").count() == 1
+        assert panel.locator("dt").count() == 4 and len(posts) == 3
+        native_plan["mechanism"]["measurement"]["rows_pointer"] = ""
+        decision.context = yaml.safe_dump(native_plan)
+        assert _decision_to_dict(decision)["mechanism"]["measurement"]["rows_pointer"] == ""
+        del native_plan["mechanism"]["measurement"]["rows_pointer"]
+        decision.context = yaml.safe_dump(native_plan)
+        assert "measurement" not in _decision_to_dict(decision)["mechanism"]
         browser.close()

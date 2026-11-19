@@ -553,6 +553,10 @@ def _cancel_one(row, path):
     _save(path, row)
 
 
+def plan_digest(plan):
+    return hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+
+
 def _plot_runs(root, runs, plot, plan, known_identity):
     """Locate attempts for this output. Older unfinished receipts omitted its filename."""
     for path in runs.glob("*/receipt.json"):
@@ -571,7 +575,7 @@ def _plot_runs(root, runs, plot, plan, known_identity):
             continue
         # Reconstruct the original content-addressed key, which includes the output name.
         # A different file, plan, or relocated run cannot accidentally match.
-        if row.get("plan_sha256") != hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest():
+        if row.get("plan_sha256") != plan_digest(plan):
             continue
         header = json.dumps([str(root), plan, row["backend"], plot], sort_keys=True).encode()
         try:
@@ -700,7 +704,7 @@ def execute(root, config, plan, script, *, plot=None, selection=None, measuremen
             row = {"identity": "i2p-" + token, "backend": kind, "status": "prepared",
                    "created": datetime.now().isoformat(timespec="seconds"),
                    "script": script, "code_sha256": hashlib.sha256(code).hexdigest(),
-                   "plan_sha256": hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest(),
+                   "plan_sha256": plan_digest(plan),
                    "expected": expected}
             if plot:
                 row["input_sha256"] = hashlib.sha256(inputs).hexdigest()
@@ -726,7 +730,7 @@ def cancel(root):
 def measurement_receipt(root, plan, code_sha256):
     """Recover the unique measured operation for a sealed plan and script."""
     root = Path(root).resolve()
-    plan_hash = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+    plan_hash = plan_digest(plan)
     with _locked(root) as runs:
         matched = []
         for path in runs.glob("*/receipt.json"):

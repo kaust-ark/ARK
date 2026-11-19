@@ -344,6 +344,10 @@ export const operations = {
       explanation:str, alternative:str,
       distinguishing_observation:{type:'string', description:'Which observation would differ under these explanations? Specify the measure and their predictions.'},
       claim_without_it:{type:'string', description:'The strongest conclusion the primary comparison alone can support.'},
+      measurement:{type:'object', additionalProperties:false, properties:{
+        rows_pointer:{type:'string',description:'JSON pointer to the planned table, or an empty string for a root array.'},
+        columns:{type:'array',items:str,minItems:1,maxItems:16,description:'Numeric fields that will distinguish the explanations. Dotted paths address nested values.'},
+      },required:['rows_pointer','columns']},
     }, required:['explanation','alternative','distinguishing_observation','claim_without_it']},
     script: {type:'string', description:'One project-relative Python filename, for example scripts/experiment.py.'},
     result_path: {type:'string', description:'One project-relative JSON output filename, for example results/measurements.json.'},

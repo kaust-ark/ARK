@@ -336,6 +336,9 @@ class NativeProject(CompilerMixin):
             "owner_brief": (
                 "Use the same session for planning, measurements, writing and repair. Read the venue skeleton and project skills. "
                 "Investigate primary literature, freeze paired controls, run a Python experiment, inspect measurements, and generate its plots. "
+                "For a proposed mechanism, name the distinguishing numeric columns in the plan before submitting work. "
+                "After the worker returns, inspect experiment_design and the actual values. If the distinguishing measurement is absent "
+                "or inconclusive, use claim_without_it throughout the manuscript or plan the missing comparison. "
                 "State which recorded observation supports each central inference. When revising a disputed claim, trace it across the "
                 "abstract, discussion, conclusions and captions so that earlier versions of the explanation are corrected everywhere. "
                 "Use the survey's official titles and primary abstracts to select relevant originals before writing. "
@@ -359,6 +362,7 @@ class NativeProject(CompilerMixin):
             "experiment",
             "previous_measurement",
             "measurement_comparison",
+            "mechanism_observation",
             "research",
             "concept",
             "compiled_pdf_sha256",
@@ -590,9 +594,11 @@ class NativeProject(CompilerMixin):
         if "mechanism" in args:
             mechanism = args["mechanism"]
             fields = ("explanation", "alternative", "distinguishing_observation", "claim_without_it")
-            if not isinstance(mechanism, dict) or set(mechanism) != set(fields):
+            if not isinstance(mechanism, dict) or set(mechanism) - {"measurement"} != set(fields):
                 raise ValueError("For a mechanism study, describe the explanation, alternative, distinguishing_observation and claim_without_it.")
             plan["mechanism"] = {key: _text(mechanism, key, limit=1200) for key in fields}
+            if "measurement" in mechanism:
+                plan["mechanism"]["measurement"] = measurement_table.planned_columns(mechanism["measurement"])
             if plan["mechanism"]["explanation"].casefold() == plan["mechanism"]["alternative"].casefold():
                 raise ValueError("Describe a distinct competing explanation.")
         if not re.fullmatch(r"scripts/[\w-]+\.py", plan["script"], re.ASCII):
@@ -639,6 +645,7 @@ class NativeProject(CompilerMixin):
                 and existing.get("artifact") == (self.state.get("plan") or {}).get("expected")):
             self.state["previous_measurement"] = {k: existing[k] for k in ("artifact", "sha256")}
         self.state.pop("measurement_comparison", None)
+        self.state.pop("mechanism_observation", None)
         self.state.update(plan=plan)
         self.state.pop("sealed_script", None)
         self.state.pop("experiment", None)
@@ -745,9 +752,22 @@ class NativeProject(CompilerMixin):
                 **({"artifact": attempt["artifact"]} if "artifact" in attempt else {}),
             )
         if not plot and record["status"] == "completed":
-            data, _ = self._measurements()
+            data, digest = self._measurements()
+            design = measurement_table.experiment_design(plan, data)
+            if observation := design.get("observation"):
+                entry = {**observation, "artifact": record["artifact"], "sha256": digest}
+                if self.state.get("mechanism_observation") != entry:
+                    labels = {"recorded": "The registered mechanism columns are present in all worker rows.",
+                              "partial": "Only part of the registered mechanism measurement is present.",
+                              "missing": "The worker output lacks the registered mechanism measurement.",
+                              "unspecified": "The plan described a distinguishing observation without registering result columns."}
+                    self.event("experiments", "mechanism_observation", labels[observation["status"]], **observation,
+                               artifact=record["artifact"], id=f"{record['identity']}-mechanism")
+                    self.state["mechanism_observation"] = entry
+                    self.save()
             return {
                 **record,
+                "experiment_design": design,
                 "result_arrays": measurement_table.describe(data),
                 "measurements_excerpt": (self.root / record["artifact"]).read_text()[:16000],
                 "table_tool": "Use render_results_table to format measured columns in the paper without transcription.",
@@ -1746,6 +1766,7 @@ class NativeProject(CompilerMixin):
             target_track=str(self.config.get("venue") or self.config.get("venue_format") or ""),
             required=required,
             expected_measurement=expected,
+            experiment_plan=self.state.get("plan"),
             measurement_comparison=self.state.get("measurement_comparison"),
             measurement_run=self._measurement_receipt() if expected else self.state.get("experiment"),
             registered_plots={name: row["script"] for name, row in (self.state.get("plots") or {}).items()

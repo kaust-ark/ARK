@@ -41,6 +41,62 @@ def describe(data):
     ]
 
 
+def planned_columns(value):
+    """Validate the result table a researcher names before submitting a worker."""
+    if not isinstance(value, dict) or value.keys() != {"rows_pointer", "columns"}:
+        raise ValueError("Register the distinguishing measurement with rows_pointer and columns.")
+    pointer, columns = value["rows_pointer"], value["columns"]
+    if (not isinstance(pointer, str) or len(pointer) > 320
+            or not re.fullmatch(r"(?:/(?:[^~/]|~[01])*)*", pointer)):
+        raise ValueError("Use a JSON pointer to a result table, or an empty string for the root array.")
+    if (not isinstance(columns, list) or not 1 <= len(columns) <= 16 or
+            not all(isinstance(c, str) and len(c) <= 120 and re.fullmatch(r"[\w-]+(?:\.[\w-]+)*", c)
+                    for c in columns) or len(set(columns)) != len(columns)):
+        raise ValueError("Register one to sixteen distinct numeric result columns using dotted field paths.")
+    return {"rows_pointer": pointer, "columns": list(columns)}
+
+
+def experiment_design(plan, data):
+    """Compare the pre-submission design to actual worker rows. Values do not adjudicate a hypothesis."""
+    design = {key: plan[key] for key in ("question", "baseline", "comparison", "metric")}
+    mechanism = plan.get("mechanism")
+    if not mechanism:
+        return design
+    design["mechanism"] = mechanism
+    if "measurement" not in mechanism:
+        design["observation"] = {"status": "unspecified"}
+        return design
+    spec = mechanism["measurement"]
+    rows = data
+    for key in spec["rows_pointer"].split("/")[1:]:
+        key = key.replace("~1", "/").replace("~0", "~")
+        if isinstance(rows, dict):
+            rows = rows.get(key)
+        elif isinstance(rows, list) and re.fullmatch(r"(?:0|[1-9][0-9]{0,8})", key) and int(key) < len(rows):
+            rows = rows[int(key)]
+        else:
+            rows = None
+            break
+    result = {"status": "missing"}
+    if isinstance(rows, list) and rows:
+        complete, any_value = 0, False
+        for row in rows:
+            available = 0
+            for column in spec["columns"]:
+                try:
+                    value = _value(row, column)
+                except ValueError:
+                    continue
+                if type(value) is int or (type(value) is float and math.isfinite(value)):
+                    available += 1
+            complete += available == len(spec["columns"])
+            any_value |= available > 0
+        result = {"status": "recorded" if complete == len(rows) else "partial" if any_value else "missing",
+                  "count": complete, "total": len(rows)}
+    design["observation"] = result
+    return design
+
+
 def unchanged_result_arrays(previous, current):
     """Compare like-shaped rows in their recorded order, preserving labels and integer identifiers."""
     def matches(a, b):

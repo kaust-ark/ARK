@@ -157,7 +157,8 @@ def _figure_methods(root, paper, artifacts, registered):
 
 
 def build_snapshot(project, *, paper_dir="paper", target_track="", required=("manuscript", "experiment"),
-                   registered_plots=None, measurement_run=None, expected_measurement=None, measurement_comparison=None):
+                   registered_plots=None, measurement_run=None, expected_measurement=None, measurement_comparison=None,
+                   experiment_plan=None):
     """Fingerprint the submission and allowlisted evidence without exposing project secrets."""
     root = Path(project).resolve(strict=True)
     if not isinstance(required, (tuple, list)) or any(d not in DOMAINS for d in required):
@@ -180,6 +181,15 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
         bound = (run.get("status") == "completed" and run.get("artifact") == expected_measurement
                  and artifacts.get(expected_measurement) == {"kind": "measurement", "sha256": run.get("sha256")})
         manifest["worker_measurement"] = {"expected": expected_measurement, "verified": bound}
+        if bound and experiment_plan and experiment_plan.get("expected") == expected_measurement:
+            from ark.compute.native_experiment import plan_digest
+            from ark.measurement_table import experiment_design
+            if run.get("plan_sha256") == plan_digest(experiment_plan):
+                data = None
+                if (experiment_plan.get("mechanism") or {}).get("measurement"):
+                    payload, _ = _artifact({**manifest, "project": str(root)}, expected_measurement)
+                    data = json.loads(payload)
+                manifest["registered_design"] = experiment_design(experiment_plan, data)
         for name, meta in artifacts.items():
             if meta["kind"] == "measurement" and not (bound and name == expected_measurement):
                 meta["kind"] = "supporting_measurement"
@@ -633,6 +643,16 @@ def claim_instructions(snapshot):
                      "the assumptions to the claimed quantity. If the calculation stops at an intermediate, "
                      "reconsider the basis. If the study excludes a counterexample, cite the restriction and "
                      "explain it in counterexample_limit.")
+        if _needs_inference_test(snapshot):
+            parts.append("The executed plan has no complete registered mechanism measurement. If a mixed "
+                         "conclusion attributes the observed change to a mechanism using a derivation solely "
+                         "from this manuscript, test the implication with test_inference at that passage. "
+                         "Keep the premise constant across different cases and compare the claimed endpoint. "
+                         "You can instead cite an observed discriminating control, a relevant independent "
+                         "derivation, identify genuinely limited wording, or raise the missing observation. "
+                         "A calculation of the premise alone cannot settle the question. "
+                         "If the study excludes a counterexample, give exclusion_evidence referencing the observed "
+                         "protocol, measurement, source or method with that restriction.")
     return "\n".join(parts)
 
 
@@ -644,6 +664,11 @@ def review_prompt(snapshot, previous=None):
     packet = {"revision": snapshot["revision"], "target_track": snapshot["target_track"] or "unspecified",
               "required": snapshot["required"], "manuscript_artifact": tex, "rendered_artifact": pdf,
               "manuscript_excerpt": _blind_text(snapshot), "available_artifacts": catalogue}
+    if design := snapshot.get("registered_design"):
+        packet["executed_experiment_design"] = design
+        instructions += ("\nCompare your pre-reading judgment with the registered design and the actual worker "
+                         "observations. Registered columns describe coverage. Inspect their values and methods "
+                         "to decide what they establish. Later controls or an independent proof can add evidence.")
     if target := snapshot.get("conclusion"):
         packet["conclusion_to_check"] = target
         packet["conclusion_assessment"] = (
@@ -1145,6 +1170,13 @@ def _procedure_passage(snapshot, passage):
         for parts in snapshot["evidence_scope"].get("conclusion_clauses", ()))
 
 
+def _needs_inference_test(snapshot):
+    design = snapshot.get("registered_design")
+    return bool(snapshot.get("method_control") and design and
+                (design.get("observation") or {}).get("status") != "recorded" and
+                snapshot.get("evidence_scope", {}).get("conclusion_clauses"))
+
+
 def _manuscript_claims(snapshot, values, observed, blind):
     if not isinstance(values, list) or not 1 <= len(values) <= 8:
         raise ValueError("Supply checks.manuscript.claims with the measured result and any separate explanation.")
@@ -1186,8 +1218,17 @@ def _manuscript_claims(snapshot, values, observed, blind):
                 if not sources:
                     raise ValueError("The bridge must quote the observed reasoning cited in this claim.")
                 claim["bridge"] = bridge
-                if snapshot.get("method_control") and not inference_tests and all(
-                        snapshot["artifacts"][ref["artifact"]]["kind"] == "submission" for ref in sources):
+                self_cited = all(snapshot["artifacts"][r["artifact"]]["kind"] == "submission" for r in sources)
+                if (_needs_inference_test(snapshot) and self_cited
+                        and passage["page"] == snapshot["conclusion"]["page"]
+                        and any(_contains_observed_quote(passage["quote"], part["continuation"])
+                                for part in snapshot["evidence_scope"]["conclusion_clauses"])
+                        and not any(r["same_premise"] for r in inference_tests)):
+                    raise ValueError("The registered comparison did not measure this mechanism in full. "
+                                     "Before relying on the manuscript's derivation for this empirical conclusion, "
+                                     "use test_inference on this passage with the premise held constant. "
+                                     "Compare the outcome named in the conclusion, or revise the assessment using available evidence.")
+                if snapshot.get("method_control") and not inference_tests and self_cited:
                     instruction = ("Check the submission's derivation at this exact passage with test_inference "
                                    "or supply independent_derivation with your own analytic calculation from the "
                                    "assumptions to the claimed outcome. If the implication fails, report the gap.")
@@ -1202,6 +1243,13 @@ def _manuscript_claims(snapshot, values, observed, blind):
                 r["same_premise"] and r["distinguishable_outcome"] for r in inference_tests):
             claim["counterexample_limit"] = _string(value.get("counterexample_limit"),
                                                       "reason the study excludes the constructed counterexample")
+            if _needs_inference_test(snapshot):
+                restriction = _references(snapshot, value.get("exclusion_evidence"), observed, blind, required=True)
+                if not any(ref.get("quote") and snapshot["artifacts"][ref["artifact"]]["kind"] in
+                           ("protocol", "measurement", "primary_source", "method") for ref in restriction):
+                    raise ValueError("Cite the observed assumption or measurement excluding the counterexample in exclusion_evidence.")
+                claim["exclusion_evidence"] = restriction
+                claim["evidence"] = evidence + [ref for ref in restriction if ref not in evidence]
         if basis == "qualified":
             wording = _interpretation_wording(passage, {"claim":value.get("assertion", passage["quote"]),
                                                        "qualification":value.get("qualification")})
@@ -1587,7 +1635,7 @@ def record_is_current(snapshot, record):
 def _delivery_inputs(snapshot):
     # Page locators and blind-review instructions describe how to review the inputs.
     # The scientific files, worker provenance, venue and required checks identify a delivery.
-    return {k: v for k, v in snapshot.items() if k not in ("project", "revision", "conclusion", "evidence_scope")}
+    return {k: v for k, v in snapshot.items() if k not in ("project", "revision", "conclusion", "evidence_scope", "registered_design")}
 
 
 def delivery_inputs_digest(snapshot):

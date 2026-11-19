@@ -35,6 +35,7 @@ MAX_CONCURRENT_REGULAR_GLOBAL = 3    # regular lane global cap
 MAX_CONCURRENT_ADMIN_GLOBAL = 5      # admin lane global cap
 MAX_CONCURRENT_GLOBAL = MAX_CONCURRENT_REGULAR_GLOBAL  # back-compat alias (regular lane)
 from ark.paths import get_ark_root as _get_ark_root
+from ark.measurement_table import planned_columns
 from ark.review import MAX_BYTES as MAX_REVIEW_BYTES
 _DISABLED_FLAG = None  # lazy
 
@@ -3129,6 +3130,16 @@ def _decision_to_dict(dec) -> Optional[dict]:
         fields = ("explanation", "alternative", "distinguishing_observation", "claim_without_it")
         if isinstance(mechanism, dict) and all(isinstance(mechanism.get(k), str) and mechanism[k].strip() for k in fields):
             result["mechanism"] = {k: mechanism[k] for k in fields}
+            if "measurement" in mechanism:
+                try:
+                    table = planned_columns(mechanism["measurement"])
+                except ValueError:
+                    pass  # Keep the descriptive fields when an older registration is unreadable.
+                else:
+                    artifact = plan.get("expected") or plan.get("result_path")
+                    if isinstance(artifact, str) and artifact.startswith("results/") and progress.evidence_type(artifact):
+                        table["artifact"] = artifact
+                    result["mechanism"]["measurement"] = table
             if isinstance(plan.get("question"), str):
                 result["plan_question"] = plan["question"]
     return result

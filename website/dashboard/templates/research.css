@@ -101,6 +101,8 @@
 #decision-mechanism dl>div:nth-child(n+3) { grid-column:1 / -1; }
 #decision-mechanism dt { color:var(--muted); font-size:.83rem; font-weight:600; }
 #decision-mechanism dd { margin:3px 0 0; color:var(--ink); overflow-wrap:anywhere; white-space:pre-wrap; }
+.plan-measurement { margin-block-start:6px; color:var(--muted); font-size:.85rem; }
+.plan-measurement code { display:inline-block; max-width:100%; overflow-wrap:anywhere; background:#eff5f2; padding-inline:4px; color:var(--ink); }
 #decision-full-plan pre { max-height:18rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
 .review-judgment { display:block; margin-block-end:4px; color:var(--ink); }
 #review-coverage .review-claims { list-style:none; padding:0; margin-block:10px; }

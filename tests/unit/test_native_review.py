@@ -468,6 +468,25 @@ def test_result_and_explanation_require_separate_observed_support(tmp_path):
     assert separated[0]["passage"]["quote"] == "The plots reduced mass loss"
     assert separated[2]["passage"]["quote"] == outcome
     assert separated[2]["basis"] == "unsupported"
+    empirical = dict(mixed, method_control={"backend":"slurm"}, registered_design={"metric":"loss"})
+    claim = {**self_cited, "passage":disputed["passage"], "independent_derivation":working}
+    def adjudicate(value, *receipts):
+        return _manuscript_claims(empirical, [result, qualified, value], [*seen, *receipts], "")[-1]
+    probe = {**check, "revision":mixed["revision"], "passage":separated[-1]["passage"]}
+    with pytest.raises(ValueError, match="test_inference"):
+        adjudicate(claim)
+    with pytest.raises(ValueError, match="test_inference"):
+        adjudicate(claim, {**probe, "same_premise":False})
+    with pytest.raises(ValueError, match="test_inference"):
+        adjudicate(claim, {**probe, "revision":"other"})
+    with pytest.raises(ValueError, match="counterexample"):
+        adjudicate(claim, probe)
+    counter = {**claim, "counterexample_limit":"The study used a fixed measurement method."}
+    with pytest.raises(ValueError, match="specific evidence"):
+        adjudicate(counter, probe)
+    assert adjudicate({**counter, "exclusion_evidence":[method_ref]}, probe)["exclusion_evidence"][0]["artifact"] == method
+    assert adjudicate(claim, {**probe, "distinguishable_outcome":False})["basis"] == "derivation"
+    assert adjudicate(disputed)["basis"] == "unsupported"
     with pytest.raises(ValueError, match="observed protocol"):
         _manuscript_claims(mixed,[result,dict(disputed,basis="procedure")],seen,"")
 

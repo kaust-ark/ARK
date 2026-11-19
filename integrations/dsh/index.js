@@ -594,7 +594,8 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
       'Resume the same research project. Reconcile saved work and continue to verified delivery. Reuse completed experiments, research and images.',
       'If a build fails, repair its diagnostic and compile again. A verdict for an older PDF needs a fresh review of the current build; inspect existing revised assets before requesting replacements.',
       'Fix reported artifact checks before another independent review. Use write_project_file with insert_before or insert_after on a short unique heading to expand a section, or replace to fix a specific passage. Expand an under-length paper with evidence and analysis, then compile.',
-      JSON.stringify({ requirements: status.required, rendered: status.compile?.checks, body_pages: status.compile?.body_equivalent_pages,
+      JSON.stringify({ requirements: status.required, planned_mechanism: status.plan?.mechanism, last_mechanism_observation: status.mechanism_observation,
+        rendered: status.compile?.checks, body_pages: status.compile?.body_equivalent_pages,
         manuscript_issues: status.manuscript_issues, editorial_notes: status.compile?.editorial_notes, suggested_edit: status.compile?.suggested_edit, citation_audit: status.citations, most_recent_review: status.review?.verdict, reviewed_revision: status.review?.revision, reviewed_pdf_matches_last_build: status.review?.reviewed_pdf_matches_last_build }),
     ].join('\n'))
     const start = agent.session.seq

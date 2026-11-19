@@ -6,6 +6,15 @@ const researchLabels = {
   plan_explanation: ['Proposed explanation','待检验的解释','التفسير المقترح'],
   plan_alternative: ['Alternative explanation','另一种解释','التفسير البديل'],
   plan_distinguishing_observation: ['What would distinguish the explanations?','什么观察能区分这两种解释？','ما الملاحظة التي تميّز بين التفسيرين؟'],
+  plan_result_rows: ['Planned result table','计划记录的结果表','جدول النتائج المخطّط'],
+  plan_numeric_columns: ['Numeric columns','数值列','الأعمدة العددية'],
+  plan_root_array: ['Root array','根数组','المصفوفة الجذرية'],
+  mechanism_recorded: ['All registered numeric comparisons were recorded.','结果表已完整记录预先声明的数值对照。','سُجّلت جميع المقارنات العددية المحددة مسبقًا.'],
+  mechanism_partial: ['Only some registered numeric values were recorded.','结果表只记录了部分预先声明的数值。','سُجّل بعض القيم العددية المحددة مسبقًا فقط.'],
+  mechanism_missing: ['The registered numeric comparison is missing from the results.','结果中未找到完整的预先声明数值对照。','لم تظهر المقارنة العددية المحددة مسبقًا كاملة في النتائج.'],
+  mechanism_unspecified: ['The plan did not specify a numeric comparison for this observation.','计划未为此项观测指定数值对照。','لم تحدد الخطة مقارنة عددية لهذه الملاحظة.'],
+  mechanism_rows: ['Complete rows: %s/%s.','完整行数：%s/%s。','الصفوف المكتملة: %s/%s.'],
+  event_mechanism_observation: ['Coverage of the planned comparison','计划对照的记录情况','تغطية المقارنة المخطّطة'],
   plan_claim_without_it: ['Conclusion supported without that observation','缺少该观测时可支持的结论','الاستنتاج الممكن دون تلك الملاحظة'],
   plan_full: ['Full experiment plan','完整实验计划','خطة التجربة كاملة'],
   question_conclusion: ['Question the judgment on page %s','质疑第 %s 页的判断','ناقش الحكم على الصفحة %s'],
@@ -208,7 +217,17 @@ function reviewHandoff(recent) {
   return review.stale ? rt('stale') : rt('after_review_' + review.verdict);
 }
 
+function mechanismCoverage(event) {
+  if (event?.action !== 'mechanism_observation' || !['recorded','partial','missing','unspecified'].includes(event.status)) return '';
+  const label = rt('mechanism_' + event.status);
+  return event.status !== 'unspecified' && Number.isInteger(event.count) && Number.isInteger(event.total) &&
+    event.count >= 0 && event.total > 0 && event.count <= event.total
+    ? label + ' ' + rt('mechanism_rows', event.count, event.total) : label;
+}
+
 function observationText(event, withValues=true) {
+  const coverage = mechanismCoverage(event);
+  if (coverage) return coverage;
   if (['review_started','evidence_scope_committed','review_repair_requested','inference_test_started','inference_test_failed'].includes(event?.action)) return reviewEventLabel(event);
   if (event?.action === 'delivered' && event.artifact === 'paper/main.pdf' && /^[a-f0-9]{64}$/.test(event.revision))
     return rt('delivery_verified');
@@ -322,7 +341,7 @@ function renderHistory() {
         meta.append(time);
       }
       const observation = document.createElement('p');
-      const progress = e.count != null && e.total > 0 ? ' (' + e.count + '/' + e.total + ')' : '';
+      const progress = e.action !== 'mechanism_observation' && e.count != null && e.total > 0 ? ' (' + e.count + '/' + e.total + ')' : '';
       observation.textContent = (observationText(e, false) || e.action) + progress;
       row.append(meta, observation);
       if (hasComparison(e)) {
@@ -497,7 +516,7 @@ function renderResearch(animate=false) {
     comparison.querySelector('bdi').textContent = obs.metric;
     fillComparison(comparison, obs);
   }
-  const measured = Number.isInteger(obs?.count) && Number.isInteger(obs.total) &&
+  const measured = obs?.action !== 'mechanism_observation' && Number.isInteger(obs?.count) && Number.isInteger(obs.total) &&
     obs.count >= 0 && obs.total > 0 && obs.count <= obs.total;
   const counter = measured ? ' (' + obs.count + '/' + obs.total + ')' : '';
   const meter = re('research-count');
@@ -640,7 +659,7 @@ async function openEvidence(item, opener, page=1, compare=false) {
     if (controller.signal.aborted) return;
     let rows;
     try { rows = JSON.parse(text).rows; } catch {}
-    if (Array.isArray(rows) && rows.length && rows.every(row => row && typeof row.label === 'string' && Number.isFinite(row.baseline) && Number.isFinite(row.proposed))) {
+    if (Array.isArray(rows) && rows.length && rows.every(row => row && typeof row.label === 'string' && Number.isFinite(row.baseline) && Number.isFinite(row.proposed) && Object.keys(row).length === 3)) {
       const table = document.createElement('table'), head = table.createTHead().insertRow();
       for (const key of ['trial','baseline','proposed']) { const th = document.createElement('th'); th.textContent = rt(key); head.append(th); }
       const body = table.createTBody();
