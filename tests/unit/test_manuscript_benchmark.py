@@ -204,6 +204,16 @@ def test_fourth_page_full_width_chart_counts_at_its_rendered_location():
         assert .9 < benchmark.layout(doc)["last_page_fill"] < .95
 
 
+def _reviewed_method_checks():
+    from ark.nano_banana import _SEMANTIC_CHECKS
+
+    checks = {name: {"status": "consistent", "observed": "Two paths lead into shared calibration."}
+              for name in _SEMANTIC_CHECKS}
+    checks["result_marks"]["depiction"] = "method"
+    checks["printed_labels"]["transcription"] = ["Calibration"]
+    return checks
+
+
 def test_semantic_review_binds_final_pixels_and_study_design(tmp_path):
     import hashlib
     from ark.nano_banana import SEMANTIC_REVIEW_VERSION, concept_design
@@ -212,15 +222,21 @@ def test_semantic_review_binds_final_pixels_and_study_design(tmp_path):
     figures.mkdir(parents=True)
     spec = {"name": "method", "description": "Temperature selection uses held-out calibration data."}
     art = figures / "method.png"
-    art.write_bytes(b"selected method illustration")
+    Image.new("RGB", (80, 50), "orange").save(art)
     (figures / "concept_figures.json").write_text(json.dumps([spec]))
     review = {"model": "vision", "version": SEMANTIC_REVIEW_VERSION, "status": "passed", "artifact_sha256": benchmark.sha256(art),
               "design_sha256": hashlib.sha256(concept_design(spec, None).encode()).hexdigest(),
-              "checks": {"comparison_groups": "pass"}}
+              "checks": _reviewed_method_checks()}
     path = figures / "figure_manifest.json"
     path.write_text(json.dumps({"figures": {art.name: {"semantic_review": review}}}))
     embedded = {"method_art": {art.name: 2}}
     assert benchmark.check_diagram_review(figures.parent, embedded)[art.name]["model"] == "vision"
+    review["checks"].pop("result_marks")
+    path.write_text(json.dumps({"figures": {art.name: {"semantic_review": review}}}))
+    with pytest.raises(ValueError, match="unavailable"):
+        benchmark.check_diagram_review(figures.parent, embedded)
+    review["checks"] = _reviewed_method_checks()
+    path.write_text(json.dumps({"figures": {art.name: {"semantic_review": review}}}))
     spec["description"] = "Modified experimental design."
     (figures / "concept_figures.json").write_text(json.dumps([spec]))
     with pytest.raises(ValueError, match="study design"):
@@ -247,7 +263,7 @@ def test_composed_panel_needs_native_bytes_and_a_matching_authenticated_receipt(
     _compose_study_panel(native, groups, fig, False)
     (figures / "concept_figures.json").write_text(json.dumps([spec]))
     review = {"model": "vision", "version": SEMANTIC_REVIEW_VERSION, "status": "passed",
-              "artifact_sha256": benchmark.sha256(fig),
+              "artifact_sha256": benchmark.sha256(fig), "checks": _reviewed_method_checks(),
               "design_sha256": hashlib.sha256(concept_design(spec, None).encode()).hexdigest()}
     record = {"representation": "subject_with_comparison_panel", "semantic_review": review,
               "illustration_file": native.name, "payload_source": "google_inline_data", "response_id": "r1",

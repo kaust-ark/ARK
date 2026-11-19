@@ -6,6 +6,7 @@ researcher or from the reviewer model. Only the response is model-authored.
 """
 from __future__ import annotations
 
+import ast
 import base64
 import csv
 from decimal import Decimal, InvalidOperation
@@ -110,7 +111,52 @@ def _artifact_paths(root, paper):
                 yield rel, kind
 
 
-def build_snapshot(project, *, paper_dir="paper", target_track="", required=("manuscript", "experiment")):
+def _figure_methods(root, paper, artifacts, registered):
+    """Link included figures to their plotting source; also handle imported manuscripts."""
+    from ark.citation import active_tex_sources
+
+    included = set()
+    for path, source in active_tex_sources(root / paper):
+        if path.relative_to(root).as_posix() in artifacts:
+            included.update(Path(name).name for name in re.findall(
+                r"\\includegraphics\*?(?:\s*\[[^]]*\])?\s*\{([^{}]+)\}", source))
+    if not included:
+        return {}
+    def included_name(filename):
+        return filename in included or Path(filename).stem in included
+
+    found = {name: method for name, method in registered.items()
+             if included_name(name) and artifacts.get(method, {}).get("kind") == "method"}
+    inferred = {}
+    for name, meta in artifacts.items():
+        path = root / name
+        if meta["kind"] != "method" or path.suffix != ".py" or path.stat().st_size > 256_000:
+            continue
+        try:
+            source = path.read_bytes()
+            if b"savefig" not in source or _digest(source) != meta["sha256"]:
+                continue
+            tree = ast.parse(source)
+        except (SyntaxError, ValueError, RecursionError):
+            continue
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call) or getattr(call.func, "attr", "") != "savefig":
+                continue
+            arg = call.args[0] if call.args else next((kw.value for kw in call.keywords if kw.arg == "fname"), None)
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                filename = Path(arg.value).name
+                if included_name(filename):
+                    inferred.setdefault(filename, set()).add(name)
+    # An old script may export the same figure; only a worker receipt can
+    # disambiguate competing programs.
+    for filename, names in inferred.items():
+        if len(names) == 1:
+            found.setdefault(filename, next(iter(names)))
+    return found
+
+
+def build_snapshot(project, *, paper_dir="paper", target_track="", required=("manuscript", "experiment"),
+                   registered_plots=None):
     """Fingerprint the submission and allowlisted evidence without exposing project secrets."""
     root = Path(project).resolve(strict=True)
     if not isinstance(required, (tuple, list)) or any(d not in DOMAINS for d in required):
@@ -126,6 +172,10 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
         artifacts[rel.as_posix()] = {"kind": kind, "sha256": _file_digest(path)}
     manifest = {"version": REVIEW_VERSION, "artifacts": artifacts, "paper_dir": paper.as_posix(),
                 "target_track": target_track, "required": sorted(set(required) | {"manuscript"})}
+    if "visual" in required and any(meta["kind"] == "measurement" for meta in artifacts.values()):
+        methods = _figure_methods(root, paper, artifacts, registered_plots or {})
+        if methods:
+            manifest["figure_methods"] = methods
     return {**manifest, "project": str(root), "revision": _digest(_canonical(manifest))}
 
 
@@ -291,6 +341,17 @@ def review_prompt(snapshot, previous=None):
               "manuscript_excerpt": _blind_text(snapshot), "available_artifacts": catalogue}
     if conflicts := reported_change_conflicts(packet["manuscript_excerpt"]):
         packet["reported_changes_to_verify"] = conflicts[:8]
+    if snapshot.get("figure_methods"):
+        packet["figure_methods"] = snapshot["figure_methods"]
+        packet["visual_evidence_required"] = (
+            "Trace one series for each listed plotting program. In checks.visual.evidence cite the page image, "
+            "the exact code assigning the plotted values and a verbatim excerpt of the input rows. "
+            "In checks.visual.series_origin, map each listed figure filename to measured, copied, or theoretical "
+            "as supported by the evidence. Mark the visual check unassessed if a series cannot be traced. "
+            "Use copied when an empirical series is transcribed into its script. That prevents "
+            "reproducing the figure from changed input and requires a blocker located in the source and manuscript, "
+            "even when the numbers support the paper's scientific conclusion. Use theoretical only for an explicitly "
+            "identified theoretical reference, not as a substitute for measured results.")
     if not any(item["kind"] == "primary_source" for item in snapshot["artifacts"].values()):
         packet["primary_sources_available"] = False
     if previous:
@@ -501,9 +562,23 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
             assessed, status = False, "unassessed"
             reason = "No primary-source passage is present in the snapshot. " + reason
         refs = _references(snapshot, check.get("evidence", []), observed, blind, required=assessed)
+        origins = None
         if assessed and not _covers(snapshot, domain, refs):
             raise ValueError(f"No observed {domain} evidence supports this assessment")
         if assessed and domain == "visual":
+            if methods := snapshot.get("figure_methods"):
+                cited = {ref["artifact"] for ref in refs}
+                missing = sorted(set(methods.values()) - cited)
+                if missing or not any(snapshot["artifacts"][item]["kind"] == "measurement" for item in cited):
+                    raise ValueError("Trace the plotted values in checks.visual.evidence: cite the rendered page, "
+                                     "a verbatim measurement excerpt and the source assigning each plotted series in "
+                                     + ", ".join(missing or sorted(set(methods.values()))))
+                origins = check.get("series_origin")
+                if not isinstance(origins, dict) or set(origins) != set(methods) or any(
+                    value not in ("measured", "copied", "theoretical") for value in origins.values()
+                ):
+                    raise ValueError("For each figure in figure_methods, report measured, copied, or theoretical "
+                                     "in checks.visual.series_origin. Mark the visual check unassessed when its origin is unknown.")
             _, pdf = _submission(snapshot)
             import fitz
             with fitz.open(stream=_artifact(snapshot, pdf)[0], filetype="pdf") as doc:
@@ -513,6 +588,8 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                 if not set(range(1, len(doc) + 1)).issubset(seen):
                     raise ValueError("Rendered layout was not observed on every manuscript page")
         checks[domain] = {"status": status, "reason": reason, "evidence": refs}
+        if origins:
+            checks[domain]["series_origin"] = origins
 
     prior = {i["id"]: i for i in previous["issues"]} if previous else {}
     prior_open = {key for key, issue in prior.items() if issue["status"] != "resolved"}
@@ -566,6 +643,14 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                        **{k: _string(issue.get(k), k) for k in ("claim", "reason", "fix")}, "evidence": refs})
     if not prior_open.issubset(used):
         raise ValueError("Recheck every open finding from the preceding revision")
+    for name, origin in checks["visual"].get("series_origin", {}).items():
+        if origin == "copied" and not any(
+            issue["severity"] == "blocker" and issue["status"] in ("new", "still_present")
+            and snapshot["figure_methods"][name] in {r["artifact"] for r in issue["evidence"]}
+            for issue in issues
+        ):
+            raise ValueError(f"Report the copied empirical series in {name} as a reproducibility blocker. "
+                             "Cite the plotting source and the figure's manuscript passage or rendered page.")
     if any(i["severity"] == "blocker" and i["status"] in ("new", "still_present") for i in issues):
         verdict = "revise"
     elif any(checks[d]["status"] == "unassessed" for d in snapshot["required"]) or any(
@@ -585,8 +670,13 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
 
 
 def record_is_current(snapshot, record):
-    return bool(isinstance(record, dict) and record.get("version") == REVIEW_VERSION
-                and record.get("revision") == snapshot["revision"])
+    if not isinstance(record, dict) or record.get("version") != REVIEW_VERSION or record.get("revision") != snapshot["revision"]:
+        return False
+    if snapshot.get("figure_methods") and record.get("verdict") == "accept":
+        origins = (record.get("checks", {}).get("visual", {}).get("series_origin") or {})
+        return set(origins) == set(snapshot["figure_methods"]) and all(
+            value in ("measured", "theoretical") for value in origins.values())
+    return True
 
 
 def main():

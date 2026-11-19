@@ -35,6 +35,9 @@ const researchLabels = {
   pause_at: ['Response deadline %s','答复截止时间 %s','الموعد النهائي للرد %s'],
   trial: ['Trial','试验','التجربة'], baseline: ['Baseline','基线','خط الأساس'], proposed: ['Proposed','所提方法','الطريقة المقترحة'],
   coverage: ['What the reviewer checked','评审检查了什么','ما الذي فحصه المراجع'],
+  measured: ['Plotted from measurements','由实测数据绘制','رُسم من القياسات'],
+  copied: ['Values copied into plotting code','绘图代码写死了数值','القيم منسوخة في كود الرسم'],
+  theoretical: ['Theoretical curve','理论曲线','منحنى نظري'],
   manuscript: ['Manuscript','论文正文','المخطوطة'], citations: ['Citations','引用','الاستشهادات'],
   visual: ['Rendered pages and figures','排版与图表','الصفحات والأشكال'], assessed: ['Assessed','已核查','تم تقييمه'],
   blocker: ['Blocking issue','阻断性问题','مشكلة مانعة'], minor: ['Minor issue','次要问题','ملاحظة طفيفة'], question: ['Question','待澄清','سؤال'],
@@ -324,7 +327,16 @@ async function openEvidence(item, opener, page=1, compare=false) {
       for (const row of rows) { const tr = body.insertRow(); for (const k of ['label','baseline','proposed']) tr.insertCell().textContent = row[k]; }
       container.replaceChildren(table);
     } else {
-      const pre = document.createElement('pre'); pre.textContent = text; container.replaceChildren(pre);
+      const pre = document.createElement('pre'), start = item.quote ? text.indexOf(item.quote) : -1;
+      if (start >= 0) {
+        const mark = document.createElement('mark');
+        mark.textContent = item.quote;
+        pre.append(document.createTextNode(text.slice(0,start)), mark, document.createTextNode(text.slice(start + item.quote.length)));
+        container.replaceChildren(pre);
+        container.scrollTop += mark.getBoundingClientRect().top - container.getBoundingClientRect().top - 24;
+      } else {
+        pre.textContent = text; container.replaceChildren(pre);
+      }
     }
   } catch { if (!controller.signal.aborted) container.textContent = rt('unavailable'); }
 }
@@ -343,6 +355,23 @@ function renderReview() {
     const li = document.createElement('li'), label = document.createElement('strong');
     label.textContent = rt(check.domain) + ' · ' + rt(check.status);
     li.append(label, document.createTextNode(check.reason ? ' ' + check.reason : ''));
+    if (check.figures?.length) {
+      const figures = document.createElement('ul');
+      figures.className = 'review-figures';
+      for (const figure of check.figures) {
+        const row = document.createElement('li'), name = document.createElement(figure.key ? 'button' : 'span');
+        name.textContent = figure.name;
+        if (figure.key) {
+          name.type = 'button';
+          name.onclick = () => openEvidence({key:figure.key, sha256:figure.sha256, label:figure.name}, name);
+        }
+        const origin = document.createElement('span');
+        origin.textContent = rt(figure.origin);
+        row.dataset.origin = figure.origin;
+        row.append(name, origin); figures.append(row);
+      }
+      li.append(figures);
+    }
     return li;
   }));
   re('review-issues').replaceChildren(...(review.issues || []).map(issue => {
@@ -356,7 +385,7 @@ function renderReview() {
       if (!ref.key) continue;
       const btn = document.createElement('button'); btn.type = 'button';
       btn.textContent = [ref.previous ? rt('before') : rt('after'),ref.artifact,ref.page && rt('page') + ' ' + ref.page].filter(Boolean).join(' · ');
-      btn.onclick = () => openEvidence({key:ref.key, sha256:ref.sha256, label:btn.textContent},btn,ref.page,!!preview && preview.opener?.closest('li') === li);
+      btn.onclick = () => openEvidence({key:ref.key, sha256:ref.sha256, label:btn.textContent, quote:ref.quote},btn,ref.page,!!preview && preview.opener?.closest('li') === li);
       controls.append(btn);
     }
     const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = rt('steer');

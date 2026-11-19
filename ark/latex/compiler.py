@@ -1289,7 +1289,8 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
         from hashlib import sha256
         from ark.figure_manifest import save_manifest
         from ark.nano_banana import (concept_design, review_concept_image, repair_concept_image,
-                                     create_study_panel, SEMANTIC_REVIEW_VERSION, semantic_verdict, verify_printed_labels, IMAGE_MODELS)
+                                     create_study_panel, SEMANTIC_REVIEW_VERSION, semantic_verdict, verify_printed_labels,
+                                     generated_result_conflict, reject_generated_result, native_study_design, IMAGE_MODELS)
 
         entry = manifest["figures"][path.name]
         design = concept_design(fig, getattr(self, "state_dir", None))
@@ -1305,6 +1306,12 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
         else:
             model = model.removeprefix("google/").removeprefix("gemini/")
         old = entry.get("semantic_review") or {}
+        if old.get("artifact_sha256") == image_digest and (conflict := generated_result_conflict(old.get("checks"))):
+            blocked = reject_generated_result(old, conflict)
+            if old != blocked:
+                entry["semantic_review"] = blocked
+                save_manifest(self.figures_dir, manifest)
+            return False
         same_design = old.get("design_sha256") == design_digest
         cached = None
         if (same_design and old.get("version") == SEMANTIC_REVIEW_VERSION
@@ -1345,6 +1352,14 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
         history = {k: old[k] for k in ("repair_attempted", "initial_review", "panel_attempted", "edited_review")
                    if same_design and k in old}
         review = cached or inspect()
+        if conflict := generated_result_conflict(review.get("checks")):
+            persist(reject_generated_result(review, conflict))
+            return False
+        native = getattr(self, "state_dir", None)
+        native = Path(native) / "native_project.json" if native else None
+        image_design = native_study_design(json.loads(native.read_text()), native.parent) if (
+            native and native.is_file() and fig.get("representation") in ("study_panel", "schematic")
+        ) else design
         if (review["status"] == "contradiction" and not history.get("repair_attempted")
                 and entry.get("representation") != "subject_with_comparison_panel"):
             persist(review)
@@ -1352,7 +1367,7 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
             persist({**review, **history})
             image_model = entry.get("image_model") or self.config.get("paperbanana_image_model") or IMAGE_MODELS["flash"]
             receipt = {}
-            if repair_concept_image(path, design, review, provider, key, image_model, aspect_ratio, receipt):
+            if repair_concept_image(path, image_design, review, provider, key, image_model, aspect_ratio, receipt):
                 entry["before_semantic_edit"] = {k: entry[k] for k in (
                     "source", "provider", "image_model", "model_version", "response_id", "payload_source",
                     "artifact_sha256", "payload_sha256", "selected_candidate") if k in entry}
@@ -1370,7 +1385,7 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
             persist({**review, **history})
             history.update(panel_attempted=True, edited_review=dict(entry["semantic_review"]))
             persist({**review, **history})
-            receipt = create_study_panel(path, design, provider, key, model, aspect_ratio)
+            receipt = create_study_panel(path, image_design, provider, key, model, aspect_ratio)
             if receipt:
                 entry["before_study_panel"] = {k: entry[k] for k in (
                     "provider", "image_model", "response_id", "payload_source", "artifact_sha256",

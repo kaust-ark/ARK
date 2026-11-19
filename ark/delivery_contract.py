@@ -262,7 +262,7 @@ def _concept_figure_in_pdf(pdf: Path, figures_dir: Path, *, semantic_state: Path
     inspected, pending = [], []
     specs = {}
     if semantic_state is not None:
-        from ark.nano_banana import concept_design, SEMANTIC_REVIEW_VERSION, semantic_verdict
+        from ark.nano_banana import concept_design, SEMANTIC_REVIEW_VERSION, generated_result_conflict, semantic_verdict
         try:
             specs = {row["name"]: row for row in json.loads((figures_dir / "concept_figures.json").read_text())
                      if isinstance(row, dict) and isinstance(row.get("name"), str)}
@@ -285,6 +285,10 @@ def _concept_figure_in_pdf(pdf: Path, figures_dir: Path, *, semantic_state: Path
                 return Finding(check, "pass", "soft", f"{source.name} matches PDF pixels on page {page_number}")
             review = figures[source.name].get("semantic_review") or {}
             spec = specs.get(source.stem)
+            if (review.get("artifact_sha256") == hashlib.sha256(source.read_bytes()).hexdigest()
+                    and (conflict := generated_result_conflict(review.get("checks")))):
+                return Finding(check, "violated", "soft", f"{source.name} on page {page_number}: {conflict} "
+                               "Use the worker measurements for a separate results plot.")
             bound = (spec and review.get("version") == SEMANTIC_REVIEW_VERSION
                      and review.get("artifact_sha256") == hashlib.sha256(source.read_bytes()).hexdigest()
                      and review.get("design_sha256") == hashlib.sha256(concept_design(spec, semantic_state).encode()).hexdigest())

@@ -122,7 +122,64 @@ def _checks(status):
     checks = {k: {"status": status, "observed": "Compared the visible paths."}
               for k in nano_banana._SEMANTIC_CHECKS}
     checks["printed_labels"]["transcription"] = ["Input", "Output"]
+    checks["result_marks"]["depiction"] = "method"
     return checks
+
+
+def test_generated_result_plot_overrides_an_older_pass_without_a_paid_repair(tmp_path, monkeypatch):
+    compiler = CompilerMixin()
+    compiler.config = {"paperbanana_text_model": "vision"}
+    compiler.figures_dir = tmp_path
+    compiler.log = Mock()
+    image = tmp_path / "diagram.png"
+    image.write_bytes(_image("blue", "PNG"))
+    checks = _checks("consistent")
+    checks.pop("result_marks")
+    checks["printed_labels"]["transcription"] = ["Empirical performance curves", "Measured accuracy", "Test fold"]
+    old = {"version": 2, "model": "vision", "status": "passed", "checks": checks,
+           "artifact_sha256": hashlib.sha256(image.read_bytes()).hexdigest(), "design_sha256": "older design"}
+    manifest = {"figures": {image.name: {"source":"nano_banana", "semantic_review": old}}}
+    for operation in ("review_concept_image", "repair_concept_image", "create_study_panel"):
+        monkeypatch.setattr(nano_banana, operation, lambda *a: pytest.fail("replaying named results charged the owner"))
+    for _ in range(2):
+        assert not compiler._check_final_concept_image({"name":"diagram"}, image, manifest, "unused", "16:9")
+    assert nano_banana.semantic_verdict(checks) == "contradiction"
+    blocked = manifest["figures"][image.name]["semantic_review"]
+    assert blocked["status"] == "contradiction" and "Measured accuracy" in blocked["checks"]["result_marks"]["observed"]
+    assert hashlib.sha256(image.read_bytes()).hexdigest() == old["artifact_sha256"]
+
+
+def test_conceptual_marks_and_measurement_stages_are_valid_method_illustrations():
+    checks = _checks("consistent")
+    checks["printed_labels"]["transcription"] = ["Neighborhood projection", "Experimental seed", "Measure response",
+                                                "Evaluate measured results", "Write data-derived plot"]
+    checks["result_marks"].update(depiction="method", observed="Example point geometry and a measurement step.")
+    assert nano_banana.semantic_verdict(checks) == "passed"
+    checks["result_marks"].pop("depiction")
+    assert nano_banana.semantic_verdict(checks) == "unavailable"
+    checks["result_marks"].update(depiction="experimental_results", observed="Bars labeled as observed cohort outcomes.")
+    assert nano_banana.semantic_verdict(checks) == "contradiction"
+
+
+def test_ocr_preserves_literal_quotes_and_corroborates_rotated_response_axis(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    tsv = ("level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+           '5\t1\t1\t1\t1\t1\t50\t75\t21\t8\t91\t"Test\n'
+           '5\t1\t1\t1\t1\t2\t72\t75\t21\t8\t96\tfold\n')
+    monkeypatch.setattr(nano_banana.subprocess, "run", lambda *a, **kw: SimpleNamespace(stdout=tsv))
+    trial = nano_banana._tesseract_lines("ocr", tmp_path, 11)[0]
+    assert [word["text"] for word in trial] == ['"Test', 'fold']
+    def line(words, x, y):
+        return [{"text":w, "confidence":95, "box":[x+24*i,y,23,8]} for i,w in enumerate(words.split())]
+    heading = line("Observed curves", 50, 12)
+    image = tmp_path / "method.png"
+    Image.new("RGB", (160, 110), "white").save(image)
+    rotate = Mock(side_effect=lambda *a: [line("Measured errors", 0, 0)])
+    monkeypatch.setattr(nano_banana, "_tesseract_lines", rotate)
+    assert nano_banana._ocr_chart_labels(image, "ocr", [[heading, trial], [heading, trial]]) == [
+        "observed curves", "measured errors", "test fold"]
+    assert rotate.call_count == 2
+    assert not nano_banana._ocr_chart_labels(image, "ocr", [[heading, trial], [trial]])
 
 
 def test_vision_review_requires_observed_contradiction_on_actual_pixels(tmp_path, monkeypatch):

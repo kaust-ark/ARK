@@ -56,6 +56,38 @@ def _value(row, path):
     return row
 
 
+def with_row_identifiers(data, pointer, columns):
+    """Keep measured conditions identifiable when typesetting per-trial rows."""
+    rows = _rows(data, pointer)
+    if len(rows) < 2 or not isinstance(columns, list):
+        return columns
+    selected = {col["path"] for col in columns if isinstance(col, dict) and isinstance(col.get("path"), str)}
+    keys = []
+    for path in _leaf_paths(rows[0]):
+        name = path.split(".")[-1].lower()
+        if name not in {"condition", "label", "seed", "fold", "split", "trial", "run", "replicate",
+                        "condition_id", "fold_id", "split_id", "trial_id", "run_id", "sample_id"}:
+            continue
+        try:
+            values = [_value(row, path) for row in rows]
+        except ValueError:
+            continue
+        if all(type(v) is int or isinstance(v, str) and 0 < len(v) <= 100 for v in values):
+            keys.append((path, values))
+    signatures = [tuple(values[i] for path, values in keys if path in selected) for i in range(len(rows))]
+    additions = []
+    for path, values in keys:
+        if len(set(signatures)) == len(rows):
+            break
+        if path in selected:
+            continue
+        extended = [(*old, value) for old, value in zip(signatures, values)]
+        if len(set(extended)) > len(set(signatures)):
+            additions.append({"path": path, "label": path.split(".")[-1].replace("_", " ").capitalize(), "digits": 0})
+            signatures = extended
+    return additions + columns if len(set(signatures)) == len(rows) else columns
+
+
 def plot_spec(data, args):
     """Validate the requested fields against every row before reserving compute."""
     kind = args.get("kind")

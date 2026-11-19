@@ -63,6 +63,58 @@ def test_reuse_versioned_measurement_and_reject_overwrite(monkeypatch, tmp_path)
         compute.execute(tmp_path, cfg, plan, plan["script"])
 
 
+def test_changed_plot_waits_for_sealed_attempt_and_keeps_unrelated_filenames_independent(monkeypatch, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from PIL import Image
+
+    plan = project(tmp_path)
+    cfg = {"experiment_compute_backend": {"type": "slurm"}}
+    (tmp_path / "results").mkdir()
+    (tmp_path / plan["expected"]).write_text('[{"n": 1, "loss": 3}, {"n": 2, "loss": 4}]')
+    selection = {"kind": "line", "x": {"path": "n"}, "series": [{"path": "loss"}]}
+    def request(filename, label):
+        return compute.execute(tmp_path, cfg, plan, None, plot=filename, selection={**selection, "y_label": label})
+
+    calls = []
+    def sbatch(stage, config, row, path, filename):
+        if not row.get("submitted_intent"):
+            calls.append((filename, row["identity"]))
+            row["submitted_intent"] = True
+        return "submission_unknown"
+    monkeypatch.setattr(compute, "_slurm", sbatch)
+    with ThreadPoolExecutor(2) as pool:
+        records = list(pool.map(lambda label: request("loss.png", label), ("first", "second")))
+    assert len(calls) == 1
+    first, = (r for r in records if r["status"] == "submission_unknown")
+    deferred, = (r for r in records if r["status"] == "deferred")
+    assert deferred["identity"] != first["identity"] and deferred["prior_attempt"]["identity"] == first["identity"]
+
+    # An older nonterminal receipt omitted the filename. Its sealed identity is
+    # positive evidence for this output and does not claim all the other figures.
+    path = tmp_path / "auto_research/state/native_runs" / first["identity"][4:] / "receipt.json"
+    legacy = json.loads(path.read_text())
+    del legacy["plot_filename"]
+    path.write_text(json.dumps(legacy))
+    assert request("another.png", "third")["status"] == "submission_unknown"
+    assert len(calls) == 2
+    assert request("loss.png", "third")["prior_attempt"]["identity"] == first["identity"]
+    assert len(calls) == 2
+
+    image = io.BytesIO()
+    Image.new("L", (2, 2), 45).save(image, "PNG")
+    def finish(stage, config, row, path, filename):
+        assert row["identity"] == first["identity"]
+        (stage / "stdout").write_bytes(compute.PLOT_READ_HEADER + base64.b64encode(image.getvalue()))
+        return "computed"
+    monkeypatch.setattr(compute, "_slurm", finish)
+    updated = request("loss.png", "third")
+    assert updated["status"] == "deferred" and updated["prior_attempt"]["status"] == "completed"
+    assert compute.published_plot(tmp_path, "loss.png")["identity"] == first["identity"]
+    monkeypatch.setattr(compute, "_slurm", sbatch)
+    assert request("loss.png", "third")["status"] == "submission_unknown" and len(calls) == 3
+    assert compute.published_plot(tmp_path, "loss.png")["identity"] == first["identity"]
+
+
 def test_resources_and_credential_isolation(monkeypatch, tmp_path):
     image = tmp_path / "science.sif"
     image.touch()
@@ -209,7 +261,14 @@ def test_declarative_plot_draws_unrounded_nested_columns(tmp_path, monkeypatch, 
     def render(staging, conf, row, path, filename):
         assert b"0.023417" not in (staging / "input/main.py").read_bytes()
         code = (staging / "input/main.py").read_text().replace("/study", str(staging / "input")).replace("/output", str(staging))
-        exec(compile(code, str(staging / "input/main.py"), "exec"), {})
+        namespace = {}
+        exec(compile(code, str(staging / "input/main.py"), "exec"), namespace)
+        fig, ax = namespace["fig"], namespace["ax"]
+        fig.canvas.draw()
+        legend, = fig.legends
+        bounds = legend.get_window_extent(fig.canvas.get_renderer())
+        assert bounds.y0 >= ax.get_window_extent().y1
+        assert fig.bbox.contains(bounds.x0, bounds.y0) and fig.bbox.contains(bounds.x1, bounds.y1)
         (staging / "stdout").write_bytes(compute.PLOT_READ_HEADER + base64.b64encode((staging / filename).read_bytes()))
         row["job_id"] = "42"
         return "computed"

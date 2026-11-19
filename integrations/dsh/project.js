@@ -332,10 +332,14 @@ const plotField = {type:'object', properties:{path:str, label:str}, required:['p
 
 export const operations = {
   project_status: ['Read current research state, outstanding prerequisites, budgets, skills and artifact paths.', {}],
-  lookup_papers: ['Find primary bibliographic records, abstracts, and canonical BibTeX.', { query: str, limit: num }, ['query']],
+  lookup_papers: ['Find primary records, abstracts and canonical BibTeX. Set add_to_bibliography with an exact title or DOI to save that work and receive its cite key for the manuscript.', { query: str, limit: num, add_to_bibliography: bool }, ['query']],
   research: ['Retrieve or reconcile the requested research report and primary sources.', { query: str }],
   plan_experiment: ['Register the comparison and its two file paths. The script prints its JSON measurements to stdout. The host saves them at result_path.', {
-    question: str, baseline: str, comparison: str, metric: str, controls: strings,
+    question: str,
+    baseline: {type:'string', description:'The reference method, configuration or condition.'},
+    comparison: {type:'string', description:'What changes in the comparison condition relative to the baseline.'},
+    metric: {type:'string', description:'What is measured and in what units.'},
+    controls: {type:'array', items:{type:'string'}, description:'Data, splits, settings or other conditions held fixed across the comparison.'},
     script: {type:'string', description:'One project-relative Python filename, for example scripts/experiment.py.'},
     result_path: {type:'string', description:'One project-relative JSON output filename, for example results/measurements.json.'},
   }, ['question', 'baseline', 'comparison', 'metric', 'controls', 'script', 'result_path']],
@@ -350,7 +354,7 @@ export const operations = {
   }],
   generate_concept_figure: ['Generate a method illustration. A study_panel shows source-grounded comparison arms with genuine illustrative artwork. Use the returned caption for a study panel. For a scientific mechanism or flow diagram, select schematic.', { name: str, caption: str, description: str, representation: {type:'string', enum:['study_panel','schematic']} }, ['name', 'caption', 'description']],
   verify_citations: ['Check the manuscript bibliography against primary bibliographic records.', {}],
-  compile_paper: ['Compile and inspect the current manuscript and return page measurements and artifacts.', {}],
+  compile_paper: ['Compile the current manuscript and inspect its figures, citations and layout. manuscript_revision identifies main.tex after typesetting adjustments.', {}],
   request_review: ['Request an independent, blind submission review after artifact checks. Use draft only for early scientific feedback on an incomplete manuscript.', { draft: bool }],
   deliver: ['Verify the current reviewed revision and publish the checked project deliverables.', {}],
   read_project_file: ['Read up to 6000 characters of a manuscript, result, skill, auto_research/state/deep_research.md, or sources/<id>.txt from verify_citations. Supply next_offset as offset to continue, or find a passage to get its match_line. Use start_line to read up to 40 numbered lines. sha256 covers the entire file. For paper/main.tex, list_revisions lists saved digests and revision_sha256 reads a saved version.', { path: str, offset: num, find: str, start_line: num, revision_sha256: str, list_revisions: bool }, ['path']],

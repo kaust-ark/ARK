@@ -321,7 +321,9 @@ def check_graphics(doc, paper, replayed_plots=None):
 
 
 def check_diagram_review(paper, graphics, image_receipts=()):
-    from ark.nano_banana import SEMANTIC_REVIEW_VERSION, _compose_study_panel, concept_design
+    from ark.nano_banana import (
+        SEMANTIC_REVIEW_VERSION, _compose_study_panel, concept_design, semantic_verdict, verify_printed_labels,
+    )
 
     if not graphics or not graphics["method_art"]:
         raise ValueError("No embedded native method illustration to check")
@@ -337,12 +339,19 @@ def check_diagram_review(paper, graphics, image_receipts=()):
         spec = specs[Path(name).stem]
         design = concept_design(spec, paper.parent / "auto_research/state")
         expected = hashlib.sha256(design.encode()).hexdigest()
+        fresh = verify_printed_labels(figures / name, {**review, "label_verification": {}}, record,
+                                      "4:3" if record.get("placement") == "single_column" else "16:9")
+        verdict = semantic_verdict(fresh.get("checks"))
+        if fresh.get("status") != "passed" or verdict != "passed":
+            marks = (fresh.get("checks") or {}).get("result_marks") or {}
+            reason = marks.get("observed", "") if isinstance(marks, dict) else ""
+            raise ValueError(f"{name}: final image check {verdict}. {reason}")
         if (review.get("version") != SEMANTIC_REVIEW_VERSION or review.get("design_sha256") != expected
                 or review.get("artifact_sha256") != sha256(figures / name) or not review.get("model")):
             raise ValueError(f"{name}: semantic review does not match the final pixels and study design")
         details[name] = {k: review.get(k) for k in ("model", "artifact_sha256", "design_sha256", "checks")}
-        if labels := review.get("label_verification"):
-            if labels.get("image_sha256") != record["artifact_sha256"] or labels.get("conflicts"):
+        if labels := fresh.get("label_verification"):
+            if labels.get("image_sha256") != sha256(figures / name) or labels.get("conflicts"):
                 raise ValueError(f"{name}: printed label check is stale or reports a conflict")
             details[name]["printed_labels"] = labels.get("coverage")
         if record.get("representation") == "subject_with_comparison_panel":

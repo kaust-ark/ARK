@@ -134,7 +134,11 @@ ax.set_ylabel(fill(spec["y_label"], 38))
 ax.grid(axis="y", alpha=0.22)
 ax.set_axisbelow(True)
 if len(series) > 1:
-    ax.legend(frameon=False, fontsize=8)
+    legend_columns = 2 if wide else 1
+    legend_rows = (len(series) + legend_columns - 1) // legend_columns
+    line_count = max(len(fill(item["label"], 32).splitlines()) for item in series)
+    fig.set_figheight(fig.get_figheight() + 0.15 * line_count * legend_rows)
+    fig.legend(loc="outside upper center", ncols=legend_columns, frameon=False, fontsize=8)
 metadata = {"CreationDate": None, "ModDate": None} if filename.endswith(".pdf") else {}
 fig.savefig("/output/" + filename, dpi=300, metadata=metadata)
 plt.close(fig)
@@ -511,7 +515,85 @@ def _cancel_one(row, path):
     _save(path, row)
 
 
-def execute(root, config, plan, script, *, plot=None, selection=None, measurement_sha256=None):
+def _plot_runs(root, runs, plot, plan, known_identity):
+    """Locate attempts for this output. Older unfinished receipts omitted its filename."""
+    for path in runs.glob("*/receipt.json"):
+        row = json.loads(_read(_safe(root, path)))
+        if "input_sha256" not in row or row.get("identity") != "i2p-" + path.parent.name:
+            continue
+        filename = row.get("plot_filename")
+        if filename is not None:
+            if filename == plot:
+                yield path, row
+            continue
+        if row.get("identity") == known_identity or row.get("artifact") == "paper/figures/" + plot:
+            yield path, row
+            continue
+        if row["status"] in {"completed", "cancelled", "failed"} or plan is None:
+            continue
+        # Reconstruct the original content-addressed key, which includes the output name.
+        # A different file, plan, or relocated run cannot accidentally match.
+        if row.get("plan_sha256") != hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest():
+            continue
+        header = json.dumps([str(root), plan, row["backend"], plot], sort_keys=True).encode()
+        try:
+            source = _read(_safe(root, path.parent / "input/main.py"))
+            data = _read(_safe(root, path.parent / "input/results.json"))
+        except FileNotFoundError:
+            continue
+        token = hashlib.sha256(header + b"\0" + source + b"\0" + data).hexdigest()[:24]
+        if token == path.parent.name:
+            yield path, row
+
+
+def published_plot(root, filename):
+    """Recover old dashboard pointers only when the published bytes identify one receipt."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}\.(?:pdf|png)", filename):
+        return None
+    root = Path(root).resolve()
+    with _locked(root) as runs:
+        artifact = _safe(root, root / "paper/figures" / filename)
+        if not artifact.is_file():
+            return None
+        sha = hashlib.sha256(_read(artifact)).hexdigest()
+        found = [row for _, row in _plot_runs(root, runs, filename, None, None)
+                 if row["status"] == "completed" and row.get("artifact") == str(artifact.relative_to(root))
+                 and row.get("sha256") == sha]
+        return found[0] if len(found) == 1 else None
+
+
+def _advance(root, path, row, backend, artifact, plot):
+    kind, staging = row["backend"], path.parent
+    if row["status"] in ("cancelling", "cancelled"):
+        _cancel_one(row, path)
+        return row
+    if row["status"] == "failed":
+        _cleanup_terminal(row, path)
+        raise RuntimeError(row.get("error", "Experiment previously failed"))
+    if row["status"] == "completed":
+        if not artifact.is_file() or hashlib.sha256(_read(artifact)).hexdigest() != row["sha256"]:
+            raise ValueError("Published artifact changed since this experiment completed")
+        _cleanup_terminal(row, path)
+        return row
+    if row["status"] != "computed":
+        state = (_slurm(staging, backend, row, path, plot) if kind == "slurm" else _docker(staging, row, path, plot))
+        row["status"] = state
+        _save(path, row)
+    if row["status"] == "computed":
+        try:
+            _publish(root, staging, artifact, plot, row)
+        except (ValueError, OSError) as exc:
+            row.update(status="failed", error=f"Invalid experiment artifact: {exc}", cleanup_pending=kind == "local")
+            _save(path, row)
+            raise
+        if kind == "local":
+            row["cleanup_pending"] = True
+        _save(path, row)
+        _cleanup_terminal(row, path)
+    return row
+
+
+def execute(root, config, plan, script, *, plot=None, selection=None, measurement_sha256=None, prior_plot_identity=None):
     """Start or poll exactly one operation for a fixed plan, script, and input."""
     root = Path(root).resolve()
     if selection is None:
@@ -541,7 +623,6 @@ def execute(root, config, plan, script, *, plot=None, selection=None, measuremen
         payload = json.dumps([str(root), plan, kind, plot], sort_keys=True).encode()
         token = hashlib.sha256(payload + b"\0" + code + b"\0" + inputs).hexdigest()[:24]
         staging = _safe(root, runs / token)
-        staging.mkdir(mode=0o700, exist_ok=True)
         path = _safe(root, staging / "receipt.json")
         artifact = _safe(root, root / "paper/figures" / plot) if plot else measurement
         if path.exists():
@@ -549,6 +630,22 @@ def execute(root, config, plan, script, *, plot=None, selection=None, measuremen
             if row.get("identity") != "i2p-" + token or row.get("backend") != kind:
                 raise ValueError("Invalid experiment receipt")
         else:
+            if plot:
+                active = [(other, item) for other, item in _plot_runs(root, runs, plot, plan, prior_plot_identity)
+                          if item["status"] not in {"completed", "failed", "cancelled"}]
+                if active:
+                    other, item = min(active, key=lambda entry: (entry[1]["created"], entry[1]["identity"]))
+                    item["plot_filename"] = plot
+                    _save(other, item)
+                    # Reconcile sealed inputs before allowing any replacement for this filename.
+                    pending = item
+                    if item.get("job_id") or item.get("submitted_intent") or item["status"] in {"computed", "cancelling"}:
+                        pending = _advance(root, other, item, backend, artifact, plot)
+                    return {"status": "deferred", "identity": "i2p-" + token, "backend": kind,
+                            "plot_filename": plot, "prior_attempt": pending,
+                            "note": "This specification was not submitted. An earlier attempt owns this filename. "
+                                    "Call render_plot again after that attempt settles."}
+            staging.mkdir(mode=0o700, exist_ok=True)
             if not plot and artifact.exists():
                 raise ValueError("This result path is already in use; choose a distinct filename")
             directory = _safe(root, staging / "input")
@@ -565,36 +662,11 @@ def execute(root, config, plan, script, *, plot=None, selection=None, measuremen
             if plot:
                 row["input_sha256"] = hashlib.sha256(inputs).hexdigest()
                 row["plot_protocol"] = 1
+                row["plot_filename"] = plot
                 if selection is not None:
                     row["plot_spec"] = spec
             _save(path, row)
-        if row["status"] in ("cancelling", "cancelled"):
-            _cancel_one(row, path)
-            return row
-        if row["status"] == "failed":
-            _cleanup_terminal(row, path)
-            raise RuntimeError(row.get("error", "Experiment previously failed"))
-        if row["status"] == "completed":
-            if not artifact.is_file() or hashlib.sha256(_read(artifact)).hexdigest() != row["sha256"]:
-                raise ValueError("Published artifact changed since this experiment completed")
-            _cleanup_terminal(row, path)
-            return row
-        if row["status"] != "computed":
-            state = (_slurm(staging, backend, row, path, plot) if kind == "slurm" else _docker(staging, row, path, plot))
-            row["status"] = state
-            _save(path, row)
-        if row["status"] == "computed":
-            try:
-                _publish(root, staging, artifact, plot, row)
-            except (ValueError, OSError) as exc:
-                row.update(status="failed", error=f"Invalid experiment artifact: {exc}", cleanup_pending=kind == "local")
-                _save(path, row)
-                raise
-            if kind == "local":
-                row["cleanup_pending"] = True
-            _save(path, row)
-            _cleanup_terminal(row, path)
-        return row
+        return _advance(root, path, row, backend, artifact, plot)
 
 
 def cancel(root):

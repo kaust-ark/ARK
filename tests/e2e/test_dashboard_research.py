@@ -41,6 +41,11 @@ def test_live_research_desk(tmp_path, monkeypatch):
     state.mkdir(parents=True)
     (root / "results").mkdir()
     (root / "paper").mkdir()
+    from PIL import Image
+    figure = root / "paper/figures/comparisons.png"
+    figure.parent.mkdir()
+    Image.new("RGB", (80, 50), "green").save(figure)
+    figure_digest = hashlib.sha256(figure.read_bytes()).hexdigest()
     measurement = root / "results/experiment.json"
     measurement.write_text(json.dumps({"rows": [{"label": "128 items", "baseline": 128, "proposed": 7}]}))
     journal = state / "research_events.jsonl"
@@ -62,13 +67,19 @@ def test_live_research_desk(tmp_path, monkeypatch):
         archived = state / "reviews" / revision
         archived.mkdir(parents=True)
         (archived / "main.pdf").write_bytes(data)
+        source = "Discussion. " + claim + "."
+        (archived / "main.tex").write_text(source)
+        (root / "paper/main.tex").write_text("Author's newer draft.")
         (root / "paper/main.pdf").write_bytes(data)
         record = {"revision": revision, "previous_revision": previous, "verdict": "accept" if previous else "revise",
                   "summary": "Compared the annotation with the plotted series.", "paper_pdf_sha256": digest,
-                  "checks":{"visual":{"status":"assessed","reason":"Compared the two archived pages."}},
+                  "artifact_hashes":{"paper/figures/comparisons.png":figure_digest},
+                  "checks":{"visual":{"status":"assessed","reason":"Compared the two archived pages.",
+                                      "series_origin":{"comparisons.png":"measured"}}},
                   "issues": [{"id":"R1","severity":"blocker","claim":claim,"reason":"Compared at the same axis scale.",
                               "status":"resolved" if previous else "new","evidence":[{"artifact":"paper/main.pdf",
-                              "page":1,"visual":True,"sha256":digest}]}]}
+                              "page":1,"visual":True,"sha256":digest},{"artifact":"paper/main.tex",
+                              "quote":claim,"sha256":hashlib.sha256(source.encode()).hexdigest()}]}]}
         (archived / "review.json").write_text(json.dumps(record))
         previous = revision
     (state / "native_review.json").write_text(json.dumps(record))
@@ -137,11 +148,20 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 page.locator("#evidence-close").focus()
                 page.keyboard.press("Enter")
                 assert page.evaluate("document.activeElement.dataset.key") == "results/experiment.json"
-                before = page.locator("#review-issues button").filter(has_text="Previous revision")
-                after = page.locator("#review-issues button").filter(has_text="Reviewed revision")
+                before = page.locator("#review-issues button").filter(has_text="Previous revision · paper/main.pdf")
+                after = page.locator("#review-issues button").filter(has_text="Reviewed revision · paper/main.pdf")
                 page.locator("#review-coverage summary").click()
                 assert "Compared the two archived pages." in page.locator("#review-coverage").inner_text()
+                assert "Plotted from measurements" in page.locator(".review-figures").inner_text()
+                page.get_by_role("button", name="comparisons.png", exact=True).click()
+                page.wait_for_function("document.querySelector('#preview-content img')?.naturalWidth === 80")
+                assert figure_digest in page.locator("#preview-content img").get_attribute("src")
+                page.locator("#evidence-close").click()
                 assert "Blocking issue" in page.locator("#review-issues li strong").inner_text()
+                page.locator("#review-issues button").filter(has_text="Previous revision · paper/main.tex").click()
+                assert page.locator("#preview-content mark").inner_text() == "Arrow points to the wrong series"
+                assert "Author's newer draft" not in page.locator("#preview-content").inner_text()
+                page.locator("#evidence-close").click()
                 before.click()
                 img = page.locator("#preview-content img")
                 page.wait_for_function("document.querySelector('#preview-content img')?.naturalWidth > 0")

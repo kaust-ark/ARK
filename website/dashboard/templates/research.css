@@ -60,6 +60,11 @@
 #review-issues li { margin-top:10px; padding-inline-start:12px; border-inline-start:2px solid #cd8753; overflow-wrap:anywhere; }
 #review-issues li[data-status="resolved"] { border-color:#237a65; }
 #review-coverage li { margin:4px 0 8px 1rem; color:var(--muted); font-size:.85rem; overflow-wrap:anywhere; }
+#review-coverage .review-figures { list-style:none; margin-block:8px; }
+#review-coverage .review-figures li { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; margin:0; padding-inline-start:10px; border-inline-start:2px solid var(--line); }
+#review-coverage .review-figures [data-origin="copied"] { border-color:#b05c36; color:#864220; }
+.review-figures button { border:0; background:none; color:#126657; font:inherit; text-decoration:underline; cursor:pointer; }
+#preview-content mark { color:#392a10; background:#ffdf96; }
 #review-issues p { color:var(--text-second); margin-top:3px; }
 .review-controls { display:flex; gap:8px; flex-wrap:wrap; font-size:.85rem; }
 #hitl-chat { margin:0!important; }

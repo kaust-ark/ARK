@@ -211,6 +211,7 @@ def test_actual_compile_fingerprint_and_stale_delivery(tmp_path, monkeypatch):
     source.write_text(r"\documentclass{article}\begin{document}Search comparisons.\end{document}")
     report = project.invoke("compile_paper", {})
     assert report["ok"] and report["pages"] == 1 and "main.tex" in report["inputs"]
+    assert report["manuscript_revision"]["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
     pdf = project.latex_dir / "main.pdf"
     assert report["pdf_sha256"] == hashlib.sha256(pdf.read_bytes()).hexdigest()
     assert project.invoke("compile_paper", {}) == report
@@ -353,6 +354,86 @@ def test_primary_source_resolution_requires_correct_identity(monkeypatch):
     assert evidence.resolve(entry) is None
 
 
+def test_register_selected_publication_keeps_existing_cite_keys(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    paper = domain.citation.Paper(title="Measured search costs", authors=["A. Author"], year=2020, doi="10.1234/search")
+    official = "@article{author2020,\n title={Measured search costs},\n doi={10.1234/search},\n year={2020}\n}"
+    monkeypatch.setattr(domain.citation, "search_papers", lambda *a, **kw: [paper])
+    monkeypatch.setattr(domain.citation, "fetch_bibtex", lambda p: official)
+    monkeypatch.setattr(domain.citation, "_fetch_bibtex_from_doi", lambda doi: official)
+    bib = project.latex_dir / "references.bib"
+    bib.write_text("% my references\n")
+    assert not project.lookup_papers({"query": "search", "add_to_bibliography": True})["saved"]
+    assert "saved" not in project.lookup_papers({"query": "Measured search costs"})
+    assert bib.read_text() == "% my references\n"
+    request = {"query": "Measured search costs", "add_to_bibliography": True}
+    assert project.lookup_papers(request)["cite"] == r"\cite{author2020}"
+    with monkeypatch.context() as direct:
+        direct.setattr(domain.citation, "search_papers", lambda *a, **kw: [])
+        assert project.lookup_papers(dict(request, query=paper.doi))["cite_key"] == "author2020"
+        direct.setattr(domain.citation, "_fetch_bibtex_from_doi", lambda doi: official.replace("/search", "/other"))
+        assert not project.lookup_papers(dict(request, query=paper.doi))["saved"]
+    assert bib.read_text().count("@article") == 1
+    bib.write_text(official.replace("author2020", "existing"))
+    assert project.lookup_papers(request)["cite_key"] == "existing"
+    collision = official.replace("10.1234/search", "10.1234/other").replace("Measured search costs", "Another work")
+    bib.write_text(collision)
+    assert not project.lookup_papers(request)["saved"] and bib.read_text() == collision
+
+
+def test_body_citations_trace_primary_records_and_survey_independently(tmp_path, monkeypatch):
+    import fitz
+    from contextlib import nullcontext
+
+    project = open_project(tmp_path, monkeypatch)
+    bib = project.latex_dir / "references.bib"
+    bib.write_text("\n".join(f"@article{{{k}, title={{{k} short title}}, author={{A Researcher}}, year={{2025}}}}"
+                             for k in ("main", "extra", "supplement")))
+    project.config["skip_deep_research"] = False
+    report = project.state_dir / "deep_research.md"
+    report.write_text("# Survey\n\n## References\nA relevant study (doi:10.1234/method).\n")
+    sha = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+    (project.state_dir / "deep_research_receipt.json").write_text(json.dumps({
+        "provider": "google", "status": "completed", "interaction_id": "fixture", "report_sha256": sha(report)
+    }))
+    checked = {}
+    for key, source_url in (("supplement", "https://doi.org/10.1234/appendix"),
+                            ("main", "https://doi.org/10.1234/method"), ("extra", "https://doi.org/10.1234/method2")):
+        relative = "sources/" + hashlib.sha256(source_url.encode()).hexdigest()[:24] + ".txt"
+        source = tmp_path / relative
+        source.parent.mkdir(exist_ok=True)
+        # A DOI in the quoted passage can identify a different paper.
+        source.write_text(f"Indexed abstract\nA short title\n{source_url}\n\nIt used https://doi.org/10.1234/method\n")
+        checked[key] = {"status": "SINGLE_SOURCE", "source": relative, "source_sha256": sha(source)}
+    (project.state_dir / "native_citations.json").write_text(json.dumps({"sha256": sha(bib), "checked": checked}))
+
+    def page(index, items):
+        links = [{"nameddest": "cite." + key, "page": 1, "from": fitz.Rect(x, y, x+30, y+10)}
+                 for key, x, y in items]
+        return SimpleNamespace(number=index, rect=fitz.Rect(0, 0, 600, 800), get_links=lambda: links)
+    pages = [page(0, [("extra", 320, 80)]), page(1, [("0@main", 50, 80), ("supplement", 350, 300)]),
+             page(2, [("supplement", 40, 120)])]
+    monkeypatch.setattr(fitz, "open", lambda *a: nullcontext(pages))
+    monkeypatch.setattr(domain.literature_evidence, "body_page_boundary", lambda doc: (1, (200, 0)))
+    trace = project._research_citations()
+    assert (trace["matched"], trace["total"], trace["references_line"]) == (1, 2, 3)
+    assert trace["body_citations"] == {
+        "main": {"source": checked["main"]["source"], "pages": [2], "report_line": 4},
+        "extra": {"source": checked["extra"]["source"], "pages": [1]},
+    }
+    assets = {name: {"kind": "primary_source"} for name in ("sources/archived.txt", *(r["source"] for r in checked.values()))}
+    assert project._opening_review_evidence({"artifacts": assets}, trace) == [
+        checked["main"]["source"], checked["extra"]["source"],
+    ]
+    (tmp_path / checked["main"]["source"]).write_text("different source material")
+    assert project._research_citations()["body_citations"]["main"] == {"pages": [2]}
+    project.config["layout_mode"] = "flexible"
+    assert project._research_citations() is None
+    project.config["layout_mode"] = "strict"
+    report.write_text("replaced after verification")
+    assert project._research_citations() is None
+
+
 def test_reviewer_reservation_survives_restart_and_is_bound_to_revision(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     project.config["max_review_attempts"] = 1
@@ -366,6 +447,34 @@ def test_reviewer_reservation_survives_restart_and_is_bound_to_revision(tmp_path
     project.review_snapshot({"session_id": "child1"})
     with pytest.raises(ValueError, match="budget exhausted"):
         project.review_snapshot({"session_id": "child2"})
+
+
+def test_review_preview_leaves_verdict_unpublished_and_rechecks_current_evidence(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    main = project.latex_dir / "main.tex"
+    main.write_text("The study examines a paired control.")
+    (project.latex_dir / "main.pdf").write_bytes(b"frozen manuscript")
+    snapshot = project._snapshot()
+    project.snapshot = snapshot
+    args = {"revision": snapshot["revision"], "session_id": "child1", "observed": [], "verdict": {}}
+    first = project.invoke("check_review", args)
+    assert first["valid"] is False and "revision" in first["diagnostic"]
+    checks = {d: {"status": "unassessed", "reason": "Unavailable.", "evidence": []}
+              for d in ("manuscript", "experiment", "citations", "visual")}
+    checks["manuscript"] = {"status": "assessed", "reason": "Read the manuscript.",
+                            "evidence": [{"artifact": "paper/main.tex", "quote": main.read_text()}]}
+    args["verdict"] = {"revision": snapshot["revision"], "summary": "The study examines controls.",
+                       "alternative": "Results have not been independently measured.",
+                       "strengths": ["The question is explicit."], "checks": checks, "issues": [],
+                       "verdict": "unassessed"}
+    assert project.invoke("check_review", args) == {"valid": True}
+    assert not (project.state_dir / "native_review.json").exists()
+    with pytest.raises(ValueError, match="Unknown reviewer evidence"):
+        project.invoke("check_review", {**args, "observed": [{"artifact": "paper/main.tex"}]})
+    main.write_text("The owner changed this manuscript.")
+    with pytest.raises(ValueError, match="changed while the review"):
+        project.invoke("record_review", args)
+    assert not (project.state_dir / "native_review.json").exists()
 
 
 def test_measurement_table_uses_worker_decimal_values_even_beyond_model_excerpt(tmp_path, monkeypatch):
@@ -414,6 +523,35 @@ def test_measurement_table_uses_worker_decimal_values_even_beyond_model_excerpt(
         project.invoke("render_results_table", args)
 
 
+def test_strict_table_keeps_worker_conditions_across_render_and_resume(tmp_path, monkeypatch):
+    from ark import measurement_table
+
+    project = open_project(tmp_path, monkeypatch)
+    project.config["layout_mode"] = "strict"
+    rows = [{"seed": s, "condition": c, "loss": (i + 1) / 9}
+            for i, (s, c) in enumerate([(2, "A"), (2, "B"), (1, "A"), (1, "B")])]
+    measurements = tmp_path / "results/pairs.json"
+    measurements.write_text(json.dumps(rows))
+    project.state["experiment"] = {"status": "completed", "artifact": "results/pairs.json",
+                                   "sha256": hashlib.sha256(measurements.read_bytes()).hexdigest()}
+    columns = [{"path": "condition"}, {"path": "loss"}]
+    args = {"name": "errors", "columns": columns}
+    record = project.render_results_table(args)
+    assert [c["path"] for c in record["columns"]] == ["seed", "condition", "loss"]
+    assert "2 & B & 0.22" in record["preview"] and "1 & A & 0.33" in record["preview"]
+    # A pre-upgrade table can have an intact source and measurement receipt while
+    # hiding which observation each number belongs to.
+    project.state["tables"]["errors"]["columns"] = columns
+    project.state["compile"] = {"inputs": [record["path"]]}
+    assert any("omit their measured identifiers (seed)" in msg for msg in project._strict_paper_issues())
+    project.render_results_table(args)
+    assert not any("omit their measured identifiers" in msg for msg in project._strict_paper_issues())
+    assert measurement_table.with_row_identifiers([{"value": 2}, {"value": 3}], "", columns) == columns
+    assert measurement_table.with_row_identifiers([{"seed": 7}, {"seed": 7}], "", columns) == columns
+    project.config["layout_mode"] = "flexible"
+    assert project.render_results_table(args)["columns"] == columns
+
+
 def test_render_plot_discovery_and_strict_delivery_require_actual_read(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     registered = plan()
@@ -439,6 +577,16 @@ def test_render_plot_discovery_and_strict_delivery_require_actual_read(tmp_path,
     record["input_access"] = "worker_observed_read"
     assert project.invoke("render_plot", args)["input_access"] == "worker_observed_read"
     assert project._strict_paper_issues() == []
+    published = dict(project.state["plots"]["loss.png"])
+    unknown = {"identity": "i2p-unresolved", "backend": "slurm", "status": "submission_unknown",
+               "error": "Submission response was unavailable."}
+    monkeypatch.setattr(domain.native_experiment, "execute", lambda *a, **kw: dict(unknown))
+    assert project.invoke("render_plot", {**args, "y_label": "Updated label"}) == unknown
+    assert project.state["plot_attempts"]["loss.png"] == unknown
+    assert project.state["plots"]["loss.png"] == published
+    assert project._strict_paper_issues() == []
+    journal = (project.state_dir / "research_events.jsonl").read_text()
+    assert "slurm submission i2p-unresolved: submission_unknown" in journal
     project.state["compile"]["inputs"] = []
     assert any("Include a scientific plot" in i for i in project._strict_paper_issues())
 
@@ -533,7 +681,8 @@ def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_pa
     prompts, draws, reviews = [], [], []
 
     def plan_panel(client, model, prompt):
-        assert all(s in prompt for s in ("linear", "binary", "paired_probes"))
+        assert all(s in prompt for s in ("linear", "binary"))
+        assert "paired_probes" not in prompt
         assert "class clusters" not in prompt
         prompts.append(prompt)
         return json.dumps(panel)
@@ -543,7 +692,8 @@ def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_pa
         if path.suffix == ".image":
             assert aspect_ratio == "1:1" and "An ordered row" in prompt
         else:
-            assert aspect_ratio == "16:9" and "Requested presentation" in prompt
+            assert aspect_ratio == "16:9" and "linear" in prompt and "binary" in prompt
+            assert "class clusters" not in prompt and "paired_probes" not in prompt
         buf = io.BytesIO()
         Image.new("RGB", (50, 40), "silver").save(buf, "PNG")
         nano_banana._save_generated_image(buf.getvalue(), path, receipt, provider="google", image_model=model)
@@ -553,6 +703,7 @@ def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_pa
         reviews.append(domain._sha(path))
         checks = {name: {"status": "consistent", "observed": "Approved condition."}
                   for name in nano_banana._SEMANTIC_CHECKS}
+        checks["result_marks"]["depiction"] = "method"
         checks["printed_labels"]["transcription"] = [g["label"] for g in panel["groups"]]
         if "subject-only illustration" in design:
             assert panel["caption"] in design and "Unsupported class clusters." not in design
@@ -623,6 +774,10 @@ def test_plan_result_path_records_same_receipt_as_legacy_expected(tmp_path, monk
         project.plan_experiment(dict(current, expected="results/else.json"))
     with pytest.raises(ValueError, match="result_path must be one output file path"):
         project.plan_experiment(dict(current, result_path="hypothesized improvement"))
+    placeholders = dict(current, baseline=current["script"], comparison=current["script"], controls=[current["script"]])
+    with pytest.raises(ValueError, match="baseline, comparison, controls"):
+        project.plan_experiment(placeholders)
+    assert project.state["plan"] == old
 
 
 @pytest.mark.parametrize(("reason", "expected"), [("owner_error", "running"), ("quota", "running"), ("ethics", "paused")])

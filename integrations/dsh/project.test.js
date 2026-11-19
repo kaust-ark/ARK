@@ -197,7 +197,7 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
       const body = JSON.parse(raw)
       const tools = body.tools?.map(tool => tool.name) || []
       const history = JSON.stringify(body.messages)
-      if (parked) {
+      if (parked && tools.includes('read_evidence')) {
         blocked.resolve()
         return // Hold the request open until DSH cancels the in-flight turn.
       }
@@ -208,13 +208,19 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
         assert.ok(!history.includes('parent-scientific-private'))
         assert.match(history, /Rendered manuscript page 2 of 2/)
         assert.match(history, /"type":"image"/)
-        if (history.includes('measured-observation')) {
+        if (history.includes('independently-read-primary-passage')) {
+          response = JSON.stringify({revision:'rev1', verdict:'accept', source:'sources/paper.txt'})
+        } else if (history.includes('Cite an observed primary source')) {
+          response = {name:'read_evidence',args:{artifact:'sources/paper.txt'}}
+        } else if (history.includes('measured-observation')) {
           assert.match(history, /"type":"image"/, 'The provider must receive pixels for a visual receipt')
           response = JSON.stringify({ revision:'rev1', verdict:'accept' })
         } else response = { name:'read_evidence',args:{artifact:'paper/main.pdf',page:1,visual:true} }
       } else {
         assert.ok(tools.includes('request_review'), JSON.stringify(tools))
-        if (resumed) {
+        if (parked) {
+          response = {name:'request_review',args:{draft:true}}
+        } else if (resumed) {
           assert.match(history, /parent-scientific-private/)
           assert.match(history, /What happened/)
           response = 'The recorded review accepted revision one.'
@@ -248,11 +254,20 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
       case 'stop': stopped = true; return {state:'stopped'}
       case 'project_status': return { state:stopped?'stopped':delivered?'delivered':'running', delivered, commands:[] }
       case 'project_event': events.push(args); return {}
-      case 'review_snapshot': return {revision:'rev1',rendered_pages:2,rendered_artifact:'paper/main.pdf',opening_evidence:['scripts/plot.py'],brief:'Blind reviewer. Inspect results/data.json using read_evidence.'}
-      case 'review_evidence': if (args.artifact === 'scripts/plot.py') return {text:'frozen-source-only-for-independent-reader',receipt:{artifact:args.artifact,revision:'rev1'}}; return {text:'measured-observation',receipt:{artifact:'paper/main.pdf',visual:true},
-        mime_type:'image/png',image_base64:'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAIklEQVR4nGNkYGhgoAZgooopowaNGjRq0KhBowaNGkQRAAAV1ACwA5vbQAAAAABJRU5ErkJggg=='}
+      case 'review_snapshot':
+        assert.equal(args.preflight, !parked)
+        return {revision:'rev1',rendered_pages:2,rendered_artifact:'paper/main.pdf',opening_evidence:['scripts/plot.py'],brief:'Blind reviewer. Inspect results/data.json using read_evidence.'}
+      case 'review_evidence':
+        if (args.artifact === 'scripts/plot.py') return {text:'frozen-source-only-for-independent-reader',receipt:{artifact:args.artifact,revision:'rev1'}}
+        if (args.artifact === 'sources/paper.txt') return {text:'independently-read-primary-passage',receipt:{artifact:args.artifact,revision:'rev1'}}
+        return {text:'measured-observation',receipt:{artifact:'paper/main.pdf',visual:true},
+          mime_type:'image/png',image_base64:'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAIklEQVR4nGNkYGhgoAZgooopowaNGjRq0KhBowaNGkQRAAAV1ACwA5vbQAAAAABJRU5ErkJggg=='}
+      case 'check_review':
+        return args.observed.some(r => r.artifact === 'sources/paper.txt') && args.verdict.source === 'sources/paper.txt'
+          ? {valid:true} : {valid:false, diagnostic:'Cite an observed primary source'}
       case 'record_review':
         assert.equal(args.verdict.verdict, 'accept')
+        assert.equal(args.verdict.source, 'sources/paper.txt')
         assert.ok(args.observed.some(receipt => receipt.artifact === 'scripts/plot.py'))
         assert.ok(args.observed.filter(receipt => receipt.artifact === 'paper/main.pdf' && receipt.visual).length >= 2)
         recorded = args
@@ -288,6 +303,8 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
   await launch('run',project,'parent-scientific-private')
   const first = JSON.parse(await readFile(join(project,'workflow.json'),'utf8'))
   assert.ok(delivered)
+  assert.equal(calls.filter(op => op === 'review_snapshot').length,1)
+  assert.equal(calls.filter(op => op === 'check_review').length,2)
   assert.notEqual(recorded.session_id,first.owner_session_id)
   assert.ok(events.some(e => e.role === 'reviewer' && e.kind === 'tool/call'))
   resumed = true
@@ -302,6 +319,7 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
   await launch('stop', project)
   await active
   assert.equal(calls.filter(op => op === 'stop').length,1)
+  assert.equal(calls.filter(op => op === 'record_review').length,1)
   assert.ok(stopped)
 })
 

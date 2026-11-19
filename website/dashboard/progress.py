@@ -54,6 +54,8 @@ def evidence_type(key):
         return MEDIA.get(suffix)
     if key.startswith("sources/") and suffix == ".pdf":
         return MEDIA[suffix]
+    if re.fullmatch(r"auto_research/state/reviews/[a-f0-9]{64}/(?:main\.tex|references\.bib)", key):
+        return "text/plain"
     if (key in {"auto_research/state/experiment_plan.yaml", "paper/main.tex", "paper/references.bib", "auto_research/state/deep_research.md",
                 "auto_research/state/findings.yaml", "auto_research/state/findings.json"}
             or key.startswith(("results/", "sources/")) and suffix in DATA | {".jsonl"}):
@@ -215,7 +217,11 @@ def review_summary(root, review):
             digest = _text(ref.get("sha256"))
             if not evidence_type(key) or not re.fullmatch(r"[a-f0-9]{64}", digest):
                 continue
-            archived = f"auto_research/state/reviews/{version}/main.pdf" if key == "paper/main.pdf" else key
+            archived = key
+            if key in ("paper/main.pdf", "paper/main.tex", "paper/references.bib"):
+                candidate = f"auto_research/state/reviews/{version}/{Path(key).name}"
+                if key == "paper/main.pdf" or file_exists(root, candidate):
+                    archived = candidate
             refs.append({"artifact": key, "key": archived, "sha256": digest, "previous": earlier,
                          "page": ref.get("page") if type(ref.get("page")) is int else None,
                          "quote": _text(ref.get("quote"), 1200)})
@@ -249,6 +255,21 @@ def review_summary(root, review):
         for domain in ("manuscript", "experiment", "citations", "visual"):
             check = checks.get(domain)
             if isinstance(check, dict) and check.get("status") in ("assessed", "unassessed"):
-                coverage.append({"domain": domain, "status": check["status"], "reason": _text(check.get("reason"))})
+                item = {"domain": domain, "status": check["status"], "reason": _text(check.get("reason"))}
+                origins = check.get("series_origin")
+                hashes = review.get("artifact_hashes")
+                if domain == "visual" and isinstance(origins, dict):
+                    figures = []
+                    for name, origin in list(origins.items())[:48]:
+                        key = "paper/figures/" + name
+                        if "/" in name or not evidence_type(key) or origin not in ("measured", "copied", "theoretical"):
+                            continue
+                        digest = _text(hashes.get(key)) if isinstance(hashes, dict) else ""
+                        figure = {"name": name, "origin": origin}
+                        if re.fullmatch(r"[a-f0-9]{64}", digest):
+                            figure.update(key=key, sha256=digest)
+                        figures.append(figure)
+                    item["figures"] = figures
+                coverage.append(item)
     return {"revision": revision, "verdict": _text(review.get("verdict")), "checks": coverage,
             "summary": _text(review.get("summary")), "issues": issues, "stale": stale}

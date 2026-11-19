@@ -145,6 +145,57 @@ def test_visual_evidence_is_actual_rendered_current_pages(tmp_path):
     assert validate_review(snap, response, observed=[*receipts, first["receipt"], second["receipt"]])["deliverable"]
 
 
+def test_review_of_measured_figure_needs_plotted_source_rows_and_pixels(tmp_path):
+    pair = PAIRS[0]
+    project(tmp_path, pair, "clean")
+    paper = tmp_path / "paper"
+    (paper / "main.tex").write_text(pair["clean"] + "\n" + r"\input{results}")
+    (paper / "results.tex").write_text(r"\includegraphics{figures/measured}")
+    (paper / "unused.tex").write_text(r"\includegraphics{only_in_draft.png}")
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    method = "scripts/visualize.py"
+    snippet = "axis.plot(sizes, counts)"
+    (tmp_path / method).write_text(snippet + '\nfigure.savefig("measured.png")')
+    (scripts / "other.py").write_text('fig.savefig("only_in_draft.png")')
+    with fitz.open() as pdf:
+        pdf.new_page().insert_text((60, 65), "Measured counts")
+        pdf.save(paper / "main.pdf")
+    snapshot = build_snapshot(tmp_path, required=["visual"])
+    assert snapshot["figure_methods"] == {"measured.png": method}
+    assert "checks.visual.evidence" in review_prompt(snapshot)
+    response, receipts = record(snapshot, pair, "clean", "")
+    visual = {"artifact": "paper/main.pdf", "page": 1, "visual": True}
+    seen = read_evidence(snapshot, visual["artifact"], page=1, visual=True)
+    receipts = [*receipts, seen["receipt"], read_evidence(snapshot, method)["receipt"]]
+    check = response["checks"]["visual"]
+    check.update(status="assessed", reason="Compared the measured series.", evidence=[visual])
+    with pytest.raises(ValueError, match="Trace the plotted values"):
+        validate_review(snapshot, response, observed=receipts)
+    check["evidence"].append({"artifact": method, "quote": snippet})
+    with pytest.raises(ValueError, match="measurement excerpt"):
+        validate_review(snapshot, response, observed=receipts)
+    check["evidence"].extend(response["checks"]["experiment"]["evidence"])
+    with pytest.raises(ValueError, match="series_origin"):
+        validate_review(snapshot, response, observed=receipts)
+    check["series_origin"] = {"measured.png": "measured"}
+    clean = validate_review(snapshot, response, observed=receipts)
+    assert clean["deliverable"] and record_is_current(snapshot, clean)
+    del clean["checks"]["visual"]["series_origin"]
+    assert not record_is_current(snapshot, clean)
+    check["series_origin"]["measured.png"] = "copied"
+    with pytest.raises(ValueError, match="reproducibility blocker"):
+        validate_review(snapshot, response, observed=receipts)
+    response["issues"] = [{"id":"R1", "status":"new", "severity":"blocker", "domain":"visual",
+                           "claim":"Figure 1", "reason":"Values are copied into the program.",
+                           "fix":"Use the measured inputs.", "evidence":check["evidence"]}]
+    response["verdict"] = "revise"
+    assert not validate_review(snapshot, response, observed=receipts)["deliverable"]
+    (scripts / "alternative.py").write_text('fig.savefig("measured.png")')
+    assert "figure_methods" not in build_snapshot(tmp_path, required=["visual"])
+    assert build_snapshot(tmp_path, required=["visual"], registered_plots={"measured.png": method})["figure_methods"] == {"measured.png": method}
+
+
 def test_linked_in_project_or_external_artifacts_not_followed(tmp_path):
     root = tmp_path / "root"
     root.mkdir()

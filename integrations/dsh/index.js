@@ -166,6 +166,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
   if (packet.cached) return packet.cached
   if (!packet.revision || !packet.brief) throw new Error('Review snapshot has no revision or blind brief')
   const observed = []
+  let checkedVerdict, lastRejected
   let configured = false
   const unlisten = ctx.on('agent/created', ({ agent }) => {
     if (agent.id !== childId) return
@@ -174,6 +175,34 @@ async function review(ctx, owner, domain, signal, draft = false) {
     scope.on('agent/pre-step', (step, next) => {
       if (step.agent === agent && step.step > 30) throw new Error('Reviewer reached its evidence-inspection budget')
       return next()
+    })
+    scope.on('agent/turn-stopping', async ({agent: stopping, turn, signal: turnSignal}) => {
+      if (stopping !== agent) return
+      signal.throwIfAborted()
+      turnSignal.throwIfAborted()
+      checkedVerdict = undefined
+      const message = agent.session.snapshotEvents().findLast(e => e.type === 'assistant/message' && e.data.turn === turn)?.data
+      if (!message || message.interrupted || message.stream?.some(({chunk}) => chunk?.type === 'finish' && chunk.reason.kind === 'max-tokens')) return
+      const output = message.message.content.filter(b => b.type === 'text').map(b => b.text).join('').trim()
+      let verdict, diagnostic
+      try { verdict = JSON.parse(output.replace(/^`{3}(?:json)?\s*|\s*`{3}$/gi, '')) }
+      catch { diagnostic = 'The final message must contain a complete JSON verdict.' }
+      if (!diagnostic) {
+        const proof = await domain.call('check_review', {revision:packet.revision, verdict, observed})
+        signal.throwIfAborted()
+        turnSignal.throwIfAborted()
+        if (proof.valid === true) { checkedVerdict = verdict; return }
+        if (proof.valid !== false || !proof.diagnostic) throw new Error('Missing review validation result')
+        diagnostic = proof.diagnostic
+      }
+      // Steer this DSH step boundary so the independent reader keeps its evidence and identity.
+      if (lastRejected?.output === output && lastRejected.observations === observed.length) {
+        throw new Error('Repeated unsupported review without further evidence: ' + diagnostic)
+      }
+      lastRejected = {output, observations:observed.length}
+      agent.steer(createUserMessage({source:{kind:'idea2paper-review', form:'instructions'}, content:[{
+        type:'text', text:'Review evidence check: ' + diagnostic + '\nInspect the relevant originals with read_evidence as needed. Correct the complete verdict, using only supported findings, or mark the affected check unassessed.',
+      }]}))
     })
     scope.tools.presentAs('native')
     scope.tools.restrict({ allow: [] })
@@ -221,10 +250,10 @@ async function review(ctx, owner, domain, signal, draft = false) {
     if (!configured) throw new Error('Reviewer read-only tool scope was not established')
     signal.throwIfAborted()
     const result = await activation.result
+    signal.throwIfAborted()
     if (result.stopReason !== 'completed') throw new Error('Reviewer ended with ' + result.stopReason)
-    const output = result.output.filter(b => b.type === 'text').map(b => b.text).join('').trim()
-    const verdict = JSON.parse(output.replace(/^`{3}(?:json)?\s*|\s*`{3}$/gi, ''))
-    return await domain.call('record_review', { revision: packet.revision, session_id: childId, verdict, observed })
+    if (!checkedVerdict) throw new Error('Reviewer ended without a validated verdict')
+    return await domain.call('record_review', { revision: packet.revision, session_id: childId, verdict:checkedVerdict, observed })
   } finally {
     signal.removeEventListener('abort', dispose)
     unlisten()

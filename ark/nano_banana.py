@@ -216,8 +216,9 @@ def generate_figure(
         return False
 
 
-SEMANTIC_REVIEW_VERSION = 2
-_SEMANTIC_CHECKS = ("arrows", "comparison_groups", "numbers", "data_separation", "stages_and_labels", "printed_labels")
+SEMANTIC_REVIEW_VERSION = 3
+_SEMANTIC_CHECKS = ("arrows", "comparison_groups", "numbers", "data_separation", "stages_and_labels", "printed_labels",
+                    "result_marks")
 
 
 def _verified_worker_excerpt(state_dir, receipt):
@@ -234,17 +235,23 @@ def _verified_worker_excerpt(state_dir, receipt):
 
 
 def native_study_design(state, state_dir):
-    """Only approved conditions and measurements bound to that experiment can ground a new native figure."""
+    """Only the approved protocol goes to the illustration model."""
     plan = state.get("plan") or {}
     conditions = {k: plan[k] for k in ("question", "baseline", "comparison", "controls", "metric") if k in plan}
-    design = "Approved experimental design:\n" + yaml.safe_dump(conditions, sort_keys=False, allow_unicode=True)
+    return "Approved experimental design:\n" + yaml.safe_dump(conditions, sort_keys=False, allow_unicode=True)
+
+
+def legacy_native_design_digest(state, state_dir):
+    """Recognize an existing paid image made before the protocol and measurements were separated."""
+    design = native_study_design(state, state_dir)
+    plan = state.get("plan") or {}
     receipt = state.get("experiment") or {}
     plan_hash = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
     if (receipt.get("plan_sha256") == plan_hash and receipt.get("artifact") == plan.get("expected")
             and (not state.get("sealed_script") or receipt.get("code_sha256") == state["sealed_script"])):
         if excerpt := _verified_worker_excerpt(state_dir, receipt):
             design += "\n" + excerpt
-    return design
+    return hashlib.sha256(design.encode()).hexdigest()
 
 
 def concept_design(fig: dict, state_dir: Path | None) -> str:
@@ -256,7 +263,7 @@ def concept_design(fig: dict, state_dir: Path | None) -> str:
             design = native_study_design(json.loads(receipt_file.read_text()), state_dir)
             return design + (
                 "\n\nProposed figure specification (presentation only). Check every illustrated condition and the "
-                "proposed caption against the approved design and verified evidence above. Treat artwork that "
+                "proposed caption against the approved design above. Treat artwork that "
                 "depicts unsupported classes, clusters or trends as a scientific contradiction. "
                 "This request supplies no additional experimental facts.\n" + parts[0]
             )
@@ -272,12 +279,6 @@ def concept_design(fig: dict, state_dir: Path | None) -> str:
             lines = [line for line in body.splitlines() if not re.search(
                 r"(?i)api[_ -]?key|password|secret|credential|access[_ -]?token", line)]
             parts.append(name + "\n" + "\n".join(lines)[:2200])
-        # Scientific labels are checked against the measured outcome when available.
-        # The result path and digest originate in the isolated worker's receipt.
-        if receipt_file.is_file():
-            receipt = json.loads(receipt_file.read_text()).get("experiment") or {}
-            if excerpt := _verified_worker_excerpt(state_dir, receipt):
-                parts.append(excerpt)
     return "\n\n".join(parts)
 
 
@@ -299,9 +300,55 @@ def _openrouter_figure_request(key, model, prompt, pixels, *, aspect_ratio=None)
     return response.json()
 
 
+_RESULT_TITLE = (r"(?:data derived|data driven|measured|observed|empirical|experimental) "
+                 r"(?:(?:result|results|performance|measurement|comparison) )?(?:plots?|charts?|curves?|graphs?)")
+_RESULT_AXIS = (r"(?:measured|observed|empirical|experimental|actual) "
+                r"(?:results?|values?|outcomes?|responses?|measurements?|performance|errors?|accuracy|scores?)")
+_TRIAL_AXIS = (r"(?:experimental |test |random |training |validation )?(?:seeds?|folds?|splits?|trials?|runs?|"
+               r"samples?|epochs?|iterations?|conditions?|time|steps?)(?: index| id| number)?")
+
+
+def _result_plot_labels(labels):
+    """Require a graph claiming empirical provenance and separate labels describing its axes."""
+    if not isinstance(labels, list):
+        return None
+    def match(pattern):
+        return next((s for s in labels if isinstance(s, str) and
+                     re.fullmatch(pattern, re.sub(r"[^\w]+", " ", s.casefold()).strip())), None)
+    heading, response, axis = [match(pattern) for pattern in (_RESULT_TITLE, _RESULT_AXIS, _TRIAL_AXIS)]
+    return (heading, response, axis) if heading and response and axis else None
+
+
+def generated_result_conflict(checks):
+    """Use the literal transcription or explicit observations of a plotted experimental outcome."""
+    if not isinstance(checks, dict):
+        return None
+    marks = checks.get("result_marks")
+    if (isinstance(marks, dict) and (marks.get("status") == "contradiction" or marks.get("depiction") == "experimental_results")
+            and isinstance(marks.get("observed"), str) and marks["observed"].strip()):
+        return marks["observed"]
+    printed = checks.get("printed_labels")
+    labels = _result_plot_labels(printed.get("transcription")) if isinstance(printed, dict) else None
+    if labels:
+        return "The generated illustration labels a results chart and its axes: " + ", ".join(repr(s) for s in labels) + "."
+    return None
+
+
+def reject_generated_result(review, reason):
+    check = {"status": "contradiction", "observed": reason,
+             "expected": "The method illustration describes the protocol and contains no empirical result marks.",
+             "correction": "Remove the results chart from the illustration. Draw measured values separately from worker output."}
+    return {**review, "status": "contradiction", "checks": {**review.get("checks", {}), "result_marks": check}}
+
+
 def semantic_verdict(checks) -> str:
     """Derive a verdict from the actual check records, including literal transcription."""
+    if generated_result_conflict(checks):
+        return "contradiction"
     if not isinstance(checks, dict) or not all(k in checks for k in _SEMANTIC_CHECKS):
+        return "unavailable"
+    marks = checks.get("result_marks")
+    if not isinstance(marks, dict) or marks.get("depiction") not in ("method", "unclear"):
         return "unavailable"
     printed = checks.get("printed_labels")
     transcription = printed.get("transcription") if isinstance(printed, dict) else None
@@ -321,7 +368,7 @@ def semantic_verdict(checks) -> str:
             return "unavailable"
         states.append(status)
     verdict = ("contradiction" if "contradiction" in states else
-               "unclear" if "unclear" in states or "consistent" not in states else "passed")
+               "unclear" if "unclear" in states or marks["depiction"] == "unclear" or "consistent" not in states else "passed")
     return verdict
 
 
@@ -369,7 +416,7 @@ def _tesseract_lines(binary, path, mode):
                              capture_output=True, check=True, timeout=25, text=True,
                              env={**os.environ, "OMP_THREAD_LIMIT": "1"})
     lines = {}
-    for row in csv.DictReader(io.StringIO(process.stdout), delimiter="\t"):
+    for row in csv.DictReader(io.StringIO(process.stdout), delimiter="\t", quoting=csv.QUOTE_NONE):
         if row.get("level") == "5" and row["text"].strip():
             group = tuple(row[k] for k in ("page_num", "block_num", "par_num", "line_num"))
             lines.setdefault(group, []).append({"text": row["text"].strip(), "confidence": float(row["conf"]),
@@ -377,9 +424,61 @@ def _tesseract_lines(binary, path, mode):
     return list(lines.values())
 
 
+def _ocr_chart_labels(path, binary, runs):
+    """Corroborate a chart title and its two axis labels, including vertical text missed by page OCR."""
+    from PIL import Image
+
+    def phrases(lines, pattern):
+        found = []
+        for line in lines:
+            for i in range(len(line)):
+                for size in range(min(5, len(line)-i), 0, -1):
+                    words = line[i:i+size]
+                    phrase = re.sub(r"[^\w]+", " ", " ".join(w["text"] for w in words).casefold()).strip()
+                    if all(w["confidence"] >= 60 for w in words) and re.fullmatch(pattern, phrase):
+                        boxes = [w["box"] for w in words]
+                        found.append((phrase, (min(b[0] for b in boxes), min(b[1] for b in boxes),
+                                               max(b[0]+b[2] for b in boxes), max(b[1]+b[3] for b in boxes))))
+                        break
+        return found
+
+    def agreed(scans, pattern):
+        first, second = [phrases(lines, pattern) for lines in scans]
+        def overlaps(a, b):
+            area = max(0, min(a[2], b[2])-max(a[0], b[0])) * max(0, min(a[3], b[3])-max(a[1], b[1]))
+            union = (a[2]-a[0]) * (a[3]-a[1]) + (b[2]-b[0]) * (b[3]-b[1]) - area
+            return area > 0 and area >= .35 * union
+        return [(text, a) for text, a in first if any(text == other and overlaps(a,b) for other,b in second)]
+
+    trials = agreed(runs, _TRIAL_AXIS)
+    inspected = 0
+    for heading, (x0, _, x1, top) in agreed(runs, _RESULT_TITLE):
+        for axis, (a0, bottom, a1, _) in trials:
+            width = max(x1-x0, a1-a0)
+            if bottom <= top+15 or abs((x0+x1-a0-a1)/2) > width/2:
+                continue
+            if inspected == 3:
+                return []
+            inspected += 1
+            # A vertical response axis sits beside the plot, between its heading and horizontal axis.
+            with Image.open(path) as image, tempfile.TemporaryDirectory() as folder:
+                bounds = (max(0, int(min(x0,a0)-width)), top, min(image.width, int(min(x0,a0)+width*.25)), bottom)
+                if bounds[2] <= bounds[0]:
+                    continue
+                strip = image.crop(bounds)
+                rotated = Path(folder) / "axis.png"
+                strip.transpose(Image.Transpose.ROTATE_270).save(rotated)
+                vertical = agreed([_tesseract_lines(binary, rotated, mode) for mode in (6, 11)], _RESULT_AXIS)
+                if vertical:
+                    return [heading, vertical[0][0], axis]
+    return []
+
+
 def verify_printed_labels(path: Path, review: dict, entry: dict, aspect_ratio: str) -> dict:
     """Augment a saved visual review without another model request."""
     checks = review.get("checks") or {}
+    if reason := generated_result_conflict(checks):
+        return reject_generated_result(review, reason)
     labels = (checks.get("printed_labels") or {}).get("transcription")
     if not isinstance(labels, list) or not all(isinstance(word, str) for word in labels):
         return review
@@ -388,12 +487,12 @@ def verify_printed_labels(path: Path, review: dict, entry: dict, aspect_ratio: s
     prior = review.get("label_verification") or {}
     binary = shutil.which(os.environ.get("ARK_TESSERACT") or "tesseract")
     is_panel = entry.get("representation") == "subject_with_comparison_panel"
-    if (prior.get("version") == 1 and prior.get("image_sha256") == pixel_hash
-            and prior.get("transcription_sha256") == label_hash and
+    if (prior.get("version") == 2 and prior.get("image_sha256") == pixel_hash
+            and prior.get("transcription_sha256") == label_hash and (not binary or prior.get("chart_ocr")) and
             (prior.get("coverage") in ("two_ocr_layouts", "reproduced_typeset")
              or (not is_panel and not binary and prior.get("coverage") == "unavailable"))):
         return review
-    evidence = {"version": 1, "image_sha256": pixel_hash, "transcription_sha256": label_hash,
+    evidence = {"version": 2, "image_sha256": pixel_hash, "transcription_sha256": label_hash,
                 "coverage": "unavailable", "model_label_count": len(labels), "conflicts": []}
     if is_panel:
         raw = (path.parent / (entry.get("illustration_file") or "")).resolve()
@@ -411,23 +510,34 @@ def verify_printed_labels(path: Path, review: dict, entry: dict, aspect_ratio: s
                                         conflicts=list(_label_differences(labels, lines).values()))
         except (OSError, ValueError, KeyError, TypeError):
             pass
-    if evidence["coverage"] == "unavailable" and binary:
+    if binary:
         try:
             runs = [_tesseract_lines(binary, path, mode) for mode in (6, 11)]
             if all(runs):
-                first, second = [_label_differences(labels, lines) for lines in runs]
-                conflicts = []
-                for label, a in first.items():
-                    b = second.get(label)
-                    if (b and a["read_label"].casefold() == b["read_label"].casefold()
-                            and max(abs(x-y) for x, y in zip(a["box"], b["box"])) <= 3):
-                        conflicts.append({**a, "confirming_confidence": b["confidence"], "confirming_box": b["box"]})
-                unique = [c for c in conflicts if sum(
-                    x["box"] == c["box"] and x["text"] == c["text"] for x in conflicts) == 1]
-                evidence.update(coverage="two_ocr_layouts", psm=[6, 11], conflicts=unique)
+                evidence["chart_ocr"] = True
+                if evidence["coverage"] == "unavailable":
+                    first, second = [_label_differences(labels, lines) for lines in runs]
+                    conflicts = []
+                    for label, a in first.items():
+                        b = second.get(label)
+                        if (b and a["read_label"].casefold() == b["read_label"].casefold()
+                                and max(abs(x-y) for x, y in zip(a["box"], b["box"])) <= 3):
+                            conflicts.append({**a, "confirming_confidence": b["confidence"], "confirming_box": b["box"]})
+                    unique = [c for c in conflicts if sum(
+                        x["box"] == c["box"] and x["text"] == c["text"] for x in conflicts) == 1]
+                    evidence.update(coverage="two_ocr_layouts", psm=[6, 11], conflicts=unique)
+                observed = [_result_plot_labels([" ".join(w["text"] for w in line) for line in lines
+                                                 if all(w["confidence"] >= 90 for w in line)]) for lines in runs]
+                if observed[0] and observed[0] == observed[1]:
+                    evidence["result_plot_labels"] = observed[0]
+                elif markers := _ocr_chart_labels(path, binary, runs):
+                    evidence["result_plot_labels"] = markers
         except (OSError, subprocess.SubprocessError, KeyError, ValueError, TypeError):
             pass
     result = {**review, "label_verification": evidence}
+    if evidence.get("result_plot_labels"):
+        return reject_generated_result(result, "Two OCR layouts read the empirical chart title and its axes: "
+                                       + ", ".join(repr(s) for s in evidence["result_plot_labels"]) + ".")
     if evidence["conflicts"]:
         heard = ", ".join(f"{v['read_label']!r} vs {v['model_label']!r}" for v in evidence["conflicts"])
         printed = {**checks["printed_labels"], "status": "contradiction",
@@ -455,6 +565,11 @@ silently correct a misspelling to the intended word. Supply a nonempty "transcri
 literal strings (use ["no printed labels"] only for an entirely unlabeled picture). Misspelled ordinary
 words and corrupted scientific names are contradictions even if the underlying science is correct.
 If a word cannot be deciphered mark unclear, not consistent. Ignore purely aesthetic preferences.
+For result_marks inspect every panel, including insets. Identify any plotted marks, their axis labels
+and legend. Set depiction to experimental_results if dots, bars or curves claim to display observed
+study outcomes, and mark contradiction: generative artwork cannot publish measured results. A schematic
+neighborhood, conceptual distribution or operation such as "compute RMSE" may be consistent.
+For these use depiction method; use unclear if the distinction cannot be read.
 Report a contradiction only when pixels and design establish different meanings. If an endpoint
 or label cannot be read, mark unclear. A check outside this design can be not_applicable.
 Return only JSON with a checks object containing exactly {", ".join(_SEMANTIC_CHECKS)}.
@@ -474,6 +589,8 @@ Study design and contextual evidence:
         from ark.quality_gate import extract_json
         data = extract_json(text, want=dict) if text else None
         checks = data.get("checks") if isinstance(data, dict) else None
+        if reason := generated_result_conflict(checks):
+            return reject_generated_result({**result, "checks": {k: v for k, v in checks.items() if k in _SEMANTIC_CHECKS}}, reason)
         verdict = semantic_verdict(checks)
         if verdict == "unavailable":
             return result
