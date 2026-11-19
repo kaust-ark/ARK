@@ -14,11 +14,11 @@
 dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.4/idea2paper-dsh-0.2.0-alpha.4.tgz
 ```
 
-如需从源码安装，可在仓库根目录构建并安装归档。
+源码分支包含 alpha.5 候选版，可在仓库根目录构建并安装。
 
 ```sh
 python3 integrations/dsh/pack.py --out dist/dsh
-dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-0.2.0-alpha.4.tgz"
+dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-0.2.0-alpha.5.tgz"
 dsh --profile idea2paper --help
 ```
 
@@ -69,7 +69,7 @@ https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.4/index.j
 
 ```sh
 python3 integrations/dsh/pack.py --out dist/dsh
-python3 integrations/dsh/verify.py dist/dsh/idea2paper-dsh-0.2.0-alpha.4.tgz --prepare dist/dsh/release
+python3 integrations/dsh/verify.py dist/dsh/idea2paper-dsh-0.2.0-alpha.5.tgz --prepare dist/dsh/release
 ```
 
 验证程序会从本地 HTTP 地址安装到干净的 profile，调用包内 Python 组件读取已停止的项目，再启动 DSH Web 核对 Discover 的 Git 安装目标，并通过本地 Git 镜像安装同一提交。生成的独立 Git 仓库包含归档中的文件和 wheel，索引指向实际的包提交。原 0.1.0-alpha.1 安装包可使用 `verify_legacy.py` 运行对应的测试。

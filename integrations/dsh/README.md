@@ -14,11 +14,11 @@ Install version 0.2.0-alpha.4 into a dedicated profile with one command. The DSH
 dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.4/idea2paper-dsh-0.2.0-alpha.4.tgz
 ```
 
-To install from source, build the archive at the repository root.
+The source checkout contains the alpha.5 candidate. To try it, build the archive at the repository root.
 
 ```sh
 python3 integrations/dsh/pack.py --out dist/dsh
-dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-0.2.0-alpha.4.tgz"
+dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-0.2.0-alpha.5.tgz"
 dsh --profile idea2paper --help
 ```
 
@@ -69,27 +69,27 @@ From the source checkout, put the pinned DSH binary and pnpm on PATH. Build once
 
 ```sh
 python3 integrations/dsh/pack.py --out dist/dsh
-python3 integrations/dsh/verify.py dist/dsh/idea2paper-dsh-0.2.0-alpha.4.tgz --prepare dist/dsh/release
+python3 integrations/dsh/verify.py dist/dsh/idea2paper-dsh-0.2.0-alpha.5.tgz --prepare dist/dsh/release
 ```
 
 The verifier installs the archive over loopback into a clean profile, reads a stopped project using the packaged companion, checks the Git target in the running DSH Web Discover service, and installs that exact commit through a local Git mirror. Its separate Git repository contains the exact unpacked npm contents, including the wheel, and an index pointing to that package commit. The legacy v0.1.0-alpha.1 package fixture is available as `verify_legacy.py`.
 
-For alpha.4, include the offline replay from alpha.3 and checksums for both downloads. The release tag exposes the Discover index as a raw HTTPS file.
+For alpha.5, include the offline replay from alpha.3 and checksums for both downloads. The release tag exposes the Discover index as a raw HTTPS file.
 
 ```sh
 curl -fsSL https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.3/review-replay.zip -o dist/dsh/review-replay.zip
-(cd dist/dsh && sha256sum idea2paper-dsh-0.2.0-alpha.4.tgz review-replay.zip > SHA256SUMS)
-git -C dist/dsh/release push git@github.com:kaust-ark/ARK.git refs/tags/dsh-bundle-0.2.0-alpha.4
-gh release create dsh-bundle-0.2.0-alpha.4 dist/dsh/idea2paper-dsh-0.2.0-alpha.4.tgz dist/dsh/review-replay.zip dist/dsh/SHA256SUMS --repo kaust-ark/ARK --verify-tag --prerelease --title "Idea2Paper DSH 0.2.0-alpha.4" --notes "Persistent research sessions, measured experiments and revision-bound independent review. Requires DSH 0.2.1-rc.2."
+(cd dist/dsh && sha256sum idea2paper-dsh-0.2.0-alpha.5.tgz review-replay.zip > SHA256SUMS)
+git -C dist/dsh/release push git@github.com:kaust-ark/ARK.git refs/tags/dsh-bundle-0.2.0-alpha.5
+gh release create dsh-bundle-0.2.0-alpha.5 dist/dsh/idea2paper-dsh-0.2.0-alpha.5.tgz dist/dsh/review-replay.zip dist/dsh/SHA256SUMS --repo kaust-ark/ARK --verify-tag --prerelease --title "Idea2Paper DSH 0.2.0-alpha.5" --notes "Persistent research sessions, measured experiments and revision-bound independent review. Requires DSH 0.2.1-rc.2."
 ```
 
 Verify the public tarball and Discover index against the tested files, then repeat the one-command installation with a fresh DSH home.
 
 ```sh
-curl -fsSL https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.4/idea2paper-dsh-0.2.0-alpha.4.tgz -o dist/dsh/downloaded.tgz
-cmp dist/dsh/downloaded.tgz dist/dsh/idea2paper-dsh-0.2.0-alpha.4.tgz
-curl -fsS https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.4/index.json -o dist/dsh/downloaded-index.json
+curl -fsSL https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.5/idea2paper-dsh-0.2.0-alpha.5.tgz -o dist/dsh/downloaded.tgz
+cmp dist/dsh/downloaded.tgz dist/dsh/idea2paper-dsh-0.2.0-alpha.5.tgz
+curl -fsS https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.5/index.json -o dist/dsh/downloaded-index.json
 cmp dist/dsh/downloaded-index.json dist/dsh/release/index.json
 ```
 
-An npm maintainer can additionally publish the same archive with `npm publish dist/dsh/idea2paper-dsh-0.2.0-alpha.4.tgz --access public --tag alpha`. Check its registry `dist.integrity` before documenting the npm install path. To uninstall the profile plugin, run `dsh plugin --profile idea2paper remove idea2paper-dsh`. Keep the project directory and original profile for resuming work.
+An npm maintainer can additionally publish the same archive with `npm publish dist/dsh/idea2paper-dsh-0.2.0-alpha.5.tgz --access public --tag alpha`. Check its registry `dist.integrity` before documenting the npm install path. To uninstall the profile plugin, run `dsh plugin --profile idea2paper remove idea2paper-dsh`. Keep the project directory and original profile for resuming work.
