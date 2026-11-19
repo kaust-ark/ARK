@@ -359,7 +359,22 @@ def test_result_and_explanation_require_separate_observed_support(tmp_path):
     answer.update(verdict="revise",issues=[dict(id="R1",domain="manuscript",severity="blocker",status="new",
         claim=explanation, reason="The study did not measure uptake.",fix="Report it as a hypothesis.",
         evidence=[{"selector":"attribution"},row])])
-    assert validate_review(snap,answer,observed=[*receipts,*seen])["verdict"] == "revise"
+    # A model supplies the scientific judgment once. Expanded references and the
+    # linked issue must be identical to the independently observed originals.
+    answer["checks"]["manuscript"].pop("evidence")
+    answer["checks"]["manuscript"].pop("conclusion_support")
+    answer["issues"][0].pop("claim")
+    answer["issues"][0].pop("evidence")
+    answer["issues"][0]["claim_ref"] = 2
+    revised = validate_review(snap,answer,observed=[*receipts,*seen])
+    assert revised["verdict"] == "revise" and "conclusion_support" not in revised["checks"]["manuscript"]
+    assert revised["issues"][0]["evidence"][0] == revised["checks"]["manuscript"]["claims"][1]["passage"]
+    assert revised["issues"][0]["claim"] == explanation
+    for bad in (True, 0, 1, 3):
+        invalid = copy.deepcopy(answer)
+        invalid["issues"][0]["claim_ref"] = bad
+        with pytest.raises(ValueError, match="claim"):
+            validate_review(snap,invalid,observed=[*receipts,*seen])
 
     fixed = make_snapshot("Root uptake is one possible explanation.")
     assert "attribution" not in fixed["evidence_scope"]
@@ -400,6 +415,10 @@ def test_conclusion_selector_verifies_the_observed_page_window_and_pdf_digest(tm
     seen = read_evidence(snap, artifact, page=2, start=target["start"])["receipt"]
     canonical = resolve(original, [seen])
     assert resolve(selector, [seen]) == canonical
+    assert resolve({**selector,"sentence":1}, [seen])["quote"] == paragraph.split(". ")[0].split(".\n")[0].rstrip(".") + "."
+    for incorrect in (False, 0, 300, "1"):
+        with pytest.raises(ValueError):
+            resolve({**selector,"sentence":incorrect},[seen])
     assert canonical["quote"] == paragraph and canonical["sha256"] == snap["artifacts"][artifact]["sha256"]
     assert resolve(selector, [read_evidence(snap, artifact, page=2)["receipt"]]) == canonical
     for bad in ([], [dict(seen, end=seen["end"] - 1)], [dict(seen, revision="older")],

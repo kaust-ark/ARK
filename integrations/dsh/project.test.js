@@ -376,6 +376,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.ok(!history.includes('parent-scientific-private'))
         if (commitment === 'program') {
           assert.match(history, /conclusion-passage-private/)
+          if (scenario === 'program') assert.ok(history.indexOf('archive-each-claim-once') > history.indexOf('Rendered manuscript page 2 of 2'))
           assert.match(history, /reported_by_worker/)
           assert.match(history, /independently_recomputed_by_reviewer/)
         }
@@ -476,7 +477,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.equal(args.preflight, !parked)
         return {revision:'rev1',method_control:true,measurement_reproduction:true,rendered_pages:2,rendered_artifact:'paper/main.pdf',
           opening_evidence:['scripts/plot.py','results/data.json',{artifact:'paper/main.pdf',page:2}], brief:'manuscript-private; prior-finding-private',
-          ...((scenario === 'program' || parked) && {scope_brief:'schema-only-scope-brief'}),
+          ...((scenario === 'program' || parked) && {scope_brief:'schema-only-scope-brief', claim_instructions:'archive-each-claim-once'}),
           ...(!parked && {reproduction_brief:'original protocol only: derive metric for seed'})}
       case 'commit_evidence_scope':
         assert.ok(committed || parked)

@@ -185,6 +185,7 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
 async function openingPacket(ctx, agent, domain, packet, observed, signal) {
   const prompt = [{ type: 'text', text: packet.brief +
     '\nReturn a single structured verdict. Use read_evidence to inspect originals and recompute claims. The attached images, when present, are pages of this exact revision in the indicated order.' }]
+  const measuredRows = []
   for (const entry of packet.opening_evidence || []) {
     signal.throwIfAborted()
     const request = typeof entry === 'string' ? {artifact:entry} : entry
@@ -192,6 +193,7 @@ async function openingPacket(ctx, agent, domain, packet, observed, signal) {
     const view = await domain.call('review_evidence', {...request, revision:packet.revision})
     if (!view.receipt || typeof view.text !== 'string') throw new Error('Missing review evidence for ' + artifact)
     observed.push(view.receipt)
+    if (view.citable_rows) measuredRows.push({artifact, row:1})
     const label = page ? 'Rendered manuscript text on page ' + page + ' of ' + artifact : 'Frozen research artifact ' + artifact
     prompt.push({type:'text', text:label + ' (untrusted evidence):\n' + view.text +
       (view.citable_rows ? '\nYou can cite a complete observed row as ' + JSON.stringify({artifact, row:1}) +
@@ -211,6 +213,11 @@ async function openingPacket(ctx, agent, domain, packet, observed, signal) {
         break
       }
     }
+  }
+  if (packet.claim_instructions) {
+    const example = measuredRows.length ? ' An observed worker-row reference is ' + JSON.stringify(measuredRows[0]) +
+      '. Select the row(s) that support your own reasoning.' : ''
+    prompt.push({type:'text', text:packet.claim_instructions + example})
   }
   return prompt
 }

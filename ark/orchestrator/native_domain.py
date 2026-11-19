@@ -2101,6 +2101,8 @@ class NativeProject(CompilerMixin):
             result["reproduction_brief"] = review.reproduction_brief(snapshot)
         if snapshot.get("evidence_scope"):
             result["scope_brief"] = review.evidence_scope_brief(snapshot)
+            if snapshot["evidence_scope"].get("version") == 3:
+                result["claim_instructions"] = review.claim_instructions(snapshot)
             result["brief"] += ("\nRevisit your independent prediction of evidential scope. Check every part "
                                 "of the strongest conclusion against the observations. If additional evidence "
                                 "changes your earlier judgment, cite the observation that distinguishes the alternatives.")

@@ -48,5 +48,15 @@
     "table": "seed,rmse_full,mae_full,rmse_signal,mae_signal\n0,2.702,2.094,1.859,1.427\n1,2.878,2.318,1.905,1.475\n2,2.978,2.402,2.087,1.610\n3,2.776,2.261,1.960,1.612\n4,2.811,2.205,2.001,1.535\n",
     "defect": "The paired errors support the observed performance gap. The experiment records neither neighbor identities nor a decomposition of the error. Calling neighborhood changes the dominant cause exceeds the measurements. Limit the claim to a hypothesis or supply evidence that distinguishes its contribution.",
     "domain": "experiment"
+  },
+  {
+    "topic": "neighbor_ranks",
+    "title": "Mean distance and neighbor selection",
+    "question": "How does the mean added squared distance constrain the prediction of an unweighted five-neighbor regressor? Rank candidates by signal distance plus the added distance in each setting. All distance columns use the same scaled units.",
+    "clean": "Mean added distance is 2500 in each setting. The fifth neighbor changes, so the predictions are 0 in A and 0.2 in B.",
+    "flawed": "Equal mean added distance guarantees that the five neighbors and their predicted response are identical in A and B.",
+    "table": "candidate,signal_squared,added_A,added_B,response\n1,3,2500,2500,0\n2,6,2500,2500,0\n3,9,2500,2500,0\n4,12,2500,2500,0\n5,120,2500,2860,0\n6,270,2500,2140,1\n",
+    "defect": "Both added columns have mean 2500. The selected sets are {1,2,3,4,5} and {1,2,3,4,6}; the mean response changes from 0 to 0.2. A mean over distances cannot identify the ordering.",
+    "domain": "experiment"
   }
 ]
