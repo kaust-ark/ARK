@@ -30,6 +30,9 @@ const researchLabels = {
   earlier: ['Earlier events','更早的记录','السجل السابق'],
   current: ['Current action','当前工作','العمل الحالي'], observation: ['Latest observation','最新观察','أحدث ملاحظة'],
   all_phases: ['Show all phases','查看全部阶段','عرض جميع المراحل'],
+  recent_observations: ['Recent observations','最近的研究进展','آخر الملاحظات'],
+  latest_in_history: ['View latest in history','查看最新记录','عرض أحدث ملاحظة في السجل'],
+  open_observation: ['Open in research history','在研究记录中查看','فتح في سجل البحث'],
   history: ['Research history','研究记录','سجل البحث'], evidence: ['Evidence','研究证据','الأدلة'],
   current_file: ['Open current file · %s','打开当前文件 · %s','فتح الملف الحالي · %s'],
   archived_file: ['Open archived file · %s','打开归档文件 · %s','فتح الملف المؤرشف · %s'],
@@ -69,6 +72,9 @@ const researchLabels = {
   event_method_control_started: ['Testing a prediction','正在检验预测','اختبار التوقع'],
   event_method_control_finished: ['Prediction checked','预测检验已完成','اكتمل اختبار التوقع'],
   event_method_control_failed: ['Prediction test unavailable','预测检验未完成','تعذر اختبار التوقع'],
+  after_review_accept: ['Review complete. Awaiting the next step.','本版评审已完成，等待下一步。','اكتملت مراجعة هذه النسخة. بانتظار الخطوة التالية.'],
+  after_review_revise: ['The reviewer requested a revision.','评审要求修改本版稿件。','طلب المراجع تعديل هذه النسخة.'],
+  after_review_unassessed: ['The review ended without a verdict.','本版评审未能给出结论。','انتهت مراجعة هذه النسخة دون حسم.'],
   event_manuscript_reviewed: ['Verdict recorded','评审结论已归档','حُفظ قرار المراجعة'],
   row_start: ['Independent calculation started for %s.','正在复算 %s。','بدأ الحساب المستقل للحالة %s.'],
   row_attempt: ['Independent calculation for %s · attempt %s','正在复算 %s · 第 %s 次尝试','إعادة حساب %s · المحاولة %s'],
@@ -161,6 +167,20 @@ function reviewEventLabel(event) {
   return researchLabels[label] ? rt(label) : '';
 }
 
+function reviewHandoff(recent) {
+  const review = researchData.working_review || researchData.review;
+  if (!review || !['accept','revise','unassessed'].includes(review.verdict) || !/^[a-f0-9]{64}$/.test(review.revision)) return '';
+  const archive = 'auto_research/state/reviews/' + review.revision + '/main.pdf';
+  const signed = recent.findIndex(e => e.action === 'manuscript_reviewed' && e.revision === review.revision &&
+    e.observation === review.verdict && e.artifact === archive);
+  if (signed < 0) return '';
+  // The enclosing owner tool returns after recording the verdict. A new tool
+  // invocation or scientific observation records the next piece of work.
+  const next = recent.slice(0,signed).find(e => e.observation && !['tool/result','turn/end','turn_end'].includes(e.action));
+  if (next) return reviewEventLabel(next) || observationText(next);
+  return review.stale ? rt('stale') : rt('after_review_' + review.verdict);
+}
+
 function observationText(event, withValues=true) {
   if (event?.action === 'evidence_scope_committed') return reviewEventLabel(event);
   if (event?.action === 'delivered' && event.artifact === 'paper/main.pdf' && /^[a-f0-9]{64}$/.test(event.revision))
@@ -194,6 +214,53 @@ function fillComparison(values, event) {
   if (independent.textContent !== event.independent_value) independent.textContent = event.independent_value;
 }
 
+function renderObservationTrail(observations, animate) {
+  const trail = re('research-trail');
+  const recent = observations.slice(0,3).reverse();
+  const signature = JSON.stringify([researchProject.id,currentLang,...recent.map(e => e.id)]);
+  if (trail.dataset.events === signature) return;
+  trail.dataset.events = signature;
+  trail.hidden = recent.length < 2;
+  trail.setAttribute('aria-label',rt('recent_observations'));
+  if (trail.hidden) { trail.replaceChildren(); return; }
+  const focused = document.activeElement.closest('#research-trail button');
+  const visible = new Set(recent.map(e => e.id));
+  for (const row of [...trail.children]) if (!visible.has(row.dataset.event)) row.remove();
+  for (const [index,event] of recent.entries()) {
+    let item = [...trail.children].find(row => row.dataset.event === event.id);
+    if (!item) {
+      item = document.createElement('li');
+      item.dataset.event = event.id;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.setAttribute('aria-controls','research-history');
+      button.append(document.createElement('small'),document.createElement('span'));
+      button.onclick = () => {
+        selectHistoryPhase('');
+        const entry = [...re('research-history').querySelector('ol').children].find(row => row.dataset.event === event.id);
+        entry?.focus();
+      };
+      item.append(button);
+      trail.append(item);
+      if (animate && event === recent.at(-1) && !disconnected && matchMedia('(prefers-reduced-motion: no-preference)').matches)
+        item.animate([{opacity:0,transform:'translateY(5px)'},{opacity:1,transform:'none'}],
+                     {duration:240,easing:'cubic-bezier(.2,.7,.3,1)'});
+    }
+    if (trail.children[index] !== item) trail.insertBefore(item,trail.children[index] || null);
+    const button = item.firstElementChild, phase = researchPhase(event.phase);
+    const when = new Date(event.ts);
+    const time = event.ts && !Number.isNaN(when.getTime()) ? when.toLocaleTimeString(currentLang) : '';
+    const label = researchLabels[phase] ? rt(phase) : '';
+    button.firstElementChild.textContent = [label,time].filter(Boolean).join(' · ');
+    const observation = observationText(event,false);
+    button.lastElementChild.textContent = event === recent.at(-1) ? rt('latest_in_history') : observation;
+    button.title = rt('open_observation') + ' · ' + observation;
+    button.setAttribute('aria-label', button.title);
+  }
+  if (focused && !trail.contains(document.activeElement))
+    (focused.isConnected ? focused : trail.querySelector('button')).focus({preventScroll:true});
+}
+
 function renderHistory() {
   const history = re('research-history');
   history.hidden = !researchEvents.size;
@@ -212,6 +279,7 @@ function renderHistory() {
     if (!row || row.lang !== currentLang) {
       row = document.createElement('li');
       row.dataset.event = e.id;
+      row.tabIndex = -1;
       row.lang = currentLang;
       const meta = document.createElement('div'), time = document.createElement('time');
       meta.className = 'history-meta';
@@ -298,8 +366,9 @@ re('history-earlier').onclick = async function () {
 function renderResearch(animate=false) {
   const p = researchProject, events = [...researchEvents.values()], last = events.at(-1);
   const recent = events.slice().reverse();
-  const obs = recent.find(e => e.observation && !['tool/call','tool/result','turn/end','turn_end'].includes(e.action)) ||
-    recent.find(e => e.observation && e.action !== 'tool/call');
+  const observations = recent.filter(e => e.observation && !['tool/call','tool/result','turn/end','turn_end'].includes(e.action));
+  const obs = observations[0] || recent.find(e => e.observation && e.action !== 'tool/call');
+  renderObservationTrail(observations, animate);
   const rawPhase = recent.find(e => e.phase && e.phase !== 'work')?.phase || p.phase_status?.phase;
   const phase = researchPhase(rawPhase);
   const rail = re('research-phases');
@@ -370,7 +439,7 @@ function renderResearch(animate=false) {
     paper.querySelector('img').removeAttribute('src');
   }
   const action = quota ? rt('check_quota') : active && waiting ? p.pending_decision.question : !active || paused ? state :
-    p.activity || reviewEventLabel(last) || (last?.status === 'running' && (last.action === 'tool/call' ? last.observation : last.action)) || (p.status !== 'running' ? state : rt('idle'));
+    (p.status === 'running' && reviewHandoff(recent)) || p.activity || reviewEventLabel(last) || (last?.status === 'running' && (last.action === 'tool/call' ? last.observation : last.action)) || (p.status !== 'running' ? state : rt('idle'));
   re('research-action').textContent = delivered ? rt('paper_delivered') : action;
   const artifact = researchData.evidence?.[0];
   const fallback = artifact?.key === 'paper/main.pdf' ? rt('paper_ready') :

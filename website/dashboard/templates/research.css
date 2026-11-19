@@ -119,6 +119,28 @@
 #page-detail :focus-visible { outline:3px solid #ce7500; outline-offset:2px; }
 .research-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 body.share-mode .research-workspace { grid-template-columns:1fr; }
+#research-trail { display:flex; list-style:none; margin:0; padding:15px clamp(16px,3vw,30px) 12px; border-block-start:1px solid #dce8e1; }
+#research-trail[hidden] { display:none; }
+#research-trail li { flex:1 1 0; min-width:0; position:relative; padding-top:12px; }
+#research-trail li::before { content:""; position:absolute; inset-block-start:4px; inset-inline:0; height:1px; background:#adcac0; }
+#research-trail li:last-child::before { display:none; }
+#research-trail button { display:flex; flex-direction:column; align-items:flex-start; gap:2px; width:100%; min-height:44px; padding:3px 9px 3px 0; border:0; border-radius:3px; background:none; color:var(--ink); text-align:start; font:inherit; cursor:pointer; }
+#research-trail button::before { content:""; position:absolute; inset-block-start:0; inset-inline-start:0; width:9px; height:9px; border-radius:50%; background:#7a9f90; box-shadow:0 0 0 3px white; }
+#research-trail li:last-child button::before { background:#176248; box-shadow:0 0 0 3px #d4e8df; }
+#research-trail small { color:#49655b; line-height:1.35; font-size:.72rem; }
+#research-trail button span { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; font-size:.86rem; line-height:1.35; }
+#research-trail li:last-child button span { color:#176248; font-weight:600; }
+#research-trail button:hover span { text-decoration:underline; }
+#research-trail button:focus-visible, #research-history li:focus { outline:2px solid #44846e; outline-offset:2px; }
+#research-history li[tabindex] { scroll-margin-block:5rem; }
+@media (max-width:680px) {
+  #research-trail { flex-direction:column; }
+  #research-trail li { padding-top:0; padding-inline-start:20px; }
+  #research-trail li::before { inset-block:10px -10px; inset-inline-start:4px; width:1px; height:auto; }
+  #research-trail button { padding:2px 0 6px; }
+  #research-trail button::before { inset-block-start:7px; }
+}
+
 @media (prefers-reduced-motion:no-preference) {
   .research-count-live span { transition:transform .36s cubic-bezier(.2,.7,.3,1); }
   .research-arrived { animation:research-arrive .22s ease-out; }

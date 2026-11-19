@@ -943,14 +943,24 @@ def _passage_survives(snapshot, ref):
             text = " ".join(page.get_text() for page in doc)
     else:
         text = data.decode("utf-8", "replace")
-    return " ".join(ref["quote"].split()) in " ".join(text.split())
+    return _contains_observed_quote(text, ref["quote"])
 
 
 def _resolution_changed(snapshot, previous, old, refs):
     if previous["revision"] == snapshot["revision"]:
         return False
     submission = _submission(snapshot)
-    if any(not _passage_survives(snapshot, r) for r in old["evidence"] if r["artifact"] in submission):
+    passages = [r for r in old["evidence"] if r["artifact"] in submission]
+    # When a finding located the same assertion in multiple sections, editing
+    # one appearance cannot discharge the reader's objection to the others.
+    # Contextual references (such as a valid method description) can stay.
+    disputed = [r for r in passages if r.get("quote") and old.get("claim")
+                and _contains_observed_quote(r["quote"], old["claim"])]
+    if disputed:
+        wording_changed = all(not _passage_survives(snapshot, r) for r in disputed)
+    else:
+        wording_changed = any(not _passage_survives(snapshot, r) for r in passages)
+    if wording_changed:
         return True
     # A previously missing control or source can support an unchanged claim.
     # Require a changed *evidence artifact* and a newly located observation;
@@ -1129,7 +1139,8 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
             if checks[domain]["status"] != "assessed" or not _covers(snapshot, domain, refs):
                 raise ValueError(f"Resolving {ident} requires new verified evidence")
             if not _resolution_changed(snapshot, previous, old, refs):
-                raise ValueError(f"No changed observation supports resolving {ident}")
+                raise ValueError(f"No changed observation supports resolving {ident}. Recheck each cited "
+                                 "occurrence of the disputed claim, or cite newly observed supporting evidence.")
         issues.append({"id": ident, "status": status, "severity": severity, "domain": domain,
                        **{k: _string(issue.get(k), k) for k in ("claim", "reason", "fix")}, "evidence": refs})
     if not prior_open.issubset(used):

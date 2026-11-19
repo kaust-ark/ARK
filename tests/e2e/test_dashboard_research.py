@@ -145,8 +145,9 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 page = ctx.new_page()
                 # Observe actual Web Animations without depending on a 220 ms screenshot window.
                 page.add_init_script("""const animate = Element.prototype.animate;
-                    window.observationMotion = [];
+                    window.observationMotion = []; window.trailMotion = [];
                     Element.prototype.animate = function(...args) {
+                        if (this.parentElement?.id === 'research-trail') window.trailMotion.push(this.dataset.event);
                         if (this.id === 'research-observation') window.observationMotion.push(this.textContent);
                         return animate.apply(this, args);
                     };""")
@@ -170,6 +171,18 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert abs(meter.evaluate("el => el.getBoundingClientRect().width / el.parentNode.clientWidth") - 2/3) < .01
                 assert meter.evaluate("el => getComputedStyle(el).transitionDuration") == "0s"
                 assert page.evaluate("window.observationMotion") == []
+                trail = page.locator("#research-trail")
+                assert trail.locator("li").count() == 3
+                gap = trail.locator('li[data-event="gap"] button')
+                assert gap.count() == 1 and page.evaluate("window.trailMotion") == []
+                gap.focus()
+                page.keyboard.press("Enter")
+                history_entry = page.locator('#research-history li[data-event="gap"]')
+                assert history_entry.evaluate("el => document.activeElement === el")
+                page.locator("#research-history > summary").click()
+                if os.environ.get("IDEA2PAPER_UI_CAPTURE"):
+                    page.locator("#research-desk").screenshot(path=str(
+                        Path(os.environ["IDEA2PAPER_UI_CAPTURE"]) / f"recent-observations-{width}.png"))
                 experiment = page.locator('#research-phases button[data-phase="experiment"]')
                 experiment.click()
                 assert experiment.get_attribute("aria-pressed") == "true"
@@ -186,6 +199,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     capture_history()
                 event(f"focus-{width}", "experiments", "Finished reading result rows.", action="tool/result")
                 history.locator(f'li[data-event="focus-{width}"]').wait_for()
+                assert trail.locator(f'li[data-event="focus-{width}"]').count() == 0
                 assert result_file.evaluate("el => document.activeElement === el")
                 page.keyboard.press("Enter")
                 page.locator("#preview-content td").first.wait_for()
@@ -219,6 +233,14 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     assert earlier.locator("dd").first.is_visible()
                     assert earlier.locator("summary").evaluate("el => el === document.activeElement")
                     assert history.locator('li[data-event="new-match"] details').count() == 0
+                    assert trail.locator('li[data-event="new-match"]').count() == 1
+                    assert page.evaluate("window.trailMotion") == []
+                    page.emulate_media(reduced_motion="no-preference")
+                    event("live-narrow", "review", "Received an additional reviewer observation.")
+                    event("live-narrow", "review", "Received an additional reviewer observation.")
+                    trail.locator('li[data-event="live-narrow"]').wait_for()
+                    assert page.evaluate("window.trailMotion") == ["live-narrow"]
+                    page.emulate_media(reduced_motion="reduce")
                 history.locator(":scope > summary").click()
                 if width == 1300:
                     draft = "Add 256 items before doubling again."
@@ -340,7 +362,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                           failure="row_format", attempt=2)
                     row_error = "第 2 次复算返回的数据格式有误，尚无可比较的数值。"
                     page.locator("#research-observation").get_by_text(row_error, exact=True).wait_for()
-                    assert page.evaluate("window.observationMotion") == [row_error]
+                    assert page.evaluate("window.observationMotion") == ["Received an additional reviewer observation.", row_error]
                     event("abi", "review", "Invalid row.", action="measurement_reproduction_failed",
                           failure="row_format", attempt=2)
                     event("real-row", "review", "Recomputed seed 2.", action="measurement_reproduction_finished",
@@ -356,6 +378,9 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     assert "独立复算为 64" in page.locator("#research-announce").inner_text()
                     assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
                     assert page.evaluate("window.observationMotion").count(row_error) == 1
+                    assert page.evaluate("window.trailMotion").count("abi") == 1
+                    assert page.evaluate("window.trailMotion").count("real-row") == 1
+                    assert trail.locator("li").count() == 3
                     page.evaluate("setLang('ar')")
                     page.get_by_text("ضوابط التجربة (3)", exact=True).wait_for(state="attached")
                     history.get_by_text("فتح الملف الحالي · experiment.json", exact=True).wait_for(state="attached")
@@ -397,6 +422,8 @@ def test_live_research_desk(tmp_path, monkeypatch):
             owner_page.goto(base + f"/dashboard/#project/{pid}", wait_until="domcontentloaded")
             owner_page.locator("#evidence-files").get_by_text("Working draft PDF", exact=True).wait_for()
             saved = root / archived_pdf
+            frozen_pdf_bytes = saved.read_bytes()
+            assert hashlib.sha256(frozen_pdf_bytes).hexdigest() == archived_digest
             delivered_revision = saved.parent.name
             saved_review = json.loads((saved.parent / "review.json").read_text())
             saved_review.update(verdict="accept", deliverable=True, summary="Accepted delivery before revision.")
@@ -467,6 +494,51 @@ def test_live_research_desk(tmp_path, monkeypatch):
             assert shared.request.get(shared_pdf).status == 409
             assert shared.request.get(api + "/pdf").status == 409
             assert not shared.request.get(api).json()["has_pdf"]
+            notice = "Update your key in Settings > API Keys. <i id='quota-fixture'>Continue</i>"
+            with db.get_session(settings.db_path) as session:
+                db.update_project(session, db.get_project(session, pid), status="failed", error_message=notice)
+            owner_page.reload(wait_until="domcontentloaded")
+            owner_page.locator("#detail-info").get_by_text(notice, exact=False).wait_for()
+            assert owner_page.locator("#quota-fixture").count() == 0
+
+            # Resume an active manuscript without a delivered edition. A tool's proposed
+            # acceptance and an unpaired event cannot establish review completion.
+            receipt.write_text(json.dumps({"state":"running"}))
+            saved.write_bytes(frozen_pdf_bytes)
+            (root/"paper/main.pdf").write_bytes(frozen_pdf_bytes)
+            signed = {**saved_review,"artifact_hashes":{},"paper_pdf_sha256":archived_digest}
+            (saved.parent/"review.json").write_text(json.dumps(signed))
+            (state/"native_review.json").write_text(json.dumps(signed))
+            with db.get_session(settings.db_path) as session:
+                db.update_project(session, db.get_project(session, pid), status="running", activity="Checking the experimental results")
+            event("draft-proposal","review","accept",action="tool/result")
+            event("unpaired-review","review","accept",action="manuscript_reviewed",revision=delivered_revision)
+            owner_page.reload(wait_until="domcontentloaded")
+            action = owner_page.locator("#research-action")
+            action.get_by_text("Checking the experimental results", exact=True).wait_for()
+            projection = owner_page.request.get(api).json()["research"]["review"]
+            assert projection["revision"] == delivered_revision and not projection["stale"]
+            frozen_pdf = "auto_research/state/reviews/" + delivered_revision + "/main.pdf"
+            event("signed-accept","review","accept",action="manuscript_reviewed",revision=delivered_revision,artifact=frozen_pdf)
+            event("return-to-owner","work","owner tool returned",action="tool/result")
+            complete = "Review complete. Awaiting the next step."
+            action.get_by_text(complete, exact=True).wait_for()
+            assert owner_page.locator("#research-read-paper").is_hidden()
+            owner_page.reload(wait_until="domcontentloaded")
+            action.get_by_text(complete, exact=True).wait_for()
+            event("new-writing","work","owner called write_project_file",action="tool/call",status="running")
+            action.get_by_text("owner called write_project_file", exact=True).wait_for()
+            revised = hashlib.sha256(b"new reviewed revision").hexdigest()
+            signed.update(revision=revised,verdict="revise",deliverable=False)
+            revised_archive = state/"reviews"/revised
+            revised_archive.mkdir()
+            (revised_archive/"main.pdf").write_bytes(saved.read_bytes())
+            (revised_archive/"review.json").write_text(json.dumps(signed))
+            (state/"native_review.json").write_text(json.dumps(signed))
+            event("request-revisions","review","revise",action="manuscript_reviewed",revision=revised,
+                  artifact="auto_research/state/reviews/" + revised + "/main.pdf")
+            action.get_by_text("The reviewer requested a revision.", exact=True).wait_for()
+            assert owner_page.locator("#research-read-paper").is_hidden()
             browser.close()
         with db.get_session(settings.db_path) as session:
             assert db.get_decision(session, decision).answer_text == draft

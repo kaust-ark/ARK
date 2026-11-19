@@ -747,6 +747,44 @@ def test_linked_in_project_or_external_artifacts_not_followed(tmp_path):
         build_snapshot(root)
 
 
+def test_resolving_a_claim_disputed_in_two_sections(tmp_path):
+    pair = PAIRS[2]
+    project(tmp_path, pair, "clean")
+    claim = pair["flawed"]
+    introduction = "In this benchmark: " + claim
+    discussion = "The practical takeaway: " + claim
+    data_path = "results/rows.csv"
+
+    def submit(passages, status, previous=None):
+        pdf_path = "paper/main.pdf"
+        passages = [*passages, "Both conditions used the same three paired trials."]
+        (tmp_path / "paper/main.tex").write_text("\n\n".join(passages))
+        with fitz.open() as doc:
+            for passage in passages:
+                page = doc.new_page()
+                page.insert_textbox((35, 40, 550, 160), passage, fontsize=11)
+            doc.save(tmp_path / pdf_path)
+        snap = build_snapshot(tmp_path, required=["manuscript", "experiment"])
+        response, receipts = record(snap, {**pair, "passage": passages[0]}, "passage", status)
+        issue = response["issues"][0]
+        issue["claim"] = claim
+        for page_number, passage in enumerate(passages, 1):
+            view = read_evidence(snap, pdf_path, page=page_number)
+            receipts.append(view["receipt"])
+            # A reviewer can cite only the repaired introduction on the second round.
+            if previous is None or page_number == 1:
+                issue["evidence"].append({"artifact": pdf_path, "page": page_number, "quote": passage})
+        return validate_review(snap, response, previous, observed=receipts)
+
+    initial = submit([introduction, discussion], "new")
+    with pytest.raises(ValueError, match="No changed observation"):
+        submit([pair["clean"], "The protocol is described below.", discussion], "resolved", initial)
+    assert submit([pair["clean"], pair["clean"]], "resolved", initial)["deliverable"]
+    # A finding can instead be resolved with a newly measured comparison.
+    (tmp_path / data_path).write_text("trial,uncached_ms,cached_ms\n1,10,5\n2,20,10\n3,30,15\n")
+    assert submit([introduction, discussion], "resolved", initial)["deliverable"]
+
+
 def test_blind_report_requires_independent_source_bound_adjudication(tmp_path):
     import hashlib
     from scripts.eval_peer_review import grade
@@ -763,6 +801,17 @@ def test_blind_report_requires_independent_source_bound_adjudication(tmp_path):
     jury["opaque1"]["unsupported_block"] = True
     report = grade(key, tmp_path, jury)
     assert not report["pass"] and report["metrics"]["clean_controls_incorrectly_blocked"] == {"count": 1, "total": 1}
+    stopped = {ident: {"completed": False, "note": "Request cap reached before a verdict.",
+                       "review_sha256": entry["review_sha256"]} for ident, entry in jury.items()}
+    incomplete = grade(key, tmp_path, stopped)
+    assert not incomplete["pass"]
+    assert incomplete["metrics"]["completed_reviews"] == {"count": 0, "total": 3}
+    assert incomplete["metrics"]["critical_defects_found"] == {"count": 0, "total": 1}
+    assert incomplete["metrics"]["withheld_cases_abstained"] == {"count": 0, "total": 1}
+    assert incomplete["metrics"]["clean_controls_incorrectly_blocked"] == {"count": 0, "total": 0}
+    stopped["opaque0"]["defect_found"] = True
+    with pytest.raises(ValueError, match="unfinished review"):
+        grade(key, tmp_path, stopped)
     (tmp_path / "opaque1.md").write_text("Replacement review")
     with pytest.raises(ValueError, match="different review"):
         grade(key, tmp_path, jury)

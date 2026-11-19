@@ -13,7 +13,9 @@ Save each blind review as ID.md or ID.json. An independent reader adjudicates ea
 review against the key, recording a JSON object keyed by ID. Each entry binds its
 review_sha256 and gives a short note explaining the judgment. For flawed cases
 supply booleans defect_found and evidence_located. For clean controls supply
-unsupported_block. For withheld cases supply abstained. The grader computes counts
+unsupported_block. For withheld cases supply abstained. If a run stopped before
+its verdict, archive its final response or stop receipt and set completed to false
+in its adjudication. An unfinished attempt stays in the assigned sample. The grader computes counts
 and denominators, never treats word matching as scientific evaluation.
 """
 import argparse
@@ -78,7 +80,7 @@ def prepare(output, key_path, split, seed=None):
 def grade(key, reviews, jury):
     if set(jury) != set(key):
         raise ValueError("The jury must adjudicate every frozen packet exactly once")
-    metrics = {m: [0, 0] for m in ("critical_defects_found", "correct_evidence_locations",
+    metrics = {m: [0, 0] for m in ("completed_reviews", "critical_defects_found", "correct_evidence_locations",
                                      "clean_controls_incorrectly_blocked", "withheld_cases_abstained")}
     for ident, truth in key.items():
         entries = [reviews / (ident + s) for s in (".md", ".json") if (reviews / (ident + s)).is_file()]
@@ -89,12 +91,25 @@ def grade(key, reviews, jury):
             raise ValueError(f"The adjudication refers to a different review for {ident}")
         if not isinstance(assessment.get("note"), str) or not assessment["note"].strip():
             raise ValueError(f"Missing jury rationale for {ident}")
+        completed = assessment.get("completed", True)
+        if type(completed) is not bool:
+            raise ValueError(f"Expected a Boolean completed adjudication for {ident}")
+        metrics["completed_reviews"][0] += int(completed)
+        metrics["completed_reviews"][1] += 1
         mapping = {"flawed": {"defect_found": "critical_defects_found", "evidence_located": "correct_evidence_locations"},
                    "clean": {"unsupported_block": "clean_controls_incorrectly_blocked"},
                    "withheld": {"abstained": "withheld_cases_abstained"}}[truth["variant"]]
         if (truth["variant"] == "flawed" and assessment.get("evidence_located") and not assessment.get("defect_found")):
             raise ValueError(f"Evidence for an undetected defect cannot receive credit: {ident}")
         for field, metric in mapping.items():
+            if not completed:
+                if field in assessment:
+                    raise ValueError(f"An unfinished review cannot receive a {field} judgment: {ident}")
+                # Missed findings and missing abstentions use all assigned papers.
+                # A false block is a decision and uses only completed clean reviews.
+                if field != "unsupported_block":
+                    metrics[metric][1] += 1
+                continue
             if type(assessment.get(field)) is not bool:
                 raise ValueError(f"Expected a Boolean {field} adjudication for {ident}")
             metrics[metric][0] += int(assessment[field])

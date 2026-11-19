@@ -4011,7 +4011,7 @@ async function loadDetail(id) {
   } else if (p.status === 'stopped') {
     statusLine = t('stopped_iter', p.current_iteration || 0, p.max_iterations);
   } else if (p.status === 'failed') {
-    statusLine = t('failed') + (p.error_message ? ` — ${esc(p.error_message)}` : '');
+    statusLine = t('failed') + (p.error_message ? ` — ${p.error_message}` : '');
   } else {
     statusLine = p.status;
   }
