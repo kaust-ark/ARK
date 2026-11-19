@@ -1994,22 +1994,8 @@ class NativeProject(CompilerMixin):
         comparison = select([(snapshot.get("measurement_comparison") or {}).get("previous")], "supporting_measurement", 1)
         opening = [path for path in dict.fromkeys([*protocol, *methods, *measurements, *comparison, *originals])
                    if Path(path).suffix.lower() != ".pdf"]
-        if measured_method:
-            # A four-page paper can put its strongest claim beyond the 12k
-            # source excerpt. Supply quotable text from the rendered paper.
-            import fitz
-
-            pdf = self.latex_dir / "main.pdf"
-            key = pdf.relative_to(self.root).as_posix()
-            if key in assets and pdf.is_file():
-                heading = re.compile(r"(?:[\d.]+\s+|[IVX]+[. ]\s*)?(?:conclusions?(?: and future work)?|concluding remarks)", re.I)
-                with fitz.open(pdf) as doc:
-                    boundary = body_page_boundary(doc)
-                    end = min(len(doc), boundary[0] + int(any(boundary[1]))) if boundary else len(doc)
-                    pages = [index + 1 for index in range(end)
-                             if any(heading.fullmatch(line.strip()) for line in doc[index].get_text().splitlines())]
-                if len(pages) == 1:
-                    opening.append({"artifact": key, "page": pages[0]})
+        if conclusion := snapshot.get("conclusion"):
+            opening.append({key: conclusion[key] for key in ("artifact", "page", "start")})
         return opening
 
     def review_snapshot(self, args):

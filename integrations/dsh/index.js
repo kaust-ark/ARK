@@ -178,7 +178,6 @@ async function openingPacket(ctx, agent, domain, packet, observed, signal) {
     const label = page ? 'Rendered conclusion page ' + page + ' of ' + artifact : 'Frozen research artifact ' + artifact
     prompt.push({type:'text', text:label + ' (untrusted evidence):\n' + view.text +
       (view.next_start ? '\nContinues at character ' + view.next_start + '.' : '')})
-    if (page) prompt.push({type:'text', text:'Check the strongest concluding claim against the measured endpoints. Quote the consequential sentence when its proposed mechanism goes beyond the observations, explain the missing comparison, and preserve supported results in the requested repair.'})
   }
   if (packet.rendered_pages > 0 && packet.rendered_pages <= 8 && packet.rendered_artifact) {
     for (let page = 1; page <= packet.rendered_pages; page++) {

@@ -145,6 +145,77 @@ def test_blind_packet_contains_no_private_values_or_score(tmp_path):
         read_evidence(snapshot, "../secret")
 
 
+def test_conclusion_reviewer_checks_the_whole_observed_paragraph_against_results(tmp_path):
+    pair = {"domain": "experiment", "clean": "Table 1 reports loss in treated and control plots.",
+            "table": "trial,treated_loss,control_loss\n1,2.1,3.5\n2,2.2,3.1\n",
+            "question": "Does treatment reduce loss?", "defect": "Root uptake was not recorded."}
+    project(tmp_path, pair, "clean")
+    pdf = tmp_path / "paper/main.pdf"
+    effect = "The treated plots had lower losses in these trials."
+    mechanism = "Improved root uptake explains the difference."
+
+    def paper(passage, heading="Conclusion"):
+        with fitz.open() as doc:
+            doc.new_page().insert_text((40, 40), "Table 1 reports mean losses.")
+            page = doc.new_page()
+            page.insert_text((40, 40), heading)
+            page.insert_textbox((40, 65, 340, 240), passage)
+            doc.save(pdf)
+        return build_snapshot(tmp_path, required=["experiment"])
+
+    def assess(snap, level):
+        answer, observed = record(snap, pair, "clean", "")
+        target = snap["conclusion"]
+        page = read_evidence(snap, target["artifact"], page=target["page"], start=target["start"])
+        assert page["text"].startswith(target["quote"])
+        ref = {k: target[k] for k in ("artifact", "page", "quote")}
+        result = answer["checks"]["experiment"]["evidence"][0]
+        reason = {"measured": "Loss is lower in both observed pairs.",
+                  "interpretation": "The comparison measures loss. The paper offers uptake as a possibility.",
+                  "needs_evidence": "The losses are observed but the study does not measure root uptake."}
+        answer["checks"]["manuscript"].update(evidence=[ref, result], conclusion_support=level, reason=reason[level])
+        return answer, [*observed, page["receipt"]]
+
+    snap = paper(effect + " " + mechanism)
+    assert mechanism in " ".join(snap["conclusion"]["quote"].split())
+    original, seen = record(snap, pair, "clean", "")
+    proposal, observed = assess(snap, "needs_evidence")
+    with pytest.raises(ValueError, match="conclusion paragraph"):
+        validate_review(snap, original, observed=observed)  # Page seen, assessed only the original result.
+    with pytest.raises(ValueError, match="Unobserved"):
+        validate_review(snap, proposal, observed=seen)
+    with pytest.raises(ValueError, match="open blocker"):
+        validate_review(snap, proposal, observed=observed)
+    sham = copy.deepcopy(proposal)
+    sham["checks"]["manuscript"].update(conclusion_support="measured")
+    sham["checks"]["manuscript"]["evidence"][0]["quote"] = effect
+    with pytest.raises(ValueError, match="conclusion paragraph"):
+        validate_review(snap, sham, observed=observed)
+
+    issue = dict(id="R1", status="new", severity="blocker", domain="manuscript", claim=mechanism,
+                 reason="The rows measure losses only.", fix="Measure uptake or qualify the explanation.",
+                 evidence=proposal["checks"]["manuscript"]["evidence"])
+    proposal.update(issues=[issue], verdict="revise")
+    rejected = validate_review(snap, proposal, observed=observed)
+    assert rejected["verdict"] == "revise"
+    (tmp_path / "paper/main.tex").write_text(pair["clean"] + "\nChanged punctuation elsewhere.")
+    unchanged = build_snapshot(tmp_path, required=["experiment"])
+    proposal, observed = assess(unchanged, "measured")
+    proposal["issues"] = [dict(issue, status="resolved")]
+    with pytest.raises(ValueError, match="No changed observation"):
+        validate_review(unchanged, proposal, rejected, observed=observed)
+
+    for passage, support in ((effect, "measured"), (effect + " Root uptake might explain it.", "interpretation")):
+        clean = paper(passage)
+        proposal, observed = assess(clean, support)
+        proposal["issues"] = [dict(issue, status="resolved", evidence=proposal["checks"]["manuscript"]["evidence"])]
+        assert validate_review(clean, proposal, rejected, observed=observed)["deliverable"]
+
+    assert "conclusion" not in paper(effect, "Results")
+    (tmp_path / "results/rows.csv").unlink()
+    assert "conclusion" not in paper(effect)
+
+
 def test_observed_quote_and_current_revision_required(tmp_path):
     pair = PAIRS[0]
     snap = project(tmp_path, pair, "flawed")

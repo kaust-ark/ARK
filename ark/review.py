@@ -223,6 +223,10 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
         methods = _figure_methods(root, paper, artifacts, registered_plots or {})
         if methods:
             manifest["figure_methods"] = methods
+    pdf = (paper / "main.pdf").as_posix()
+    if pdf in artifacts and any(meta["kind"] == "measurement" for meta in artifacts.values()):
+        if conclusion := _rendered_conclusion({**manifest, "project": str(root)}, pdf):
+            manifest["conclusion"] = conclusion
     return {**manifest, "project": str(root), "revision": _digest(_canonical(manifest))}
 
 
@@ -237,6 +241,38 @@ def _artifact(snapshot, artifact):
     if len(data) > MAX_BYTES or _digest(data) != meta["sha256"]:
         raise ValueError(f"Artifact changed since review started: {artifact}")
     return data, meta
+
+
+def _rendered_conclusion(snapshot, pdf):
+    """Locate a quotable opening paragraph under a unique rendered conclusion heading."""
+    import fitz
+    from ark.latex.utils import body_page_boundary
+
+    data, _ = _artifact(snapshot, pdf)
+    try:
+        document = fitz.open(stream=data, filetype="pdf")
+    except (RuntimeError, ValueError):
+        return None
+    heading = re.compile(r"(?m)^[ \t]*(?:[\d.]+\s+|[IVX]+[. ]\s*)?(?:conclusions?(?: and future work)?|concluding remarks)[ \t]*$", re.I)
+    with document as doc:
+        boundary = body_page_boundary(doc)
+        end = min(len(doc), boundary[0] + int(any(boundary[1]))) if boundary else len(doc)
+        headings = []
+        for index in range(end):
+            page = doc[index]
+            blocks = [b[4] for b in page.get_text("blocks") if b[6] == 0]
+            for n, block in enumerate(blocks):
+                for match in heading.finditer(block):
+                    paragraph = block[match.end():].strip() or (blocks[n + 1].strip() if n + 1 < len(blocks) else "")
+                    # Use complete sentences up to the ordinary reference size limit.
+                    stops = [m.end() for m in re.finditer(r"[.!?](?=\s|$)", paragraph) if m.end() <= 1200]
+                    quote = paragraph[:stops[-1]] if stops else ""
+                    text = page.get_text()
+                    title = text.find(match[0])
+                    offset = text.find(quote, title + len(match[0])) if title >= 0 else -1
+                    headings.append({"artifact": pdf, "page": index + 1, "start": offset + 1,
+                                     "quote": quote} if len(quote) >= 4 and offset >= 0 else None)
+        return headings[0] if len(headings) == 1 else None
 
 
 def _page_index(number, count):
@@ -419,6 +455,16 @@ def review_prompt(snapshot, previous=None):
     packet = {"revision": snapshot["revision"], "target_track": snapshot["target_track"] or "unspecified",
               "required": snapshot["required"], "manuscript_artifact": tex, "rendered_artifact": pdf,
               "manuscript_excerpt": _blind_text(snapshot), "available_artifacts": catalogue}
+    if target := snapshot.get("conclusion"):
+        packet["conclusion_to_check"] = target
+        packet["conclusion_assessment"] = (
+            "In checks.manuscript.evidence quote the supplied conclusion paragraph from its observed PDF page "
+            "and cite the measured result used to judge it. In reason distinguish what the study measured from "
+            "what the authors infer. Set conclusion_support to measured if the evidence directly tests the whole claim, "
+            "interpretation if the paper presents the inference as a possibility, or needs_evidence if it asserts an "
+            "untested explanation. For needs_evidence quote the disputed words in an open blocker's claim, cite "
+            "the paragraph and result, and specify the "
+            "test or narrower wording that would resolve it. Mark manuscript unassessed if the evidence is unavailable.")
     if conflicts := reported_change_conflicts(packet["manuscript_excerpt"]):
         packet["reported_changes_to_verify"] = conflicts[:8]
     if "worker_measurement" in snapshot:
@@ -738,6 +784,11 @@ def _contains_observed_quote(text, quote):
     return normalized(quote) in normalized(text)
 
 
+def _quotes_conclusion(refs, target):
+    return any(r["artifact"] == target["artifact"] and r.get("page") == target["page"]
+               and _contains_observed_quote(r.get("quote", ""), target["quote"]) for r in refs)
+
+
 def _passage_survives(snapshot, ref):
     """An unrelated edit or line reflow does not repair a disputed passage."""
     path = ref["artifact"]
@@ -876,6 +927,15 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                 if not set(range(1, len(doc) + 1)).issubset(seen):
                     raise ValueError("Rendered layout was not observed on every manuscript page")
         checks[domain] = {"status": status, "reason": reason, "evidence": refs}
+        if domain == "manuscript" and assessed and (target := snapshot.get("conclusion")):
+            if not _quotes_conclusion(refs, target) or not _covers(snapshot, "experiment", refs):
+                raise ValueError(f"In checks.manuscript.evidence cite the supplied conclusion paragraph on PDF page "
+                                 f"{target['page']} and an observed result that lets you judge its scope.")
+            support = check.get("conclusion_support")
+            if support not in ("measured", "interpretation", "needs_evidence"):
+                raise ValueError("Set checks.manuscript.conclusion_support to measured, interpretation, or "
+                                 "needs_evidence, and explain the relationship to the measured result in reason.")
+            checks[domain]["conclusion_support"] = support
         if domain == "experiment" and (controls or reproductions):
             checks[domain]["controls"] = controls + reproductions
         if origins:
@@ -936,6 +996,16 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                        **{k: _string(issue.get(k), k) for k in ("claim", "reason", "fix")}, "evidence": refs})
     if not prior_open.issubset(used):
         raise ValueError("Recheck every open finding from the preceding revision")
+    if checks["manuscript"].get("conclusion_support") == "needs_evidence" and not any(
+        issue["severity"] == "blocker" and issue["status"] in ("new", "still_present")
+        and _quotes_conclusion(issue["evidence"], snapshot["conclusion"])
+        and _contains_observed_quote(snapshot["conclusion"]["quote"], issue["claim"])
+        and _covers(snapshot, "experiment", issue["evidence"])
+        for issue in issues
+    ):
+        raise ValueError("Report the unsupported conclusion as an open blocker. Put the disputed words in "
+                         "claim verbatim, cite the same paragraph and its measured evidence, and specify "
+                         "the missing test or wording change.")
     for name, origin in checks["visual"].get("series_origin", {}).items():
         if origin == "copied" and not any(
             issue["severity"] == "blocker" and issue["status"] in ("new", "still_present")
