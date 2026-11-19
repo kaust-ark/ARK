@@ -32,9 +32,10 @@ def test_delivered_signature_survives_only_changes_to_review_checks():
         {"sentence":1,"result":"The outcome increased","continuation":"because uptake improved."}]}}
     comparisons = {**latest, "evidence_scope":{**latest["evidence_scope"], "direction":locator}}
     neighbor_checks = {**comparisons, "evidence_scope":{**comparisons["evidence_scope"], "recheck_paragraphs":True}}
-    current = {**neighbor_checks, "revision":fingerprint(neighbor_checks), "project":"/somewhere/else"}
+    bound = {**neighbor_checks, "evidence_scope":{**neighbor_checks["evidence_scope"], "recheck_paragraphs":{"version":2}}}
+    current = {**bound, "revision":fingerprint(bound), "project":"/somewhere/else"}
     archived_claims = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":3}}
-    for fmt in (early, published, older, prior, archived_claims, previous_policy, latest, comparisons):
+    for fmt in (early, published, older, prior, archived_claims, previous_policy, latest, comparisons, neighbor_checks):
         revision = fingerprint(fmt)
         signed = dict(version=1, revision=revision, verdict="accept", deliverable=True, paper_pdf_sha256="a" * 64,
                       artifact_hashes={p: meta["sha256"] for p, meta in artifacts.items()})
@@ -1093,6 +1094,18 @@ def test_resolving_manuscript_blocker_rechecks_surviving_paragraph_across_pages(
     corrected = "The measurements do not distinguish the two mechanisms."
     neighbor = "Cooling may account for part of this difference."
     procedural = "Both samples used the same type of enclosure."
+    from ark.compute.native_experiment import plan_digest
+    operation = "The same type of enclosure was used for both samples."
+    method = "scripts/worker.py"
+    protocol = "auto_research/state/experiment_plan.yaml"
+    code = "enclosure = common_enclosure\ntreated = measured_loss  # mass loss in the treatment arm"
+    (tmp_path / method).parent.mkdir()
+    (tmp_path / method).write_text(code)
+    plan = {"controls":[operation], "question":"Compare mass", "baseline":"plain", "comparison":"treated",
+            "metric":"mass", "expected":measured, "script":method}
+    (tmp_path / protocol).parent.mkdir(parents=True)
+    (tmp_path / protocol).write_text(json.dumps(plan))
+    worker.update(plan_sha256=plan_digest(plan), code_sha256=hashlib.sha256(code.encode()).hexdigest(), script=method)
     def build(claim, moved=False):
         with fitz.open() as doc:
             if moved:
@@ -1101,7 +1114,7 @@ def test_resolving_manuscript_blocker_rechecks_surviving_paragraph_across_pages(
             page.insert_textbox((40,40,460,300), "\n".join((procedural, claim, neighbor)))
             page.insert_text((40,400), pair["clean"])
             doc.save(tmp_path / pdf)
-        return build_snapshot(tmp_path, required=["experiment"], expected_measurement=measured, measurement_run=worker)
+        return build_snapshot(tmp_path, required=["experiment"], expected_measurement=measured, measurement_run=worker, experiment_plan=plan)
     def response(snap, page, claim):
         answer, _ = record(snap, pair, "clean", "")
         manuscript, data = read_evidence(snap, pdf, page=page), read_evidence(snap, measured)
@@ -1109,8 +1122,9 @@ def test_resolving_manuscript_blocker_rechecks_surviving_paragraph_across_pages(
         row = {"artifact":measured, "row":1}
         answer["checks"]["manuscript"]["claims"] = [{"passage":{"artifact":pdf, "page":page, "quote":pair["clean"]},
             "basis":"measurement", "kind":"result", "evidence":[row], "reason":"The measured losses differ."}]
-        answer["checks"]["experiment"]["evidence"] = [row]
-        return answer, ref, [manuscript["receipt"],data["receipt"]]
+        answer["checks"]["experiment"]["evidence"] = [row, {"artifact":method,"quote":code}]
+        return answer, ref, [manuscript["receipt"],data["receipt"],
+                             read_evidence(snap, protocol)["receipt"], read_evidence(snap, method)["receipt"]]
 
     first = build(old_claim)
     raw, ref, seen = response(first,1,old_claim)
@@ -1133,13 +1147,53 @@ def test_resolving_manuscript_blocker_rechecks_surviving_paragraph_across_pages(
         validate_review(revised, raw, rejected, observed=seen)
     issue["context_assessment"] = [{"sentence":1,"judgment":"limited","qualification":"may",
                                     "reason":"A possible contribution is explicitly marked as uncertain."},
-                                   {"sentence":2,"judgment":"distinct","reason":"The enclosure describes the protocol."}]
+                                   {"sentence":2,"judgment":"documented","operation":operation, "reason":"Both samples used the recorded enclosure.",
+                                    "evidence":[{"artifact":protocol,"quote":operation},{"artifact":method,"quote":code}]}]
     accepted = validate_review(revised, raw, rejected, observed=seen)
     check = accepted["issues"][0]["context_assessment"]
     assert accepted["deliverable"] and check[0]["passage"]["quote"] == neighbor and check[0]["qualification"] == "may"
-    issue["context_assessment"][0].update(judgment="supported")
-    with pytest.raises(ValueError, match="verified evidence"):
+    issue["context_assessment"][0].update(judgment="distinct", reason="It is a conceptual interpretation.")
+    with pytest.raises(ValueError, match="conceptual"):
         validate_review(revised, raw, rejected, observed=seen)
+    # An observed worker row elsewhere in the issue cannot support this individual sentence.
+    row = {"artifact":measured, "row":1}
+    issue["evidence"].append(row)
+    issue["context_assessment"][0].update(judgment="measured", quantity="Cooling", measured_columns=["treated"])
+    with pytest.raises(ValueError, match="specific evidence"):
+        validate_review(revised, raw, rejected, observed=seen)
+    issue["context_assessment"][0]["evidence"] = [row]
+    with pytest.raises(ValueError, match="printed measured quantity"):
+        validate_review(revised, raw, rejected, observed=seen)
+
+
+def test_remaining_measured_sentence_binds_an_observed_metric_alias_and_preserves_abstention(tmp_path):
+    from ark import review
+
+    pair = {"domain":"experiment","clean":"The treated arm lost less mass.","table":"arm,score\nA,1\nB,2"}
+    project(tmp_path, pair, "clean")
+    worker, method = "results/paired.json", "scripts/worker.py"
+    path = tmp_path / worker
+    path.write_text('[{"m_end":7.0,"temperature":2.0}]')
+    (tmp_path / method).parent.mkdir()
+    definition = "m_end = read_scale()  # remaining mass in grams"
+    (tmp_path / method).write_text(definition)
+    snap = build_snapshot(tmp_path, expected_measurement=worker, measurement_run={
+        "artifact":worker, "status":"completed", "sha256":hashlib.sha256(path.read_bytes()).hexdigest()})
+    observed = [read_evidence(snap, name)["receipt"] for name in (worker,method)]
+    row = {"artifact":worker,"row":1}
+    quantified = "The remaining mass was 7 grams."
+    item = {"judgment":"measured","quantity":"remaining mass","measured_columns":["m_end"],
+            "evidence":[row, {"artifact":method,"quote":definition}]}
+    def support(claim, assessment):
+        return review._context_support(snap, assessment, {"quote":claim}, {"paragraph":claim}, [], observed, "")
+    assert support(quantified,item)["measured_columns"] == ["m_end"]
+    with pytest.raises(ValueError, match="printed measured quantity"):
+        support(quantified, {**item, "evidence":[row]})
+    with pytest.raises(ValueError, match="printed measured quantity"):
+        support("Fundamental bias explains the increase in loss.",
+                {**item, "quantity":"bias", "measured_columns":["temperature"]})
+    with pytest.raises(ValueError, match="conceptual reading"):
+        support("Instability drives the result.", {"judgment":"distinct","reason":"Conceptual."})
 
 
 def test_resolving_a_claim_disputed_in_two_sections(tmp_path):

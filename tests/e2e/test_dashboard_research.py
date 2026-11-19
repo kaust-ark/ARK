@@ -413,6 +413,9 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     history.get_by_text("打开归档文件 · main.pdf", exact=True).wait_for(state="attached")
                     assert "已比较两种假想情形" in cases.text_content() and inference in cases.text_content()
                     assert "不一致" in controls.text_content() and "评审理由" in controls.text_content()
+                    assert finding.locator(".review-finding-head span").inner_text() == "已解决"
+                    assert "查看来源" in finding.locator("summary").inner_text()
+                    assert finding.get_by_role("button", name="上一版 · PDF 第 1 页", exact=True).count() == 1
                     assert "评审依据：实测数据" in claim_rows.first.text_content()
                     assert "质疑第 1 页的这条解释" in claim_rows.last.text_content()
                     if output := os.environ.get("IDEA2PAPER_UI_CAPTURE"):
@@ -449,6 +452,9 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     page.get_by_text("ضوابط التجربة (3)", exact=True).wait_for(state="attached")
                     history.get_by_text("فتح الملف الحالي · experiment.json", exact=True).wait_for(state="attached")
                     assert "غير مطابق" in controls.text_content()
+                    assert finding.locator(".review-finding-head span").inner_text() == "تم الحل"
+                    assert "تفاصيل المصادر" in finding.locator("summary").inner_text()
+                    assert finding.get_by_role("button", name="النسخة السابقة · PDF · الصفحة 1", exact=True).count() == 1
                     assert "أساس حكم المراجع: القياس" in claim_rows.first.text_content()
                     assert "ناقش هذا التفسير في الصفحة 1" in claim_rows.last.text_content()
                     if output := os.environ.get("IDEA2PAPER_UI_CAPTURE"):

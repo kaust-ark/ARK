@@ -248,7 +248,10 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
                 except (ValueError, UnicodeDecodeError, RecursionError):
                     tables = []
                 if tables and len(_canonical(tables[:8])) <= VIEW_SIZE:
-                    scope = {"version": 4, "tables": tables[:8], "recheck_paragraphs": True}
+                    recheck = {"version":2}
+                    if manifest.get("registered_design"):
+                        recheck["plan_sha256"] = run["plan_sha256"]
+                    scope = {"version": 4, "tables": tables[:8], "recheck_paragraphs":recheck}
                     if conclusion and (clauses := _conclusion_clauses(conclusion)):
                         scope["conclusion_clauses"] = clauses
                     scope.update(_explanatory_passages({**manifest, "project": str(root)}, pdf))
@@ -785,11 +788,16 @@ def review_prompt(snapshot, previous=None):
                              "numbered sentences (one-based, in the remaining array) with the original evidence gap. "
                              "If any still asserts the unsupported inference, keep the blocker still_present and cite "
                              "the surviving words. To resolve it, give the issue a context_assessment array with one "
-                             "entry per remaining sentence: {sentence, judgment, reason}. Use distinct for a separate factual "
-                             "observation or procedural detail, limited if the author qualifies the inference, or supported if "
-                             "verified evidence establishes it. A different unsupported explanation needs its own open blocker. Explain each decision. For limited supply qualification "
-                             "quoting the author's limiting words. For supported cite the relevant method, measurement, "
-                             "independent source or assessed derivation in the issue evidence.")
+                             "entry per remaining sentence: {sentence, judgment, reason}. Use limited with qualification "
+                             "quoting the author's limiting words at that inference. Use measured with quantity (the "
+                             "printed metric name), measured_columns and this entry's own evidence citing those worker "
+                             "fields or computed statistics. For a metric alias cite its definition in the protocol or code. Use documented with this entry's own evidence if the "
+                             "original source directly states the sentence, or the registered design records a neutral "
+                             "procedure in its baseline, comparison or controls. For a procedural rewording, supply the exact registered operation and cite its executed code. For an analytic implication use "
+                             "derived with claim_ref pointing to a checked derivation of that exact sentence in "
+                             "checks.manuscript.claims. A different topic or the reviewer's conceptual explanation "
+                             "cannot establish what the author asserts. If no basis applies, keep the finding open "
+                             "or mark it unassessed and cite the unresolved sentence.")
         packet["findings_to_recheck"] = [
             {k: issue[k] for k in ("id", "domain", "severity", "claim", "reason", "fix", "evidence")}
             for issue in previous["issues"] if issue["status"] != "resolved"
@@ -1469,6 +1477,91 @@ def revision_paragraphs(snapshot, previous):
     return result
 
 
+def _context_support(snapshot, item, ref, context, claims, observed, blind):
+    """Bind each closure judgment to the author's words and that sentence's own evidence."""
+    basis, quote = item.get("judgment"), ref["quote"]
+    if basis == "limited":
+        return _interpretation_wording({"quote":context["paragraph"]},
+                                      {"claim":quote, "qualification":item.get("qualification")})
+    if basis == "derived":
+        n = item.get("claim_ref")
+        if type(n) is int and 1 <= n <= len(claims):
+            claim = claims[n - 1]
+            if (claim["basis"] == "derivation" and claim["passage"] == ref and claim.get("bridge")
+                    and (claim.get("independent_derivation")
+                         or any(snapshot["artifacts"][e["artifact"]]["kind"] == "primary_source"
+                                and _contains_observed_quote(e.get("quote", ""), claim["bridge"]) for e in claim["evidence"])
+                         or any(r.get("control") == 3 and r.get("revision") == snapshot["revision"]
+                                and r.get("passage") == ref and r.get("same_premise") for r in observed))):
+                return {"claim_ref":n, "evidence":claim["evidence"]}
+        raise ValueError("For derived, reference an assessed derivation of this exact remaining sentence with "
+                         "an independent calculation, observed primary-source bridge or independent inference test.")
+    if basis not in ("measured", "documented"):
+        raise ValueError("Each remaining sentence needs its own measured, documented, derived or author-limited "
+                         "basis. A distinct topic or conceptual reading alone cannot close a blocker.")
+    refs = _references(snapshot, item.get("evidence"), observed, blind, required=True)
+    if basis == "measured":
+        quantity = _string(item.get("quantity"), "printed measured quantity", limit=160)
+        columns = item.get("measured_columns")
+        available = _cited_measurement_columns(snapshot, refs)
+        # Compare the printed metric name to whole words of a cited field,
+        # so e.g. 'mass loss' can identify 'mean_mass_loss_treated'.
+        def words(text):
+            return re.findall(r"[^\W_]+", text.casefold())
+        metric = words(quantity)
+        def names_metric(column):
+            name = words(column)
+            if any(name[i:i+len(metric)] == metric for i in range(len(name))):
+                return True
+            # Some protocols call the endpoint by its units or a descriptive alias.
+            # Accept an observed definition binding that name to the worker field.
+            return any(snapshot["artifacts"][e["artifact"]]["kind"] in ("method","protocol","primary_source")
+                       and any(len(line) <= 240 and _contains_observed_quote(line, quantity) and column in line
+                               for line in e.get("quote", "").splitlines()) for e in refs)
+        if (not metric or not _contains_observed_quote(quote, quantity) or not isinstance(columns, list)
+                or not 1 <= len(columns) <= 16 or not all(isinstance(c, str) and c in available
+                                                          and names_metric(c) for c in columns)):
+            raise ValueError("Name the printed measured quantity and its columns in this sentence's observed "
+                             "worker evidence, or cite the protocol or method mapping the printed alias to the field. "
+                             "If the measurement does not address the claim, leave it open or unassessed.")
+        return {"evidence":refs, "quantity":quantity, "measured_columns":list(dict.fromkeys(columns))}
+    for evidence in refs:
+        kind = snapshot["artifacts"][evidence["artifact"]]["kind"]
+        cited = evidence.get("quote", "")
+        if kind == "primary_source" and _contains_observed_quote(cited, quote):
+            return {"evidence":refs}
+        if kind != "protocol":
+            continue
+        import yaml
+        protocol = yaml.safe_load(_artifact(snapshot, evidence["artifact"])[0])
+        from ark.compute.native_experiment import plan_digest
+        policy = snapshot.get("evidence_scope", {}).get("recheck_paragraphs")
+        if (not isinstance(protocol, dict) or not isinstance(policy, dict)
+                or plan_digest(protocol) != policy.get("plan_sha256")):
+            continue
+        controls = protocol.get("controls")
+        operational = [protocol.get("baseline"), protocol.get("comparison"), *(controls if isinstance(controls, list) else [])]
+        for step in operational:
+            if not isinstance(step, str) or not _contains_observed_quote(cited, step):
+                continue
+            if _contains_observed_quote(step, quote):
+                return {"evidence":refs}
+            # Canonicalize an ordinary active/passive restatement without discarding
+            # operand order, numbers, units, negation, or mathematical symbols.
+            def operation_text(text):
+                text = _normalized_quote(text).casefold().strip(". ")
+                passive = re.fullmatch(r"(.+?) (?:was|were|is|are) (\w+) (?:by|for) (.+)", text)
+                if passive:
+                    text = f"{passive[3]} {passive[2]} {passive[1]}"
+                return re.sub(r"\b(?:a|an|the) ", "", text)
+            executed = (snapshot.get("measurement_method") or {}).get("artifact")
+            if (item.get("operation") == step and operation_text(quote) == operation_text(step)
+                    and any(r["artifact"] == executed and r.get("quote") for r in refs)):
+                return {"evidence":refs, "operation":step}
+    raise ValueError("For documented, cite the remaining statement directly in a primary source or documented "
+                     "experimental procedure. A planned hypothesis or unrelated method cannot establish a result.")
+
+
 def _resolution_changed(snapshot, previous, old, refs):
     if previous["revision"] == snapshot["revision"]:
         return False
@@ -1726,18 +1819,8 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                     judgment = item.get("judgment")
                     entry = {"sentence":item["sentence"], "judgment":judgment, "passage":ref,
                              "reason":_string(item.get("reason"), "reason for the remaining sentence")}
-                    if judgment == "limited":
-                        entry.update(_interpretation_wording({"quote":context["paragraph"]},
-                                     {"claim":quote, "qualification":item.get("qualification")}))
-                    elif judgment == "supported":
-                        backed = any(snapshot["artifacts"][r["artifact"]]["kind"] in
-                                     ("measurement", "method", "primary_source", "protocol") and r.get("quote") for r in refs)
-                        derived = any(c["basis"] == "derivation" and _quotes_conclusion([c["passage"]], ref)
-                                      for c in checks["manuscript"].get("claims", ()))
-                        if not backed and not derived:
-                            raise ValueError(f"Cite the verified evidence supporting the remaining claim in {ident}.")
-                    elif judgment != "distinct":
-                        raise ValueError("Give a supported, limited or distinct judgment for each remaining sentence.")
+                    entry.update(_context_support(snapshot, item, ref, context,
+                                                  checks["manuscript"].get("claims", ()), observed, blind))
                     assessment.append(entry)
         issues.append({"id": ident, "status": status, "severity": severity, "domain": domain,
                        **{k: _string(issue.get(k), k) for k in ("claim", "reason", "fix")}, "evidence": refs,
@@ -1859,6 +1942,9 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
     original_scope = snapshot.get("evidence_scope", {})
     if "recheck_paragraphs" in original_scope:
         older = {k: v for k, v in snapshot.items() if k not in ("project", "revision")}
+        older["evidence_scope"] = {**original_scope, "recheck_paragraphs":True}
+        if _digest(_canonical(older)) == revision:
+            return True
         older["evidence_scope"] = {k:v for k,v in original_scope.items() if k != "recheck_paragraphs"}
         if _digest(_canonical(older)) == revision:
             return True
