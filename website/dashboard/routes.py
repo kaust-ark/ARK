@@ -3227,6 +3227,7 @@ async def api_post_message(project_id: str, request: Request):
     user = _require_user(request)
     body = await request.json()
     text = (body.get("text") or "").strip()
+    review_question = body.get("review_question") is True
     if not text:
         raise HTTPException(400, "empty message")
     settings = get_settings()
@@ -3239,6 +3240,8 @@ async def api_post_message(project_id: str, request: Request):
             raise HTTPException(404)
         dec = get_open_decision(session, project_id)
         if dec:
+            if review_question:
+                raise HTTPException(409, "Answer the open decision before sending this review question.")
             if not answer_decision(session, dec.id, index=-1, text=text,
                                    by=user.email, source="webapp"):
                 raise HTTPException(409, "decision already closed")
@@ -3248,11 +3251,8 @@ async def api_post_message(project_id: str, request: Request):
         activity = project.activity or ""
         state_text = sideband.build_state_readmodel(session, project)
 
-    # FINISHED project → hand the message to the PERSISTENT OpenHands chat agent
-    # (Claude-Code-level: full memory + file access; it decides whether to answer,
-    # read, edit, or run, and streams its steps). Running projects keep the
-    # lightweight classify path below (the orchestrator is the live agent — we
-    # steer it rather than spawn a competitor).
+    # Finished projects resume their configured persistent project session.
+    # Running projects already have an active owner to receive steering.
     if not running and project.status in ("done", "stopped", "failed"):
         with get_session(settings.db_path) as session:
             project = get_project(session, project_id)
@@ -3286,7 +3286,7 @@ async def api_post_message(project_id: str, request: Request):
 
     # Phase 2 (no session held): classify; LLM calls are offloaded so the async
     # event loop isn't blocked.
-    intent = await asyncio.to_thread(sideband.classify_message, text, keys)
+    intent = "steer" if running and review_question else await asyncio.to_thread(sideband.classify_message, text, keys)
 
     if intent == "ask":
         # A question → instant snapshot answer. Finished projects never get here

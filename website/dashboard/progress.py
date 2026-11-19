@@ -324,6 +324,11 @@ def review_summary(root, review, *, delivered=False):
                     "measured", "interpretation", "needs_evidence"
                 ):
                     item["conclusion_support"] = support
+                scope = review.get("evidence_scope")
+                if domain == "manuscript" and isinstance(scope, dict):
+                    fields = {key: _text(scope.get(key), 1200) for key in ("comparison", "alternative", "discriminator")}
+                    if all(fields.values()):
+                        item["evidence_scope"] = fields
                 origins = check.get("series_origin")
                 hashes = review.get("artifact_hashes")
                 if domain == "experiment" and isinstance(hashes, dict):

@@ -272,9 +272,14 @@ def test_conclusion_selector_verifies_the_observed_page_window_and_pdf_digest(tm
                 [read_evidence(snap, artifact, page=2, start=target["start"]+1)["receipt"]]):
         with pytest.raises(ValueError, match="observed text window"):
             resolve(selector, bad)
-    for extra in ({"quote":paragraph}, {"artifact":artifact}, {"page":2}, {"visual":True}, {"sha256":"fake"},
+    for extra in ({"artifact":artifact}, {"page":2}, {"artifact":artifact, "page":2}):
+        assert resolve({**selector, **extra}, [seen]) == canonical
+    for extra in ({"artifact":"paper/other.pdf"}, {"page":1}, {"page":True}):
+        with pytest.raises(ValueError, match="conflicts"):
+            resolve({**selector, **extra}, [seen])
+    for extra in ({"quote":paragraph}, {"visual":True}, {"sha256":"fake"},
                   {"receipt":seen}, {"selector":"previous_conclusion"}):
-        with pytest.raises(ValueError, match="alone"):
+        with pytest.raises(ValueError, match="only"):
             resolve({**selector, **extra}, [seen])
     with pytest.raises(ValueError, match="no conclusion selector"):
         review._references(dict(snap, conclusion=None), [selector], [seen], "", required=True)

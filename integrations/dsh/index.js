@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
 import { lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
@@ -20,18 +21,23 @@ export function apply(ctx) {
       await ctx.get('loader')?.await()
       const controller = new AbortController()
       const stop = () => controller.abort(new Error('Project interrupted'))
-      const disposeStop = ctx.effect(() => stop)
-      const interrupt = () => {
-        // A human terminal interrupt is an explicit Stop. Service teardown leaves external jobs recoverable.
-        if (process.env.IDEA2PAPER_HOSTED === '1') stop()
-        else writeFile(join(resolve(directory), '.native-stop'), 'stop\n', { mode: 0o600 }).catch(stop)
+      let stopping
+      // DSH also handles SIGINT and disposes the profile before it exits with 130.
+      const disposeStop = ctx.effect(() => () => stopping ?? stop())
+      const onOwnerInterrupt = stopProject => {
+        const interrupt = () => {
+          stopping = stopProject().catch(error => console.error('Could not complete project Stop: ' + error.message)).finally(stop)
+        }
+        process.once('SIGINT', interrupt)
+        return async () => {
+          process.off('SIGINT', interrupt)
+          await stopping
+        }
       }
-      process.once('SIGINT', interrupt)
       process.once('SIGTERM', stop)
       try {
-        await runProject(ctx, resolve(directory), options, controller.signal)
+        await runProject(ctx, resolve(directory), options, controller.signal, onOwnerInterrupt)
       } finally {
-        process.off('SIGINT', interrupt)
         process.off('SIGTERM', stop)
         disposeStop()
       }
@@ -54,7 +60,7 @@ function display(kind, title, detail = '') {
   console.log('[' + kind + '] ' + title + (detail ? ' ' + detail : ''))
 }
 
-async function runProject(ctx, directory, { idea, message, commandId, statusOnly, stopOnly }, signal) {
+async function runProject(ctx, directory, { idea, message, commandId, statusOnly, stopOnly }, signal, onOwnerInterrupt) {
   const hosted = process.env.IDEA2PAPER_HOSTED === '1'
   if (idea !== undefined) {
     if (idea.trim().length < 4 || idea.length > 32_000) throw new Error('Provide a research idea between 4 and 32000 characters.')
@@ -103,7 +109,9 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
     if (previous?.version !== 3) throw new Error('Expected a native project checkpoint')
     queuedId = await queueCommand(directory, message, commandId)
   }
-  try { unlock = await acquireLock(directory, signal) } catch (error) {
+  // A terminal sends SIGINT to the foreground process group. The CLI owner
+  // must retain its lock and its domain helper while acknowledging Stop.
+  try { unlock = await acquireLock(directory, signal, { detached: !hosted }) } catch (error) {
     if (!queuedId || error.message !== 'Project is already running') throw error
     display('queued', 'Steering message', queuedId)
     return
@@ -121,7 +129,13 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
                (idea !== undefined && (!hosted || idea !== checkpoint.idea))) {
       throw new Error('Incompatible project checkpoint or model selection')
     }
-    const domain = openDomain(directory, signal)
+    const domain = openDomain(directory, signal, { detached: !hosted })
+    const disarmStop = !hosted && onOwnerInterrupt(async () => {
+      // Persist the intent before DSH teardown can interrupt the cancellation RPC.
+      writeFileSync(stopFile, 'stop\n', { mode: 0o600 })
+      await domain.call('stop')
+      await rm(stopFile, { force: true })
+    })
     try {
       let status = await domain.call('project_status', { idea: checkpoint.idea })
       if (await stopRequested(directory)) {
@@ -161,7 +175,10 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
         } catch (checkpointError) { console.error('Could not checkpoint the owner exit: ' + checkpointError.message) }
       }
       throw error
-    } finally { await domain.close() }
+    } finally {
+      if (disarmStop) await disarmStop()
+      await domain.close()
+    }
   } finally { await unlock() }
 }
 
@@ -208,7 +225,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
   }
   const observed = []
   let checkedVerdict, lastRejected, rejectedDraft
-  let disclosed = !protocolFirst, committing = false, sealed = false, disclosureError
+  let disclosed = !protocolFirst && !packet.scope_brief, committing = false, sealed = false, disclosureError
   let configured = false
   const unlisten = ctx.on('agent/created', ({ agent }) => {
     if (agent.id !== childId) return
@@ -234,7 +251,9 @@ async function review(ctx, owner, domain, signal, draft = false) {
         try { verdict = reviewSubmission(verdict, rejectedDraft, packet.revision) }
         catch (error) { diagnostic = error.message }
       }
-      if (!disclosed) diagnostic = 'Use reproduce_measurement to commit your program or explain why independent reproduction is unavailable.'
+      if (!disclosed) diagnostic = protocolFirst && !sealed
+        ? 'Use reproduce_measurement to commit your program or explain why independent reproduction is unavailable.'
+        : 'Use commit_evidence_scope to record the comparison, competing explanation and discriminating observation before reading the paper.'
       if (!diagnostic) {
         const proof = await domain.call('check_review', {revision:packet.revision, verdict, observed})
         signal.throwIfAborted()
@@ -270,7 +289,36 @@ async function review(ctx, owner, domain, signal, draft = false) {
         return value
       }, roleTimeout)
     }
+    function steer(content) {
+      agent.steer(createUserMessage({source:{kind:'idea2paper-review', form:'instructions'}, content}))
+    }
+    async function openSubmission(turnSignal) {
+      try {
+        const content = await openingPacket(ctx, agent, domain, packet, observed, turnSignal)
+        turnSignal.throwIfAborted()
+        steer(content)
+        enableInspection()
+        disclosed = true
+      } catch (error) { disclosureError = error; throw error }
+    }
+    function enableScope() {
+      const field = {type:'string'}
+      const tool = ['Record what the design can distinguish before reading the paper. Include an observable comparison, an alternative that could give the same result, and a discriminating observation.',
+        {comparison:field, alternative:field, discriminator:field}, ['comparison','alternative','discriminator']]
+      let inProgress = false
+      registerTool(scope, 'commit_evidence_scope', tool, async (args, exec) => {
+        exec.signal.throwIfAborted()
+        if (inProgress || disclosed) throw new Error('The blind evidence scope has already been submitted.')
+        inProgress = true
+        try {
+          const note = await domain.call('commit_evidence_scope', {...args, revision:packet.revision})
+          await openSubmission(exec.signal)
+          return note
+        } finally { inProgress = false }
+      }, roleTimeout)
+    }
     if (disclosed) enableInspection()
+    else if (!protocolFirst) enableScope()
     if (protocolFirst || packet.measurement_reproduction) registerTool(scope, 'reproduce_measurement', reproductionTool, async (args, exec) => {
       exec.signal.throwIfAborted()
       const program = typeof args.program === 'string' && args.program.trim().length > 0
@@ -288,13 +336,10 @@ async function review(ctx, owner, domain, signal, draft = false) {
         if (value.receipt) observed.push(value.receipt)
         if (protocolFirst) {
           sealed = true
-          try {
-            const content = await openingPacket(ctx, agent, domain, packet, observed, exec.signal)
-            exec.signal.throwIfAborted()
-            agent.steer(createUserMessage({source:{kind:'idea2paper-review', form:'instructions'}, content}))
-            enableInspection()
-            disclosed = true
-          } catch (error) { disclosureError = error; throw error }
+          if (packet.scope_brief) {
+            enableScope()
+            steer([{type:'text', text:packet.scope_brief}])
+          } else await openSubmission(exec.signal)
         }
         return value.receipt ? reproductionComparison(value.receipt) : value
       } finally { committing = false }
@@ -305,7 +350,8 @@ async function review(ctx, owner, domain, signal, draft = false) {
   const dispose = () => { activation?.dispose().catch(() => {}) }
   signal.addEventListener('abort', dispose, { once: true })
   try {
-    const prompt = protocolFirst ? [{type:'text', text:packet.reproduction_brief}]
+    const blindBrief = packet.reproduction_brief || packet.scope_brief
+    const prompt = blindBrief ? [{type:'text', text:blindBrief}]
       : await openingPacket(ctx, owner, domain, packet, observed, signal)
     activation = await ctx.subagents.startActivation({
       provider: 'spawn', childId, label: 'Independent manuscript reviewer', delivery: 'caller', signal,

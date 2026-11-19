@@ -213,6 +213,9 @@ class NativeProject(CompilerMixin):
             os.fsync(events.fileno())
         if self.host:
             self.host.log(f"{action}: {observation}", "INFO")
+        elif action not in {"turn/end", "turn_end", "tool/call", "tool/result", "failure", "quota", "stopped"}:
+            artifact = f" ({row['artifact']})" if row.get("artifact") else ""
+            self.log(f"[{phase}] {row['observation']}{artifact}")
         return row
 
     def _initialize(self, args):
@@ -336,6 +339,8 @@ class NativeProject(CompilerMixin):
             "owner_brief": (
                 "Use the same session for planning, measurements, writing and repair. Read the venue skeleton and project skills. "
                 "Investigate primary literature, freeze paired controls, run a Python experiment, inspect measurements, and generate its plots. "
+                "State which recorded observation supports each central inference. When revising a disputed claim, trace it across the "
+                "abstract, discussion, conclusions and captions so that earlier versions of the explanation are corrected everywhere. "
                 "Use the survey's official titles and primary abstracts to select relevant originals before writing. "
                 "Register those works with lookup_papers and cite the returned keys at the specific comparisons. "
                 "Use render_results_table to include the exact worker values in per-condition tables. "
@@ -2044,8 +2049,14 @@ class NativeProject(CompilerMixin):
         archive.mkdir(parents=True, exist_ok=True)
         self.reproduction_path = None
         self.reproduction_decision = None
-        if snapshot.get("measurement_reproduction") and args.get("session_id"):
+        self.scope_path = None
+        self.scope_decision = None
+        if args.get("session_id"):
             session_key = hashlib.sha256(_text(args, "session_id", limit=160).encode()).hexdigest()
+        if snapshot.get("evidence_scope") and args.get("session_id"):
+            self.scope_path = archive / ("scope-" + session_key + ".json")
+            self.scope_decision = _load(self.scope_path)
+        if snapshot.get("measurement_reproduction") and args.get("session_id"):
             self.reproduction_path = archive / ("reproduction-" + session_key + ".json")
             self.reproduction_decision = _load(self.reproduction_path)
             if self.reproduction_decision and "receipt" in self.reproduction_decision:
@@ -2087,6 +2098,11 @@ class NativeProject(CompilerMixin):
                                 + json.dumps(notes, ensure_ascii=False))
         if snapshot.get("measurement_reproduction"):
             result["reproduction_brief"] = review.reproduction_brief(snapshot)
+        if snapshot.get("evidence_scope"):
+            result["scope_brief"] = review.evidence_scope_brief(snapshot)
+            result["brief"] += ("\nRevisit your independent prediction of evidential scope. Check every part "
+                                "of the strongest conclusion against the observations. If additional evidence "
+                                "changes your earlier judgment, cite the observation that distinguishes the alternatives.")
         if trace:
             result["brief"] += (
                 "\nCitation locations from the frozen body PDF, verified survey and registered source files. "
@@ -2122,6 +2138,25 @@ class NativeProject(CompilerMixin):
         if self.snapshot and self.snapshot.get("measurement_reproduction") and self.reproduction_decision is None:
             raise ValueError("Before opening submission evidence, call reproduce_measurement with an independent "
                              "program derived from the original request or an unavailable reason.")
+        if self.snapshot and self.snapshot.get("evidence_scope") and self.scope_decision is None:
+            raise ValueError("Commit the independent evidence scope before opening the manuscript.")
+
+    def commit_evidence_scope(self, args):
+        if (not self.snapshot or args.get("revision") != self.snapshot["revision"]
+                or not self.snapshot.get("evidence_scope") or not self.scope_path):
+            raise ValueError("Open the current independent reviewer session before assessing the evidence scope.")
+        if self.snapshot.get("measurement_reproduction") and self.reproduction_decision is None:
+            raise ValueError("Complete the blind reproduction decision first.")
+        note = {key: _text(args, key, limit=1200) for key in ("comparison", "alternative", "discriminator")}
+        if self.scope_decision is None:
+            _json(self.scope_path, note)
+            self.scope_decision = note
+            self.event("review", "evidence_scope_committed",
+                       "The reviewer recorded the comparison and a discriminating observation before reading the paper.",
+                       revision=self.snapshot["revision"])
+        elif self.scope_decision != note:
+            raise ValueError("The independent reviewer has already committed the original evidence scope.")
+        return self.scope_decision
 
     def _seal_reproduction(self, decision):
         if self.reproduction_path:
@@ -2280,6 +2315,8 @@ class NativeProject(CompilerMixin):
             session_id=_text(args, "session_id", limit=160),
             paper_pdf_sha256=_sha(self.latex_dir / "main.pdf"),
         )
+        if snapshot.get("evidence_scope"):
+            record["evidence_scope"] = self.scope_decision
         if previous and previous["revision"] != record["revision"]:
             record["previous_revision"] = previous["revision"]
         archive = self.state_dir / "reviews" / snapshot["revision"]
@@ -2392,6 +2429,7 @@ class NativeProject(CompilerMixin):
             "check_manuscript_edit",
             "compile_paper",
             "review_snapshot",
+            "commit_evidence_scope",
             "review_evidence",
             "run_method_control",
             "reproduce_measurement",

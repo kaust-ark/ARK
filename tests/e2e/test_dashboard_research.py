@@ -28,6 +28,11 @@ def test_live_research_desk(tmp_path, monkeypatch):
     settings.projects_root = tmp_path
     settings.secret_key = "local-browser-fixture"
     monkeypatch.setattr(routes, "get_settings", lambda: settings)
+    calls = []
+    def unexpected_classifier(*args):
+        calls.append(args[0])
+        raise AssertionError("An explicit review question must reach the active research owner.")
+    monkeypatch.setattr(routes.sideband, "classify_message", unexpected_classifier)
     monkeypatch.setattr(db, "_engine", None)
     with db.get_session(settings.db_path) as session:
         owner, _ = db.get_or_create_user_by_email(session, "researcher@example.test")
@@ -56,6 +61,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
             f.write(json.dumps({"id": ident, "ts": datetime.now(timezone.utc).isoformat(), "action": "measurement",
                                 "phase": phase, "observation": message, **attrs}) + "\n")
 
+    event("scope-recorded", "review", "The reviewer recorded the comparison before reading.", action="evidence_scope_committed")
     event("old-comparison", "review", "Recomputed 128 items.", action="measurement_reproduction_finished",
           condition="128 items", differed=1, outcomes=2, metric="search_comparisons",
           reported_value="7", independent_value="0")
@@ -83,7 +89,8 @@ def test_live_research_desk(tmp_path, monkeypatch):
         record = {"revision": revision, "previous_revision": previous, "verdict": "unassessed" if previous else "revise",
                   "summary": "Compared the annotation with the plotted series.", "paper_pdf_sha256": digest,
                   "artifact_hashes":{"paper/figures/comparisons.png":figure_digest, method:method_sha},
-                  "checks":{"manuscript":{"status":"assessed","conclusion_support":"interpretation","reason":"The mechanism is a hypothesis."},
+                  "checks":{"manuscript":{"status":"assessed","conclusion_support":"interpretation","reason":"The mechanism is a hypothesis.",
+                                           "evidence":[{"artifact":"paper/main.pdf","page":1,"sha256":digest,"quote":label + " plot"}]},
                             "experiment":{"status":"unassessed","reason":"The averaging control disagreed with its prediction.",
                              "controls":[control, {**control, "target":"probe_counts()", "matches":True,
                                                    "expected":[9007199254740993, 0], "observed":[9007199254740993, 0]},
@@ -101,6 +108,10 @@ def test_live_research_desk(tmp_path, monkeypatch):
                               "status":"resolved" if previous else "new","evidence":[{"artifact":"paper/main.pdf",
                               "page":1,"visual":True,"sha256":digest},{"artifact":"paper/main.tex",
                               "quote":claim,"sha256":hashlib.sha256(source.encode()).hexdigest()}]}]}
+        if previous:
+            record["evidence_scope"] = {"comparison":"Compare search cost at equal input sizes.",
+                                        "alternative":"A cache effect could change the timing.",
+                                        "discriminator":"Record comparisons separately from elapsed time."}
         (archived / "review.json").write_text(json.dumps(record))
         if previous is None:
             archived_pdf = f"auto_research/state/reviews/{revision}/main.pdf"
@@ -183,6 +194,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert result_file.evaluate("el => document.activeElement === el")
                 page.locator("#history-all").click()
                 assert experiment.get_attribute("aria-pressed") == "false"
+                assert "Reviewer recorded the pre-reading judgment" in history.locator('li[data-event="scope-recorded"]').inner_text()
                 assert page.locator("#research-history li").filter(has_text="Second batch").count() == 1
                 archive_file = history.get_by_role("button", name="Open archived file · main.pdf")
                 assert archive_file.locator("..").get_by_text("Needs revision", exact=True).is_visible()
@@ -214,8 +226,28 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     page.reload(wait_until="domcontentloaded")
                     page.locator("#decision-text").wait_for()
                     assert page.locator("#decision-text").input_value() == draft
+                    page.locator("#review-coverage > summary").click()
+                    ask = page.get_by_role("button", name="Question the judgment on page 1")
+                    ask.focus()
+                    page.keyboard.press("Enter")
+                    box = page.locator("#hitl-input")
+                    assert box.evaluate("el => el === document.activeElement")
+                    assert revision in box.input_value() and "Corrected plot" in box.input_value()
+                    assert page.locator("#hitl-send").is_disabled() and page.locator("#decision-text").input_value() == draft
+                    # Guard against a decision arriving between the last UI update and an explicit send.
+                    assert page.request.post(base + f"/dashboard/api/projects/{pid}/message",
+                                             data={"text":box.input_value(),"review_question":True}).status == 409
+                    page.locator("#review-coverage > summary").click()
                     page.locator("#decision-form").get_by_role("button", name="Send instruction").click()
                     page.locator("#hitl-decision").wait_for(state="hidden")
+                    assert page.locator("#hitl-send").is_enabled() and revision in box.input_value()
+                    sent_question = box.input_value()
+                    with page.expect_response(lambda r: r.url.endswith("/message") and r.request.method == "POST") as posted:
+                        page.locator("#hitl-send").click()
+                    assert posted.value.json()["routed"] == "steer" and not calls
+                    with db.get_session(settings.db_path) as session:
+                        queued = [c for c in db.list_pending_commands(session, pid) if c["kind"] == "steer"]
+                        assert [c["payload"] for c in queued] == [sent_question]
                 page.locator("#evidence-files button").filter(has_text="experiment.json").click()
                 page.locator("#preview-content td").first.wait_for()
                 assert page.locator("#preview-content td").all_text_contents() == ["128 items", "128", "7"]
@@ -228,7 +260,13 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 controls = page.locator(".method-controls")
                 controls.locator("summary").focus()
                 page.keyboard.press("Enter")
-                assert page.locator("#review-coverage").get_by_text("The conclusion offers a possible explanation", exact=True).is_visible()
+                judgment = page.locator("#review-coverage .review-judgment")
+                assert judgment.inner_text() == "Reviewer’s judgment: a possible explanation"
+                assert judgment.evaluate("el => getComputedStyle(el).display") == "block"
+                assert record["checks"]["manuscript"]["reason"] in judgment.locator("..").inner_text()
+                scope = page.locator(".review-scope")
+                scope.locator("summary").press("Enter")
+                assert scope.locator("dd").all_text_contents() == list(record["evidence_scope"].values())
                 assert controls.locator("summary").inner_text() == "Experimental controls (3)"
                 mismatch, match, reproduced = controls.get_by_role("listitem").all()
                 values = reproduced.get_by_role("table", name="Recorded condition")
@@ -242,7 +280,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert match.locator("strong").inner_text() == "probe_counts() · Matches"
                 assert match.locator("dd").all_text_contents()[:2] == ["[9007199254740993, 0]"] * 2
                 assert controls.locator("img,a,button").count() == 0
-                passages = page.locator(".review-passages")
+                passages = page.locator(".review-passages").filter(has_text="scripts/measure.py")
                 passages.locator("summary").click()
                 assert passages.locator("strong").inner_text() == "scripts/measure.py"
                 assert passages.locator("pre").first.inner_text() == "return total / trials"
@@ -392,8 +430,30 @@ def test_live_research_desk(tmp_path, monkeypatch):
             cover.wait_for()
             assert f"sha256={archived_digest}" in cover.get_attribute("src") and cover.evaluate("img => img.naturalWidth > 0")
             owner_page.get_by_role("button", name="Inspect the review").click()
+            assert owner_page.locator(".review-scope").count() == 0  # Older signed delivery
             assert owner_page.locator("#review-coverage").get_attribute("open") is not None
             assert owner_page.locator("#review-coverage > summary").evaluate("s => document.activeElement === s")
+            sends = []
+            def sent(route):
+                sends.append(route.request.post_data_json)
+                route.fulfill(json={"ok":True, "routed":"steer", "scope":"edit"})
+            owner_page.route("**/" + pid + "/message", sent)
+            box = owner_page.locator("#hitl-input")
+            box.fill("Could you recheck this?")
+            button = owner_page.get_by_role("button", name="Question the judgment on page 1")
+            button.click()
+            expected = box.input_value()
+            assert expected.startswith("Could you recheck this?") and "Reversed plot" in expected
+            assert delivered_revision in expected and "Page 1" in expected
+            button.click()
+            assert box.input_value() == expected and not sends
+            box.press("Shift+Enter")
+            assert not sends
+            box.fill(expected + "\nPlease check the original plot legend.")
+            owner_page.locator("#hitl-send").click()
+            owner_page.get_by_role("button", name="✏️ Apply").wait_for()
+            assert len(sends) == 1 and sends[0]["review_question"] is True
+            assert sends[0]["text"] == expected + "\nPlease check the original plot legend."
             assert shared.url == base + f"/dashboard/share/{token}"
             shared.reload(wait_until="domcontentloaded")
             shared.get_by_role("link", name="Read the paper").wait_for()

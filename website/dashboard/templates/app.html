@@ -63,7 +63,7 @@
     #decision-text { width: 100%; max-width: 42rem; padding: .5rem; font: inherit; border: 1px solid var(--card-border); border-radius: 6px; resize: vertical; }
     #decision-error { color: #a13717; }
     #hitl-compose { display: flex; }
-    #hitl-decision:not([hidden]) ~ .research-workspace #hitl-compose { display: none; }
+    #hitl-decision:not([hidden]) ~ .research-workspace #hitl-compose:not([data-review]) { display: none; }
     /* ── nav ── */
     nav {
       position: sticky; top: 0; z-index: 100;
@@ -1184,10 +1184,11 @@ Strict — hit the exact page limit (spends the most tokens).">
     </div>
     <div id="hitl-thread" style="height:340px;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:8px;background:var(--bg)"></div>
     <div id="hitl-compose" style="gap:8px;padding:10px 12px;border-top:1px solid var(--card-border);background:var(--bg-hover)">
-      <input id="hitl-input" placeholder="Message the project — steer it, or answer its question…" style="flex:1;padding:9px 13px;border:1px solid var(--card-border);border-radius:20px;font-size:.85rem;outline:none;background:var(--bg)"
-        onkeydown="if(event.key==='Enter')hitlSend()">
-      <button class="btn-primary" style="border-radius:20px;padding:8px 18px" onclick="hitlSend()">Send</button>
+      <textarea id="hitl-input" rows="1" aria-label="Message"
+        onkeydown="if(event.key==='Enter' && !event.shiftKey && !event.isComposing && event.keyCode!==229){event.preventDefault();if(!event.repeat)hitlSend()}"></textarea>
+      <button type="button" id="hitl-send" class="btn-primary" data-i18n="research_send_message" onclick="hitlSend()">Send</button>
     </div>
+    <p id="review-draft-notice" role="status" hidden></p>
   </div>
 
   </div>
@@ -4372,7 +4373,6 @@ async function stopProject(id) {
 let _chatSeen = new Set();      // message ids already rendered
 let _chatThreadFor = null;      // which project the thread is loaded for
 let _lastAnsweredDecision = null;   // Ignore a pre-answer status event still in flight.
-let _pendingEcho = null;        // optimistic user bubble text to dedup vs SSE
 let _hitlActive = false;        // is the project currently running (vs finished)
 
 function renderHitl(p) {
@@ -4382,6 +4382,7 @@ function renderHitl(p) {
   _hitlActive = active;
   const chat = document.getElementById('hitl-chat');
   if (chat) chat.style.display = (active || finished) ? 'block' : 'none';
+  re('research-review').dataset.chatAvailable = String(active || finished);
   const act = document.getElementById('hitl-activity');
   if (act) act.textContent = '';
   const paused = (p.control_state === 'paused');
@@ -4392,7 +4393,7 @@ function renderHitl(p) {
   const aut = document.getElementById('hitl-autonomy');
   if (aut) { aut.style.display = active ? '' : 'none'; if (p.autonomy_level && document.activeElement !== aut) aut.value = p.autonomy_level; }
   const inp = document.getElementById('hitl-input');
-  if (inp) inp.placeholder = active ? 'Ask a question or steer the project…' : 'Ask a question or request a change…';
+  if (inp) { inp.placeholder = rt(active ? 'ask_active' : 'ask_finished'); inp.setAttribute('aria-label', rt('conversation')); }
   const mc = document.getElementById('hitl-model');
   if (mc && p.model) { mc.textContent = '🤖 ' + prettyModelName(p.model); mc.style.display = ''; }
   renderDecision(active && !window.SHARE_MODE ? p.pending_decision : null, p.id);
@@ -4445,6 +4446,7 @@ function renderDecision(decision, projectId) {
   if (!decision || decision.id === _lastAnsweredDecision) {
     card.hidden = true;
     delete card.dataset.decisionId;
+    updateReviewDraft();
     return;
   }
   if (card.dataset.decisionId === decision.id && card.lang === currentLang) return;
@@ -4455,6 +4457,7 @@ function renderDecision(decision, projectId) {
   card.dataset.decisionId = decision.id;
   card.lang = currentLang;
   card.hidden = false;
+  updateReviewDraft();
   const options = Array.isArray(decision.options) ? decision.options : [];
   document.getElementById('decision-question').textContent = decision.question;
   document.getElementById('decision-context').textContent = decision.context || '';
@@ -4516,7 +4519,6 @@ function renderDecision(decision, projectId) {
 
 async function loadChatThread(pid) {
   _chatThreadFor = pid; _chatSeen = new Set();
-  _pendingEcho = null;   // full reload from DB — never dedupe the user's own message away
   _stepGroup = null;
   const thread = document.getElementById('hitl-thread');
   if (thread) thread.innerHTML = '';
@@ -4558,8 +4560,6 @@ function _appendStepLine(thread, text) {
 }
 function appendBubble(m) {
   if (!m || (m.id && _chatSeen.has(m.id))) return;
-  // skip the echo of our own just-sent message
-  if (m.role === 'user' && _pendingEcho && m.text === _pendingEcho) { _pendingEcho = null; if (m.id) _chatSeen.add(m.id); return; }
   if (m.id) _chatSeen.add(m.id);
   const thread = document.getElementById('hitl-thread');
   if (!thread) return;
@@ -4674,59 +4674,64 @@ function appendResumeAction(instruction, scope) {
   thread.scrollTop = thread.scrollHeight;
 }
 
+function updateReviewDraft() {
+  const waiting = !!re('hitl-compose').dataset.review && !re('hitl-decision').hidden;
+  re('hitl-send').disabled = waiting;
+  const notice = re('review-draft-notice');
+  notice.hidden = !waiting;
+  notice.textContent = waiting ? rt('decision_before_question') : '';
+}
+
+function clearReviewDraft() {
+  delete re('hitl-compose').dataset.review;
+  re('hitl-input').rows = 1;
+  updateReviewDraft();
+}
+
 async function hitlSend() {
   const el = document.getElementById('hitl-input');
   const txt = (el.value || '').trim();
-  if (!txt || !detailProjectId || el.disabled) return;
+  if (!txt || !detailProjectId || el.disabled || re('hitl-send').disabled) return;
+  const id = detailProjectId;
+  const wasActive = _hitlActive;
+  const message = {text:txt};
+  if (re('hitl-compose').dataset.review) message.review_question = true;
+  let reply;
+  el.disabled = true;
+  try {
+    const r = await fetch(`${APP_BASE}/api/projects/${id}/message`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(message),
+    });
+    if (!r.ok) {
+      if (detailProjectId === id) re('command-receipt').textContent =
+        rt(message.review_question && r.status === 409 ? 'decision_before_question' : 'retry');
+      return;
+    }
+    reply = await r.json();
+  } catch {
+    if (detailProjectId === id) re('command-receipt').textContent = rt('retry');
+    return;
+  } finally { el.disabled = false; }
+  if (detailProjectId !== id) return;
+  el.value = '';
+  clearReviewDraft();
 
-  if (_hitlActive) {
-    // Running project → the message is classified server-side (ask vs steer).
-    // The agent's answer / "收到" ack streams back over SSE; just echo + post.
-    const id = detailProjectId;
-    el.disabled = true;
-    try {
-      const r = await fetch(`${APP_BASE}/api/projects/${id}/message`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: txt }),
-      });
-      if (!r.ok) throw Error();
-      if (detailProjectId === id) {
-        el.value = '';
-        re('research-announce').textContent = rt('receipt');
-        await loadChatThread(id);
-      }
-    } catch {
-      if (detailProjectId === id) re('command-receipt').textContent = rt('retry');
-    } finally { el.disabled = false; }
-
+  await loadChatThread(id);
+  if (detailProjectId !== id) return;
+  if (wasActive) {
+    re('research-announce').textContent = rt('receipt');
     return;
   }
 
-  // Finished project. A status question is answered instantly; a CONTENT question
-  // spins up a read-only Claude agent that reads the files (answer streams via
-  // SSE); an instruction offers the right-sized apply.
-  el.value = '';
-  appendBubble({ id: null, role: 'user', kind: 'message', text: txt });  // instant echo (right)
-  _pendingEcho = txt;   // now dedupe the SSE re-delivery of this same message
-  showThinking();
-  let routed = 'steer', scope = 'edit', launching = false;
-  try {
-    const r = await fetch(`${APP_BASE}/api/projects/${detailProjectId}/message`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: txt }),
-    });
-    if (r.ok) { const j = await r.json(); routed = j.routed || 'steer'; scope = j.scope || 'edit'; launching = !!j.launching; }
-  } catch (e) {}
+  // Finished projects can resume the configured persistent project session.
+  const {routed, scope='edit', launching=false} = reply;
   if (launching) {
-    // The persistent Claude agent is working (read/edit/run); its steps + reply
-    // stream in over SSE. Reconnect the stream directly (NOT loadDetail — that
-    // re-renders and can drop the just-echoed message); the bubble + dots stay.
+    // Stream the session's steps and reply into the current conversation.
     showThinking('💬 working…');
     startDetailStream(detailProjectId);
     return;
   }
-  _pendingEcho = null;
   hideThinking();
-  await loadChatThread(detailProjectId);   // pull user msg + answer/ack from DB
   // A QUESTION is already answered in place above. Only an INSTRUCTION needs work
   // — offer the smallest mechanism inline (edit / experiment / full), dismissible.
   if (routed === 'steer') {

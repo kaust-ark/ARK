@@ -264,7 +264,7 @@ async function accessFile(directory, path, content, replace, edit = {}, checkMan
 }
 
 // Requests are correlated by id so a status check cannot consume a tool response.
-export function openDomain(directory, signal) {
+export function openDomain(directory, signal, { detached = false } = {}) {
   signal.throwIfAborted()
   const interpreter = process.env.IDEA2PAPER_PYTHON || 'python3'
   const args = process.env.IDEA2PAPER_PYTHON
@@ -273,7 +273,7 @@ export function openDomain(directory, signal) {
   const fd = process.env.IDEA2PAPER_DOMAIN_FD
   if (fd !== undefined && (!/^\d+$/.test(fd) || Number(fd) < 3)) throw new Error('Invalid inherited domain socket')
   const socket = fd === undefined ? undefined : new Socket({ fd: Number(fd) })
-  const child = socket ? undefined : spawn(interpreter, args, { cwd: directory, stdio: ['pipe', 'pipe', 'inherit'], signal })
+  const child = socket ? undefined : spawn(interpreter, args, { cwd: directory, stdio: ['pipe', 'pipe', 'inherit'], signal, detached })
   const input = socket || child.stdout
   const output = socket || child.stdin
   const endpoint = socket || child
@@ -359,7 +359,7 @@ export const operations = {
   }, ['name', 'caption', 'description']],
   verify_citations: ['Check the manuscript bibliography against primary bibliographic records.', {}],
   compile_paper: ['Compile the current manuscript and inspect its figures, citations and layout. manuscript_revision identifies main.tex after typesetting adjustments.', {}],
-  request_review: ['Request an independent, blind submission review after artifact checks. Use draft only for early scientific feedback on an incomplete manuscript.', { draft: bool }],
+  request_review: ['Request an independent, blind submission review after artifact checks. Use draft only for early scientific feedback on an incomplete manuscript. For a delivery request, follow acceptance with deliver and report its result. For a review-only request, report the findings.', { draft: bool }],
   deliver: ['Verify the current reviewed revision and publish the checked project deliverables.', {}],
   read_project_file: ['Read up to 6000 characters of a manuscript, result, skill, original brief (auto_research/state/idea.md), experiment_plan.yaml or deep_research.md in that directory, or sources/<id>.txt from verify_citations. Supply next_offset as offset to continue, or find a passage to get its match_line. Use start_line to read up to 40 numbered lines. sha256 covers the entire file. For paper/main.tex, list_revisions lists saved digests and revision_sha256 reads a saved version.', { path: str, offset: num, find: str, start_line: num, revision_sha256: str, list_revisions: bool }, ['path']],
   write_project_file: ['Write a manuscript or script. To edit lines of paper/main.tex, read the numbered lines and send inclusive start_line/end_line with just the new text. The last numbered view supplies its revision; alternatively provide the exact current base_sha256. A TeX error introduced into a compiling draft rejects the edit. For a section edit use replace, insert_before or insert_after with an exact unique passage or heading. Use expected_matches only to correct a known count of identical passages. Any edit that cuts over one fifth of a manuscript longer than 3500 characters needs its current base_sha256 and allow_shrink:true. Each changed manuscript saves previous_sha256. To restore it, supply only path, current base_sha256 and restore_sha256.', { path: str, content: str, start_line: num, end_line: num, replace: str, expected_matches: num, insert_before: str, insert_after: str, base_sha256: str, allow_shrink: bool, restore_sha256: str }, ['path']],
@@ -408,6 +408,9 @@ export function reproductionComparison(receipt) {
 }
 
 export function reviewForAuthor(review) {
+  if (review.verdict === 'accept' && review.deliverable) {
+    review = {...review, delivery_instruction:'The reviewer signed this revision. If the user requested delivery, call deliver now and use its receipt when reporting completion.'}
+  }
   const experiment = review.checks?.experiment
   if (!experiment?.controls?.some(r => r.control === 2)) return review
   const controls = experiment.controls.map(r => r.control === 2 ? reproductionComparison(r) : r)

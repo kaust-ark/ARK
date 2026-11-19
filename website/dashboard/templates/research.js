@@ -1,13 +1,23 @@
 // Research milestones come from the durable project journal; transient token and log
 // traffic never changes the scientific state or triggers a screen-reader announcement.
 const researchLabels = {
+  question_conclusion: ['Question the judgment on page %s','质疑第 %s 页的判断','ناقش الحكم على الصفحة %s'],
+  question_draft: ['What evidence supports this judgment about the quoted passage?','哪些证据支持评审对这段原文的判断？','ما الأدلة التي تدعم هذا الحكم على المقطع المقتبس؟'],
+  decision_before_question: ['Answer the open decision before sending this question.','请先答复待处理的决定，再发送这个问题。','أجب عن القرار المعلّق قبل إرسال هذا السؤال.'],
+  send_message: ['Send','发送','إرسال'],
+  scope_before_reading: ['Reviewer’s judgment before reading','读稿前的判断','تقدير المراجع قبل قراءة الورقة'],
+  scope_comparison: ['Comparison the design can support','研究设计能支持的比较','المقارنة التي يتيحها التصميم'],
+  scope_alternative: ['Competing explanation','可能的其他解释','التفسير البديل'],
+  scope_discriminator: ['Observation that would distinguish the explanations','区分这些解释所需的观察','الملاحظة التي تميّز بين التفسيرات'],
+  ask_active: ['Ask a question or steer the project…','向项目提问或给出指示…','اطرح سؤالًا أو وجّه المشروع…'],
+  ask_finished: ['Ask a question or request a change…','向项目提问或提出修改请求…','اطرح سؤالًا أو اطلب تعديلًا…'],
   paper_delivered: ['Your paper is ready','论文已交付','ورقتك جاهزة'],
   read_paper: ['Read the paper','阅读定稿 PDF','اقرأ الورقة'],
   review_evidence: ['Inspect the review','查看评审依据','اعرض أدلة المراجعة'],
   delivery_verified: ['The PDF matches the version signed by the independent reviewer.','这份 PDF 与独立评审签字的版本一致。','يطابق ملف PDF النسخة التي اعتمدها المراجع المستقل.'],
-  conclusion_measured: ['The measurements directly support the conclusion','实测数据直接支持这段结论','تدعم القياسات الاستنتاج مباشرة'],
-  conclusion_interpretation: ['The conclusion offers a possible explanation','结论提出了一种可能的解释','يقدّم الاستنتاج تفسيرًا محتملًا'],
-  conclusion_needs_evidence: ['The conclusion needs additional evidence','这段结论还需要证据','يحتاج الاستنتاج إلى أدلة إضافية'],
+  conclusion_measured: ['Reviewer’s judgment: directly supported by measurements','评审判断：有直接实测支持','حكم المراجع: تدعم القياسات الاستنتاج مباشرة'],
+  conclusion_interpretation: ['Reviewer’s judgment: a possible explanation','评审判断：属于可能的解释','حكم المراجع: يقدّم الاستنتاج تفسيرًا محتملًا'],
+  conclusion_needs_evidence: ['Reviewer’s judgment: more evidence needed','评审判断：仍需证据','حكم المراجع: يحتاج الاستنتاج إلى أدلة إضافية'],
   delivered_pdf: ['Delivered PDF','已交付 PDF','ملف PDF المُسلَّم'], working_pdf: ['Working draft PDF','工作稿 PDF','ملف PDF للمسودة الحالية'],
   delivered_review: ['Review of the delivered paper','已交付稿评审','مراجعة الورقة المُسلَّمة'],
   working_review: ['Review of the working draft','工作稿评审','مراجعة المسودة الحالية'],
@@ -51,6 +61,7 @@ const researchLabels = {
   method_controls: ['Experimental controls (%s)','实验控制项（%s）','ضوابط التجربة (%s)'],
   matches_control: ['Matches','一致','مطابق'], differs_control: ['Mismatch','不一致','غير مطابق'],
   event_review_started: ['Independent review opened','独立评审已开始','بدأت المراجعة المستقلة'],
+  event_evidence_scope_committed: ['Reviewer recorded the pre-reading judgment','评审已记录读稿前的判断','سجّل المراجع تقديره قبل قراءة الورقة'],
   event_measurement_reproduction_started: ['Recomputing a recorded result','正在独立复算','إعادة حساب نتيجة مسجلة'],
   event_measurement_reproduction_finished: ['Independent calculation complete','独立复算已完成','اكتملت إعادة الحساب'],
   event_measurement_reproduction_failed: ['Calculation could not finish','复算未完成','تعذر إكمال الحساب'],
@@ -94,6 +105,10 @@ let fileSignature = '', reviewSignature = '', preview = null, streamReady = fals
 
 function resetResearch(project) {
   closeEvidence(false);
+  if (researchProject.id !== project.id && re('hitl-compose').dataset.review) {
+    re('hitl-input').value = '';
+    clearReviewDraft();
+  }
   researchProject = project;
   researchEvents.clear();
   historyPhase = '';
@@ -147,6 +162,7 @@ function reviewEventLabel(event) {
 }
 
 function observationText(event, withValues=true) {
+  if (event?.action === 'evidence_scope_committed') return reviewEventLabel(event);
   if (event?.action === 'delivered' && event.artifact === 'paper/main.pdf' && /^[a-f0-9]{64}$/.test(event.revision))
     return rt('delivery_verified');
   if (event?.action === 'manuscript_reviewed' && ['accept','revise','unassessed'].includes(event.observation))
@@ -567,7 +583,50 @@ function renderReview() {
     const li = document.createElement('li'), label = document.createElement('strong');
     label.textContent = check.conclusion_support ? rt('conclusion_' + check.conclusion_support) :
       rt(check.domain) + ' · ' + rt(check.status);
+    if (check.conclusion_support) label.className = 'review-judgment';
     li.append(label, document.createTextNode(check.reason ? ' ' + check.reason : ''));
+    if (check.evidence_scope) {
+      const details = document.createElement('details'), summary = document.createElement('summary'), fields = document.createElement('dl');
+      details.className = 'review-scope';
+      summary.textContent = rt('scope_before_reading');
+      for (const key of ['comparison','alternative','discriminator']) {
+        const term = document.createElement('dt'), value = document.createElement('dd');
+        term.textContent = rt('scope_' + key); value.textContent = check.evidence_scope[key];
+        fields.append(term, value);
+      }
+      details.append(summary, fields); li.append(details);
+    }
+    const passages = !window.SHARE_MODE && check.conclusion_support ? (check.evidence || []).filter(ref =>
+      ref.artifact === 'paper/main.pdf' && ref.page > 0 && ref.quote && !ref.previous) : [];
+    function questionButton(passage) {
+      const ask = document.createElement('button');
+      ask.type = 'button';
+      ask.textContent = rt('question_conclusion', passage.page);
+      ask.className = 'question-conclusion';
+      ask.setAttribute('aria-controls', 'hitl-compose');
+      ask.onclick = () => {
+        const input = re('hitl-input'), compose = re('hitl-compose');
+        const source = [passage.artifact, rt('page') + ' ' + passage.page].join(' · ');
+        const citation = source + '\n“' + passage.quote + '”\n' + rt('review') + ' ' + review.revision;
+        const question = input.value.trimEnd() || rt('question_draft');
+        if (!input.value.includes(citation)) {
+          input.value = question + '\n\n' + label.textContent + '\n' + citation;
+          compose.dataset.review = review.revision;
+          input.rows = 8;
+          input.dispatchEvent(new Event('input'));
+          input.setSelectionRange(question.length, question.length);
+        }
+        updateReviewDraft();
+        input.focus({preventScroll:true});
+        input.scrollIntoView({block:'center', behavior:matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth'});
+      };
+      return ask;
+    }
+    if (passages.length === 1) {
+      const controls = document.createElement('div'), ask = questionButton(passages[0]);
+      controls.className = 'review-controls';
+      controls.append(ask); li.append(controls);
+    }
     if (check.controls?.length) {
       const details = document.createElement('details'), summary = document.createElement('summary');
       details.className = 'method-controls';
@@ -628,6 +687,7 @@ function renderReview() {
           quote.textContent = ref.quote;
           passage.append(quote);
         }
+        if (passages.length > 1 && passages.includes(ref)) passage.append(questionButton(ref));
         sources.append(passage);
       }
       li.append(sources);

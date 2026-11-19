@@ -59,6 +59,12 @@
 .history-file:hover, .history-file[aria-pressed="true"] { background:#deede5; border-color:#81a997; }
 .research-workspace { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px; align-items:start; margin-bottom:16px; }
 #research-evidence, #hitl-chat { border:1px solid var(--line); border-radius:12px; background:white; min-width:0; }
+#hitl-compose { align-items:flex-end; }
+#hitl-chat:has(#hitl-compose[data-review]) #hitl-thread:empty { height:auto !important; padding-block:0 !important; }
+#research-review[data-chat-available="false"] .question-conclusion { display:none; }
+#hitl-input { flex:1; min-width:0; padding:9px 12px; border:1px solid var(--card-border); border-radius:12px; background:var(--bg); font:inherit; font-size:.9rem; line-height:1.45; resize:vertical; }
+#hitl-send { border-radius:12px; padding:8px 16px; }
+#review-draft-notice { padding:0 12px 9px; color:var(--muted); background:var(--bg-hover); font-size:.82rem; }
 #research-evidence { padding:17px; }
 #research-evidence h3, #hitl-chat h3 { font-size:1rem; font-weight:650; color:var(--ink); }
 #evidence-files { display:flex; flex-direction:column; margin-top:8px; max-height:14rem; overflow:auto; }
@@ -84,6 +90,11 @@
 #review-issues li[data-status="resolved"] { border-color:#237a65; }
 #review-coverage li { margin:4px 0 8px 1rem; color:var(--muted); font-size:.85rem; overflow-wrap:anywhere; }
 #review-coverage .review-figures { list-style:none; margin-block:8px; }
+.review-judgment { display:block; margin-block-end:4px; color:var(--ink); }
+.review-scope { margin-block:8px; }
+.review-scope dl { margin:6px 0; padding-inline-start:10px; border-inline-start:2px solid var(--line); }
+.review-scope dt { font-weight:600; color:var(--ink); }
+.review-scope dd { margin:2px 0 8px; }
 #review-coverage .review-figures li { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; margin:0; padding-inline-start:10px; border-inline-start:2px solid var(--line); }
 #review-coverage .review-figures [data-origin="copied"] { border-color:#b05c36; color:#864220; }
 .method-controls { margin-block:6px; }

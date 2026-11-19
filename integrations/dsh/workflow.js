@@ -329,10 +329,10 @@ Use stdout for the result, with no files, installations, or external datasets.`,
 
 // The OS releases this advisory lock even after SIGKILL. The helper exits on
 // stdin EOF when its owning Node process dies.
-export async function acquireLock(directory, signal) {
+export async function acquireLock(directory, signal, { detached = false } = {}) {
   signal.throwIfAborted()
   const child = spawn('flock', ['-n', '-E', '73', join(directory, '.workflow.lock'),
-    'sh', '-c', 'printf locked; cat >/dev/null'], { stdio: ['pipe', 'pipe', 'ignore'] })
+    'sh', '-c', 'printf locked; cat >/dev/null'], { stdio: ['pipe', 'pipe', 'ignore'], detached })
   child.stdin.on('error', () => {})
   const closed = new Promise(resolve => child.on('close', resolve))
   let output = ''

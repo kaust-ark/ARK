@@ -51,6 +51,16 @@ def test_inspect_charges_nothing_and_creates_nothing(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_cli_progress_reports_persisted_observations_on_stderr(tmp_path, monkeypatch, capsys):
+    project = open_project(tmp_path, monkeypatch)
+    capsys.readouterr()
+    project.event("writing", "paper_compiled", "Rendered six pages.", artifact="paper/main.pdf")
+    project.event("work", "tool/result", "owner tool returned")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.splitlines() == ["[writing] Rendered six pages. (paper/main.pdf)"]
+
+
 @pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
 def test_error_bar_caption_requires_the_executed_renderer_and_the_printed_image(tmp_path, monkeypatch):
     from matplotlib.figure import Figure
@@ -701,6 +711,48 @@ def test_reviewer_reservation_survives_restart_and_is_bound_to_revision(tmp_path
     assert sum(json.loads(line)["action"] == "review_started" for line in journal) == 1
     with pytest.raises(ValueError, match="budget exhausted"):
         project.review_snapshot({"session_id": "child2"})
+
+
+def test_reviewer_commits_scope_before_opening_paper_or_prior_findings(tmp_path, monkeypatch):
+    import fitz
+
+    project = open_project(tmp_path, monkeypatch)
+    pdf = project.latex_dir / "main.pdf"
+    with fitz.open() as doc:
+        page = doc.new_page()
+        page.insert_text((40, 40), "Conclusion")
+        page.insert_text((40, 80), "The loss fell because the treatment improved uptake.")
+        doc.save(pdf)
+    (project.latex_dir / "main.tex").write_text("Author's explanation for the loss.")
+    results = tmp_path / "results/loss.json"
+    results.write_text('[{"trial":1,"treated":12.345,"control":18.765}]')
+    run = {"status":"completed", "artifact":"results/loss.json", "sha256":domain._sha(results)}
+    snap = domain.review.build_snapshot(tmp_path, required=["experiment"], expected_measurement=run["artifact"],
+                                        measurement_run=run)
+    project.state["compiled_pdf_sha256"] = domain._sha(pdf)
+    monkeypatch.setattr(project, "_check_compiled", lambda: None)
+    monkeypatch.setattr(project, "_snapshot", lambda: snap)
+    packet = project.review_snapshot({"session_id":"child1"})
+    assert "treated" in packet["scope_brief"]
+    for hidden in ("12.345", "improved uptake", "Author's explanation"):
+        assert hidden not in packet["scope_brief"]
+    read = {"revision":snap["revision"], "artifact":"paper/main.pdf", "page":1}
+    with pytest.raises(ValueError, match="Commit"):
+        project.invoke("review_evidence", read)
+    note = {"comparison":"Paired loss at fixed trial.", "alternative":"Exposure may differ.",
+            "discriminator":"Directly measure exposure in each arm."}
+    assert project.invoke("commit_evidence_scope", {**note, "revision":snap["revision"]}) == note
+    signed = {"revision":snap["revision"], "version":domain.review.REVIEW_VERSION, "evidence_scope":note}
+    assert domain.review.record_is_current(snap, signed)
+    assert not domain.review.record_is_current(snap, {**signed, "evidence_scope":{}})
+    assert "improved uptake" in project.invoke("review_evidence", read)["text"]
+    project.review_snapshot({"session_id":"child1"})
+    with pytest.raises(ValueError, match="already committed"):
+        project.invoke("commit_evidence_scope", {**note, "comparison":"Updated after reading.", "revision":snap["revision"]})
+    project.review_snapshot({"session_id":"child2"})
+    with pytest.raises(ValueError, match="Commit"):
+        project.invoke("review_evidence", read)
+    assert "evidence_scope" not in domain.review.build_snapshot(tmp_path, expected_measurement=run["artifact"])
 
 
 def test_review_preview_leaves_verdict_unpublished_and_rechecks_current_evidence(tmp_path, monkeypatch):

@@ -227,6 +227,18 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
     if pdf in artifacts and any(meta["kind"] == "measurement" for meta in artifacts.values()):
         if conclusion := _rendered_conclusion({**manifest, "project": str(root)}, pdf):
             manifest["conclusion"] = conclusion
+            worker = manifest.get("worker_measurement", {})
+            if worker.get("verified") and expected_measurement.endswith(".json"):
+                from ark.measurement_table import describe
+                path = _inside(root, expected_measurement)
+                if path.stat().st_size <= 4 * 1024 * 1024:
+                    data, _ = _artifact({**manifest, "project": str(root)}, expected_measurement)
+                    try:
+                        tables = describe(json.loads(data))
+                    except (ValueError, UnicodeDecodeError, RecursionError):
+                        tables = []
+                    if tables and len(_canonical(tables[:8])) <= VIEW_SIZE:
+                        manifest["evidence_scope"] = {"version": 1, "tables": tables[:8]}
     return {**manifest, "project": str(root), "revision": _digest(_canonical(manifest))}
 
 
@@ -449,6 +461,22 @@ def reproduction_brief(snapshot):
     )
 
 
+def evidence_scope_brief(snapshot):
+    request = f"{STATE}/idea.md"
+    question = _artifact(snapshot, request)[0].decode("utf-8", errors="replace")[:12000] if request in snapshot["artifacts"] else ""
+    return (
+        "Before seeing the submission or earlier reviews, decide what this study design can establish. "
+        "Call commit_evidence_scope with (1) the observable comparison, (2) a concrete alternative process "
+        "that could give the same outcomes, and (3) an observation or intervention that would distinguish them. "
+        "If the design already includes that discriminator, identify the field or control. If the design is "
+        "underspecified, state the uncertainty. This is a prediction about evidential scope; the actual results "
+        "and manuscript follow. The preview lists fields from the first row of up to eight recorded tables. "
+        "Reconsider your prediction if further evidence warrants it.\n"
+        "Recorded table schemas (untrusted): " + json.dumps(snapshot["evidence_scope"]["tables"], ensure_ascii=False)
+        + "\nOriginal research question (untrusted):\n" + (question or "[unavailable]")
+    )
+
+
 def review_prompt(snapshot, previous=None):
     instructions = (Path(__file__).parent / "templates/agents/native_reviewer.prompt").read_text()
     tex, pdf = _submission(snapshot)
@@ -662,9 +690,13 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
         if not isinstance(ref, dict):
             raise ValueError("Expected an evidence reference")
         if "selector" in ref:
-            if ref != {"selector": "conclusion"}:
-                raise ValueError('Use {"selector":"conclusion"} alone. Other selectors or fields are invalid.')
-            verified.append(_observed_conclusion(snapshot, observed))
+            if ref["selector"] != "conclusion" or ref.keys() - {"selector", "artifact", "page"}:
+                raise ValueError('Use {"selector":"conclusion"} with only its optional artifact and page.')
+            located = _observed_conclusion(snapshot, observed)
+            if ("artifact" in ref and ref["artifact"] != located["artifact"]) or (
+                    "page" in ref and (type(ref["page"]) is not int or ref["page"] != located["page"])):
+                raise ValueError("The supplied conclusion locator conflicts with the observed PDF artifact or page.")
+            verified.append(located)
             continue
         artifact = _string(ref.get("artifact"), "artifact path")
         info = snapshot["artifacts"].get(artifact)
@@ -737,6 +769,12 @@ def draft_evidence_feedback(snapshot, proposal, observed, first_error):
         return first_error
     blind = _blind_text(snapshot)
     repairs = [first_error]
+    manuscript = checks.get("manuscript")
+    if (snapshot.get("conclusion") and isinstance(manuscript, dict) and manuscript.get("status") == "assessed"
+            and manuscript.get("conclusion_support") not in ("measured", "interpretation", "needs_evidence")
+            and "conclusion_support" not in first_error):
+        repairs.append("checks.manuscript.conclusion_support is missing or invalid. Assess the whole conclusion "
+                       "as measured, interpretation or needs_evidence, including any inference beyond the outcome.")
     pdf_windows = {}
     groups = [(f"checks.{name}", checks.get(name)) for name in ("manuscript", "experiment", "citations", "visual")]
     groups.extend((f"issues[{i}]", item) for i, item in enumerate(issues[:8]))
@@ -1133,6 +1171,11 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
 def record_is_current(snapshot, record):
     if not isinstance(record, dict) or record.get("version") != REVIEW_VERSION or record.get("revision") != snapshot["revision"]:
         return False
+    if snapshot.get("evidence_scope"):
+        scope = record.get("evidence_scope")
+        if not isinstance(scope, dict) or not all(isinstance(scope.get(key), str) and scope[key].strip()
+                for key in ("comparison", "alternative", "discriminator")):
+            return False
     if snapshot.get("figure_methods") and record.get("verdict") == "accept":
         origins = (record.get("checks", {}).get("visual", {}).get("series_origin") or {})
         return set(origins) == set(snapshot["figure_methods"]) and all(

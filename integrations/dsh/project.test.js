@@ -217,20 +217,95 @@ test('corrupt, writable or linked manuscript snapshots abort the edit or restore
   assert.equal((await projectFile(root, path)).content, current)
 })
 
-// The test copies the profile and overlays only the candidate bundle's source.
+// Use the pinned CLI with a disposable profile and the candidate bundle's source.
+async function installTestProfile(home) {
+  const profile = join(home, 'profiles', 'idea2paper')
+  await mkdir(dirname(profile), { recursive: true })
+  await cp(process.env.IDEA2PAPER_TEST_PROFILE, profile, { recursive: true })
+  const pkg = join(profile, 'node_modules', 'idea2paper-dsh')
+  for (const file of ['index.js','workflow.js','project.js','experiment.js','cordis.patch.yml','package.json']) await cp(join(bundle,file), join(pkg,file))
+  return profile
+}
+
+test('pinned native CLI scopes terminal Stop to the community project owner', {
+  skip: !process.env.IDEA2PAPER_TEST_PROFILE || !process.env.IDEA2PAPER_TEST_DSH,
+  timeout: 30000,
+}, async t => {
+  const home = await mkdtemp(join(tmpdir(), 'idea2paper-interrupt-'))
+  t.after(() => rm(home, {recursive:true, force:true}))
+  await installTestProfile(home)
+  const helper = join(home, 'test-domain')
+  // Park inspection before any model call. Stop must reach the live helper
+  // while this owner's flock is still held, even after a foreground-group SIGINT.
+  await writeFile(helper, `#!/usr/bin/env python3
+import fcntl, json, sys
+for line in sys.stdin:
+    request = json.loads(line)
+    op = request["op"]
+    print("domain " + op, file=sys.stderr, flush=True)
+    if op == "stop":
+        with open(".workflow.lock", "r+") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                print(json.dumps({"id": request["id"], "ok": True, "result": {"state": "stopped"}}), flush=True)
+            else:
+                sys.exit("owner lost the project lock before Stop")
+`, {mode:0o700})
+  function launch(args, hosted = false) {
+    const child = spawn(process.env.IDEA2PAPER_TEST_DSH, ['--profile','idea2paper',...args], {
+      env: {HOME:home, DSH_HOME:home, PATH:process.env.PATH, PKG_NATIVE_CACHE_PATH:process.env.PKG_NATIVE_CACHE_PATH,
+        DSH_TELEMETRY_DISABLED:'1', IDEA2PAPER_PYTHON:helper, ...(hosted && {IDEA2PAPER_HOSTED:'1'})},
+      stdio:['ignore','ignore','pipe'], detached:true,
+    })
+    t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL') })
+    let log = ''
+    const requests = []
+    let entered
+    const first = new Promise(resolve => { entered = resolve })
+    createInterface({input:child.stderr}).on('line', line => {
+      log += line + '\n'
+      if (line.startsWith('domain ')) {
+        const op = line.slice(7)
+        requests.push(op)
+        entered(op)
+      }
+    })
+    const exited = new Promise(resolve => child.once('close', resolve))
+    const ready = Promise.race([first, exited.then(() => { throw new Error('CLI exited before its domain request: ' + log) })])
+    return {child, ready, exited, requests, get log() { return log }}
+  }
+  for (const hosted of [false, true]) {
+    const project = join(home, hosted ? 'hosted' : 'community')
+    const owner = launch(['run', project, 'Measure equivalent comparisons'], hosted)
+    assert.equal(await owner.ready, 'project_status')
+    const observer = launch(['status', project])
+    assert.equal(await observer.ready, 'inspect_project')
+    process.kill(-observer.child.pid, 'SIGINT')
+    assert.equal(await observer.exited, 130)
+    assert.deepEqual(observer.requests, ['inspect_project'])
+    assert.equal(owner.child.exitCode, null)
+    assert.deepEqual(owner.requests, ['project_status'])
+    const marker = join(project,'.native-stop')
+    await assert.rejects(lstat(marker), {code:'ENOENT'}, observer.log)
+
+    process.kill(-owner.child.pid, 'SIGINT')
+    assert.equal(await owner.exited, 130)
+    assert.deepEqual(owner.requests, hosted ? ['project_status'] : ['project_status','stop'])
+    await assert.rejects(lstat(marker), {code:'ENOENT'}, owner.log)
+  }
+})
+
 for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-retry', 'server-exhausted']) test('pinned native blind reviewer with ' + scenario, {
   skip: !process.env.IDEA2PAPER_TEST_PROFILE || !process.env.IDEA2PAPER_TEST_DSH,
   timeout: 90000,
 }, async t => {
   const home = await mkdtemp(join(tmpdir(), 'idea2paper-native-test-'))
   if (!process.env.IDEA2PAPER_TEST_KEEP) t.after(() => rm(home, { recursive: true, force: true }))
-  const profile = join(home, 'profiles', 'idea2paper')
-  await mkdir(dirname(profile), { recursive: true })
-  await cp(process.env.IDEA2PAPER_TEST_PROFILE, profile, { recursive: true })
-  const pkg = join(profile, 'node_modules', 'idea2paper-dsh')
-  for (const file of ['index.js','workflow.js','project.js','experiment.js','cordis.patch.yml','package.json']) await cp(join(bundle,file), join(pkg,file))
+  const profile = await installTestProfile(home)
   let phase = 'review', committed = false, attemptedAfterDisclosure = false
   let recorded, delivered = false, resumed = false, stopped = false, parked
+  let scopeCommitments = 0
   const commitment = scenario === 'unavailable' ? 'unavailable' : 'program'
   const google = scenario !== 'unavailable'
   const terminal = ['flattened-503', 'quota', 'no-retry', 'server-exhausted'].includes(scenario)
@@ -272,7 +347,14 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         return // Hold the request open until DSH cancels the in-flight turn.
       }
       let response
-      if (tools.includes('reproduce_measurement') && !tools.includes('read_evidence')) {
+      if (tools.includes('commit_evidence_scope') && !tools.includes('read_evidence')) {
+        assert.match(history, /schema-only-scope-brief/)
+        for (const secret of ['frozen-source-only-for-independent-reader', 'prior-finding-private',
+             'reported-row-private', 'manuscript-private', 'conclusion-passage-private', 'inlineData']) {
+          assert.ok(!history.includes(secret), secret)
+        }
+        response = {name:'commit_evidence_scope', args:{comparison:'paired loss', alternative:'different exposure', discriminator:'measured exposure'}}
+      } else if (tools.includes('reproduce_measurement') && !tools.includes('read_evidence')) {
         assert.deepEqual(tools, ['reproduce_measurement'])
         assert.match(history, /original protocol only: derive metric for seed/)
         for (const privateText of ['parent-scientific-private', 'frozen-source-only-for-independent-reader',
@@ -285,7 +367,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         const submit = {name:'reproduce_measurement', args}
         response = commitment === 'unavailable' ? [submit, submit] : submit
       } else if (tools.includes('read_evidence')) {
-        assert.deepEqual(tools.toSorted(), ['read_evidence', 'reproduce_measurement', 'run_method_control'])
+        assert.deepEqual(tools.toSorted(), [...(scenario === 'program' ? ['commit_evidence_scope'] : []), 'read_evidence', 'reproduce_measurement', 'run_method_control'])
         assert.ok(committed)
         for (const opening of ['frozen-source-only-for-independent-reader', 'reported-row-private',
              'prior-finding-private', 'manuscript-private', 'Rendered manuscript page 2 of 2']) {
@@ -391,9 +473,17 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.equal(args.preflight, !parked)
         return {revision:'rev1',method_control:true,measurement_reproduction:true,rendered_pages:2,rendered_artifact:'paper/main.pdf',
           opening_evidence:['scripts/plot.py','results/data.json',{artifact:'paper/main.pdf',page:2}], brief:'manuscript-private; prior-finding-private',
+          ...((scenario === 'program' || parked) && {scope_brief:'schema-only-scope-brief'}),
           ...(!parked && {reproduction_brief:'original protocol only: derive metric for seed'})}
+      case 'commit_evidence_scope':
+        assert.ok(committed || parked)
+        assert.equal(args.revision, 'rev1')
+        assert.equal(args.discriminator, 'measured exposure')
+        assert.equal(scopeCommitments++, 0)
+        return {comparison:args.comparison, alternative:args.alternative, discriminator:args.discriminator}
       case 'review_evidence':
         assert.ok(committed || parked, 'read submission before commitment')
+        if (scenario === 'program' || parked) assert.equal(scopeCommitments, 1)
         if (args.artifact === 'results/data.json') return {text:'reported-row-private',receipt:{artifact:args.artifact,revision:'rev1'}}
         if (args.artifact === 'scripts/plot.py') return {text:'frozen-source-only-for-independent-reader',receipt:{artifact:args.artifact,revision:'rev1'}}
         if (args.artifact === 'sources/paper.txt') return {text:'independently-read-primary-passage',receipt:{artifact:args.artifact,revision:'rev1'}}
