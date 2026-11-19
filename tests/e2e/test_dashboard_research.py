@@ -83,7 +83,8 @@ def test_live_research_desk(tmp_path, monkeypatch):
         record = {"revision": revision, "previous_revision": previous, "verdict": "unassessed" if previous else "revise",
                   "summary": "Compared the annotation with the plotted series.", "paper_pdf_sha256": digest,
                   "artifact_hashes":{"paper/figures/comparisons.png":figure_digest, method:method_sha},
-                  "checks":{"experiment":{"status":"unassessed","reason":"The averaging control disagreed with its prediction.",
+                  "checks":{"manuscript":{"status":"assessed","conclusion_support":"interpretation","reason":"The mechanism is a hypothesis."},
+                            "experiment":{"status":"unassessed","reason":"The averaging control disagreed with its prediction.",
                              "controls":[control, {**control, "target":"probe_counts()", "matches":True,
                                                    "expected":[9007199254740993, 0], "observed":[9007199254740993, 0]},
                                          {**control, "control":2, "target":"Recorded condition", "columns":["temperature","accuracy"],
@@ -227,6 +228,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 controls = page.locator(".method-controls")
                 controls.locator("summary").focus()
                 page.keyboard.press("Enter")
+                assert page.locator("#review-coverage").get_by_text("The conclusion offers a possible explanation", exact=True).is_visible()
                 assert controls.locator("summary").inner_text() == "Experimental controls (3)"
                 mismatch, match, reproduced = controls.get_by_role("listitem").all()
                 values = reproduced.get_by_role("table", name="Recorded condition")

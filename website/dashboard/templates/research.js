@@ -5,6 +5,9 @@ const researchLabels = {
   read_paper: ['Read the paper','阅读定稿 PDF','اقرأ الورقة'],
   review_evidence: ['Inspect the review','查看评审依据','اعرض أدلة المراجعة'],
   delivery_verified: ['The PDF matches the version signed by the independent reviewer.','这份 PDF 与独立评审签字的版本一致。','يطابق ملف PDF النسخة التي اعتمدها المراجع المستقل.'],
+  conclusion_measured: ['The measurements directly support the conclusion','实测数据直接支持这段结论','تدعم القياسات الاستنتاج مباشرة'],
+  conclusion_interpretation: ['The conclusion offers a possible explanation','结论提出了一种可能的解释','يقدّم الاستنتاج تفسيرًا محتملًا'],
+  conclusion_needs_evidence: ['The conclusion needs additional evidence','这段结论还需要证据','يحتاج الاستنتاج إلى أدلة إضافية'],
   delivered_pdf: ['Delivered PDF','已交付 PDF','ملف PDF المُسلَّم'], working_pdf: ['Working draft PDF','工作稿 PDF','ملف PDF للمسودة الحالية'],
   delivered_review: ['Review of the delivered paper','已交付稿评审','مراجعة الورقة المُسلَّمة'],
   working_review: ['Review of the working draft','工作稿评审','مراجعة المسودة الحالية'],
@@ -562,7 +565,8 @@ function renderReview() {
   coverage.hidden = !review.checks?.length;
   coverage.querySelector('ul').replaceChildren(...(review.checks || []).map(check => {
     const li = document.createElement('li'), label = document.createElement('strong');
-    label.textContent = rt(check.domain) + ' · ' + rt(check.status);
+    label.textContent = check.conclusion_support ? rt('conclusion_' + check.conclusion_support) :
+      rt(check.domain) + ' · ' + rt(check.status);
     li.append(label, document.createTextNode(check.reason ? ' ' + check.reason : ''));
     if (check.controls?.length) {
       const details = document.createElement('details'), summary = document.createElement('summary');

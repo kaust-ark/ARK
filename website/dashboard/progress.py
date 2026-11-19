@@ -319,6 +319,11 @@ def review_summary(root, review, *, delivered=False):
             if isinstance(check, dict) and check.get("status") in ("assessed", "unassessed"):
                 item = {"domain": domain, "status": check["status"], "reason": _text(check.get("reason"))}
                 item["evidence"] = references(check, revision, False)
+                support = check.get("conclusion_support")
+                if domain == "manuscript" and check["status"] == "assessed" and support in (
+                    "measured", "interpretation", "needs_evidence"
+                ):
+                    item["conclusion_support"] = support
                 origins = check.get("series_origin")
                 hashes = review.get("artifact_hashes")
                 if domain == "experiment" and isinstance(hashes, dict):
