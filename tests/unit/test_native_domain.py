@@ -354,6 +354,39 @@ def test_primary_source_resolution_requires_correct_identity(monkeypatch):
     assert evidence.resolve(entry) is None
 
 
+def test_survey_leads_retain_report_locations_without_treating_redirects_or_code_as_papers():
+    report = '\n'.join([
+        'A paper titled "Which populations benefit from calibration" (DOI: 10.1234/A(B)).',
+        '[paper](https://doi.org/10.1234/a(b)) [1](https://vertexaisearch.cloud.google.com/10.9999/bogus)',
+        'The preprint is at https://arxiv.org/abs/2101.01234v2 and arXiv:2101.01234.',
+        '```python', 'doi="10.1111/example"', '```',
+        'Their paper was titled “Proper scoring for shifted populations”.',
+        'The paper "Early verification of forecasts" used DOI: 10.1234/078<OO>2.0.',
+    ])
+    assert domain.literature_evidence.source_leads(report) == [
+        {"query": "10.1234/A(B)", "report_line": 1, "reported_title": "Which populations benefit from calibration"},
+        {"query": "10.48550/arXiv.2101.01234", "report_line": 3},
+        {"query": "Proper scoring for shifted populations", "report_line": 7},
+        {"query": "Early verification of forecasts", "report_line": 8},
+    ]
+
+
+def test_strict_research_manuscript_preserves_live_bibliography(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    project.config["skip_deep_research"] = False
+    source = project.latex_dir / "main.tex"
+    previous = source.read_text()
+    manual = r"\section*{References}" + "\n[1] An unlinked work."
+    proposed = previous.replace(r"\bibliography{references}", manual)
+    assert proposed != previous
+    result = project.check_manuscript_edit({"content": proposed})
+    assert not result["ok"] and "lookup_papers" in result["diagnostic"]
+    assert project.check_manuscript_edit({"content": previous + "\n% " + manual})["ok"]
+    assert project.check_manuscript_edit({"content": proposed + r"\input{refs}"})["ok"]
+    source.write_text(proposed)
+    assert project.check_manuscript_edit({"content": proposed + "\n"})["ok"]
+
+
 def test_register_selected_publication_keeps_existing_cite_keys(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     paper = domain.citation.Paper(title="Measured search costs", authors=["A. Author"], year=2020, doi="10.1234/search")
@@ -361,13 +394,18 @@ def test_register_selected_publication_keeps_existing_cite_keys(tmp_path, monkey
     monkeypatch.setattr(domain.citation, "search_papers", lambda *a, **kw: [paper])
     monkeypatch.setattr(domain.citation, "fetch_bibtex", lambda p: official)
     monkeypatch.setattr(domain.citation, "_fetch_bibtex_from_doi", lambda doi: official)
+    primary = tmp_path / "sources/primary.txt"
+    primary.parent.mkdir(exist_ok=True)
+    primary.write_text(json.dumps({"source":"Publisher abstract", "passage":"The two methods used equal inputs."}))
+    monkeypatch.setattr(project, "_source_record", lambda entry: "sources/primary.txt")
     bib = project.latex_dir / "references.bib"
     bib.write_text("% my references\n")
     assert not project.lookup_papers({"query": "search", "add_to_bibliography": True})["saved"]
     assert "saved" not in project.lookup_papers({"query": "Measured search costs"})
     assert bib.read_text() == "% my references\n"
     request = {"query": "Measured search costs", "add_to_bibliography": True}
-    assert project.lookup_papers(request)["cite"] == r"\cite{author2020}"
+    registered = project.lookup_papers(request)
+    assert registered["cite"] == r"\cite{author2020}" and registered["passage"] == "The two methods used equal inputs."
     with monkeypatch.context() as direct:
         direct.setattr(domain.citation, "search_papers", lambda *a, **kw: [])
         assert project.lookup_papers(dict(request, query=paper.doi))["cite_key"] == "author2020"
@@ -379,6 +417,13 @@ def test_register_selected_publication_keeps_existing_cite_keys(tmp_path, monkey
     collision = official.replace("10.1234/search", "10.1234/other").replace("Measured search costs", "Another work")
     bib.write_text(collision)
     assert not project.lookup_papers(request)["saved"] and bib.read_text() == collision
+    official = official.replace("year={2020}", "author={A. Author}, year={2020}")
+    dubious = official.replace("author2020", "attributed").replace("A. Author", "Wrong Person")
+    bib.write_text(dubious)
+    assert not project.lookup_papers(request)["saved"] and bib.read_text() == dubious
+    bib.write_text(dubious.replace("doi={10.1234/search}", 'journal={Conference}'))
+    reply = project.lookup_papers(request)
+    assert reply["cite_key"] == "author2020" and reply["check_existing_keys"] == ["attributed"]
 
 
 def test_body_citations_trace_primary_records_and_survey_independently(tmp_path, monkeypatch):

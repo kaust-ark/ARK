@@ -145,11 +145,52 @@ def test_visual_evidence_is_actual_rendered_current_pages(tmp_path):
     assert validate_review(snap, response, observed=[*receipts, first["receipt"], second["receipt"]])["deliverable"]
 
 
+def test_review_uses_executed_code_and_requested_quantity_across_a_source_edit(tmp_path):
+    import hashlib
+
+    pair = PAIRS[0]
+    project(tmp_path, pair, "clean")
+    brief = "auto_research/state/idea.md"
+    (tmp_path / brief).parent.mkdir(parents=True)
+    (tmp_path / brief).write_text("Measure comparisons per trial.")
+    script = "scripts/measure.py"
+    code = "def per_trial(total, trials):\n    return total / trials\nratio = per_trial(total_comparisons, trials)"
+    (tmp_path / script).parent.mkdir()
+    (tmp_path / script).write_text(code)
+    token = "a" * 24
+    run = dict(status="completed", script=script, code_sha256=hashlib.sha256(code.encode()).hexdigest(),
+               identity="i2p-" + token)
+    snapshot = build_snapshot(tmp_path, measurement_run=run)
+    assert snapshot["measurement_method"]["artifact"] == script
+    response, receipts = record(snapshot, pair, "clean", "")
+    with pytest.raises(ValueError, match="executed calculation"):
+        validate_review(snapshot, response, observed=receipts)
+    for key in (script, brief):
+        reading = read_evidence(snapshot, key)
+        response["checks"]["experiment"]["evidence"].append({"artifact": key, "quote": (tmp_path / key).read_text()})
+        receipts.append(reading["receipt"])
+    method_ref = next(r for r in response["checks"]["experiment"]["evidence"] if r["artifact"] == script)
+    method_ref["quote"] = "ratio = per_trial(total_comparisons, trials)"
+    with pytest.raises(ValueError, match=r"per_trial \(line 1\)"):
+        validate_review(snapshot, response, observed=receipts)
+    method_ref["quote"] = "return total / trials"
+    assert validate_review(snapshot, response, observed=receipts)["verdict"] == "accept"
+    (tmp_path / script).write_text("# A later revision")
+    assert build_snapshot(tmp_path, measurement_run=run)["measurement_method"]["artifact"] is None
+    sealed = f"auto_research/state/native_runs/{token}/input/main.py"
+    (tmp_path / sealed).parent.mkdir(parents=True)
+    (tmp_path / sealed).write_text(code)
+    assert build_snapshot(tmp_path, measurement_run=run)["measurement_method"]["artifact"] == sealed
+
+
 def test_review_of_measured_figure_needs_plotted_source_rows_and_pixels(tmp_path):
+    from PIL import Image
+
     pair = PAIRS[0]
     project(tmp_path, pair, "clean")
     paper = tmp_path / "paper"
-    (paper / "main.tex").write_text(pair["clean"] + "\n" + r"\input{results}")
+    include = r"\includegraphics{figures/measured.png}"
+    (paper / "main.tex").write_text(pair["clean"] + "\n" + r"\input{results}" + "\n" + include)
     (paper / "results.tex").write_text(r"\includegraphics{figures/measured}")
     (paper / "unused.tex").write_text(r"\includegraphics{only_in_draft.png}")
     scripts = tmp_path / "scripts"
@@ -158,8 +199,13 @@ def test_review_of_measured_figure_needs_plotted_source_rows_and_pixels(tmp_path
     snippet = "axis.plot(sizes, counts)"
     (tmp_path / method).write_text(snippet + '\nfigure.savefig("measured.png")')
     (scripts / "other.py").write_text('fig.savefig("only_in_draft.png")')
+    (paper / "figures").mkdir()
+    art = paper / "figures/measured.png"
+    Image.new("RGB", (100, 50), "#358b70").save(art)
     with fitz.open() as pdf:
-        pdf.new_page().insert_text((60, 65), "Measured counts")
+        page = pdf.new_page()
+        page.insert_text((60, 65), "Measured counts")
+        page.insert_image((60, 75, 260, 175), filename=str(art))
         pdf.save(paper / "main.pdf")
     snapshot = build_snapshot(tmp_path, required=["visual"])
     assert snapshot["figure_methods"] == {"measured.png": method}
@@ -191,6 +237,13 @@ def test_review_of_measured_figure_needs_plotted_source_rows_and_pixels(tmp_path
                            "fix":"Use the measured inputs.", "evidence":check["evidence"]}]
     response["verdict"] = "revise"
     assert not validate_review(snapshot, response, observed=receipts)["deliverable"]
+    refs = [{"artifact": method, "quote": snippet}, {"artifact":"paper/main.tex", "quote":include}]
+    response["issues"][0]["evidence"] = refs
+    located = validate_review(snapshot, response, observed=receipts)["issues"][0]["evidence"]
+    assert located[-1]["page"] == 1 and located[-1]["image_sha256"] == seen["receipt"]["image_sha256"]
+    refs[1] = {"artifact":"paper/main.tex", "quote":pair["clean"]}
+    with pytest.raises(ValueError, match="Missing visual observation"):
+        validate_review(snapshot, response, observed=receipts)
     (scripts / "alternative.py").write_text('fig.savefig("measured.png")')
     assert "figure_methods" not in build_snapshot(tmp_path, required=["visual"])
     assert build_snapshot(tmp_path, required=["visual"], registered_plots={"measured.png": method})["figure_methods"] == {"measured.png": method}

@@ -12,6 +12,43 @@ from ark import citation
 from ark.latex.utils import body_page_boundary
 
 
+def source_leads(report, limit=10):
+    """Locate explicit paper identities in the survey. Registration still requires a primary record."""
+    identifiers, titles = {}, {}
+    in_code = False
+    for number, line in enumerate(report.splitlines(), 1):
+        if line.lstrip().startswith(("```", "~~~")):
+            in_code = not in_code
+        if in_code:
+            continue
+        # Opaque grounding redirects can each occupy thousands of characters.
+        text = re.sub(r"https?://(?:vertexaisearch\.cloud\.google\.com|www\.google\.com)/[^\s)]*", "", line)
+        section = re.search(r'(?:titled|entitled|published|paper|publication|study|conference|\(\d{4}\))', text, re.I)
+        quoted = [m[1].strip(" .,") for m in re.finditer(r'["“]([^"”\n]{12,240})["”]', text)]
+        quoted = [title for title in quoted if len(title.split()) >= 3]
+        matches = re.finditer(r"(?<!\w)(10\.\d{4,9}/[-A-Z0-9._;()/+:]+|arxiv(?:\s*:\s*|\.org/(?:abs|pdf)/)\d{4}\.\d{4,5}(?:v\d+)?)", text, re.I)
+        for match in matches:
+            # Some legacy DOI suffixes contain angle brackets. Lookup by title
+            # when the resolver cannot represent the entire identifier.
+            if text[match.end():].startswith(("<", "&lt;", "%3C", "%3c")):
+                continue
+            query = match[0].rstrip(".,;:")
+            while query.endswith(")") and query.count(")") > query.count("("):
+                query = query[:-1]
+            if query.lower().startswith("arxiv"):
+                aid = re.search(r"\d{4}\.\d{4,5}", query)[0]
+                query = "10.48550/arXiv." + aid
+            lead = {"query": query, "report_line": number}
+            if len(quoted) == 1:
+                lead["reported_title"] = quoted[0]
+            identifiers.setdefault(query.lower(), lead)
+        if section:
+            for title in quoted:
+                titles.setdefault(title.casefold(), {"query": title, "report_line": number})
+    named = {r["reported_title"].casefold() for r in identifiers.values() if "reported_title" in r}
+    return [*identifiers.values(), *(v for k, v in titles.items() if k not in named)][:limit]
+
+
 def body_source_trace(paper, report_path, checked):
     """Trace rendered body links to report identities and verified source files, without judging entailment."""
     import fitz

@@ -74,7 +74,12 @@ def test_live_research_desk(tmp_path, monkeypatch):
         record = {"revision": revision, "previous_revision": previous, "verdict": "accept" if previous else "revise",
                   "summary": "Compared the annotation with the plotted series.", "paper_pdf_sha256": digest,
                   "artifact_hashes":{"paper/figures/comparisons.png":figure_digest},
-                  "checks":{"visual":{"status":"assessed","reason":"Compared the two archived pages.",
+                  "checks":{"experiment":{"status":"assessed","reason":"Checked the averaging calculation.",
+                             "evidence":[{"artifact":"scripts/measure.py","quote":"return total / trials",
+                                          "sha256":hashlib.sha256(b"return total / trials").hexdigest()},
+                                         {"artifact":"paper/main.tex","quote":claim,
+                                          "sha256":hashlib.sha256(source.encode()).hexdigest()}]},
+                            "visual":{"status":"assessed","reason":"Compared the two archived pages.",
                                       "series_origin":{"comparisons.png":"measured"}}},
                   "issues": [{"id":"R1","severity":"blocker","claim":claim,"reason":"Compared at the same axis scale.",
                               "status":"resolved" if previous else "new","evidence":[{"artifact":"paper/main.pdf",
@@ -150,7 +155,14 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert page.evaluate("document.activeElement.dataset.key") == "results/experiment.json"
                 before = page.locator("#review-issues button").filter(has_text="Previous revision · paper/main.pdf")
                 after = page.locator("#review-issues button").filter(has_text="Reviewed revision · paper/main.pdf")
-                page.locator("#review-coverage summary").click()
+                page.locator("#review-coverage > summary").click()
+                passages = page.locator(".review-passages")
+                passages.locator("summary").click()
+                assert passages.locator("strong").inner_text() == "scripts/measure.py"
+                assert passages.locator("pre").first.inner_text() == "return total / trials"
+                passages.get_by_role("button", name="paper/main.tex").click()
+                assert page.locator("#preview-content mark").inner_text() == claim
+                page.locator("#evidence-close").click()
                 assert "Compared the two archived pages." in page.locator("#review-coverage").inner_text()
                 assert "Plotted from measurements" in page.locator(".review-figures").inner_text()
                 page.get_by_role("button", name="comparisons.png", exact=True).click()

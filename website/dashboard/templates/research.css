@@ -64,6 +64,10 @@
 #review-coverage .review-figures li { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; margin:0; padding-inline-start:10px; border-inline-start:2px solid var(--line); }
 #review-coverage .review-figures [data-origin="copied"] { border-color:#b05c36; color:#864220; }
 .review-figures button { border:0; background:none; color:#126657; font:inherit; text-decoration:underline; cursor:pointer; }
+.review-passages { margin-block:6px; }
+.review-passages>div { border-inline-start:2px solid #a8cbbd; padding:5px 10px; margin-bottom:8px; background:#f4f8f6; color:var(--ink); }
+.review-passages pre { margin-block:4px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.8rem; line-height:1.5; }
+.review-passages button { border:0; background:none; color:#126657; font:inherit; text-align:start; text-decoration:underline; cursor:pointer; overflow-wrap:anywhere; }
 #preview-content mark { color:#392a10; background:#ffdf96; }
 #review-issues p { color:var(--text-second); margin-top:3px; }
 .review-controls { display:flex; gap:8px; flex-wrap:wrap; font-size:.85rem; }
@@ -78,7 +82,7 @@ body.share-mode .research-workspace { grid-template-columns:1fr; }
 @media (prefers-reduced-motion:no-preference) {
   .research-count-live span { transition:transform .36s cubic-bezier(.2,.7,.3,1); }
   .research-arrived { animation:research-arrive .22s ease-out; }
-  #research-history[open] ol, #preview-content img { animation:research-reveal .26s cubic-bezier(.2,.7,.3,1); }
+  #research-history[open] ol, .review-passages[open]>div, #preview-content img { animation:research-reveal .26s cubic-bezier(.2,.7,.3,1); }
   #research-phases .research-arrived .research-phase::before { animation:research-phase-mark .55s ease-out; }
   @keyframes research-phase-mark { from {outline:4px solid #74b799;} to {outline:0 solid transparent;} }
   @keyframes research-reveal { from {opacity:.3;transform:translateY(4px);} to {opacity:1;transform:none;} }

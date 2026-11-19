@@ -20,6 +20,7 @@ import re
 import stat
 import statistics
 import sys
+import textwrap
 import unicodedata
 
 
@@ -156,7 +157,7 @@ def _figure_methods(root, paper, artifacts, registered):
 
 
 def build_snapshot(project, *, paper_dir="paper", target_track="", required=("manuscript", "experiment"),
-                   registered_plots=None):
+                   registered_plots=None, measurement_run=None):
     """Fingerprint the submission and allowlisted evidence without exposing project secrets."""
     root = Path(project).resolve(strict=True)
     if not isinstance(required, (tuple, list)) or any(d not in DOMAINS for d in required):
@@ -172,6 +173,25 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
         artifacts[rel.as_posix()] = {"kind": kind, "sha256": _file_digest(path)}
     manifest = {"version": REVIEW_VERSION, "artifacts": artifacts, "paper_dir": paper.as_posix(),
                 "target_track": target_track, "required": sorted(set(required) | {"manuscript"})}
+    run = measurement_run or {}
+    digest = run.get("code_sha256")
+    if "experiment" in required and run.get("status") == "completed" and re.fullmatch(r"[0-9a-f]{64}", str(digest)):
+        method = run.get("script")
+        if not isinstance(method, str) or artifacts.get(method) != {"kind": "method", "sha256": digest}:
+            method = None
+            identity = run.get("identity") or ""
+            if re.fullmatch(r"i2p-[a-f0-9]{24}", identity):
+                sealed = f"{STATE}/native_runs/{identity[4:]}/input/main.py"
+                path = _inside(root, sealed)
+                if path.is_file() and _file_digest(path) == digest:
+                    if len(artifacts) >= MAX_ARTIFACTS:
+                        raise ValueError("Review evidence exceeds the supported artifact limit")
+                    artifacts[sealed] = {"kind": "method", "sha256": digest}
+                    method = sealed
+        manifest["measurement_method"] = {"artifact": method, "sha256": digest}
+        brief = f"{STATE}/idea.md"
+        if brief in artifacts:
+            manifest["measurement_method"]["request"] = brief
     if "visual" in required and any(meta["kind"] == "measurement" for meta in artifacts.values()):
         methods = _figure_methods(root, paper, artifacts, registered_plots or {})
         if methods:
@@ -341,6 +361,16 @@ def review_prompt(snapshot, previous=None):
               "manuscript_excerpt": _blind_text(snapshot), "available_artifacts": catalogue}
     if conflicts := reported_change_conflicts(packet["manuscript_excerpt"]):
         packet["reported_changes_to_verify"] = conflicts[:8]
+    if snapshot.get("measurement_method"):
+        packet["measurement_method"] = snapshot["measurement_method"]
+        packet["experiment_evidence_required"] = (
+            "Compare the requested measurement with the implementation that produced the rows. "
+            "Check the split, objective, units, numerical transformations and aggregation. "
+            "Follow local helper calls to the operations that compute the quantity. Compare their behavior "
+            "on an edge case with the requested definition. In checks.experiment.evidence cite the defining "
+            "calculation, a recorded row and the applicable "
+            "passage of the request when present. A reproducible computation can still measure a different quantity. "
+            "Mark experiment unassessed if the executed source is unavailable.")
     if snapshot.get("figure_methods"):
         packet["figure_methods"] = snapshot["figure_methods"]
         packet["visual_evidence_required"] = (
@@ -370,6 +400,36 @@ def _string(value, field, *, limit=4000):
 
 _JSON_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[{}\[\],:]|[^"{}\[\],: \t\r\n]+')
 _JSON_STRING_MARK = re.compile(r'\\.|"')
+
+
+def _delegated_calculation(snapshot, method, refs):
+    """Identify evidence consisting solely of calls to the worker's own helpers."""
+    if not method.endswith(".py"):
+        return None
+    quotes = [ref["quote"] for ref in refs if ref["artifact"] == method and ref.get("quote")]
+    calls = set()
+    for quote in quotes:
+        try:
+            statements = ast.parse(textwrap.dedent(quote)).body
+        except (SyntaxError, ValueError, RecursionError):
+            return None
+        for stmt in statements:
+            value = getattr(stmt, "value", None)
+            if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+                return None
+            calls.add(value.func.id)
+    if not calls:
+        return None
+    data, _ = _artifact(snapshot, method)
+    if len(data) > 1024 * 1024:
+        return None
+    try:
+        definitions = {node.name: node.lineno for node in ast.parse(data).body if isinstance(node, ast.FunctionDef)}
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    if calls <= definitions.keys():
+        return ", ".join(f"{name} (line {definitions[name]})" for name in sorted(calls))
+    return None
 
 
 def _json_container_tokens(quote):
@@ -469,6 +529,43 @@ def _covers(snapshot, domain, refs):
     return any(snapshot["artifacts"][r["artifact"]]["kind"] == kind for r in refs)
 
 
+def _copied_series_page(snapshot, refs, check):
+    """Reuse a reviewer's page citation only when the disputed plot is painted on that page."""
+    import fitz
+
+    tex, pdf = _submission(snapshot)
+    citations = check["evidence"]
+    methods = {r["artifact"] for r in refs if r in citations}
+    copied = {name for name, kind in check.get("series_origin", {}).items()
+              if kind == "copied" and snapshot["figure_methods"][name] in methods}
+    if not copied:
+        return None
+    linked = set()
+    for r in refs:
+        if r["artifact"] != tex:
+            continue
+        for literal in re.findall(r"\\includegraphics\*?(?:\s*\[[^]]*\])?\s*\{([^{}]+)\}", r.get("quote", "")):
+            key = snapshot["paper_dir"] + "/" + literal
+            if key in snapshot["artifacts"] and Path(key).name in copied:
+                linked.add(key)
+    if len(linked) != 1:
+        return None
+    key = linked.pop()
+    if Path(key).suffix.lower() not in (".png", ".jpg", ".jpeg"):
+        return None  # A vector figure still needs an explicit rendered page reference.
+    try:
+        image = fitz.Pixmap(_artifact(snapshot, key)[0])
+        if image.alpha:
+            image = fitz.Pixmap(image, 0)
+        with fitz.open(stream=_artifact(snapshot, pdf)[0], filetype="pdf") as doc:
+            pages = [r for r in citations if r["artifact"] == pdf and r.get("visual") and any(
+                (entry["width"], entry["height"], entry["digest"]) == (image.width, image.height, image.digest)
+                for entry in doc[r["page"] - 1].get_image_info(hashes=True))]
+    except (RuntimeError, ValueError):
+        return None
+    return pages[0] if len(pages) == 1 else None
+
+
 def _contains_observed_quote(text, quote):
     # PDF extraction can change a printed ligature or wrap a line. Keep numbers,
     # units, words and mathematical relations intact when locating the passage.
@@ -565,6 +662,16 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
         origins = None
         if assessed and not _covers(snapshot, domain, refs):
             raise ValueError(f"No observed {domain} evidence supports this assessment")
+        if assessed and domain == "experiment" and (method := snapshot.get("measurement_method")):
+            paths = {r["artifact"] for r in refs}
+            if not method["artifact"]:
+                raise ValueError("The worker's executed source is unavailable. Mark experiment unassessed.")
+            if method["artifact"] not in paths or (method.get("request") and method["request"] not in paths):
+                raise ValueError("Trace the measured quantity to its requested definition, executed calculation "
+                                 "and recorded rows in checks.experiment.evidence.")
+            if delegated := _delegated_calculation(snapshot, method["artifact"], refs):
+                raise ValueError(f"The quoted code delegates the calculation to {delegated}. Inspect that "
+                                 "definition and quote the operation that produces the measured quantity.")
         if assessed and domain == "visual":
             if methods := snapshot.get("figure_methods"):
                 cited = {ref["artifact"] for ref in refs}
@@ -631,6 +738,9 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
         refs = _references(snapshot, supplied, observed, blind, required=True)
         if not _covers(snapshot, "manuscript", refs):
             raise ValueError(f"{ident} must locate the disputed manuscript passage or page")
+        if domain == "visual" and severity == "blocker" and status in ("new", "still_present") and not _covers(snapshot, domain, refs):
+            if page := _copied_series_page(snapshot, refs, checks[domain]):
+                refs.append(page)
         if status != "unassessed" and severity == "blocker" and (
                 checks[domain]["status"] != "assessed" or not _covers(snapshot, domain, refs)):
             raise ValueError(f"Missing {domain} observation for blocking finding {ident}")

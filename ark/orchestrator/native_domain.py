@@ -528,9 +528,13 @@ class NativeProject(CompilerMixin):
         report = (self.state_dir / "deep_research.md").read_text()
         return {
             "path": "auto_research/state/deep_research.md",
-            "report": report[:28000],
+            "source_leads": literature_evidence.source_leads(report),
+            "source_guidance": "These are unverified leads located in the survey. Before writing related work, select relevant "
+                               "ones with lookup_papers(query, add_to_bibliography=true). Check their official titles "
+                               "and original passages before citing their returned keys. Keep the venue bibliography.",
+            "report": report[:6000],
             "total_chars": len(report),
-            "next_offset": 28000 if len(report) > 28000 else None,
+            "next_offset": 6000 if len(report) > 6000 else None,
             "interaction_id": receipt["interaction_id"],
         }
 
@@ -886,8 +890,14 @@ class NativeProject(CompilerMixin):
             record["caption"] = caption
         if not passed:
             from ark.nano_banana import generated_result_conflict
-            if conflict := generated_result_conflict((entry.get("semantic_review") or {}).get("checks")):
+            checks = (entry.get("semantic_review") or {}).get("checks") or {}
+            if conflict := generated_result_conflict(checks):
                 record["diagnostic"] = conflict + " Keep the results plot separate and render it from worker output."
+            corrections = [{"check": name, "observed": check["observed"][:450], "correction": check["correction"][:450]}
+                           for name, check in checks.items() if isinstance(check, dict) and check.get("status") == "contradiction"
+                           and isinstance(check.get("observed"), str) and isinstance(check.get("correction"), str)]
+            if corrections:
+                record["corrections"] = corrections
         return record
 
     def lookup_papers(self, args):
@@ -940,14 +950,31 @@ class NativeProject(CompilerMixin):
             fcntl.flock(output, fcntl.LOCK_EX)
             output.seek(0)
             existing = citation.parse_bib_string(output.read())
-            key = next((r["key"] for r in existing if same_work(r["fields"])), None)
+            canonical = citation._bib_paper(entry)
+            same_title = [r for r in existing if same_work(r["fields"])]
+            key = next((r["key"] for r in same_title
+                        if (citation._doi_id(r["fields"].get("doi")) or r["fields"].get("author"))
+                        and citation._same_paper(r["fields"].get("title", ""), r["fields"], [canonical])), None)
             if key is None:
+                conflicts = [r["key"] for r in same_title]
+                if conflicts:
+                    result["check_existing_keys"] = conflicts
+                    if expected_doi and any(citation._doi_id(r["fields"].get("doi")) == expected_doi for r in same_title):
+                        return {**result, "saved": False, "next": "The selected DOI is already registered with conflicting "
+                                "metadata. Check the listed entries against the returned official BibTeX before citing."}
                 key = entry["key"]
                 if any(r["key"] == key for r in existing):
                     return {**result, "saved": False, "next": f"Bibliography key {key} already names another work."}
                 output.write("\n" + official.strip() + "\n")
                 output.flush()
         result.update(saved=True, cite_key=key, cite=r"\cite{" + key + "}", bibliography="paper/references.bib")
+        # Put the primary passage beside the cite key, before the author writes a claim.
+        source = self._source_record({**entry, "key": key})
+        if source:
+            record = _load(self.root / source)
+            result.update(source=source, source_kind=record["source"], passage=record["passage"][:1600])
+        else:
+            result["next"] = "Bibliographic identity saved. Inspect the original work before attributing a finding to it."
         return result
 
     def _source_record(self, entry):
@@ -994,7 +1021,11 @@ class NativeProject(CompilerMixin):
         record["bibtex_key"] = entry["key"]
         name = hashlib.sha256(record["url"].encode()).hexdigest()[:24] + ".txt"
         path = self.root / "sources" / name
-        _atomic_write_text(path, json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+        if path.resolve() != path:
+            raise ValueError("The primary source must be a regular project file.")
+        content = json.dumps(record, ensure_ascii=False, indent=2) + "\n"
+        if not path.is_file() or path.read_text() != content:
+            _atomic_write_text(path, content)
         return str(path.relative_to(self.root))
 
     def verify_citations(self, args):
@@ -1342,6 +1373,18 @@ class NativeProject(CompilerMixin):
             previous is None or hashlib.sha256(previous).hexdigest() != args["base_sha256"]
         ):
             return {"ok": False, "checked": False, "diagnostic": "The manuscript changed. Reopen the current revision."}
+        if previous and self.config.get("layout_mode") == "strict" and self.config.get("skip_deep_research") is False:
+            managed = r"\\(?:bibliography\s*\{|printbibliography\b)"
+            active = re.sub(r"(?<!\\)%[^\n]*", "", content)
+            if (re.search(managed, previous.decode("utf-8", errors="replace"))
+                    and not re.search(managed, active)
+                    and re.search(r"\\section\*?\s*\{(?:References|Bibliography)\}", active, re.I)
+                    and re.search(r"(?:^|\n)\s*\[\d+\]", active)
+                    and not re.search(r"\\(?:input|include)\s*\{[^{}]*(?:bib|ref)[^{}]*\}", active, re.I)):
+                return {"ok": False, "checked": True, "diagnostic":
+                        "This edit replaces the venue bibliography with hand-numbered references. Keep its "
+                        "bibliography command and style. Register the selected works with lookup_papers "
+                        "(add_to_bibliography=true) and cite their returned keys in the supported passages."}
         pdf = self.latex_dir / "main.pdf"
         receipt = self.state.get("compile") or {}
         digest = self.state.get("compiled_pdf_sha256")
@@ -1520,6 +1563,7 @@ class NativeProject(CompilerMixin):
             self.root,
             target_track=str(self.config.get("venue") or self.config.get("venue_format") or ""),
             required=required,
+            measurement_run=self.state.get("experiment"),
             registered_plots={name: row["script"] for name, row in (self.state.get("plots") or {}).items()
                               if row.get("script") and row.get("status") == "completed"},
         )
@@ -1667,6 +1711,8 @@ class NativeProject(CompilerMixin):
         # Imported manuscripts may have a plot script and no native run receipt.
         candidates = [name for name in sorted(assets) if re.search(r"plot|figure", Path(name).stem, re.I)]
         methods = select([*registered, *candidates], "method", 1)
+        measured_method = snapshot.get("measurement_method", {})
+        protocol = [key for key in (measured_method.get("request"), measured_method.get("artifact")) if key]
         citations = _load(self.state_dir / "native_citations.json", {}).get("checked", {})
         body_records = (trace or {}).get("body_citations", {}).values()
         source_paths = [record.get("source") for record in body_records]
@@ -1676,7 +1722,8 @@ class NativeProject(CompilerMixin):
         originals = select([*first_from_each, *source_paths, *(r.get("source") for r in citations.values()), *sorted(assets)],
                            "primary_source", 2)
         # PDFs need a page selector. The reviewer can request them through read_evidence.
-        return [path for path in [*methods, *measurements, *originals] if Path(path).suffix.lower() != ".pdf"]
+        return [path for path in dict.fromkeys([*protocol, *methods, *measurements, *originals])
+                if Path(path).suffix.lower() != ".pdf"]
 
     def review_snapshot(self, args):
         self._check_compiled()

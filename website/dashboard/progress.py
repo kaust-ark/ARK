@@ -215,7 +215,16 @@ def review_summary(root, review):
         for ref in _rows(issue.get("evidence"))[:8]:
             key = ref.get("artifact")
             digest = _text(ref.get("sha256"))
-            if not evidence_type(key) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            if not re.fullmatch(r"[a-f0-9]{64}", digest):
+                continue
+            if not evidence_type(key):
+                # Show only the passage already recorded by the private reviewer.
+                # Source code and the project brief have no download route.
+                if isinstance(key, str) and re.fullmatch(
+                    r"(?:auto_research/state/(?:idea\.md|native_runs/[a-f0-9]{24}/input/main\.py)"
+                    r"|(?:scripts|experiments)/(?:[\w-]+/)*[\w.-]+\.(?:py|r|jl|sh))", key, re.I
+                ) and (quote := _text(ref.get("quote"), 1200)):
+                    refs.append({"artifact": key, "previous": earlier, "quote": quote})
                 continue
             archived = key
             if key in ("paper/main.pdf", "paper/main.tex", "paper/references.bib"):
@@ -256,6 +265,7 @@ def review_summary(root, review):
             check = checks.get(domain)
             if isinstance(check, dict) and check.get("status") in ("assessed", "unassessed"):
                 item = {"domain": domain, "status": check["status"], "reason": _text(check.get("reason"))}
+                item["evidence"] = references(check, revision, False)
                 origins = check.get("series_origin")
                 hashes = review.get("artifact_hashes")
                 if domain == "visual" and isinstance(origins, dict):

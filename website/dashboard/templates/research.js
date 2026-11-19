@@ -35,6 +35,7 @@ const researchLabels = {
   pause_at: ['Response deadline %s','答复截止时间 %s','الموعد النهائي للرد %s'],
   trial: ['Trial','试验','التجربة'], baseline: ['Baseline','基线','خط الأساس'], proposed: ['Proposed','所提方法','الطريقة المقترحة'],
   coverage: ['What the reviewer checked','评审检查了什么','ما الذي فحصه المراجع'],
+  reviewed_sources: ['Evidence inspected (%s)','查看评审依据（%s）','الأدلة المفحوصة (%s)'],
   measured: ['Plotted from measurements','由实测数据绘制','رُسم من القياسات'],
   copied: ['Values copied into plotting code','绘图代码写死了数值','القيم منسوخة في كود الرسم'],
   theoretical: ['Theoretical curve','理论曲线','منحنى نظري'],
@@ -355,6 +356,28 @@ function renderReview() {
     const li = document.createElement('li'), label = document.createElement('strong');
     label.textContent = rt(check.domain) + ' · ' + rt(check.status);
     li.append(label, document.createTextNode(check.reason ? ' ' + check.reason : ''));
+    if (check.evidence?.length) {
+      const sources = document.createElement('details'), summary = document.createElement('summary');
+      sources.className = 'review-passages';
+      summary.textContent = rt('reviewed_sources', check.evidence.length);
+      sources.append(summary);
+      for (const ref of check.evidence) {
+        const passage = document.createElement('div'), name = document.createElement(ref.key ? 'button' : 'strong');
+        name.textContent = [ref.artifact, ref.page && rt('page') + ' ' + ref.page].filter(Boolean).join(' · ');
+        if (ref.key) {
+          name.type = 'button';
+          name.onclick = () => openEvidence({...ref, label:name.textContent}, name, ref.page);
+        }
+        passage.append(name);
+        if (ref.quote) {
+          const quote = document.createElement('pre');
+          quote.textContent = ref.quote;
+          passage.append(quote);
+        }
+        sources.append(passage);
+      }
+      li.append(sources);
+    }
     if (check.figures?.length) {
       const figures = document.createElement('ul');
       figures.className = 'review-figures';
