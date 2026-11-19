@@ -118,7 +118,17 @@ def _stage_tex(paper, staging):
     return env
 
 
-def _manuscript_first_pass(paper, content, *, check_headings=False, page_target=None):
+def _local_tex_inputs(staging):
+    inputs = set()
+    for line in (staging / "main.fls").read_text(errors="replace").splitlines():
+        if line.startswith("INPUT "):
+            path = (staging / line[6:]).resolve()
+            if path.is_relative_to(staging):
+                inputs.add(path.relative_to(staging).as_posix())
+    return inputs
+
+
+def _manuscript_first_pass(paper, content, *, check_headings=False, page_target=None, expected_style=None):
     with tempfile.TemporaryDirectory(prefix="idea2paper-edit-") as tmp:
         staging = Path(tmp)
         env = _stage_tex(paper, staging)
@@ -134,6 +144,9 @@ def _manuscript_first_pass(paper, content, *, check_headings=False, page_target=
         pdf = staging / "main.pdf"
         if not pdf.is_file() or not pdf.stat().st_size:
             return {"diagnostic": "pdflatex produced no manuscript pages."}
+        if expected_style and expected_style not in _local_tex_inputs(staging):
+            return {"missing_venue_style": expected_style, "diagnostic": f"TeX did not load {expected_style}. Keep the supplied ICML preamble and title block. "
+                                  "Edit the abstract, sections and appendix inside that skeleton."}
         if check_headings and (notes := body_repetition_notes(staging, empty_headings_only=True)):
             return {"diagnostic": notes[0]}
         if page_target:
@@ -334,7 +347,7 @@ class NativeProject(CompilerMixin):
                 "experiment": (self.config.get("experiment_compute_backend") or {}).get("type", "local"),
             },
             "owner_brief": (
-                "Use the same session for planning, measurements, writing and repair. Read the venue skeleton and project skills. "
+                "Use the same session for planning, measurements, writing and repair. Edit the supplied venue skeleton in place and read the project skills. "
                 "Investigate primary literature, freeze paired controls, run a Python experiment, inspect measurements, and generate its plots. "
                 "For a proposed mechanism, name the distinguishing numeric columns in the plan before submitting work. "
                 "After the worker returns, inspect experiment_design and the actual values. If the distinguishing measurement is absent "
@@ -1573,6 +1586,15 @@ class NativeProject(CompilerMixin):
         pdf = self.latex_dir / "main.pdf"
         receipt = self.state.get("compile") or {}
         digest = self.state.get("compiled_pdf_sha256")
+        venue_template = _asset_dir("venue_templates") / "icml"
+        strict_icml = self.config.get("layout_mode") == "strict" and self.config.get("venue_format") == "icml"
+        if (strict_icml and previous and not receipt.get("ok") and r"\end{document}" in content
+                and previous == (venue_template / "main.tex").read_bytes()):
+            try:
+                trial = _manuscript_first_pass(self.latex_dir, candidate, expected_style="icml2026.sty")
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return {"ok": False, "checked": False, "diagnostic": f"The first venue build could not run: {exc}"}
+            return {"ok": "diagnostic" not in trial, "checked": True, **trial}
         if (
             previous is None or receipt.get("ok") is not True or not digest or receipt.get("pdf_sha256") != digest
             or pdf.is_symlink() or not pdf.is_file() or _sha(pdf) != digest
@@ -1580,10 +1602,13 @@ class NativeProject(CompilerMixin):
             return {"ok": True, "checked": False, "reason": "No verified prior build."}
         try:
             strict = self.config.get("layout_mode") == "strict"
+            style_check = {"expected_style": "icml2026.sty"} if strict_icml and "icml2026.sty" in receipt.get("inputs", ()) else {}
             trial = _manuscript_first_pass(self.latex_dir, candidate, check_headings=strict,
-                                           page_target=(self.config.get("venue_pages") or 4) if strict else None)
+                                           page_target=(self.config.get("venue_pages") or 4) if strict else None, **style_check)
             if "diagnostic" not in trial:
                 return {"ok": True, "checked": True, **trial}
+            if trial.get("missing_venue_style"):
+                return {"ok": False, "checked": True, **trial}
             baseline = _manuscript_first_pass(self.latex_dir, previous, check_headings=strict)
         except subprocess.TimeoutExpired:
             return {"ok": False, "checked": False, "diagnostic": "The manuscript check timed out after 90 seconds."}
@@ -1690,12 +1715,7 @@ class NativeProject(CompilerMixin):
 
             with fitz.open(staging / "main.pdf") as pdf:
                 pages = len(pdf)
-            local_inputs = set()
-            for line in (staging / "main.fls").read_text(errors="replace").splitlines():
-                if line.startswith("INPUT "):
-                    path = (staging / line[6:]).resolve()
-                    if path.is_relative_to(staging):
-                        local_inputs.add(path.relative_to(staging).as_posix())
+            local_inputs = _local_tex_inputs(staging)
             cited = set()
             for aux in staging.rglob("*.aux"):
                 for keys in re.findall(r"\\citation\{([^{}]+)\}", aux.read_text(errors="replace")):
@@ -1901,6 +1921,43 @@ class NativeProject(CompilerMixin):
                               "Use lookup_papers with an exact title or DOI and add_to_bibliography=true. "
                               "Cite its returned key at the supported claim and use the venue bibliography "
                               "instead of typing a numbered reference list.")
+        if self.state.get("compiled_pdf_sha256") and main.is_file() and main.resolve() == main:
+            compiled_files = set(rendered.get("inputs", []))
+            tex = "\n".join(
+                (self.latex_dir / path).read_text()
+                for path in [
+                    "main.tex",
+                    *sorted(p for p in compiled_files if p.endswith(".tex") and p != "main.tex"),
+                ]
+            )
+            tex = re.sub(r"(?<!\\)%[^\n]*", "", tex)
+            parts = re.split(r"\\appendix\b", tex, maxsplit=1)
+            if len(parts) < 2 or not re.search(r"\\(?:sub)*section\*?\{[^}]+\}", parts[1]):
+                issues.append("Include a reproducibility appendix with a substantive section.")
+        if self.config.get("venue_format") == "icml" and rendered.get("ok") and "main.tex" in rendered.get("inputs", []):
+            template = _asset_dir("venue_templates") / "icml"
+            # A .sty beside the manuscript does not establish that TeX loaded it.
+            style = template / "icml2026.sty"
+            local = self.latex_dir / style.name
+            if (style.name not in rendered["inputs"] or not local.is_file() or local.resolve() != local
+                    or _sha(local) != _sha(style)):
+                issues.append(f"The TeX recorder must show the official {style.name} loaded from paper/. "
+                              "Read the original paper/main.tex with read_project_file(list_revisions=true). "
+                              "Restore its preamble and title block, and keep your scientific sections.")
+            if rendered.get("cited"):
+                bibstyle = style.with_suffix(".bst")
+                biblog = self.latex_dir / "main.blg"
+                local_bst = self.latex_dir / bibstyle.name
+                if (not biblog.is_file() or f"The style file: {bibstyle.name}" not in biblog.read_text(errors="replace").splitlines()
+                        or not local_bst.is_file() or local_bst.resolve() != local_bst or _sha(local_bst) != _sha(bibstyle)):
+                    issues.append(f"Compile using the venue bibliography style {bibstyle.stem}. Keep the bibliography "
+                                  "command from the supplied ICML skeleton and recompile the paper.")
+            if (self.config.get("skip_deep_research") is False and float(self.config.get("venue_pages") or 4) >= 4
+                    and not rendered.get("research_citations")
+                    and deep_research.research_report_status(self.state_dir) == "verified"):
+                issues.append("No body citation links could be traced to the verified literature report. Restore the "
+                              "venue's hyperref setup and bibliography. Use lookup_papers(add_to_bibliography=true) "
+                              "for relevant originals and cite at least two of those works at the supported passages.")
         trace = rendered.get("research_citations") or {}
         if (self.config.get("venue_format") == "icml" and float(self.config.get("venue_pages") or 4) >= 4
                 and trace and trace.get("verified_works", trace["matched"]) < 2):
@@ -2440,15 +2497,6 @@ class NativeProject(CompilerMixin):
             problems.append("Missing or changed worker measurements.")
         if self.config.get("layout_mode") == "strict":
             rendered = self.state.get("compile", {})
-            compiled_files = set(rendered.get("inputs", []))
-            tex = "\n".join(
-                (self.latex_dir / path).read_text()
-                for path in [
-                    "main.tex",
-                    *sorted(p for p in compiled_files if p.endswith(".tex") and p != "main.tex"),
-                ]
-            )
-            tex = re.sub(r"(?<!\\)%[^\n]*", "", tex)
             proof = _load(self.state_dir / "native_citations.json", {})
             bib = self.latex_dir / "references.bib"
             cited = set(rendered.get("cited", []))
@@ -2460,9 +2508,6 @@ class NativeProject(CompilerMixin):
                 or not cited.issubset(set(proof.get("cited", [])))
             ):
                 problems.append("Verify the sources cited by this manuscript.")
-            parts = re.split(r"\\appendix\b", tex, maxsplit=1)
-            if len(parts) < 2 or not re.search(r"\\(?:sub)*section\*?\{[^}]+\}", parts[1]):
-                problems.append("Include a reproducibility appendix with a substantive section.")
         report = delivery_contract.evaluate(self.root, self.config.get("venue_pages", 4), config=self.config)
         delivery_contract.write_report(self.root, report)
         problems += [f"{x.check}: {x.detail}" for x in report.delivery_blockers(self.config)]

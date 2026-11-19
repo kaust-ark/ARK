@@ -158,7 +158,7 @@ def _check_friedman_tables(doc, rows):
     """Check each rendered per-seed table that labels both feature-space arms."""
     labels = {"seed":"seed"}
     for metric in ("rmse", "mae"):
-        for arm, aliases in (("all", ("10", "full")), ("signal", ("5", "signal"))):
+        for arm, aliases in (("all", ("10", "10f", "full")), ("signal", ("5", "5f", "signal"))):
             for name in aliases:
                 labels[f"{metric} ({name})"] = f"{metric}_{arm}"
     errors = []
@@ -180,7 +180,7 @@ def _check_friedman_tables(doc, rows):
                     cells = line.split()
                     if len(cells) != len(columns) or not all(re.fullmatch(r"\d+(?:\.\d+)?", v) for v in cells):
                         break
-                    identifier = cells[columns.index("seed")]
+                    identifier = re.sub(r"\.0+$", "", cells[columns.index("seed")])
                     if not identifier.isdigit() or int(identifier) not in rows:
                         break
                     row = rows[int(identifier)]
@@ -204,7 +204,7 @@ def displayed_metrics(doc, case, rows):
                           lambda m: f"{m[1]}e{m[2].replace('−', '-')}", line)
             tokens = re.findall(r"(?<![\w.])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\w.])",
                                 line.replace("−", "-"))
-            if str(seed) not in tokens:
+            if str(seed) not in tokens and not (tokens and re.fullmatch(rf"{seed}\.0+", tokens[0])):
                 continue
             if all(any(printed_value_matches(token, row[field]) for token in tokens) for field in fields):
                 result[seed] = {"page": page, "row": line}

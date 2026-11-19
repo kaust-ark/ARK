@@ -405,6 +405,36 @@ def test_actual_compile_fingerprint_and_stale_delivery(tmp_path, monkeypatch):
         project.invoke("review_snapshot", {})
 
 
+@pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
+def test_icml_first_edit_and_review_require_the_loaded_venue(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    main = project.latex_dir / "main.tex"
+    stock = main.read_text()
+    plain = r"\documentclass{article}\begin{document}Experiments.\end{document}"
+    proposed = project.check_manuscript_edit({"content": plain + "\n% icml2026.sty"})
+    assert not proposed["ok"] and "did not load icml2026.sty" in proposed["diagnostic"]
+    assert main.read_text() == stock
+    # Preamble commands can legitimately live in an included file.
+    (project.latex_dir / "prelude.tex").write_text(r"\usepackage{icml2026}")
+    modular = stock.replace(r"\usepackage{icml2026}", r"\input{prelude}")
+    assert project.check_manuscript_edit({"content": modular})["ok"]
+    # A resumed project can already contain the plain article.
+    main.write_text(plain)
+    assert project.compile_paper({})["ok"]
+    project.config["skip_deep_research"] = False
+    monkeypatch.setattr(domain.deep_research, "research_report_status", lambda *_: "verified")
+    issues = project.review_snapshot({"preflight": True})["blockers"]
+    assert any("recorder" in issue and "icml2026.sty" in issue for issue in issues)
+    assert any("No body citation links" in issue for issue in issues)
+    assert any("reproducibility appendix" in issue for issue in issues)
+    main.write_text(modular.replace(r"\bibliography{references}", ""))
+    monkeypatch.setattr(domain.deep_research, "research_report_status", lambda *_: "missing")
+    compiled = project.compile_paper({})
+    assert compiled["ok"] and "icml2026.sty" in compiled["inputs"]
+    assert not any("recorder" in issue for issue in compiled["manuscript_issues"])
+    assert "did not load" in project.check_manuscript_edit({"content": plain})["diagnostic"]
+
+
 def test_manuscript_check_bootstrap_receipt_and_base_digest(tmp_path, monkeypatch):
     project = domain.NativeProject(tmp_path)
     args = {"content": "draft"}

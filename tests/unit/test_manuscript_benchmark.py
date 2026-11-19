@@ -20,11 +20,12 @@ def test_replay_refuses_swapped_conditions_or_seeds():
         benchmark.replay(rows, mapping, oracle)
 
 
-def test_shuffled_pdf_rows_do_not_match_split_values():
+@pytest.mark.parametrize("precision", [0, 2])
+def test_shuffled_pdf_rows_do_not_match_split_values(precision):
     with fitz.open() as doc:
         pg = doc.new_page()
-        pg.insert_text((72, 100), "0   2417.4   542.5")
-        pg.insert_text((72, 124), "1   3214.7   675.4")
+        pg.insert_text((72, 100), f"{0:.{precision}f}   2417.4   542.5")
+        pg.insert_text((72, 124), f"{1:.{precision}f}   3214.7   675.4")
         rows = {0: {"nll_raw": 2417.4, "nll_cal": 542.5}, 1: {"nll_raw": 3214.7, "nll_cal": 675.4}}
         assert set(benchmark.displayed_metrics(doc, "digits", rows)) == {0, 1}
         with pytest.raises(ValueError, match="seeds"):
