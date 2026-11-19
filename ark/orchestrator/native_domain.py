@@ -12,6 +12,7 @@ import fcntl
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -35,7 +36,7 @@ from ark import (
     measurement_table,
     review,
 )
-from ark.compute import native_experiment
+from ark.compute import native_experiment, review_control
 from ark.execution import ExecutionMixin
 from ark.latex.compiler import CompilerMixin
 from ark.latex.utils import body_page_boundary, extract_latex_errors, parse_overfull_warnings
@@ -1805,8 +1806,18 @@ class NativeProject(CompilerMixin):
         self.snapshot = snapshot
         previous = _load(self.state_dir / "native_review.json")
         self.review_receipts = []
+        self.control_attempts = 0
+        self.reproduction_attempts = 0
         archive = self.state_dir / "reviews" / snapshot["revision"]
         archive.mkdir(parents=True, exist_ok=True)
+        self.reproduction_path = None
+        self.reproduction_decision = None
+        if snapshot.get("measurement_reproduction") and args.get("session_id"):
+            session_key = hashlib.sha256(_text(args, "session_id", limit=160).encode()).hexdigest()
+            self.reproduction_path = archive / ("reproduction-" + session_key + ".json")
+            self.reproduction_decision = _load(self.reproduction_path)
+            if self.reproduction_decision and "receipt" in self.reproduction_decision:
+                self.review_receipts.append(self.reproduction_decision["receipt"])
         saved = archive / "main.pdf"
         if not saved.exists():
             tmp = archive / ".main.pdf.tmp"
@@ -1831,8 +1842,12 @@ class NativeProject(CompilerMixin):
             "rendered_artifact": f"{snapshot.get('paper_dir', 'paper')}/main.pdf",
             "rendered_pages": pages,
             "opening_evidence": self._opening_review_evidence(snapshot, trace),
+            "method_control": bool(snapshot.get("method_control")),
+            "measurement_reproduction": bool(snapshot.get("measurement_reproduction")),
             "evidence_refs": sorted(snapshot["artifacts"]),
         }
+        if snapshot.get("measurement_reproduction"):
+            result["reproduction_brief"] = review.reproduction_brief(snapshot)
         if trace:
             result["brief"] += (
                 "\nCitation locations from the frozen body PDF, verified survey and registered source files. "
@@ -1856,13 +1871,31 @@ class NativeProject(CompilerMixin):
                     )
                 attempts[session] = snapshot["revision"]
                 self.save()
+                observation = ("Independent review opened. The reviewer has only the original research request "
+                               "and measurement fields." if snapshot.get("measurement_reproduction")
+                               else "Independent review opened for this manuscript revision.")
+                self.event("review", "review_started", observation, revision=snapshot["revision"])
             elif attempts[session] != snapshot["revision"]:
                 raise ValueError("Reviewer session belongs to a different manuscript revision.")
         return result
 
+    def _require_disclosure(self):
+        if self.snapshot and self.snapshot.get("measurement_reproduction") and self.reproduction_decision is None:
+            raise ValueError("Before opening submission evidence, call reproduce_measurement with an independent "
+                             "program derived from the original request or an unavailable reason.")
+
+    def _seal_reproduction(self, decision):
+        if self.reproduction_path:
+            _json(self.reproduction_path, decision)
+        self.reproduction_decision = decision
+        if receipt := decision.get("receipt"):
+            self.review_receipts.append(receipt)
+        return decision
+
     def review_evidence(self, args):
         if not self.snapshot or args.get("revision") != self.snapshot["revision"]:
             raise ValueError("Open the current review snapshot before requesting evidence.")
+        self._require_disclosure()
         artifact = args.get("artifact") or args.get("ref")
         result = review.read_evidence(
             self.snapshot,
@@ -1876,6 +1909,92 @@ class NativeProject(CompilerMixin):
         )
         self.review_receipts.append(result["receipt"])
         return result
+
+    def run_method_control(self, args):
+        snap = self.snapshot
+        if not snap or args.get("revision") != snap["revision"] or not snap.get("method_control"):
+            raise ValueError("Open the frozen worker's review packet before requesting a numerical control.")
+        self._require_disclosure()
+        method = snap["measurement_method"]
+        data, _ = review._artifact(snap, method["artifact"])
+        if self.control_attempts >= 4:
+            raise ValueError("The review has used its four control attempts. Report the available evidence.")
+        self.control_attempts += 1
+        self.event("review", "method_control_started", "Reviewer is testing a prediction against the frozen experiment.")
+        try:
+            result = review_control.run(data, snap["method_control"], args)
+        except Exception:
+            self.event("review", "method_control_failed", "The reviewer’s numerical control did not return a measurement.")
+            raise
+        receipt = dict(control=1, revision=snap["revision"], artifact=method["artifact"], sha256=method["sha256"], **result)
+        self.review_receipts.append(receipt)
+        self.event("review", "method_control_finished",
+                   f"{result['target']}: predicted {result['expected']}, measured {result['observed']}.",
+                   revision=snap["revision"])
+        return {"receipt": receipt}
+
+    def reproduce_measurement(self, args):
+        snap = self.snapshot
+        if not snap or args.get("revision") != snap["revision"] or not (task := snap.get("measurement_reproduction")):
+            raise ValueError("Open the review packet for the revised measurements first.")
+        if not self.reproduction_path:
+            return self._reproduce(args, snap, task)
+        with self.reproduction_path.with_suffix(".lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if self.reproduction_decision is None and (stored := _load(self.reproduction_path)):
+                self.reproduction_decision = stored
+                if receipt := stored.get("receipt"):
+                    self.review_receipts.append(receipt)
+            return self._reproduce(args, snap, task)
+
+    def _reproduce(self, args, snap, task):
+        if ("program" in args) == ("unavailable" in args):
+            raise ValueError("Submit one independent program or explain why the calculation is unavailable.")
+        program = _text(args, "program", limit=12000) if "program" in args else None
+        reason = _text(args, "unavailable", limit=1200) if "unavailable" in args else None
+        if self.reproduction_decision is not None:
+            sealed = self.reproduction_decision
+            if ((program and sealed.get("receipt", {}).get("program") == program)
+                    or (reason and sealed.get("unavailable") == reason)):
+                return sealed
+            raise ValueError("The reviewer already opened the submission. Its independent program is sealed.")
+        if reason:
+            decision = self._seal_reproduction({"unavailable": reason})
+            self.event("review", "measurement_reproduction_unavailable", reason, revision=snap["revision"])
+            return decision
+        if self.reproduction_attempts >= 3:
+            raise ValueError("The independent reproduction has used its three attempts; report available evidence.")
+        data, _ = review._artifact(snap, task["artifact"])
+        row = measurement_table.reproduction_row(json.loads(data), snap["measurement_comparison"]["unchanged_arrays"],
+                                                 task["sha256"])
+        self.reproduction_attempts += 1
+        identity = ", ".join(f"{k} {v}" for k, v in task["identifiers"].items()) or "single observation"
+        self.event("review", "measurement_reproduction_started", f"Independently recomputing {identity}.",
+                   condition=identity)
+        try:
+            expected = review_control.reproduce(snap["method_control"], program, task["identifiers"], task["columns"])
+        except Exception:
+            self.event("review", "measurement_reproduction_failed", "The independent calculation did not return the requested outcomes.")
+            raise
+        observed = row["outcomes"]
+        differences = [key for key in task["columns"] if not math.isclose(expected[key], observed[key],
+                                                                           rel_tol=1e-6, abs_tol=1e-9)]
+        receipt = {**task, "control": 2, "revision": snap["revision"], "target": f"Recorded condition {identity}",
+                   "backend": snap["method_control"]["backend"], "expected": expected, "observed": observed,
+                   "matches": not differences, "differences": differences, "program": program,
+                   "rel_tol": 1e-6, "abs_tol": 1e-9,
+                   "rationale": "The reviewer independently recomputed all numeric outcomes for this condition from the study protocol."}
+        receipt["program_sha256"] = hashlib.sha256(program.encode()).hexdigest()
+        decision = self._seal_reproduction({"receipt": receipt})
+        description = "Differing outcomes: " + ", ".join(differences) if differences else "All requested outcomes matched."
+        detail = {}
+        if differences:
+            first = differences[0]
+            detail = {"metric": first, "independent_value": str(expected[first]), "reported_value": str(observed[first])}
+        self.event("review", "measurement_reproduction_finished", f"Recomputed {identity}. {description}",
+                   revision=snap["revision"], condition=identity, differed=len(differences),
+                   outcomes=len(task["columns"]), **detail)
+        return decision
 
     def check_review(self, args):
         return self.record_review(args, check_only=True)
@@ -1893,6 +2012,9 @@ class NativeProject(CompilerMixin):
             raise ValueError("Unknown reviewer evidence receipt.")
         previous = _load(self.state_dir / "native_review.json")
         try:
+            self._require_disclosure()
+            if any(r.get("control") and r not in observed for r in self.review_receipts):
+                raise ValueError("The verdict must retain all executed numerical controls.")
             record = review.validate_review(snapshot, args["verdict"], previous=previous, observed=observed)
         except ValueError as exc:
             if check_only:
@@ -2017,6 +2139,8 @@ class NativeProject(CompilerMixin):
             "compile_paper",
             "review_snapshot",
             "review_evidence",
+            "run_method_control",
+            "reproduce_measurement",
             "check_review",
             "record_review",
             "deliver",

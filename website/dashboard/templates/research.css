@@ -63,6 +63,12 @@
 #review-coverage .review-figures { list-style:none; margin-block:8px; }
 #review-coverage .review-figures li { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; margin:0; padding-inline-start:10px; border-inline-start:2px solid var(--line); }
 #review-coverage .review-figures [data-origin="copied"] { border-color:#b05c36; color:#864220; }
+.method-controls { margin-block:6px; }
+.method-controls dl { display:grid; grid-template-columns:fit-content(35%) minmax(0,1fr); gap:2px 10px; margin-block:4px 8px; }
+.method-controls table { width:100%; table-layout:fixed; margin-block:6px 10px; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+.method-controls th, .method-controls td { text-align:start; overflow-wrap:anywhere; vertical-align:top; border-bottom:1px solid var(--line); padding:3px 4px; }
+.method-controls tr[data-match="false"] { background:#fff0e5; color:#76391e; }
+.method-controls dd { margin:0; color:var(--ink); }
 .review-figures button { border:0; background:none; color:#126657; font:inherit; text-decoration:underline; cursor:pointer; }
 .review-passages { margin-block:6px; }
 .review-passages>div { border-inline-start:2px solid #a8cbbd; padding:5px 10px; margin-bottom:8px; background:#f4f8f6; color:var(--ink); }

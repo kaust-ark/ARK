@@ -36,6 +36,25 @@ const researchLabels = {
   trial: ['Trial','试验','التجربة'], baseline: ['Baseline','基线','خط الأساس'], proposed: ['Proposed','所提方法','الطريقة المقترحة'],
   coverage: ['What the reviewer checked','评审检查了什么','ما الذي فحصه المراجع'],
   reviewed_sources: ['Evidence inspected (%s)','查看评审依据（%s）','الأدلة المفحوصة (%s)'],
+  method_controls: ['Experimental controls (%s)','实验控制项（%s）','ضوابط التجربة (%s)'],
+  matches_control: ['Matches','一致','مطابق'], differs_control: ['Mismatch','不一致','غير مطابق'],
+  event_review_started: ['Independent review opened','独立评审已开始','بدأت المراجعة المستقلة'],
+  event_measurement_reproduction_started: ['Recomputing a recorded result','正在独立复算','إعادة حساب نتيجة مسجلة'],
+  event_measurement_reproduction_finished: ['Independent calculation complete','独立复算已完成','اكتملت إعادة الحساب'],
+  event_measurement_reproduction_failed: ['Calculation could not finish','复算未完成','تعذر إكمال الحساب'],
+  event_measurement_reproduction_unavailable: ['Reproduction unavailable','当前无法复算','إعادة الحساب غير متاحة'],
+  event_method_control_started: ['Testing a prediction','正在检验预测','اختبار التوقع'],
+  event_method_control_finished: ['Prediction checked','预测检验已完成','اكتمل اختبار التوقع'],
+  event_method_control_failed: ['Prediction test unavailable','预测检验未完成','تعذر اختبار التوقع'],
+  event_manuscript_reviewed: ['Verdict recorded','评审结论已归档','حُفظ قرار المراجعة'],
+  row_start: ['Independent calculation started for %s.','正在复算 %s。','بدأ الحساب المستقل للحالة %s.'],
+  row_match: ['%s · All %s outcomes matched.','%s · %s 项指标全部吻合。','%s · تطابقت النتائج كلها (%s).'],
+  row_diff: ['%s · %s of %s outcomes differ.','%s · %s 项存在差异，共 %s 项。','%s · تختلف %s من أصل %s نتائج.'],
+  row_values: ['%s was reported as %s and recomputed as %s.','%s 的原始实测为 %s，独立复算为 %s。','%s: القيمة المسجلة %s وإعادة الحساب %s.'],
+  control_metric: ['Outcome','指标','المقياس'], control_recomputed: ['Recomputed','独立复算','أُعيد حسابه'],
+  control_reported: ['Reported','论文实测','المسجل'], control_result: ['Comparison','比较','المقارنة'],
+  control_expected: ['Expected','预期值','المتوقع'], control_observed: ['Observed','观察值','المرصود'],
+  control_rationale: ['Reviewer’s rationale','评审理由','تعليل المراجع'], control_source: ['Source','证据来源','المصدر'],
   measured: ['Plotted from measurements','由实测数据绘制','رُسم من القياسات'],
   copied: ['Values copied into plotting code','绘图代码写死了数值','القيم منسوخة في كود الرسم'],
   theoretical: ['Theoretical curve','理论曲线','منحنى نظري'],
@@ -95,6 +114,21 @@ function researchPhase(phase) {
     draft:'writing', manuscript:'writing', reviewer:'review', delivered:'report', delivery:'report', accepted:'report' })[phase] || phase;
 }
 
+function reviewEventLabel(event) {
+  const label = 'event_' + event?.action;
+  return researchLabels[label] ? rt(label) : '';
+}
+
+function observationText(event) {
+  if (event?.condition && event.action === 'measurement_reproduction_started') return rt('row_start', event.condition);
+  if (event?.condition && event.action === 'measurement_reproduction_finished' && Number.isInteger(event.outcomes)) {
+    if (event.differed === 0) return rt('row_match', event.condition, event.outcomes);
+    if (event.differed > 0 && event.metric) return rt('row_diff', event.condition, event.differed, event.outcomes) +
+      ' ' + rt('row_values', event.metric, event.reported_value, event.independent_value);
+  }
+  return event?.observation || '';
+}
+
 function renderHistory() {
   const history = re('research-history');
   history.hidden = !researchEvents.size;
@@ -107,7 +141,7 @@ function renderHistory() {
     const li = document.createElement('li'), time = document.createElement('time');
     time.textContent = e.ts ? fmtDate(e.ts) : '';
     const progress = e.count != null && e.total > 0 ? ' (' + e.count + '/' + e.total + ')' : '';
-    li.append(time, [e.action, e.observation].filter(Boolean).join(' · ') + progress);
+    li.append(time, [reviewEventLabel(e) || e.action, observationText(e)].filter(Boolean).join(' · ') + progress);
     return li;
   }));
 }
@@ -191,7 +225,7 @@ function renderResearch(animate=false) {
     label.startsWith('status_') ? (p.status || '') : label).replace(/^[^\p{L}\p{N}]+/u, '');
   re('research-state').textContent = disconnected ? rt('disconnected') : state;
   const action = quota ? rt('check_quota') : active && waiting ? p.pending_decision.question : !active || paused ? state :
-    p.activity || (last?.status === 'running' && (last.action === 'tool/call' ? last.observation : last.action)) || (p.status !== 'running' ? state : rt('idle'));
+    p.activity || reviewEventLabel(last) || (last?.status === 'running' && (last.action === 'tool/call' ? last.observation : last.action)) || (p.status !== 'running' ? state : rt('idle'));
   re('research-action').textContent = action;
   const artifact = researchData.evidence?.[0];
   const fallback = artifact?.key === 'paper/main.pdf' ? rt('paper_ready') :
@@ -206,7 +240,7 @@ function renderResearch(animate=false) {
   }
   details.hidden = !diagnostic;
   const observed = diagnostic ? (location ? rt('build_location',location[1],location[2]) : rt('build_error')) :
-    obs?.observation || researchData.milestone?.text || fallback;
+    observationText(obs) || researchData.milestone?.text || fallback;
   const measured = Number.isInteger(obs?.count) && Number.isInteger(obs.total) &&
     obs.count >= 0 && obs.total > 0 && obs.count <= obs.total;
   const counter = measured ? ' (' + obs.count + '/' + obs.total + ')' : '';
@@ -356,6 +390,48 @@ function renderReview() {
     const li = document.createElement('li'), label = document.createElement('strong');
     label.textContent = rt(check.domain) + ' · ' + rt(check.status);
     li.append(label, document.createTextNode(check.reason ? ' ' + check.reason : ''));
+    if (check.controls?.length) {
+      const details = document.createElement('details'), summary = document.createElement('summary');
+      details.className = 'method-controls';
+      summary.textContent = rt('method_controls', check.controls.length);
+      const list = document.createElement('ul');
+      for (const control of check.controls) {
+        const row = document.createElement('li'), heading = document.createElement('strong');
+        const target = document.createElement('bdi');
+        target.textContent = control.target;
+        heading.append(target, document.createTextNode(' · ' + rt(control.matches ? 'matches_control' : 'differs_control')));
+        row.append(heading);
+        if (control.outcomes?.length) {
+          const table = document.createElement('table'), header = table.createTHead().insertRow();
+          table.setAttribute('aria-label', control.target);
+          for (const label of ['control_metric','control_recomputed','control_reported','control_result']) {
+            const th = document.createElement('th'); th.scope = 'col'; th.textContent = rt(label); header.append(th);
+          }
+          const body = table.createTBody();
+          for (const outcome of control.outcomes) {
+            const line = body.insertRow(), metric = document.createElement('th');
+            line.dataset.match = String(outcome.matches);
+            metric.scope = 'row'; metric.textContent = outcome.name; line.append(metric);
+            for (const text of [outcome.expected, outcome.reported, rt(outcome.matches ? 'matches_control' : 'differs_control')])
+              line.insertCell().textContent = text;
+          }
+          row.append(table);
+        }
+        const fields = document.createElement('dl');
+        for (const [label, value] of [
+          ...(control.outcomes?.length ? [] : [['control_expected', control.expected], ['control_observed', control.observed]]),
+          ['control_rationale', control.rationale], ['control_source', control.artifact + ' · SHA-256 ' + control.sha256]
+        ]) {
+          const term = document.createElement('dt'), description = document.createElement('dd');
+          term.textContent = rt(label);
+          description.dir = 'auto';
+          description.textContent = value;
+          fields.append(term, description);
+        }
+        row.append(fields); list.append(row);
+      }
+      details.append(summary, list); li.append(details);
+    }
     if (check.evidence?.length) {
       const sources = document.createElement('details'), summary = document.createElement('summary');
       sources.className = 'review-passages';

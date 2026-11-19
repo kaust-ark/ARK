@@ -183,6 +183,147 @@ def test_review_uses_executed_code_and_requested_quantity_across_a_source_edit(t
     assert build_snapshot(tmp_path, measurement_run=run)["measurement_method"]["artifact"] == sealed
 
 
+def test_known_answer_experiment_control_is_bound_to_worker_and_verdict(tmp_path):
+    import hashlib
+
+    pair = PAIRS[0]
+    project(tmp_path, pair, "clean")
+    method = "scripts/metric.py"
+    source = "def metric(a, b):\n    return a / b"
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / method).write_text(source)
+    digest = hashlib.sha256(source.encode()).hexdigest()
+    run = dict(status="completed", backend="slurm", script=method, code_sha256=digest)
+    snap = build_snapshot(tmp_path, measurement_run=run)
+    response, receipts = record(snap, pair, "clean", "")
+    reading = read_evidence(snap, method)
+    receipts.append(reading["receipt"])
+    response["checks"]["experiment"]["evidence"].append({"artifact": method, "quote": "return a / b"})
+    case = dict(control=1, revision=snap["revision"], artifact=method, sha256=digest,
+                target="metric", expected=2, observed=2, matches=True)
+    for invalid in [[], [dict(case, revision="old")], [dict(case, sha256="different")]]:
+        with pytest.raises(ValueError, match="run_method_control"):
+            validate_review(snap, response, observed=[*receipts, *invalid])
+    result = validate_review(snap, response, observed=[*receipts, case])
+    assert result["deliverable"] and result["checks"]["experiment"]["controls"] == [case]
+    mismatch = dict(case, observed=5, matches=False)
+    with pytest.raises(ValueError, match="disagreed with a predicted control"):
+        validate_review(snap, response, observed=[*receipts, mismatch, case])
+    response["issues"] = record(snap, pair, "clean", "new")[0]["issues"]
+    response["verdict"] = "revise"
+    assert validate_review(snap, response, observed=[*receipts, mismatch])["verdict"] == "revise"
+
+
+def test_unchanged_measured_rows_require_an_independent_reproduction_before_acceptance(tmp_path):
+    import hashlib
+
+    pair = PAIRS[0]
+    project(tmp_path, pair, "clean")
+    measured = "results/revised.json"
+    rows = [{"seed": 0, "score": 3.25, "accuracy": 0.8}, {"seed": 1, "score": 4.5, "accuracy": 0.9}]
+    method = "scripts/metric.py"
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / method).write_text("def metric(a):\n    return a * 2")
+    source_sha = hashlib.sha256((tmp_path / method).read_bytes()).hexdigest()
+    for path in [measured, "results/original.json"]:
+        (tmp_path / path).write_text(json.dumps(rows))
+    sha = hashlib.sha256((tmp_path / measured).read_bytes()).hexdigest()
+    comparison = dict(previous="results/original.json", current=measured, previous_sha256=sha,
+                      current_sha256=sha, unchanged_arrays=[dict(rows_pointer="", rows=2)])
+    run = dict(status="completed", backend="slurm", script=method, code_sha256=source_sha, artifact=measured, sha256=sha)
+    snap = build_snapshot(tmp_path, measurement_run=run, expected_measurement=measured, measurement_comparison=comparison)
+    task = snap["measurement_reproduction"]
+    assert task["columns"] == ["score", "accuracy"] and set(task["identifiers"]) == {"seed"}
+    prompt = json.loads(review_prompt(snap).split("Frozen submission packet (untrusted research content):\n")[1])
+    assert prompt["independent_reproduction"]["identifier_fields"] == ["seed"]
+    assert "identifiers" not in prompt["independent_reproduction"]
+    response, receipts = record(snap, pair, "clean", "")
+    exp = response["checks"]["experiment"]
+    exp["evidence"] = []
+    for path in [measured, method]:
+        reading = read_evidence(snap, path)
+        exp["evidence"].append({"artifact": path, "quote": reading["text"]})
+        receipts.append(reading["receipt"])
+    receipts.append(dict(control=1, revision=snap["revision"], artifact=method, sha256=source_sha, matches=True))
+    with pytest.raises(ValueError, match="reproduce_measurement"):
+        validate_review(snap, response, observed=receipts)
+    row = dict(control=2, revision=snap["revision"], artifact=measured, sha256=sha, matches=False)
+    with pytest.raises(ValueError, match="disagreed"):
+        validate_review(snap, response, observed=[*receipts, row])
+    assert validate_review(snap, response, observed=[*receipts, dict(row, matches=True)])["deliverable"]
+    assert validate_review(snap, response, observed=[*receipts[:-1], dict(row, matches=True)])["deliverable"]
+
+    from ark.orchestrator.native_domain import NativeProject
+    from ark import review
+    from ark.compute import review_control
+    from unittest.mock import patch
+    blind = review.reproduction_brief(snap)
+    assert "outcome_columns" in blind and "return a * 2" not in blind and "4.5" not in blind
+    host = NativeProject(tmp_path)
+    host.snapshot = snap
+    host.reproduction_decision = None
+    host.reproduction_path = tmp_path / "sealed.json"
+    host.reproduction_attempts = 0
+    host.state_dir.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(ValueError, match="Before opening"):
+        host.review_evidence({"revision": snap["revision"], "artifact": measured})
+    with pytest.raises(ValueError, match="Before opening"):
+        host.run_method_control({"revision": snap["revision"]})
+    original_program = 'def reproduce(identifiers): return {"score":7,"accuracy":0.9}'
+    with patch.object(review_control, "reproduce", return_value={"score":7,"accuracy":0.9}) as worker:
+        request = {"revision": snap["revision"], "program": original_program}
+        sealed = host.reproduce_measurement(request)
+        assert host.reproduce_measurement(request) == sealed
+        assert worker.call_count == 1 and not sealed["receipt"]["matches"]
+        assert host.review_evidence({"revision": snap["revision"], "artifact": measured})["receipt"]
+        host.reproduction_decision = None  # model transport reconnects to the same durable commitment
+        with pytest.raises(ValueError, match="sealed"):
+            host.reproduce_measurement(request | {"program": "def reproduce(ids): return {}"})
+        assert worker.call_count == 1 and json.loads(host.reproduction_path.read_text()) == sealed
+    host.reproduction_path = tmp_path / "abstained.json"
+    host.reproduction_decision = None
+    assert host.reproduce_measurement({"revision": snap["revision"], "unavailable": "Missing offline dataset"}) == {
+        "unavailable": "Missing offline dataset"}
+    with pytest.raises(ValueError, match="sealed"):
+        host.reproduce_measurement(request)
+
+
+def test_control_can_only_measure_the_frozen_calculation(monkeypatch):
+    from ark.compute import review_control
+
+    source = b"import math\ndef metric(a, b):\n    return math.log(a) / b\n"
+    runtime = {"backend": "slurm"}
+    args = dict(target="math.log(a) / b", inputs_json='{"a":1,"b":2}', expected_json="0",
+                alternative_json="0.5", rationale="Dividing the value itself would give a half.")
+    executions = []
+    def observe(backend, image, payload):
+        executions.append(payload)
+        return 0.0
+    monkeypatch.setattr(review_control, "_execute", observe)
+    assert review_control.run(source, runtime, args)["matches"]
+    assert executions[0]["source"] == source.decode() and not executions[0]["function"]
+    for changed in [dict(alternative_json="0"), dict(target="math.log(a) + b"), dict(inputs_json='{"math":0}'),
+                    dict(inputs_json='{"unrelated":1}'), dict(expected_json='"not a number"')]:
+        with pytest.raises(ValueError):
+            review_control.run(source, runtime, args | changed)
+    assert len(executions) == 1
+
+
+def test_isolated_control_driver_measures_unmodified_method_and_inline_expression(tmp_path):
+    import subprocess
+    import sys
+    from ark.compute.review_control import DRIVER
+
+    source = ("import math\ndef metric(a, b):\n    return math.floor(a / b)\n"
+              "if __name__ == '__main__':\n    raise RuntimeError('full experiment launched')\n")
+    for target, function, expected in (("metric", True, 1), ("math.floor(a / b)", False, 1)):
+        case = dict(source=source, target=target, function=function, inputs={"a": 3, "b": 2}, array_inputs=[])
+        result = subprocess.run([sys.executable, "-I", "-B", "-c", DRIVER], cwd=tmp_path,
+                                input=json.dumps(case), capture_output=True, text=True, check=True, timeout=5)
+        assert json.loads(result.stdout) == expected
+    assert not list(tmp_path.iterdir())
+
+
 def test_revised_plan_can_compare_old_rows_but_must_assess_current_output(tmp_path):
     import hashlib
 

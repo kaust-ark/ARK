@@ -1,6 +1,7 @@
 """Hosted workflow boot and transitions with the real pinned DSH runtime."""
 
 from datetime import datetime, timedelta
+import json
 import os
 from types import SimpleNamespace
 
@@ -8,6 +9,25 @@ import pytest
 
 from ark.workflow import ResearchDecision
 from ark.orchestrator.dsh_workflow import hosted_workflow_enabled, run_workflow
+
+
+@pytest.mark.parametrize(("override", "budget"), [(None, 1), ("0", 0), ("3", 3)])
+def test_native_profile_retries_only_transient_provider_failures(tmp_path, monkeypatch, override, budget):
+    from ark.orchestrator.dsh_workflow import _native_profile
+    from ark.engines.dsh_runtime import DSHRuntime
+
+    monkeypatch.setattr(DSHRuntime, "build_env", lambda *args: {})
+    monkeypatch.delenv("ARK_DSH_API", raising=False)
+    monkeypatch.delenv("ARK_DSH_RETRIES", raising=False)
+    monkeypatch.setenv("ARK_DSH_CONTEXT_WINDOW", "65536")
+    if override is not None:
+        monkeypatch.setenv("ARK_DSH_RETRIES", override)
+    _native_profile(SimpleNamespace(config={}, model="deepseek/deepseek-v4-pro"), tmp_path, tmp_path)
+    rows = {r["id"]: r for r in json.loads((tmp_path / "cordis.patch.yml").read_text()) if "id" in r}
+    policy = rows["llm-deepseek"]["config"]["retryPolicy"]
+    assert rows["llm-retry"]["disabled"] == (budget == 0)
+    assert policy["maxRetries"] == budget and policy["mode"] == "normal"
+    assert set(policy["retryableCodes"]) == {"SERVER", "TIMEOUT", "TRANSPORT"}
 
 
 def test_hosted_uses_dsh_with_rollback(monkeypatch):

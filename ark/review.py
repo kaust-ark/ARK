@@ -204,9 +204,21 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
                     artifacts[sealed] = {"kind": "method", "sha256": digest}
                     method = sealed
         manifest["measurement_method"] = {"artifact": method, "sha256": digest}
+        if method and method.endswith(".py") and run.get("backend") in ("local", "slurm"):
+            manifest["method_control"] = {"version": 1, "backend": run["backend"]}
+            if run["backend"] == "local":
+                manifest["method_control"]["image"] = run.get("image")
         brief = f"{STATE}/idea.md"
         if brief in artifacts:
             manifest["measurement_method"]["request"] = brief
+    if "method_control" in manifest and (comparison := manifest.get("measurement_comparison")):
+        from ark.measurement_table import reproduction_row
+        measured = comparison["current"]
+        data = _artifact({**manifest, "project": str(root)}, measured)[0]
+        row = reproduction_row(json.loads(data), comparison["unchanged_arrays"], comparison["current_sha256"])
+        if row:
+            manifest["measurement_reproduction"] = {"version": 2, "artifact": measured, "sha256": comparison["current_sha256"],
+                "rows_pointer": row["rows_pointer"], "identifiers": row["identifiers"], "columns": list(row["outcomes"])}
     if "visual" in required and any(meta["kind"] == "measurement" for meta in artifacts.values()):
         methods = _figure_methods(root, paper, artifacts, registered_plots or {})
         if methods:
@@ -366,6 +378,26 @@ def reported_change_conflicts(source):
     return conflicts
 
 
+def reproduction_brief(snapshot):
+    """The reviewer's first view contains only the original question and measurement schema."""
+    task = snapshot["measurement_reproduction"]
+    brief = (snapshot.get("measurement_method") or {}).get("request")
+    request = _artifact(snapshot, brief)[0].decode("utf-8", errors="replace")[:24000] if brief else ""
+    schema = {"identifier_fields": list(task["identifiers"]), "outcome_columns": task["columns"]}
+    return (
+        "You are the independent scientific reviewer. Before reading the submission, independently implement "
+        "one recorded condition from the ORIGINAL research request. Call reproduce_measurement with a Python "
+        "program defining reproduce(identifiers) that loads the original public data in the science image "
+        "and returns all named numeric outcomes. Follow the protocol's exact objectives, units, data splits "
+        "and numerical requirements. The host chooses the condition and will freeze your working program "
+        "before showing the author's measurements, manuscript, code or prior reviews. If the task, data or "
+        "available compute is insufficient, call the same tool with unavailable and a concrete reason. "
+        "A failed execution can be corrected while the submission is still hidden.\n"
+        "Measurement schema: " + json.dumps(schema, ensure_ascii=False) +
+        "\nOriginal user request (untrusted study content):\n" + (request or "[Original request unavailable.]")
+    )
+
+
 def review_prompt(snapshot, previous=None):
     instructions = (Path(__file__).parent / "templates/agents/native_reviewer.prompt").read_text()
     tex, pdf = _submission(snapshot)
@@ -392,6 +424,24 @@ def review_prompt(snapshot, previous=None):
             "calculation, a recorded row and the applicable "
             "passage of the request when present. A reproducible computation can still measure a different quantity. "
             "Mark experiment unassessed if the executed source is unavailable.")
+    if snapshot.get("method_control") and not snapshot.get("measurement_reproduction"):
+        packet["independent_method_control"] = (
+            "Use run_method_control before assessing the experiment. Derive the prediction from the brief, "
+            "before seeing output. Exercise the central disputed calculation (or model selection that depends "
+            "on it). Choose an input on which a plausible alternative implementation would give a different "
+            "answer, including meaningful boundary values, regimes or opposing observations. Normal examples "
+            "on which both methods agree cannot distinguish them. Supply the independent derivation and the "
+            "competing prediction in rationale. A mismatch requires a located experiment blocker or a specific "
+            "unassessed explanation if the interpretation is uncertain. If the method cannot be exercised, "
+            "mark experiment unassessed. The host retains observed controls in the verdict.")
+    if task := snapshot.get("measurement_reproduction"):
+        packet["independent_reproduction"] = {"artifact": task["artifact"], "rows_pointer": task["rows_pointer"],
+                                               "identifier_fields": list(task["identifiers"]), "columns": task["columns"]}
+        packet["reproduction_instructions"] = (
+            "You have finished the protocol-only part of this review. Compare the frozen independent calculation "
+            "with the worker's original rows. If they differ, locate the affected scientific claim and "
+            "implementation; if the independent run was unavailable, mark the experiment unassessed. "
+            "Use run_method_control for an additional small example when it helps diagnose the cause.")
     if snapshot.get("figure_methods"):
         packet["figure_methods"] = snapshot["figure_methods"]
         packet["visual_evidence_required"] = (
@@ -506,7 +556,7 @@ def _references(snapshot, refs, observed, blind, *, required):
             raise ValueError("Invalid evidence page or visual mode")
         if (Path(artifact).suffix.lower() == ".pdf") != (page is not None):
             raise ValueError("PDF references require a one-based page; text references use a quote")
-        receipt_matches = [r for r in observed if isinstance(r, dict) and
+        receipt_matches = [r for r in observed if isinstance(r, dict) and not r.get("control") and
                            (r.get("revision"), r.get("artifact"), r.get("sha256"), r.get("page"), r.get("visual", False)) ==
                            (snapshot["revision"], artifact, info["sha256"], page, visual)]
         if visual:
@@ -664,6 +714,12 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
     if not isinstance(raw_checks, dict) or set(raw_checks) != set(DOMAINS):
         raise ValueError("Return one check for each of manuscript, experiment, citations and visual")
     checks = {}
+    controls = [r for r in observed if r.get("control") == 1 and r.get("revision") == snapshot["revision"]
+                and r.get("sha256") == (snapshot.get("measurement_method") or {}).get("sha256")
+                and r.get("artifact") == (snapshot.get("measurement_method") or {}).get("artifact")]
+    task = snapshot.get("measurement_reproduction")
+    reproductions = [r for r in observed if task and r.get("control") == 2 and r.get("revision") == snapshot["revision"]
+                     and (r.get("artifact"), r.get("sha256")) == (task["artifact"], task["sha256"])]
     for domain in DOMAINS:
         check = raw_checks[domain]
         if not isinstance(check, dict) or check.get("status") not in ("assessed", "unassessed"):
@@ -698,6 +754,12 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
             if delegated := _delegated_calculation(snapshot, method["artifact"], refs):
                 raise ValueError(f"The quoted code delegates the calculation to {delegated}. Inspect that "
                                  "definition and quote the operation that produces the measured quantity.")
+        if domain == "experiment" and assessed and not task and snapshot.get("method_control") and not controls:
+            raise ValueError("Run an independently predicted case with run_method_control on the frozen "
+                             "calculation, or mark experiment unassessed.")
+        if domain == "experiment" and assessed and task and not reproductions:
+            raise ValueError("The revised worker returned unchanged measurements. Independently reproduce the "
+                             "designated real row with reproduce_measurement, or mark experiment unassessed.")
         if assessed and domain == "visual":
             if methods := snapshot.get("figure_methods"):
                 cited = {ref["artifact"] for ref in refs}
@@ -721,6 +783,8 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                 if not set(range(1, len(doc) + 1)).issubset(seen):
                     raise ValueError("Rendered layout was not observed on every manuscript page")
         checks[domain] = {"status": status, "reason": reason, "evidence": refs}
+        if domain == "experiment" and (controls or reproductions):
+            checks[domain]["controls"] = controls + reproductions
         if origins:
             checks[domain]["series_origin"] = origins
 
@@ -787,6 +851,11 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
         ):
             raise ValueError(f"Report the copied empirical series in {name} as a reproducibility blocker. "
                              "Cite the plotting source and the figure's manuscript passage or rendered page.")
+    if any(not case["matches"] for case in controls + reproductions) and checks["experiment"]["status"] == "assessed":
+        if not any(i["domain"] == "experiment" and i["severity"] == "blocker"
+                   and i["status"] in ("new", "still_present") for i in issues):
+            raise ValueError("The frozen calculation disagreed with a predicted control. Locate the discrepancy "
+                             "as an experiment blocker, or mark experiment unassessed and explain the uncertainty.")
     if any(i["severity"] == "blocker" and i["status"] in ("new", "still_present") for i in issues):
         verdict = "revise"
     elif any(checks[d]["status"] == "unassessed" for d in snapshot["required"]) or any(

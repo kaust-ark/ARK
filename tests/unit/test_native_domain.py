@@ -531,6 +531,8 @@ def test_reviewer_reservation_survives_restart_and_is_bound_to_revision(tmp_path
     project.review_snapshot({"session_id": "child1"})
     assert json.loads(project.path.read_text())["review_attempts"] == {"child1": "rev1"}
     project.review_snapshot({"session_id": "child1"})
+    journal = (project.state_dir / "research_events.jsonl").read_text().splitlines()
+    assert sum(json.loads(line)["action"] == "review_started" for line in journal) == 1
     with pytest.raises(ValueError, match="budget exhausted"):
         project.review_snapshot({"session_id": "child2"})
 

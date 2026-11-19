@@ -72,6 +72,40 @@ def _value(row, path):
     return row
 
 
+ROW_IDENTIFIERS = {"condition", "label", "seed", "fold", "split", "trial", "run", "replicate",
+                   "condition_id", "fold_id", "split_id", "trial_id", "run_id", "sample_id"}
+
+
+def reproduction_row(data, unchanged, digest):
+    """Choose a real condition and all of its finite scalar outcomes for independent replay."""
+    arrays = project_rows(data)
+    for item in unchanged:
+        pointer = item["rows_pointer"]
+        rows = arrays.get(pointer, [])
+        if not rows:
+            continue
+        # Use the same condition identifiers as the paper tables. The reviewer
+        # cannot pick an easy hand-chosen case or a subset of the outcomes.
+        keys = [p for p in _leaf_paths(rows[0]) if p.split(".")[-1].lower() in ROW_IDENTIFIERS]
+        row = rows[int(digest[:12], 16) % len(rows)]
+        identifiers = {p: _value(row, p) for p in keys if _has_scalar_id(row, p)}
+        if len(rows) > 1 and (not identifiers or sum(all(_has_scalar_id(other, p) and _value(other, p) == v
+                                  for p, v in identifiers.items()) for other in rows) != 1):
+            continue
+        values = {p: _value(row, p) for p in _leaf_paths(row) if p not in keys
+                  and type(_value(row, p)) in (int, float) and math.isfinite(_value(row, p))}
+        if 1 <= len(values) <= 16 and len(identifiers) <= 8:
+            return {"rows_pointer": pointer, "identifiers": identifiers, "outcomes": values}
+
+
+def _has_scalar_id(row, path):
+    try:
+        value = _value(row, path)
+    except ValueError:
+        return False
+    return type(value) is int or isinstance(value, str) and 0 < len(value) <= 100
+
+
 def with_row_identifiers(data, pointer, columns):
     """Keep measured conditions identifiable when typesetting per-trial rows."""
     rows = _rows(data, pointer)
@@ -81,8 +115,7 @@ def with_row_identifiers(data, pointer, columns):
     keys = []
     for path in _leaf_paths(rows[0]):
         name = path.split(".")[-1].lower()
-        if name not in {"condition", "label", "seed", "fold", "split", "trial", "run", "replicate",
-                        "condition_id", "fold_id", "split_id", "trial_id", "run_id", "sample_id"}:
+        if name not in ROW_IDENTIFIERS:
             continue
         try:
             values = [_value(row, path) for row in rows]

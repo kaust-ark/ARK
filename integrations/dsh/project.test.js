@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -26,11 +26,14 @@ test('author can edit sources but cannot rewrite evidence, credentials or linked
 function frames(model, content) {
   const id = randomUUID()
   const isTool = typeof content !== 'string'
+  const blocks = Array.isArray(content) ? content : [content]
   const data = [
     {type:'message_start',message:{id, model,usage:{input_tokens:10,output_tokens:0}}},
-    {type:'content_block_start',index:0,content_block:isTool ? {type:'tool_use',id,name:content.name,input:{}} : {type:'text',text:''}},
-    {type:'content_block_delta',index:0,delta:isTool ? {type:'input_json_delta',partial_json:JSON.stringify(content.args)} : {type:'text_delta',text:content}},
-    {type:'content_block_stop',index:0},
+    ...blocks.flatMap((block, index) => [
+      {type:'content_block_start',index,content_block:isTool ? {type:'tool_use',id:randomUUID(),name:block.name,input:{}} : {type:'text',text:''}},
+      {type:'content_block_delta',index,delta:isTool ? {type:'input_json_delta',partial_json:JSON.stringify(block.args)} : {type:'text_delta',text:block}},
+      {type:'content_block_stop',index},
+    ]),
     {type:'message_delta',delta:{stop_reason:isTool?'tool_use':'end_turn'},usage:{output_tokens:5}},
     {type:'message_stop'},
   ]
@@ -173,7 +176,7 @@ test('corrupt, writable or linked manuscript snapshots abort the edit or restore
 })
 
 // The test copies the profile and overlays only the candidate bundle's source.
-test('pinned native owner, evidence-only reviewer and persisted resume', {
+for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-retry', 'server-exhausted']) test('pinned native blind reviewer with ' + scenario, {
   skip: !process.env.IDEA2PAPER_TEST_PROFILE || !process.env.IDEA2PAPER_TEST_DSH,
   timeout: 90000,
 }, async t => {
@@ -184,8 +187,13 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
   await cp(process.env.IDEA2PAPER_TEST_PROFILE, profile, { recursive: true })
   const pkg = join(profile, 'node_modules', 'idea2paper-dsh')
   for (const file of ['index.js','workflow.js','project.js','experiment.js','cordis.patch.yml','package.json']) await cp(join(bundle,file), join(pkg,file))
-  let phase = 'review'
+  let phase = 'review', committed = false, attemptedAfterDisclosure = false
   let recorded, delivered = false, resumed = false, stopped = false, parked
+  const commitment = scenario === 'unavailable' ? 'unavailable' : 'program'
+  const google = scenario !== 'unavailable'
+  const terminal = ['flattened-503', 'quota', 'no-retry', 'server-exhausted'].includes(scenario)
+  let rejectedRequests = 0
+  let failedRequest, followupRequest, reviewerError
   const blocked = Promise.withResolvers()
   const events = []
   const calls = []
@@ -195,30 +203,73 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
       let raw = ''
       for await (const chunk of req) raw += chunk
       const body = JSON.parse(raw)
-      const tools = body.tools?.map(tool => tool.name) || []
-      const history = JSON.stringify(body.messages)
+      const tools = (google ? body.tools?.flatMap(t => t.functionDeclarations || []) : body.tools)?.map(t => t.name) || []
+      const history = JSON.stringify(google ? body.contents : body.messages)
+      if (google) assert.match(req.url, /\/models\/gemini-4-hydrogen:streamGenerateContent\b/)
+      if (google && !parked && tools.includes('read_evidence') && history.includes('known-answer-receipt') && !followupRequest) {
+        if (!failedRequest || scenario === 'server-exhausted') {
+          if (failedRequest) assert.equal(history, failedRequest)
+          assert.ok(++rejectedRequests <= (scenario === 'server-exhausted' ? 2 : 1), 'provider retry budget exceeded')
+          failedRequest = history
+          const demand = 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.'
+          const error = scenario === 'flattened-503' ? {message:'Google: ' + demand, type:'invalid_request_error'}
+            : scenario === 'quota' ? {code:402, message:'Insufficient Balance', status:'PAYMENT_REQUIRED'}
+            : {code:503, message:demand, status:'UNAVAILABLE'}
+          res.writeHead(scenario === 'quota' ? 402 : 503, {'Content-Type':'application/json'})
+          res.end(JSON.stringify({error}))
+          return
+        }
+        assert.ok(!terminal, 'unexpected retry of ' + scenario)
+        assert.equal(history, failedRequest, 'a retry must continue the failed model step')
+        followupRequest = history
+      }
       if (parked && tools.includes('read_evidence')) {
+        assert.ok(history.includes('frozen-source-only-for-independent-reader'), 'ordinary reviews still open immediately')
         blocked.resolve()
         return // Hold the request open until DSH cancels the in-flight turn.
       }
       let response
-      if (tools.includes('read_evidence')) {
-        assert.deepEqual(tools, ['read_evidence'])
-        assert.ok(history.includes('frozen-source-only-for-independent-reader'))
+      if (tools.includes('reproduce_measurement') && !tools.includes('read_evidence')) {
+        assert.deepEqual(tools, ['reproduce_measurement'])
+        assert.match(history, /original protocol only: derive metric for seed/)
+        for (const privateText of ['parent-scientific-private', 'frozen-source-only-for-independent-reader',
+             'prior-finding-private', 'reported-row-private', 'manuscript-private', '"type":"image"', 'inlineData']) {
+          assert.ok(!history.includes(privateText), privateText)
+        }
+        const args = commitment === 'program'
+          ? {program:'def reproduce(ids): return {"metric": ids["seed"] * 2}'}
+          : {unavailable:'The original protocol does not identify an obtainable dataset.'}
+        const submit = {name:'reproduce_measurement', args}
+        response = commitment === 'unavailable' ? [submit, submit] : submit
+      } else if (tools.includes('read_evidence')) {
+        assert.deepEqual(tools.toSorted(), ['read_evidence', 'reproduce_measurement', 'run_method_control'])
+        assert.ok(committed)
+        for (const opening of ['frozen-source-only-for-independent-reader', 'reported-row-private',
+             'prior-finding-private', 'manuscript-private', 'Rendered manuscript page 2 of 2']) {
+          assert.equal(history.split(opening).length - 1, 1, opening)
+        }
         assert.ok(!history.includes('parent-scientific-private'))
-        assert.match(history, /Rendered manuscript page 2 of 2/)
-        assert.match(history, /"type":"image"/)
-        if (history.includes('independently-read-primary-passage')) {
+        assert.match(history, google ? /"inlineData"/ : /"type":"image"/)
+        if (!attemptedAfterDisclosure) {
+          attemptedAfterDisclosure = true
+          response = {name:'reproduce_measurement',args:{program:'def reproduce(ids): return {"metric": 1}'}}
+        } else if (!history.includes('known-answer-receipt')) {
+          response = {name:'run_method_control',args:{target:'mean',inputs_json:'{"values":[2,4]}',
+            expected_json:'3',alternative_json:'6',rationale:'The mean of two and four is three. The sum is six.'}}
+        } else if (history.includes('independently-read-primary-passage')) {
           response = JSON.stringify({revision:'rev1', verdict:'accept', source:'sources/paper.txt'})
         } else if (history.includes('Cite an observed primary source')) {
           response = {name:'read_evidence',args:{artifact:'sources/paper.txt'}}
         } else if (history.includes('measured-observation')) {
-          assert.match(history, /"type":"image"/, 'The provider must receive pixels for a visual receipt')
+          assert.match(history, google ? /"inlineData"/ : /"type":"image"/, 'The provider must receive pixels for a visual receipt')
           response = JSON.stringify({ revision:'rev1', verdict:'accept' })
         } else response = { name:'read_evidence',args:{artifact:'paper/main.pdf',page:1,visual:true} }
       } else {
         assert.ok(tools.includes('request_review'), JSON.stringify(tools))
-        if (parked) {
+        assert.ok(!tools.includes('run_method_control') && !tools.includes('reproduce_measurement'))
+        if (reviewerError) {
+          response = 'The reviewer stopped.'
+        } else if (parked) {
           response = {name:'request_review',args:{draft:true}}
         } else if (resumed) {
           assert.match(history, /parent-scientific-private/)
@@ -233,7 +284,13 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
         } else response = 'The project delivered.'
       }
       res.writeHead(200, {'Content-Type':'text/event-stream'})
-      res.end(frames(body.model, response))
+      if (google) {
+        const parts = typeof response === 'string' ? [{text:response}]
+          : [{functionCall:{name:response.name,args:response.args},thoughtSignature:'c2ln'}]
+        const chunk = {candidates:[{content:{role:'model',parts},finishReason:'STOP'}],
+          usageMetadata:{promptTokenCount:10,candidatesTokenCount:5,totalTokenCount:15}}
+        res.end('data: ' + JSON.stringify(chunk) + '\n\n')
+      } else res.end(frames(body.model, response))
     } catch (error) {
       failure = error
       res.writeHead(400)
@@ -243,7 +300,25 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   t.after(() => server.close())
   const gateway = 'http://127.0.0.1:' + server.address().port
-  await writeFile(join(profile, 'cordis.patch.yml'), JSON.stringify([
+  const project = join(home,'research')
+  if (google) {
+    const env = {PATH:process.env.PATH, HOME:home, LITELLM_LOCAL_MODEL_COST_MAP:'True',
+      ARK_DSH_CONTEXT_WINDOW:'65536',
+      ARK_DSH_MAX_TOKENS:'2048', GEMINI_API_KEY:'fixture-only'}
+    if (scenario === 'no-retry') env.ARK_DSH_RETRIES = '0'
+    execFileSync('python3', ['-c', [
+      'from pathlib import Path', 'from types import SimpleNamespace', 'import sys',
+      'from ark.orchestrator.dsh_workflow import _native_profile',
+      '_native_profile(SimpleNamespace(config={}, model="gemini/gemini-4-hydrogen"), Path(sys.argv[1]), Path(sys.argv[2]))',
+    ].join('\n'), project, profile], {env, cwd:join(bundle,'../..')})
+    const config = join(profile, 'cordis.patch.yml')
+    const rows = JSON.parse(await readFile(config,'utf8'))
+    const googleRoute = rows.find(row => row.id === 'llm-pi-ai').config.providers.google
+    assert.match(googleRoute.baseURL, /^https:\/\/generativelanguage\.googleapis\.com\//)
+    googleRoute.baseURL = gateway + '/v1beta'
+    googleRoute.models[0].input = ['text', 'image']
+    await writeFile(config, JSON.stringify(rows))
+  } else await writeFile(join(profile, 'cordis.patch.yml'), JSON.stringify([
     {id:'agent-default-model',config:{provider:'loopback',model:'vision-fixture'}},
     {id:'llm-pi-ai',config:{providers:{loopback:{api:'anthropic-messages',baseURL:gateway,apiKeyEnv:'FIXTURE_KEY',
       models:[{id:'vision-fixture',contextWindow:65536,maxTokens:2048,input:['text','image']}]}}}},
@@ -252,22 +327,45 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
     calls.push(op)
     switch (op) {
       case 'stop': stopped = true; return {state:'stopped'}
-      case 'project_status': return { state:stopped?'stopped':delivered?'delivered':'running', delivered, commands:[] }
-      case 'project_event': events.push(args); return {}
+      case 'project_status': return {state:reviewerError?'waiting':stopped?'stopped':delivered?'delivered':'running', delivered, commands:[]}
+      case 'project_event':
+        events.push(args)
+        if (terminal && args.role === 'reviewer' && args.kind === 'turn/end' && args.reason?.kind === 'error') {
+          reviewerError = args.reason.error
+        }
+        return {}
       case 'review_snapshot':
         assert.equal(args.preflight, !parked)
-        return {revision:'rev1',rendered_pages:2,rendered_artifact:'paper/main.pdf',opening_evidence:['scripts/plot.py'],brief:'Blind reviewer. Inspect results/data.json using read_evidence.'}
+        return {revision:'rev1',method_control:true,measurement_reproduction:true,rendered_pages:2,rendered_artifact:'paper/main.pdf',
+          opening_evidence:['scripts/plot.py','results/data.json'], brief:'manuscript-private; prior-finding-private',
+          ...(!parked && {reproduction_brief:'original protocol only: derive metric for seed'})}
       case 'review_evidence':
+        assert.ok(committed || parked, 'read submission before commitment')
+        if (args.artifact === 'results/data.json') return {text:'reported-row-private',receipt:{artifact:args.artifact,revision:'rev1'}}
         if (args.artifact === 'scripts/plot.py') return {text:'frozen-source-only-for-independent-reader',receipt:{artifact:args.artifact,revision:'rev1'}}
         if (args.artifact === 'sources/paper.txt') return {text:'independently-read-primary-passage',receipt:{artifact:args.artifact,revision:'rev1'}}
         return {text:'measured-observation',receipt:{artifact:'paper/main.pdf',visual:true},
           mime_type:'image/png',image_base64:'iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAIAAABvFaqvAAAAIklEQVR4nGNkYGhgoAZgooopowaNGjRq0KhBowaNGkQRAAAV1ACwA5vbQAAAAABJRU5ErkJggg=='}
+      case 'reproduce_measurement':
+        assert.equal(args.revision, 'rev1')
+        assert.equal(committed, false)
+        assert.deepEqual(Object.keys(args).sort(), [commitment, 'revision'].sort())
+        committed = true
+        if (commitment === 'unavailable') return {unavailable:args.unavailable}
+        return {receipt:{control:2, artifact:'results/data.json', marker:'independent-row-receipt', matches:true}}
+      case 'run_method_control':
+        assert.ok(committed)
+        assert.equal(args.revision, 'rev1')
+        return {receipt:{control:1, artifact:'scripts/plot.py', marker:'known-answer-receipt', matches:true}}
       case 'check_review':
         return args.observed.some(r => r.artifact === 'sources/paper.txt') && args.verdict.source === 'sources/paper.txt'
           ? {valid:true} : {valid:false, diagnostic:'Cite an observed primary source'}
       case 'record_review':
         assert.equal(args.verdict.verdict, 'accept')
         assert.equal(args.verdict.source, 'sources/paper.txt')
+        assert.ok(args.observed.some(r => r.marker === 'known-answer-receipt'))
+        assert.equal(args.observed.some(r => r.marker === 'independent-row-receipt'), commitment === 'program')
+        assert.ok(args.observed.every(Boolean))
         assert.ok(args.observed.some(receipt => receipt.artifact === 'scripts/plot.py'))
         assert.ok(args.observed.filter(receipt => receipt.artifact === 'paper/main.pdf' && receipt.visual).length >= 2)
         recorded = args
@@ -276,13 +374,12 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
       default: throw new Error('unexpected op ' + op)
     }
   }
-  const project = join(home,'research')
   async function launch(...args) {
     const child = spawn(process.env.IDEA2PAPER_TEST_DSH, ['--profile','idea2paper',...args], {
       env: { HOME:home,PATH:process.env.PATH,DSH_HOME:home,
-        PKG_NATIVE_CACHE_PATH:process.env.PKG_NATIVE_CACHE_PATH,DEEPSEEK_API_KEY:'fixture-only',FIXTURE_KEY:'localhost',
+        PKG_NATIVE_CACHE_PATH:process.env.PKG_NATIVE_CACHE_PATH,DEEPSEEK_API_KEY:'fixture-only',FIXTURE_KEY:'localhost',ARK_DSH_API_KEY:'fixture-only',
         DEEPSEEK_BASE_URL:'http://127.0.0.1:' + server.address().port,
-        DSH_TELEMETRY_DISABLED:'1',IDEA2PAPER_DOMAIN_FD:'3' },
+        DSH_TELEMETRY_DISABLED:'1',IDEA2PAPER_DOMAIN_FD:'3',...(google && {IDEA2PAPER_HOSTED:'1'}) },
       stdio:['ignore','pipe','pipe','pipe'],
     })
     let log = ''
@@ -301,12 +398,35 @@ test('pinned native owner, evidence-only reviewer and persisted resume', {
     assert.equal(code,0,home + '\n' + log)
   }
   await launch('run',project,'parent-scientific-private')
+  if (google) {
+    assert.ok(failedRequest && (terminal ? !followupRequest : followupRequest))
+    assert.equal(calls.filter(op => op === 'run_method_control').length,1)
+    assert.equal(calls.filter(op => op === 'reproduce_measurement').length,1)
+    assert.equal(new Set(events.filter(e => e.role === 'reviewer').map(e => e.session_id)).size, 1)
+    if (terminal) {
+      assert.equal(rejectedRequests, scenario === 'server-exhausted' ? 2 : 1)
+      assert.equal(reviewerError?.code, {'flattened-503':'INVALID_REQUEST',quota:'QUOTA','no-retry':'SERVER','server-exhausted':'SERVER'}[scenario])
+      assert.ok(!recorded && !delivered)
+      if (scenario === 'quota') {
+        const event = events.find(e => e.role === 'reviewer' && e.kind === 'turn/end' && e.reason?.error === reviewerError)
+        execFileSync('python3', ['-c', [
+          'import json, sys', 'from ark.orchestrator.native_domain import NativeProject',
+          'p = NativeProject(sys.argv[1])', 'p.state_dir.mkdir(parents=True)', 'p.state = {"state":"running"}',
+          'p.project_event(json.load(sys.stdin))', 'assert NativeProject(p.root).state["pause_reason"] == "quota"',
+        ].join('\n'), join(home,'quota-checkpoint')], {cwd:join(bundle,'../..'),input:JSON.stringify(event)})
+      }
+      return
+    }
+  }
   const first = JSON.parse(await readFile(join(project,'workflow.json'),'utf8'))
   assert.ok(delivered)
   assert.equal(calls.filter(op => op === 'review_snapshot').length,1)
+  assert.equal(calls.filter(op => op === 'reproduce_measurement').length,1)
   assert.equal(calls.filter(op => op === 'check_review').length,2)
   assert.notEqual(recorded.session_id,first.owner_session_id)
   assert.ok(events.some(e => e.role === 'reviewer' && e.kind === 'tool/call'))
+  assert.deepEqual([...new Set(events.filter(e => e.role === 'reviewer').map(e => e.session_id))], [recorded.session_id])
+  if (google) return
   resumed = true
   await launch('resume',project,'What happened?', '--command-id', 'history-question')
   await launch('resume',project,'What happened?', '--command-id', 'history-question')

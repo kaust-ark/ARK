@@ -364,6 +364,12 @@ export const evidenceTool = ['Inspect one named artifact from the blind review p
   artifact: str, page: num, start: num, visual: bool, statistic: str, column: str, rows_pointer: str,
 }, ['artifact']]
 
+export const methodControlTool = ['Test the frozen scientific worker on a small independently predicted example. Select a top-level function name (keyword arguments) or quote the complete exact expression from a return or assignment (named operands). inputs_json is a JSON object string. List names needing NumPy arrays in array_inputs. expected_json and alternative_json are numbers or flat numeric arrays encoded as JSON strings. Predict the first from the research definition and the second from a concrete competing calculation. Choose an input where they differ. Explain both predictions.', {
+  target: str, inputs_json: str, array_inputs: strings, expected_json: str, alternative_json: str, rationale: str,
+}, ['target', 'inputs_json', 'expected_json', 'alternative_json', 'rationale']]
+
+export const reproductionTool = ['Use the original research request to independently recompute the designated condition. Supply exactly one of program or unavailable. The program defines Python reproduce(identifiers) and returns all requested finite scalar columns. The CPU sandbox provides the science image and identifiers, with no project files or network. If reproduction is infeasible, give the specific reason in unavailable. The submission opens after commitment, and the program cannot be changed after disclosure.', {program: str, unavailable: str}]
+
 function render(_args, value) {
   const { attachment, ...details } = value
   const blocks = [{ type: 'text', text: JSON.stringify(details) }]

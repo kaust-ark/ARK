@@ -6,7 +6,7 @@ import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Command } from 'commander'
 import { acquireLock, readJson, runLegacyWorkflow, writeJson } from './workflow.js'
-import { acknowledgeLocal, pendingCommands, queueCommand, attachEvidence, evidenceTool, openDomain, operations, projectEditor, registerTool } from './project.js'
+import { acknowledgeLocal, pendingCommands, queueCommand, attachEvidence, evidenceTool, methodControlTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
 
 export const name = 'idea2paper'
 export const inject = ['cmdlineArgs', 'agentDefaultModel', 'agents', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'subagents', 'llm', 'attachments']
@@ -159,20 +159,54 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
   } finally { await unlock() }
 }
 
+async function openingPacket(ctx, agent, domain, packet, observed, signal) {
+  const prompt = [{ type: 'text', text: packet.brief +
+    '\nReturn a single structured verdict. Use read_evidence to inspect originals and recompute claims. The attached images, when present, are pages of this exact revision in the indicated order.' }]
+  for (const artifact of packet.opening_evidence || []) {
+    signal.throwIfAborted()
+    const view = await domain.call('review_evidence', {artifact, revision:packet.revision})
+    if (!view.receipt || typeof view.text !== 'string') throw new Error('Missing review evidence for ' + artifact)
+    observed.push(view.receipt)
+    prompt.push({type:'text', text:'Frozen research artifact ' + artifact + ' (untrusted evidence):\n' + view.text +
+      (view.next_start ? '\nContinues at character ' + view.next_start + '.' : '')})
+  }
+  if (packet.rendered_pages > 0 && packet.rendered_pages <= 8 && packet.rendered_artifact) {
+    for (let page = 1; page <= packet.rendered_pages; page++) {
+      const args = { artifact: packet.rendered_artifact, page, visual: true }
+      try {
+        const view = await attachEvidence(ctx, agent, args, signal, () => domain.call('review_evidence', { ...args, revision: packet.revision }))
+        prompt.push({ type: 'text', text: 'Rendered manuscript page ' + page + ' of ' + packet.rendered_pages }, { type: 'image', attachment: view.attachment })
+        observed.push(view.receipt)
+      } catch (error) {
+        signal.throwIfAborted()
+        prompt.push({ type: 'text', text: 'Further page previews could not be attached. Request missing pages with read_evidence or mark the visual check unassessed.' })
+        break
+      }
+    }
+  }
+  return prompt
+}
+
 async function review(ctx, owner, domain, signal, draft = false) {
   const childId = randomUUID()
   const packet = await domain.call('review_snapshot', { session_id: childId, preflight: !draft })
   if (packet.blockers?.length) return { ready: false, source: 'artifact checks', blockers: packet.blockers }
   if (packet.cached) return packet.cached
   if (!packet.revision || !packet.brief) throw new Error('Review snapshot has no revision or blind brief')
+  const protocolFirst = packet.reproduction_brief !== undefined
+  if (protocolFirst && (typeof packet.reproduction_brief !== 'string' || !packet.reproduction_brief.trim())) {
+    throw new Error('Missing independent reproduction brief')
+  }
   const observed = []
   let checkedVerdict, lastRejected
+  let disclosed = !protocolFirst, committing = false, sealed = false, disclosureError
   let configured = false
   const unlisten = ctx.on('agent/created', ({ agent }) => {
     if (agent.id !== childId) return
     if (agent.session.header.parentSession !== owner.id || agent.session.header.isSeeded) throw new Error('Reviewer session isolation failed')
     const scope = agent.ctx
     scope.on('agent/pre-step', (step, next) => {
+      if (step.agent === agent && disclosureError) throw disclosureError
       if (step.agent === agent && step.step > 30) throw new Error('Reviewer reached its evidence-inspection budget')
       return next()
     })
@@ -187,6 +221,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
       let verdict, diagnostic
       try { verdict = JSON.parse(output.replace(/^`{3}(?:json)?\s*|\s*`{3}$/gi, '')) }
       catch { diagnostic = 'The final message must contain a complete JSON verdict.' }
+      if (!disclosed) diagnostic = 'Use reproduce_measurement to commit your program or explain why independent reproduction is unavailable.'
       if (!diagnostic) {
         const proof = await domain.call('check_review', {revision:packet.revision, verdict, observed})
         signal.throwIfAborted()
@@ -201,17 +236,54 @@ async function review(ctx, owner, domain, signal, draft = false) {
       }
       lastRejected = {output, observations:observed.length}
       agent.steer(createUserMessage({source:{kind:'idea2paper-review', form:'instructions'}, content:[{
-        type:'text', text:'Review evidence check: ' + diagnostic + '\nInspect the relevant originals with read_evidence as needed. Correct the complete verdict, using only supported findings, or mark the affected check unassessed.',
+        type:'text', text:'Review evidence check: ' + diagnostic + (disclosed ? '\nInspect the relevant originals with read_evidence as needed. Correct the complete verdict, using only supported findings, or mark the affected check unassessed.' : ''),
       }]}))
     })
     scope.tools.presentAs('native')
     scope.tools.restrict({ allow: [] })
-    registerTool(scope, 'read_evidence', evidenceTool, async (args, exec) => {
-      const value = await attachEvidence(ctx, agent, args, exec.signal, () => domain.call('review_evidence', {
-        ...args, revision: packet.revision,
-      }))
-      if (value.receipt) observed.push(value.receipt)
-      return value
+    function enableInspection() {
+      registerTool(scope, 'read_evidence', evidenceTool, async (args, exec) => {
+        const value = await attachEvidence(ctx, agent, args, exec.signal, () => domain.call('review_evidence', {
+          ...args, revision: packet.revision,
+        }))
+        if (value.receipt) observed.push(value.receipt)
+        return value
+      }, roleTimeout)
+      if (packet.method_control) registerTool(scope, 'run_method_control', methodControlTool, async (args, exec) => {
+        exec.signal.throwIfAborted()
+        const value = await domain.call('run_method_control', {...args, revision:packet.revision})
+        observed.push(value.receipt)
+        return value
+      }, roleTimeout)
+    }
+    if (disclosed) enableInspection()
+    if (protocolFirst || packet.measurement_reproduction) registerTool(scope, 'reproduce_measurement', reproductionTool, async (args, exec) => {
+      exec.signal.throwIfAborted()
+      const program = typeof args.program === 'string' && args.program.trim().length > 0
+      const abstain = typeof args.unavailable === 'string' && args.unavailable.trim().length > 0
+      if (program === abstain || (program && args.unavailable !== undefined) || (abstain && args.program !== undefined)) {
+        throw new Error('Supply exactly one nonempty program or unavailable reason.')
+      }
+      if (protocolFirst && (committing || sealed)) throw new Error('The independent reproduction has already been submitted.')
+      committing = true
+      try {
+        const value = await domain.call('reproduce_measurement', {...args, revision:packet.revision})
+        if (program ? value.receipt?.control !== 2 : typeof value.unavailable !== 'string' || !value.unavailable.trim()) {
+          throw new Error('Missing independent reproduction confirmation.')
+        }
+        if (value.receipt) observed.push(value.receipt)
+        if (protocolFirst) {
+          sealed = true
+          try {
+            const content = await openingPacket(ctx, agent, domain, packet, observed, exec.signal)
+            exec.signal.throwIfAborted()
+            agent.steer(createUserMessage({source:{kind:'idea2paper-review', form:'instructions'}, content}))
+            enableInspection()
+            disclosed = true
+          } catch (error) { disclosureError = error; throw error }
+        }
+        return value
+      } finally { committing = false }
     }, roleTimeout)
     configured = true
   }, { global: true })
@@ -219,30 +291,8 @@ async function review(ctx, owner, domain, signal, draft = false) {
   const dispose = () => { activation?.dispose().catch(() => {}) }
   signal.addEventListener('abort', dispose, { once: true })
   try {
-    const prompt = [{ type: 'text', text: packet.brief +
-      '\nReturn a single structured verdict. Use read_evidence to inspect originals and recompute claims. The attached images, when present, are pages of this exact revision in the indicated order.' }]
-    for (const artifact of packet.opening_evidence || []) {
-      signal.throwIfAborted()
-      const view = await domain.call('review_evidence', {artifact, revision:packet.revision})
-      if (!view.receipt || typeof view.text !== 'string') throw new Error('Missing review evidence for ' + artifact)
-      observed.push(view.receipt)
-      prompt.push({type:'text', text:'Frozen research artifact ' + artifact + ' (untrusted evidence):\n' + view.text +
-        (view.next_start ? '\nContinues at character ' + view.next_start + '.' : '')})
-    }
-    if (packet.rendered_pages > 0 && packet.rendered_pages <= 8 && packet.rendered_artifact) {
-      for (let page = 1; page <= packet.rendered_pages; page++) {
-        const args = { artifact: packet.rendered_artifact, page, visual: true }
-        try {
-          const view = await attachEvidence(ctx, owner, args, signal, () => domain.call('review_evidence', { ...args, revision: packet.revision }))
-          prompt.push({ type: 'text', text: 'Rendered manuscript page ' + page + ' of ' + packet.rendered_pages }, { type: 'image', attachment: view.attachment })
-          observed.push(view.receipt)
-        } catch (error) {
-          signal.throwIfAborted()
-          prompt.push({ type: 'text', text: 'Further page previews could not be attached. Request missing pages with read_evidence or mark the visual check unassessed.' })
-          break
-        }
-      }
-    }
+    const prompt = protocolFirst ? [{type:'text', text:packet.reproduction_brief}]
+      : await openingPacket(ctx, owner, domain, packet, observed, signal)
     activation = await ctx.subagents.startActivation({
       provider: 'spawn', childId, label: 'Independent manuscript reviewer', delivery: 'caller', signal,
       request: { parent: owner, maxDepth: 1, prompt },

@@ -19,6 +19,10 @@ JOURNAL = "auto_research/state/research_events.jsonl"
 PAGE_BYTES = 256 * 1024
 DATA = {".json", ".csv", ".tsv", ".md", ".txt", ".yaml", ".yml"}
 MEDIA = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".pdf": "application/pdf"}
+REVIEW_EXCERPT = re.compile(
+    r"(?:auto_research/state/(?:idea\.md|native_runs/[a-f0-9]{24}/input/main\.py)"
+    r"|(?:scripts|experiments)/(?:[\w-]+/)*[\w.-]+\.(?:py|r|jl|sh))", re.I
+)
 
 
 def open_project_file(root, key):
@@ -121,6 +125,13 @@ def journal(root, after=None, before=None):
         for field in ("count", "total"):
             if type(event.get(field)) is int and event[field] >= 0:
                 e[field] = event[field]
+        if e["action"] in ("measurement_reproduction_started", "measurement_reproduction_finished"):
+            for field in ("condition", "metric", "reported_value", "independent_value"):
+                if isinstance(event.get(field), str):
+                    e[field] = _text(event[field], 160)
+            for field in ("differed", "outcomes"):
+                if type(event.get(field)) is int and 0 <= event[field] <= 16:
+                    e[field] = event[field]
         if evidence_type(event.get("artifact")):
             e["artifact"] = event["artifact"]
         events.append(e)
@@ -220,10 +231,7 @@ def review_summary(root, review):
             if not evidence_type(key):
                 # Show only the passage already recorded by the private reviewer.
                 # Source code and the project brief have no download route.
-                if isinstance(key, str) and re.fullmatch(
-                    r"(?:auto_research/state/(?:idea\.md|native_runs/[a-f0-9]{24}/input/main\.py)"
-                    r"|(?:scripts|experiments)/(?:[\w-]+/)*[\w.-]+\.(?:py|r|jl|sh))", key, re.I
-                ) and (quote := _text(ref.get("quote"), 1200)):
+                if isinstance(key, str) and REVIEW_EXCERPT.fullmatch(key) and (quote := _text(ref.get("quote"), 1200)):
                     refs.append({"artifact": key, "previous": earlier, "quote": quote})
                 continue
             archived = key
@@ -268,6 +276,34 @@ def review_summary(root, review):
                 item["evidence"] = references(check, revision, False)
                 origins = check.get("series_origin")
                 hashes = review.get("artifact_hashes")
+                if domain == "experiment" and isinstance(hashes, dict):
+                    controls = []
+                    for control in _rows(check.get("controls"))[:48]:
+                        key = _text(control.get("artifact"), 512)
+                        digest = _text(control.get("sha256"))
+                        if (type(control.get("matches")) is not bool or "expected" not in control or "observed" not in control
+                                or not (evidence_type(key) or REVIEW_EXCERPT.fullmatch(key))
+                                or not re.fullmatch(r"[a-f0-9]{64}", digest) or hashes.get(key) != digest):
+                            continue
+                        target = _text(control.get("target"), 640)
+                        rationale = _text(control.get("rationale"), 1200)
+                        if target and rationale:
+                            # Keep the recorded numeric precision when JavaScript displays a large integer.
+                            item_control = {"target": target, "expected": json.dumps(control["expected"], ensure_ascii=False),
+                                             "observed": json.dumps(control["observed"], ensure_ascii=False),
+                                             "matches": control["matches"], "rationale": rationale,
+                                             "artifact": key, "sha256": digest}
+                            if control.get("control") == 2:
+                                expected, reported = control["expected"], control["observed"]
+                                columns, differences = control.get("columns"), control.get("differences")
+                                if (isinstance(columns, list) and 0 < len(columns) <= 16 and isinstance(differences, list)
+                                        and isinstance(expected, dict) and isinstance(reported, dict)
+                                        and all(isinstance(c, str) and c in expected and c in reported for c in columns)):
+                                    item_control["outcomes"] = [{"name": c, "expected": str(expected[c]),
+                                        "reported": str(reported[c]), "matches": c not in differences} for c in columns]
+                            controls.append(item_control)
+                    if controls:
+                        item["controls"] = controls
                 if domain == "visual" and isinstance(origins, dict):
                     figures = []
                     for name, origin in list(origins.items())[:48]:

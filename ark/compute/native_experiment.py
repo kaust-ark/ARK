@@ -245,14 +245,18 @@ def _job_state(job, name):
     return None, None
 
 
-def _slurm_command(staging, config, name, plot=None):
+def apptainer_command():
     apptainer, image = apptainer_bin(), sandbox_sif_path()
     if not apptainer or not Path(image).is_file():
         raise RuntimeError("Slurm experiments require a configured Apptainer science image (ARK_SANDBOX_SIF).")
-    run = ["env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin", f"HOME={Path.home()}",
+    return ["env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin", f"HOME={Path.home()}",
            f"USER={getpass.getuser()}", apptainer, "exec", "--cleanenv", "--containall", "--no-home", "--no-privs",
-           "--net", "--network", "none", "--no-mount", "hostfs,bind-paths,cwd",
-           "--bind", f"{staging / 'input'}:/study:ro", "--scratch", "/output", "--pwd", "/output",
+           "--net", "--network", "none", "--no-mount", "hostfs,bind-paths,cwd"], image
+
+
+def _slurm_command(staging, config, name, plot=None):
+    run, image = apptainer_command()
+    run += ["--bind", f"{staging / 'input'}:/study:ro", "--scratch", "/output", "--pwd", "/output",
            "--env", "MPLCONFIGDIR=/tmp/mpl,OPENBLAS_NUM_THREADS=1,OMP_NUM_THREADS=1",
            image, "python3", "-I", "-B", "/study/runner.py"]
     if plot:

@@ -47,6 +47,12 @@ The first command opens the project. Run status, send a follow-up or request a s
 
 The researcher can plot measured JSON columns directly as lines, points or grouped bars. A custom plotting script reads `/study/results.json` and saves its named output in `/output/`. For comparisons, Nano Banana supplies the study artwork and the tool typesets the experimental conditions from the approved plan. Each passing panel includes its caption. Mechanism diagrams are also available. During revisions, the owner can edit the numbered lines it has read. The editor checks changes to a previously compiled manuscript with TeX before saving them.
 
+### Independent review in the source build
+
+When a revised experiment returns the same measured rows, the reviewer first sees the original question and the measurement schema. It writes a short Python reproduction for one recorded condition. The bundle freezes that program before opening the manuscript, worker source and results in the same reviewer session. The review records each recomputed value alongside the worker’s value. If the data or compute is unavailable, the review identifies the missing evidence.
+
+In the dashboard, expand **What the reviewer checked → Experimental controls** to inspect the comparison. The local Docker or configured Apptainer science image runs the calculation offline. A Slurm project can perform this check without submitting another job.
+
 ## Discover
 
 In DSH Web, open **Plugins → More → Experimental plugins**, enable **Custom plugin markets**, and select **Discover → Add index source**. After publication, enter the index URL below. The card identifies the exact release package commit and its supported DSH version. Market sources and installations belong to the selected profile. Use the CLI install command for the `idea2paper` profile when browsing from a separate Web profile. [DSH Discover guide](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.md)

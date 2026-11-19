@@ -71,10 +71,21 @@ def test_live_research_desk(tmp_path, monkeypatch):
         (archived / "main.tex").write_text(source)
         (root / "paper/main.tex").write_text("Author's newer draft.")
         (root / "paper/main.pdf").write_bytes(data)
-        record = {"revision": revision, "previous_revision": previous, "verdict": "accept" if previous else "revise",
+        method = "auto_research/state/native_runs/" + "a" * 24 + "/input/main.py"
+        method_sha = hashlib.sha256(b"return total / trials").hexdigest()
+        control = {"artifact": method, "sha256": method_sha, "target": "mean(comparisons)",
+                   "expected": 2.5, "observed": 5, "matches": False,
+                   "rationale": "Two trials should halve the total. Check <img src=x> literally."}
+        record = {"revision": revision, "previous_revision": previous, "verdict": "unassessed" if previous else "revise",
                   "summary": "Compared the annotation with the plotted series.", "paper_pdf_sha256": digest,
-                  "artifact_hashes":{"paper/figures/comparisons.png":figure_digest},
-                  "checks":{"experiment":{"status":"assessed","reason":"Checked the averaging calculation.",
+                  "artifact_hashes":{"paper/figures/comparisons.png":figure_digest, method:method_sha},
+                  "checks":{"experiment":{"status":"unassessed","reason":"The averaging control disagreed with its prediction.",
+                             "controls":[control, {**control, "target":"probe_counts()", "matches":True,
+                                                   "expected":[9007199254740993, 0], "observed":[9007199254740993, 0]},
+                                         {**control, "control":2, "target":"Recorded condition", "columns":["temperature","accuracy"],
+                                          "expected":{"temperature":64,"accuracy":0.9}, "observed":{"temperature":16,"accuracy":0.9},
+                                          "differences":["temperature"]},
+                                         {**control, "sha256":"0" * 64, "target":"unverified_method()"}],
                              "evidence":[{"artifact":"scripts/measure.py","quote":"return total / trials",
                                           "sha256":hashlib.sha256(b"return total / trials").hexdigest()},
                                          {"artifact":"paper/main.tex","quote":claim,
@@ -156,6 +167,22 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 before = page.locator("#review-issues button").filter(has_text="Previous revision · paper/main.pdf")
                 after = page.locator("#review-issues button").filter(has_text="Reviewed revision · paper/main.pdf")
                 page.locator("#review-coverage > summary").click()
+                controls = page.locator(".method-controls")
+                controls.locator("summary").focus()
+                page.keyboard.press("Enter")
+                assert controls.locator("summary").inner_text() == "Experimental controls (3)"
+                mismatch, match, reproduced = controls.get_by_role("listitem").all()
+                values = reproduced.get_by_role("table", name="Recorded condition")
+                assert values.get_by_role("row").nth(1).locator("td").all_text_contents() == ["64","16","Mismatch"]
+                assert values.get_by_role("row").nth(2).locator("td").all_text_contents() == ["0.9","0.9","Matches"]
+                assert mismatch.locator("strong").inner_text() == "mean(comparisons) · Mismatch"
+                assert mismatch.locator("dt").all_text_contents() == ["Expected", "Observed", "Reviewer’s rationale", "Source"]
+                assert mismatch.locator("dd").all_text_contents() == [
+                    "2.5", "5", control["rationale"], method + " · SHA-256 " + method_sha,
+                ]
+                assert match.locator("strong").inner_text() == "probe_counts() · Matches"
+                assert match.locator("dd").all_text_contents()[:2] == ["[9007199254740993, 0]"] * 2
+                assert controls.locator("img,a,button").count() == 0
                 passages = page.locator(".review-passages")
                 passages.locator("summary").click()
                 assert passages.locator("strong").inner_text() == "scripts/measure.py"
@@ -205,6 +232,18 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     details.locator("summary").focus()
                     page.keyboard.press("Enter")
                     assert details.locator("pre").inner_text() == diagnostic
+                    page.evaluate("setLang('zh')")
+                    page.get_by_text("实验控制项（3）", exact=True).wait_for(state="attached")
+                    assert "不一致" in controls.text_content() and "评审理由" in controls.text_content()
+                    event("real-row", "review", "Recomputed seed 2.", action="measurement_reproduction_finished",
+                          condition="seed 2", differed=3, outcomes=6, metric="best_temp",
+                          reported_value="16", independent_value="64")
+                    page.locator("#research-observation").get_by_text(
+                        "seed 2 · 3 项存在差异，共 6 项。 best_temp 的原始实测为 16，独立复算为 64。", exact=True
+                    ).wait_for()
+                    page.evaluate("setLang('ar')")
+                    page.get_by_text("ضوابط التجربة (3)", exact=True).wait_for(state="attached")
+                    assert "غير مطابق" in controls.text_content()
                 ctx.close()
 
             shared = browser.new_context().new_page()

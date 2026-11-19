@@ -286,6 +286,7 @@ def _native_profile(project, root, profile):
     )
     window = _window(model)
     maximum = _max_tokens(model)
+    retries = int(os.getenv("ARK_DSH_RETRIES", "1"))
     patch = role_patch(
         role="project researcher",
         workdir=root,
@@ -299,7 +300,8 @@ def _native_profile(project, root, profile):
         skills_dir=root / ".claude/skills",
         model_provider=prefix,
         image_input=supports_images(model),
-        retries=int(os.getenv("ARK_DSH_RETRIES", "0")),
+        retries=retries,
+        retryable_codes=("SERVER", "TIMEOUT", "TRANSPORT"),
     )
     # The full base bundle already mounts pi-ai. The SDK profile adds it on demand.
     for idx, row in enumerate(patch):
@@ -307,6 +309,7 @@ def _native_profile(project, root, profile):
             patch[idx] = {"id": "llm-pi-ai", "config": row["insert"][0]["config"]}
         if row.get("id") == "llm-deepseek" and "config" in row and endpoint:
             row["config"]["baseURL"] = endpoint
+    patch.append({"id": "llm-retry", "disabled": not retries})
     patch.append(
         {
             "id": "agent-default-model",

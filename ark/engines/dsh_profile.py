@@ -66,12 +66,15 @@ def compaction(window: int, max_tokens: int, history_budget: int) -> dict:
 def role_patch(*, role: str, workdir: Path, provider: str, model_id: str, window: int,
                max_tokens: int, history_budget: int, api: str = "", endpoint: str = "",
                sandbox: str = "danger-full-access", skills_dir: Path | None = None,
-               retries: int = 0, image_input: bool = False, model_provider: str = "") -> list:
+               retries: int = 0, image_input: bool = False, model_provider: str = "",
+               retryable_codes: tuple[str, ...] | None = None) -> list:
     if sandbox not in _MODES:
         raise ValueError(f"ARK_DSH_SANDBOX must be one of {', '.join(_MODES)}")
     rows = [{"id": i, "disabled": True} for i in _OFF]
     retry = {"mode": "normal", "maxRetries": retries,
              "backoff": {"initialDelayMs": 2_000, "maxDelayMs": 60_000}}
+    if retryable_codes is not None:
+        retry["retryableCodes"] = list(retryable_codes)
     native = provider == "deepseek-official"
     if native:
         # A `config:` replaces the row, so restate what the profile set: the

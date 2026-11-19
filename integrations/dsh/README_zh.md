@@ -47,6 +47,12 @@ dsh --profile idea2paper resume search-study
 
 研究 agent 可直接用测量 JSON 的字段画折线图、点图和分组柱状图。自定义绘图脚本读取 `/study/results.json`，并把图存入 `/output/`。对照实验默认由 Nano Banana 绘制研究对象，再按已确认的实验方案排版各组条件。通过核查的图会返回对应图注，也可以按需绘制机制图。修订时可以直接编辑已读过的行，已有成功编译记录的稿件会在保存修改前由 TeX 试编译。
 
+### 源码版的独立评审
+
+修改实验后，如果实测数据仍与上一版相同，reviewer 会先看原始研究任务、实验条件字段和指标名，并为一个真实条件编写独立复算程序。Bundle 锁定程序后，同一评审会话才会看到论文、作者的代码和结果。评审记录逐项保留复算值和实测值。如果缺少数据或算力，评审会标明缺失的证据。
+
+在仪表盘展开「评审检查了什么 → 实验控制项」可以查看比较结果。复算在本地 Docker 或配置的 Apptainer 科学镜像中离线运行，Slurm 项目无需为此再提交作业。
+
 ## 在 Discover 中查看
 
 在 DSH Web 打开 **Plugins → More → Experimental plugins**，启用 **Custom plugin markets**，再选择 **Discover → Add index source**。发布后填入下方地址。插件卡片会显示精确的 Git 提交和兼容的 DSH 版本。索引和安装均属于当前 profile。如果 Web 使用单独的 profile，请用上面的 CLI 命令安装到 `idea2paper`。[DSH Discover 中文指南](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.zh.md)
