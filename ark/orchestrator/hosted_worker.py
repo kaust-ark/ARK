@@ -67,7 +67,7 @@ def _archive_for_project(profile, root):
 def boot_native_worker(project_id, code_dir, project_dir, project_name):
     from ark.orchestrator.dsh_workflow import _install_bundle, hosted_workflow_enabled, uses_native_project
 
-    if not project_id or not code_dir or not project_dir:
+    if not code_dir or not project_dir:
         return
     root = Path(code_dir).resolve()
     project = SimpleNamespace(

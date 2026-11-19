@@ -211,14 +211,15 @@ def test_hosted_retains_early_legacy_worker_after_log_rotation(tmp_path, monkeyp
     assert uses_native_project(project)
 
 
-def test_cli_legacy_identity_requires_its_own_run_log_pointer(tmp_path):
+@pytest.mark.parametrize("project_id", ["db-uuid", None])
+def test_cli_legacy_identity_requires_its_own_run_log_pointer(tmp_path, project_id):
     from ark.orchestrator.dsh_workflow import uses_native_project
 
     state = tmp_path / "auto_research/state"
     state.mkdir(parents=True)
     logs = state.parent / "logs"
     logs.mkdir()
-    project = SimpleNamespace(code_dir=tmp_path, state_dir=state, _project_id="db-uuid", project_name="cli-name")
+    project = SimpleNamespace(code_dir=tmp_path, state_dir=state, _project_id=project_id, project_name="cli-name")
     old = logs / "cli-name_paper_20261119_183100.log"
     old.write_text("DSH hosted workflow started")
     assert uses_native_project(project)
@@ -500,7 +501,8 @@ def test_hosted_worker_keeps_python_and_js_pinned_after_service_rollout(tmp_path
     assert first_sha in missing.value.stderr and "Restore the trusted Idea2Paper release" in missing.value.stderr
 
 
-def test_cli_run_loads_the_original_worker_on_resume(tmp_path, monkeypatch, worker_bundle):
+@pytest.mark.parametrize("registered", [True, False])
+def test_cli_run_loads_the_original_worker_on_resume(tmp_path, monkeypatch, worker_bundle, registered):
     import sys
 
     from ark import cli, paths
@@ -514,9 +516,13 @@ def test_cli_run_loads_the_original_worker_on_resume(tmp_path, monkeypatch, work
     config_dir.mkdir(parents=True)
     workspace = tmp_path / "research"
     workspace.mkdir()
-    (config_dir / "config.yaml").write_text(json.dumps({
-        "code_dir": str(workspace), "_project_id": "test-cli-pin", "_db_path": str(tmp_path / "db")
-    }))
+    monkeypatch.setenv("ARK_WEBAPP_DB_PATH", str(tmp_path / "absent" / "db"))
+    config = {"code_dir": str(workspace)}
+    if registered:
+        config.update(_project_id="test-cli-pin", _db_path=str(tmp_path / "db"))
+    else:
+        monkeypatch.setenv("ARK_WORKFLOW_RUNTIME", "native")
+    (config_dir / "config.yaml").write_text(json.dumps(config))
     monkeypatch.setattr(sys, "argv", ["ark", "run", "cli-pin", "--no-research"])
     original_digest = None
     for version in ("initial", "rollout"):

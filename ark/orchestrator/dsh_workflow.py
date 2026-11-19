@@ -140,11 +140,11 @@ def uses_native_project(project):
     # their registered name instead of the dashboard UUID and published a
     # relative latest.log link. A copied CLI log on its own is not a receipt.
     project_id = getattr(project, "_project_id", None)
-    if project_id:
+    project_name = getattr(project, "project_name", None)
+    if project_id or project_name:
         logs = state.parent / "logs"
         run_log = re.compile(r"(.+)_paper_\d{8}_\d{6}\.log")
         identities = {project_id}
-        project_name = getattr(project, "project_name", None)
         if project_name and project_name != project_id:
             try:
                 linked = run_log.fullmatch(os.readlink(logs / "latest.log"))
