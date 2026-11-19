@@ -297,3 +297,36 @@ Enough detail.
     assert canonical.index(r"\bibliographystyle{plain}") < bib < canonical.index(r"\appendix")
     stub._ensure_clearpage_before_bibliography()
     assert main.read_text() == canonical
+
+
+def test_icml_formats_authored_endmatter_without_rewriting_its_contents(stub):
+    from ark.execution import ExecutionMixin
+
+    text = r"""\documentclass{article}
+\begin{document}
+Body prose about our experiment.
+\section*{References}
+\bibliographystyle{icml2026}
+\bibliography{references}
+\section*{Reproducibility Appendix}\label{app:rep}
+The stored data and code reproduce all five splits.
+\end{document}
+"""
+    _write_main(stub, text)
+    def prepare():
+        ExecutionMixin.prepare_endmatter(stub.latex_dir, stub.log, venue="icml")
+        return _read_main(stub)
+    result = prepare()
+    assert r"\section*{References}" not in result
+    assert result.index(r"\bibliography{") < result.index(r"\appendix")
+    assert text[text.index("Reproducibility Appendix"):text.index(r"\end{document}")].rstrip() in result
+    assert prepare() == result
+    # An annotated bibliography, a custom heading setup and non-appendix
+    # supplements belong to the author.
+    custom = text.replace(r"\begin{document}", r"\renewcommand{\bibsection}{}" + "\n" + r"\begin{document}")
+    _write_main(stub, custom)
+    assert r"\section*{References}" in prepare()
+    annotated = text.replace(r"\section*{References}", "\\section*{References}\nA note about the sources.")
+    _write_main(stub, annotated.replace("Reproducibility Appendix", "Implementation Notes"))
+    result = prepare()
+    assert "A note about the sources." in result and r"\appendix" not in result

@@ -133,6 +133,8 @@ def _manuscript_first_pass(paper, content, *, check_headings=False, page_target=
         staging = Path(tmp)
         env = _stage_tex(paper, staging)
         (staging / "main.tex").write_bytes(content)
+        if page_target and expected_style == "icml2026.sty":
+            ExecutionMixin.prepare_endmatter(staging, lambda *_: None, venue="icml")
         run = subprocess.run(
             _PDFLATEX, cwd=staging, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=90
         )
@@ -389,6 +391,14 @@ class NativeProject(CompilerMixin):
                 data[key] = self.state[key]
         if self.state.get("compile") and not inspect:
             data["manuscript_issues"] = self.state["compile"].get("manuscript_issues", [])
+            if self.state["compile"].get("ok"):
+                try:
+                    self._check_compiled()
+                except ValueError:
+                    data["manuscript_issues"] = ["The saved manuscript or figures changed since the last PDF. "
+                                                 "Run compile_paper on the saved files before using the previous "
+                                                 "page count, citation audit or reviewer decision."]
+                    data["build_stale"] = True
         last_review = _load(self.state_dir / "native_review.json")
         if last_review:
             data["review"] = {
@@ -1642,7 +1652,7 @@ class NativeProject(CompilerMixin):
         self._restore_measured_table()
         self._apply_figure_layout()
         if self.config.get("layout_mode") == "strict":
-            ExecutionMixin.prepare_endmatter(self.latex_dir, self.log)
+            ExecutionMixin.prepare_endmatter(self.latex_dir, self.log, venue=self.config.get("venue_format"))
             self._link_appendix()
         self._recheck_concept()
         self._disclose_study_panel_art(self.latex_dir / "main.tex")
@@ -1753,8 +1763,11 @@ class NativeProject(CompilerMixin):
             if body and body < target - 0.25:
                 result["layout_guidance"] = (
                     f"The body occupies about {body:.2f} of {target:g} requested pages. "
-                    "Use the remaining space to report the actual paired results, diagnose uncertainty and "
-                    "explain where the evidence stops. Preserve the venue margins and type size."
+                    "Use the remaining space for substantive material. Reopen the original research question and "
+                    "registered metrics. Report each requested comparison in the body, interpret its magnitude and "
+                    "uncertainty, compare the design with the verified literature, and explain which competing "
+                    "accounts the data distinguish. Expand the relevant sections in place. Keep implementation "
+                    "details in the appendix and preserve the venue margins and type size."
                 )
         result["editorial_notes"] = [f.detail for f in report.violations if f.check in {"body_prose_repeated", "markdown_emphasis"}]
         result["editorial_notes"].extend(self._body_repetition_notes())

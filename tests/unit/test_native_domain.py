@@ -394,13 +394,16 @@ def test_actual_compile_fingerprint_and_stale_delivery(tmp_path, monkeypatch):
     pdf = project.latex_dir / "main.pdf"
     assert report["pdf_sha256"] == hashlib.sha256(pdf.read_bytes()).hexdigest()
     assert project.invoke("compile_paper", {}) == report
+    assert not project.invoke("project_status", {}).get("build_stale")
     assert not project.invoke("deliver", {})["delivered"]
     project.state.update(state="delivered", delivery_revision="old")
     project.save()
     source.write_text(source.read_text().replace("comparisons", "results"))
     assert project.invoke("inspect_project", {})["state"] == "running"
     assert project.state["state"] == "delivered"  # read-only observer
-    assert project.invoke("project_status", {})["state"] == "running"
+    resumed = project.invoke("project_status", {})
+    assert resumed["state"] == "running" and resumed["build_stale"]
+    assert "Run compile_paper" in resumed["manuscript_issues"][0]
     with pytest.raises(ValueError, match="Compile"):
         project.invoke("review_snapshot", {})
 
