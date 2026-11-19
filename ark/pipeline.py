@@ -854,7 +854,7 @@ class PipelineMixin:
         """Check the selected runtime, model routes and credentials."""
         from ark.llm_lite import provider_key_env
 
-        if selected_agent_runtime() == "dsh":
+        if getattr(self, "_hosted_runtime_preflight", False) or selected_agent_runtime() == "dsh":
             from ark.engines.dsh_runtime import dsh_installation_error, route
             if getattr(self, "_hosted_runtime_preflight", False):
                 from ark.orchestrator.dsh_workflow import native_interpreter

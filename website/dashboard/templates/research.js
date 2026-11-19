@@ -6,6 +6,7 @@ const researchLabels = {
   view_evidence: ['View evidence files','查看证据文件','عرض ملفات الأدلة'],
   earlier: ['Earlier events','更早的记录','السجل السابق'],
   current: ['Current action','当前工作','العمل الحالي'], observation: ['Latest observation','最新观察','أحدث ملاحظة'],
+  all_phases: ['Show all phases','查看全部阶段','عرض جميع المراحل'],
   history: ['Research history','研究记录','سجل البحث'], evidence: ['Evidence','研究证据','الأدلة'],
   open: ['Open file','打开文件','فتح الملف'], close: ['Close','关闭','إغلاق'],
   report: ['Delivery','交付','التسليم'], review: ['Review','评审','المراجعة'],
@@ -15,6 +16,7 @@ const researchLabels = {
   idle: ['Waiting for the next recorded action','等待下一项工作记录','بانتظار تسجيل الإجراء التالي'],
   waiting: ['Waiting for your decision','等待你的决定','بانتظار قرارك'],
   disconnected: ['Disconnected · reconnecting','连接中断，正在重连','انقطع الاتصال. جارٍ إعادة الاتصال'],
+  check_quota: ['Check your provider balance, then select Continue','检查服务商余额或配额，然后点「继续」','تحقق من رصيد مزوّد الخدمة ثم اختر متابعة'],
   quota: ['Paused for API quota','因 API 配额暂停','متوقف لبلوغ حصة الواجهة'],
   paused: ['Paused','已暂停','متوقف مؤقتًا'], conversation: ['Conversation','对话','المحادثة'],
   command: ['Latest command','最近指令','آخر أمر'], pending: ['Queued','已入队','في قائمة الانتظار'],
@@ -42,12 +44,14 @@ Object.entries(researchLabels).forEach(([key, values]) =>
 const rt = (key, ...args) => t('research_' + key, ...args);
 const re = id => document.getElementById(id);
 let researchProject = {}, researchData = {}, researchEvents = new Map(), researchCursor = 0;
+let historyPhase = '';
 let fileSignature = '', reviewSignature = '', preview = null, streamReady = false, disconnected = false;
 
 function resetResearch(project) {
   closeEvidence(false);
   researchProject = project;
   researchEvents.clear();
+  historyPhase = '';
   researchData = {};
   researchCursor = 0;
   fileSignature = reviewSignature = '';
@@ -79,11 +83,20 @@ function receiveResearch(record, animate) {
   if (re('command-receipt').textContent !== text) re('command-receipt').textContent = text;
 }
 
+function researchPhase(phase) {
+  return ({ experiments:'experiment', figures:'writing', dev:'experiment', development:'experiment', planning:'research', plan:'research', literature:'research', analysis:'experiment',
+    draft:'writing', manuscript:'writing', reviewer:'review', delivered:'report', delivery:'report', accepted:'report' })[phase] || phase;
+}
+
 function renderHistory() {
   const history = re('research-history');
   history.hidden = !researchEvents.size;
   re('history-earlier').hidden = !([...researchEvents.values()][0]?.offset > 0);
-  history.querySelector('ol').replaceChildren(...[...researchEvents.values()].reverse().map(e => {
+  const all = re('history-all');
+  all.hidden = !historyPhase;
+  history.querySelector('summary').textContent = historyPhase ? rt('history') + ' · ' + rt(historyPhase) : rt('history');
+  const visible = [...researchEvents.values()].reverse().filter(e => !historyPhase || researchPhase(e.phase) === historyPhase);
+  history.querySelector('ol').replaceChildren(...visible.map(e => {
     const li = document.createElement('li'), time = document.createElement('time');
     time.textContent = e.ts ? fmtDate(e.ts) : '';
     const progress = e.count != null && e.total > 0 ? ' (' + e.count + '/' + e.total + ')' : '';
@@ -91,6 +104,19 @@ function renderHistory() {
     return li;
   }));
 }
+
+function selectHistoryPhase(phase) {
+  historyPhase = phase;
+  re('research-history').open = true;
+  for (const button of re('research-phases').querySelectorAll('button'))
+    button.setAttribute('aria-pressed', String(button.dataset.phase === phase));
+  renderHistory();
+}
+
+re('history-all').onclick = () => {
+  selectHistoryPhase('');
+  re('research-history').querySelector('summary').focus();
+};
 
 re('history-earlier').onclick = async function () {
   const id = detailProjectId, first = [...researchEvents.values()][0]?.offset;
@@ -103,6 +129,7 @@ re('history-earlier').onclick = async function () {
     if (id !== detailProjectId) return;
     const earlier = events.map(e => [e.id,e]);
     researchEvents = new Map([...earlier,...researchEvents]);
+    renderResearch();
     renderHistory();
     if (!earlier.length) this.hidden = true;
   } catch { if (id === detailProjectId) re('research-announce').textContent = rt('unavailable'); }
@@ -115,16 +142,28 @@ function renderResearch(animate=false) {
   const obs = recent.find(e => e.observation && !['tool/call','tool/result','turn/end','turn_end'].includes(e.action)) ||
     recent.find(e => e.observation && e.action !== 'tool/call');
   const rawPhase = recent.find(e => e.phase && e.phase !== 'work')?.phase || p.phase_status?.phase;
-  const phase = ({ experiments:'experiment', figures:'writing', dev:'experiment', development:'experiment', planning:'research', plan:'research', literature:'research', analysis:'experiment',
-    draft:'writing', manuscript:'writing', reviewer:'review', delivered:'report', delivery:'report', accepted:'report' })[rawPhase] || rawPhase;
+  const phase = researchPhase(rawPhase);
   const rail = re('research-phases');
-  if (rail.dataset.phase !== (phase || '') || rail.lang !== currentLang) {
+  const visited = new Set(events.map(e => researchPhase(e.phase)).filter(Boolean));
+  const visits = [...visited].sort().join(' ');
+  if (rail.dataset.phase !== (phase || '') || rail.dataset.visits !== visits || rail.lang !== currentLang) {
+    const focused = rail.contains(document.activeElement) && document.activeElement.dataset.phase;
+    rail.dataset.visits = visits;
     const previous = rail.dataset.phase;
     rail.dataset.phase = phase || '';
     rail.lang = currentLang;
     rail.replaceChildren(...['research','experiment','writing','review','report'].map(key => {
-      const li = document.createElement('li'), label = document.createElement('span');
+      const li = document.createElement('li'), label = document.createElement(visited.has(key) ? 'button' : 'span');
+      label.className = 'research-phase';
       label.textContent = rt(key);
+      if (visited.has(key)) {
+        label.type = 'button';
+        label.dataset.phase = key;
+        label.title = rt('history') + ' · ' + rt(key);
+        label.setAttribute('aria-controls', 'research-history');
+        label.setAttribute('aria-pressed', String(historyPhase === key));
+        label.onclick = () => selectHistoryPhase(historyPhase === key ? '' : key);
+      }
       if (key === phase) {
         li.setAttribute('aria-current','step');
         if (animate && previous !== phase && !disconnected && !p.pending_decision && p.status === 'running' && p.control_state !== 'paused') li.classList.add('research-arrived');
@@ -132,6 +171,7 @@ function renderResearch(animate=false) {
       li.append(label);
       return li;
     }));
+    if (focused) rail.querySelector('button[data-phase="' + focused + '"]')?.focus({preventScroll:true});
   }
   re('research-stop').hidden = !!window.SHARE_MODE || !['queued','running'].includes(p.status);
   const active = ['initializing','queued','pending','running'].includes(p.status);
@@ -143,7 +183,7 @@ function renderResearch(animate=false) {
   const state = (quota ? rt('quota') : active && waiting ? rt('waiting') : paused ? rt('paused') :
     label.startsWith('status_') ? (p.status || '') : label).replace(/^[^\p{L}\p{N}]+/u, '');
   re('research-state').textContent = disconnected ? rt('disconnected') : state;
-  const action = active && waiting ? p.pending_decision.question : !active || paused || quota ? state :
+  const action = quota ? rt('check_quota') : active && waiting ? p.pending_decision.question : !active || paused ? state :
     p.activity || (last?.status === 'running' && (last.action === 'tool/call' ? last.observation : last.action)) || (p.status !== 'running' ? state : rt('idle'));
   re('research-action').textContent = action;
   const artifact = researchData.evidence?.[0];

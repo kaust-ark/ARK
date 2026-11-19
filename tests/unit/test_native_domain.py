@@ -141,6 +141,59 @@ def test_source_evidence_requires_matching_identity_and_actual_passage(tmp_path,
     assert source["source"].startswith("Publisher-deposited abstract")
 
 
+@pytest.mark.parametrize(("error", "pause_reason"), [
+    ({"code": "PI_AI_ERROR", "message": "402 <!DOCTYPE HTML> Frozen qualification request cap."}, "quota"),
+    ({"code": "PI_AI_ERROR", "message": "HTTP/1.1 402 Payment Required"}, "quota"),
+    ({"code": "PI_AI_ERROR", "message": "402 Payment Required"}, "quota"),
+    ({"status": 402, "message": "Provider rejected the request"}, "quota"),
+    ({"code": "PI_AI_ERROR", "message": "Parse failure near token 402"}, "owner_error"),
+    ({"code": "PI_AI_ERROR", "message": "402 tokens could not be decoded"}, "owner_error"),
+    ({"code": "PI_AI_ERROR", "message": "4020: malformed input"}, "owner_error"),
+    ({"status": 500, "message": "402 <!DOCTYPE HTML> quoted in upstream error"}, "owner_error"),
+])
+def test_owner_provider_exit_checkpoints_and_resumes_same_project(tmp_path, monkeypatch, error, pause_reason):
+    project = open_project(tmp_path, monkeypatch)
+    final = {"kind": "turn/end", "role": "owner", "session_id": "persistent", "seq": 224,
+             "reason": {"kind": "error", "error": error}}
+    project.invoke("project_event", final)
+    fallback = {"kind": "failure", "role": "owner", "session_id": "persistent"}
+    assert project.invoke("project_event", fallback) == {"recorded": False}
+    reopened = domain.NativeProject(tmp_path)
+    status = reopened.invoke("inspect_project", {})
+    assert (status["state"], status["pause_reason"]) == ("paused", pause_reason)
+    assert reopened.invoke("continue_project", {})["state"] == "running"
+    assert reopened.invoke("project_event", {**final, "replayed": True}) == {"duplicate": True}
+    assert reopened.state["session_seq"]["persistent"] == 224
+
+
+def test_provider_setup_402_uses_existing_host_quota_handler(tmp_path, monkeypatch):
+    observed = []
+    host = SimpleNamespace(_run_ethical_review=lambda: True, _poll_control=lambda: None,
+                           _record_native_event=observed.append, log=lambda *args: None)
+    project = open_project(tmp_path, monkeypatch, host)
+    event = {"kind": "failure", "role": "owner", "reason": {"kind": "error", "error": {"status": 402}}}
+    project.invoke("project_event", event)
+    assert project.state["pause_reason"] == "quota"
+    assert observed == [{**event, "kind": "turn/end"}]
+    project.invoke("project_event", event)
+    assert len(observed) == 1
+
+
+def test_pre_turn_owner_failure_is_recoverable_and_reviewer_failure_stays_local(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    error = {"kind": "turn/end", "reason": {"kind": "error", "error": {"message": "Malformed stream"}}}
+    project.invoke("project_event", {**error, "role": "reviewer"})
+    project.invoke("project_event", {**error, "role": "owner", "replayed": True})
+    assert project.state["state"] == "running"
+    project.invoke("project_event", {"kind": "failure", "role": "owner", "session_id": "persistent"})
+    reopened = domain.NativeProject(tmp_path)
+    assert reopened.state["pause_reason"] == "owner_error"
+    assert reopened.invoke("continue_project", {})["state"] == "running"
+    assert reopened.invoke("stop", {})["state"] == "stopped"
+    reopened.invoke("project_event", {"kind": "failure", "role": "owner"})
+    assert reopened.state["state"] == "stopped"
+
+
 def test_quota_pause_sequence_dedup_and_resume(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     event = {"kind": "quota", "session_id": "s", "seq": 3, "usage": {"input_tokens": 12}}
@@ -281,3 +334,57 @@ def test_detects_named_optimizer_absent_from_worker(tmp_path, monkeypatch):
     )
     assert len(project._implementation_claims()) == 1
     assert "scipy.optimize.minimize" in project._implementation_claims()[0]
+    tex.write_text(r"We used \texttt{sklearn.model\_selection.GridSearchCV}.")
+    assert "sklearn.model_selection.GridSearchCV" in project._implementation_claims()[0]
+
+@pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
+def test_failed_new_build_survives_resume_without_reusing_old_review(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    main = project.latex_dir / "main.tex"
+    main.write_text(r"\documentclass{article}\begin{document}First version.\end{document}")
+    assert project.invoke("compile_paper", {})["ok"]
+    main.write_text(r"\documentclass{article}\begin{document}We used \texttt{metric_value}.\end{document}")
+    error = project.invoke("compile_paper", {})
+    assert not error["ok"] and "Missing $" in error["diagnostic"] and "suggested_edit" in error["diagnostic"]
+    reopened = domain.NativeProject(tmp_path)
+    assert reopened.invoke("project_status", {})["manuscript_issues"] == [error["diagnostic"]]
+    assert "compiled_pdf_sha256" not in reopened.state
+    with pytest.raises(ValueError, match="Compile"):
+        reopened.invoke("review_snapshot", {})
+    assert reopened.invoke("compile_paper", {}) == error
+    events = (project.state_dir / "research_events.jsonl").read_text()
+    assert events.count('"action": "paper_compile_failed"') == 1
+    edit = error["suggested_edit"]
+    assert edit == {"path":"paper/main.tex", "replace":r"\texttt{metric_value}", "content":r"\texttt{metric\_value}","expected_matches":1}
+    main.write_text(main.read_text().replace(edit["replace"], edit["content"]))
+    assert reopened.invoke("compile_paper", {})["ok"]
+
+
+def test_verified_concept_can_be_reused_without_charging_or_loading_a_key(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    project.state["plan"] = plan()
+    image = project.figures_dir / "overview.png"
+    image.write_bytes(b"frozen figure fixture")
+    sha = hashlib.sha256(image.read_bytes()).hexdigest()
+    rec = {"path":"paper/figures/overview.png", "semantic_pass":True, "sha256":sha}
+    project.state["concept"] = rec
+    (project.state_dir / "native_review.json").write_text(json.dumps({"artifact_hashes":{rec["path"]:"old"}}))
+    monkeypatch.setattr(domain.figure_manifest,"load_manifest",lambda *a, **kw: {"figures":{
+        image.name:{"artifact_sha256":sha,"source":"nano_banana","provider":"google"}}})
+    monkeypatch.setattr(domain.deep_research,"get_gemini_api_key",lambda: None)
+    args = {"name":"overview","caption":"Protocol","description":"Show the paired comparison"}
+    assert project.invoke("generate_concept_figure",args)["already_revised"]
+    image.write_bytes(b"unverified replacement")
+    with pytest.raises(RuntimeError,match="Google key"):
+        project.invoke("generate_concept_figure",args)
+
+def test_fenced_source_repair_preserves_code_and_ordinary_tex(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    issue = "./main.tex:3: Missing $ inserted"
+    main = project.latex_dir / "main.tex"
+    main.write_text("Results\n```python\nscore_per_seed = [4, 6]\n```\nContinue.")
+    edit = project._suggest_tex_edit(project.latex_dir, issue)
+    assert edit["expected_matches"] == 1 and edit["path"] == "paper/main.tex"
+    assert edit["content"].splitlines() == [r"\begin{verbatim}", "score_per_seed = [4, 6]", r"\end{verbatim}"]
+    main.write_text("x\ny\nz\n")
+    assert project._suggest_tex_edit(project.latex_dir, issue) is None

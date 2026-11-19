@@ -834,3 +834,20 @@ def test_strict_checks_the_final_build_log_including_the_appendix(tmp_path):
                for f in report.delivery_blockers(config))
     log.write_text(r"Overfull \hbox (0.05pt too wide) in paragraph at lines 195--206")
     assert not any(f.check == "column_overflow" for f in evaluate(project, config=config).delivery_blockers(config))
+
+
+def test_long_body_duplication_is_an_editorial_signal_not_appendix_repetition():
+    from ark.delivery_contract import _repeated_body_passage
+
+    passage = ("The training distribution includes a new mixture component for each session. "
+               "Every group uses an equal observation period before estimating the difference "
+               "between the measured and predicted outcome with a paired interval. ")
+    passage += ("We record each source and retain the observed errors across independent trials "
+                "to distinguish the effect of sample size from the choice of optimizer. ")
+    passage += ("First we calculate the residual for each subject and then fit a separate slope "
+                "for each subgroup to compare the direction of the change and its magnitude.")
+    assert len(passage.split()) >= 80
+    assert _repeated_body_passage(passage + "\nResults\n" + passage)
+    assert not _repeated_body_passage(passage + "\nReferences\n" + passage)
+    assert not _repeated_body_passage(passage + "\nResults\n" + " ".join(passage.split()[:40]))
+    assert not _repeated_body_passage("1 2 3 4 5 6 7 8 " * 30)

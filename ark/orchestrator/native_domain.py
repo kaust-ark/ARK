@@ -37,7 +37,7 @@ from ark import (
 from ark.compute import native_experiment
 from ark.execution import ExecutionMixin
 from ark.latex.compiler import CompilerMixin
-from ark.latex.utils import body_page_boundary, parse_overfull_warnings
+from ark.latex.utils import body_page_boundary, extract_latex_errors, parse_overfull_warnings
 from ark.orchestrator.state import _atomic_write_text
 
 
@@ -309,6 +309,10 @@ class NativeProject(CompilerMixin):
             data["review"] = {
                 "revision": last_review["revision"],
                 "verdict": last_review["verdict"],
+                "reviewed_pdf_matches_last_build": bool(
+                    self.state.get("compiled_pdf_sha256")
+                    and self.state["compiled_pdf_sha256"] == last_review.get("paper_pdf_sha256")
+                ),
                 "summary": last_review.get("summary", ""),
                 "issues": last_review.get("issues", []),
             }
@@ -343,7 +347,7 @@ class NativeProject(CompilerMixin):
                 self.state["experiment"] = record
             self.state["state"] = self.state.pop("state_before_stop", "running")
             self.save()
-        elif status == "paused" and self.state.get("pause_reason") == "quota":
+        elif status == "paused" and self.state.get("pause_reason") in {"quota", "owner_error"}:
             self.state["state"] = "running"
             self.state.pop("pause_reason", None)
             self.save()
@@ -398,7 +402,11 @@ class NativeProject(CompilerMixin):
                 return {"duplicate": True}
             seqs[sid] = seq
         kind = str(args.get("kind", "agent"))[:80]
-        if kind == "turn/end" and not args.get("replayed"):
+        owner_fallback = kind == "failure" and args.get("role") == "owner" and seq is None
+        if owner_fallback and self.state.get("state") != "running":
+            # A durable turn/end, gate, delivery or Stop already owns the outcome.
+            return {"recorded": False}
+        if (kind == "turn/end" or owner_fallback) and not args.get("replayed"):
             from ark.engines.dsh_driver import classify
 
             code, detail = classify(args.get("reason"))
@@ -407,8 +415,12 @@ class NativeProject(CompilerMixin):
                 for token in ("insufficient balance", "insufficient_balance", "insufficient_quota")
             ):
                 kind = "quota"
+            elif args.get("role") == "owner" and (args.get("reason") or {}).get("kind") == "error":
+                kind = "failure"
         if kind == "quota" and self.state.get("state") == "running":
             self.state.update(state="paused", pause_reason="quota")
+        elif kind == "failure" and args.get("role") == "owner" and not args.get("replayed") and self.state.get("state") == "running":
+            self.state.update(state="paused", pause_reason="owner_error")
         usage = args.get("usage")
         if isinstance(usage, dict) and sid:
             totals = self.state.setdefault("token_usage", {})
@@ -442,7 +454,7 @@ class NativeProject(CompilerMixin):
                 **({"status": status} if status else {}),
             )
         if self.host and callable(getattr(self.host, "_record_native_event", None)):
-            self.host._record_native_event(args)
+            self.host._record_native_event({**args, "kind": "turn/end"} if owner_fallback and kind == "quota" else args)
         self.save()
         return {"recorded": True}
 
@@ -649,9 +661,6 @@ class NativeProject(CompilerMixin):
         name = _text(args, "name", limit=64).removesuffix(".png")
         if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", name):
             raise ValueError("Choose a simple figure basename.")
-        key = deep_research.get_gemini_api_key()
-        if not key:
-            raise RuntimeError("Nano Banana requires a Google key on the project owner's account.")
         caption = _text(args, "caption", limit=1000)
         description = _text(args, "description", limit=9000)
         spec = {"name": name, "caption": caption, "section_context": description, "placement": "full_width"}
@@ -661,17 +670,25 @@ class NativeProject(CompilerMixin):
         fingerprint = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
         previous = _load(self.state_dir / "native_review.json", {})
         reviewed = previous.get("artifact_hashes", {}).get(str(path.relative_to(self.root)))
-        if (
-            reviewed
-            and path.is_file()
-            and reviewed != _sha(path)
-            and self.state.get("concept", {}).get("semantic_pass")
-        ):
+        current = self.state.get("concept") or {}
+        actual_sha = _sha(path) if path.is_file() else None
+        verified_image = (
+            actual_sha and current.get("path") == str(path.relative_to(self.root))
+            and actual_sha == current.get("sha256") == entry.get("artifact_sha256")
+            and entry.get("source") == "nano_banana" and entry.get("provider") == "google"
+            and current.get("semantic_pass")
+        )
+        if verified_image and reviewed and reviewed != actual_sha:
             return {
-                **self.state["concept"],
+                **current,
                 "already_revised": True,
                 "next": "This image changed after the recorded review. Compile and inspect the updated PDF.",
             }
+        if verified_image and entry.get("native_description") == fingerprint:
+            return {**current, "cached": True}
+        key = deep_research.get_gemini_api_key()
+        if not key:
+            raise RuntimeError("Nano Banana requires a Google key on the project owner's account.")
         if (
             entry.get("native_description") != fingerprint
             or not path.exists()
@@ -1076,6 +1093,38 @@ class NativeProject(CompilerMixin):
             amended = tex[:end] + supplement + tex[end:]
         _atomic_write_text(source, amended)
 
+    def _suggest_tex_edit(self, staging, log):
+        """Offer a scoped typesetting edit for the misplaced underscore TeX reported."""
+        location = re.search(r"(?m)^\./([^:\n]+\.tex):(\d+): Missing \$ inserted", log)
+        if not location:
+            return None
+        file = (self.latex_dir / location[1]).resolve()
+        if not file.is_relative_to(self.latex_dir) or not file.is_file():
+            return None
+        source = file.read_text()
+        if source != (staging / location[1]).read_text():
+            return None
+        lines = source.splitlines()
+        number = int(location[2])
+        if not 1 <= number <= len(lines):
+            return None
+        fences = [i for i, line in enumerate(lines) if re.fullmatch(r"\s*```[\w-]*\s*", line)]
+        before = [i for i in fences if i < number - 1]
+        if len(before) % 2 and len(fences) > len(before):
+            first, last = before[-1], fences[len(before)]
+            if lines[last].strip() != "```" or last - first > 40:
+                return None
+            literal = "\n".join(lines[first:last + 1])
+            amended = "\n".join([r"\begin{verbatim}", *lines[first + 1:last], r"\end{verbatim}"])
+        else:
+            code = re.search(r"\\texttt\{[a-zA-Z][a-zA-Z0-9.]*_[a-zA-Z0-9._]+\}", lines[number - 1])
+            if not code:
+                return None
+            literal = code[0]
+            amended = literal.replace("_", r"\_")
+        return {"path": str(file.relative_to(self.root)), "replace": literal,
+                "content": amended, "expected_matches": source.count(literal)}
+
     def compile_paper(self, args):
         self._fit_overfull_tables()
         citation_proof = None
@@ -1118,6 +1167,7 @@ class NativeProject(CompilerMixin):
             )
             latex = [
                 "pdflatex",
+                "-file-line-error",
                 "-recorder",
                 "-no-shell-escape",
                 "-halt-on-error",
@@ -1130,12 +1180,31 @@ class NativeProject(CompilerMixin):
                 else [latex, latex]
             )
             for cmd in commands:
-                run = subprocess.run(cmd, cwd=staging, env=env, capture_output=True, timeout=90)
-                if run.returncode:
-                    return {
-                        "ok": False,
-                        "diagnostic": (run.stdout + run.stderr).decode(errors="replace")[-3500:],
-                    }
+                edit = None
+                try:
+                    run = subprocess.run(cmd, cwd=staging, env=env, capture_output=True, timeout=90)
+                except subprocess.TimeoutExpired:
+                    error = f"{cmd[0]} timed out after 90 seconds."
+                else:
+                    if run.returncode == 0:
+                        continue
+                    error = (run.stdout + run.stderr).decode(errors="replace").strip()[-2000:]
+                    if cmd[0] == "pdflatex" and (staging / "main.log").exists():
+                        error = extract_latex_errors(staging / "main.log")
+                        edit = self._suggest_tex_edit(staging, (staging / "main.log").read_text(errors="replace"))
+                        if edit:
+                            error += " Apply suggested_edit with write_project_file and compile the updated source."
+                failure = {"ok": False, "source_sha256": digest, "diagnostic": error, "manuscript_issues": [error]}
+                if edit:
+                    failure["suggested_edit"] = edit
+                changed = self.state.get("compile") != failure
+                self.state["compile"] = failure
+                self.state.pop("compiled_sources", None)
+                self.state.pop("compiled_pdf_sha256", None)
+                self.save()
+                if changed:
+                    self.event("writing", "paper_compile_failed", error[:700])
+                return failure
             import fitz
 
             with fitz.open(staging / "main.pdf") as pdf:
@@ -1186,6 +1255,7 @@ class NativeProject(CompilerMixin):
                     "Use the remaining space to report the actual paired results, diagnose uncertainty and "
                     "explain where the evidence stops. Preserve the venue margins and type size."
                 )
+        result["editorial_notes"] = [f.detail for f in report.violations if f.check in {"body_prose_repeated", "markdown_emphasis"}]
         if citation_proof:
             result["unverified_citations"] = citation_proof["unconfirmed"]
         self.state.update(compiled_sources=digest, compile=result, compiled_pdf_sha256=result["pdf_sha256"])
@@ -1244,7 +1314,7 @@ class NativeProject(CompilerMixin):
                 name = ast.unparse(node.func)
                 head, dot, rest = name.partition(".")
                 calls.add(imports.get(head, head) + dot + rest)
-        paper = "\n".join(source for _, source in citation.active_tex_sources(self.latex_dir))
+        paper = "\n".join(source for _, source in citation.active_tex_sources(self.latex_dir)).replace(r"\_", "_")
         claimed = re.findall(
             r"(?:\busing(?: the)?|\bwe (?:used?|call(?:ed)?))\s+"
             r"\\texttt\{((?:scipy|sklearn|numpy|torch)\.[A-Za-z_][A-Za-z_0-9.]*)\}",
@@ -1263,6 +1333,9 @@ class NativeProject(CompilerMixin):
             return []
         rendered = self.state.get("compile", {})
         issues = self._implementation_claims()
+        main = self.latex_dir / "main.tex"
+        if main.is_file() and main.resolve() == main:
+            issues.extend(review.reported_change_conflicts(main.read_text()))
         if guidance := rendered.get("layout_guidance"):
             issues.append(guidance)
         if overflow := rendered.get("overflow"):
@@ -1335,15 +1408,17 @@ class NativeProject(CompilerMixin):
             if source.is_file() and not (archive / name).exists():
                 _atomic_write_text(archive / name, source.read_text())
         record = _load(archive / "review.json")
+        pages = 0
+        if "visual" in snapshot.get("required", ()):
+            import fitz
+
+            with fitz.open(saved) as pdf:
+                pages = len(pdf)
         result = {
             "revision": snapshot["revision"],
             "brief": review.review_prompt(snapshot, previous=previous),
             "rendered_artifact": f"{snapshot.get('paper_dir', 'paper')}/main.pdf",
-            "rendered_pages": (
-                self.state.get("compile", {}).get("pages", 0)
-                if "visual" in snapshot.get("required", [])
-                else 0
-            ),
+            "rendered_pages": pages,
             "evidence_refs": sorted(snapshot["artifacts"]),
         }
         if record and review.record_is_current(snapshot, record):

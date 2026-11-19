@@ -19,7 +19,19 @@ from ark.engines.dsh_runtime import SDK_VERSION, dsh_interpreter
 from ark.workflow import WorkflowSteps
 
 
-def hosted_workflow_enabled(project_id):
+def _checkpoint_version(project):
+    folder = getattr(project, "code_dir", None)
+    if folder is None:
+        return None
+    checkpoint = Path(folder) / "workflow.json"
+    if checkpoint.is_file():
+        return json.loads(checkpoint.read_text()).get("version", 0)
+    return None
+
+
+def hosted_workflow_enabled(project_id, project=None):
+    if _checkpoint_version(project) == 3:
+        return True
     choice = os.environ.get("ARK_WORKFLOW_RUNTIME", "").strip().lower()
     if choice not in ("", "python", "dsh", "native", "legacy"):
         raise ValueError("ARK_WORKFLOW_RUNTIME must be native, legacy, dsh, or python")
@@ -88,15 +100,13 @@ def _run_legacy_workflow(project):
 
 def uses_native_project(project):
     """New projects use the shared bundle; a checkpoint retains its original runner."""
+    version = _checkpoint_version(project)
+    if version is not None:
+        return version == 3
     choice = os.getenv("ARK_WORKFLOW_RUNTIME", "").lower().strip()
-    if choice in ("python", "legacy"):
-        return False
     state = getattr(project, "state_dir", None)
-    if state is None:
+    if state is None or choice in ("python", "legacy") or selected_agent_runtime() != "dsh":
         return False
-    checkpoint = Path(project.code_dir) / "workflow.json"
-    if checkpoint.is_file():
-        return json.loads(checkpoint.read_text()).get("version") == 3
     return not any(
         (state / name).is_file()
         for name in (
@@ -171,21 +181,45 @@ def _bundle_archive():
         return archives[0]
 
 
+def _bundle_files(package):
+    files = {}
+    if package.is_symlink():
+        raise ValueError("Installed bundle directory is a symbolic link.")
+    for item in package.rglob("*"):
+        if item.is_symlink():
+            raise ValueError("Installed bundle contains a symbolic link.")
+        if not item.is_dir():
+            if not item.is_file():
+                raise ValueError("Installed bundle contains a non-regular file.")
+            files[item.relative_to(package).as_posix()] = hashlib.sha256(item.read_bytes()).hexdigest()
+    return files
+
+
 def _install_bundle(profile):
     """Install the immutable, dependency-bundled npm payload without a registry request."""
     marker = profile / "bundle.sha256"
     package = profile / "node_modules/idea2paper-dsh"
-    required_digest = os.getenv("IDEA2PAPER_BUNDLE_SHA256")
-    if marker.is_file() and package.is_dir():
-        if required_digest and marker.read_text().strip() != required_digest:
-            raise RuntimeError(
-                "Existing project is pinned to a different Idea2Paper bundle."
-            )
-        return marker.read_text().strip()
-    archive = _bundle_archive()
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    manifest = profile / "bundle.files.json"
+    pinned = marker.read_text().strip() if marker.is_file() else None
+    if pinned is not None and (len(pinned) != 64 or any(c not in "0123456789abcdef" for c in pinned)):
+        raise RuntimeError("Invalid project bundle digest. Restore the project's verified bundle metadata.")
+    if pinned and package.is_dir() and manifest.is_file():
+        # Service rollout variables select the archive for new projects. An existing
+        # owner can continue offline only while its installed payload matches its pin.
+        if json.loads(manifest.read_text()) != {"sha256": pinned, "files": _bundle_files(package)}:
+            raise RuntimeError(f"Installed Idea2Paper bundle changed. Restore archive {pinned}.")
+        return pinned
+    try:
+        archive = _bundle_archive()
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    except (OSError, RuntimeError, subprocess.CalledProcessError) as exc:
+        if pinned:
+            raise RuntimeError(f"Restore Idea2Paper archive {pinned} to verify this project's bundle.") from exc
+        raise
+    required_digest = pinned or os.getenv("IDEA2PAPER_BUNDLE_SHA256")
     if required_digest and required_digest != digest:
-        raise RuntimeError("Idea2Paper bundle checksum did not match.")
+        raise RuntimeError(f"Idea2Paper bundle checksum mismatch. Expected {required_digest}, got {digest}. "
+                           "Restore the archive matching the project's pin before resuming.")
     package.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=profile) as staging:
         with tarfile.open(archive, "r:gz") as packed:
@@ -215,22 +249,17 @@ def _install_bundle(profile):
             raise ValueError("This bundle does not target the installed DSH runtime.")
         if not (unpacked / "node_modules/commander/package.json").is_file():
             raise ValueError("The hosted tarball must bundle its commander dependency.")
+        files = _bundle_files(unpacked)
         if package.exists():
-            # The directory is installed atomically before the marker. Recover only
-            # if a crash left an intact byte-for-byte copy of the selected package.
-            for item in unpacked.rglob("*"):
-                if (
-                    item.is_file()
-                    and (package / item.relative_to(unpacked)).read_bytes()
-                    != item.read_bytes()
-                ):
-                    raise ValueError(
-                        "Incomplete bundle installation. Restore the pinned archive."
-                    )
+            # Validate older marker-only installs against their original archive and
+            # handle interruption between publishing the payload and its marker.
+            if _bundle_files(package) != files:
+                raise ValueError(f"Incomplete or changed bundle installation. Restore archive {digest}.")
         else:
             unpacked.rename(package)
     from ark.orchestrator.state import _atomic_write_text
 
+    _atomic_write_text(manifest, json.dumps({"sha256": digest, "files": files}))
     _atomic_write_text(marker, digest + "\n")
     return digest
 

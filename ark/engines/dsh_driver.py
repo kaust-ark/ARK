@@ -5,6 +5,7 @@ import importlib.metadata
 import json
 import os
 import queue
+import re
 import signal
 import sys
 import time
@@ -105,7 +106,12 @@ def classify(reason):
         # Google reports its project spending cap as RESOURCE_EXHAUSTED (429).
         # Retrying in a minute only helps a rate window.
         monthly_cap = "exceeded its monthly spending cap" in message.lower()
-        if code in _QUOTA_CODES or str(status) == "402" or message.lstrip().startswith("402:") or monthly_cap:
+        # Some adapters discard the status field and prefix a JSON/HTML body with its HTTP status.
+        payment_required = not status and re.match(
+            r"^(?:HTTP(?:/\d+(?:\.\d+)?)?\s+402\b|402(?:$|:|\s+(?:[<{\[]|payment required\b)))",
+            message.strip(), re.I,
+        )
+        if code in _QUOTA_CODES or str(status) == "402" or payment_required or monthly_cap:
             return "DSH.QuotaExceeded", detail
         if code in _TRANSIENT_CODES:
             return _TRANSIENT_CODES[code], detail

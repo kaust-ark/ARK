@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { projectFile } from './project.js'
+import { projectFile, readProjectFile } from './project.js'
 
 const bundle = dirname(fileURLToPath(import.meta.url))
 test('author can edit sources but cannot rewrite evidence, credentials or linked paths', async t => {
@@ -38,6 +38,25 @@ function frames(model, content) {
 }
 
 // Provide an already installed, disposable base-backed idea2paper profile to test fully offline.
+test('bounded evidence reads preserve Unicode offsets and the complete-file digest', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'research-read-'))
+  t.after(() => rm(root, {recursive: true, force: true}))
+  const path = 'paper/main.tex'
+  const material = '🧪'.repeat(6100) + 'first method; revised method'
+  await projectFile(root, path, material)
+  const first = await readProjectFile(root, {path})
+  assert.equal(first.next_offset, 6000)
+  const second = await readProjectFile(root, {path, offset:first.next_offset})
+  assert.equal(first.content + second.content, material)
+  assert.equal(first.sha256, second.sha256)
+  assert.equal(second.next_offset, null)
+  const hit = await readProjectFile(root, {path, find:'method'})
+  assert.equal(hit.match_offset, 6106)
+  assert.equal((await readProjectFile(root, {path, offset:hit.match_offset+1, find:'method'})).match_offset, 6122)
+  assert.equal((await readProjectFile(root, {path, find:'absent'})).found, false)
+  await assert.rejects(readProjectFile(root, {path, offset:-1}), /Offset/)
+})
+
 test('concurrent section edits preserve other manuscript passages', async t => {
   const root = await mkdtemp(join(tmpdir(), 'research-edits-'))
   t.after(() => rm(root, { recursive: true, force: true }))
@@ -53,6 +72,104 @@ test('concurrent section edits preserve other manuscript passages', async t => {
   await projectFile(root, file, 'new method', 'same method', {expected_matches: 2})
   assert.equal((await projectFile(root, file)).content, 'new method; new method')
 
+})
+
+function manuscript(body) {
+  return '\\documentclass{article}\n\\begin{document}\n' + body + '\n\\end{document}\n'
+}
+
+test('a complete main.tex survives truncated output even with its correct base hash', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'research-truncation-'))
+  t.after(() => rm(root, {recursive:true, force:true}))
+  const path = 'paper/main.tex'
+  const abstract = '\\begin{abstract}\nAblation results.\n\\end{abstract}'
+  const original = manuscript(abstract + '\n\\section{Methods}\n' + 'Repeated scientific observation. '.repeat(500))
+  const {sha256} = await projectFile(root, path, original)
+  const fragment = original.slice(0, original.indexOf('\\section'))
+  for (const ending of ['', '% \\end{document}', '\\\\end{document}', '\\verb|\\end{document}|',
+                         '\\begin{verbatim}\n\\end{document}\n\\end{verbatim}']) {
+    await assert.rejects(projectFile(root, path, fragment + ending, undefined, {base_sha256:sha256, allow_shrink:true}), /incomplete document/)
+  }
+  await assert.rejects(projectFile(root, path, '', '\\end{document}'), /incomplete document/)
+  const shell = manuscript('A shorter submission.')
+  for (const edit of [{base_sha256:sha256}, {allow_shrink:true}, {base_sha256:sha256, allow_shrink:'true'}]) {
+    await assert.rejects(projectFile(root, path, shell, undefined, edit), /allow_shrink:true/)
+  }
+  assert.equal((await projectFile(root, path)).content, original)
+  const piece = await projectFile(root, path, '\\section{Approach}', '\\section{Methods}')
+  assert.equal(piece.previous_sha256, sha256)
+  assert.equal((await projectFile(root, path)).content, original.replace('Methods', 'Approach'))
+})
+
+test('an acknowledged full rewrite archives the exact source and restores it with compare-and-swap', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'research-restore-'))
+  t.after(() => rm(root, {recursive:true, force:true}))
+  const path = 'paper/main.tex'
+  const original = '\uFEFF' + manuscript('Scientific observation 🧪.\r\n'.repeat(500))
+  const {sha256: first} = await projectFile(root, path, original)
+  const smaller = manuscript('A concise report.')
+  const {sha256: second, previous_sha256} = await projectFile(root, path, smaller, undefined, {base_sha256:first, allow_shrink:true})
+  assert.equal(previous_sha256, first)
+  const saved = join(root, '.dsh', 'native', 'main-tex-revisions', first)
+  assert.equal((await lstat(saved)).mode & 0o222, 0)
+  assert.deepEqual(await readFile(saved), Buffer.from(original))
+  assert.deepEqual((await readProjectFile(root, {path, list_revisions:true})).revisions, [first])
+  const page = await readProjectFile(root, {path, revision_sha256:first})
+  assert.equal(page.sha256, first)
+  assert.equal(page.next_offset, 6000)
+  await assert.rejects(projectFile(root, path, undefined, undefined, {restore_sha256:first}), /current base_sha256/)
+  await assert.rejects(projectFile(root, path, undefined, undefined, {restore_sha256:first, base_sha256:first}), /changed since/)
+  await assert.rejects(projectFile(root, path, 'extra', undefined, {restore_sha256:first, base_sha256:second}), /only restore_sha256/)
+  await assert.rejects(projectFile(root, 'paper/other.tex', undefined, undefined, {restore_sha256:first, base_sha256:second}), /only restore_sha256/)
+  await assert.rejects(projectFile(root, path, undefined, undefined, {restore_sha256:'../file', base_sha256:second}), /saved manuscript SHA-256/)
+  const restored = await projectFile(root, path, undefined, undefined, {restore_sha256:first, base_sha256:second})
+  assert.equal(restored.sha256, first)
+  assert.equal(restored.previous_sha256, second)
+  assert.deepEqual(await readFile(join(root, path)), Buffer.from(original))
+  assert.equal((await readProjectFile(root, {path, revision_sha256:second})).content, smaller)
+})
+
+test('a preexisting small project can finish a draft and explicitly restore its earlier source', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'research-old-source-'))
+  t.after(() => rm(root, {recursive:true, force:true}))
+  const path = 'paper/main.tex'
+  await mkdir(join(root, 'paper'))
+  await writeFile(join(root, path), 'Legacy notes.')
+  assert.deepEqual((await readProjectFile(root, {path, list_revisions:true})).revisions, [])
+  const first = await projectFile(root, path, manuscript('A report.'))
+  await assert.rejects(projectFile(root, path, 'Only a fragment.'), /incomplete document/)
+  const second = await projectFile(root, path, manuscript('Short.'))
+  assert.equal(second.previous_sha256, first.sha256)
+  await projectFile(root, path, undefined, undefined, {base_sha256:second.sha256, restore_sha256:first.previous_sha256})
+  assert.equal((await readProjectFile(root, {path})).content, 'Legacy notes.')
+})
+
+test('corrupt, writable or linked manuscript snapshots abort the edit or restore without changing the live file', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'research-invalid-backup-'))
+  t.after(() => rm(root, {recursive:true, force:true}))
+  const path = 'paper/main.tex'
+  const {sha256: first} = await projectFile(root, path, manuscript('First source.'))
+  const current = manuscript('New source.')
+  const {sha256: second} = await projectFile(root, path, current)
+  const folder = join(root, '.dsh', 'native', 'main-tex-revisions')
+  const archive = join(folder, first)
+  const restore = () => projectFile(root, path, undefined, undefined, {base_sha256:second, restore_sha256:first})
+  await chmod(archive, 0o600)
+  await assert.rejects(restore(), /read-only/)
+  await writeFile(archive, 'modified')
+  await chmod(archive, 0o400)
+  await assert.rejects(restore(), /SHA-256 check/)
+  await rm(archive)
+  await symlink(join(root, path), archive)
+  await assert.rejects(restore(), {code:'ELOOP'})
+  await symlink(join(root, path), join(folder, second))
+  await assert.rejects(projectFile(root, path, manuscript('Overwritten.')), {code:'ELOOP'})
+  assert.equal((await projectFile(root, path)).content, current)
+  await rm(folder, {recursive:true})
+  await symlink(root, folder)
+  await assert.rejects(restore(), /Unsafe project directory/)
+  await assert.rejects(projectFile(root, path, manuscript('Overwritten.')), /Unsafe project directory/)
+  assert.equal((await projectFile(root, path)).content, current)
 })
 
 // The test copies the profile and overlays only the candidate bundle's source.

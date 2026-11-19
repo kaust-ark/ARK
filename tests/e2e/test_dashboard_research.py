@@ -115,7 +115,12 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert meter.is_visible()
                 assert abs(meter.evaluate("el => el.getBoundingClientRect().width / el.parentNode.clientWidth") - 2/3) < .01
                 assert meter.evaluate("el => getComputedStyle(el).transitionDuration") == "0s"
-                page.locator("#research-history summary").click()
+                experiment = page.locator('#research-phases button[data-phase="experiment"]')
+                experiment.click()
+                assert experiment.get_attribute("aria-pressed") == "true"
+                assert page.locator("#research-history").get_attribute("open") is not None
+                page.locator("#history-all").click()
+                assert experiment.get_attribute("aria-pressed") == "false"
                 assert page.locator("#research-history li").filter(has_text="Second batch").count() == 1
                 page.locator("#research-history summary").click()
                 if width == 1300:

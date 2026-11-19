@@ -6,7 +6,7 @@ import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Command } from 'commander'
 import { acquireLock, readJson, runLegacyWorkflow, writeJson } from './workflow.js'
-import { acknowledgeLocal, pendingCommands, queueCommand, attachEvidence, evidenceTool, openDomain, operations, projectFile, registerTool } from './project.js'
+import { acknowledgeLocal, pendingCommands, queueCommand, attachEvidence, evidenceTool, openDomain, operations, projectFile, readProjectFile, registerTool } from './project.js'
 
 export const name = 'idea2paper'
 export const inject = ['cmdlineArgs', 'agentDefaultModel', 'agents', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'subagents', 'llm', 'attachments']
@@ -130,7 +130,7 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
         display('stopped', 'Outstanding Stop was applied')
         return
       }
-      if (!idea && !message && (status.state === 'stopped' || status.pause_reason === 'quota')) {
+      if (!idea && !message && (status.state === 'stopped' || ['quota', 'owner_error'].includes(status.pause_reason))) {
         await domain.call('continue_project')
         status = await domain.call('project_status')
       }
@@ -143,6 +143,18 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
         return
       }
       await runOwner(ctx, { directory, path, checkpoint, selected, status, message, domain, signal })
+    } catch (error) {
+      // Setup errors and incomplete turns can exit without a classified turn/end.
+      if (!signal.aborted) {
+        try {
+          await domain.call('project_event', {
+            kind: 'failure', role: 'owner', session_id: checkpoint.owner_session_id,
+            title: 'Researcher stopped before completion. Continue to retry the saved project.',
+            reason: { kind: 'error', error: { code: error.code, status: error.status, message: error.message } },
+          })
+        } catch (checkpointError) { console.error('Could not checkpoint the owner exit: ' + checkpointError.message) }
+      }
+      throw error
     } finally { await domain.close() }
   } finally { await unlock() }
 }
@@ -325,7 +337,7 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
         registerTool(scope, name, definition, async (args, exec) => {
           if (exec.agent !== agent) throw new Error('This operation belongs to the project owner')
           exec.signal.throwIfAborted()
-          if (name === 'read_project_file') return projectFile(directory, args.path)
+          if (name === 'read_project_file') return readProjectFile(directory, args)
           if (name === 'write_project_file') return projectFile(directory, args.path, args.content, args.replace, args)
           if (name === 'request_review') return review(ctx, agent, domain, AbortSignal.any([deadline, exec.signal]), args.draft === true)
           return domain.call(name, args)
@@ -389,9 +401,10 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
       'Research idea: ' + checkpoint.idea, status.owner_brief || '', 'Read .claude/skills/{research-integrity,figure-integrity,page-adjustment,human-intervention,env-isolation,runtime-sandbox}/SKILL.md for the relevant project operations.', 'Project state: ' + JSON.stringify({ required: status.required, capabilities: status.capabilities }),
     ].join('\n\n') : [
       'Resume the same research project. Reconcile saved work and continue to verified delivery. Reuse completed experiments, research and images.',
+      'If a build fails, repair its diagnostic and compile again. A verdict for an older PDF needs a fresh review of the current build; inspect existing revised assets before requesting replacements.',
       'Fix reported artifact checks before another independent review. Use write_project_file with insert_before or insert_after on a short unique heading to expand a section, or replace to fix a specific passage. Expand an under-length paper with evidence and analysis, then compile.',
       JSON.stringify({ requirements: status.required, rendered: status.compile?.checks, body_pages: status.compile?.body_equivalent_pages,
-        manuscript_issues: status.manuscript_issues, citation_audit: status.citations, most_recent_review: status.review?.verdict, reviewed_revision: status.review?.revision }),
+        manuscript_issues: status.manuscript_issues, editorial_notes: status.compile?.editorial_notes, suggested_edit: status.compile?.suggested_edit, citation_audit: status.citations, most_recent_review: status.review?.verdict, reviewed_revision: status.review?.revision, reviewed_pdf_matches_last_build: status.review?.reviewed_pdf_matches_last_build }),
     ].join('\n'))
     const start = agent.session.seq
     const hasCommands = status.commands?.length || (await pendingCommands(directory)).length
@@ -421,13 +434,15 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
       await ctx.sessions.flush(agent.session)
       deadline.throwIfAborted()
       if (commandFailure) throw commandFailure
+      await writeEvents
       const latest = await domain.call('project_status')
       const events = agent.session.snapshotEvents(start)
       const reason = events.findLast(e => e.type === 'turn/end')?.data.reason
-      if (['paused','stopped'].includes(latest.state)) {
+      if (latest.state === 'stopped' || (latest.state === 'paused' && !['quota','owner_error'].includes(latest.pause_reason))) {
         display(latest.state, latest.note || 'Work suspended')
         break
       }
+      if (latest.state === 'paused') throw new Error('Researcher paused (' + latest.pause_reason + '). Continue to retry the saved project.')
       if (reason?.kind !== 'completed') throw new Error('Owner turn ' + (reason?.kind ?? 'missing') + ': ' + (reason?.error?.message || reason?.error?.code || 'no completion'))
       await routeCommands(latest)
       if (agent.inbox.nextTurn.length || agent.inbox.nextStep.length || agent.status !== 'idle') continue

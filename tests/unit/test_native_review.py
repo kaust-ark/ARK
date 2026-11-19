@@ -212,3 +212,20 @@ def test_located_missing_observation_cannot_be_promoted_to_scientific_failure(tm
     answer["issues"][0]["claim"] = "A passage that does not exist in the manuscript."
     with pytest.raises(ValueError, match="evidence"):
         validate_review(snapshot, answer)
+
+
+@pytest.mark.parametrize(("claim", "conflict"), [
+    (r"RMSE from $1.962 \pm 0.088$ to $2.829 \pm 0.105$ (a paired increase of $+8.670 \pm 0.067$, or 44%).", True),
+    (r"RMSE from $1.962 \pm 0.088$ to $2.829 \pm 0.105$ (a paired increase of $+0.867 \pm 0.067$, or 44%).", False),
+    ("went from 3.2 to 2.0, a decrease of 1.2.", False),
+    ("went from 3.2 to 2.0, a decrease of -1.2.", False),
+    ("went from 2.0 to 3.2, a decrease of 1.2.", True),
+    ("fell from 3.21 to 2.03 (an absolute decrease of 1.2).", False),
+    ("rose from 0.50 to 0.75, an increase of 50%.", False),
+    ("went from 1 to 2, an increase of 2 fold.", False),
+    ("went from 1.0 kg to 2.0 kg, an increase of 1000 grams.", False),
+    ("% RMSE from 1.962 to 2.829, a paired increase of 8.670.", False),
+])
+def test_reported_absolute_changes_respect_scale_direction_and_rounding(claim, conflict):
+    from ark.review import reported_change_conflicts
+    assert bool(reported_change_conflicts(claim)) is conflict

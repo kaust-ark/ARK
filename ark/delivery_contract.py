@@ -154,6 +154,27 @@ def _pdf_text(pdf: Path) -> Optional[str]:
         return None
 
 
+def _repeated_body_passage(text: str) -> str:
+    """Find a long duplicated stretch of rendered prose for editorial review."""
+    body = re.split(
+        r"(?im)^\s*(?:references|bibliography|appendix|supplementary materials?|参考文献)\s*$",
+        text, maxsplit=1,
+    )[0]
+    # PDF line wrapping can insert discretionary hyphens. Preserve the actual words and numbers.
+    body = re.sub(r"(?<=\w)-\s*\n\s*(?=[a-z])", "", body)
+    words = re.findall(r"[^\W_]+", body.casefold())
+    seen = {}
+    width = 80
+    for index in range(len(words) - width + 1):
+        anchor = tuple(words[index:index + 8])
+        old = seen.setdefault(anchor, index)
+        if index - old < width or words[old:old + width] != words[index:index + width]:
+            continue
+        if len({word for word in words[index:index + width] if len(word) >= 3 and word.isalpha()}) >= 24:
+            return " ".join(words[index:index + 12])
+    return ""
+
+
 def _page_budget(pdf: Path, tex: str, limit: int, *, strict: bool = False) -> Finding:
     from ark.latex.utils import body_page_boundary
     try:
@@ -366,6 +387,22 @@ def evaluate(project_dir: Path, venue_pages: int = 0, *, config: Optional[dict] 
         rep.findings.append(Finding("column_overflow", "violated" if over else "pass", "soft",
             f"{len(over)} boxes extend more than 3 pt beyond a column; largest {max(over):.2f} pt."
             if over else "No significant column overflow in the final build log."))
+
+    if config.get("layout_mode") == "strict":
+        repeated = _repeated_body_passage(text)
+        if repeated:
+            rep.findings.append(Finding(
+                "body_prose_repeated", "violated", "soft",
+                f'Two body passages share at least 80 consecutive words starting with "{repeated}". '
+                "Check whether both occurrences serve a distinct purpose and revise redundant text."
+            ))
+
+        emphasis = re.search(r"\*\*([^*\n]{2,90})\*\*", text)
+        if emphasis and re.search(r"[^\W\d_]+\s+[^\W\d_]+", emphasis[1]):
+            rep.findings.append(Finding(
+                "markdown_emphasis", "violated", "soft",
+                f'The rendered PDF contains literal "{emphasis[0]}". Use LaTeX emphasis if this is running prose.'
+            ))
 
     # ── citations resolved ────────────────────────────────────────────────
     n_unresolved = len(_UNRESOLVED_CITE_RE.findall(text))

@@ -249,6 +249,38 @@ def _blind_text(snapshot):
     return _artifact(snapshot, tex)[0].decode("utf-8", errors="replace")[:BLIND_SIZE]
 
 
+# Match only explicit absolute changes with unitless endpoints. A fold change,
+# relative percentage or a comparison of different estimands requires review.
+_NUMBER = r"[+-]?(?:\d{1,12}(?:\.\d{1,12})?|\.\d{1,12})"
+_SPREAD = rf"(?:\s*(?:\\pm|±)\s*{_NUMBER})?"
+_ABSOLUTE_CHANGE = re.compile(
+    rf"\bfrom\s+\$?(?P<before>{_NUMBER}){_SPREAD}\$?\s+to\s+"
+    rf"\$?(?P<after>{_NUMBER}){_SPREAD}\$?\s*[,;(]\s*(?:an?\s+)?"
+    rf"(?:(?:paired|absolute|mean)\s+)*(?P<direction>increase|decrease)\s+of\s+"
+    rf"\$?(?P<effect>{_NUMBER}){_SPREAD}\$?(?=\s*[,;)\n]|\.(?:\s|$)|$)", re.I,
+)
+
+
+def reported_change_conflicts(source):
+    """Explicit endpoint/difference triplets that disagree beyond the printed precision."""
+    # Line comments often retain a superseded version of a scientific claim.
+    visible = re.sub(r"(?<!\\)%[^\n]*", "%", source)
+    conflicts = []
+    for match in _ABSOLUTE_CHANGE.finditer(visible):
+        first, last, effect = (Decimal(match[key]) for key in ("before", "after", "effect"))
+        difference = last - first
+        if match["direction"].lower() == "decrease" and effect >= 0:
+            difference = -difference
+        tolerance = sum(Decimal(1).scaleb(v.as_tuple().exponent) for v in (first, last, effect)) / 2
+        wrong_direction = (difference < 0 if match["direction"].lower() == "increase" else last > first)
+        if abs(difference - effect) > tolerance or (wrong_direction and abs(last - first) > tolerance):
+            conflicts.append(
+                f'The manuscript reports "{match[0]}". The endpoints imply a signed difference '
+                f'of {last - first}. Check the reported absolute change against the measured rows.'
+            )
+    return conflicts
+
+
 def review_prompt(snapshot, previous=None):
     instructions = (Path(__file__).parent / "templates/agents/native_reviewer.prompt").read_text()
     tex, pdf = _submission(snapshot)
@@ -257,6 +289,10 @@ def review_prompt(snapshot, previous=None):
     packet = {"revision": snapshot["revision"], "target_track": snapshot["target_track"] or "unspecified",
               "required": snapshot["required"], "manuscript_artifact": tex, "rendered_artifact": pdf,
               "manuscript_excerpt": _blind_text(snapshot), "available_artifacts": catalogue}
+    if conflicts := reported_change_conflicts(packet["manuscript_excerpt"]):
+        packet["reported_changes_to_verify"] = conflicts[:8]
+    if not any(item["kind"] == "primary_source" for item in snapshot["artifacts"].values()):
+        packet["primary_sources_available"] = False
     if previous:
         packet["findings_to_recheck"] = [
             {k: issue[k] for k in ("id", "domain", "severity", "claim", "reason", "fix", "evidence")}

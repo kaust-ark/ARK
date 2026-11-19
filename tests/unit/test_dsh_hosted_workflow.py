@@ -74,6 +74,7 @@ def test_real_hosted_workflow_resumes_python_checkpoint(monkeypatch, fail_execut
 
 def test_hosted_uses_native_for_fresh_project_and_retains_legacy(tmp_path, monkeypatch):
     from ark.orchestrator.dsh_workflow import uses_native_project
+
     state = tmp_path / "auto_research/state"
     state.mkdir(parents=True)
     project = SimpleNamespace(code_dir=tmp_path, state_dir=state)
@@ -82,8 +83,65 @@ def test_hosted_uses_native_for_fresh_project_and_retains_legacy(tmp_path, monke
     assert not uses_native_project(project)
     (tmp_path / "workflow.json").write_text('{"version":3}')
     assert uses_native_project(project)
-    monkeypatch.setenv("ARK_WORKFLOW_RUNTIME", "legacy")
+    for policy in ("python", "legacy"):
+        monkeypatch.setenv("ARK_WORKFLOW_RUNTIME", policy)
+        monkeypatch.setenv("ARK_AGENT_RUNTIME", "cli")
+        assert hosted_workflow_enabled("project-id", project)
+        assert uses_native_project(project)
+    (tmp_path / "workflow.json").unlink()
+    assert not hosted_workflow_enabled("project-id", project)
     assert not uses_native_project(project)
+
+
+def test_installed_bundle_retains_verified_project_pin_across_rollout(
+    tmp_path, monkeypatch
+):
+    import hashlib
+    import json
+    import shutil
+    import tarfile
+    from ark.orchestrator.dsh_workflow import _install_bundle
+
+    dist = tmp_path / "package"
+    commander = dist / "node_modules/commander/package.json"
+    commander.parent.mkdir(parents=True)
+    commander.write_text("{}")
+    (dist / "package.json").write_text(
+        json.dumps({"name": "idea2paper-dsh", "engines": {"dsh": "0.2.1-rc.2"}})
+    )
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    archives = []
+    for version in ("first", "second"):
+        (dist / "index.js").write_text(version)
+        archive = tmp_path / f"{version}.tgz"
+        with tarfile.open(archive, "w:gz") as output:
+            output.add(dist, arcname="package")
+        archives.append((archive, hashlib.sha256(archive.read_bytes()).hexdigest()))
+
+    (first, old), (second, new) = archives
+    monkeypatch.setenv("IDEA2PAPER_BUNDLE_PATH", str(first))
+    monkeypatch.setenv("IDEA2PAPER_BUNDLE_SHA256", old)
+    assert _install_bundle(profile) == old
+    monkeypatch.setenv("IDEA2PAPER_BUNDLE_PATH", str(second))
+    monkeypatch.setenv("IDEA2PAPER_BUNDLE_SHA256", new)
+    assert _install_bundle(profile) == old
+    package = profile / "node_modules/idea2paper-dsh"
+    assert (package / "index.js").read_text() == "first"
+    (package / "index.js").write_text("modified")
+    with pytest.raises(RuntimeError, match=old):
+        _install_bundle(profile)
+
+    # Before the file manifest was introduced, the project kept only a digest.
+    (profile / "bundle.files.json").unlink()
+    with pytest.raises(RuntimeError, match=old):
+        _install_bundle(profile)
+    shutil.rmtree(package)
+    with pytest.raises(RuntimeError, match=old):
+        _install_bundle(profile)
+    monkeypatch.setenv("IDEA2PAPER_BUNDLE_PATH", str(first))
+    assert _install_bundle(profile) == old
+    assert (package / "index.js").read_text() == "first"
 
 
 @pytest.mark.parametrize("model", ["deepseek/deepseek-flash", "openai/fixture"])
@@ -195,7 +253,11 @@ def test_real_native_host_replays_owner_through_installed_tarball(
     try:
         run_native_project(project)
         claim = json.loads((tmp_path / "workflow.json").read_text())
-        run_native_project(project, message="Explain the previous result")
+        from ark.pipeline import PipelineMixin
+        monkeypatch.setenv("ARK_WORKFLOW_RUNTIME", "python")
+        monkeypatch.setenv("ARK_AGENT_RUNTIME", "cli")
+        assert hosted_workflow_enabled("project-id", project)
+        assert PipelineMixin._native_followup(project, "Explain the previous result")
         assert (
             json.loads((tmp_path / "workflow.json").read_text())["owner_session_id"]
             == claim["owner_session_id"]
