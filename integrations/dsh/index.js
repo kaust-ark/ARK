@@ -61,7 +61,9 @@ export function apply(ctx) {
     .option('--command-id <id>', 'Reusable identifier for a steering message')
     .action((dir, message, options) => launch(dir, { message, commandId: options.commandId }))
   cli.command('stop <project>').description('Stop this project and cancel its tracked experiments').action(dir => launch(dir, { stopOnly: true }))
-  cli.command('status <project>').description('Read project status without starting a model turn').action(dir => launch(dir, { statusOnly: true }))
+  cli.command('status <project>').description('Read project status without starting a model turn')
+    .option('--json', 'Print the full project status as JSON')
+    .action((dir, options) => launch(dir, { statusOnly: true, json: options.json }))
   parseCmdline(ctx, cli)
 }
 
@@ -69,7 +71,23 @@ function display(kind, title, detail = '') {
   console.log('[' + kind + '] ' + title + (detail ? ' ' + detail : ''))
 }
 
-async function runProject(ctx, directory, { idea, message, commandId, statusOnly, stopOnly }, signal, onOwnerInterrupt) {
+function projectSummary(status) {
+  const plain = value => String(value ?? '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim()
+  const lines = ['Idea2Paper · ' + plain(status.state) + (status.pause_reason ? ' (' + plain(status.pause_reason) + ')' : '')]
+  const experiment = status.experiment
+  if (experiment?.job_id) lines.push('Slurm ' + plain(experiment.job_id) + ' · ' + plain(experiment.status))
+  if (status.concept?.semantic_pass === true) lines.push('Method illustration · verified')
+  if (status.concept?.semantic_pass === false) lines.push('Method illustration · needs revision')
+  const build = status.compile, target = status.required?.body_pages
+  if (build?.ok && Number.isFinite(build.body_equivalent_pages) && Number.isFinite(target))
+    lines.push('Last build · ' + Number(build.body_equivalent_pages.toFixed(2)) + ' / ' + target + ' body pages · PDF ' + build.pages + ' pages')
+  if (status.review?.verdict)
+    lines.push('Review · ' + plain(status.review.verdict) + (status.review.reviewed_pdf_matches_last_build ? ' (last build)' : ' (earlier PDF)'))
+  if (status.delivered) lines.push('Delivered · paper/main.pdf')
+  return lines.join('\n')
+}
+
+async function runProject(ctx, directory, { idea, message, commandId, statusOnly, stopOnly, json }, signal, onOwnerInterrupt) {
   const hosted = process.env.IDEA2PAPER_HOSTED === '1'
   if (idea !== undefined) {
     if (idea.trim().length < 4 || idea.length > 32_000) throw new Error('Provide a research idea between 4 and 32000 characters.')
@@ -109,7 +127,11 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
   }
   if (statusOnly) {
     const domain = openDomain(directory, signal)
-    try { console.log(JSON.stringify(await domain.call('inspect_project'))) } finally { await domain.close() }
+    try {
+      const status = await domain.call('inspect_project')
+      if (json || !process.stdout.isTTY) console.log(JSON.stringify(status))
+      else console.log(projectSummary(status))
+    } finally { await domain.close() }
     return
   }
   let unlock
