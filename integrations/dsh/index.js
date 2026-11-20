@@ -221,6 +221,12 @@ async function runProject(ctx, directory, { idea, message, commandId, statusOnly
 async function openingPacket(ctx, agent, domain, packet, observed, signal) {
   const prompt = [{ type: 'text', text: packet.brief +
     '\nReturn a single structured verdict. Use read_evidence to inspect originals and recompute claims. The attached images, when present, are pages of this exact revision in the indicated order.' }]
+  if (packet.retry_context) {
+    prompt.push({type:'text', text:'An earlier reader left an evidence check unfinished on this exact revision. ' +
+      'Inspect the cited originals and decide whether the disputed passage should remain an open finding. ' +
+      'The locations are leads from the author. Only your own observations support a verdict.\n' +
+      JSON.stringify(packet.retry_context)})
+  }
   const measuredRows = []
   for (const entry of packet.opening_evidence || []) {
     signal.throwIfAborted()
@@ -638,12 +644,16 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
       'Research idea: ' + checkpoint.idea, status.owner_brief || '', 'Read .claude/skills/{research-integrity,figure-integrity,page-adjustment,human-intervention,env-isolation,runtime-sandbox}/SKILL.md for the relevant project operations.', 'Project state: ' + JSON.stringify({ required: status.required, capabilities: status.capabilities }),
     ].join('\n\n') : [
       'Resume the same research project. Reconcile saved work and continue to verified delivery. Reuse completed experiments, research and images.',
+      ...(status.unfinished_review?.matches_last_build ? [
+        'The last independent review of this PDF is unsigned. Inspect each surviving statement against the measured quantity, comparison and scope. Edit unsupported wording wherever it recurs. A source_edit in revision_passages supplies exact write_project_file arguments; add your replacement as content, then compile. For an unchanged draft, identify the observation that answers the outstanding check before retrying.',
+        JSON.stringify({unchecked:status.unfinished_review.diagnostic, revision_passages:status.revision_passages}),
+      ] : []),
       'For a statement about every condition, a trend, or a threshold, calculate the relevant per-condition values from the sealed table. Check the denominator, sign, order and scope before writing. Describe rounded bounds as approximate. For literature comparisons, read the relevant pages of the original source when available.',
       'If a build fails, repair its diagnostic and compile again. A verdict for an older PDF needs a fresh review of the current build; inspect existing revised assets before requesting replacements.',
       'Fix reported artifact checks before another independent review. Use write_project_file with insert_before or insert_after on a short unique heading to expand a section, or replace to fix a specific passage. Expand an under-length paper with evidence and analysis, then compile.',
       JSON.stringify({ requirements: status.required, planned_mechanism: status.plan?.mechanism, last_mechanism_observation: status.mechanism_observation,
         rendered: status.compile?.checks, body_pages: status.compile?.body_equivalent_pages,
-        build_stale: status.build_stale, manuscript_issues: status.manuscript_issues, editorial_notes: status.build_stale ? undefined : status.compile?.editorial_notes, suggested_edit: status.build_stale ? undefined : status.compile?.suggested_edit, citation_audit: status.build_stale ? undefined : status.citations, last_signed_review: status.review && reviewForAuthor(status.review), unresolved_check: status.unfinished_review, review_attempts: status.review_attempts, max_review_attempts: status.max_review_attempts, revision_passages: status.revision_passages }),
+        build_stale: status.build_stale, manuscript_issues: status.manuscript_issues, editorial_notes: status.build_stale ? undefined : status.compile?.editorial_notes, suggested_edit: status.build_stale ? undefined : status.compile?.suggested_edit, citation_audit: status.build_stale ? undefined : status.citations, last_signed_review: status.review && reviewForAuthor(status.review), review_attempts: status.review_attempts, max_review_attempts: status.max_review_attempts, revision_passages: status.unfinished_review?.matches_last_build ? undefined : status.revision_passages }),
     ].join('\n'))
     const start = agent.session.seq
     const hasCommands = status.commands?.length || (await pendingCommands(directory)).length

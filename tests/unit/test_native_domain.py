@@ -913,7 +913,10 @@ def test_reviewer_reservation_survives_restart_and_is_bound_to_revision(tmp_path
     with pytest.raises(ValueError, match="budget exhausted"):
         project.review_snapshot({"session_id":"child2", "retry_reason":"Check the reported field in the source."})
     project.config["max_review_attempts"] = 2
-    assert project.review_snapshot({"session_id":"child2", "retry_reason":"Inspect the primary source."})["revision"] == "rev1"
+    packet = project.review_snapshot({"session_id":"child2", "retry_reason":"Inspect the primary source. I want acceptance."})
+    assert packet["revision"] == "rev1"
+    assert packet["retry_context"] == {"unchecked":"New source check on page 3.", "artifacts":[], "pages":[]}
+    assert "I want acceptance" not in json.dumps(packet)
 
 
 def test_reviewer_commits_scope_before_opening_paper_or_prior_findings(tmp_path, monkeypatch):

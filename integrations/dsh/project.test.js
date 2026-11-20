@@ -418,7 +418,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
       if (tools.includes('commit_evidence_scope') && !tools.includes('read_evidence')) {
         assert.match(history, /schema-only-scope-brief/)
         for (const secret of ['frozen-source-only-for-independent-reader', 'prior-finding-private',
-             'reported-row-private', 'manuscript-private', 'conclusion-passage-private', 'inlineData']) {
+             'reported-row-private', 'manuscript-private', 'conclusion-passage-private', 'retry-check-after-commitment', 'inlineData']) {
           assert.ok(!history.includes(secret), secret)
         }
         response = {name:'commit_evidence_scope', args:{comparison:'paired loss', alternative:'different exposure', discriminator:'measured exposure'}}
@@ -426,7 +426,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.deepEqual(tools, ['reproduce_measurement'])
         assert.match(history, /original protocol only: derive metric for seed/)
         for (const privateText of ['parent-scientific-private', 'frozen-source-only-for-independent-reader',
-             'prior-finding-private', 'reported-row-private', 'manuscript-private', 'conclusion-passage-private', '"type":"image"', 'inlineData']) {
+             'prior-finding-private', 'reported-row-private', 'manuscript-private', 'conclusion-passage-private', 'retry-check-after-commitment', '"type":"image"', 'inlineData']) {
           assert.ok(!history.includes(privateText), privateText)
         }
         const args = commitment === 'program'
@@ -437,6 +437,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
       } else if (tools.includes('read_evidence')) {
         assert.deepEqual(tools.toSorted(), [...(scenario === 'program' ? ['commit_evidence_scope'] : []), 'read_evidence', 'reproduce_measurement', 'run_method_control', ...(scenario === 'program' ? ['test_inference'] : [])])
         assert.ok(committed)
+        if (scenario === 'program') assert.ok(history.includes('retry-check-after-commitment'))
         for (const opening of ['frozen-source-only-for-independent-reader', 'reported-row-private',
              'prior-finding-private', 'manuscript-private', 'Rendered manuscript page 2 of 2']) {
           assert.equal(history.split(opening).length - 1, 1, opening)
@@ -561,6 +562,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.equal(args.preflight, !parked)
         return {revision:'rev1',method_control:true,measurement_reproduction:true,rendered_pages:2,rendered_artifact:'paper/main.pdf',
           opening_evidence:['scripts/plot.py','results/data.json',{artifact:'paper/main.pdf',page:2}], brief:'manuscript-private; prior-finding-private',
+          ...(scenario === 'program' && {retry_context:{unchecked:'retry-check-after-commitment', pages:[2], artifacts:['results/data.json']}}),
           ...((scenario === 'program' || parked) && {scope_brief:'schema-only-scope-brief', inference_test:scenario === 'program', claim_instructions:'archive-each-claim-once'}),
           ...(!parked && {reproduction_brief:'original protocol only: derive metric for seed'})}
       case 'commit_evidence_scope':

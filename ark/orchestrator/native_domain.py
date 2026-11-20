@@ -1774,13 +1774,29 @@ class NativeProject(CompilerMixin):
         if (not pdf_sha or not prior or prior.get("verdict") != "revise"
                 or not prior.get("paper_pdf_sha256") or prior["paper_pdf_sha256"] == pdf_sha):
             return {}
-        contexts = review.revision_paragraphs(self._snapshot(), prior)
+        snapshot = self._snapshot()
+        contexts = review.revision_paragraphs(snapshot, prior)
         followup = {}
         for ident, context in contexts.items():
             locations = context.get("remaining_locations")
-            followup[ident] = [{"page": locations[i]["page"] if locations else context["page"], "quote": quote}
-                               for i, quote in enumerate(context["remaining"])]
+            passages = []
+            for i, quote in enumerate(context["remaining"]):
+                passage = {"page": locations[i]["page"] if locations else context["page"], "quote": quote}
+                if edit := review.editable_source_passage(snapshot, quote):
+                    passage["source_edit"] = {key: edit[key] for key in ("path", "replace", "base_sha256")}
+                passages.append(passage)
+            followup[ident] = passages
         return followup
+
+    def _return_unfinished_review(self, pending, prior):
+        return {"ready": False, "signed": False, **pending,
+                "revision_passages": self._author_revision_passages(prior, pending["pdf_sha256"]),
+                "instruction": "Read the surviving statements for each finding. Where the observations establish "
+                               "less than the sentence claims, use its source_edit with write_project_file and supply "
+                               "your replacement as content. Narrow the claim and its repetitions to what was "
+                               "measured, or remove an unsupported explanation. Compile and review the new PDF. "
+                               "If the unchanged text is supported, give retry_reason pointing to the specific "
+                               "artifact and observation that answers the outstanding check."}
 
     def compile_paper(self, args):
         source = self.latex_dir / "main.tex"
@@ -2417,12 +2433,14 @@ class NativeProject(CompilerMixin):
                 pending = self.state.get("unfinished_review", {})
                 if pending.get("revision") == snapshot["revision"]:
                     if not args.get("retry_reason"):
-                        return {"unfinished_review": {"ready": False, "signed": False, **pending,
-                                "revision_passages": self._author_revision_passages(previous, self.state.get("compiled_pdf_sha256")),
-                                "instruction": "The same revision still has an unresolved evidence check. Inspect the "
-                                "cited passages before requesting another reader. If these inputs do support the "
-                                "claim, give retry_reason naming the evidence to examine."}}
-                    _text(args, "retry_reason", limit=1200)
+                        return {"unfinished_review": self._return_unfinished_review(pending, previous)}
+                    reason = _text(args, "retry_reason", limit=1200)
+                    # Give the reader the author's evidence locations after its blind commitments.
+                    # The author's interpretation and proposed verdict stay in the owner session.
+                    cited_pages = {int(n) for n in re.findall(r"\bpage\s+(\d{1,4})\b", reason, re.I)}
+                    result["retry_context"] = {"unchecked": pending["diagnostic"],
+                                               "pages": sorted(n for n in cited_pages if 1 <= n <= result["rendered_pages"]),
+                                               "artifacts": [name for name in snapshot["artifacts"] if name in reason]}
                 limit = int(self.config.get("max_review_attempts", 8))
                 if len(attempts) >= limit:
                     raise ValueError(
@@ -2640,9 +2658,8 @@ class NativeProject(CompilerMixin):
         self.save()
         self.event("review", "review_incomplete", "Independent review stopped with an unresolved evidence check.",
                    revision=revision)
-        return {"ready": False, "signed": False, **pending, "instruction":
-                "Inspect the disputed passage and its evidence. Repeated calls on this unchanged draft consume "
-                "the project's review allowance. The previous signed findings stay open."}
+        prior = _load(self.state_dir / "native_review.json")
+        return self._return_unfinished_review(pending, prior)
 
     def check_review(self, args):
         result = self.record_review(args, check_only=True)

@@ -1415,6 +1415,41 @@ def test_resolving_manuscript_blocker_rechecks_surviving_paragraph_across_pages(
     assert validate_review(changed, raw, rejected, observed=seen)["verdict"] == "revise"
 
 
+def test_editable_source_passage_requires_unique_literal_tex_and_matching_math(tmp_path):
+    from ark.review import editable_source_passage
+
+    paper = tmp_path / "paper"
+    paper.mkdir()
+    path = paper / "main.tex"
+    sentence = "The coating shows lower reactivity\nwhen the temperature reaches $T=25$ degrees."
+    source = "\\section{Results}\n" + sentence + "\n"
+    path.write_text(source)
+    snap = build_snapshot(tmp_path)
+    quote = "The coating shows lower reac-\ntivity when the temperature reaches T = 25 degrees."
+    anchor = editable_source_passage(snap, quote)
+    assert anchor == {"path":"paper/main.tex", "replace":sentence, "start_line":2, "end_line":3,
+                      "base_sha256":hashlib.sha256(path.read_bytes()).hexdigest()}
+    assert source.count(anchor["replace"]) == 1
+    for changed in ("T = 52", "T < 25", "T = -25", "T² = 25"):
+        assert editable_source_passage(snap, quote.replace("T = 25", changed)) is None
+
+    path.write_text(source.replace("$T=25$", "$T=26$"))
+    assert editable_source_passage(snap, quote) is None
+    path.write_text(source + "\n" + sentence)
+    assert editable_source_passage(build_snapshot(tmp_path), quote) is None
+    # Even a commented-out copy could be matched by the editor's literal replace.
+    path.write_text(source + "% " + " ".join(sentence.split()))
+    assert editable_source_passage(build_snapshot(tmp_path), quote) is None
+    path.write_text(source.replace("reactivity\n", "reactivity % in-source note\n")
+                    + "% " + " ".join(sentence.split()))
+    assert editable_source_passage(build_snapshot(tmp_path), quote) is None
+    path.write_text(source.replace("$T=25$", "$T_{a}=25$"))
+    assert editable_source_passage(build_snapshot(tmp_path), quote.replace("T = 25", "Ta = 25")) is None
+    plain = "A distinct family of filters retained the original timing."
+    path.write_text(plain)
+    assert editable_source_passage(build_snapshot(tmp_path), plain)["replace"] == plain
+
+
 def test_cross_page_finding_uses_same_source_paragraph_and_page_bound_observation(tmp_path):
     from ark import review
     from ark.orchestrator.native_domain import NativeProject

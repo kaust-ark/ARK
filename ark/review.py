@@ -1909,6 +1909,66 @@ def _tex_paragraph_locator(source):
     return locate, paragraphs
 
 
+def editable_source_passage(snapshot, quote):
+    """Locate a verified rendered sentence in the live TeX for an exact owner edit."""
+    if not isinstance(quote, str) or not 1 <= len(quote) <= 1200:
+        return None
+    tex, _ = _submission(snapshot)
+    try:
+        data, meta = _artifact(snapshot, tex)
+        source = data.decode("utf-8")
+    except (OSError, ValueError):
+        return None
+    locate, _ = _tex_paragraph_locator(source)
+    match = locate(quote, with_source=True)
+    if not match:
+        return None
+    sentence = match[1]
+
+    # The paragraph matcher uses prose around inline math to locate candidates.
+    # Only offer an edit when the entire printed sentence, including its operands
+    # and relations, agrees. Leave layouts such as fractions and scripts unbound.
+    symbols = {r"\le":"≤", r"\leq":"≤", r"\ge":"≥", r"\geq":"≥", r"\times":"×",
+               r"\pm":"±", r"\approx":"≈", r"\cdot":"·", r"\%":"%"}
+    pieces = re.split(r"(\$[^$\n]+\$|\\\([^\n]*?\\\))", sentence)
+    for i in range(0, len(pieces), 2):
+        pieces[i] = pieces[i].replace("---", "—").replace("--", "–")
+    for i in range(1, len(pieces), 2):
+        math_text = pieces[i][1:-1] if pieces[i][0] == "$" else pieces[i][2:-2]
+        math_text = re.sub(r"\\(?:[a-zA-Z]+|.)", lambda m: symbols.get(m[0], m[0]), math_text)
+        if not re.fullmatch(r"[a-zA-Z0-9.,+()/%=<>≤≥×±≈·*\s-]+", math_text):
+            return None
+        pieces[i] = math_text
+    expected = "".join(pieces)
+
+    def typography(text):
+        for ligature in "ﬀﬁﬂﬃﬄ":
+            text = text.replace(ligature, unicodedata.normalize("NFKC", ligature))
+        text = text.replace("’", "'").replace("−", "-")
+        return re.sub(r"\s*([=<>≤≥+×±≈·*/-])\s*", r"\1", " ".join(text.split()))
+
+    # At a hyphenated line break the source may contain a real hyphen or none.
+    wrapped = re.sub(r"(?<=\w)-[ \t]*\r?\n(?=[a-z])", "\u00ad", quote)
+    pattern = re.escape(typography(wrapped)).replace("\u00ad", "-?")
+    if not re.fullmatch(pattern, typography(expected)):
+        return None
+    # The locator normalizes whitespace. Return the original bytes' exact text,
+    # including line breaks, after excluding duplicate anchors anywhere in TeX.
+    spans = re.finditer(r"\s+".join(map(re.escape, sentence.split())), source)
+    span = next(spans, None)
+    if span is None or next(spans, None) is not None:
+        return None
+    # A verbatim copy inside a comment or macro could be the only literal hit
+    # when the rendered original crosses a TeX comment. Verify this is the hit
+    # the locator actually used before offering it to the editor.
+    without = source[:span.start()] + "Removed." + source[span.end():]
+    if _tex_paragraph_locator(without)[0](quote) is not None:
+        return None
+    return {"path":tex, "replace":span[0], "base_sha256":meta["sha256"],
+            "start_line":source.count("\n", 0, span.start()) + 1,
+            "end_line":source.count("\n", 0, span.end()) + 1}
+
+
 def _add_paragraph_continuation(context, stable, old_par, old_locate, new_locate, old_pdf, old_page, blocks, wording):
     # Page adjacency alone could associate a float or a new paragraph.
     # Require a common author paragraph in both TeX sources and a complete
