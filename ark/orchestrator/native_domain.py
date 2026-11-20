@@ -2406,6 +2406,15 @@ class NativeProject(CompilerMixin):
             session = _text(args, "session_id", limit=160)
             attempts = self.state.setdefault("review_attempts", {})
             if session not in attempts:
+                pending = self.state.get("unfinished_review", {})
+                if pending.get("revision") == snapshot["revision"]:
+                    if not args.get("retry_reason"):
+                        return {"unfinished_review": {"ready": False, "signed": False, **pending,
+                                "revision_passages": self._author_revision_passages(previous, self.state.get("compiled_pdf_sha256")),
+                                "instruction": "The same revision still has an unresolved evidence check. Inspect the "
+                                "cited passages before requesting another reader. If these inputs do support the "
+                                "claim, give retry_reason naming the evidence to examine."}}
+                    _text(args, "retry_reason", limit=1200)
                 limit = int(self.config.get("max_review_attempts", 8))
                 if len(attempts) >= limit:
                     raise ValueError(

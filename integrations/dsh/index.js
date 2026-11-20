@@ -260,9 +260,10 @@ async function openingPacket(ctx, agent, domain, packet, observed, signal) {
   return prompt
 }
 
-async function review(ctx, owner, domain, signal, draft = false) {
+async function review(ctx, owner, domain, signal, args) {
   const childId = randomUUID()
-  const packet = await domain.call('review_snapshot', { session_id: childId, preflight: !draft })
+  const packet = await domain.call('review_snapshot', {session_id:childId, preflight:args.draft !== true, retry_reason:args.retry_reason})
+  if (packet.unfinished_review) return packet.unfinished_review
   if (packet.blockers?.length) return { ready: false, source: 'artifact checks', blockers: packet.blockers }
   if (packet.cached) return packet.cached
   if (!packet.revision || !packet.brief) throw new Error('Review snapshot has no revision or blind brief')
@@ -566,7 +567,7 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
             })
           }
           if (name === 'request_review') {
-            const result = await review(ctx, agent, domain, AbortSignal.any([deadline, exec.signal]), args.draft === true)
+            const result = await review(ctx, agent, domain, AbortSignal.any([deadline, exec.signal]), args)
             return reviewForAuthor(result)
           }
           const result = await domain.call(name, args)

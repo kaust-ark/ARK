@@ -894,8 +894,13 @@ def test_reviewer_reservation_survives_restart_and_is_bound_to_revision(tmp_path
     restored = domain.NativeProject(project.root)
     assert restored.state["unfinished_review"]["diagnostic"] == result["diagnostic"]
     assert not (project.state_dir / "native_review.json").exists()
+    same = project.review_snapshot({"session_id":"child2"})
+    assert same["unfinished_review"]["signed"] is False
+    assert len(project.state["review_attempts"]) == 1
     with pytest.raises(ValueError, match="budget exhausted"):
-        project.review_snapshot({"session_id": "child2"})
+        project.review_snapshot({"session_id":"child2", "retry_reason":"Check the reported field in the source."})
+    project.config["max_review_attempts"] = 2
+    assert project.review_snapshot({"session_id":"child2", "retry_reason":"Inspect the primary source."})["revision"] == "rev1"
 
 
 def test_reviewer_commits_scope_before_opening_paper_or_prior_findings(tmp_path, monkeypatch):
