@@ -1025,14 +1025,21 @@ def test_strict_research_manuscript_preserves_live_bibliography(tmp_path, monkey
     project = open_project(tmp_path, monkeypatch)
     project.config["skip_deep_research"] = False
     source = project.latex_dir / "main.tex"
-    previous = source.read_text()
+    # Exercise bibliography edits on an existing draft. The untouched ICML
+    # template triggers a separate first-edit check that invokes pdflatex.
+    previous = source.read_text().replace("Paper Title", "Measured Search Costs")
+    source.write_text(previous)
     manual = r"\section*{References}" + "\n[1] An unlinked work."
     proposed = previous.replace(r"\bibliography{references}", manual)
     assert proposed != previous
     result = project.check_manuscript_edit({"content": proposed})
     assert not result["ok"] and "lookup_papers" in result["diagnostic"]
-    assert project.check_manuscript_edit({"content": previous + "\n% " + manual})["ok"]
-    assert project.check_manuscript_edit({"content": proposed + r"\input{refs}"})["ok"]
+    comments = "\n".join("% " + line for line in manual.splitlines())
+    commented = previous.replace(r"\bibliography{references}", comments + "\n" + r"\bibliography{references}")
+    assert project.check_manuscript_edit({"content": commented})["ok"]
+    (project.latex_dir / "refs.tex").write_text(r"\bibliography{references}")
+    modular = proposed.replace(manual, manual + "\n" + r"\input{refs}")
+    assert project.check_manuscript_edit({"content": modular})["ok"]
     manual = r"\begin{thebibliography}{9}\bibitem{madeup} A typed reference.\end{thebibliography}"
     assert "lookup_papers" in project.check_manuscript_edit({"content": manual})["diagnostic"]
     source.write_text(proposed)
