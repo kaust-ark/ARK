@@ -125,8 +125,9 @@ def verify(bundle, target, package, commit, scratch):
         try:
             run("plugin", "--profile", "idea2paper", "add", url + "/" + bundle.name)
             help_text = run("--profile", "idea2paper", "--help")
-            for command in ("run <project>", "resume", "stop <project>", "status <project>"):
-                if command not in help_text:
+            command_list = help_text.replace(" [options]", "")
+            for command in ("run <project>", "resume <project>", "stop <project>", "status <project>"):
+                if command not in command_list:
                     raise ValueError(f"Missing native package command: {command}\n{help_text}")
             print("Verified remote tarball installation and the native commands.", flush=True)
             # Read a stopped workspace via the packaged, isolated Python companion.
