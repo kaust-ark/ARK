@@ -928,6 +928,7 @@ def review_prompt(snapshot, previous=None):
             }
             instructions += ("\nRead the complete revised paragraph for each linked blocker. Compare the remaining "
                              "numbered sentences (one-based, in the remaining array) with the original evidence gap. "
+                             "Where remaining_locations is provided, use its matching page and text window for each sentence. "
                              "If any still asserts the unsupported inference, keep the blocker still_present and cite "
                              "the surviving sentence as the issue claim with current PDF evidence. When the old claim changed "
                              "and you dispute its replacement, compare the changed words in issue.revision_comparison "
@@ -1858,6 +1859,82 @@ def _passage_survives(snapshot, ref):
     return _contains_observed_quote(text, ref["quote"])
 
 
+def _tex_paragraph_locator(source):
+    """Locate a whole rendered sentence uniquely in ordinary TeX prose, allowing inline math."""
+    def letters(text):
+        return re.sub(r"[\W_]", "", unicodedata.normalize("NFKC", text).casefold())
+
+    # A hard paragraph boundary must not disappear when headings or environments
+    # print no prose. Leave unsupported TeX constructs out of the matching index.
+    source = re.sub(r"(?<!\\)%[^\n]*", "", source)
+    paragraphs = re.split(r"\n\s*\n|\\par\b|(?m:^[ \t]*\\(?:begin|end|(?:sub)*section|chapter|paragraph)\*?\{[^\n]*)", source)
+    patterns = []
+    inline_math = re.compile(r"\$[^$\n]+\$|\\\([^\n]*?\\\)")
+    for number, paragraph in enumerate(paragraphs):
+        if "\\" in inline_math.sub("", paragraph):
+            continue
+        for sentence in _conclusion_sentences(paragraph):
+            parts = inline_math.split(sentence)
+            pieces = [letters(part) for part in parts]
+            if sum(map(len, pieces)) >= 24:
+                patterns.append((number, pieces))
+
+    def locate(quote):
+        key = letters(quote)
+        matches = []
+        for number, pieces in patterns:
+            if len(pieces) == 1:
+                if key == pieces[0]:
+                    matches.append(number)
+                continue
+            if not key.startswith(pieces[0]) or not key.endswith(pieces[-1]):
+                continue
+            pos = len(pieces[0])
+            for mid in pieces[1:-1]:
+                found = key.find(mid, pos, len(key) - len(pieces[-1]))
+                if found < 0:
+                    break
+                pos = found + len(mid)
+            else:
+                if pos <= len(key) - len(pieces[-1]):
+                    matches.append(number)
+        return matches[0] if len(matches) == 1 else None
+    return locate
+
+
+def _add_paragraph_continuation(context, stable, old_par, old_locate, new_locate, old_pdf, old_page, blocks, wording):
+    # Page adjacency alone could associate a float or a new paragraph.
+    # Require a common author paragraph in both TeX sources and a complete
+    # surviving PDF sentence separate from the anchor in both rendered revisions.
+    if old_par is None:
+        return
+    anchors = {new_locate(q) for q in stable if old_locate(q) == old_par}
+    anchors.discard(None)
+    if len(anchors) != 1:
+        return
+    new_par = anchors.pop()
+    from collections import Counter
+    old_nearby = Counter(wording(q) for idx in range(max(0, old_page - 2), min(len(old_pdf), old_page + 1))
+                         for block in old_pdf[idx].get_text("blocks") if block[6] == 0
+                         for q in _conclusion_sentences(block[4]))
+    adjacent = [b for b in blocks if abs(b[0] - context["page"]) == 1]
+    occurrences = Counter(wording(q) for _, _, block, _ in adjacent for q in _conclusion_sentences(block))
+    continuation = []
+    for page, offset, block, candidates in adjacent:
+        for key, quote in candidates.items():
+            if (old_nearby[key] == occurrences[key] == 1 and 20 <= len(quote) <= 1200
+                    and old_locate(quote) == old_par and new_locate(quote) == new_par):
+                at = offset + block.index(quote)
+                continuation.append((quote, {"page":page, "start":at, "end":at + len(quote) - 1}))
+    if continuation:
+        locations = []
+        for quote in context["remaining"]:
+            at = context["start"] + context["paragraph"].index(quote)
+            locations.append({"page":context["page"], "start":at, "end":at + len(quote) - 1})
+        context["remaining"].extend(quote for quote, _ in continuation)
+        context["remaining_locations"] = locations + [location for _, location in continuation]
+
+
 def revision_paragraphs(snapshot, previous):
     """Locate surviving neighbors of disputed sentences in the current rendered body."""
     from difflib import SequenceMatcher
@@ -1868,7 +1945,7 @@ def revision_paragraphs(snapshot, previous):
             or not re.fullmatch(r"[0-9a-f]{64}", str(previous.get("revision", "")))
             or previous["revision"] == snapshot["revision"]):
         return {}
-    pdf = _submission(snapshot)[1]
+    tex, pdf = _submission(snapshot)
     blockers = [i for i in previous.get("issues", []) if i["domain"] == "manuscript"
                 and i["severity"] == "blocker" and i["status"] != "resolved"]
     if not blockers or not pdf:
@@ -1883,6 +1960,17 @@ def revision_paragraphs(snapshot, previous):
     # sentence differently on a later build. Never credit a fuzzy quotation.
     def wording(sentence):
         return _normalized_quote(re.sub(r"(?<=\w)-[ \t]*\n(?=[a-z])", "", sentence))
+
+    old_locate = new_locate = None
+    source_hash = previous.get("artifact_hashes", {}).get(tex)
+    if source_hash and tex in snapshot["artifacts"]:
+        archived_tex = _inside(Path(snapshot["project"]), Path(STATE) / "reviews" / previous["revision"] / "main.tex")
+        if archived_tex.is_file() and archived_tex.stat().st_size <= MAX_BYTES:
+            source = archived_tex.read_bytes()
+            if _digest(source) != source_hash:
+                raise ValueError("The archived TeX does not match the preceding review.")
+            old_locate = _tex_paragraph_locator(source.decode("utf-8", "replace"))
+            new_locate = _tex_paragraph_locator(_artifact(snapshot, tex)[0].decode("utf-8", "replace"))
 
     result = {}
     with fitz.open(stream=original, filetype="pdf") as old, fitz.open(stream=_artifact(snapshot, pdf)[0], filetype="pdf") as new:
@@ -1941,6 +2029,11 @@ def revision_paragraphs(snapshot, previous):
                         q for op, i, j, a, b in alignment.get_opcodes() if op == "replace" and i <= disputed < j
                         for q in current[a:b] if len(q) <= 1200]
                     result[issue["id"]]["surviving"] = [keys[sentences[i]] for i in surviving]
+                if old_locate and new_locate:
+                    old_par = old_locate(sentences[disputed])
+                    stable = [keys[sentences[i]] for i in surviving]
+                    _add_paragraph_continuation(result[issue["id"]], stable, old_par, old_locate, new_locate,
+                                                old, page, blocks, wording)
                 break
     return result
 
@@ -2070,6 +2163,11 @@ def _retained_comparison(snapshot, previous, old, issue, refs, context):
     claim = _normalized_quote(_string(issue.get("claim"), "current disputed assertion", limit=1200))
     at_paragraph = any(r["artifact"] == context["artifact"] and r.get("page") == context["page"]
                        and _contains_observed_quote(r.get("quote", ""), claim) for r in refs)
+    for quote, location in zip(context["remaining"], context.get("remaining_locations", ())):
+        if claim == _normalized_quote(quote) and any(
+                r["artifact"] == context["artifact"] and r.get("page") == location["page"]
+                and _contains_observed_quote(r.get("quote", ""), claim) for r in refs):
+            return {}
     if at_paragraph and any(claim == _normalized_quote(q) for q in context["surviving"]):
         return {}
     if (at_paragraph and any(claim == _normalized_quote(q) for q in _conclusion_sentences(context["paragraph"]))
@@ -2087,7 +2185,10 @@ def _retained_comparison(snapshot, previous, old, issue, refs, context):
                 and any(snapshot["artifacts"][r["artifact"]]["kind"] in
                         ("measurement", "protocol", "method", "primary_source") and r.get("quote") for r in refs)):
             return {"revision_comparison":{"previous":earlier, "current":later, "reason":reason}}
-    remaining = json.dumps(context["remaining"], ensure_ascii=False)
+    remaining = context["remaining"]
+    if "remaining_locations" in context:
+        remaining = [{"page":loc["page"], "quote":q} for q, loc in zip(remaining, context["remaining_locations"])]
+    remaining = json.dumps(remaining, ensure_ascii=False)
     raise ValueError(f"{issue['id']} on page {context['page']}: the previous disputed sentence changed. Recheck "
                      f"these surviving sentences: {remaining}. For still_present, quote the complete current "
                      "assertion in claim and cite it on its PDF page. If the replacement itself remains unsupported, "
@@ -2331,21 +2432,24 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                 if (not isinstance(judgments, list) or len(judgments) != len(neighbors)
                         or any(not isinstance(j, dict) or type(j.get("sentence")) is not int for j in judgments)
                         or sorted(j["sentence"] for j in judgments) != list(range(1, len(neighbors) + 1))):
+                    pages = sorted({loc["page"] for loc in context.get("remaining_locations", [context])})
+                    where = ("page " if len(pages) == 1 else "pages ") + ", ".join(map(str, pages))
                     raise ValueError(f"Resolving {ident} requires a context_assessment of each remaining sentence "
-                                     f"in its revised paragraph on page {context['page']}. If the unsupported claim "
+                                     f"in its revised paragraph on {where}. If the unsupported claim "
                                      "survives, keep the blocker still_present and cite that sentence.")
                 for item in judgments:
                     quote = neighbors[item["sentence"] - 1]
-                    ref, = _references(snapshot, [{"artifact":context["artifact"], "page":context["page"],
-                                                   "quote":quote}], observed, blind, required=True)
-                    judgment = item.get("judgment")
-                    entry = {"sentence":item["sentence"], "judgment":judgment, "passage":ref,
-                             "reason":_string(item.get("reason"), "reason for the remaining sentence")}
+                    location = context["remaining_locations"][item["sentence"] - 1] if "remaining_locations" in context else context
                     try:
-                        entry.update(_context_support(snapshot, item, ref, context,
+                        ref, = _references(snapshot, [{"artifact":context["artifact"], "page":location["page"],
+                                                       "quote":quote}], observed, blind, required=True)
+                        entry = {"sentence":item["sentence"], "judgment":item.get("judgment"), "passage":ref,
+                                 "reason":_string(item.get("reason"), "reason for the remaining sentence")}
+                        evidence_context = context if location["page"] == context["page"] else {"paragraph":quote}
+                        entry.update(_context_support(snapshot, item, ref, evidence_context,
                                                       checks["manuscript"].get("claims", ()), observed, blind))
                     except ValueError as exc:
-                        raise ValueError(f"Finding {ident}, PDF page {context['page']}, remaining sentence "
+                        raise ValueError(f"Finding {ident}, PDF page {location['page']}, remaining sentence "
                                          f"{item['sentence']}: {quote}\n{exc}") from None
                     assessment.append(entry)
         issues.append({"id": ident, "status": status, "severity": severity, "domain": domain,

@@ -2275,13 +2275,15 @@ class NativeProject(CompilerMixin):
             if location not in opening:
                 opening.append(location)
         for context in review.revision_paragraphs(snapshot, previous).values():
-            # Existing opening windows may already contain this entire paragraph.
-            covered = any(isinstance(ref, dict) and ref.get("artifact") == context["artifact"]
-                          and ref.get("page") == context["page"] and ref.get("start", 1) <= context["start"]
-                          and context["start"] + len(context["paragraph"]) <= ref.get("start", 1) + review.VIEW_SIZE
-                          for ref in opening)
-            if not covered:
-                opening.append({key:context[key] for key in ("artifact", "page", "start")})
+            # Existing opening windows may already contain each rendered passage.
+            windows = [{"page":context["page"], "start":context["start"],
+                        "end":context["start"] + len(context["paragraph"]) - 1}, *context.get("remaining_locations", ())]
+            for window in windows:
+                covered = any(isinstance(ref, dict) and ref.get("artifact") == context["artifact"]
+                              and ref.get("page") == window["page"] and ref.get("start", 1) <= window["start"]
+                              and window["end"] < ref.get("start", 1) + review.VIEW_SIZE for ref in opening)
+                if not covered:
+                    opening.append({"artifact":context["artifact"], "page":window["page"], "start":window["start"]})
         # Read current text at the last review's disputed locations. Page images cannot verify quotations.
         if pages and previous and previous.get("revision") != snapshot["revision"]:
             pdf_key = f"{snapshot.get('paper_dir', 'paper')}/main.pdf"

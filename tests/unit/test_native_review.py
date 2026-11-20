@@ -1407,6 +1407,85 @@ def test_resolving_manuscript_blocker_rechecks_surviving_paragraph_across_pages(
     assert validate_review(changed, raw, rejected, observed=seen)["verdict"] == "revise"
 
 
+def test_cross_page_finding_uses_same_source_paragraph_and_page_bound_observation(tmp_path):
+    from ark import review
+    from ark.orchestrator.native_domain import NativeProject
+
+    pdf, tex, table = "paper/main.pdf", "paper/main.tex", "results/timing.json"
+    anchor = "The latency was ten seconds in both trials."
+    disputed = "Scheduling alone explains the measured latency."
+    revised = "The comparison leaves the role of scheduling uncertain."
+    continuation = "The scheduling score directly measures network saturation."
+    other = "The clock offsets determine the behavior of the collector."
+    (tmp_path / "paper").mkdir()
+    (tmp_path / "results").mkdir()
+    (tmp_path / table).write_text('[{"latency":10}]')
+    run = {"status":"completed", "artifact":table, "sha256":hashlib.sha256((tmp_path / table).read_bytes()).hexdigest()}
+
+    def build(sentence, boundary=" "):
+        (tmp_path / tex).write_text(anchor + " " + sentence + boundary + continuation + "\n\\section{Collector}\n" + other)
+        with fitz.open() as doc:
+            doc.new_page().insert_textbox((35, 45, 555, 300), anchor + " " + sentence)
+            page = doc.new_page()
+            page.insert_text((35, 45), continuation)
+            page.insert_text((35, 85), other)
+            doc.save(tmp_path / pdf)
+        return build_snapshot(tmp_path, expected_measurement=table, measurement_run=run)
+
+    def assessment(snap, claim, page, status):
+        row = {"artifact":table, "row":1}
+        checks = {d:{"status":"unassessed", "reason":"Outside this study.", "evidence":[]} for d in review.DOMAINS}
+        checks["experiment"] = {"status":"assessed", "reason":"Opened the timing row.", "evidence":[row]}
+        checks["manuscript"] = {"status":"assessed", "reason":"Observed the timings.", "claims":[
+            {"kind":"result", "basis":"measurement", "passage":{"artifact":pdf, "page":1, "quote":anchor},
+             "reason":"The worker recorded latency.", "evidence":[row]}]}
+        return {"revision":snap["revision"], "summary":"A timing study.", "alternative":"Network congestion.",
+                "strengths":["Identical trials."], "checks":checks, "verdict":"revise", "issues":[
+                    {"id":"R1", "status":status, "domain":"manuscript", "severity":"blocker", "claim":claim,
+                     "fix":"Qualify the explanation.", "reason":"Timing alone cannot identify the mechanism.",
+                     "evidence":[{"artifact":pdf, "page":page, "quote":claim}, row]}]}
+
+    first = build(disputed)
+    prior = validate_review(first, assessment(first, disputed, 1, "new"), observed=[
+        read_evidence(first, pdf, page=1)["receipt"], read_evidence(first, table)["receipt"]])
+    archive = tmp_path / review.STATE / "reviews" / first["revision"]
+    archive.mkdir(parents=True)
+    for path in (pdf, tex):
+        (archive / Path(path).name).write_bytes((tmp_path / path).read_bytes())
+
+    current = build(revised)
+    ctx = review.revision_paragraphs(current, prior)["R1"]
+    assert ctx["remaining"] == [anchor, continuation]
+    first_loc, second_loc = ctx["remaining_locations"]
+    assert (first_loc["page"], second_loc["page"]) == (1, 2)
+    view = read_evidence(current, pdf, page=2, start=second_loc["start"])
+    assert view["text"][:second_loc["end"] - second_loc["start"] + 1] == continuation
+    assert {"artifact":pdf, "page":2, "start":second_loc["start"]} in NativeProject(tmp_path)._opening_review_evidence(current, previous=prior)
+    seen = [read_evidence(current, table)["receipt"], read_evidence(current, pdf, page=1)["receipt"]]
+    raw = assessment(current, continuation, 2, "still_present")
+    with pytest.raises(ValueError, match="Unobserved or unlocatable"):
+        validate_review(current, raw, prior, observed=seen)
+    seen.append(view["receipt"])
+    assert validate_review(current, raw, prior, observed=seen)["verdict"] == "revise"
+    raw = assessment(current, revised, 1, "resolved")
+    raw["verdict"] = "accept"
+    raw["issues"][0]["context_assessment"] = [
+        {"sentence":1, "judgment":"measured", "quantity":"latency", "measured_columns":["latency"],
+         "reason":"Directly timed.", "evidence":[{"artifact":table, "row":1}]}]
+    with pytest.raises(ValueError, match="context_assessment"):
+        validate_review(current, raw, prior, observed=seen)
+    raw["issues"][0]["context_assessment"].append({"sentence":2, "judgment":"limited", "qualification":"may",
+                                                   "reason":"Check whether the paper qualifies the inference."})
+    with pytest.raises(ValueError, match="Finding R1, PDF page 2, remaining sentence 2"):
+        validate_review(current, raw, prior, observed=seen)
+    # Identical physical PDF placement cannot reconnect two distinct author paragraphs.
+    detached = build(revised, boundary=r"\par ")
+    assert review.revision_paragraphs(detached, prior)["R1"]["remaining"] == [anchor]
+    (archive / "main.tex").write_text("An altered archive.")
+    with pytest.raises(ValueError, match="archived TeX"):
+        review.revision_paragraphs(current, prior)
+
+
 def test_remaining_measured_sentence_binds_an_observed_metric_alias_and_preserves_abstention(tmp_path):
     from ark import review
 
