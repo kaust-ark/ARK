@@ -228,6 +228,14 @@ async function accessFile(directory, path, content, replace, edit = {}, checkMan
     const found = passages.length - 1
     const expected = edit.expected_matches ?? 1
     if (found !== expected) {
+      if (found === 0 && path === mainSource) {
+        const headings = sourceLines(previous.content).flatMap((line, index) =>
+          /^\s*\\(?:sub){0,2}section\*?(?:\[[^\]]*\])?\{/.test(line)
+            ? [`${index + 1} ${line.trim().slice(0, 140)}`] : []).slice(0, 32)
+        const outline = headings.length ? '\nCurrent section lines:\n' + headings.join('\n') : ''
+        throw new Error('The requested passage must occur exactly as written, found 0. Read the intended section ' +
+          'with start_line, then edit its observed lines using start_line, end_line and base_sha256.' + outline)
+      }
       throw new Error(`The requested passage must occur ${expected === 1 ? 'exactly once' : expected + ' times'}, found ${found}. Read the current file. Use a longer unique passage, or set expected_matches to replace a known number of identical passages.`)
     }
     content = passages.join(content)

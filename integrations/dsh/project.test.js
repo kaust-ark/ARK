@@ -98,6 +98,18 @@ function manuscript(body) {
   return '\\documentclass{article}\n\\begin{document}\n' + body + '\n\\end{document}\n'
 }
 
+test('a missing manuscript anchor shows the actual numbered headings for the next edit', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'research-heading-'))
+  t.after(() => rm(root, {recursive:true, force:true}))
+  const path = 'paper/main.tex'
+  await projectFile(root, path, manuscript('\\section{Findings}\nThe two conditions were measured.'))
+  const original = await projectFile(root, path)
+  await assert.rejects(projectFile(root, path, 'Updated text.', undefined, {
+    base_sha256:original.sha256, insert_before:'\\section{Discussion}'
+  }), /found 0[\s\S]+3 \\section\{Findings\}/)
+  assert.equal((await projectFile(root, path)).sha256, original.sha256)
+})
+
 test('a saved owner edit returns the page preview from its actual typesetting check', async t => {
   const root = await mkdtemp(join(tmpdir(), 'research-page-preview-'))
   t.after(() => rm(root, {recursive:true, force:true}))
