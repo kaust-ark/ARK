@@ -322,6 +322,10 @@ def _concept_figure_in_pdf(pdf: Path, figures_dir: Path, *, semantic_state: Path
                 location = (figures_dir / raw).resolve()
                 bound = (location.is_relative_to(root) and location.is_file() and
                          hashlib.sha256(location.read_bytes()).hexdigest() == figures[source.name].get("payload_sha256"))
+            if bound and figures[source.name].get("representation") == "subject_with_mechanism_panel":
+                from ark.nano_banana import mechanism_panel_is_grounded, reproduced_panel_labels
+                bound = (mechanism_panel_is_grounded(figures[source.name], spec, semantic_state)
+                         and bool(reproduced_panel_labels(source, figures[source.name], "16:9")))
             if not bound:
                 pending.append(f"{source.name}: final review missing or no longer matches image/design")
             elif review.get("status") == "contradiction":

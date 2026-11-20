@@ -927,6 +927,10 @@ class NativeProject(CompilerMixin):
         legacy_fingerprint = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
         spec["representation"] = representation
         design = nano_banana.native_study_design(self.state, self.state_dir)
+        if "mechanism_steps" in args:
+            if representation != "schematic":
+                raise ValueError("Choose explain_mechanism to select a sequence of approved protocol fields.")
+            spec["mechanism_steps"] = args["mechanism_steps"]
         design_sha = hashlib.sha256(design.encode()).hexdigest()
         fingerprint = hashlib.sha256(json.dumps([spec, design_sha], sort_keys=True).encode()).hexdigest()
         previous = _load(self.state_dir / "native_review.json", {})
@@ -941,16 +945,30 @@ class NativeProject(CompilerMixin):
         )
         existing_kind = "study_panel" if entry.get("representation") == "subject_with_comparison_panel" else "schematic"
         explicit_kind = purpose is not None or "representation" in args
-        legacy = not entry.get("native_design_sha256") and (not explicit_kind or representation == existing_kind)
+        legacy = (not entry.get("native_design_sha256") and "mechanism_steps" not in args
+                  and (not explicit_kind or representation == existing_kind))
         same_request = entry.get("native_description") == fingerprint
         old_design_sha = entry.get("native_design_sha256")
         if not same_request and old_design_sha and old_design_sha != design_sha:
             prior_request = hashlib.sha256(json.dumps([spec, old_design_sha], sort_keys=True).encode()).hexdigest()
             same_request = (prior_request == entry.get("native_description") and
                             nano_banana.legacy_native_design_digest(self.state, self.state_dir) == old_design_sha)
+        if representation == "schematic":
+            original_intent = fingerprint
+            fingerprint = hashlib.sha256((original_intent + ":typeset-mechanism").encode()).hexdigest()
+            if entry.get("representation") == "subject_with_mechanism_panel":
+                same_request = entry.get("native_description") == fingerprint
+            elif same_request and actual_sha == (entry.get("semantic_review") or {}).get("artifact_sha256"):
+                if (entry.get("semantic_review") or {}).get("status") in ("contradiction", "unclear"):
+                    same_request = False
+            elif self.state.get("image_intent") == original_intent and not (same_request and actual_sha):
+                raise RuntimeError("Image request outcome is ambiguous. Inspect the receipt before repeating it.")
+        if verified_image and same_request and entry.get("representation") == "subject_with_mechanism_panel":
+            verified_image = (nano_banana.mechanism_panel_is_grounded(entry, spec, self.state_dir)
+                              and bool(nano_banana.reproduced_panel_labels(path, entry, "16:9")))
         if verified_image:
             current = {**current, "representation": existing_kind}
-            if existing_kind == "study_panel" and (entry.get("panel_plan") or {}).get("caption"):
+            if entry.get("representation") in nano_banana.TYPESET_PANELS and (entry.get("panel_plan") or {}).get("caption"):
                 current["caption"] = entry["panel_plan"]["caption"]
         legacy_request = legacy and entry.get("native_description") == legacy_fingerprint
         unversioned = legacy and not entry.get("native_description") and not explicit_kind
@@ -983,30 +1001,17 @@ class NativeProject(CompilerMixin):
                 raise RuntimeError(
                     "Image request outcome is ambiguous. Inspect the receipt before repeating it."
                 )
+            mechanism_plan = (nano_banana.mechanism_panel_plan(self.state["plan"], spec.get("mechanism_steps"))
+                              if representation == "schematic" else None)
             self.state["image_intent"] = fingerprint
             self.save()
-            receipt = {}
-            if representation == "study_panel":
-                text_model = self.config.get("paperbanana_text_model") or nano_banana.TEXT_MODELS["flash"]
-                receipt = nano_banana.create_study_panel(
-                    path, design, "google", key, text_model.removeprefix("google/").removeprefix("gemini/"), "16:9",
-                    approved_plan=self.state["plan"],
-                )
-                if not receipt:
-                    raise RuntimeError("No source-grounded study panel was produced. Check the plan and image receipt.")
-            elif not nano_banana.generate_figure(
-                "Illustrate the method in the approved protocol below. Depict the configuration, scientific objects, "
-                "and operations that explain the comparison. Use schematic examples for geometry when appropriate. "
-                "Omit performance panels, empirical results axes, trend lines and recorded observations.\n" + design
-                + ("\nRequested mechanism to explain, subject to the approved protocol:\n" + description
-                   if purpose == "explain_mechanism" else ""),
-                path,
-                key,
-                self.config.get("nano_banana_model") or "flash",
-                aspect_ratio="16:9",
-                receipt=receipt,
-            ):
-                raise RuntimeError("Google returned no usable image. Check provider status before retrying.")
+            text_model = self.config.get("paperbanana_text_model") or nano_banana.TEXT_MODELS["flash"]
+            receipt = nano_banana.create_study_panel(
+                path, design, "google", key, text_model.removeprefix("google/").removeprefix("gemini/"), "16:9",
+                approved_plan=self.state["plan"], mechanism_plan=mechanism_plan,
+            )
+            if not receipt:
+                raise RuntimeError("No source-grounded study panel was produced. Check the plan and image receipt.")
             figure_manifest.register_figure(
                 manifest,
                 path.name,
@@ -1019,9 +1024,10 @@ class NativeProject(CompilerMixin):
             )
             figure_manifest.save_manifest(self.figures_dir, manifest)
         entry = manifest["figures"][path.name]
-        if entry.get("representation") == "subject_with_comparison_panel":
+        if entry.get("representation") in nano_banana.TYPESET_PANELS:
             spec["caption"] = entry["panel_plan"]["caption"]
-            spec["section_context"] = "Subject illustration with typeset comparison arms from the approved experiment."
+            if representation == "study_panel":
+                spec["section_context"] = "Subject illustration with typeset comparison arms from the approved experiment."
         specs_file = self.figures_dir / "concept_figures.json"
         specs = [s for s in _load(specs_file, []) if s.get("name") != name] + [spec]
         _json(specs_file, specs)
@@ -1042,7 +1048,7 @@ class NativeProject(CompilerMixin):
             "path": str(path.relative_to(self.root)), "sha256": _sha(path), "semantic_pass": passed,
             "representation": "study_panel" if panel else "schematic",
         }
-        if passed and panel and (caption := (entry.get("panel_plan") or {}).get("caption")):
+        if passed and (caption := (entry.get("panel_plan") or {}).get("caption")):
             record["caption"] = caption
         if not passed:
             from ark.nano_banana import generated_result_conflict

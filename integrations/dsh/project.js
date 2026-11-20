@@ -361,9 +361,9 @@ export const operations = {
     filename: str, rows_pointer: str, kind: {type:'string', enum:['line','points','bar']},
     x: plotField, series: {type:'array', items:plotField}, y_label: str, script: str,
   }],
-  generate_concept_figure: ['Illustrate the scientific question. For paired conditions, side-by-side comparisons or a method overview, use compare_conditions (the default). The approved baseline and comparison are typeset automatically. Use the returned caption. Use explain_mechanism only to show how a particular process works and name that process in description.', {
+  generate_concept_figure: ['Illustrate the scientific question. For paired conditions, side-by-side comparisons or a method overview, use compare_conditions (the default). The approved baseline and comparison are typeset automatically. Use the returned caption. For explain_mechanism, name the process in description. The tool draws the approved protocol, compared operations and readout beside wordless subject artwork. To specify a sequence, choose two or three mechanism_steps in order using approved field names such as controls[0], comparison or metric.', {
     name: str, caption: str, description: str,
-    purpose: {type:'string', enum:['compare_conditions','explain_mechanism']},
+    purpose: {type:'string', enum:['compare_conditions','explain_mechanism']}, mechanism_steps: strings,
     representation: {type:'string', enum:['study_panel','schematic'], description:'Legacy format for older callers. New calls use purpose.'},
   }, ['name', 'caption', 'description']],
   verify_citations: ['Check the manuscript bibliography against primary bibliographic records.', {}],

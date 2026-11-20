@@ -367,7 +367,8 @@ def check_graphics(doc, paper, replayed_plots=None):
 
 def check_diagram_review(paper, graphics, image_receipts=()):
     from ark.nano_banana import (
-        SEMANTIC_REVIEW_VERSION, _compose_study_panel, concept_design, semantic_verdict, verify_printed_labels,
+        SEMANTIC_REVIEW_VERSION, TYPESET_PANELS, _compose_study_panel, concept_design,
+        mechanism_panel_is_grounded, semantic_verdict, verify_printed_labels,
     )
 
     if not graphics or not graphics["method_art"]:
@@ -390,7 +391,9 @@ def check_diagram_review(paper, graphics, image_receipts=()):
         if fresh.get("status") != "passed" or verdict != "passed":
             marks = (fresh.get("checks") or {}).get("result_marks") or {}
             reason = marks.get("observed", "") if isinstance(marks, dict) else ""
-            raise ValueError(f"{name}: final image check {verdict}. {reason}")
+            if verdict == "passed":
+                verdict = fresh.get("status")
+            raise ValueError(f"{name}: final image check {verdict}. {fresh.get('panel_error') or reason}")
         if (review.get("version") != SEMANTIC_REVIEW_VERSION or review.get("design_sha256") != expected
                 or review.get("artifact_sha256") != sha256(figures / name) or not review.get("model")):
             raise ValueError(f"{name}: semantic review does not match the final pixels and study design")
@@ -399,21 +402,31 @@ def check_diagram_review(paper, graphics, image_receipts=()):
             if labels.get("image_sha256") != sha256(figures / name) or labels.get("conflicts"):
                 raise ValueError(f"{name}: printed label check is stale or reports a conflict")
             details[name]["printed_labels"] = labels.get("coverage")
-        if record.get("representation") == "subject_with_comparison_panel":
+        if record.get("representation") in TYPESET_PANELS:
+            mechanism = record["representation"] == "subject_with_mechanism_panel"
             raw = (figures / record["illustration_file"]).resolve()
             plan = record["panel_plan"]
             groups = plan["groups"]
+            supported = (mechanism_panel_is_grounded(record, spec, paper.parent / "auto_research/state") if mechanism else
+                         all(g.get("evidence") and g["evidence"] in design for g in groups))
             if (not raw.is_relative_to(figures.resolve()) or not record.get("response_id")
                     or record.get("payload_source") != "google_inline_data" or sha256(raw) != record["payload_sha256"]
                     or not plan.get("caption") or len(groups) < 2
-                    or not all(g.get("evidence") and g["evidence"] in design for g in groups)):
-                raise ValueError(f"{name}: unbound native illustration or unsupported comparison panels")
+                    or not supported):
+                raise ValueError(f"{name}: unbound native illustration or unsupported protocol panels")
             with tempfile.TemporaryDirectory() as tmp:
                 rebuilt = Path(tmp) / "composed.png"
-                _compose_study_panel(raw, groups, rebuilt, single_column=record.get("placement") == "single_column")
+                _compose_study_panel(raw, groups, rebuilt, single_column=record.get("placement") == "single_column",
+                                     mechanism=mechanism)
                 if figure_pixels(rebuilt) != figure_pixels(figures / name):
                     raise ValueError(f"{name}: saved panel does not reproduce from native pixels and study groups")
-            details[name].update(grounded_comparison_groups=[g["label"] for g in groups], caption=plan["caption"])
+            details[name]["caption"] = plan["caption"]
+            if mechanism:
+                details[name]["mechanism_source_fields"] = {g["label"]: g["source_fields"] for g in groups}
+                if not image_receipts or not record.get("model_version"):
+                    raise ValueError(f"{name}: no authenticated image response for the original method artwork")
+            else:
+                details[name]["grounded_comparison_groups"] = [g["label"] for g in groups]
         if record.get("payload_source") == "google_inline_data" and image_receipts:
             valid = any(r.get("responseId") == record["response_id"] and r.get("modelVersion") == record.get("model_version")
                         and any(p.get("sha256") == record["payload_sha256"] for p in r.get("payloads", []))

@@ -327,9 +327,10 @@ class CompilerMixin:
             note = "图中 AI 生成的部分是概念示意，图形和坐标刻度仅作说明。实验测量值见结果部分。"
         else:
             return
+        from ark.nano_banana import TYPESET_PANELS
         artifacts = load_manifest(figures, infer_existing=False)["figures"]
         panels = {Path(name).stem for name, item in artifacts.items()
-                  if isinstance(item, dict) and item.get("representation") == "subject_with_comparison_panel"}
+                  if isinstance(item, dict) and item.get("representation") in TYPESET_PANELS}
         if not panels:
             return
 
@@ -1469,10 +1470,14 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
         from hashlib import sha256
         from ark.figure_manifest import save_manifest
         from ark.nano_banana import (concept_design, review_concept_image, repair_concept_image,
-                                     create_study_panel, SEMANTIC_REVIEW_VERSION, semantic_verdict, verify_printed_labels,
+                                     create_study_panel, SEMANTIC_REVIEW_VERSION, TYPESET_PANELS, semantic_verdict, verify_printed_labels,
                                      generated_result_conflict, reject_generated_result, native_study_design, IMAGE_MODELS)
 
         entry = manifest["figures"][path.name]
+        if entry.get("representation") == "subject_with_mechanism_panel":
+            from ark.nano_banana import mechanism_panel_is_grounded
+            if not mechanism_panel_is_grounded(entry, fig, self.state_dir):
+                return False
         design = concept_design(fig, getattr(self, "state_dir", None))
         design_digest = sha256(design.encode()).hexdigest()
         image_digest = sha256(path.read_bytes()).hexdigest()
@@ -1521,6 +1526,12 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
                          "full protocol belongs in the caption/methods, so no arrows or extra workflow stages "
                          "are required. Assess the entire image; reject invented groups or labels. Also verify the "
                          "proposed caption against the design: " + str(entry.get("panel_plan", {}).get("caption") or ""))
+            elif entry.get("representation") == "subject_with_mechanism_panel":
+                goal += ("\nInspect the whole composite. The subject artwork must be wordless and data-free. "
+                         "Letters, numbers, labeled samples, counts, plots or observations in that artwork are "
+                         "contradictions. Check the separately typeset operations, every number and the direction "
+                         "of each connector against the approved protocol and the requested mechanism. A box "
+                         "containing two compared operations does not mean that one operates on the other.")
             review = review_concept_image(path, goal, provider, key, model)
             return verify_printed_labels(path, review, entry, aspect_ratio)
 
@@ -1541,7 +1552,7 @@ Do NOT remove any existing citations. Do NOT modify references.bib.
             native and native.is_file() and fig.get("representation") in ("study_panel", "schematic")
         ) else design
         if (review["status"] == "contradiction" and not history.get("repair_attempted")
-                and entry.get("representation") != "subject_with_comparison_panel"):
+                and entry.get("representation") not in TYPESET_PANELS):
             persist(review)
             history.update(repair_attempted=True, initial_review=dict(review))
             persist({**review, **history})

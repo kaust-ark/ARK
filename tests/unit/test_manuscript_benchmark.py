@@ -273,40 +273,63 @@ def test_semantic_review_binds_final_pixels_and_study_design(tmp_path):
         benchmark.check_diagram_review(figures.parent, embedded)
 
 
-def test_composed_panel_needs_native_bytes_and_a_matching_authenticated_receipt(tmp_path):
+@pytest.mark.parametrize("mechanism", [False, True])
+def test_composed_panel_needs_native_bytes_and_a_matching_authenticated_receipt(tmp_path, mechanism):
     import hashlib
-    from ark.nano_banana import SEMANTIC_REVIEW_VERSION, _compose_study_panel, concept_design
+    from ark.nano_banana import SEMANTIC_REVIEW_VERSION, _compose_study_panel, concept_design, mechanism_panel_plan
 
     paper = tmp_path / "paper"
     figures = paper / "figures"
     figures.mkdir(parents=True)
-    native = figures / "native.jpg"
+    native = figures / (".concept_sources/native.jpg" if mechanism else "native.jpg")
+    native.parent.mkdir(exist_ok=True)
     Image.new("RGB", (80, 50), "orange").save(native)
     fig = figures / "method.png"
     groups = [{"label": s, "description": f"Measure the {s.lower()} arm.", "evidence": s}
               for s in ("Baseline", "Calibrated")]
     spec = {"name": "method", "description": "Baseline and Calibrated arms share a test split."}
-    _compose_study_panel(native, groups, fig, False)
+    state = tmp_path / "auto_research/state"
+    plan = {"groups": groups, "caption": "Shared test data compare two arms."}
+    if mechanism:
+        state.mkdir(parents=True)
+        approved = {"question": "Which reaction changes the concentration?", "baseline": "Use the initial solution",
+                    "comparison": "Add 3 mL of reagent", "controls": ["Use 1 mL aliquots"], "metric": "Concentration (mM)"}
+        (state / "native_project.json").write_text(json.dumps({"plan": approved}))
+        spec["representation"] = "schematic"
+        plan = mechanism_panel_plan(approved)
+    _compose_study_panel(native, plan["groups"], fig, False, mechanism=mechanism)
     (figures / "concept_figures.json").write_text(json.dumps([spec]))
     review = {"model": "vision", "version": SEMANTIC_REVIEW_VERSION, "status": "passed",
               "artifact_sha256": benchmark.sha256(fig), "checks": _reviewed_method_checks(),
-              "design_sha256": hashlib.sha256(concept_design(spec, None).encode()).hexdigest()}
-    record = {"representation": "subject_with_comparison_panel", "semantic_review": review,
-              "illustration_file": native.name, "payload_source": "google_inline_data", "response_id": "r1",
+              "design_sha256": hashlib.sha256(concept_design(spec, state).encode()).hexdigest()}
+    record = {"representation": "subject_with_mechanism_panel" if mechanism else "subject_with_comparison_panel",
+              "semantic_review": review,
+              "illustration_file": str(native.relative_to(figures)), "payload_source": "google_inline_data", "response_id": "r1",
               "model_version": "image-v1", "payload_sha256": benchmark.sha256(native),
-              "panel_plan": {"groups": groups, "caption": "Shared test data compare two arms."}}
+              "panel_plan": plan}
     (figures / "figure_manifest.json").write_text(json.dumps({"figures": {fig.name: record}}))
     receipt = tmp_path / "google.json"
     response = {"responseId": "r1", "modelVersion": "image-v1", "payloads": [{"sha256": benchmark.sha256(native)}]}
     receipt.write_text(json.dumps(response))
     embedded = {"method_art": {fig.name: 2}}
-    assert benchmark.check_diagram_review(paper, embedded, [receipt])[fig.name]["authenticated_native_payload"]
+    evidence = benchmark.check_diagram_review(paper, embedded, [receipt])[fig.name]
+    assert evidence["authenticated_native_payload"]
+    if mechanism:
+        assert evidence["mechanism_source_fields"]["Operations compared"] == ["baseline", "comparison"]
+        with pytest.raises(ValueError, match="authenticated image response"):
+            benchmark.check_diagram_review(paper, embedded)
+        plan["groups"][1]["source_fields"].reverse()
+        (figures / "figure_manifest.json").write_text(json.dumps({"figures": {fig.name: record}}))
+        with pytest.raises(ValueError, match="unsupported protocol"):
+            benchmark.check_diagram_review(paper, embedded, [receipt])
+        plan["groups"][1]["source_fields"].reverse()
+        (figures / "figure_manifest.json").write_text(json.dumps({"figures": {fig.name: record}}))
     response["responseId"] = "wrong"
     receipt.write_text(json.dumps(response))
     with pytest.raises(ValueError, match="authenticated image"):
         benchmark.check_diagram_review(paper, embedded, [receipt])
     Image.new("RGB", (80, 50), "purple").save(native)
-    with pytest.raises(ValueError, match="unbound native"):
+    with pytest.raises(ValueError, match="(?i)unbound native"):
         benchmark.check_diagram_review(paper, embedded, [receipt])
 
 

@@ -429,3 +429,61 @@ def test_hybrid_art_gets_a_local_disclosure_without_changing_other_captions(tmp_
     assert "Comparison of $k$ settings." in marked
     compiler._disclose_study_panel_art(doc)
     assert doc.read_text() == marked
+
+
+def test_mechanism_receipt_binds_rendered_steps_to_approved_fields_and_original_art(tmp_path, monkeypatch):
+    import fitz
+    from ark.delivery_contract import _concept_figure_in_pdf
+    from ark.figure_manifest import save_manifest
+
+    state = tmp_path / "state"
+    state.mkdir()
+    approved = {"question": "How does layer curing change stiffness?", "baseline": "Untreated film",
+                "comparison": "Cure each layer for 12 s", "controls": ["Use a 3 mm film"], "metric": "Elastic modulus (MPa)"}
+    (state / "native_project.json").write_text(json.dumps({"plan": approved}))
+    spec = {"name": "process", "representation": "schematic", "mechanism_steps": ["controls[0]", "comparison", "metric"]}
+    plan = nano_banana.mechanism_panel_plan(approved, spec["mechanism_steps"])
+    assert [g["description"] for g in plan["groups"]] == [approved["controls"][0], approved["comparison"], approved["metric"]]
+    assert [g["source_fields"] for g in plan["groups"]] == [[k] for k in spec["mechanism_steps"]]
+    payload = _image("purple", "JPEG")
+
+    def draw(prompt, output, key, model, *, aspect_ratio, receipt):
+        assert output.suffix == ".image" and approved["question"] in prompt
+        assert "Do not encode quantities" in prompt and "12 s" not in prompt and "3 mm" not in prompt
+        nano_banana._save_generated_image(payload, output, receipt, provider="google", image_model=model,
+                                          payload_source="google_inline_data", response_id="unit-test")
+        return True
+
+    draw_once = Mock(side_effect=draw)
+    monkeypatch.setattr(nano_banana, "generate_figure", draw_once)
+    fig = tmp_path / "figures" / "process.png"
+    entry = nano_banana.create_study_panel(fig, "approved test protocol", "google", "fixture", "vision", "16:9",
+                                           approved_plan=approved, mechanism_plan=plan)
+    assert draw_once.call_count == 1
+    raw = fig.parent / entry["illustration_file"]
+    assert raw.read_bytes() == payload and entry["payload_sha256"] != entry["artifact_sha256"]
+    assert nano_banana.reproduced_panel_labels(fig, entry, "16:9") == [g[k] for g in plan["groups"] for k in ("label", "description")]
+    entry["source"] = "nano_banana"
+    (fig.parent / "concept_figures.json").write_text(json.dumps([spec]))
+    pdf = tmp_path / "main.pdf"
+    with fitz.open() as doc:
+        doc.new_page().insert_image(fitz.Rect(20, 40, 550, 360), filename=str(fig))
+        doc.save(pdf)
+    def check():
+        save_manifest(fig.parent, {"figures": {fig.name: entry}})
+        return _concept_figure_in_pdf(pdf, fig.parent, semantic_state=state).status
+    assert check() == "skipped"
+    entry["semantic_review"] = {"version": nano_banana.SEMANTIC_REVIEW_VERSION, "status": "contradiction",
+                                "artifact_sha256": entry["artifact_sha256"], "checks": _checks("consistent"),
+                                "design_sha256": hashlib.sha256(nano_banana.concept_design(spec, state).encode()).hexdigest()}
+    assert check() == "violated"
+    entry["semantic_review"]["status"] = "passed"
+    assert check() == "pass"
+    plan["groups"][1]["source_fields"] = ["baseline"]
+    assert check() == "skipped"
+    plan["groups"][1]["source_fields"] = ["comparison"]
+    plan["groups"][1]["description"] = "Cure each layer for 120 s"
+    assert check() == "skipped" and not nano_banana.reproduced_panel_labels(fig, entry, "16:9")
+    plan["groups"][1]["description"] = approved["comparison"]
+    raw.write_bytes(_image("orange", "JPEG"))
+    assert check() == "skipped" and not nano_banana.reproduced_panel_labels(fig, entry, "16:9")

@@ -1251,13 +1251,9 @@ def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_pa
 
     def draw(prompt, path, key, model, *, aspect_ratio, receipt):
         draws.append(prompt)
-        if path.suffix == ".image":
-            assert aspect_ratio == "1:1" and approved["question"] in prompt
-            assert "class clusters" not in prompt and "paired_probes" not in prompt
-        else:
-            assert aspect_ratio == "16:9" and approved["baseline"] in prompt and approved["comparison"] in prompt
-            assert mechanism in prompt
-            assert "class clusters" not in prompt and "paired_probes" not in prompt
+        assert path.suffix == ".image" and aspect_ratio == "1:1" and approved["question"] in prompt
+        assert "No words, numerals" in prompt and mechanism not in prompt
+        assert approved["baseline"] not in prompt and "class clusters" not in prompt and "paired_probes" not in prompt
         buf = io.BytesIO()
         Image.new("RGB", (50, 40), "silver").save(buf, "PNG")
         nano_banana._save_generated_image(buf.getvalue(), path, receipt, provider="google", image_model=model)
@@ -1275,6 +1271,10 @@ def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_pa
             if verdict == "contradiction":
                 checks["comparison_groups"].update(status="contradiction", expected="Only two conditions.",
                                                    correction="Remove the unsupported third condition.")
+        else:
+            assert "must be wordless and data-free" in design and mechanism in design
+            assert approved["comparison"] in design and "paired_probes" not in design
+            checks["printed_labels"]["transcription"] = ["Shared protocol", "Operations compared", "Readout"]
         return {"status": nano_banana.semantic_verdict(checks), "model": model, "provider": provider, "checks": checks}
 
     monkeypatch.setattr(nano_banana, "generate_figure", draw)
@@ -1301,8 +1301,18 @@ def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_pa
     request = {"name": "method", "caption": "How neighbors are selected for one query.", "description": mechanism}
     schematic = project.invoke("generate_concept_figure", {**request, "purpose": "explain_mechanism"})
     assert schematic["representation"] == "schematic" and schematic["semantic_pass"]
+    mechanism_entry = get_entry()
+    assert mechanism_entry["representation"] == "subject_with_mechanism_panel"
+    assert mechanism_entry["payload_sha256"] == domain._sha(path.parent / mechanism_entry["illustration_file"])
+    assert mechanism_entry["payload_sha256"] != mechanism_entry["artifact_sha256"] == reviews[-1]
+    assert mechanism_entry["semantic_review"]["label_verification"]["coverage"] == "reproduced_typeset"
+    assert schematic["caption"] == mechanism_entry["panel_plan"]["caption"]
     assert get_entry()["native_description"] != entry["native_description"]
     assert project.invoke("generate_concept_figure", {**request, "representation": "schematic"})["cached"]
+    assert len(draws) == len(reviews) == 2
+    with pytest.raises(ValueError, match="mechanism_steps"):
+        project.invoke("generate_concept_figure", {**request, "purpose": "explain_mechanism",
+                                                  "mechanism_steps": ["controls[0]", "unverified number"]})
     assert len(draws) == len(reviews) == 2
     artifact.write_text('{"summary": "tampered"}')
     assert "tampered" not in nano_banana.native_study_design(project.state, project.state_dir)

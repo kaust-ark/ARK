@@ -216,6 +216,7 @@ def generate_figure(
         return False
 
 
+TYPESET_PANELS = ("subject_with_comparison_panel", "subject_with_mechanism_panel")
 SEMANTIC_REVIEW_VERSION = 3
 _SEMANTIC_CHECKS = ("arrows", "comparison_groups", "numbers", "data_separation", "stages_and_labels", "printed_labels",
                     "result_marks")
@@ -486,30 +487,22 @@ def verify_printed_labels(path: Path, review: dict, entry: dict, aspect_ratio: s
     label_hash = hashlib.sha256(json.dumps(labels, ensure_ascii=False).encode()).hexdigest()
     prior = review.get("label_verification") or {}
     binary = shutil.which(os.environ.get("ARK_TESSERACT") or "tesseract")
-    is_panel = entry.get("representation") == "subject_with_comparison_panel"
-    if (prior.get("version") == 2 and prior.get("image_sha256") == pixel_hash
+    is_panel = entry.get("representation") in TYPESET_PANELS
+    mechanism = entry.get("representation") == "subject_with_mechanism_panel"
+    if (not mechanism and prior.get("version") == 2 and prior.get("image_sha256") == pixel_hash
             and prior.get("transcription_sha256") == label_hash and (not binary or prior.get("chart_ocr")) and
             (prior.get("coverage") in ("two_ocr_layouts", "reproduced_typeset")
              or (not is_panel and not binary and prior.get("coverage") == "unavailable"))):
         return review
     evidence = {"version": 2, "image_sha256": pixel_hash, "transcription_sha256": label_hash,
                 "coverage": "unavailable", "model_label_count": len(labels), "conflicts": []}
-    if is_panel:
-        raw = (path.parent / (entry.get("illustration_file") or "")).resolve()
-        groups = (entry.get("panel_plan") or {}).get("groups") or []
-        try:
-            if (raw.is_relative_to((path.parent / ".concept_sources").resolve()) and raw.is_file()
-                    and hashlib.sha256(raw.read_bytes()).hexdigest() == entry.get("payload_sha256")):
-                with tempfile.TemporaryDirectory() as folder:
-                    reproduced = Path(folder) / "panel.png"
-                    _compose_study_panel(raw, groups, reproduced, single_column=aspect_ratio == "4:3")
-                    if hashlib.sha256(reproduced.read_bytes()).hexdigest() == pixel_hash:
-                        printed = [g[k] for g in groups for k in ("label", "description")]
-                        lines = [[{"text": w, "confidence": 100, "box": []} for w in line.split()] for line in printed]
-                        evidence.update(coverage="reproduced_typeset", labels=printed,
-                                        conflicts=list(_label_differences(labels, lines).values()))
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
+    if is_panel and (printed := reproduced_panel_labels(path, entry, aspect_ratio)):
+        lines = [[{"text": w, "confidence": 100, "box": []} for w in line.split()] for line in printed]
+        evidence.update(coverage="reproduced_typeset", labels=printed,
+                        conflicts=list(_label_differences(labels, lines).values()))
+    elif mechanism:
+        return {**review, "status": "unavailable", "label_verification": evidence,
+                "panel_error": "Unbound native artwork or protocol labels: the composed method image could not be reproduced."}
     if binary:
         try:
             runs = [_tesseract_lines(binary, path, mode) for mode in (6, 11)]
@@ -625,7 +618,24 @@ def repair_concept_image(path: Path, design: str, review: dict, provider: str, k
         return False
 
 
-def _compose_study_panel(illustration: Path, groups: list, destination: Path, single_column: bool):
+def reproduced_panel_labels(path, entry, aspect_ratio):
+    raw = (path.parent / (entry.get("illustration_file") or "")).resolve()
+    groups = (entry.get("panel_plan") or {}).get("groups") or []
+    try:
+        if (raw.is_relative_to((path.parent / ".concept_sources").resolve()) and raw.is_file()
+                and hashlib.sha256(raw.read_bytes()).hexdigest() == entry.get("payload_sha256")):
+            with tempfile.TemporaryDirectory() as folder:
+                reproduced = Path(folder) / "panel.png"
+                _compose_study_panel(raw, groups, reproduced, single_column=aspect_ratio == "4:3",
+                                     mechanism=entry.get("representation") == "subject_with_mechanism_panel")
+                if hashlib.sha256(reproduced.read_bytes()).digest() == hashlib.sha256(path.read_bytes()).digest():
+                    return [g[k] for g in groups for k in ("label", "description")]
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        pass
+    return []
+
+
+def _compose_study_panel(illustration: Path, groups: list, destination: Path, single_column: bool, *, mechanism=False):
     from PIL import Image, ImageDraw, ImageFont, ImageOps
 
     width = 840 if single_column else 1600
@@ -649,7 +659,8 @@ def _compose_study_panel(illustration: Path, groups: list, destination: Path, si
     heights = [2 * padding + len(names) * (heading.size + 9) + len(lines) * (body.size + 8)
                for names, lines in sections]
     top = 245 if single_column else margin
-    height = max(top + sum(heights) + 14 * (len(groups) - 1) + margin, 560)
+    gap = 38 if mechanism else 14
+    height = max(top + sum(heights) + gap * (len(groups) - 1) + margin, 560)
     canvas = Image.new("RGB", (width, height), "white")
     art_box = (width - 2 * margin, top - 2 * margin) if single_column else (card_x - 2 * margin, height - 2 * margin)
     with Image.open(illustration) as im:
@@ -663,7 +674,12 @@ def _compose_study_panel(illustration: Path, groups: list, destination: Path, si
         for text, font in [(t, heading) for t in names] + [(t, body) for t in lines]:
             draw.text((card_x + padding, y), text, font=font, fill="#172428")
             y += font.size + (9 if font is heading else 8)
-        top += h + 14
+        if mechanism and i + 1 < len(groups):
+            center, edge = card_x + card_width // 2, top + h + 2
+            draw.line((center, edge, center, edge + gap - 12), fill="#42525a", width=4)
+            draw.polygon([(center - 8, edge + gap - 16), (center + 8, edge + gap - 16),
+                          (center, edge + gap - 4)], fill="#42525a")
+        top += h + gap
     buffer = io.BytesIO()
     canvas.save(buffer, format="PNG")
     _save_generated_image(buffer.getvalue(), destination)
@@ -702,11 +718,43 @@ def _study_panel_plan(design, provider, key, model):
     return plan
 
 
+def mechanism_panel_plan(approved, steps=None):
+    """Bind each printed operation to the approved protocol, before requesting artwork."""
+    sources = {key: approved[key] for key in ("baseline", "comparison", "metric")}
+    sources.update({f"controls[{i}]": text for i, text in enumerate(approved.get("controls", []))})
+    if steps is None:
+        settings = [key for key in sources if key.startswith("controls[")]
+        groups = ([("Shared protocol", settings)] if settings else []) + [
+            ("Operations compared", ["baseline", "comparison"]), ("Readout", ["metric"])]
+    else:
+        if (not isinstance(steps, list) or not 2 <= len(steps) <= 3
+                or not all(isinstance(k, str) and k in sources for k in steps) or len(set(steps)) != len(steps)):
+            raise ValueError("Select two or three distinct mechanism_steps from baseline, comparison, metric or controls[i].")
+        groups = [(f"Step {i}", [key]) for i, key in enumerate(steps, 1)]
+    cards = [{"label": label, "description": " · ".join(sources[k] for k in keys),
+              "source_fields": keys} for label, keys in groups]
+    if any(len(card["description"]) > 320 for card in cards):
+        raise ValueError("Select shorter approved fields in mechanism_steps so each operation fits at print size.")
+    return {"subject": approved["question"], "groups": cards,
+            "caption": "The artwork illustrates the study subject. The diagram describes the protocol. " +
+                       ". ".join(card["description"].rstrip(".") for card in cards) + "."}
+
+
+def mechanism_panel_is_grounded(entry, spec, state_dir):
+    try:
+        approved = json.loads((Path(state_dir) / "native_project.json").read_text())["plan"]
+        return entry.get("panel_plan") == mechanism_panel_plan(approved, spec.get("mechanism_steps"))
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+
+
 def create_study_panel(path: Path, design: str, provider: str, key: str, model: str, aspect_ratio: str,
-                       *, approved_plan: dict | None = None):
+                       *, approved_plan: dict | None = None, mechanism_plan: dict | None = None):
     """Typeset the approved arms and generate only the subject illustration."""
     try:
-        if approved_plan is None:
+        if mechanism_plan is not None:
+            plan = mechanism_plan
+        elif approved_plan is None:
             plan = _study_panel_plan(design, provider, key, model)
             if not plan:
                 return None
@@ -728,8 +776,12 @@ def create_study_panel(path: Path, design: str, provider: str, key: str, model: 
                       "letters, arrows, branches, workflows, charts, comparisons or layout panels. "
                       "It illustrates the subject only. For abstract inputs, depict their structure neutrally. "
                       "Do not invent classes, clusters or trends or present simulated data as an observation.")
+        if mechanism_plan is not None:
+            art_prompt += (" Draw one thematic object only. Do not encode quantities with repeated objects, "
+                           "sample groups, graphs, histograms, scales, labels or equations.")
         flash = IMAGE_MODELS["flash"]
-        original = path.parent / ".concept_sources" / (path.stem + "-" + hashlib.sha256(design.encode()).hexdigest()[:12] + ".image")
+        identity = design if mechanism_plan is None else design + json.dumps(mechanism_plan, sort_keys=True)
+        original = path.parent / ".concept_sources" / (path.stem + "-" + hashlib.sha256(identity.encode()).hexdigest()[:12] + ".image")
         receipt = {}
         if provider == "google":
             if not generate_figure(art_prompt, original, key, flash, aspect_ratio="1:1", receipt=receipt):
@@ -743,9 +795,10 @@ def create_study_panel(path: Path, design: str, provider: str, key: str, model: 
             _save_generated_image(base64.b64decode(url.split(",", 1)[1], validate=True), original, receipt,
                                   provider=provider, image_model=flash, response_id=res.get("id"),
                                   model_version=res.get("model"), payload_source="openrouter_inline_data")
-        _compose_study_panel(original, groups, path, single_column=aspect_ratio == "4:3")
+        _compose_study_panel(original, groups, path, single_column=aspect_ratio == "4:3", mechanism=mechanism_plan is not None)
         receipt.update(artifact_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-                       selected_candidate="typeset_study_panel", representation="subject_with_comparison_panel",
+                       selected_candidate="typeset_study_panel", representation=("subject_with_mechanism_panel" if mechanism_plan is not None
+                                                                                else "subject_with_comparison_panel"),
                        illustration_file=str(original.relative_to(path.parent)), panel_plan=plan)
         return receipt
     except Exception:
