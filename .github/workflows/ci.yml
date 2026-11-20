@@ -29,13 +29,21 @@ jobs:
           pip install -e ".[research,webapp]"
           pip install pytest
 
+      - name: Cache TeX Live downloads
+        if: matrix.python-version == '3.11'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/texlive-archives/*.deb
+          key: texlive-apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/workflows/ci.yml') }}
+
       - name: Install TeX Live for manuscript and venue compilation tests
         if: matrix.python-version == '3.11'
         run: |
+          mkdir -p "$RUNNER_TEMP/texlive-archives"
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Dir::Cache::archives="$RUNNER_TEMP/texlive-archives" install -y --no-install-recommends \
             lmodern cm-super tex-gyre texlive-latex-extra texlive-science texlive-publishers \
-            texlive-bibtex-extra texlive-fonts-recommended texlive-fonts-extra
+            texlive-plain-generic texlive-bibtex-extra texlive-fonts-recommended texlive-fonts-extra
           pdflatex --version
           bibtex --version
 
