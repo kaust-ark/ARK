@@ -1003,6 +1003,23 @@ def test_measurement_table_uses_worker_decimal_values_even_beyond_model_excerpt(
         project.invoke("render_results_table", args)
 
 
+def test_measured_headers_support_mixed_math_and_keep_other_tex_literal():
+    from ark.measurement_table import render
+
+    def heading(label):
+        return render([{"value": 7}], "", [{"path": "value", "label": label}]).splitlines()[2]
+
+    assert heading(r"$\bar{K}_{\mathrm{obs}}$") == r"\(\bar{K}_{\mathrm{obs}}\) \\"
+    assert heading(r"$\Delta$MAE / $\sigma^2$ (\%)") == r"\(\Delta\)MAE / \(\sigma^2\) (\%) \\"
+    assert heading(r"$n$") == r"\(n\) \\"
+    assert heading("A & B_1 (95%)") == r"A \& B\_1 (95\%) \\"
+    assert heading("Cost $5 to $10") == r"Cost \$5 to \$10 \\"
+    for label in (r"$\custom{A}$", r"$\bar{K$", "$n^^41$", "$a_1_2$", "$n^$", "$x&y$"):
+        assert heading(label).startswith(r"\$") and r"\(" not in heading(label)
+    # A worker-supplied string is data and must never opt into heading syntax.
+    assert r"\$\textbackslash{}Delta\$" in render([{"value": r"$\Delta$"}], "", [{"path": "value"}])
+
+
 @pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
 def test_measured_float_uses_actual_column_width(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)

@@ -266,6 +266,59 @@ def _tex(text):
     return "".join(escapes.get(c, "\\" + c if c in "{}&%$#_" else c) for c in text)
 
 
+# Table headings may mix text with short inline formulas. Only these LaTeX
+# commands can enter math mode; result values always stay escaped text.
+_MATH_SYMBOLS = set(
+    (r"\alpha \beta \gamma \delta \epsilon \varepsilon \zeta \eta \theta \vartheta \iota \kappa "
+     r"\lambda \mu \nu \xi \pi \varpi \rho \varrho \sigma \varsigma \tau \upsilon \phi \varphi "
+     r"\chi \psi \omega \Gamma \Delta \Theta \Lambda \Xi \Pi \Sigma \Upsilon \Phi \Psi \Omega "
+     r"\pm \times \cdot \leq \geq \approx \infty \log \exp \min \max").split()
+)
+_MATH_FORMATS = {r"\bar", r"\hat", r"\tilde", r"\overline", r"\mathrm", r"\mathbf", r"\mathit", r"\mathsf", r"\frac"}
+
+
+def _valid_header_math(formula):
+    # Parsing atoms and their scripts also prevents a trailing subscript or
+    # unclosed command argument from consuming the next table cell.
+    tokens = re.findall(r"\\[A-Za-z]+|[^ ]", formula)[::-1]
+
+    def atom():
+        token = tokens.pop() if tokens else ""
+        if token == "{":
+            return terms() and bool(tokens) and tokens.pop() == "}"
+        if token in _MATH_FORMATS:
+            return all(tokens and tokens[-1] == "{" and atom() for _ in range(2 if token == r"\frac" else 1))
+        return token in _MATH_SYMBOLS or bool(re.fullmatch(r"[A-Za-z0-9*()+.,/=<>|\[\]-]", token))
+
+    def terms():
+        if not tokens or tokens[-1] == "}":
+            return False
+        while tokens and tokens[-1] != "}":
+            if not atom():
+                return False
+            scripts = set()
+            while tokens and tokens[-1] in ("_", "^"):
+                op = tokens.pop()
+                if op in scripts or not atom():
+                    return False
+                scripts.add(op)
+        return True
+
+    return terms() and not tokens
+
+
+def _header_tex(label):
+    label = label.replace(r"\%", "%")
+    parts = re.split(r"(?<!\\)\$", label)
+    formulas = parts[1::2]
+    if len(parts) % 2 == 0 or any(not _valid_header_math(part) for part in formulas):
+        return _tex(label)
+    # A pair of prices such as "$5 to $10" uses dollar signs as text.
+    if (parts[0] or parts[-1]) and any(part.strip() != part for part in formulas):
+        return _tex(label)
+    return "".join(r"\(" + part + r"\)" if i % 2 else _tex(part) for i, part in enumerate(parts))
+
+
 _TABULAR = re.compile(r"\\begin\{tabular(?P<star>\*)?\}\s*(?(star)\{[^{}]*\}\s*)"
                       r"(?:\[[tbc]\]\s*)?\{(?:[^{}]|\{[^{}]*\})*\}(.*?)\\end\{tabular(?(star)\*)\}", re.S)
 _PRINTED_NUMBER = re.compile(r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
@@ -395,9 +448,7 @@ def render(data, pointer, columns):
             raise ValueError("Use a short column label and zero to eight decimal places.")
         if type(col.get("percent", False)) is not bool:
             raise ValueError("percent must be true or false.")
-        label = label.replace(r"\%", "%")
-        short_math = re.fullmatch(r"\$([A-Za-z0-9 _^*()+./=+-]{1,32})\$", label)
-        headers.append(r"\(" + short_math[1] + r"\)" if short_math else _tex(label))
+        headers.append(_header_tex(label))
         specs.append((col["path"], digits, col.get("percent", False)))
     lines = [
         r"\begin{tabular}{@{}" + "r" * len(columns) + "@{}}",
