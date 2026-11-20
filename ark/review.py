@@ -1867,25 +1867,31 @@ def _tex_paragraph_locator(source):
     # A hard paragraph boundary must not disappear when headings or environments
     # print no prose. Leave unsupported TeX constructs out of the matching index.
     source = re.sub(r"(?<!\\)%[^\n]*", "", source)
-    paragraphs = re.split(r"\n\s*\n|\\par\b|(?m:^[ \t]*\\(?:begin|end|(?:sub)*section|chapter|paragraph)\*?\{[^\n]*)", source)
+    boundaries = r"(\n\s*\n|\\par\b|(?m:^[ \t]*\\(?:begin|end|(?:sub)*section|chapter|paragraph)\*?\{[^\n]*))"
+    # Keep structural markers as context for aligning a one-paragraph revision.
+    paragraphs = [" ".join(part.split()) for part in re.split(boundaries, source)
+                  if part.strip() and part != r"\par"]
     patterns = []
     inline_math = re.compile(r"\$[^$\n]+\$|\\\([^\n]*?\\\)")
     for number, paragraph in enumerate(paragraphs):
-        if "\\" in inline_math.sub("", paragraph):
+        plain = inline_math.sub("", paragraph)
+        if re.search(r"\\(?!(?:texttt|textbf|textit|emph|ref|cite[tp]?)\b|[%&_])", plain):
             continue
         for sentence in _conclusion_sentences(paragraph):
             parts = inline_math.split(sentence)
+            if any("\\" in part for part in parts):
+                continue
             pieces = [letters(part) for part in parts]
             if sum(map(len, pieces)) >= 24:
-                patterns.append((number, pieces))
+                patterns.append((number, sentence, pieces))
 
-    def locate(quote):
+    def locate(quote, *, with_source=False):
         key = letters(quote)
         matches = []
-        for number, pieces in patterns:
+        for number, sentence, pieces in patterns:
             if len(pieces) == 1:
                 if key == pieces[0]:
-                    matches.append(number)
+                    matches.append((number, sentence))
                 continue
             if not key.startswith(pieces[0]) or not key.endswith(pieces[-1]):
                 continue
@@ -1897,9 +1903,10 @@ def _tex_paragraph_locator(source):
                 pos = found + len(mid)
             else:
                 if pos <= len(key) - len(pieces[-1]):
-                    matches.append(number)
-        return matches[0] if len(matches) == 1 else None
-    return locate
+                    matches.append((number, sentence))
+        if len(matches) == 1:
+            return matches[0] if with_source else matches[0][0]
+    return locate, paragraphs
 
 
 def _add_paragraph_continuation(context, stable, old_par, old_locate, new_locate, old_pdf, old_page, blocks, wording):
@@ -1935,6 +1942,37 @@ def _add_paragraph_continuation(context, stable, old_par, old_locate, new_locate
         context["remaining_locations"] = locations + [location for _, location in continuation]
 
 
+def _reflowed_paragraph(pdf, blocks, signed_claim, old_locate, new_locate, aligned):
+    """Recover a continuation after the author replaced every anchor on the original page."""
+    old_par = old_locate(signed_claim)
+    if old_par not in aligned:
+        return None
+    passages = []
+    for page, start, block, _ in blocks:
+        for quote in _conclusion_sentences(block):
+            if not 20 <= len(quote) <= 1200 or not quote.endswith((".", "!", "?")):
+                continue
+            prior = old_locate(quote, with_source=True)
+            if not prior or prior[0] != old_par:
+                continue
+            current = new_locate(quote, with_source=True)
+            # Match full TeX sentences including their math. Rendered math may
+            # omit TeX delimiters, but a changed operand cannot count as survival.
+            if current != (aligned[old_par], prior[1]):
+                continue
+            at = start + block.index(quote)
+            passages.append((quote, {"page":page, "start":at, "end":at + len(quote) - 1}, block, start))
+    # Identical running text printed twice is ambiguous even after rewrapping.
+    identities = {re.sub(r"[\W_]", "", unicodedata.normalize("NFKC", q).casefold()) for q, *_ in passages}
+    if not passages or len(identities) != len(passages):
+        return None
+    _, first, block, start = passages[0]
+    remaining = [q for q, *_ in passages]
+    return {"artifact":pdf, "page":first["page"], "start":start, "paragraph":block,
+            "remaining":remaining, "remaining_locations":[location for _, location, _, _ in passages],
+            "surviving":remaining}
+
+
 def revision_paragraphs(snapshot, previous):
     """Locate surviving neighbors of disputed sentences in the current rendered body."""
     from difflib import SequenceMatcher
@@ -1962,6 +2000,7 @@ def revision_paragraphs(snapshot, previous):
         return _normalized_quote(re.sub(r"(?<=\w)-[ \t]*\n(?=[a-z])", "", sentence))
 
     old_locate = new_locate = None
+    aligned_paragraphs = {}
     source_hash = previous.get("artifact_hashes", {}).get(tex)
     if source_hash and tex in snapshot["artifacts"]:
         archived_tex = _inside(Path(snapshot["project"]), Path(STATE) / "reviews" / previous["revision"] / "main.tex")
@@ -1969,8 +2008,14 @@ def revision_paragraphs(snapshot, previous):
             source = archived_tex.read_bytes()
             if _digest(source) != source_hash:
                 raise ValueError("The archived TeX does not match the preceding review.")
-            old_locate = _tex_paragraph_locator(source.decode("utf-8", "replace"))
-            new_locate = _tex_paragraph_locator(_artifact(snapshot, tex)[0].decode("utf-8", "replace"))
+            old_locate, old_paragraphs = _tex_paragraph_locator(source.decode("utf-8", "replace"))
+            new_locate, new_paragraphs = _tex_paragraph_locator(_artifact(snapshot, tex)[0].decode("utf-8", "replace"))
+            # Splitting a paragraph or moving a sentence between independent
+            # paragraphs is ambiguous. Only a one-for-one substitution between
+            # unchanged source boundaries can recover a lost rendered anchor.
+            alignment = SequenceMatcher(None, old_paragraphs, new_paragraphs, autojunk=False)
+            aligned_paragraphs = {i:a for tag, i, j, a, b in alignment.get_opcodes()
+                                  if tag == "replace" and j - i == b - a == 1}
 
     result = {}
     with fitz.open(stream=original, filetype="pdf") as old, fitz.open(stream=_artifact(snapshot, pdf)[0], filetype="pdf") as new:
@@ -2008,6 +2053,12 @@ def revision_paragraphs(snapshot, previous):
                 count = max((score for score, _ in matches), default=0)
                 best = [n for score, n in matches if score == count]
                 if not count or len(best) != 1:
+                    if aligned_paragraphs:
+                        reflowed = _reflowed_paragraph(pdf, blocks, sentences[disputed], old_locate,
+                                                       new_locate, aligned_paragraphs)
+                        if reflowed:
+                            result[issue["id"]] = reflowed
+                            break
                     continue
                 new_page, start, paragraph, keys = blocks[best[0]]
                 terms = set(re.findall(r"[a-z]{4,}", (claim + " " + issue["reason"]).casefold()))
@@ -2176,6 +2227,9 @@ def _retained_comparison(snapshot, previous, old, issue, refs, context):
                 r["artifact"] == context["artifact"] and r.get("page") == location["page"]
                 and _contains_observed_quote(r.get("quote", ""), claim) for r in refs):
             return {}
+    if "replacement" not in context:
+        raise ValueError(f"{issue['id']} must cite a surviving current sentence from the revised paragraph "
+                         "and its observed PDF page, or report the remaining evidence gap as unassessed.")
     if at_paragraph and any(claim == _normalized_quote(q) for q in context["surviving"]):
         return {}
     if (at_paragraph and any(claim == _normalized_quote(q) for q in _conclusion_sentences(context["paragraph"]))
@@ -2423,7 +2477,7 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
         assessment = []
         comparison = {}
         context = contexts.get(ident, {})
-        if status == "still_present" and "replacement" in context:
+        if status == "still_present" and "surviving" in context:
             try:
                 comparison = _retained_comparison(snapshot, previous, old, issue, refs, context)
             except ValueError as exc:

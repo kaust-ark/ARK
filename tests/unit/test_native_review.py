@@ -1430,12 +1430,14 @@ def test_cross_page_finding_uses_same_source_paragraph_and_page_bound_observatio
     (tmp_path / table).write_text('[{"latency":10}]')
     run = {"status":"completed", "artifact":table, "sha256":hashlib.sha256((tmp_path / table).read_bytes()).hexdigest()}
 
-    def build(sentence, boundary=" "):
-        (tmp_path / tex).write_text(anchor + " " + sentence + boundary + continuation + "\n\\section{Collector}\n" + other)
+    def build(sentence, boundary=" ", first=anchor, split=False):
+        (tmp_path / tex).write_text(first + " " + sentence + boundary + continuation + "\n\\section{Collector}\n" + other)
         with fitz.open() as doc:
-            doc.new_page().insert_textbox((35, 45, 555, 300), anchor + " " + sentence)
+            prefix, suffix = continuation.split(" directly")
+            lead = first + " " + sentence + (" " + prefix if split else "")
+            doc.new_page().insert_textbox((35, 45, 555, 300), lead)
             page = doc.new_page()
-            page.insert_text((35, 45), continuation)
+            page.insert_text((35, 45), "directly" + suffix if split else continuation)
             page.insert_text((35, 85), other)
             doc.save(tmp_path / pdf)
         return build_snapshot(tmp_path, expected_measurement=table, measurement_run=run)
@@ -1489,6 +1491,39 @@ def test_cross_page_finding_uses_same_source_paragraph_and_page_bound_observatio
     # Identical physical PDF placement cannot reconnect two distinct author paragraphs.
     detached = build(revised, boundary=r"\par ")
     assert review.revision_paragraphs(detached, prior)["R1"]["remaining"] == [anchor]
+    # Previously the whole original-page anchor was rewritten and the only
+    # surviving sentence straddled the old page break. A new PDF block can
+    # be located through immutable source paragraphs without guessing an edit.
+    split = build(disputed, split=True)
+    original = validate_review(split, assessment(split, disputed, 1, "new"), observed=[
+        read_evidence(split, pdf, page=1)["receipt"], read_evidence(split, table)["receipt"]])
+    split_archive = tmp_path / review.STATE / "reviews" / split["revision"]
+    split_archive.mkdir()
+    for path in (pdf, tex):
+        (split_archive / Path(path).name).write_bytes((tmp_path / path).read_bytes())
+    new_anchor = "Both trials had the same observed latency of ten seconds."
+    current = build(revised, first=new_anchor)
+    ctx = review.revision_paragraphs(current, original)["R1"]
+    assert ctx["remaining"] == [continuation] and "replacement" not in ctx
+    page_loc, = ctx["remaining_locations"]
+    assert page_loc["page"] == 2
+    seen = [read_evidence(current, pdf, page=1)["receipt"], read_evidence(current, table)["receipt"]]
+    raw = assessment(current, continuation, 2, "still_present")
+    raw["checks"]["manuscript"]["claims"][0]["passage"]["quote"] = new_anchor
+    with pytest.raises(ValueError, match="Unobserved or unlocatable"):
+        validate_review(current, raw, original, observed=seen)
+    view = read_evidence(current, pdf, page=2, start=page_loc["start"])
+    seen.append(view["receipt"])
+    assert validate_review(current, raw, original, observed=seen)["verdict"] == "revise"
+    raw["issues"][0].update(claim=other, evidence=[{"artifact":pdf, "page":2, "quote":other}])
+    with pytest.raises(ValueError, match="surviving current sentence"):
+        validate_review(current, raw, original, observed=seen)
+    raw["issues"][0].update(status="resolved", claim=revised, evidence=[{"artifact":pdf, "page":1, "quote":revised}])
+    raw["verdict"] = "accept"
+    with pytest.raises(ValueError, match="context_assessment"):
+        validate_review(current, raw, original, observed=seen)
+    detached = build(revised, first=new_anchor, boundary=r"\par ")
+    assert "R1" not in review.revision_paragraphs(detached, original)
     (archive / "main.tex").write_text("An altered archive.")
     with pytest.raises(ValueError, match="archived TeX"):
         review.revision_paragraphs(current, prior)
