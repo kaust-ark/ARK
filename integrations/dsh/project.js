@@ -11,7 +11,7 @@ const packageDir = dirname(fileURLToPath(import.meta.url))
 const writable = /^(?:paper\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.(?:tex|bib)|scripts\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.py)$/
 const readable = /^(?:results\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+\.(?:json|csv|tsv|txt)|\.claude\/skills\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+\.md)$/
 
-const researchSource = /^(?:auto_research\/state\/(?:idea\.md|experiment_plan\.yaml|deep_research\.md)|sources\/[a-f0-9]{24}\.txt)$/
+const researchSource = /^(?:auto_research\/state\/(?:idea\.md|experiment_plan\.yaml|deep_research\.md|reviews\/[a-f0-9]{64}\/review\.json)|sources\/[a-f0-9]{24}\.txt)$/
 
 const mainSource = 'paper/main.tex'
 const revisionParts = ['.dsh', 'native', 'main-tex-revisions']
@@ -378,7 +378,7 @@ export const operations = {
   compile_paper: ['Compile the current manuscript and inspect its figures, citations and layout. manuscript_revision identifies main.tex after typesetting adjustments.', {}],
   request_review: ['Request an independent, blind submission review after artifact checks. Use draft only for early scientific feedback on an incomplete manuscript. For a delivery request, follow acceptance with deliver and report its result. For a review-only request, report the findings.', { draft: bool }],
   deliver: ['Verify the current reviewed revision and publish the checked project deliverables.', {}],
-  read_project_file: ['Read up to 6000 characters of a manuscript, result, skill, original brief (auto_research/state/idea.md), experiment_plan.yaml or deep_research.md in that directory, or sources/<id>.txt from verify_citations. Supply next_offset as offset to continue, or find a passage to get its match_line. Use start_line to read up to 40 numbered lines. sha256 covers the entire file. For paper/main.tex, list_revisions lists saved digests and revision_sha256 reads a saved version.', { path: str, offset: num, find: str, start_line: num, revision_sha256: str, list_revisions: bool }, ['path']],
+  read_project_file: ['Read up to 6000 characters of a manuscript, result, skill, original brief (auto_research/state/idea.md), experiment_plan.yaml or deep_research.md in that directory, sources/<id>.txt from verify_citations, or the signed_record returned by review. Supply next_offset as offset to continue, or find a passage to get its match_line. Use start_line to read up to 40 numbered lines. sha256 covers the entire file. For paper/main.tex, list_revisions lists saved digests and revision_sha256 reads a saved version.', { path: str, offset: num, find: str, start_line: num, revision_sha256: str, list_revisions: bool }, ['path']],
   write_project_file: ['Write a manuscript or script. To edit lines of paper/main.tex, read the numbered lines and send inclusive start_line/end_line with just the new text. The last numbered view supplies its revision; alternatively provide the exact current base_sha256. A TeX error introduced into a compiling draft rejects the edit. For a section edit use replace, insert_before or insert_after with an exact unique passage or heading. Use expected_matches only to correct a known count of identical passages. Any edit that cuts over one fifth of a manuscript longer than 3500 characters needs its current base_sha256 and allow_shrink:true. Each changed manuscript saves previous_sha256. To restore it, supply only path, current base_sha256 and restore_sha256.', { path: str, content: str, start_line: num, end_line: num, replace: str, expected_matches: num, insert_before: str, insert_after: str, base_sha256: str, allow_shrink: bool, restore_sha256: str }, ['path']],
 }
 // The reviewer may revise its own draft during this activation.
@@ -469,8 +469,28 @@ export function reproductionComparison(receipt) {
 }
 
 export function reviewForAuthor(review) {
-  if (review.verdict === 'accept' && review.deliverable) {
-    review = {...review, delivery_instruction:'The reviewer signed this revision. If the user requested delivery, call deliver now and use its receipt when reporting completion.'}
+  // DSH compacts long tool results. Keep the signed decision and the work it
+  // requires together, with a stable read-only path to the complete record.
+  if (Array.isArray(review.issues) && /^[a-f0-9]{64}$/.test(review.revision)) {
+    const issues = review.issues.filter(issue => issue.status !== 'resolved').map(issue => ({
+      id:issue.id, status:issue.status, severity:issue.severity, domain:issue.domain,
+      pages:[...new Set((issue.evidence || []).filter(ref => ref.artifact?.endsWith('/main.pdf') &&
+        Number.isSafeInteger(ref.page)).map(ref => ref.page))],
+      claim:issue.claim, fix:issue.fix, reason:issue.reason,
+    }))
+    const result = {verdict:review.verdict, revision:review.revision, deliverable:review.deliverable,
+      signed_record:'auto_research/state/reviews/' + review.revision + '/review.json', issues}
+    if (review.reviewed_pdf_matches_last_build !== undefined) result.reviewed_pdf_matches_last_build = review.reviewed_pdf_matches_last_build
+    if (review.verdict === 'accept' && review.deliverable) {
+      result.delivery_instruction = 'Call deliver on the current revision and use its receipt to report completion.'
+    } else if (issues.some(issue => issue.severity === 'blocker')) {
+      result.revision_instruction = 'Recheck the complete source paragraph of each open finding, including text on the next PDF page. Trace any repetition in the abstract, results, discussion and conclusion to the same observation. Compile the revision and inspect the surviving passages before requesting independent review.'
+    }
+    if (review.checks) result.unassessed = Object.entries(review.checks).filter(([,check]) => check.status === 'unassessed')
+      .map(([domain,check]) => ({domain,reason:check.reason}))
+    const reproductions = review.checks?.experiment?.controls?.filter(receipt => receipt.control === 2)
+    if (reproductions?.length) result.reproduction = reproductions.map(reproductionComparison)
+    return result
   }
   const experiment = review.checks?.experiment
   if (!experiment?.controls?.some(r => r.control === 2)) return review

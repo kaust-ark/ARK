@@ -886,6 +886,14 @@ def test_reviewer_reservation_survives_restart_and_is_bound_to_revision(tmp_path
     project.review_snapshot({"session_id": "child1"})
     journal = (project.state_dir / "research_events.jsonl").read_text().splitlines()
     assert sum(json.loads(line)["action"] == "review_started" for line in journal) == 1
+    with pytest.raises(ValueError, match="does not belong"):
+        project.unfinished_review({"revision":"rev1","session_id":"unrelated","diagnostic":"untrusted"})
+    result = project.invoke("unfinished_review", {"revision":"rev1","session_id":"child1",
+                                                  "diagnostic":"R2 on page 3 needs observed evidence."})
+    assert result["signed"] is False and result["ready"] is False
+    restored = domain.NativeProject(project.root)
+    assert restored.state["unfinished_review"]["diagnostic"] == result["diagnostic"]
+    assert not (project.state_dir / "native_review.json").exists()
     with pytest.raises(ValueError, match="budget exhausted"):
         project.review_snapshot({"session_id": "child2"})
 

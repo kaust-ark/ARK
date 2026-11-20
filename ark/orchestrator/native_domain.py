@@ -424,6 +424,7 @@ class NativeProject(CompilerMixin):
             data["review"] = {
                 "revision": last_review["revision"],
                 "verdict": last_review["verdict"],
+                "deliverable": last_review.get("deliverable", False),
                 "reviewed_pdf_matches_last_build": bool(
                     self.state.get("compiled_pdf_sha256")
                     and self.state["compiled_pdf_sha256"] == last_review.get("paper_pdf_sha256")
@@ -431,6 +432,13 @@ class NativeProject(CompilerMixin):
                 "summary": last_review.get("summary", ""),
                 "issues": last_review.get("issues", []),
             }
+        if not inspect and not data.get("build_stale"):
+            if followup := self._author_revision_passages(last_review, self.state.get("compiled_pdf_sha256")):
+                data["revision_passages"] = followup
+        if pending := self.state.get("unfinished_review"):
+            data["unfinished_review"] = {**pending, "matches_last_build":
+                                         pending["pdf_sha256"] == self.state.get("compiled_pdf_sha256")
+                                         and not data.get("build_stale", False)}
         audit = _load(self.state_dir / "native_citations.json")
         if audit:
             data["citations"] = {
@@ -1755,12 +1763,26 @@ class NativeProject(CompilerMixin):
             }
         return {"ok": False, "checked": True, "diagnostic": trial["diagnostic"]}
 
+    def _author_revision_passages(self, prior, pdf_sha):
+        if (not pdf_sha or not prior or prior.get("verdict") != "revise"
+                or not prior.get("paper_pdf_sha256") or prior["paper_pdf_sha256"] == pdf_sha):
+            return {}
+        contexts = review.revision_paragraphs(self._snapshot(), prior)
+        followup = {}
+        for ident, context in contexts.items():
+            locations = context.get("remaining_locations")
+            followup[ident] = [{"page": locations[i]["page"] if locations else context["page"], "quote": quote}
+                               for i, quote in enumerate(context["remaining"])]
+        return followup
+
     def compile_paper(self, args):
         source = self.latex_dir / "main.tex"
         result = self._compile_paper(args)
         if not source.is_file() or source.resolve() != source:
             return result
-        return {**result, "manuscript_revision": {
+        prior = _load(self.state_dir / "native_review.json")
+        followup = self._author_revision_passages(prior, result.get("pdf_sha256"))
+        return {**({"revision_passages": followup} if followup else {}), **result, "manuscript_revision": {
             "path": "paper/main.tex", "sha256": _sha(source),
             "next": "Use this post-build revision for the next edit. To expand a section, insert_before its "
                     "next heading or replace a unique passage, supplying only the new paragraphs as content.",
@@ -2299,6 +2321,7 @@ class NativeProject(CompilerMixin):
             if blockers:
                 return {"blockers": blockers, **({"research_citations": trace} if trace else {})}
         self.snapshot = snapshot
+        self.review_session = args.get("session_id")
         previous = _load(self.state_dir / "native_review.json")
         self.review_receipts = []
         self.control_attempts = 0
@@ -2584,6 +2607,24 @@ class NativeProject(CompilerMixin):
                    outcomes=len(task["columns"]), **detail)
         return decision
 
+    def unfinished_review(self, args):
+        """Return the validator's outstanding check to the owner at a native child stop."""
+        revision = args.get("revision")
+        session = args.get("session_id")
+        if (not self.snapshot or revision != self.snapshot["revision"]
+                or session != self.review_session or self.state.get("review_attempts", {}).get(session) != revision):
+            raise ValueError("The unfinished review does not belong to this manuscript and reviewer.")
+        diagnostic = _text(args, "diagnostic", limit=16000)
+        pending = {"revision": revision, "session_id": session, "pdf_sha256": self.state["compiled_pdf_sha256"],
+                   "diagnostic": diagnostic[:1800]}
+        self.state["unfinished_review"] = pending
+        self.save()
+        self.event("review", "review_incomplete", "Independent review stopped with an unresolved evidence check.",
+                   revision=revision)
+        return {"ready": False, "signed": False, **pending, "instruction":
+                "Inspect the disputed passage and its evidence. Repeated calls on this unchanged draft consume "
+                "the project's review allowance. The previous signed findings stay open."}
+
     def check_review(self, args):
         return self.record_review(args, check_only=True)
 
@@ -2627,6 +2668,8 @@ class NativeProject(CompilerMixin):
         archive = self.state_dir / "reviews" / snapshot["revision"]
         _json(archive / "review.json", record)
         _json(self.state_dir / "native_review.json", record)
+        if self.state.pop("unfinished_review", None) is not None:
+            self.save()
         self.event(
             "review",
             "manuscript_reviewed",
@@ -2729,6 +2772,7 @@ class NativeProject(CompilerMixin):
             "test_inference",
             "reproduce_measurement",
             "check_review",
+            "unfinished_review",
             "record_review",
             "deliver",
         }

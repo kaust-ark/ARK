@@ -271,7 +271,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
     throw new Error('Missing independent reproduction brief')
   }
   const observed = []
-  let checkedVerdict, lastRejected, previousDraft
+  let checkedVerdict, lastRejected, previousDraft, stalledCheck
   let disclosed = !protocolFirst && !packet.scope_brief, committing = false, sealed = false, disclosureError
   let configured = false
   const unlisten = ctx.on('agent/created', async ({ agent }) => {
@@ -314,7 +314,12 @@ async function review(ctx, owner, domain, signal, draft = false) {
         if (verdict?.revision === packet.revision) previousDraft = verdict
       }
       // Steer this DSH step boundary so the independent reader keeps its evidence and identity.
-      lastRejected = nextReviewRepair(lastRejected, output, diagnostic, observed)
+      try {
+        lastRejected = nextReviewRepair(lastRejected, output, diagnostic, observed)
+      } catch (error) {
+        stalledCheck = diagnostic
+        throw error
+      }
       agent.steer(createUserMessage({source:{kind:'idea2paper-review-repair', form:'instructions'}, content:[{
         type:'text', text:'Review evidence check: ' + diagnostic + (lastRejected.repeats === 2
           ? '\nThis check remains open. Inspect a different original or report which evidence is missing. A prior finding that still applies may remain open on this revision.' : '') + (disclosed ? '\nInspect the relevant originals with read_evidence as needed. Return the corrected verdict or, after a rejected draft, {"amend":{...}} containing only the changed fields. Under checks, send complete replacements for changed domains. To change issues, replace the issues array. The whole verdict is checked again.' : ''),
@@ -414,8 +419,14 @@ async function review(ctx, owner, domain, signal, draft = false) {
     })
     if (!configured) throw new Error('Reviewer read-only tool scope was not established')
     signal.throwIfAborted()
-    const result = await activation.result
+    let result
+    try { result = await activation.result } catch (error) {
+      if (!stalledCheck || signal.aborted) throw error
+    }
     signal.throwIfAborted()
+    if (stalledCheck && !checkedVerdict) return await domain.call('unfinished_review', {
+      session_id:childId, revision:packet.revision, diagnostic:stalledCheck,
+    })
     if (result.stopReason !== 'completed') throw new Error('Reviewer ended with ' + result.stopReason)
     if (!checkedVerdict) throw new Error('Reviewer ended without a validated verdict')
     return await domain.call('record_review', { revision: packet.revision, session_id: childId, verdict:checkedVerdict, observed })
@@ -559,6 +570,10 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
             return reviewForAuthor(result)
           }
           const result = await domain.call(name, args)
+          if (name === 'project_status' && (result.review || result.unfinished_review)) {
+            const {review, unfinished_review, ...status} = result
+            return {review:review && reviewForAuthor(review), unfinished_review, ...status}
+          }
           if (name === 'deliver' && result?.delivered === true) committedDelivery = true
           return result
         }, roleTimeout)
@@ -627,7 +642,7 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
       'Fix reported artifact checks before another independent review. Use write_project_file with insert_before or insert_after on a short unique heading to expand a section, or replace to fix a specific passage. Expand an under-length paper with evidence and analysis, then compile.',
       JSON.stringify({ requirements: status.required, planned_mechanism: status.plan?.mechanism, last_mechanism_observation: status.mechanism_observation,
         rendered: status.compile?.checks, body_pages: status.compile?.body_equivalent_pages,
-        build_stale: status.build_stale, manuscript_issues: status.manuscript_issues, editorial_notes: status.build_stale ? undefined : status.compile?.editorial_notes, suggested_edit: status.build_stale ? undefined : status.compile?.suggested_edit, citation_audit: status.build_stale ? undefined : status.citations, most_recent_review: status.review?.verdict, reviewed_revision: status.review?.revision, reviewed_pdf_matches_last_build: status.review?.reviewed_pdf_matches_last_build }),
+        build_stale: status.build_stale, manuscript_issues: status.manuscript_issues, editorial_notes: status.build_stale ? undefined : status.compile?.editorial_notes, suggested_edit: status.build_stale ? undefined : status.compile?.suggested_edit, citation_audit: status.build_stale ? undefined : status.citations, last_signed_review: status.review && reviewForAuthor(status.review), unresolved_check: status.unfinished_review, review_attempts: status.review_attempts, max_review_attempts: status.max_review_attempts, revision_passages: status.revision_passages }),
     ].join('\n'))
     const start = agent.session.seq
     const hasCommands = status.commands?.length || (await pendingCommands(directory)).length

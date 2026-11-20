@@ -42,6 +42,27 @@ test('unsigned repair topics use the validator instruction and never quote its e
 })
 
 
+test('owner receives signed findings before bulky evidence and can reopen the original', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'paper-review-owner-'))
+  t.after(() => rm(root, {recursive:true,force:true}))
+  const revision = 'a'.repeat(64)
+  const evidence = [{artifact:'paper/main.pdf',page:3,quote:'The residual mass explains the difference.'}]
+  const issue = {id:'R2',status:'still_present',severity:'blocker',domain:'manuscript',
+    claim:evidence[0].quote,fix:'Report the measured difference.',reason:'The mechanism was not measured.',evidence}
+  const record = {revision,verdict:'revise',deliverable:false,checks:{experiment:{status:'assessed',evidence:[
+    {quote:'q'.repeat(24000)}]},citations:{status:'unassessed',reason:'Missing original.'}},issues:[issue]}
+  const view = reviewForAuthor(record)
+  assert.deepEqual(view.issues[0], {id:'R2',status:'still_present',severity:'blocker',domain:'manuscript',
+    pages:[3],claim:issue.claim,fix:issue.fix,reason:issue.reason})
+  assert.ok(JSON.stringify(view).length < 1200)
+  assert.deepEqual(view.unassessed,[{domain:'citations',reason:'Missing original.'}])
+  await mkdir(dirname(join(root,view.signed_record)),{recursive:true})
+  await writeFile(join(root,view.signed_record),JSON.stringify(record))
+  assert.equal((await readProjectFile(root,{path:view.signed_record,find:'The mechanism was not measured.'})).found,true)
+  await assert.rejects(projectFile(root,view.signed_record,'{}'), /for authoring/)
+  assert.equal(reviewForAuthor({...record,verdict:'accept',deliverable:true,issues:[]}).delivery_instruction.includes('deliver'),true)
+})
+
 test('worker and reviewer values retain their source and the host tolerance decision', () => {
   const row = {control:2, artifact:'results/values.json', rows_pointer:'/rows', identifiers:{seed:2},
     columns:['temperature','accuracy'], differences:['temperature'], observed:{temperature:16,accuracy:0.883333},
@@ -338,7 +359,7 @@ for line in sys.stdin:
   }
 })
 
-for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-retry', 'server-exhausted']) test('pinned native blind reviewer with ' + scenario, {
+for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-retry', 'server-exhausted', 'stalled-review']) test('pinned native blind reviewer with ' + scenario, {
   skip: !process.env.IDEA2PAPER_TEST_PROFILE || !process.env.IDEA2PAPER_TEST_DSH,
   timeout: 90000,
 }, async t => {
@@ -352,7 +373,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
   const google = scenario !== 'unavailable'
   const terminal = ['flattened-503', 'quota', 'no-retry', 'server-exhausted'].includes(scenario)
   let rejectedRequests = 0
-  let failedRequest, followupRequest, reviewerError
+  let failedRequest, followupRequest, reviewerError, unfinished
   const blocked = Promise.withResolvers()
   const events = []
   const calls = []
@@ -432,6 +453,8 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         } else if (!history.includes('known-answer-receipt')) {
           response = {name:'run_method_control',args:{target:'mean',inputs_json:'{"values":[2,4]}',
             expected_json:'3',alternative_json:'6',rationale:'The mean of two and four is three. The sum is six.'}}
+        } else if (scenario === 'stalled-review') {
+          response = JSON.stringify({revision:'rev1', verdict:'accept'})
         } else if (scenario === 'program' && !inference) {
           response = {name:'test_inference',args:{passage:{selector:'conclusion'}, premise:'total', outcome:'largest',
             assumptions:'Two positive values form a pair.',
@@ -451,7 +474,13 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
       } else {
         assert.ok(tools.includes('request_review'), JSON.stringify(tools))
         assert.ok(!tools.includes('run_method_control') && !tools.includes('reproduce_measurement') && !tools.includes('test_inference'))
-        if (reviewerError) {
+        if (unfinished) {
+          assert.match(history, /R2 needs a measurement on page 3/)
+          const receipt = body.contents.flatMap(message => message.parts || [])
+            .findLast(part => part.functionResponse?.name === 'request_review')
+          assert.equal(JSON.parse(receipt.functionResponse.response.output).signed, false)
+          response = 'The revised paper needs additional evidence.'
+        } else if (reviewerError) {
           response = 'The reviewer stopped.'
         } else if (parked) {
           response = {name:'request_review',args:{draft:true}}
@@ -519,7 +548,7 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
     calls.push(op)
     switch (op) {
       case 'stop': stopped = true; return {state:'stopped'}
-      case 'project_status': return {state:reviewerError?'waiting':stopped?'stopped':delivered?'delivered':'running', delivered, commands:[]}
+      case 'project_status': return {state:reviewerError || unfinished?'waiting':stopped?'stopped':delivered?'delivered':'running', delivered, commands:[]}
       case 'project_event':
         events.push(args)
         if (terminal && args.role === 'reviewer' && args.kind === 'turn/end' && args.reason?.kind === 'error') {
@@ -566,7 +595,14 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
         assert.equal(args.premise, 'total')
         return {receipt:{...args,control:3,passage:{artifact:'paper/main.pdf',page:2,quote:'conclusion-passage-private'},
           cases:{A:{premise:6,outcome:4},B:{premise:6,outcome:5}},same_premise:true,distinguishable_outcome:true}}
+      case 'unfinished_review':
+        assert.equal(args.revision,'rev1')
+        assert.ok(args.session_id)
+        assert.equal(args.diagnostic,'R2 needs a measurement on page 3.')
+        unfinished = true
+        return {ready:false,signed:false,diagnostic:args.diagnostic}
       case 'check_review':
+        if (scenario === 'stalled-review') return {valid:false, diagnostic:'R2 needs a measurement on page 3.'}
         if (google && args.verdict.checks?.citations?.evidence?.length && !args.verdict.checks?.manuscript?.claims)
           return {valid:false, diagnostic:'Separate the result from its explanation'}
         return args.observed.some(r => r.artifact === 'sources/paper.txt') && args.verdict.checks?.citations.evidence[0].artifact === 'sources/paper.txt'
@@ -616,6 +652,11 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
     assert.equal(calls.filter(op => op === 'run_method_control').length,1)
     assert.equal(calls.filter(op => op === 'reproduce_measurement').length,1)
     assert.equal(new Set(events.filter(e => e.role === 'reviewer').map(e => e.session_id)).size, 1)
+    if (scenario === 'stalled-review') {
+      assert.equal(calls.filter(op => op === 'unfinished_review').length, 1)
+      assert.ok(unfinished && !recorded && !delivered)
+      return
+    }
     if (terminal) {
       assert.equal(rejectedRequests, scenario === 'server-exhausted' ? 2 : 1)
       assert.equal(reviewerError?.code, {'flattened-503':'INVALID_REQUEST',quota:'QUOTA','no-retry':'SERVER','server-exhausted':'SERVER'}[scenario])
