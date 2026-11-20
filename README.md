@@ -76,7 +76,7 @@ The fastest way to try it is the hosted instance at **[idea2paper.org](https://i
 
 Install the [Idea2Paper DSH bundle](integrations/dsh/README.md) into a dedicated profile. Each project keeps one research session across experiments, writing and revisions. The independent reviewer can inspect measured rows, original papers and rendered PDF pages. The guide includes the install command, prerequisites, and how to resume a project.
 
-Follow a numerical check from the live progress view into the signed review. [Dashboard recording](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.6/progress-history.webm) · [What the reviewer caught and missed](https://github.com/kaust-ark/ARK/blob/8662928b40dbff13e21859cbacda66d9b5df659f/docs/dsh-review-example.md#four-blind-reviews-of-the-same-disputed-explanation)
+Watch a reviewer finding arrive, open its source data, and inspect the exact PDF page under review. [Eight-second dashboard replay](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.20/reviewer-page.webm) · [Subscribe in DSH Discover](https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-preview/index.json) · [Reviewer results and limitations](docs/dsh-review-example.md#reading-a-finding-on-the-dashboard)
 
 ## Quick Start
 

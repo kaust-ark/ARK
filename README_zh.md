@@ -76,7 +76,7 @@ idea2paper 协调 **6 个专业 AI 智能体**，将研究构想转化为完整�
 
 将 [Idea2Paper DSH Bundle](integrations/dsh/README_zh.md) 安装到专用 profile。每个项目保留一个主研究会话，实验、写作和修订共用同一段上下文。独立 reviewer 可以复算测量结果、阅读原文，也能检查实际 PDF 页面。安装命令、运行条件和续接方法见中文指南。
 
-看一次真实的独立复算怎样进入进度时间线，再对照论文和原始数据检查评审的判断。[进度动效录屏](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.6/progress-history.webm) · [盲审实测和漏判记录](https://github.com/kaust-ark/ARK/blob/8662928b40dbff13e21859cbacda66d9b5df659f/docs/dsh-review-example.md#four-blind-reviews-of-the-same-disputed-explanation)
+查看一条评审意见如何进入项目页、展开原始数据并定位到受评 PDF 的具体页。[8 秒实录](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.20/reviewer-page.webm) · [DSH Discover 订阅地址](https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-preview/index.json) · [评审实测与局限](docs/dsh-review-example.md#reading-a-finding-on-the-dashboard)
 
 ## 快速上手
 

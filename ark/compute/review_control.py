@@ -1,5 +1,6 @@
 """Run bounded method controls and independent row reproductions in the science image."""
 import ast
+from collections import Counter
 import json
 import math
 import os
@@ -84,8 +85,153 @@ def _matches(prediction, result):
             and all(math.isclose(a, b, rel_tol=1e-6, abs_tol=1e-9) for a, b in zip(left, right)))
 
 
-def _target(source, target, inputs):
-    tree = ast.parse(source)
+# Only these known numerical calls are reconstructed outside the row-building
+# loop. An exact match in the source alone would also admit file or process I/O.
+_REDUCERS = {
+    "statistics": {"mean", "fmean", "median", "stdev", "pstdev", "variance", "pvariance"},
+    "math": {"ceil", "floor", "sqrt", "log", "log2", "log10", "exp", "fabs", "fsum"},
+    "numpy": {"mean", "sum", "min", "max", "median", "std", "var", "sqrt", "abs"},
+}
+_NUMERIC_BUILTINS = {"abs", "float", "int", "len", "max", "min", "round", "sum"}
+
+
+def _row_calculations(source, tree, tables):
+    """Recognize inline computations on a list of records serialized to stdout."""
+    columns = {table["rows_pointer"]: set(table["columns"]) for table in tables}
+    if not columns:
+        return []
+    modules, members = {}, {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            modules.update((a.asname or a.name, a.name) for a in node.names)
+        if isinstance(node, ast.ImportFrom) and not node.level:
+            members.update((a.asname or a.name, (node.module, a.name)) for a in node.names)
+    # Skip ambiguous bindings, including imports superseded by other imports.
+    bindings = [
+        n.id if isinstance(n, ast.Name) else (n.asname or n.name.split(".")[0])
+        for n in ast.walk(tree) if isinstance(n, ast.alias) or isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    ]
+    bindings.extend(n.name for n in ast.walk(tree) if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)))
+    counts = Counter(bindings)
+    if counts["*"]:
+        return []
+    changed = {(modules[n.value.id], n.attr) for n in ast.walk(tree)
+               if isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del))
+               and isinstance(n.value, ast.Name) and n.value.id in modules}
+
+    def imported(fn):
+        if isinstance(fn, ast.Name) and counts[fn.id] == 1:
+            return members.get(fn.id)
+        if isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name) and counts[fn.value.id] == 1:
+            return modules.get(fn.value.id), fn.attr
+        return None
+
+    # Associate the actual output list with its row appends. A dictionary in
+    # logging or another accumulator does not define a result column.
+    stmt = tree.body[-1] if tree.body else None
+    call = stmt.value if isinstance(stmt, ast.Expr) else None
+    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "print"
+            and not counts["print"] and len(call.args) == 1 and not call.keywords):
+        return []
+    encoded = call.args[0]
+    if not (isinstance(encoded, ast.Call) and imported(encoded.func) == ("json", "dumps") and encoded.args):
+        return []
+    result = encoded.args[0]
+    outputs = [("", result)]
+    if isinstance(result, ast.Dict):
+        outputs = [("/" + k.value.replace("~", "~0").replace("/", "~1"), v)
+                   for k, v in zip(result.keys, result.values) if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+    row_lists = {t.id for n in tree.body if isinstance(n, ast.Assign) and isinstance(n.value, ast.List) and not n.value.elts
+                 for t in n.targets if isinstance(t, ast.Name) and counts[t.id] == 1}
+    lists = {v.id: columns[key] for key, v in outputs
+             if key in columns and isinstance(v, ast.Name) and v.id in row_lists}
+    if not lists:
+        return []
+
+    def operands(expr):
+        inputs, imports, callees = set(), set(), set()
+
+        def pure(n):
+            if isinstance(n, ast.Name) and not n.id.startswith("__"):
+                if n.id in modules or n.id in members:
+                    return False
+                inputs.add(n.id)
+                return True
+            if isinstance(n, ast.Constant):
+                return type(n.value) in (int, float)
+            if isinstance(n, (ast.List, ast.Tuple)):
+                return all(pure(item) for item in n.elts)
+            if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.UAdd, ast.USub)):
+                return pure(n.operand)
+            if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)):
+                return pure(n.left) and pure(n.right)
+            if not isinstance(n, ast.Call) or n.keywords:
+                return False
+            fn = n.func
+            if isinstance(fn, ast.Name):
+                callees.add(fn.id)
+            elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
+                callees.add(fn.value.id)
+            if binding := imported(fn):
+                module, name = binding
+                if binding in changed or name not in _REDUCERS.get(module, ()):
+                    return False
+                if isinstance(fn, ast.Name):
+                    imports.add(f"from {module} import {name} as {fn.id}")
+                else:
+                    imports.add(f"import {module} as {fn.value.id}")
+            elif not (isinstance(fn, ast.Name) and fn.id in _NUMERIC_BUILTINS and not counts[fn.id]):
+                return False
+            return all(pure(arg) for arg in n.args)
+
+        if sum(1 for _ in ast.walk(expr)) <= 64 and pure(expr) and inputs and inputs.isdisjoint(callees):
+            return sorted(inputs), "\n".join(sorted(imports))
+
+    targets = []
+    pending = list(reversed(tree.body))
+    while pending:
+        stmt = pending.pop()
+        if isinstance(stmt, (ast.For, ast.If, ast.While)):
+            pending.extend(reversed(stmt.body + stmt.orelse))
+            continue
+        # Follow standalone appends, skipping local scopes.
+        n = stmt.value if isinstance(stmt, ast.Expr) else None
+        if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "append"
+                and isinstance(n.func.value, ast.Name) and n.func.value.id in lists and len(n.args) == 1):
+            continue
+        row = n.args[0]
+        if isinstance(row, ast.Dict) and all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in row.keys):
+            fields = [(k.value, v) for k, v in zip(row.keys, row.values)]
+        elif (isinstance(row, ast.Call) and isinstance(row.func, ast.Name) and row.func.id == "dict"
+              and not counts["dict"] and not row.args and all(k.arg for k in row.keywords)):
+            fields = [(k.arg, k.value) for k in row.keywords]
+        else:
+            continue
+        for column, expr in fields:
+            if column not in lists[n.func.value.id]:
+                continue
+            if not isinstance(expr, (ast.Call, ast.BinOp, ast.UnaryOp)) or not (bound := operands(expr)):
+                continue
+            target = ast.get_source_segment(source, expr)
+            if target and len(target) <= 240 and len(column) <= 100 and len(bound[0]) <= 12:
+                entry = {"column": column, "target": target, "inputs": bound[0]}
+                targets.append((entry, bound[1]))
+                if len(targets) == 16:
+                    return targets
+    return targets
+
+
+def result_column_targets(source, tables):
+    if len(source) > 256_000:
+        return []
+    try:
+        source = source.decode("utf-8")
+        return [entry for entry, _ in _row_calculations(source, ast.parse(source), tables)]
+    except (UnicodeDecodeError, SyntaxError, RecursionError):
+        return []
+
+
+def _target(source, tree, target, inputs):
     if any(isinstance(n, ast.FunctionDef) and n.name == target for n in tree.body):
         return True
     # Limit expressions to exactly the calculation in a return or assignment.
@@ -205,7 +351,7 @@ def reproduce(runtime, program, identifiers, columns):
     return {name: row[name] for name in columns}
 
 
-def run(source, runtime, args):
+def run(source, runtime, args, *, tables=()):
     if len(source) > 256_000:
         raise ValueError("The sealed method exceeds the control size limit.")
     target = args.get("target")
@@ -224,7 +370,32 @@ def run(source, runtime, args):
     if not isinstance(arrays, list) or not all(isinstance(k, str) and isinstance(inputs.get(k), list) for k in arrays):
         raise ValueError("array_inputs must name list inputs that need NumPy conversion.")
     source = source.decode("utf-8")
-    function = _target(source, target, inputs)
+    tree = ast.parse(source)
+    candidates = _row_calculations(source, tree, tables)
+    for entry, preamble in candidates:
+        if target == entry["target"]:
+            if set(inputs) != set(entry["inputs"]):
+                raise ValueError(f"Bind exactly these inputs for {target}: {', '.join(entry['inputs'])}.")
+            for value in inputs.values():
+                # The request already bounds inputs_json to 4096 characters.
+                # A pooled population can be longer than a control's small output.
+                items = value if isinstance(value, list) else [value]
+                if not items or any(type(x) not in (int, float) for x in items):
+                    raise ValueError("Bind each operand to a finite number or a flat numeric array.")
+                for x in items:
+                    _numbers(x)
+            # The exact row expression needs its verified imports and the bound
+            # operands only. Never run the table loop or its surrounding I/O.
+            source, function = preamble, False
+            break
+    else:
+        try:
+            function = _target(source, tree, target, inputs)
+        except ValueError as err:
+            if candidates:
+                raise ValueError(f"{err} Available result-column targets and inputs: "
+                                 + json.dumps([entry for entry, _ in candidates])) from None
+            raise
     program = args.get("prediction_program")
     if program is None:
         expected, alternative = parse("expected_json"), parse("alternative_json")

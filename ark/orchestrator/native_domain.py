@@ -2358,7 +2358,8 @@ class NativeProject(CompilerMixin):
         self.control_attempts += 1
         self.event("review", "method_control_started", "Reviewer is testing a prediction against the frozen experiment.")
         try:
-            result = review_control.run(data, snap["method_control"], args)
+            tables = snap.get("evidence_scope", {}).get("tables", ())
+            result = review_control.run(data, snap["method_control"], args, tables=tables)
         except Exception:
             self.event("review", "method_control_failed", "The reviewer’s numerical control did not return a measurement.")
             raise

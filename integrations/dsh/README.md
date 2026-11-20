@@ -10,10 +10,10 @@ This source build supports two DSH runtimes on Linux with pnpm. Use Node.js 22.1
 
 Python 3.10 or newer with venv and pip, TeX Live with pdflatex and BibTeX, and a working Docker daemon are needed for the local experiment. The first run installs the bundled Python wheel and its dependencies into a private cache and builds the experiment image. Budget disk space and package-download time for that setup.
 
-Install version 0.2.0-alpha.20 into a dedicated profile with one command. The DSH Web Discover view requires the full upstream CLI with its Web profile.
+Install version 0.2.0-alpha.22 into a dedicated profile with one command. The DSH Web Discover view requires the full upstream CLI with its Web profile.
 
 ```sh
-dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.20/idea2paper-dsh-0.2.0-alpha.20.tgz
+dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.22/idea2paper-dsh-0.2.0-alpha.22.tgz
 ```
 
 To install a local build, run these commands from the source checkout.
@@ -25,7 +25,7 @@ dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-$version.tgz"
 dsh --profile idea2paper --help
 ```
 
-To see how a review changes across manuscript revisions, open the offline replay. It contains three PDFs, their reviewer findings and the measured rows. The archive reproduces the example first published with alpha.3 and requires no model key. [Download the review replay](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.20/review-replay.zip)
+To see how a review changes across manuscript revisions, open the offline replay. It contains three PDFs, their reviewer findings and the measured rows. The archive reproduces the example first published with alpha.3 and requires no model key. [Download the review replay](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.22/review-replay.zip)
 
 ## Run a small study
 
@@ -64,10 +64,10 @@ In the dashboard, expand **What the reviewer checked → Experimental controls**
 
 ## Discover
 
-In DSH Web, open **Plugins → More → Experimental plugins**, enable **Custom plugin markets**, and select **Discover → Add index source**. Enter the 0.2.0-alpha.20 index URL below. The card identifies the exact release package commit and its supported DSH version. Market sources and installations belong to the selected profile. Use the CLI install command for the `idea2paper` profile when browsing from a separate Web profile. [DSH Discover guide](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.md)
+In DSH Web, open **Plugins → More → Experimental plugins**, enable **Custom plugin markets**, and select **Discover → Add index source**. Add the community preview index below once. Discover lists subsequent releases at this address and selects the version compatible with your DSH installation. The card identifies the exact release package commit and its supported DSH version. Market sources and installations belong to the selected profile. Use the CLI install command for the `idea2paper` profile when browsing from a separate Web profile. [DSH Discover guide](https://github.com/deepseek-ai/deepseek-harness/blob/dsh-v0.2.1-rc.2/docs/user/guide/plugin-market.md)
 
 ```text
-https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-0.2.0-alpha.20/index.json
+https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-preview/index.json
 ```
 
 ## Verify and publish
@@ -77,7 +77,8 @@ From the source checkout, put the pinned DSH binary and pnpm on PATH. Build once
 ```sh
 python3 integrations/dsh/pack.py --out dist/dsh
 version=$(node -p "require('./integrations/dsh/package.json').version")
-python3 integrations/dsh/verify.py "dist/dsh/idea2paper-dsh-$version.tgz" --prepare dist/dsh/release
+git clone --single-branch --branch dsh-bundle-preview https://github.com/kaust-ark/ARK.git dist/dsh/channel
+python3 integrations/dsh/verify.py "dist/dsh/idea2paper-dsh-$version.tgz" --prepare dist/dsh/release --previous-index dist/dsh/channel/index.json
 ```
 
 The verifier installs the archive over loopback into a clean profile, reads a stopped project using the packaged companion, checks the Git target in the running DSH Web Discover service, and installs that exact commit through a local Git mirror. Its separate Git repository contains the exact unpacked npm contents, including the wheel, and an index pointing to that package commit. The legacy v0.1.0-alpha.1 package fixture is available as `verify_legacy.py`.
@@ -98,6 +99,10 @@ curl -fsSL https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-${versi
 cmp dist/dsh/downloaded.tgz dist/dsh/idea2paper-dsh-${version}.tgz
 curl -fsS https://raw.githubusercontent.com/kaust-ark/ARK/dsh-bundle-${version}/index.json -o dist/dsh/downloaded-index.json
 cmp dist/dsh/downloaded-index.json dist/dsh/release/index.json
+cp dist/dsh/downloaded-index.json dist/dsh/channel/index.json
+git -C dist/dsh/channel add index.json
+git -C dist/dsh/channel commit -m "List Idea2Paper $version in Discover"
+git -C dist/dsh/channel push origin HEAD:dsh-bundle-preview
 ```
 
 An npm maintainer can additionally publish the same archive with `npm publish dist/dsh/idea2paper-dsh-${version}.tgz --access public --tag alpha`. Check its registry `dist.integrity` before documenting the npm install path. To uninstall the profile plugin, run `dsh plugin --profile idea2paper remove idea2paper-dsh`. Keep the project directory and original profile for resuming work.

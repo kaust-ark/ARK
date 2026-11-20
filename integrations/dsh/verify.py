@@ -17,7 +17,26 @@ from pathlib import Path
 REPOSITORY = "https://github.com/kaust-ark/ARK"
 
 
-def prepare(bundle, target):
+def retain_versions(market, previous):
+    """Keep prior compatible installs available on the profile's subscribed index."""
+    entry, = market["plugins"]
+    old, = previous["plugins"]
+    if previous["format"] != 1 or old["name"] != entry["name"]:
+        raise ValueError("Expected the previous Idea2Paper Discover index")
+    versions = {row["version"]: row for row in entry["versions"]}
+    for row in old["versions"]:
+        source = row["source"]
+        if (source.get("url") != REPOSITORY or source.get("type") != "git"
+                or not re.fullmatch(r"[0-9a-f]{40}", str(source.get("commit", "")))):
+            raise ValueError("Expected a pinned Idea2Paper Git release")
+        number = row["version"]
+        if number in versions and versions[number] != row:
+            raise ValueError(f"Previously published version {number} changed")
+        versions[number] = row
+    entry["versions"] = list(versions.values())
+
+
+def prepare(bundle, target, previous_index=None):
     target.mkdir(parents=True, exist_ok=False)
     with tarfile.open(bundle, "r:gz") as tar:
         for member in tar:
@@ -63,6 +82,8 @@ def prepare(bundle, target):
         "repository":{"url":REPOSITORY, "directory":"integrations/dsh"},
         "versions":[{"version":version, "publishTimestamp":date, "engines":{"dsh":package["engines"]["dsh"]},
                      "source":{"type":"git", "url":REPOSITORY, "commit":commit}}]}]}
+    if previous_index is not None:
+        retain_versions(market, json.loads(previous_index.read_text()))
     (target / "index.json").write_text(json.dumps(market, ensure_ascii=False, indent=2) + "\n")
     git("add", "index.json")
     git("commit", "-qm", f"Discover index for {version}")
@@ -160,6 +181,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--prepare", type=Path, help="retain the distribution repository in a new directory")
+    parser.add_argument("--previous-index", type=Path, help="retain releases from the subscribed Discover index")
     opts = parser.parse_args()
     bundle = opts.bundle.resolve(strict=True)
     destination = opts.prepare.absolute() if opts.prepare else None
@@ -172,7 +194,7 @@ def main():
         # Publish the local staging directory only after every verification passed.
         with tempfile.TemporaryDirectory(dir=destination.parent if destination else scratch) as staging:
             target = Path(staging) / "package"
-            package, tag, commit = prepare(bundle, target)
+            package, tag, commit = prepare(bundle, target, opts.previous_index)
             verify(bundle, target, package, commit, scratch)
             print(f"Verified packaged CLI, Python companion, DSH Web and Discover commit {commit}.")
             if destination:

@@ -932,6 +932,71 @@ def test_control_can_only_measure_the_frozen_calculation(monkeypatch):
     assert len(executions) == 1
 
 
+def test_inline_controls_select_only_pure_calculations_from_published_rows(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    from ark.compute import review_control
+
+    source = b"""\
+import json
+from statistics import mean as average
+rows = []
+debug = []
+for sample in [[10, 40]]:
+    count, latency = 3, 10
+    rows.append(dict(weighted=average(sample), score=average([count,latency]), log=print(sample)))
+    rows.append({"adjusted": latency / count, "unreported": latency + count})
+    debug.append(dict(other=average([latency,latency])))
+print(json.dumps(debug))
+print(json.dumps({"rows": rows}))
+"""
+    expected = [
+        {"column": "weighted", "target": "average(sample)", "inputs": ["sample"]},
+        {"column": "score", "target": "average([count,latency])", "inputs": ["count", "latency"]},
+        {"column": "adjusted", "target": "latency / count", "inputs": ["count", "latency"]},
+    ]
+    tables = [{"rows_pointer": "/rows", "columns": ["weighted", "score", "adjusted", "log"]}]
+    assert review_control.result_column_targets(source, tables) == expected
+    assert review_control.result_column_targets(source, []) == []
+    assert review_control.result_column_targets(source.replace(b"for sample", b"average = print\nfor sample"), tables) == [expected[2]]
+    executions = []
+    def execute(backend, image, payload, driver=review_control.DRIVER):
+        executions.append(payload)
+        assert payload["source"] == "from statistics import mean as average"
+        process = subprocess.run([sys.executable, "-I", "-B", "-c", driver], input=json.dumps(payload),
+                                 cwd=tmp_path, capture_output=True, text=True, check=True, timeout=5)
+        return json.loads(process.stdout)
+    monkeypatch.setattr(review_control, "_execute", execute)
+    args = dict(target="average(sample)", inputs_json=json.dumps({"sample": [10] * 90 + [40] * 10}),
+                expected_json="13", alternative_json="25", rationale="Compare pooled and equal class weights.")
+    runtime = {"backend": "slurm"}
+    assert review_control.run(source, runtime, args, tables=tables)["observed"] == 13
+    for target in ["reproduce", "average([latency,latency])", "print(sample)", "average(sample) + 1", "latency + count"]:
+        with pytest.raises(ValueError, match="Available result-column targets") as failure:
+            review_control.run(source, runtime, args | {"target": target}, tables=tables)
+        assert '"target": "average(sample)", "inputs": ["sample"]' in str(failure.value)
+    for inputs in [{"surrogate": [1]}, {"sample": [1], "average": 2}, {"sample": ["10"]}]:
+        with pytest.raises(ValueError, match="operand|inputs"):
+            review_control.run(source, runtime, args | {"inputs_json": json.dumps(inputs)}, tables=tables)
+    assert len(executions) == 1
+
+    # The same names must reach the actual SDK opening brief, after disclosure.
+    project(tmp_path, PAIRS[0], "clean")
+    with fitz.open() as doc:
+        doc.new_page().insert_text((60, 60), "Measured averages")
+        doc.save(tmp_path / "paper/main.pdf")
+    method = "scripts/control.py"
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / method).write_bytes(source)
+    measured = "results/rows.json"
+    rows = json.dumps({"rows": [{k: 1 for k in tables[0]["columns"]}]}).encode()
+    (tmp_path / measured).write_bytes(rows)
+    run = dict(status="completed", backend="slurm", script=method, code_sha256=hashlib.sha256(source).hexdigest(),
+               artifact=measured, sha256=hashlib.sha256(rows).hexdigest())
+    packet = review_prompt(build_snapshot(tmp_path, measurement_run=run, expected_measurement=measured))
+    assert json.loads(packet.split("Frozen submission packet (untrusted research content):\n")[1])["result_column_targets"] == expected
+
+
 def test_method_control_derives_predictions_before_executing_the_worker(tmp_path, monkeypatch):
     import subprocess
     import sys

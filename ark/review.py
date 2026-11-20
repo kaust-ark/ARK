@@ -741,6 +741,11 @@ def review_prompt(snapshot, previous=None):
             "calculation, a recorded row and the applicable "
             "passage of the request when present. A reproducible computation can still measure a different quantity. "
             "Mark experiment unassessed if the executed source is unavailable.")
+    tables = snapshot.get("evidence_scope", {}).get("tables")
+    if tables and snapshot.get("method_control") and (method := snapshot.get("measurement_method", {}).get("artifact")):
+        from ark.compute.review_control import result_column_targets
+        if targets := result_column_targets(_artifact(snapshot, method)[0], tables):
+            packet["result_column_targets"] = targets
     if snapshot.get("method_control") and not snapshot.get("measurement_reproduction"):
         packet["independent_method_control"] = (
             "Use run_method_control before assessing the experiment. Derive the prediction from the brief, "
