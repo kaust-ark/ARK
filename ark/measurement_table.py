@@ -427,6 +427,15 @@ def _compare_printed_rows(headers, body, data, table):
     return conflicts if matched and len(seen) >= 2 else []
 
 
+def _table_cells(body):
+    rows = []
+    for row in re.split(r"\\\\(?:\[[^\[\]]*\])?", body):
+        row = re.sub(r"\\(?:toprule|midrule|bottomrule|hline)\b", "", row).strip()
+        if row:
+            rows.append([_plain_cell(c) for c in re.split(r"(?<!\\)&", row)])
+    return rows
+
+
 def transcription_issues(data, tables, sources, pdf):
     """Check visible, hand-entered copies of compiled worker projections against raw rows."""
     if not tables or not pdf.is_file():
@@ -442,11 +451,7 @@ def transcription_issues(data, tables, sources, pdf):
     issues = []
     for name, source in sources.items():
         for match in _TABULAR.finditer(source):
-            rows = []
-            for row in re.split(r"\\\\(?:\[[^\[\]]*\])?", match[2]):
-                row = re.sub(r"\\(?:toprule|midrule|bottomrule|hline)\b", "", row).strip()
-                if row:
-                    rows.append([_plain_cell(c) for c in re.split(r"(?<!\\)&", row)])
+            rows = _table_cells(match[2])
             if len(rows) < 3:
                 continue
             candidates = [(table, conflicts) for table in projections.values()
@@ -470,6 +475,161 @@ def transcription_issues(data, tables, sources, pdf):
                           + ". ".join(conflicts[:4]) + ". Correct the listed cells using the measured rows, "
                           f"or use \\input{{{table['path']}}} for the worker projection.")
     return issues
+
+
+_BOUND_NUMBER = r"[+−-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+−-]?[0-9]{1,3})?"
+_ALL_ROWS = r"(?:all (?:the )?(?:(?:tested|measured|recorded|observed) )?(?:conditions|rows|runs|trials|settings|folds|seeds)|every (?:condition|row|run|trial|setting|fold|seed))"
+_BOUND_COMPARISONS = {"<": lambda x, b: x < b, "lower than": lambda x, b: x < b,
+                      ">": lambda x, b: x > b, "higher than": lambda x, b: x > b,
+                      "≤": lambda x, b: x <= b, "≥": lambda x, b: x >= b}
+_UNCERTAIN_BOUND = re.compile(r"\b(?:about|around|roughly|approximately|approx\w*|round\w*|displayed|"
+                              r"if|when|unless|except|excluding|without|not|never|only|subset|assuming|"
+                              r"expected|target|budget|goal|criterion|hypothes\w*|plan\w*|aim\w*|predict\w*|"
+                              r"intend\w*|want\w*|whether|will|might|could|would|should)\b|[≈~]", re.I)
+
+
+def _bound_scope(before, after, identifiers):
+    # Accept a complete scope adjoining the assertion. An unparsed qualifier
+    # before or after the bound could change which rows it describes.
+    fields = "|".join(re.escape(name) for name in identifiers)
+    selection = rf"(?P<all>{_ALL_ROWS})"
+    if fields:
+        numbers = rf"{_BOUND_NUMBER}(?:\s*,\s*{_BOUND_NUMBER})*"
+        selection += rf"|(?P<id>{fields})\s*(?:∈\s*\{{(?P<set>{numbers})\}}|=\s*(?P<one>{_BOUND_NUMBER}))"
+    scope = rf"(?:across|for|at|over|in)\s+(?:{selection})"
+    if re.fullmatch(r"(?:the )?", before, re.I):
+        match = re.fullmatch(rf"\s*{scope}", after, re.I)
+    elif not after or after == ")":
+        match = re.fullmatch(rf"{scope}\s*,?\s*(?:the )?", before, re.I)
+        if (not match and after == ")" and re.search(r"\b(?:we|our|us)\b", before, re.I)
+                and re.search(r"\b(?:measur(?:e[ds]?|ing)|observ(?:e[ds]?|ing)|record(?:ed)?|found)\b", before, re.I)):
+            match = re.search(rf"\b{scope}\s+with (?:[A-Za-z]+ ){{0,5}}(?:precision|uncertainty|variability) \($",
+                              before, re.I)
+            if match and re.search(r"\b(?:for|at|among|during|under|on|in|within|using|with|over|across|"
+                                   r"after|before|from)\b", before[:match.start()], re.I):
+                return None
+    else:
+        return None
+    if not match:
+        return None
+    if match["all"]:
+        return "", set()
+    return match["id"].casefold(), {Decimal(n.strip().replace("−", "-")) for n in
+                                   (match["set"] or match["one"]).split(",")}
+
+
+def measured_bound_issues(data, tables, pdf):
+    """Find counterexamples to explicitly scoped upper/lower bounds in the rendered submission."""
+    if not tables:
+        return []
+    import fitz
+
+    with fitz.open(pdf) as doc:
+        blocks = [(n, " ".join(re.sub(r"(?<=[A-Za-z])-\n(?=[a-z])", "", b[4]).split()))
+                  for n, page in enumerate(doc, 1) for b in page.get_text("blocks") if b[6] == 0]
+    page_text = {}
+    captions = {}
+    for page, block in blocks:
+        page_text[page] = page_text.get(page, " ") + block + " "
+        if re.match(r"Table\s+[0-9]+[.:]", block, re.I):
+            captions.setdefault(page, []).append(block)
+    # Bind aliases only to verified table recipes whose rows reached the PDF.
+    labels = {}
+    for table in tables:
+        pointer = table.get("rows_pointer", "")
+        cells = _table_cells(_TABULAR.fullmatch(table["rendered_table"].strip())[2])
+        body = " " + " ".join(c for row in cells[1:] for c in row) + " "
+        pages = [n for n, text in page_text.items() if body in text]
+        if not pages:
+            continue
+        caption = captions.get(pages[0], []) if len(pages) == 1 else []
+        caption = caption[0] if len(caption) == 1 else ""
+        ids = {}
+        for col in table["columns"]:
+            name = _plain_cell(col.get("label") or col["path"]).casefold()
+            if re.fullmatch(r"[\w -]{1,48}", name):
+                ids.setdefault(name, set()).add(col["path"])
+        ids = {name: next(iter(paths)) for name, paths in ids.items() if len(paths) == 1}
+        for col in table["columns"]:
+            name = _plain_cell(col.get("label") or col["path"])
+            label = re.fullmatch(r"([A-Za-z][\w -]{0,48}?)(?:\s*\(([A-Za-zµμ%]+)\))?", name)
+            if label:
+                key = label[1].strip().casefold()
+                signature = (pointer, col["path"], label[2], col.get("percent", False))
+                labels.setdefault(key, {}).setdefault(signature, []).append((ids, caption))
+    issues = []
+    for label, choices in labels.items():
+        if len(choices) != 1:
+            continue
+        (pointer, path, header_unit, percent), projections = next(iter(choices.items()))
+        ids = {k: v for k, v in projections[0][0].items() if all(p.get(k) == v for p, _ in projections)}
+        caption = projections[0][1] if len(projections) == 1 else ""
+        rows = _rows(data, pointer)
+        values = [_value(row, path) for row in rows]
+        if not all(type(v) is int or isinstance(v, Decimal) and v.is_finite() for v in values):
+            continue
+        relation = re.compile(rf"\b{re.escape(label)}\s*(?:(?:was|is|were|are)\s+)?"
+                              rf"(?P<op>≤|≥|<|>|lower than\b|higher than\b)\s*(?P<number>{_BOUND_NUMBER})"
+                              rf"(?![\w.,/×^−-])", re.I)
+        for page, block in blocks:
+            if re.search(r"\b(?:all|following|reported) (?:values|measurements|results) (?:are|were) rounded\b",
+                         block, re.I):
+                continue
+            for sentence in re.split(r"(?<=[.!?])\s+", block):
+                sentence = sentence.rstrip(".")
+                if _UNCERTAIN_BOUND.search(sentence):
+                    continue
+                for m in relation.finditer(sentence):
+                    before, after = sentence[:m.start()].lstrip(), sentence[m.end():].strip()
+                    # Any explicit unit must be bound to the named column. A standard
+                    # error/deviation reported with its estimate inherits the estimate's unit.
+                    unit = re.match(r"([A-Za-zµμ%]+)(?=\s|\)|$)", after)
+                    if unit and unit[1].lower() not in {"across", "for", "at", "over", "in"}:
+                        token = unit[1]
+                        if percent:
+                            known = token == "%"
+                        elif header_unit:
+                            known = token == header_unit
+                        else:
+                            unit_text = rf"(?-i:{re.escape(token)})(?!\w)"
+                            known = path.endswith("_" + token) or re.search(
+                                rf"\b{re.escape(label)}\s*(?:\(\s*(?:in )?|\bin ){unit_text}|"
+                                rf"\bin {unit_text},? with (?:its|their) (?:[A-Za-z]+ ){{0,3}}standard "
+                                rf"(?:error|deviation)\s*\({re.escape(label)}\)", caption, re.I)
+                        if not known:
+                            continue
+                        after = after[unit.end():].strip()
+                    elif percent:
+                        continue
+                    scope = _bound_scope(before, after, ids)
+                    if scope is None:
+                        continue
+                    field, selected = scope
+                    if field:
+                        raw = [_value(row, ids[field]) for row in rows]
+                        if not all(type(v) is int or isinstance(v, Decimal) and v.is_finite() for v in raw):
+                            continue
+                        settings = [Decimal(str(v)) for v in raw]
+                        if len(set(settings)) != len(rows) or not selected <= set(settings):
+                            continue
+                    bound = Decimal(m["number"].replace("−", "-"))
+                    obeys = _BOUND_COMPARISONS[m["op"].lower()]
+                    for i, (row, value) in enumerate(zip(rows, values)):
+                        if field and settings[i] not in selected:
+                            continue
+                        observed = Decimal(value)
+                        if percent:
+                            sign, digits, e = observed.as_tuple()
+                            observed = Decimal((sign, digits, e + 2))
+                        if not obeys(observed, bound):
+                            fields = [ids[field]] if field else [p for p in ids.values()
+                                                               if p.split(".")[-1].lower() in ROW_IDENTIFIERS]
+                            where = ", ".join(f"{p}={_value(row, p)}" for p in fields)
+                            issues.append(f'PDF p. {page} reports “{m[0]}”. The sealed worker row {pointer}/{i}'
+                                          f' ({where or "one-based row " + str(i + 1)}) gives {path} = {observed}'
+                                          f'{("%" if percent else "")}. Check the boundary at full precision.')
+                            break
+    return list(dict.fromkeys(issues))
 
 
 def render(data, pointer, columns, *, legacy_headers=False):

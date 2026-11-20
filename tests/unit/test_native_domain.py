@@ -1201,6 +1201,51 @@ A & 12.3 & 3.124 & 2 \\
     assert not any("disagrees with the worker measurements" in i for i in project.compile_paper({})["manuscript_issues"])
 
 
+@pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
+def test_scoped_latency_bounds_use_sealed_precision_in_review_preflight(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    artifact = tmp_path / "results/timings.json"
+    artifact.write_text('{"runs":[{"seed":11,"latency_ms":10.004},{"seed":17,"latency_ms":8},'
+                        '{"seed":19,"latency_ms":8.999999999999999999999999999999}]}')
+    project.state["experiment"] = {"status": "completed", "artifact": "results/timings.json",
+                                   "sha256": domain._sha(artifact)}
+    project.render_results_table({"name": "timings", "rows_pointer": "/runs", "columns": [
+        {"path": "latency_ms", "label": "Latency (ms)", "digits": 2}]})
+    source = project.latex_dir / "main.tex"
+    correct = r"""Latency was lower than 9 ms at seed = 17.
+Across all measured runs, Latency $\ge 8$ ms.
+Across all measured runs, Latency $\le 10.00$ ms when rounded to two decimals.
+Latency was lower than 7 ms for warm caches.
+Latency was lower than 7 ms at seed = 91.
+We measured speed for warmed caches across all runs with high precision (Latency $< 7$ ms).
+We measured speed across all runs with warm caches (Latency $< 7$ ms).
+Across all measured runs, Latency was lower than 1 second.
+For some measured runs, Latency was lower than 8 ms."""
+    wrong = r"""Across all measured runs, Latency $\le 10.00$ ms.
+Latency was lower than 8 ms at seed = 17.
+Latency was higher than 8 ms at seed = 17.
+Latency $\ge 9$ ms at seed = 19."""
+    template = r"""\documentclass{article}
+\begin{document}\section{Results}
+\input{tables/timings.tex}
+
+%s
+
+\appendix\section{Measurements} We timed each run.
+\end{document}"""
+    source.write_text(template % (correct + "\n" + wrong))
+    compiled = project.compile_paper({})
+    messages = [m for m in compiled["manuscript_issues"] if "The sealed worker row" in m]
+    assert compiled["ok"] and len(messages) == 4
+    assert any("seed=11" in m and "10.004" in m and "PDF p. 1" in m for m in messages)
+    assert any("seed=19" in m and "8.999999999999999999999999999999" in m for m in messages)
+    assert all(any(text in m and "seed=17" in m and "latency_ms = 8" in m for m in messages)
+               for text in ("lower than 8", "higher than 8"))
+    assert set(messages) <= set(project.review_snapshot({"preflight": True})["blockers"])
+    source.write_text(template % correct)
+    assert not any("The sealed worker row" in m for m in project.compile_paper({})["manuscript_issues"])
+
+
 def test_render_plot_discovery_and_strict_delivery_require_actual_read(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     registered = plan()

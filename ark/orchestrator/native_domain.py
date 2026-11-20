@@ -852,15 +852,16 @@ class NativeProject(CompilerMixin):
                                     "and proposed calculations predict different values before calling it fixed.")
         self.state["measurement_comparison"] = check
 
-    def _measurements(self):
+    def _measurements(self, *, parse_float=float):
         receipt = self.state.get("experiment") or {}
         name = receipt.get("artifact", "")
         if receipt.get("status") != "completed" or not re.fullmatch(r"results/[\w-]+\.json", name):
             raise ValueError("Complete the measured experiment first.")
         path = self.root / name
-        if path.resolve() != path or _sha(path) != receipt.get("sha256"):
+        raw = path.read_bytes() if path.resolve() == path and path.is_file() else None
+        if raw is None or hashlib.sha256(raw).hexdigest() != receipt.get("sha256"):
             raise ValueError("Measured artifact does not match its worker receipt.")
-        return json.loads(path.read_text()), receipt["sha256"]
+        return json.loads(raw, parse_float=parse_float), receipt["sha256"]
 
     def render_results_table(self, args):
         data, digest = self._measurements()
@@ -2174,7 +2175,7 @@ class NativeProject(CompilerMixin):
                         issues.append(f"Rows in {name} omit their measured identifiers ({', '.join(missing)}). "
                                       "Regenerate this table with render_results_table so each row can be traced to its condition.")
                     elif regenerated == path.read_text():
-                        verified_tables.append(table)
+                        verified_tables.append({**table, "rendered_table": regenerated})
                     else:
                         issues.append(f"Regenerate {name} to match its recorded worker rows and columns.")
                 continue
@@ -2198,6 +2199,12 @@ class NativeProject(CompilerMixin):
             )
         issues.extend(measurement_table.transcription_issues(data, verified_tables, authored_sources,
                                                              self.latex_dir / "main.pdf"))
+        pdf = self.latex_dir / "main.pdf"
+        if (verified_tables and rendered.get("ok") and pdf.is_file() and pdf.resolve() == pdf
+                and self.state.get("compiled_pdf_sha256") == _sha(pdf)):
+            from decimal import Decimal
+            exact_data, _ = self._measurements(parse_float=Decimal)
+            issues.extend(measurement_table.measured_bound_issues(exact_data, verified_tables, pdf))
         return issues
 
     def _opening_review_evidence(self, snapshot, trace=None, *, previous=None, pages=0):
