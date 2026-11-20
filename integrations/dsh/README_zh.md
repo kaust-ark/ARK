@@ -10,10 +10,10 @@
 
 本地实验还需要含 venv 和 pip 的 Python 3.10 或更高版本、带 pdflatex 和 BibTeX 的 TeX Live，以及可用的 Docker daemon。首次运行会在独立缓存中安装随包分发的 Python wheel 及依赖，并构建实验镜像。请为首次下载和安装留出时间和磁盘空间。
 
-用这一条命令将 0.2.0-alpha.22 安装到专用 profile。使用 DSH Web Discover 需要上游带 Web profile 的完整 CLI。
+用这一条命令将 0.2.0-alpha.23 安装到专用 profile。使用 DSH Web Discover 需要上游带 Web profile 的完整 CLI。
 
 ```sh
-dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.22/idea2paper-dsh-0.2.0-alpha.22.tgz
+dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.23/idea2paper-dsh-0.2.0-alpha.23.tgz
 ```
 
 如需安装本地构建的版本，可在仓库根目录运行以下命令。
@@ -25,7 +25,7 @@ dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-$version.tgz"
 dsh --profile idea2paper --help
 ```
 
-离线示例包含三个版本的论文 PDF、各版的评审意见和测量数据。解压后即可对照查看同一问题如何在修订中得到解决，无需模型密钥。这份示例首次随 alpha.3 发布，本版沿用原始记录。[下载离线评审示例](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.22/review-replay.zip)
+离线示例包含三个版本的论文 PDF、各版的评审意见和测量数据。解压后即可对照查看同一问题如何在修订中得到解决，无需模型密钥。这份示例首次随 alpha.3 发布，本版沿用原始记录。[下载离线评审示例](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.23/review-replay.zip)
 
 ## 运行一个小实验
 
@@ -51,6 +51,8 @@ dsh --profile idea2paper resume search-study
 | 交付检查 | `auto_research/state/delivery_report.yaml` |
 
 研究 agent 可直接用测量 JSON 的字段画折线图、点图和分组柱状图。自定义绘图脚本读取 `/study/results.json`，并把图存入 `/output/`。对照实验默认由 Nano Banana 绘制研究对象，再按已确认的实验方案排版各组条件。通过核查的图会返回对应图注，也可以按需绘制机制图。修订时可以直接编辑已读过的行，已有成功编译记录的稿件会在保存修改前由 TeX 试编译。
+
+四页论文的回放记录了四次编译。正文从 0.91 页增加到 3.34 页，点选每根柱子可以返回对应版本的编译记录。评审结论单独显示。[查看工作台回放](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.23/draft-length.webm)
 
 ### 独立评审
 

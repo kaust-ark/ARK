@@ -10,10 +10,10 @@ This source build supports two DSH runtimes on Linux with pnpm. Use Node.js 22.1
 
 Python 3.10 or newer with venv and pip, TeX Live with pdflatex and BibTeX, and a working Docker daemon are needed for the local experiment. The first run installs the bundled Python wheel and its dependencies into a private cache and builds the experiment image. Budget disk space and package-download time for that setup.
 
-Install version 0.2.0-alpha.22 into a dedicated profile with one command. The DSH Web Discover view requires the full upstream CLI with its Web profile.
+Install version 0.2.0-alpha.23 into a dedicated profile with one command. The DSH Web Discover view requires the full upstream CLI with its Web profile.
 
 ```sh
-dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.22/idea2paper-dsh-0.2.0-alpha.22.tgz
+dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.23/idea2paper-dsh-0.2.0-alpha.23.tgz
 ```
 
 To install a local build, run these commands from the source checkout.
@@ -25,7 +25,7 @@ dsh plugin --profile idea2paper add "$PWD/dist/dsh/idea2paper-dsh-$version.tgz"
 dsh --profile idea2paper --help
 ```
 
-To see how a review changes across manuscript revisions, open the offline replay. It contains three PDFs, their reviewer findings and the measured rows. The archive reproduces the example first published with alpha.3 and requires no model key. [Download the review replay](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.22/review-replay.zip)
+To see how a review changes across manuscript revisions, open the offline replay. It contains three PDFs, their reviewer findings and the measured rows. The archive reproduces the example first published with alpha.3 and requires no model key. [Download the review replay](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.23/review-replay.zip)
 
 ## Run a small study
 
@@ -51,6 +51,8 @@ The first command opens the project. Run status, send a follow-up or request a s
 | Delivery checks | `auto_research/state/delivery_report.yaml` |
 
 The researcher can plot measured JSON columns directly as lines, points or grouped bars. A custom plotting script reads `/study/results.json` and saves its named output in `/output/`. For comparisons, Nano Banana supplies the study artwork and the tool typesets the experimental conditions from the approved plan. Each passing panel includes its caption. Mechanism diagrams are also available. During revisions, the owner can edit the numbered lines it has read. The editor checks changes to a previously compiled manuscript with TeX before saving them.
+
+Open the manuscript progress recording to follow four real drafts from 0.91 to 3.34 body pages against a four-page target. Select a bar to return to its compilation event. The host shows page coverage independently of the review verdict. [Watch the dashboard replay](https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.23/draft-length.webm)
 
 ### Independent review
 
