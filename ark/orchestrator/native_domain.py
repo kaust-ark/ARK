@@ -133,6 +133,113 @@ def _appendix_pages(doc):
                    if name.startswith("appendix.") and 0 <= dest.get("page", -1) < len(doc)})
 
 
+def _replication_appendix(pdf, heading, measurement, output_path, state):
+    """Check the printed replay instructions against the completed worker's entry point and result."""
+    import fitz
+
+    # The instructions below are English. Other languages, stylized headings and
+    # supplement structures we cannot locate confidently remain for the reviewer.
+    if not re.search(r"\breproduc(?:e|ible|ibility|ing|tion)\b|\breplicat(?:ion|ing)\b", heading, re.I):
+        return []
+    checksum = measurement["sha256"]
+    inputs = (state.get("compile") or {}).get("inputs", [])
+    measured_table = any(t.get("input_sha256") == checksum and t.get("path") in inputs
+                         for t in (state.get("tables") or {}).values())
+    title = re.compile(rf"^\s*(?:Appendix\s+)?(?:[A-Z](?:\.\d+)*[.:]?\s+)?{re.escape(heading)}\s*$", re.I | re.M)
+    with fitz.open(pdf) as doc:
+        starts = _appendix_pages(doc)
+        first_page = starts[0] - 1 if starts else 0
+        pages = [page.get_text() for page in list(doc)[first_page:]]
+        sections = [(i, m.end()) for i, page in enumerate(pages) for m in title.finditer(page)]
+        if len(sections) != 1:
+            return []
+        first, offset = sections[0]
+        pages[first] = pages[first][offset:]
+        text = " ".join(" ".join(pages[first:]).split())
+        benchmarks = set()
+        # An appendix link can identify the verified table without repeating its values.
+        # With several tables we cannot safely infer which one came from this worker.
+        tables = [key for key in doc.resolve_names() if key.startswith("table.")]
+        if measured_table and len(tables) == 1:
+            for page in list(doc)[first_page + first:]:
+                for link in page.get_links():
+                    if link.get("nameddest") == tables[0] and link.get("page", -1) >= 0:
+                        number = page.get_textbox(link["from"] + (-1, -2, 1, 2)).strip()
+                        if re.fullmatch(r"[A-Z]?\d+(?:\.\d+)*", number):
+                            benchmarks.add(f"table {number}".casefold())
+
+    script, output = measurement["script"], measurement["artifact"]
+    # TeX can render underscores in monospace paths as spaces in PDF text extraction.
+    def literal(path):
+        return re.escape(path).replace("_", "[_ ]").replace("/", r"/\s*")
+
+    file_end = r"(?![\w/-]|\.\w)"
+    entry = rf"(?:\./)?{literal(script)}{file_end}"
+    module = literal(Path(script).with_suffix("").as_posix().replace("/", "."))
+    invoke = (rf"\bpython(?:3(?:\.\d+)?)?\s+(?:-[BIEOus]+\s+)*(?:{entry}|-m\s+{module}{file_end})"
+              rf"|\b(?:re-?run|run|running|execut(?:e|ing)|invok(?:e|ing)|launch(?:ing)?)\s+"
+              rf"(?:(?:the|archived|supplied|provided|Python|script|program)\s+)*{entry}")
+    # The native runner reserializes JSON. The archived file digest identifies
+    # the reference, but does not in itself validate a fresh worker's output.
+    reference = r"(?:archived|original|frozen|reference|published|supplied|provided|saved|preserved)"
+    compare = r"(?:compare|check|verify|match|diff|cmp|agree(?:s)?|identical)"
+    sentences = re.split(r"(?<=[.?!])\s+(?=[A-Z])", text)
+    checked = False
+    for sentence in sentences:
+        if not re.search(rf"\b{compare}\b", sentence, re.I):
+            continue
+        if (re.search(r"\b(?:sha-?256|checksum|digest|bytes?|diff|cmp)\b", sentence, re.I)
+                and not re.search(r"canonical|normali[sz]|(?:jq|json\.tool)\b", sentence, re.I)):
+            continue
+        if (re.search(rf"\b{reference}\s+(?:copy|file|values?|results?|measurements?|output|rows?|JSON)\b", sentence, re.I)
+                or any(re.search(rf"\b{re.escape(target)}\b", sentence.casefold()) for target in benchmarks)
+                or (re.search(r"\b(?:diff|cmp)\s+(?:-\w+\s+)*\S+\s+\S+", sentence)
+                    and re.search(literal(output) + file_end, sentence))):
+            checked = True
+            break
+    # A reader can also verify a reported value directly. Bind named values in
+    # the same statement to one actual output row, including any named condition.
+    outcomes = set()
+    summaries = state.get("measurement_summaries") or {}
+    if summaries.get("input_sha256") == checksum:
+        for recipe in summaries.get("recipes", []):
+            outcomes.update((recipe.get("rows_pointer", ""), recipe[key]) for key in ("column", "reference") if recipe.get(key))
+    for plot in (state.get("plots") or {}).values():
+        if plot.get("status") == "completed" and plot.get("input_sha256") == checksum:
+            spec = plot.get("plot_spec") or {}
+            outcomes.update((spec.get("rows_pointer", ""), item["path"]) for item in spec.get("series", []) if item.get("path"))
+    if not checked and outcomes and output_path.is_file() and output_path.resolve() == output_path and _sha(output_path) == checksum:
+        for pointer, rows in measurement_table.project_rows(_load(output_path)).items():
+            metrics = {field for source, field in outcomes if source == pointer}
+            if not metrics:
+                continue
+            fields = {key for row in rows for key, v in row.items()
+                      if type(v) in (int, float) and re.fullmatch(r"[\w-]+", key)}
+            if not fields:
+                continue
+            keys = "|".join(literal(k) for k in sorted(fields, key=len, reverse=True))
+            assertion = re.compile(rf"\b({keys})\s*(?:[=:]|\bis\b|\bof\b)\s*"
+                                   r"([+−-]?\d+(?:\.\d+)?)(?!\w|\.\d)")
+            for sentence in sentences:
+                pairs = [(key.replace(" ", "_"), value.replace("−", "-")) for key, value in assertion.findall(sentence)]
+                if any(k in metrics for k, _ in pairs) and any(
+                    all(type(row.get(k)) in (int, float) and round(row[k], len(v.partition(".")[2])) == float(v)
+                        for k, v in pairs) for row in rows
+                ):
+                    checked = True
+                    break
+    issues = []
+    if not re.search(invoke, text, re.I):
+        issues.append(f"Give the reader a way to rerun the measured program {script} from the project directory "
+                      "in the reproducibility appendix, including any inputs or dependencies it needs.")
+    locates_result = re.search(literal(output) + file_end, text) or re.search(r"\b(?:stdout|standard output)\b", text, re.I)
+    if not locates_result or not checked:
+        issues.append("In the reproducibility appendix, tell readers where the worker writes or prints its result "
+                      f"and how to check it against {output}, for example using a recorded value or comparing "
+                      "the parsed JSON from a fresh run in a separate directory with the archived values.")
+    return issues
+
+
 def _manuscript_first_pass(project, content, *, check_headings=False, page_target=None, expected_style=None,
                            inspect_appendix=False):
     with tempfile.TemporaryDirectory(prefix="idea2paper-edit-") as tmp:
@@ -1380,23 +1487,8 @@ class NativeProject(CompilerMixin):
         if not bib.is_file() or proof.get("sha256") != _sha(bib):
             return None
         report = self.state_dir / "deep_research.md"
-        trace = literature_evidence.body_source_trace(self.latex_dir, report, proof.get("checked", {}))
-        if trace and trace["verified_works"] < 2:
-            # Report location is evidence of discovery, not authority for the paper's findings.
-            cited_lines = {r.get("report_line") for r in trace["body_citations"].values()}
-            used = {citation._doi_id(row["fields"].get("doi")) for row in citation.parse_bib(str(bib))
-                    if row["key"] in trace["body_citations"]}
-            originals = self.state.get("survey_originals") or {}
-            leads = []
-            for lead in literature_evidence.source_leads(report.read_text()):
-                doi = citation._doi_id(lead["query"])
-                if (doi in used if doi else lead["report_line"] in cited_lines):
-                    continue
-                original = originals.get(doi, {})
-                leads.append({**lead, **({"official_title": original["title"],
-                                          "abstract_excerpt": original["passage"][:360]} if original else {})})
-            trace["unused_leads"] = sorted(leads, key=lambda lead: "official_title" not in lead)[:4]
-        return trace
+        return literature_evidence.body_source_trace(self.latex_dir, report, proof.get("checked", {}),
+                                                     originals=self.state.get("survey_originals"))
 
     def _rendered_body_coverage(self, path=None):
         """Measure body length and locate its last physical PDF page."""
@@ -2118,8 +2210,17 @@ class NativeProject(CompilerMixin):
             )
             tex = re.sub(r"(?<!\\)%[^\n]*", "", tex)
             parts = re.split(r"\\appendix\b", tex, maxsplit=1)
-            if len(parts) < 2 or not re.search(r"\\(?:sub)*section\*?\{[^}]+\}", parts[1]):
+            heading = re.search(r"\\(?:sub)*section\*?\{([^}]+)\}", parts[1]) if len(parts) == 2 else None
+            if not heading:
                 issues.append("Include a reproducibility appendix with a substantive section.")
+            elif (str(self.config.get("language") or "en").lower().split("-")[0] in ("en", "english")
+                  and (self.state.get("experiment") or {}).get("status") == "completed"
+                  and (self.latex_dir / "main.pdf").is_file()):
+                run = self._measurement_receipt()
+                if (run and run.get("status") == "completed" and run.get("artifact") and run.get("script")
+                        and run.get("sha256")):
+                    issues.extend(_replication_appendix(self.latex_dir / "main.pdf", heading[1], run,
+                                                        self.root / run["artifact"], self.state))
         if self.config.get("venue_format") == "icml" and rendered.get("ok") and "main.tex" in rendered.get("inputs", []):
             template = _asset_dir("venue_templates") / "icml"
             # A .sty beside the manuscript does not establish that TeX loaded it.
@@ -2415,12 +2516,19 @@ class NativeProject(CompilerMixin):
             result["brief"] += ("\nRevisit your independent prediction of evidential scope. Check every part "
                                 "of the strongest conclusion against the observations. If additional evidence "
                                 "changes your earlier judgment, cite the observation that distinguishes the alternatives.")
+        if worker and worker.get("verified") and self.config.get("layout_mode") == "strict":
+            result["brief"] += ("\nCheck the reproducibility appendix from a reader's perspective. Trace its inputs, "
+                                "procedure and expected result to the archived experiment. Identify a specific "
+                                "missing or incorrect step if a reader could not reproduce a reported measurement.")
         if trace:
             result["brief"] += (
                 "\nCitation locations from the frozen body PDF, verified survey and registered source files. "
                 "Use the pages and source paths to inspect whether the original work supports the manuscript claim. "
-                "A missing report match alone does not establish a citation error.\n"
-                + json.dumps({k: v for k, v in trace.items() if k != "unused_leads"}, ensure_ascii=False)
+                "Assess coverage of the named method's origin, the theory used and the closest comparison where "
+                "applicable. If an attribution lacks support, locate the manuscript claim and specify the original "
+                "source the author should investigate. unused_leads are search suggestions, not verified facts. "
+                "Judge relevance from the originals. A missing report match alone does not establish a citation error.\n"
+                + json.dumps(trace, ensure_ascii=False)
             )
         if record and review.record_is_current(snapshot, record):
             if previous != record:

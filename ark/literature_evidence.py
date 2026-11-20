@@ -29,6 +29,7 @@ def source_leads(report, limit=10):
         quoted = [m[1].strip(" .,") for m in re.finditer(r'["“]([^"”\n]{12,240})["”]', text)]
         quoted = [title for title in quoted if len(title.split()) >= 3]
         matches = re.finditer(r"(?<!\w)(10\.\d{4,9}/[-A-Z0-9._;()/+:]+|arxiv(?:\s*:\s*|\.org/(?:abs|pdf)/)\d{4}\.\d{4,5}(?:v\d+)?)", text, re.I)
+        line_ids = set()
         for match in matches:
             # Some legacy DOI suffixes contain angle brackets. Lookup by title
             # when the resolver cannot represent the entire identifier.
@@ -40,12 +41,10 @@ def source_leads(report, limit=10):
             if query.lower().startswith("arxiv"):
                 aid = re.search(r"\d{4}\.\d{4,5}", query)[0]
                 query = "10.48550/arXiv." + aid
-            lead = {"query": query, "report_line": number}
-            if len(quoted) == 1:
-                lead["reported_title"] = quoted[0]
-            previous = identifiers.setdefault(query.lower(), lead)
-            if "reported_title" in lead:
-                previous.setdefault("reported_title", lead["reported_title"])
+            line_ids.add(query.lower())
+            identifiers.setdefault(query.lower(), {"query": query, "report_line": number})
+        if len(line_ids) == 1 and len(quoted) == 1:
+            identifiers[next(iter(line_ids))].setdefault("reported_title", quoted[0])
         if section:
             for title in quoted:
                 titles.setdefault(title.casefold(), {"query": title, "report_line": number})
@@ -86,7 +85,44 @@ def survey_originals(leads, cache):
             if (record := cache.get(citation._doi_id(lead["query"]))) else lead for lead in leads]
 
 
-def body_source_trace(paper, report_path, checked):
+def _unused_source_leads(raw_lines, normalized, entries, body_keys, checked, originals):
+    """Surface uncited survey leads, including works the author already considered for the bibliography."""
+    cited_dois = {citation._doi_id(entries[key].get("doi")) for key in body_keys} - {""}
+    cited_titles = {citation._normalize_title(entries[key].get("title", "")) for key in body_keys} - {""}
+    candidates = []
+    for lead in source_leads("\n".join(raw_lines)):
+        doi = citation._doi_id(lead["query"])
+        record = originals.get(doi, {}) if doi else {}
+        title = record.get("title") or lead.get("reported_title") or ("" if doi else lead["query"])
+        if (doi and doi in cited_dois) or (title and citation._normalize_title(title) in cited_titles):
+            continue
+        candidate = dict(lead)
+        if record:
+            candidate.update(official_title=record["title"], abstract_excerpt=record["passage"][:360])
+        candidates.append((citation._normalize_title(title), doi, candidate))
+
+    # A report can mention a work without quoting its title or including a DOI.
+    # Keep a full-title match as a lookup lead, including failed identity checks.
+    for key, fields in entries.items():
+        title = fields.get("title", "")
+        name = citation._normalize_title(title)
+        doi = citation._doi_id(fields.get("doi"))
+        if key in body_keys or name in cited_titles or (doi and doi in cited_dois) or len(name.split()) < 4:
+            continue
+        line = next((i for i, words in enumerate(normalized, 1) if f" {name} " in words), None)
+        if not line:
+            continue
+        candidate = next((item for t, d, item in candidates
+                          if (doi == d if doi and d else name == t)), None)
+        if candidate is None:
+            candidate = {"query": doi or title, "report_line": line}
+            candidates.append((name, doi, candidate))
+        candidate.update(bibliography_key=key, identity_status=checked.get(key, {}).get("status", "unchecked"))
+    leads = (item for _, _, item in candidates)
+    return sorted(leads, key=lambda item: ("bibliography_key" not in item, "official_title" not in item))[:4]
+
+
+def body_source_trace(paper, report_path, checked, *, originals=None):
     """Trace rendered body links to report identities and verified source files, without judging entailment."""
     import fitz
 
@@ -173,9 +209,14 @@ def body_source_trace(paper, report_path, checked):
     # Keep the agent tool result bounded for a full-length survey. Sample both groups.
     samples = [key for flag in (True, False)
                for key in [k for k, v in records.items() if ("report_line" in v) == flag][:8]]
+    unused = _unused_source_leads(raw_lines, normalized, entries, pages, checked, originals or {})
+    if unused:
+        summary += (" Inspect unused leads for the origin of the method, its assumptions and the closest comparison. "
+                    "Verify the original before citing a work at the claim it supports.")
     return {"report": "auto_research/state/deep_research.md", "references_line": ref_line,
             "matched": matched, "verified_works": len(verified_works - {""}), "total": len(records), "summary": summary,
-            "body_citations": {key: records[key] for key in sorted(samples)}}
+            "body_citations": {key: records[key] for key in sorted(samples)},
+            "unused_leads": unused}
 
 # Only fetch public PDFs from known research repositories. Other locations still
 # contribute bibliographic identifiers and explicitly labelled indexed abstracts.

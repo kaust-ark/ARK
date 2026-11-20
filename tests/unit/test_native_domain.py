@@ -574,6 +574,46 @@ Archive contents.
     assert source.read_text() == canonical
 
 
+def test_replication_appendix_checks_a_different_workers_printed_recipe(tmp_path):
+    import fitz
+    import subprocess
+    import sys
+
+    # This native worker emits JSON to stdout; the runner retains it as the registered result.
+    script = tmp_path / "scripts" / "time_lookup.py"
+    script.parent.mkdir()
+    script.write_text('print(\'[{"size": 8, "probes": 3}, {"size": 32, "probes": 5}]\')\n')
+    output = tmp_path / "results" / "timing.json"
+    output.parent.mkdir()
+    output.write_bytes(subprocess.check_output([sys.executable, str(script)], cwd=tmp_path))
+    receipt = {"artifact": "results/timing.json", "script": "scripts/time_lookup.py", "sha256": domain._sha(output)}
+    state = {"measurement_summaries": {"input_sha256": receipt["sha256"], "recipes": [{"rows_pointer": "", "column": "probes"}]}}
+    pdf = tmp_path / "study.pdf"
+    recipe = "Run scripts/time_lookup.py from the project directory. On stdout expect size=32 and probes=5."
+
+    def check(appendix, *, title="Reproducibility", body=recipe):
+        with fitz.open() as doc:
+            p = doc.new_page()
+            p.insert_textbox(fitz.Rect(35, 35, 560, 135), body)
+            p.insert_text((35, 180), "A. " + title)
+            p.insert_textbox(fitz.Rect(35, 200, 560, 550), appendix)
+            pdf.write_bytes(doc.tobytes())
+        return domain._replication_appendix(pdf, title, receipt, output, state)
+
+    assert check(recipe) == []
+    wrong_row = check(recipe.replace("probes=5", "probes=3"))
+    assert len(wrong_row) == 1 and "check it" in wrong_row[0]
+    assert len(check(recipe.replace(" and probes=5", ""))) == 1
+    assert len(check("Run scripts/time_lookup.py. Verify the checksum of the archived result "
+                     "results/timing.json: " + receipt["sha256"])) == 1
+    assert check("In a fresh directory, run python3 scripts/time_lookup.py. Compare standard output "
+                 "with the archived result in results/timing.json.") == []
+    assert check(recipe.replace("Run scripts/time_lookup.py", "Use python -m scripts.time_lookup")) == []
+    assert len(check("scripts/time_lookup.py and results/timing.json. Seed. Replication. Comparison.")) == 2
+    assert check(recipe.replace("time_lookup.py", "time_lookup.py.bak"))[0].startswith("Give the reader")
+    assert check("Protocole expérimental.", title="Procédure") == []
+
+
 @pytest.mark.skipif(not shutil.which("pdflatex") or not shutil.which("bibtex"), reason="requires TeX Live")
 def test_major_body_cut_cannot_silently_drop_rendered_appendix(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
@@ -853,6 +893,50 @@ def test_body_citations_trace_primary_records_and_survey_independently(tmp_path,
     project.config["layout_mode"] = "strict"
     report.write_text("replaced after verification")
     assert project._research_citations() is None
+
+
+def test_survey_still_exposes_foundational_leads_after_two_verified_body_sources(tmp_path, monkeypatch):
+    import fitz
+    from contextlib import nullcontext
+
+    project = open_project(tmp_path, monkeypatch)
+    project.config["skip_deep_research"] = False
+    report = project.state_dir / "deep_research.md"
+    report.write_text('Prior applications doi:10.1234/app1 and doi:10.1234/app2. '
+                      'Another study titled "Origin of the queue estimator" describes the original method.\n'
+                      'The other draft work, Missing unrelated title, is outside this scope.\n')
+    parsed = domain.literature_evidence.source_leads(report.read_text())
+    assert "reported_title" not in parsed[0] and "reported_title" not in parsed[1]
+    assert parsed[2]["query"] == "Origin of the queue estimator"
+    titles = {"one":"Runtime cost in old systems", "two":"Runtime cost in new systems",
+              "origin":"Origin of the queue estimator", "unused":"Unrelated uncited database methods"}
+    bib = project.latex_dir / "references.bib"
+    checked = {}
+    entries = []
+    for i, (key, title) in enumerate(titles.items(), 1):
+        doi = f"10.1234/app{i}" if i <= 2 else ""
+        entries.append(f"@article{{{key}, title={{{title}}}, doi={{{doi}}}, year={{2020}}}}")
+        if doi:
+            content = f"Indexed abstract\n{title}\nhttps://doi.org/{doi}\n\nOriginal source."
+            path = tmp_path / "sources" / (hashlib.sha256(doi.encode()).hexdigest()[:24] + ".txt")
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(content)
+            checked[key] = {"status":"SINGLE_SOURCE", "source":str(path.relative_to(tmp_path)),
+                            "source_sha256":hashlib.sha256(path.read_bytes()).hexdigest()}
+    bib.write_text("\n".join(entries))
+    checked["origin"] = {"status":"NEEDS-CHECK"}
+    (project.state_dir / "native_citations.json").write_text(json.dumps({"sha256":domain._sha(bib), "checked":checked}))
+    (project.state_dir / "deep_research_receipt.json").write_text(json.dumps({
+        "provider":"google", "status":"completed", "interaction_id":"fixture", "report_sha256":domain._sha(report)}))
+    page = SimpleNamespace(number=0, rect=fitz.Rect(0, 0, 600, 800), get_links=lambda: [
+        {"nameddest":"cite." + key, "page":1, "from":fitz.Rect(0, 10, 50, 20)} for key in ("one", "two")])
+    monkeypatch.setattr(fitz, "open", lambda *args: nullcontext([page, SimpleNamespace(number=1)]))
+    monkeypatch.setattr(domain.literature_evidence, "body_page_boundary", lambda doc: (1,(0,0)))
+    trace = project._research_citations()
+    assert trace["verified_works"] == 2
+    assert trace["unused_leads"] == [{"query":titles["origin"], "report_line":1,
+                                      "bibliography_key":"origin", "identity_status":"NEEDS-CHECK"}]
+    assert "origin" not in trace["body_citations"]
 
 
 def test_review_reopens_current_page_text_at_unresolved_locations(tmp_path, monkeypatch):
