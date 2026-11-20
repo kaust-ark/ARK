@@ -68,7 +68,9 @@ def test_completed_google_report_identifies_the_actual_interaction(tmp_path, mon
         "report_sha256": hashlib.sha256(Path(report_path).read_bytes()).hexdigest(),
         "usage": api.get.return_value.usage,
     }
-    assert "original publication" in api.create.call_args.kwargs["input"]
+    query = api.create.call_args.kwargs["input"]
+    assert query.startswith("Query") and "original publication" in query
+    assert "## Primary studies" in query and "conditions closest to this project" in query
 
 
 def test_existing_interaction_restores_raw_steps_and_cross_block_grounding(tmp_path, monkeypatch):

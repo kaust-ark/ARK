@@ -16,10 +16,32 @@ from ark import citation
 from ark.latex.utils import body_page_boundary
 
 
-def source_leads(report, limit=10):
+RESOURCE_GUIDANCE = ("Cite software and datasets for the implementation or data they document. For a method's "
+                     "derivation or an empirical comparison, follow the resource's references to the original study "
+                     "and check its methods, conditions and results.")
+ORIGIN_GUIDANCE = ("For historical attributions, find the passage that introduces the specific method, formula or "
+                   "result. An author's surname, an earlier date or a related theorem alone cannot establish its origin.")
+
+
+def record_kind(entry):
+    fields = entry["fields"]
+    doi = citation._doi_id(fields.get("doi")) or citation._doi_id(fields.get("url"))
+    kind = entry.get("entry_type")
+    if kind == "software" or re.fullmatch(r"10\.32614/cran\.package\.[a-z][a-z0-9.]*", doi):
+        return "software"
+    if kind in {"dataset", "data"}:
+        return "dataset"
+    if kind in {"article", "inproceedings", "conference", "book", "inbook", "incollection", "phdthesis",
+                "mastersthesis", "techreport", "proceedings"} or doi.startswith("10.48550/arxiv."):
+        return "publication"
+    return "unspecified"
+
+
+def source_leads(report, limit=16):
     """Locate explicit paper identities in the survey. Registration still requires a primary record."""
     identifiers, titles = {}, {}
     in_code = False
+    in_references = False
     for number, line in enumerate(report.splitlines(), 1):
         if line.lstrip().startswith(("```", "~~~")):
             in_code = not in_code
@@ -27,8 +49,12 @@ def source_leads(report, limit=10):
             continue
         # Opaque grounding redirects can each occupy thousands of characters.
         text = re.sub(r"https?://(?:vertexaisearch\.cloud\.google\.com|www\.google\.com)/[^\s)]*", "", line)
+        if header := re.match(r"^#{1,6}\s+(.+?)\s*$", text):
+            in_references = header[1].strip(" :").lower() in {"primary studies", "references", "bibliography", "sources"}
         section = re.search(r'(?:titled|entitled|published|paper|publication|study|conference|\(\d{4}\))', text, re.I)
         quoted = [m[1].strip(" .,") for m in re.finditer(r'["“]([^"”\n]{12,240})["”]', text)]
+        if in_references:
+            quoted.extend(m[1] for m in re.finditer(r"\[([^\[\]]{12,240})\]\(https?://", text))
         quoted = [title for title in quoted if len(title.split()) >= 3]
         matches = re.finditer(r"(?<!\w)(10\.\d{4,9}/[-A-Z0-9._;()/+:]+|arxiv(?:\s*:\s*|\.org/(?:abs|pdf)/)\d{4}\.\d{4,5}(?:v\d+)?)", text, re.I)
         line_ids = set()
@@ -47,7 +73,7 @@ def source_leads(report, limit=10):
             identifiers.setdefault(query.lower(), {"query": query, "report_line": number})
         if len(line_ids) == 1 and len(quoted) == 1:
             identifiers[next(iter(line_ids))].setdefault("reported_title", quoted[0])
-        if section:
+        if section or in_references:
             for title in quoted:
                 titles.setdefault(title.casefold(), {"query": title, "report_line": number})
     named = {r["reported_title"].casefold() for r in identifiers.values() if "reported_title" in r}
@@ -87,12 +113,64 @@ def survey_originals(leads, cache):
             if (record := cache.get(citation._doi_id(lead["query"]))) else lead for lead in leads]
 
 
+def survey_reference_leads(leads, topic, report, cache):
+    """Follow one citation hop from survey DOIs; deposited references are search leads only."""
+    seeds = [doi for lead in leads if (doi := citation._doi_id(lead["query"]))]
+    known_dois = set(seeds)
+    known_titles = {citation._normalize_title(lead.get("official_title") or lead.get("reported_title") or lead["query"])
+                    for lead in leads}
+    # Generic words shared by unrelated article titles provide little evidence of topical relevance.
+    stop = set("the and for with from using into based new study studies analysis methods method approach "
+               "research estimation estimating estimators evaluation comparison experimental through under".split())
+    keywords = set(citation._normalize_title(topic).split()) - stop
+    keywords = {word for word in keywords if len(word) >= 3}
+    prose = re.sub(r"https?://\S+", "", report).casefold()
+    ranked = []
+    for seed in seeds[:3]:
+        if seed not in cache:
+            data = citation._http_get_json("https://api.crossref.org/works/" + quote(seed, safe="/"), timeout=5)
+            message = data.get("message") if isinstance(data, dict) else None
+            if not isinstance(message, dict) or citation._doi_id(message.get("DOI")) != seed:
+                continue  # Leave an unavailable or mismatched deposit eligible for a later call.
+            titles = []
+            for ref in message.get("reference") or []:
+                if not isinstance(ref, dict) or not isinstance(ref.get("article-title"), str):
+                    continue
+                title = " ".join(ref["article-title"].split())
+                if not 8 <= len(title) <= 350:
+                    continue
+                doi = citation._doi_id(ref.get("DOI"))
+                titles.append({"query": doi or title, "reference_title": title, "cited_by_doi": seed,
+                               **{k: str(ref[k])[:100] for k in ("author", "year") if ref.get(k)}})
+            cache[seed] = titles
+        for row in cache[seed]:
+            title = citation._normalize_title(row["reference_title"])
+            if title in known_titles or row["query"] in known_dois:
+                continue
+            overlap = keywords.intersection(title.split())
+            author = row.get("author", "").casefold()
+            mentioned = bool(len(author) >= 3 and re.search(r"\b" + re.escape(author) + r"\b", prose))
+            # A shared author is more informative when the study year also appears in their passage.
+            dated = bool(mentioned and row.get("year")
+                         and re.search(r"\b" + re.escape(author) + r"\b[^\n]{0,240}\b" + re.escape(row["year"]) + r"\b", prose))
+            if overlap or dated:
+                ranked.append(((dated, mentioned, len(overlap)), row))
+    result = []
+    for _, row in sorted(ranked, key=lambda item: item[0], reverse=True):
+        title = citation._normalize_title(row["reference_title"])
+        if title not in known_titles and row["query"] not in known_dois:
+            result.append(row)
+            known_titles.add(title)
+            known_dois.add(row["query"])
+    return result[:16], all(seed in cache for seed in seeds[:3])
+
+
 def _unused_source_leads(raw_lines, normalized, entries, body_keys, checked, originals):
     """Surface uncited survey leads, including works the author already considered for the bibliography."""
     cited_dois = {citation._doi_id(entries[key].get("doi")) for key in body_keys} - {""}
     cited_titles = {citation._normalize_title(entries[key].get("title", "")) for key in body_keys} - {""}
     candidates = []
-    for lead in source_leads("\n".join(raw_lines)):
+    for lead in source_leads("\n".join(raw_lines), limit=None):
         doi = citation._doi_id(lead["query"])
         record = originals.get(doi, {}) if doi else {}
         title = record.get("title") or lead.get("reported_title") or ("" if doi else lead["query"])
@@ -121,14 +199,16 @@ def _unused_source_leads(raw_lines, normalized, entries, body_keys, checked, ori
             candidates.append((name, doi, candidate))
         candidate.update(bibliography_key=key, identity_status=checked.get(key, {}).get("status", "unchecked"))
     leads = (item for _, _, item in candidates)
-    return sorted(leads, key=lambda item: ("bibliography_key" not in item, "official_title" not in item))[:4]
+    return sorted(leads, key=lambda item: ("bibliography_key" not in item, "official_title" not in item))[:8]
 
 
-def body_source_trace(paper, report_path, checked, *, originals=None):
+def body_source_trace(paper, report_path, checked, *, originals=None, reference_leads=()):
     """Trace rendered body links to report identities and verified source files, without judging entailment."""
     import fitz
 
-    entries = {entry["key"]: entry["fields"] for entry in citation.parse_bib(str(paper / "references.bib"))}
+    bibliography = citation.parse_bib(str(paper / "references.bib"))
+    entries = {entry["key"]: entry["fields"] for entry in bibliography}
+    kinds = {entry["key"]: record_kind(entry) for entry in bibliography}
     pages = {}
     with fitz.open(paper / "main.pdf") as doc:
         boundary = body_page_boundary(doc)
@@ -159,7 +239,7 @@ def body_source_trace(paper, report_path, checked, *, originals=None):
     records = {}
     for key, body_pages in sorted(pages.items()):
         fields = entries[key]
-        row = {"pages": sorted(body_pages)}
+        row = {"pages": sorted(body_pages), "title": fields.get("title", "")[:350], "record_kind": kinds[key]}
         evidence = checked.get(key, {})
         verified = evidence.get("status") in {"VERIFIED", "CORRECTED", "SINGLE_SOURCE"}
         source = (evidence.get("source") or "") if verified else ""
@@ -201,24 +281,42 @@ def body_source_trace(paper, report_path, checked, *, originals=None):
                 row["report_line"] = line
         records[key] = row
     ref_line = next((i for i, raw in enumerate(raw_lines, 1)
-                     if re.fullmatch(r"#+\s*(?:references|bibliography|sources)\s*", raw, re.I)), None)
+                     if re.fullmatch(r"(?:#+\s*|\*\*)(?:references|bibliography|sources|primary studies):?(?:\*\*)?\s*", raw, re.I)), None)
     matched = sum("report_line" in row for row in records.values())
-    verified_works = {citation._doi_id(entries[key].get("doi")) or citation._normalize_title(entries[key].get("title", ""))
-                      for key, row in records.items() if row.get("source") and row.get("report_line")}
+    verified_works = set()
+    verified_publications = set()
+    for key, row in records.items():
+        identity = citation._doi_id(entries[key].get("doi")) or citation._normalize_title(row["title"])
+        if identity and row.get("source") and kinds[key] not in {"software", "dataset"}:
+            if kinds[key] == "publication":
+                verified_publications.add(identity)
+            if row.get("report_line"):
+                verified_works.add(identity)
     summary = f"{matched} of {len(records)} distinct body citations could be located by title or identifier in the verified Deep Research report."
+    summary += f" {len(verified_publications)} distinct publication records have verified source passages. " + ORIGIN_GUIDANCE
+    if any(kinds[key] in {"software", "dataset"} for key in records):
+        summary += " " + RESOURCE_GUIDANCE
     if matched < len(records):
         summary += " Inspect the survey for relevant comparisons and check claims against their original sources. Supplemental papers may legitimately come from outside the survey."
     # Keep the agent tool result bounded for a full-length survey. Sample both groups.
     samples = [key for flag in (True, False)
                for key in [k for k, v in records.items() if ("report_line" in v) == flag][:8]]
     unused = _unused_source_leads(raw_lines, normalized, entries, pages, checked, originals or {})
+    cited_dois = {citation._doi_id(entries[key].get("doi")) for key in pages} - {""}
+    cited_titles = {citation._normalize_title(entries[key].get("title", "")) for key in pages}
+    further = [row for row in reference_leads if row["query"] not in cited_dois
+               and citation._normalize_title(row["reference_title"]) not in cited_titles][:8]
     if unused:
         summary += (" Inspect unused leads for the origin of the method, its assumptions and the closest comparison. "
                     "Verify the original before citing a work at the claim it supports.")
+    if further:
+        summary += (" Reference lists of surveyed papers identify additional candidate studies. Use lookup_papers "
+                    "to inspect the relevant original and compare its conditions and findings to the present study.")
     return {"report": "auto_research/state/deep_research.md", "references_line": ref_line,
-            "matched": matched, "verified_works": len(verified_works - {""}), "total": len(records), "summary": summary,
+            "matched": matched, "verified_works": len(verified_works), "verified_publications": len(verified_publications),
+            "total": len(records), "summary": summary,
             "body_citations": {key: records[key] for key in sorted(samples)},
-            "unused_leads": unused}
+            "unused_leads": unused, "reference_leads": further}
 
 # Only fetch public PDFs from known research repositories. Other locations still
 # contribute bibliographic identifiers and explicitly labelled indexed abstracts.

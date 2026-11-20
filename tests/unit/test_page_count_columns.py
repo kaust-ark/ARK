@@ -158,6 +158,30 @@ Details.\end{document}
 # ── _is_two_column_doc ───────────────────────────────────────────────
 
 
+def test_numerical_restating_is_scoped_to_body_prose(tmp_path):
+    fitz = pytest.importorskip("fitz")
+    from ark.latex.compiler import body_repetition_notes, repeated_result_series
+
+    (tmp_path / "main.tex").write_text(r"\documentclass{article}\begin{document}Results.\end{document}")
+    passage = ("The paired estimates for the same observations at each sampling depth follow "
+               "the pattern observed when we repeat this measurement across all conditions: "
+               "0.91, 0.82, 0.74, 0.68, 0.53, 0.41, 0.38 and 0.32.")
+    with fitz.open() as doc:
+        for content in (passage, "Table 1. " + passage, passage.replace("The paired estimates", "Our measurements"),
+                        "References\n" + passage):
+            page = doc.new_page()
+            page.insert_textbox(fitz.Rect(62, 110, 470, 250), content)
+        doc.save(tmp_path / "main.pdf")
+    note, = body_repetition_notes(tmp_path)
+    assert "pages 1 and 3" in note and "0.91, 0.82, 0.74" in note
+    assert body_repetition_notes(tmp_path, empty_headings_only=True) == []
+    table = "0.91 & 0.82 & 0.74 & 0.68 & 0.53 & 0.41 & 0.38 & 0.32"
+    with fitz.open(tmp_path / "main.pdf") as doc:
+        issue, = repeated_result_series(doc, verified_tables=[{"rendered_table": table}])
+        assert "pages 1 and 3" in issue and "verified worker table" in issue
+        assert not repeated_result_series(doc, verified_tables=[{"rendered_table": table.replace("0.32", "0.31")}])
+
+
 def test_review_line_numbers_do_not_fill_an_empty_column(compiler):
     gutter = (25, 69, 40, 724, "165\n166\n167\n")
     body = (55, 88, 291, 260, "Conclusion")

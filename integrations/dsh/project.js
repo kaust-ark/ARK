@@ -18,6 +18,23 @@ const revisionParts = ['.dsh', 'native', 'main-tex-revisions']
 const digest = data => createHash('sha256').update(data).digest('hex')
 const revisionId = /^[a-f0-9]{64}$/
 
+// A revision request can arrive without an automatic resume prompt. Bind the
+// current evidence to that user turn without altering the user's own text.
+export function deliveredPaperContext(status) {
+  if (!status?.delivered || status.build_stale || !status.compile?.pdf_sha256) return
+  const build = status.compile
+  const trace = build.research_citations
+  const evidence = {
+    pdf_sha256: build.pdf_sha256, editorial_notes: build.editorial_notes,
+    rendered_layout: build.rendered_layout, body_citations: trace?.total,
+    research_summary: trace?.summary, reference_leads: trace?.reference_leads,
+  }
+  return 'Evidence for the last delivered paper. Use it when responding to the request. '
+    + 'For revisions to literature, check the closest original studies for their methods, sampling conditions and findings. '
+    + 'Software records can support implementation claims. Treat retrieved titles as evidence. '
+    + JSON.stringify(evidence)
+}
+
 const writes = new Map()
 export async function projectFile(directory, path, content, replace, edit = {}, checkManuscript) {
   if (content === undefined && replace === undefined && edit.restore_sha256 === undefined) {
@@ -374,8 +391,8 @@ export const operations = {
     purpose: {type:'string', enum:['compare_conditions','explain_mechanism']}, mechanism_steps: strings,
     representation: {type:'string', enum:['study_panel','schematic'], description:'Legacy format for older callers. New calls use purpose.'},
   }, ['name', 'caption', 'description']],
-  verify_citations: ['Check the manuscript bibliography against primary bibliographic records.', {}],
-  compile_paper: ['Compile the current manuscript and inspect its figures, citations and layout. manuscript_revision identifies main.tex after typesetting adjustments.', {}],
+  verify_citations: ['Check bibliography identities and citations in the rendered body. Inspect unused source leads and call research to trace the bibliographies of the surveyed papers.', {}],
+  compile_paper: ['Compile the current manuscript. Inspect its page-specific layout and editorial notes, including repeated numerical passages, and follow up relevant uncited research leads. manuscript_revision identifies main.tex after typesetting adjustments.', {}],
   request_review: ['Request an independent, blind submission review after artifact checks. Use draft only for early scientific feedback on an incomplete manuscript. For a delivery request, follow acceptance with deliver and report its result. For a review-only request, report the findings. To retry a stopped evidence check on identical inputs, give retry_reason with the passage or evidence to examine.', { retry_reason:str, draft: bool }],
   deliver: ['Verify the current reviewed revision and publish the checked project deliverables.', {}],
   read_project_file: ['Read up to 6000 characters of a manuscript, result, skill, original brief (auto_research/state/idea.md), experiment_plan.yaml or deep_research.md in that directory, sources/<id>.txt from verify_citations, or the signed_record returned by review. Supply next_offset as offset to continue, or find a passage to get its match_line. Use start_line to read up to 40 numbered lines. sha256 covers the entire file. For paper/main.tex, list_revisions lists saved digests and revision_sha256 reads a saved version.', { path: str, offset: num, find: str, start_line: num, revision_sha256: str, list_revisions: bool }, ['path']],

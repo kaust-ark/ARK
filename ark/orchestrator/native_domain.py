@@ -38,7 +38,9 @@ from ark import (
 )
 from ark.compute import native_experiment, review_control
 from ark.execution import ExecutionMixin
-from ark.latex.compiler import CompilerMixin, body_repetition_notes, body_sections_and_figures, rendered_body_images
+from ark.latex.compiler import (
+    CompilerMixin, body_repetition_notes, body_sections_and_figures, rendered_body_images, repeated_result_series, stretched_prose,
+)
 from ark.latex.utils import BODY_END_PDF_MARKER, body_page_boundary, extract_latex_errors, parse_overfull_warnings
 from ark.orchestrator.state import _atomic_write_text
 
@@ -78,6 +80,14 @@ def install_skills(root):
             shutil.copytree(skill.parent, dest)
 
 
+_ICML_BALANCE_TOLERANCE = 24  # two body lines, in PDF points
+_ICML_COLUMN_HEIGHT = 9 * 72  # PDF points in the official nine-inch type area
+_ICML_BALANCE = r"""% Idea2Paper final body columns
+\usepackage{balance}
+\AddToHook{shipout/after}{\ifdefined\arkBodyEndPage
+  \ifnum\value{page}=\numexpr\arkBodyEndPage-1\relax\balance\fi
+  \ifnum\value{page}=\arkBodyEndPage\relax\nobalance\fi\fi}
+"""
 _PAPER_EXTENSIONS = {".tex", ".sty", ".bst", ".bib", ".cls", ".png", ".jpg", ".jpeg", ".pdf"}
 _PDFLATEX = (
     "pdflatex", "-file-line-error", "-recorder", "-no-shell-escape",
@@ -99,10 +109,12 @@ def _paper_inputs(paper):
             yield path
 
 
-def _paper_sources(paper):
+def _paper_sources(paper, *, original_main=None):
     digest = hashlib.sha256()
     for path in _paper_inputs(paper):
-        digest.update(str(path.relative_to(paper)).encode() + b"\0" + bytes.fromhex(_sha(path)))
+        checksum = (hashlib.sha256(original_main).digest() if original_main is not None and path == paper / "main.tex"
+                    else bytes.fromhex(_sha(path)))
+        digest.update(str(path.relative_to(paper)).encode() + b"\0" + checksum)
     return digest.hexdigest()
 
 
@@ -497,7 +509,9 @@ class NativeProject(CompilerMixin):
                 "or inconclusive, use claim_without_it throughout the manuscript or plan the missing comparison. "
                 "State which recorded observation supports each central inference. When revising a disputed claim, trace it across the "
                 "abstract, discussion, conclusions and captions so that earlier versions of the explanation are corrected everywhere. "
-                "Use the survey's official titles and primary abstracts to select relevant originals before writing. "
+                "Use the survey's official titles, primary abstracts and reference_leads to locate relevant originals before writing. "
+                "For a claim about a named method, a sampling condition or a competing approach that still lacks evidence, "
+                "search lookup_papers by method, author and condition, then open the closest original. "
                 "Register those works with lookup_papers and cite the returned keys at the specific comparisons. "
                 "Use render_results_table to include the exact worker values in per-condition tables. "
                 "For claims about the size or direction of a change at specific conditions, call that tool with "
@@ -746,13 +760,17 @@ class NativeProject(CompilerMixin):
             )
         report = (self.state_dir / "deep_research.md").read_text()
         leads = self._survey_leads(literature_evidence.source_leads(report))
+        references = self._survey_references(receipt["report_sha256"], report, leads)
         return {
             "path": "auto_research/state/deep_research.md",
             "source_leads": leads,
+            "reference_leads": references[:8],
             "source_guidance": "official_title and abstract_excerpt come from the DOI deposit. Survey titles and claims may be wrong. "
-                               "Before writing related work, select relevant "
-                               "ones with lookup_papers(query, add_to_bibliography=true). Check their official titles "
-                               "and original passages before citing their returned keys. Keep the venue bibliography.",
+                               "reference_leads come from those publications' reference lists and require original-source lookup. "
+                               "For each substantive comparison, match the original's method, conditions and finding to the present study. "
+                               "If an origin, close comparison, alternative or sampling assumption is missing, search lookup_papers "
+                               "by method, author or condition even when no exact title appears in the survey. "
+                               "Select a relevant exact title or DOI with add_to_bibliography=true, inspect its passage and cite its key.",
             "report": report[:6000],
             "total_chars": len(report),
             "next_offset": 6000 if len(report) > 6000 else None,
@@ -1251,6 +1269,28 @@ class NativeProject(CompilerMixin):
             self.save()
         return resolved
 
+    def _survey_references(self, digest, report=None, leads=None):
+        """Reuse the verified survey on writing-only resumes; only query public reference metadata."""
+        previous = self.state.get("survey_reference_search") or {}
+        if previous.get("report_sha256") != digest:
+            previous = {}
+        if previous.get("complete") or previous.get("retry_after", 0) > time.time():
+            return previous["leads"]
+        if report is None:
+            report = (self.state_dir / "deep_research.md").read_text()
+        if leads is None:
+            leads = literature_evidence.source_leads(report)
+        cache = {doi: [row for row in previous["leads"] if row["cited_by_doi"] == doi]
+                 for doi in previous.get("checked_dois", [])}
+        topic = self.config.get("title") or self.config.get("research_idea") or self.config.get("idea") or ""
+        references, complete = literature_evidence.survey_reference_leads(leads, topic, report, cache)
+        self.state["survey_reference_search"] = {
+            "report_sha256": digest, "checked_dois": list(cache), "leads": references, "complete": complete,
+            **({} if complete else {"retry_after": time.time() + 300}),
+        }
+        self.save()
+        return references
+
     def lookup_papers(self, args):
         query = _text(args, "query", limit=500)
         limit = args.get("limit", 4)
@@ -1286,7 +1326,16 @@ class NativeProject(CompilerMixin):
             for p in papers[:limit]
         ]
         result = {"papers": found}
+        for paper in found:
+            records = citation.parse_bib_string(paper["bibtex"] or "")
+            if len(records) == 1:
+                paper["record_kind"] = literature_evidence.record_kind(records[0])
+            if paper.get("record_kind") in {"software", "dataset"}:
+                paper["citation_guidance"] = literature_evidence.RESOURCE_GUIDANCE
         if not args.get("add_to_bibliography"):
+            result["next"] = ("Select a directly relevant exact title or DOI, then use add_to_bibliography=true to inspect "
+                              "the original passage and obtain a cite key. Refine the search with the method, author or "
+                              "study conditions if the candidates address a different question.")
             return result
         matching = [p for p in found if (doi and citation._doi_id(p["doi"]) == doi)
                     or (not doi and citation._normalize_title(p["title"]) == wanted)]
@@ -1332,6 +1381,11 @@ class NativeProject(CompilerMixin):
                 output.write("\n" + official.strip() + "\n")
                 output.flush()
         result.update(saved=True, cite_key=key, cite=r"\cite{" + key + "}", bibliography="paper/references.bib")
+        result["record_kind"] = literature_evidence.record_kind(entry)
+        if result["record_kind"] in {"software", "dataset"}:
+            result["citation_guidance"] = literature_evidence.RESOURCE_GUIDANCE
+        else:
+            result["citation_guidance"] = literature_evidence.ORIGIN_GUIDANCE
         # Put the primary passage beside the cite key, before the author writes a claim.
         source = self._source_record({**entry, "key": key})
         if source:
@@ -1522,7 +1576,30 @@ class NativeProject(CompilerMixin):
             return None
         report = self.state_dir / "deep_research.md"
         return literature_evidence.body_source_trace(self.latex_dir, report, proof.get("checked", {}),
-                                                     originals=self.state.get("survey_originals"))
+                                                     originals=self.state.get("survey_originals"),
+                                                     reference_leads=self._survey_references(_sha(report)))
+
+    def _icml_body_columns(self, doc, boundary):
+        """Occupied height in each column on a separate final body page, in PDF points."""
+        import fitz
+
+        if not boundary or not boundary[0] or any(boundary[1]):
+            return None
+        page = doc[boundary[0] - 1]
+        width, height = page.rect.width, page.rect.height
+        boxes = [fitz.Rect(b[:4]) for b in self._body_text_blocks(page)]
+        boxes.extend(
+            fitz.Rect(b) for kind, b in page.get_bboxlog()
+            if kind in {"fill-image", "fill-path", "stroke-path"}
+            and width * 0.06 < b[0] < b[2] < width * 0.94
+            and height * 0.06 < b[1] < b[3] < height * 0.95
+        )
+        top = (height - _ICML_COLUMN_HEIGHT) / 2
+        heights = []
+        for left, right in ((width * 0.12, width / 2 - 8), (width / 2 + 8, width * 0.88)):
+            bottom = max((b.y1 for b in boxes if b.x0 < right and b.x1 > left), default=top)
+            heights.append(min(_ICML_COLUMN_HEIGHT, max(0, bottom - top)))
+        return heights
 
     def _rendered_body_coverage(self, path=None):
         """Measure body length and locate its last physical PDF page."""
@@ -1533,28 +1610,120 @@ class NativeProject(CompilerMixin):
         if self.config.get("venue_format") == "icml":
             with fitz.open(path) as doc:
                 boundary = body_page_boundary(doc)
-                if boundary and boundary[0] > 0 and not any(boundary[1]):
-                    page = doc[boundary[0] - 1]
-                    width, height = page.rect.width, page.rect.height
-                    boxes = [fitz.Rect(b[:4]) for b in self._body_text_blocks(page)]
-                    boxes.extend(
-                        fitz.Rect(b)
-                        for kind, b in page.get_bboxlog()
-                        if kind in {"fill-image", "fill-path", "stroke-path"}
-                        and width * 0.06 < b[0] < b[2] < width * 0.94
-                        and height * 0.06 < b[1] < b[3] < height * 0.95
-                    )
-                    column_height = 9 * 72  # ICML's nine-inch type area
-                    top = (height - column_height) / 2
-                    bottoms = [
-                        max((b.y1 for b in boxes if b.x0 < right and b.x1 > left), default=top)
-                        for left, right in ((width * 0.12, width / 2 - 8), (width / 2 + 8, width * 0.88))
-                    ]
-                    fill = sum(min(column_height, max(0, y - top)) for y in bottoms) / (2 * column_height)
-                    return boundary[0] - 1 + fill, boundary[0]
+                if heights := self._icml_body_columns(doc, boundary):
+                    return boundary[0] - 1 + sum(heights) / (2 * _ICML_COLUMN_HEIGHT), boundary[0]
         # A staged edit has its own PDF. Its page count must never use the published AUX.
         length = self._count_body_pages(path) if path == published else self._count_body_pages_from_pdf(path)
         return length, max(1, math.ceil(length))
+
+    @staticmethod
+    def _uneven_final_columns(boundary, heights):
+        return (boundary and boundary[0] >= 2 and heights and min(heights) > 0
+                and abs(heights[0] - heights[1]) > 2 * _ICML_BALANCE_TOLERANCE)
+
+    def _rendered_layout(self, compiled):
+        """Measure the ICML body independently of its reference/appendix pages."""
+        if (self.config.get("layout_mode") != "strict" or self.config.get("venue_format") != "icml"
+                or "icml2026.sty" not in compiled.get("inputs", [])):
+            return {}
+        import fitz
+
+        with fitz.open(self.latex_dir / "main.pdf") as doc:
+            boundary = body_page_boundary(doc)
+            if not boundary:
+                return {}
+            layout = {}
+            if spacing := stretched_prose(self.latex_dir, doc, range(boundary[0])):
+                layout["stretched_body_prose"] = spacing
+            starts = _appendix_pages(doc)
+            if starts and starts[0] > boundary[0]:
+                # The native appendix starts on a fresh page. Skip an imported mixed page
+                # when the first appendix destination is below the top of the left column.
+                first = starts[0] - 1
+                destinations = [loc.get("to") for key, loc in doc.resolve_names().items()
+                                if key.startswith("appendix.") and loc.get("page") == first]
+                clean_start = any(to and to[0] < doc[first].rect.width / 2 and
+                                  to[1] > doc[first].rect.height * .85 for to in destinations)
+                if spacing := stretched_prose(self.latex_dir, doc, range(first + int(not clean_start), len(doc)),
+                                              appendix=True):
+                    layout["stretched_appendix_prose"] = spacing
+            heights = self._icml_body_columns(doc, boundary)
+            if self._uneven_final_columns(boundary, heights):
+                layout["column_balance"] = (
+                    f"PDF p. {boundary[0]}, final body page: left and right columns occupy "
+                    f"{heights[0]:.0f} and {heights[1]:.0f} pt of the {_ICML_COLUMN_HEIGHT} pt type area. "
+                    "Inspect the last figure and paragraph breaks. Balance the columns on this page if it evens the "
+                    "two endings while preserving the evidence, body length and venue typography."
+                )
+        return layout
+
+    def _balance_icml_body(self, staging, env):
+        """Adopt a one-page balance only after a second PDF proves the layout and content."""
+        import fitz
+
+        source = staging / "main.tex"
+        main = source.read_text()
+        if (self.config.get("layout_mode") != "strict" or self.config.get("venue_format") != "icml"
+                or BODY_END_PDF_MARKER not in main or (staging / "balance.sty").exists()
+                or "icml2026.sty" not in _local_tex_inputs(staging)
+                or _sha(staging / "icml2026.sty") != _sha(_asset_dir("venue_templates") / "icml/icml2026.sty")):
+            return False
+        manual = re.compile(r"\\(?:newpage|clearpage|pagebreak|columnbreak|onecolumn|balance|nobalance)\b"
+                            r"|\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^}]*\b(?:balance|flushend|multicol)\b")
+        if any(manual.search(tex.split(BODY_END_PDF_MARKER)[0]) for _, tex in citation.active_tex_sources(staging)):
+            return False
+
+        def content(page):
+            # Columns may move. Preserve the reading order, link targets and graphics on each page.
+            return (page.get_text().split(),
+                    [im["digest"] for im in page.get_image_info(hashes=True)],
+                    [(d["type"], len(d["items"]), round(d["rect"].width, 1), round(d["rect"].height, 1))
+                     for d in page.get_drawings()],
+                    [(l.get("kind"), l.get("nameddest"), l.get("uri"), l.get("page"), l.get("file"))
+                     for l in page.get_links()])
+
+        def anchors(doc):
+            return {name: loc.get("page") for name, loc in doc.resolve_names().items()}
+
+        with fitz.open(staging / "main.pdf") as original:
+            boundary = body_page_boundary(original)
+            heights = self._icml_body_columns(original, boundary)
+            target = int(self.config.get("venue_pages") or 4)
+            if (not self._uneven_final_columns(boundary, heights) or boundary[0] != target
+                    or boundary[0] >= len(original) or anchors(original).get("idea2paper.body.end") != target - 1):
+                return False
+            with tempfile.TemporaryDirectory(prefix="idea2paper-columns-") as tmp:
+                trial = Path(tmp)
+                shutil.copytree(staging, trial, dirs_exist_ok=True)
+                proposed = main.replace(r"\begin{document}", _ICML_BALANCE + r"\begin{document}", 1)
+                if proposed == main:
+                    return False
+                (trial / "main.tex").write_text(proposed)
+                try:
+                    for _ in range(2):
+                        subprocess.run(_PDFLATEX, cwd=trial, env={**env, "HOME": tmp}, capture_output=True,
+                                       check=True, timeout=90)
+                    if ((trial / "main.tex").read_text() != proposed
+                            or _paper_sources(trial, original_main=source.read_bytes()) != _paper_sources(staging)):
+                        return False
+                    log = (trial / "main.log").read_text(errors="replace")
+                    if parse_overfull_warnings(trial) or delivery_contract.cross_reference_warning(log):
+                        return False
+                    with fitz.open(trial / "main.pdf") as candidate:
+                        if (len(candidate) != len(original) or body_page_boundary(candidate) != boundary
+                                or anchors(candidate) != anchors(original)):
+                            return False
+                        adjusted = self._icml_body_columns(candidate, boundary)
+                        fill = sum(adjusted) / (2 * _ICML_COLUMN_HEIGHT)
+                        if (fill < 0.75 or abs(adjusted[0] - adjusted[1]) > _ICML_BALANCE_TOLERANCE
+                                or any(content(a) != content(b) for a, b in zip(original, candidate))):
+                            return False
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+                    return False
+                # Keep the baseline recorder and bibliography. Only these outputs changed.
+                for name in ("main.tex", "main.pdf", "main.aux", "main.log"):
+                    shutil.copyfile(trial / name, staging / name)
+        return True
 
     @staticmethod
     def _link_appendix(paper):
@@ -1966,6 +2135,10 @@ class NativeProject(CompilerMixin):
                         cached.pop("research_citations", None)
                     self.save()
                 # Recheck editorial observations even when resuming an older compiled checkpoint.
+                layout = self._rendered_layout(cached)
+                layout_changed = layout != cached.get("rendered_layout")
+                if layout_changed:
+                    cached["rendered_layout"] = layout
                 notes = list(dict.fromkeys([*cached.get("editorial_notes", []), *self._body_repetition_notes()]))
                 issues = self._strict_paper_issues()
                 checks = cached.get("checks", [])
@@ -1974,14 +2147,21 @@ class NativeProject(CompilerMixin):
                     checks = [check for check in checks if check["check"] != "cross_references_resolved"]
                     if warning := delivery_contract.cross_reference_warning(final_log.read_text(errors="replace")):
                         checks.append(dict(check="cross_references_resolved", status="violated", detail=warning))
-                if (notes != cached.get("editorial_notes") or issues != cached.get("manuscript_issues")
+                if (layout_changed or notes != cached.get("editorial_notes") or issues != cached.get("manuscript_issues")
                         or checks != cached.get("checks")):
                     cached.update(editorial_notes=notes, manuscript_issues=issues, checks=checks)
                     self.save()
-                return cached
+                if not layout.get("column_balance") or cached.get("column_balance_checked"):
+                    return cached
         with tempfile.TemporaryDirectory(prefix="idea2paper-tex-") as tmp:
             staging = Path(tmp)
             env = _stage_tex(self.latex_dir, staging)
+            staged_main = staging / "main.tex"
+            original_main = staged_main.read_bytes()
+            # A later prose edit may move the body boundary or remove the need for balancing.
+            if _ICML_BALANCE in staged_main.read_text():
+                staged_main.write_text(staged_main.read_text().replace(_ICML_BALANCE, "", 1))
+            baseline_main = staged_main.read_bytes()
             if "TEXMFVAR" in os.environ:
                 env["TEXMFVAR"] = os.environ["TEXMFVAR"]
             commands = (
@@ -2017,6 +2197,9 @@ class NativeProject(CompilerMixin):
                 return failure
             import fitz
 
+            if staged_main.read_bytes() != baseline_main:
+                return {"ok": False, "diagnostic": "The staged manuscript changed during compilation."}
+            balanced = self._balance_icml_body(staging, env)
             with fitz.open(staging / "main.pdf") as pdf:
                 pages = len(pdf)
             local_inputs = _local_tex_inputs(staging)
@@ -2024,11 +2207,14 @@ class NativeProject(CompilerMixin):
             for aux in staging.rglob("*.aux"):
                 for keys in re.findall(r"\\citation\{([^{}]+)\}", aux.read_text(errors="replace")):
                     cited.update(k.strip() for k in keys.split(","))
-            if digest != _paper_sources(self.latex_dir) or digest != _paper_sources(staging):
+            if digest != _paper_sources(self.latex_dir) or digest != _paper_sources(staging, original_main=original_main):
                 return {
                     "ok": False,
                     "diagnostic": "The manuscript changed while TeX was compiling. Compile its current revision.",
                 }
+            if staged_main.read_bytes() != original_main:
+                _atomic_write_text(source, staged_main.read_text())
+                digest = _paper_sources(staging)
             for suffix in ("aux", "bbl", "blg", "log", "pdf"):
                 new = staging / ("main." + suffix)
                 if new.exists():
@@ -2064,6 +2250,10 @@ class NativeProject(CompilerMixin):
                     "accounts the data distinguish. Expand the relevant sections in place. Keep implementation "
                     "details in the appendix and preserve the venue margins and type size."
                 )
+        if self.config.get("layout_mode") == "strict":
+            result["rendered_layout"] = self._rendered_layout(result)
+            if balanced or result["rendered_layout"].get("column_balance"):
+                result["column_balance_checked"] = True
         result["editorial_notes"] = [f.detail for f in report.violations if f.check in {"body_prose_repeated", "markdown_emphasis"}]
         result["editorial_notes"].extend(self._body_repetition_notes())
         if citation_proof:
@@ -2288,6 +2478,11 @@ class NativeProject(CompilerMixin):
                           "Register a relevant work with lookup_papers(add_to_bibliography=true). "
                           + (f"Survey candidates: {leads}. " if leads else "") +
                           "Use the returned cite key in the supported passage.")
+        layout = rendered.get("rendered_layout")
+        if layout is None and rendered.get("ok") and (self.latex_dir / "main.pdf").is_file():
+            layout = self._rendered_layout(rendered)
+        issues.extend((layout or {}).get("stretched_body_prose", []))
+        issues.extend((layout or {}).get("stretched_appendix_prose", []))
         if guidance := rendered.get("layout_guidance"):
             issues.append(guidance)
         if overflow := rendered.get("overflow"):
@@ -2395,6 +2590,10 @@ class NativeProject(CompilerMixin):
             from decimal import Decimal
             exact_data, _ = self._measurements(parse_float=Decimal)
             issues.extend(measurement_table.measured_bound_issues(exact_data, verified_tables, pdf))
+            if self.config.get("venue_format") == "icml" and 0 < float(self.config.get("venue_pages") or 4) <= 8:
+                import fitz
+                with fitz.open(pdf) as doc:
+                    issues.extend(repeated_result_series(doc, verified_tables=verified_tables))
         return issues
 
     def _opening_review_evidence(self, snapshot, trace=None, *, previous=None, pages=0):
@@ -2412,7 +2611,8 @@ class NativeProject(CompilerMixin):
         measured_method = snapshot.get("measurement_method", {})
         protocol = [key for key in (measured_method.get("request"), measured_method.get("artifact")) if key]
         citations = _load(self.state_dir / "native_citations.json", {}).get("checked", {})
-        body_records = (trace or {}).get("body_citations", {}).values()
+        body_records = [row for row in (trace or {}).get("body_citations", {}).values()
+                        if row.get("record_kind") not in {"software", "dataset"}]
         source_paths = [record.get("source") for record in body_records]
         # Prefer the originals behind the author's actual body citations, including an independently found work.
         first_from_each = [next((row["source"] for row in body_records if row.get("source")
@@ -2536,6 +2736,9 @@ class NativeProject(CompilerMixin):
             result["brief"] += ("\nTypesetting observations on the submitted revision. Open the named pages and "
                                 "decide whether the repetition is justified or requires a repair.\n"
                                 + json.dumps(notes, ensure_ascii=False))
+        layout = self.state.get("compile", {}).get("rendered_layout", {})
+        if pages and layout.get("column_balance"):
+            result["brief"] += "\nTypesetting observation. " + layout["column_balance"]
         if pages and (notes := self._plot_caption_issues()):
             result["brief"] += ("\nPlot caption checks. Inspect the named PDF page and caption before reporting a visual finding.\n"
                                 + json.dumps(notes, ensure_ascii=False))
@@ -2560,8 +2763,10 @@ class NativeProject(CompilerMixin):
                 "Use the pages and source paths to inspect whether the original work supports the manuscript claim. "
                 "Assess coverage of the named method's origin, the theory used and the closest comparison where "
                 "applicable. If an attribution lacks support, locate the manuscript claim and specify the original "
-                "source the author should investigate. unused_leads are search suggestions, not verified facts. "
-                "Judge relevance from the originals. A missing report match alone does not establish a citation error.\n"
+                "source the author should investigate. Compare the study conditions, outcome and closest alternative where those "
+                "matter to the conclusion. Check unused_leads from the survey and reference_leads from the cited papers' "
+                "bibliographies for a substantive missing comparison. Judge relevance from the originals. The citation "
+                "count and a missing survey match alone do not establish a citation error.\n"
                 + json.dumps(trace, ensure_ascii=False)
             )
         if record and review.record_is_current(snapshot, record):

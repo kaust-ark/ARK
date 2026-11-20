@@ -629,6 +629,110 @@ def test_replication_appendix_checks_a_different_workers_printed_recipe(tmp_path
     assert check("Protocole expérimental.", title="Procédure") == []
 
 
+@pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
+def test_layout_traces_severe_spacing_to_body_prose_and_rechecks_cached_build(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    main = project.latex_dir / "main.tex"
+    preamble = main.read_text().split(r"\section{Introduction}")[0]
+    line = r"Root mean squared error (RMSE): $\sqrt{\frac{1}{1000}\sum (\hat{H} - H(P))^2}$, capturing both bias and variance in nats."
+    # Identify the body and appendix occurrences independently of their identical prose.
+    body = (r"\section{Method}" + "\n" + r"\begin{itemize}" + "\n" + r"\item " + line + "\n"
+            + r"\end{itemize}" + "\n")
+    styled = line.replace("Root mean squared", r"\textbf{Root mean squared}")
+    appendix = (r"\clearpage\section*{References}Author reference.\clearpage\appendix\section{Replication}"
+                + "\n" + r"\begin{itemize}" + "\n" + r"\item " + styled + "\n" + r"\end{itemize}\end{document}")
+    main.write_text(preamble + body + appendix)
+    compiled = project.compile_paper({})
+    issue, = compiled["rendered_layout"]["stretched_body_prose"]
+    assert "PDF p. 1" in issue and "Root mean squared error" in issue and issue in compiled["manuscript_issues"]
+    project.state["compile"].pop("rendered_layout")
+    assert issue in project._strict_paper_issues()  # an older checkpoint can go straight to review
+    assert project.compile_paper({})["rendered_layout"]["stretched_body_prose"] == [issue]
+
+    # Keep a severely stretched copy in a table cell, reflow the actual body.
+    table = (r"\begin{table}\begin{minipage}{\columnwidth}\begin{itemize}" + "\n" + r"\item " + line
+             + "\n" + r"\end{itemize}\end{minipage}\end{table}" + "\n")
+    main.write_text(preamble + body.replace(line, "Root mean squared error is measured in nats.") + table + appendix)
+    revised = project.compile_paper({})
+    assert revised["ok"] and "badness 10000" in (project.latex_dir / "main.log").read_text()
+    assert not revised.get("rendered_layout", {}).get("stretched_body_prose")
+    appendix_note, = revised["rendered_layout"]["stretched_appendix_prose"]
+    assert "Root mean squared error" in appendix_note and "appendix paragraph" in appendix_note
+    assert appendix_note in revised["manuscript_issues"]
+    # Keep the same printed problem inside an appendix table, with no matching prose.
+    main.write_text(preamble + body.replace(line, "Root mean squared error is measured in nats.")
+                    + appendix.replace(r"\begin{itemize}", r"\begin{table}\begin{minipage}{\columnwidth}\begin{itemize}")
+                              .replace(r"\end{itemize}", r"\end{itemize}\end{minipage}\end{table}"))
+    final = project.compile_paper({})
+    assert final["ok"] and not final.get("rendered_layout", {}).get("stretched_appendix_prose")
+
+
+@pytest.mark.skipif(not shutil.which("pdflatex") or not shutil.which("bibtex"), reason="requires TeX Live")
+def test_icml_balance_adopts_only_a_content_preserving_compilation(tmp_path, monkeypatch):
+    import fitz
+
+    project = open_project(tmp_path, monkeypatch)
+    project.config["venue_pages"] = 2
+    main = project.latex_dir / "main.tex"
+    preamble = main.read_text().split(r"\section{Introduction}")[0]
+    # An actual two-column draft with a long left column and a short right column on p. 2.
+    rows = "\n".join(f"Recorded observation {i} for both conditions." + r"\par" for i in range(110))
+    evidence = "Every observed case remains archived."
+    conditional = r"\makeatletter\@ifpackageloaded{balance}{Abbreviated.}{" + evidence + r"}\makeatother"
+    manuscript = (preamble + r"\section{Results} Reference to the experiment \citep{example}." + "\n" + rows
+                  + "\n" + r"\bibliographystyle{icml2026}\bibliography{references}"
+                  + "\n" + r"\appendix\section{Supplement}" + conditional + r"\end{document}")
+    (project.latex_dir / "references.bib").write_text(
+        "@book{example,author={An Author},title={A result},year={2001},publisher={Example press}}")
+    monkeypatch.setattr(project, "verify_citations", lambda args: {"unconfirmed": []})
+    main.write_text(manuscript)
+    declined = project.compile_paper({})
+    assert declined["ok"] and "column_balance" in declined["rendered_layout"]
+    assert declined["column_balance_checked"] and domain._ICML_BALANCE not in main.read_text()
+    with fitz.open(project.latex_dir / "main.pdf") as pdf:
+        assert evidence in pdf[-1].get_text() and len(pdf) == 4
+
+    main.write_text(manuscript.replace(conditional, evidence))
+    repaired = project.compile_paper({})
+    assert repaired["ok"] and repaired["last_body_page"] == 2 and repaired["body_equivalent_pages"] >= 1.75
+    assert repaired["column_balance_checked"] and not repaired["rendered_layout"]
+    assert main.read_text().count(domain._ICML_BALANCE) == 1
+    with fitz.open(project.latex_dir / "main.pdf") as pdf:
+        left, right = project._icml_body_columns(pdf, domain.body_page_boundary(pdf))
+        assert abs(left - right) <= 24 and len(pdf) == 4
+        names = pdf.resolve_names()
+        assert names["cite.example"]["page"] == 2 and names["appendix.A"]["page"] == 3
+    assert project.compile_paper({})["pdf_sha256"] == repaired["pdf_sha256"]
+
+    manual = manuscript.replace(conditional, evidence).replace(r"\begin{document}",
+                                                              r"\usepackage{balance}\begin{document}")
+    main.write_text(manual)
+    assert "column_balance" in project.compile_paper({})["rendered_layout"]
+    assert domain._ICML_BALANCE not in main.read_text()
+
+
+def test_last_column_balance_observation_excludes_endmatter_and_even_endings(tmp_path, monkeypatch):
+    import fitz
+
+    project = open_project(tmp_path, monkeypatch)
+    for right_y, expected in [(450, True), (608, True), (655, True), (665, False), (700, False)]:
+        with fitz.open() as pdf:
+            pdf.new_page(width=612, height=792).insert_text((55, 70), "Title")
+            page = pdf.new_page(width=612, height=792)
+            page.insert_text((55, 710), "Final paragraph of the left column.")
+            page.insert_text((308, right_y), "Final paragraph of the right column.")
+            page = pdf.new_page(width=612, height=792)
+            page.insert_text((55, 70), "References")
+            page.insert_text((55, 100), "One short reference.")
+            pdf.save(project.latex_dir / "main.pdf")
+        notes = project._rendered_layout({"inputs": ["icml2026.sty"]})
+        assert ("column_balance" in notes) is expected
+        if expected:
+            assert "PDF p. 2" in notes["column_balance"]
+            assert list(notes) == ["column_balance"]
+    assert project._rendered_layout({"inputs": ["other.sty"]}) == {}
+
+
 @pytest.mark.skipif(not shutil.which("pdflatex") or not shutil.which("bibtex"), reason="requires TeX Live")
 def test_major_body_cut_cannot_silently_drop_rendered_appendix(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
@@ -849,6 +953,59 @@ def test_survey_candidates_use_official_abstract_and_cache_only_confirmed_dois(m
     assert len(calls) == 3 and calls[-1].endswith("missing")
 
 
+def test_follow_cited_references_for_missing_comparisons_without_registering_them(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    project.config["title"] = "Calibration under label shift"
+    report = project.state_dir / "deep_research.md"
+    report.write_text('Stone (2002) introduced an estimator for shifted populations.\n'
+                      '## Primary studies\n'
+                      '- "Calibration under resampling", Lee, 2022, DOI: 10.1234/seed.\n'
+                      '- [A separate study of calibration](https://proceedings.mlr.press/v100/other.html)\n'
+                      '- "Calibration with old weights", Ray, 2012, DOI: 10.1234/missing.\n')
+    (project.state_dir / "deep_research_receipt.json").write_text(json.dumps({
+        "provider": "google", "status": "completed", "interaction_id": "fixture", "report_sha256": domain._sha(report)}))
+    monkeypatch.setattr(domain.literature_evidence, "doi_original", lambda doi: None)
+    monkeypatch.setattr(domain.deep_research, "run_deep_research", lambda *a: pytest.fail("started another survey"))
+    calls = []
+    def deposit(url, timeout):
+        calls.append(url)
+        if url.endswith("/missing"):
+            return {"message": {"DOI": "10.1234/wrong", "reference": []}}
+        return {"message": {"DOI": "10.1234/seed", "reference": [
+            {"article-title": "Calibration under resampling", "DOI": "10.1234/seed"},
+            {"article-title": "A separate study of calibration"},
+            {"article-title": "Regression on time series", "DOI": "10.1234/unrelated"},
+            {"article-title": "Calibration by inversion", "DOI": "10.1234/older"},
+            {"article-title": "Calibration of rare classes", "author": "Stone", "year": "2002"},
+            {"article-title": "Calibration by inversion", "DOI": "10.1234/older"},
+        ]}}
+    monkeypatch.setattr(domain.citation, "_http_get_json", deposit)
+    bib = project.latex_dir / "references.bib"
+    initial = bib.read_bytes()
+    result = project.research({})
+    assert {lead["query"] for lead in result["source_leads"]} == {
+        "10.1234/seed", "10.1234/missing", "A separate study of calibration"}
+    assert [row["query"] for row in result["reference_leads"]] == ["Calibration of rare classes", "10.1234/older"]
+    assert all(row["cited_by_doi"] == "10.1234/seed" and "report_line" not in row for row in result["reference_leads"])
+    assert len(calls) == 2 and bib.read_bytes() == initial
+    project = domain.NativeProject(tmp_path)
+    project.config["title"] = "Calibration under label shift"
+    assert project.research({})["reference_leads"] == result["reference_leads"]
+    assert len(calls) == 2
+    retry_after = project.state["survey_reference_search"]["retry_after"]
+    monkeypatch.setattr(domain.time, "time", lambda: retry_after + 1)
+    assert project._survey_references(domain._sha(report)) == result["reference_leads"]
+    assert len(calls) == 3 and calls[-1].endswith("/missing")
+
+
+def test_unused_survey_sources_filter_body_before_applying_output_limit():
+    evidence = domain.literature_evidence
+    lines = [f"The source DOI is 10.1234/work{i}." for i in range(18)]
+    entries = {str(i): {"doi": f"10.1234/work{i}"} for i in range(17)}
+    unused = evidence._unused_source_leads(lines, [], entries, set(entries), {}, {})
+    assert unused == [{"query": "10.1234/work17", "report_line": 18}]
+
+
 def test_survey_title_registration_uses_the_matched_deposit_on_old_checkpoints(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     (project.state_dir / "deep_research.md").write_text('The paper "Exactly Selected Title" has DOI: 10.1234/chosen.')
@@ -921,6 +1078,26 @@ def test_register_selected_publication_keeps_existing_cite_keys(tmp_path, monkey
     assert reply["cite_key"] == "author2020" and reply["check_existing_keys"] == ["attributed"]
 
 
+@pytest.mark.parametrize(("bibtype", "doi", "expected"), [
+    ("misc", "10.32614/CRAN.package.calibrate", "software"),
+    ("article", "10.32614/RJ-2022-001", "publication"),
+    ("software", "10.5281/zenodo.31", "software"),
+    ("dataset", "10.5281/zenodo.32", "dataset"),
+    ("misc", "10.5281/zenodo.33", "unspecified"),
+])
+def test_lookup_identifies_resource_without_discarding_its_citation(tmp_path, monkeypatch, bibtype, doi, expected):
+    project = open_project(tmp_path, monkeypatch)
+    title = "Calibrating a model under a distribution shift"
+    bib = f"@{bibtype}{{example, title={{{title}}}, author={{Doe, A}}, year={{2025}}, doi={{{doi}}}}}"
+    monkeypatch.setattr(domain.citation, "_fetch_bibtex_from_doi", lambda wanted: bib)
+    monkeypatch.setattr(project, "_source_record", lambda entry: None)
+    result = project.lookup_papers({"query": doi, "add_to_bibliography": True})
+    assert result["saved"] and result["cite_key"] == "example"
+    assert result["record_kind"] == result["papers"][0]["record_kind"] == expected
+    if expected in {"software", "dataset"}:
+        assert "original study" in result["citation_guidance"]
+
+
 def test_body_citations_trace_primary_records_and_survey_independently(tmp_path, monkeypatch):
     import fitz
     from contextlib import nullcontext
@@ -955,19 +1132,29 @@ def test_body_citations_trace_primary_records_and_survey_independently(tmp_path,
              page(2, [("supplement", 40, 120)])]
     monkeypatch.setattr(fitz, "open", lambda *a: nullcontext(pages))
     monkeypatch.setattr(domain.literature_evidence, "body_page_boundary", lambda doc: (1, (200, 0)))
+    monkeypatch.setattr(domain.citation, "_http_get_json", lambda *a, **kw: None)
     trace = project._research_citations()
     assert (trace["matched"], trace["total"], trace["references_line"]) == (1, 2, 3)
-    assert trace["verified_works"] == 1
+    assert trace["verified_works"] == 1 and trace["verified_publications"] == 2
     assert trace["body_citations"] == {
-        "main": {"source": checked["main"]["source"], "pages": [2], "report_line": 4},
-        "extra": {"source": checked["extra"]["source"], "pages": [1]},
+        "main": {"title": "main short title", "record_kind": "publication",
+                 "source": checked["main"]["source"], "pages": [2], "report_line": 4},
+        "extra": {"title": "extra short title", "record_kind": "publication", "source": checked["extra"]["source"], "pages": [1]},
     }
     assets = {name: {"kind": "primary_source"} for name in ("sources/archived.txt", *(r["source"] for r in checked.values()))}
     assert project._opening_review_evidence({"artifacts": assets}, trace) == [
         checked["main"]["source"], checked["extra"]["source"],
     ]
+    # A linked dataset with a verified passage and a survey match is still a resource.
+    bib.write_text(bib.read_text().replace("@article{main,", "@dataset{main,"))
+    (project.state_dir / "native_citations.json").write_text(json.dumps({"sha256": sha(bib), "checked": checked}))
+    resource_trace = project._research_citations()
+    assert (resource_trace["matched"], resource_trace["total"], resource_trace["verified_works"],
+            resource_trace["verified_publications"]) == (1, 2, 0, 1)
+    assert resource_trace["body_citations"]["main"]["record_kind"] == "dataset"
+    assert "original study" in resource_trace["summary"] and "surname" in resource_trace["summary"]
     (tmp_path / checked["main"]["source"]).write_text("different source material")
-    assert project._research_citations()["body_citations"]["main"] == {"pages": [2]}
+    assert "source" not in project._research_citations()["body_citations"]["main"]
     project.config["layout_mode"] = "flexible"
     assert project._research_citations() is None
     project.config["layout_mode"] = "strict"
@@ -1012,11 +1199,32 @@ def test_survey_still_exposes_foundational_leads_after_two_verified_body_sources
         {"nameddest":"cite." + key, "page":1, "from":fitz.Rect(0, 10, 50, 20)} for key in ("one", "two")])
     monkeypatch.setattr(fitz, "open", lambda *args: nullcontext([page, SimpleNamespace(number=1)]))
     monkeypatch.setattr(domain.literature_evidence, "body_page_boundary", lambda doc: (1,(0,0)))
+    discovered = {"query": "10.1234/unknown", "reference_title": "Latency in a similar system", "cited_by_doi": "10.1234/app1"}
+    project.state["survey_reference_search"] = {"report_sha256": domain._sha(report), "complete": True, "leads": [
+        discovered, dict(discovered, query="10.1234/app2"), dict(discovered, reference_title=titles["one"])]}
     trace = project._research_citations()
     assert trace["verified_works"] == 2
     assert trace["unused_leads"] == [{"query":titles["origin"], "report_line":1,
                                       "bibliography_key":"origin", "identity_status":"NEEDS-CHECK"}]
     assert "origin" not in trace["body_citations"]
+    assert trace["reference_leads"] == [discovered]
+    # A checkpoint written before reference discovery (or for a different survey)
+    # must expose candidates to compile/review without another owner research call.
+    project.state["survey_reference_search"]["report_sha256"] = "a different survey"
+    project.config["title"] = "Measuring latency"
+    monkeypatch.setattr(domain.deep_research, "run_deep_research", lambda *a: pytest.fail("paid survey restarted"))
+    calls = []
+    def deposit(url, timeout):
+        doi = url.rsplit("/works/", 1)[1]
+        calls.append(doi)
+        return {"message": {"DOI": doi, "reference": [
+            {"article-title": "Latency under shifted populations", "DOI": "10.1234/new-source"}]}}
+    monkeypatch.setattr(domain.citation, "_http_get_json", deposit)
+    resumed = project._research_citations()
+    assert [row["query"] for row in resumed["reference_leads"]] == ["10.1234/new-source"]
+    assert resumed["verified_works"] == 2
+    assert calls == ["10.1234/app1", "10.1234/app2"]
+    assert project._research_citations() == resumed and len(calls) == 2
 
 
 def test_review_reopens_current_page_text_at_unresolved_locations(tmp_path, monkeypatch):

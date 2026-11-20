@@ -8,9 +8,18 @@ import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { nextOwnerFollowup, projectFile, projectEditor, readProjectFile, reproductionComparison, reviewForAuthor, reviewRepairTopic, reviewSubmission } from './project.js'
+import { deliveredPaperContext, nextOwnerFollowup, projectFile, projectEditor, readProjectFile, reproductionComparison, reviewForAuthor, reviewRepairTopic, reviewSubmission } from './project.js'
 
 const bundle = dirname(fileURLToPath(import.meta.url))
+
+test('revision requests receive evidence only from the current delivered PDF', () => {
+  const lead = {reference_title:'Comparison on a rare sample', query:'10.1234/a'}
+  const status = {delivered:true, compile:{pdf_sha256:'abc', research_citations:{total:4,reference_leads:[lead]}}}
+  assert.match(deliveredPaperContext(status), /Comparison on a rare sample/)
+  assert.equal(deliveredPaperContext({...status, build_stale:true}), undefined)
+  assert.equal(deliveredPaperContext({...status, delivered:false}), undefined)
+  assert.equal(deliveredPaperContext({}), undefined)
+})
 
 test('review repairs require progress in evidence or the validation problem', async () => {
   const { nextReviewRepair } = await import('./project.js')

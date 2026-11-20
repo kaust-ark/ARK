@@ -144,8 +144,39 @@ def _repeated_figure_notes(doc, figures, sources, root):
     return notes
 
 
+def repeated_result_series(doc, *, verified_tables=()):
+    """Locate repeated prose series. With verified tables, require eight values from one table."""
+    decimal = re.compile(r"(?<![\w.])-?\d+\.\d+(?!\w|\.\d)")
+    tables = [set(decimal.findall(t["rendered_table"])) for t in verified_tables]
+    length = 8 if tables else 6
+    boundary = latex_utils.body_page_boundary(doc)
+    last_page = boundary[0] if boundary else len(doc)
+    seen = {}
+    notes = []
+    for page_number in range(last_page):
+        for block in doc[page_number].get_text("blocks", flags=0):
+            text = " ".join(block[4].split()).replace("−", "-")
+            if re.match(r"(?:Fig(?:ure)?\.?|Table)\s+\d", text, re.I) or len(re.findall(r"\b[a-zA-Z]{3,}\b", text)) < 20:
+                continue
+            values = decimal.findall(text)
+            # Short endpoint comparisons belong in both the abstract and results.
+            windows = [tuple(values[i:i + length]) for i in range(len(values) - length + 1)]
+            windows = [w for w in windows if len(set(w)) == length and
+                       (not tables or any(table.issuperset(w) for table in tables))]
+            match = next((w for w in windows if w in seen), None)
+            if match:
+                location = f"Body paragraphs on PDF pages {seen[match]} and {page_number + 1}"
+                table_note = " These values also appear in the verified worker table." if tables else ""
+                notes.append(f"{location} repeat the numerical series beginning {', '.join(match[:3])}.{table_note} "
+                             "Keep the condition-level values in one place; use the other paragraph for "
+                             "a contrast, an explanation or a limitation supported by the study.")
+            for window in windows:
+                seen.setdefault(window, page_number + 1)
+    return notes
+
+
 def body_repetition_notes(root, *, empty_headings_only=False) -> list[str]:
-    """Match duplicate source headings or image floats to their printed occurrences."""
+    """Locate repeated headings, floats and numerical prose in the typeset body."""
     root = root.resolve()
     main = root / "main.tex"
     notes = []
@@ -166,7 +197,7 @@ def body_repetition_notes(root, *, empty_headings_only=False) -> list[str]:
                   (any(empty for _, _, empty in rows) or (key == "conclusion" and not empty_headings_only))}
         counts = Counter(figure.asset for figure in figures)
         figures = [] if empty_headings_only else [figure for figure in figures if counts[figure.asset] > 1]
-        if not groups and not figures:
+        if empty_headings_only and not groups:
             return []
 
         import fitz
@@ -190,9 +221,90 @@ def body_repetition_notes(root, *, empty_headings_only=False) -> list[str]:
                     notes.append(f"Repeated Conclusion heading in {where}. Merge the closing material into one section.")
             if len(figures) > 1:
                 notes.extend(_repeated_figure_notes(doc, figures, sources, root))
-    except (ImportError, OSError, RuntimeError, ValueError):
+            if not empty_headings_only:
+                notes.extend(repeated_result_series(doc))
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
         # These optional notices require readable, matching typesetting artifacts.
         pass
+    return notes
+
+
+def stretched_prose(paper, doc, pages, *, appendix=False):
+    """Locate TeX's worst underfull prose lines in the printed ICML columns."""
+    log = paper / "main.log"
+    if not log.is_file():
+        return []
+    warnings = re.findall(r"Underfull \\hbox \(badness 10000\) in paragraph at lines (\d+)--(\d+)\n(.*?)\n *\[\]",
+                          log.read_text(errors="replace"), re.S)
+    if not warnings:
+        return []
+
+    # Attribute a warning only when its typeset words also occur at the reported
+    # source lines. Leave code, equations, floats and unmatched input files alone.
+    tex = re.sub(r"(?m)(?<!\\)%.*$", "", (paper / "main.tex").read_text())
+    if appendix:
+        start = re.search(r"\\appendix\b", tex)
+        if not start:
+            return []
+        # Source line numbers in the TeX log are relative to the complete document.
+        tex = "\n" * tex.count("\n", 0, start.end()) + tex[start.end():]
+    tex = re.split(r"\\(?:appendix\b|bibliography\s*\{)", tex, maxsplit=1)[0]
+    excluded = (r"\\begin\{(?!(?:document|abstract|enumerate|itemize|description)\})([^{}]+)\}.*?\\end\{\1\}"
+                r"|\\\[.*?\\\]|\$\$.*?\$\$")
+    lines = re.sub(excluded, lambda m: "\n" * m[0].count("\n"), tex, flags=re.S).splitlines()
+
+    def words(text):
+        return " " + " ".join(re.findall(r"[a-z]+", text.lower().replace("-", ""))) + " "
+
+    candidates = []
+    for start, end, reported in warnings:
+        # TeX's font switches and physical log wrapping are invisible on the printed line.
+        visible = re.sub(r"\\[A-Z][A-Z0-9]*/(?:[\w.-]+/){3}[\d.]+(?:\s*\([+-]\d+\))?",
+                         " ", reported.replace("\n", ""))
+        for index in range(int(start) - 1, min(int(end), len(lines))):
+            # The opening prose fragment is attributable even when the
+            # following inline formula or file name forced TeX to stretch it.
+            text = re.sub(r"\\(?:textbf|textit|emph|textrm|textnormal)\s*\{([^{}\\\$%]+)\}", r"\1", lines[index])
+            plain = re.match(r"\s*(?:\\item\s+)?([A-Za-z][^\\${}%]*)", text)
+            if plain:
+                candidates.append((index + 1, words(plain[1]), words(visible)))
+    if not candidates:
+        return []
+
+    notes = []
+    for idx in pages:
+        page = doc[idx]
+        rows = {}
+        for w in page.get_text("words"):
+            x, y, right, bottom, word = w[:5]
+            if (page.rect.width * .08 < x < right < page.rect.width * .94
+                    and page.rect.height * .08 < y < bottom < page.rect.height * .94):
+                rows.setdefault((x >= page.rect.width / 2, round(bottom)), []).append((x, right, word))
+        for (right_column, _), row in rows.items():
+            run = []
+            for x, right, word in sorted(row):
+                if run and x - run[-1][0] < 12:  # three consecutive gaps wider than a 10pt body em
+                    run = []
+                run.append((right, word))
+                if len(run) < 4:
+                    continue
+                phrase = " ".join(w for _, w in run[-4:])
+                normalized = words(phrase)
+                if len(normalized.split()) != 4:
+                    continue
+                line = next((n for n, source, report in candidates if normalized in source and normalized in report), None)
+                if line:
+                    column = "right" if right_column else "left"
+                    advice = ("Reflow the appendix paragraph and set any long path or code expression on its own "
+                              "line. Preserve the exact commands, identifiers and recorded values." if appendix else
+                              "Reflow the sentence or put the neighboring long expression on a display line.")
+                    notes.append(f'PDF p. {idx + 1}, {column} column (main.tex:{line}): "{phrase}" has three '
+                                 "consecutive word spaces of at least 12 pt. TeX reports maximum paragraph badness. "
+                                 + advice)
+                    break
+            else:
+                continue
+            break  # one verifiable passage per affected page
     return notes
 
 

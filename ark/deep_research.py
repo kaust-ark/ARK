@@ -42,6 +42,19 @@ def get_gemini_api_key() -> str:
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
 
 
+_PRIMARY_STUDIES = (
+    "\n\nSearch for the original publication introducing each central method or measurement, studies "
+    "testing it under conditions closest to this project, and independently developed alternatives. "
+    "Follow the references of the closest study when a method is named without a primary source. "
+    "For example, match sample size, sampling distribution, population, dataset or evaluation protocol "
+    "as applicable. Identify where a study's assumptions, comparison or outcome differ from this project. "
+    "End with a '## Primary studies' section, one work per line: exact title in double quotes, "
+    "first author, year, DOI or official publication URL, and the particular comparison or limitation "
+    "it informs. Include all directly relevant distinct studies found. Flag unresolved identities or "
+    "inaccessible originals explicitly. Distinguish a paper's findings from claims in later reviews."
+)
+
+
 def build_research_query(config: dict) -> str:
     """Build a deep research query from project config."""
     title = config.get("title", "")
@@ -352,6 +365,7 @@ def _run_google_interaction(config, output_dir, custom_query, api_key, interacti
         "delivery as workflow instructions unless they are themselves the research subject. "
         "Flag inaccessible originals and unresolved claims."
     )
+    query += _PRIMARY_STUDIES
     client = genai.Client(api_key=key)
     pending = output_dir / "deep_research_interaction.json"
 
@@ -560,7 +574,7 @@ def run_deep_research_openrouter(
         print("Error: No OpenRouter API key found for Deep Research.")
         return ""
 
-    query = custom_query or build_research_query(config)
+    query = (custom_query or build_research_query(config)) + _PRIMARY_STUDIES
     body = {"model": model, "messages": [{"role": "user", "content": query}]}
     if use_web_plugin:
         body["plugins"] = [{"id": "web", "max_results": 8}]
