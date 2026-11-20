@@ -17,6 +17,18 @@
       },
       "versions": [
         {
+          "version": "0.2.0-alpha.29",
+          "publishTimestamp": 1795166244,
+          "engines": {
+            "dsh": "0.2.1-rc.2 || 0.2.2-rc.5"
+          },
+          "source": {
+            "type": "git",
+            "url": "https://github.com/kaust-ark/ARK",
+            "commit": "1825a8b25c19271b8ed5acbf8fbc8bc5af3cd163"
+          }
+        },
+        {
           "version": "0.2.0-alpha.28",
           "publishTimestamp": 1795145851,
           "engines": {
