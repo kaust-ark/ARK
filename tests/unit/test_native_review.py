@@ -647,8 +647,16 @@ def test_result_and_explanation_require_separate_observed_support(tmp_path):
     from_inline = validate_review(snap,inline,observed=[*receipts,*seen])
     assert from_inline["issues"] == revised["issues"] and from_inline["verdict"] == "revise"
     assert validate_review(snap,inline,previous=from_inline,observed=[*receipts,*seen])["issues"][0]["status"] == "still_present"
+    repeated = validate_review(snap,{**inline,"issues":[original]},observed=[*receipts,*seen])
+    assert repeated["issues"] == from_inline["issues"] and repeated["verdict"] == "revise"
     with pytest.raises(ValueError,match="unique"):
-        validate_review(snap,{**inline,"issues":[original]},observed=[*receipts,*seen])
+        validate_review(snap,{**inline,"issues":[original,original]},observed=[*receipts,*seen])
+    with pytest.raises(ValueError,match="unique"):
+        validate_review(snap,{**inline,"issues":[{**original,"severity":"question"}]},observed=[*receipts,*seen])
+    different = {k:v for k,v in original.items() if k != "claim_ref"}
+    different.update(claim=outcome, evidence=[{"selector":"conclusion"},row])
+    with pytest.raises(ValueError,match="unique"):
+        validate_review(snap,{**inline,"issues":[different]},observed=[*receipts,*seen])
     wrong = copy.deepcopy(inline)
     wrong["checks"]["manuscript"]["claims"][0]["finding"] = {"id":"R2","fix":"change"}
     with pytest.raises(ValueError,match="unsupported claim"):

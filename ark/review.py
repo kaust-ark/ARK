@@ -1225,6 +1225,18 @@ def draft_evidence_feedback(snapshot, proposal, observed, first_error, previous=
         repairs.append("checks.manuscript.conclusion_support is missing or invalid. Assess the whole conclusion "
                        "as measured, interpretation or needs_evidence, including any inference beyond the outcome.")
     pdf_windows = {}
+    # Report independent provenance problems on the first repair turn, even
+    # when the manuscript judgment itself still needs work.
+    for domain in ("experiment", "citations"):
+        check = checks.get(domain)
+        if not isinstance(check, dict) or check.get("status") != "assessed":
+            continue
+        try:
+            refs = _references(snapshot, check.get("evidence", []), observed, blind, required=True, pdf_windows=pdf_windows)
+            _check_source_and_method(snapshot, domain, refs)
+        except ValueError as exc:
+            if str(exc) != first_error:
+                repairs.append(f"checks.{domain}: {exc}")
     if per_claim and isinstance(manuscript, dict) and isinstance(manuscript.get("claims"), list):
         located = []
         for index, claim in enumerate(manuscript["claims"][:12], 1):
@@ -1286,6 +1298,34 @@ def draft_evidence_feedback(snapshot, proposal, observed, first_error, previous=
     return "\n".join(dict.fromkeys(repairs))
 
 
+def _check_source_and_method(snapshot, domain, refs):
+    if domain == "citations":
+        for ref in refs:
+            if snapshot["artifacts"][ref["artifact"]]["kind"] != "primary_source" or ref.get("visual"):
+                continue
+            if Path(ref["artifact"]).suffix.lower() not in (".md", ".txt"):
+                continue
+            data, _ = _artifact(snapshot, ref["artifact"])
+            source = _primary_record(data.decode("utf-8", errors="replace"))
+            if source:
+                quote = _normalized_quote(ref.get("quote", "")).casefold()
+                if (not quote or quote in _normalized_quote(source.get("title") or "").casefold()
+                        or quote not in _normalized_quote(source["passage"]).casefold()):
+                    raise ValueError(f"Quote the authors' scientific statement from {ref['artifact']}. "
+                                     "The title identifies the publication but supplies no evidence for the claim. "
+                                     "Use read_evidence with find to open a relevant passage.")
+    elif domain == "experiment" and (method := snapshot.get("measurement_method")):
+        paths = {r["artifact"] for r in refs}
+        if not method["artifact"]:
+            raise ValueError("The worker's executed source is unavailable. Mark experiment unassessed.")
+        if method["artifact"] not in paths or (method.get("request") and method["request"] not in paths):
+            raise ValueError("Trace the measured quantity to its requested definition, executed calculation "
+                             "and recorded rows in checks.experiment.evidence.")
+        if delegated := _delegated_calculation(snapshot, method["artifact"], refs):
+            raise ValueError(f"The quoted code delegates the calculation to {delegated}. Inspect that "
+                             "definition and quote the operation that produces the measured quantity.")
+
+
 def _covers(snapshot, domain, refs):
     tex, pdf = _submission(snapshot)
     if domain == "manuscript":
@@ -1341,6 +1381,29 @@ def _normalized_quote(value):
 
 def _contains_observed_quote(text, quote):
     return _normalized_quote(quote) in _normalized_quote(text)
+
+
+def _same_open_finding(issue, claim, status):
+    """Match two reports of one verified blocker, including the exact observed evidence."""
+    if (issue["domain"], issue["severity"], issue["status"]) != ("manuscript", "blocker", status):
+        return False
+    passage = claim["passage"]
+    # An explicit finding may remove a discretionary hyphen from the rendered page.
+    prose = re.sub(r"(?<=[^\W\d_])-\n(?=[^\W\d_])", "", passage["quote"])
+    if _normalized_quote(issue["claim"]) not in {_normalized_quote(passage["quote"]), _normalized_quote(prose)}:
+        return False
+    def cited(ref):
+        if "quote" in ref:
+            ref = {**ref, "quote": _normalized_quote(ref["quote"])}
+        return _canonical(ref)
+    listed = {cited(ref) for ref in issue["evidence"]}
+    attached = {cited(ref) for ref in [passage, *claim["evidence"]]}
+    if listed == attached:
+        return True
+    # One form may cite additional conditions of the same measurement.
+    location = cited(passage)
+    shared_support = (listed & attached) - {location}
+    return bool(shared_support) and location in listed and (listed < attached or attached < listed)
 
 
 def _quotes_conclusion(refs, target, *, disputed=None):
@@ -2100,33 +2163,10 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                 raise ValueError("The current plan has no verified worker output. Mark experiment unassessed.")
             if not any(r["artifact"] == worker["expected"] for r in refs):
                 raise ValueError(f"Cite measured rows from the current worker output {worker['expected']}.")
-        if assessed and domain == "citations":
-            for ref in refs:
-                if snapshot["artifacts"][ref["artifact"]]["kind"] != "primary_source" or ref.get("visual"):
-                    continue
-                if Path(ref["artifact"]).suffix.lower() not in (".md", ".txt"):
-                    continue
-                data, _ = _artifact(snapshot, ref["artifact"])
-                source = _primary_record(data.decode("utf-8", errors="replace"))
-                if source:
-                    quote = _normalized_quote(ref.get("quote", "")).casefold()
-                    if (not quote or quote in _normalized_quote(source.get("title") or "").casefold()
-                            or quote not in _normalized_quote(source["passage"]).casefold()):
-                        raise ValueError(f"Quote the authors' scientific statement from {ref['artifact']}. "
-                                         "The title identifies the publication but supplies no evidence for the claim. "
-                                         "Use read_evidence with find to open a relevant passage.")
+        if assessed:
+            _check_source_and_method(snapshot, domain, refs)
         if assessed and not _covers(snapshot, domain, refs):
             raise ValueError(f"No observed {domain} evidence supports this assessment")
-        if assessed and domain == "experiment" and (method := snapshot.get("measurement_method")):
-            paths = {r["artifact"] for r in refs}
-            if not method["artifact"]:
-                raise ValueError("The worker's executed source is unavailable. Mark experiment unassessed.")
-            if method["artifact"] not in paths or (method.get("request") and method["request"] not in paths):
-                raise ValueError("Trace the measured quantity to its requested definition, executed calculation "
-                                 "and recorded rows in checks.experiment.evidence.")
-            if delegated := _delegated_calculation(snapshot, method["artifact"], refs):
-                raise ValueError(f"The quoted code delegates the calculation to {delegated}. Inspect that "
-                                 "definition and quote the operation that produces the measured quantity.")
         if domain == "experiment" and assessed and not task and snapshot.get("method_control") and not controls:
             raise ValueError("Run an independently predicted case with run_method_control on the frozen "
                              "calculation, or mark experiment unassessed.")
@@ -2195,6 +2235,7 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
     if not isinstance(raw_issues, list):
         raise ValueError("Expected an array of at most 32 review findings")
     raw_issues = list(raw_issues)
+    explicit_count = len(raw_issues)
     for index, claim in enumerate(checks["manuscript"].get("claims", ()), 1):
         if finding := claim.get("finding"):
             raw_issues.append({**finding, "claim_ref":index, "reason":claim["reason"], "domain":"manuscript",
@@ -2208,7 +2249,22 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
     retention_errors = []
     missing_observations = False
     used = set()
-    for issue in raw_issues:
+    linked = set()
+    for position, issue in enumerate(raw_issues):
+        if position >= explicit_count and issue["id"] in used and issue["id"] not in linked:
+            # Both representations are supplied by the same reviewer. The explicit
+            # issue has already passed its own history and evidence checks.
+            matching = next(item for item in issues if item["id"] == issue["id"])
+            claim = checks["manuscript"]["claims"][issue["claim_ref"] - 1]
+            if _same_open_finding(matching, claim, issue["status"]):
+                matching["claim"] = claim["passage"]["quote"]
+                for ref in claim["evidence"]:
+                    if ref not in matching["evidence"]:
+                        matching["evidence"].append(ref)
+                linked.add(issue["id"])
+                continue
+        if position >= explicit_count:
+            linked.add(issue["id"])
         if isinstance(issue, dict) and "claim_ref" in issue:
             index = issue["claim_ref"]
             claims = checks["manuscript"].get("claims", [])
