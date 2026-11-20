@@ -199,3 +199,20 @@ def test_delivered_paper_requires_the_recorded_acceptance_and_pdf(tmp_path):
     pdf.rename(archive / "other.pdf")
     pdf.symlink_to(archive / "other.pdf")
     assert progress.paper_edition(tmp_path) == ("unavailable", None)
+
+
+def test_comparison_projection_preserves_signed_row_identifiers_or_omits_the_pair():
+    from website.dashboard.progress import _claim_comparison
+
+    side = {"subject": "Method A", "column": "error"}
+    for value in [0, 0.5, "A", 2**53 + 1]:
+        condition = {"column": "arm", "value": value}
+        pair = [side, {**side, "subject": "Method B", "condition": condition}]
+        display = _claim_comparison(pair)
+        assert display[0] == side and display[1]["condition"]["value"] == value
+        if value == 2**53 + 1:
+            assert display[1]["condition"]["literal"] == "9007199254740993"
+    for malformed in [None, [side], [side, {}], [side, side, side],
+                      [side, {**side, "condition": {"column": "arm"}}],
+                      [side, {**side, "condition": {"column": "arm", "value": False}}]]:
+        assert _claim_comparison(malformed) == []

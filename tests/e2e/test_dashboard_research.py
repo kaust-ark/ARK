@@ -55,6 +55,9 @@ def test_live_research_desk(tmp_path, monkeypatch):
     figure_digest = hashlib.sha256(figure.read_bytes()).hexdigest()
     measurement = root / "results/experiment.json"
     measurement.write_text(json.dumps({"rows": [{"label": "128 items", "baseline": 128, "proposed": 7}]}))
+    conditions = root / "results/search-conditions.json"
+    conditions.write_text(json.dumps({"rows": [{"algorithm": "linear", "comparisons": 256},
+                                                {"algorithm": "binary", "comparisons": 8}]}))
     journal = state / "research_events.jsonl"
 
     def event(ident, phase, message, **attrs):
@@ -69,7 +72,8 @@ def test_live_research_desk(tmp_path, monkeypatch):
           condition="128 items", differed=1, outcomes=2, metric="search_comparisons",
           reported_value="7", independent_value="0")
     event("observed", "experiments", "Recorded search comparisons for 128 items.", artifact="results/experiment.json")
-    result_sentence = "At 128 items, the search used seven comparisons."
+    result_sentence = "At 128 items, binary search used seven comparisons against 128 for linear search."
+    long_sentence = "At 256 items, binary search used eight comparisons and linear search used 256."
     explanation_sentence = "A cache effect could explain the lower elapsed time."
     previous = None
     for label, claim in [("Reversed", "Arrow points to the wrong series"), ("Corrected", "Arrow points to the baseline")]:
@@ -77,7 +81,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
             pg = doc.new_page()
             pg.insert_text((60, 80), label + " plot")
             if previous:
-                pg.insert_text((60, 110), result_sentence + "\n" + explanation_sentence)
+                pg.insert_text((60, 110), "\n".join([result_sentence, explanation_sentence, long_sentence]))
             data = doc.tobytes()
         digest = hashlib.sha256(data).hexdigest()
         revision = hashlib.sha256(label.encode()).hexdigest()
@@ -116,18 +120,28 @@ def test_live_research_desk(tmp_path, monkeypatch):
                               "page":1,"visual":True,"sha256":digest},{"artifact":"paper/main.tex",
                               "quote":claim,"sha256":hashlib.sha256(source.encode()).hexdigest()}]}]}
         if previous:
-            measurement_ref = {"artifact": "results/experiment.json", "quote": "128 items",
+            measurement_ref = {"artifact": "results/experiment.json", "quote": json.dumps(json.loads(measurement.read_text())["rows"][0]),
                                "sha256": hashlib.sha256(measurement.read_bytes()).hexdigest()}
             record["artifact_hashes"].update({"paper/main.pdf": digest, measurement_ref["artifact"]: measurement_ref["sha256"]})
             result = {"kind": "result", "basis": "measurement", "reason": "The count matches the recorded trial.",
                       "passage": {"artifact": "paper/main.pdf", "page": 1, "quote": result_sentence, "sha256": digest},
                       "evidence": [measurement_ref, {**measurement_ref, "sha256": "0" * 64, "quote": "Unverified evidence"}]}
+            result["comparison"] = [{"subject": "binary search", "column": "proposed"},
+                                    {"subject": "linear search", "column": "baseline"}]
+            condition_ref = {"artifact": "results/search-conditions.json", "quote": conditions.read_text(),
+                             "sha256": hashlib.sha256(conditions.read_bytes()).hexdigest()}
+            record["artifact_hashes"][condition_ref["artifact"]] = condition_ref["sha256"]
+            conditional = {**result, "passage": {**result["passage"], "quote": long_sentence},
+                           "reason": "The two methods occupy separate rows.", "evidence": [condition_ref],
+                           "comparison": [{"subject": subject, "column": "comparisons",
+                                           "condition": {"column": "algorithm", "value": method}}
+                                          for subject, method in [("binary search", "binary"), ("linear search", "linear")]]}
             explanation = {"kind": "explanation", "basis": "qualified", "reason": "The authors explicitly say ‘could explain’.",
                            "passage": {**result["passage"], "quote": explanation_sentence},
                            "qualification": "could explain",
                            "evidence": [{**result["passage"], "quote": explanation_sentence}]}
             record["checks"]["manuscript"]["claims"] = [
-                result, explanation, {**result, "passage": {**result["passage"], "sha256": "0" * 64}},
+                result, explanation, conditional, {**result, "passage": {**result["passage"], "sha256": "0" * 64}},
             ]
             record["evidence_scope"] = {"comparison":"Compare search cost at equal input sizes.",
                                         "alternative":"A cache effect could change the timing.",
@@ -273,9 +287,10 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     assert page.locator("#decision-text").input_value() == draft
                     page.locator("#review-coverage > summary").click()
                     box = page.locator("#hitl-input")
-                    page.get_by_role("button", name="Question this result on page 1").press("Enter")
+                    page.get_by_role("button", name="Question this result on page 1").first.press("Enter")
                     assert result_sentence in box.input_value() and explanation_sentence not in box.input_value()
                     assert "Reviewer’s basis: measurement" in box.input_value()
+                    assert "binary search\nproposed" in box.input_value() and "linear search\nbaseline" in box.input_value()
                     box.fill("")
                     ask = page.get_by_role("button", name="Question this explanation on page 1")
                     ask.focus()
@@ -319,11 +334,27 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 assert record["checks"]["manuscript"]["reason"] in judgment.locator("..").inner_text()
                 claim_rows = page.locator(".review-claims > li")
                 assert claim_rows.locator("blockquote").all_text_contents() == [
-                    result_sentence, explanation_sentence, "could explain"]
+                    result_sentence, explanation_sentence, "could explain", long_sentence]
+                assert claim_rows.nth(1).locator(".claim-comparison").count() == 0
+                assert claim_rows.first.locator(".claim-comparison dt").all_text_contents() == ["binary search", "linear search"]
+                assert claim_rows.first.locator(".claim-comparison dd").all_text_contents() == ["proposed", "baseline"]
+                long_row = claim_rows.nth(2)
+                assert long_row.locator(".claim-comparison dd").all_text_contents() == [
+                    'comparisons · algorithm = "binary"', 'comparisons · algorithm = "linear"']
+                assert long_row.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+                long_row.locator("summary").press("Enter")
+                opener = long_row.get_by_role("button", name="results/search-conditions.json")
+                opener.press("Enter")
+                assert page.locator("#preview-content mark").inner_text() == condition_ref["quote"]
+                assert json.loads(page.locator("#preview-content pre").inner_text()) == json.loads(conditions.read_text())
+                assert condition_ref["sha256"] in page.locator("#evidence-open").get_attribute("href")
+                page.keyboard.press("Escape")
+                assert opener.evaluate("el => el === document.activeElement")
+                long_row.locator("summary").press("Enter")
                 first = claim_rows.first
                 sources = first.locator(".review-passages")
                 sources.locator("summary").press("Enter")
-                assert sources.locator("pre").all_text_contents() == ["128 items"]
+                assert sources.locator("pre").all_text_contents() == [measurement_ref["quote"]]
                 sources.get_by_role("button", name="results/experiment.json").click()
                 assert page.locator("#preview-content td").first.inner_text() == "128 items"
                 page.locator("#evidence-close").click()
@@ -335,9 +366,13 @@ def test_live_research_desk(tmp_path, monkeypatch):
                 page.locator("#evidence-close").click()
                 if output := os.environ.get("IDEA2PAPER_UI_CAPTURE"):
                     sources.locator("summary").click()
+                    long_row.locator("summary").click()
+                    long_row.evaluate("el => window.scrollBy(0,el.getBoundingClientRect().top-108)")
+                    long_row.screenshot(path=str(Path(output) / f"comparison-{width}.png"))
                     claim_rows.first.evaluate("el => window.scrollBy(0,el.getBoundingClientRect().top-84)")
                     page.locator(".review-claims").screenshot(path=str(Path(output) / f"claim-fixture-en-{width}.png"))
                     sources.locator("summary").click()
+                    long_row.locator("summary").click()
                 scope = page.locator(".review-scope")
                 scope.locator("summary").press("Enter")
                 assert scope.locator("dd").all_text_contents() == list(record["evidence_scope"].values())
@@ -417,7 +452,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     assert "查看来源" in finding.locator("summary").inner_text()
                     assert finding.get_by_role("button", name="上一版 · PDF 第 1 页", exact=True).count() == 1
                     assert "评审依据：实测数据" in claim_rows.first.text_content()
-                    assert "质疑第 1 页的这条解释" in claim_rows.last.text_content()
+                    assert "质疑第 1 页的这条解释" in claim_rows.nth(1).text_content()
                     if output := os.environ.get("IDEA2PAPER_UI_CAPTURE"):
                         claim_rows.first.evaluate("el => window.scrollBy(0,el.getBoundingClientRect().top-84)")
                         page.screenshot(path=str(Path(output) / "claim-fixture-zh-mobile.png"))
@@ -456,7 +491,7 @@ def test_live_research_desk(tmp_path, monkeypatch):
                     assert "تفاصيل المصادر" in finding.locator("summary").inner_text()
                     assert finding.get_by_role("button", name="النسخة السابقة · PDF · الصفحة 1", exact=True).count() == 1
                     assert "أساس حكم المراجع: القياس" in claim_rows.first.text_content()
-                    assert "ناقش هذا التفسير في الصفحة 1" in claim_rows.last.text_content()
+                    assert "ناقش هذا التفسير في الصفحة 1" in claim_rows.nth(1).text_content()
                     if output := os.environ.get("IDEA2PAPER_UI_CAPTURE"):
                         claim_rows.first.evaluate("el => window.scrollBy(0,el.getBoundingClientRect().top-84)")
                         page.screenshot(path=str(Path(output) / "claim-fixture-ar-mobile.png"))

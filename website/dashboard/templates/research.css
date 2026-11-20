@@ -130,6 +130,10 @@
 .review-claims blockquote { margin:4px 0 8px; color:var(--ink); white-space:pre-wrap; }
 .review-claims p { margin:3px 0; }
 .review-claims .claim-evidence-label { margin-top:9px; font-size:.78rem; color:var(--muted); }
+#review-coverage .claim-comparison { display:grid; grid-template-columns:fit-content(45%) minmax(0,1fr); gap:3px 12px; margin:4px 0 8px; overflow-wrap:anywhere; }
+.claim-comparison dt { font-weight:600; }
+.claim-comparison dd { margin:0; }
+.claim-comparison code { font-size:.92em; white-space:normal; }
 .review-scope { margin-block:8px; }
 .review-scope dl { margin:6px 0; padding-inline-start:10px; border-inline-start:2px solid var(--line); }
 .review-scope dt { font-weight:600; color:var(--ink); }

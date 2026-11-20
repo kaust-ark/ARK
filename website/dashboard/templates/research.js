@@ -28,6 +28,8 @@ const researchLabels = {
   basis_procedure: ['study procedure','实验步骤','إجراء الدراسة'],
   basis_derivation: ['derivation','推导','الاشتقاق'],
   basis_qualified: ['qualified wording','作者的限定措辞','صياغة المؤلف المشروطة'],
+  claim_comparison: ['Compared result fields','对照双方与结果字段','القياسات المقارَنة'],
+  comparison_sources: ['Evidence for this comparison (%s)','这项比较的原始证据（%s）','أدلة هذه المقارنة (%s)'],
   claim_bridge: ['Step cited by the reviewer','评审引用的推导步骤','خطوة الاستدلال التي استشهد بها المراجع'],
   claim_qualification: ['Words the reviewer considered sufficient','评审认定足以限定结论的原文','العبارة التي اعتبرها المراجع تقييدًا كافيًا'],
   claim_independent_derivation: ['Reviewer’s own calculation','评审独立写出的推导','حساب المراجع المستقل'],
@@ -882,9 +884,32 @@ function renderReview(animate=false) {
           row.append(label, excerpt);
           discussion.push(label.textContent + '\n' + excerpt.textContent);
         }
+        if (claim.comparison?.length === 2) {
+          const label = document.createElement('p'), fields = document.createElement('dl');
+          label.className = 'claim-evidence-label';
+          label.textContent = rt('claim_comparison');
+          fields.className = 'claim-comparison';
+          for (const side of claim.comparison) {
+            const subject = document.createElement('dt'), value = document.createElement('dd');
+            const column = document.createElement('code');
+            subject.dir = 'auto'; subject.textContent = side.subject;
+            column.dir = 'auto'; column.textContent = side.column;
+            value.append(column);
+            if (side.condition) {
+              const condition = document.createElement('code');
+              condition.dir = 'auto';
+              condition.textContent = side.condition.column + ' = ' + (side.condition.literal ?? JSON.stringify(side.condition.value));
+              value.append(' · ', condition);
+            }
+            fields.append(subject, value);
+            discussion.push(side.subject + '\n' + value.textContent);
+          }
+          row.append(label, fields);
+        }
         if (!window.SHARE_MODE) actions.append(questionButton(claim.passage, discussion.join('\n'), 'question_' + claim.kind));
         row.append(actions);
-        if (claim.evidence.length) row.append(reviewSources(claim.evidence));
+        if (claim.evidence.length) row.append(reviewSources(claim.evidence,
+          {title:claim.comparison?.length ? 'comparison_sources' : 'reviewed_sources'}));
         list.append(row);
       }
       li.append(list);

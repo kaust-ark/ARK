@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import stat
@@ -326,6 +327,34 @@ def _rows(value):
     return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
 
 
+def _claim_comparison(sides):
+    if not isinstance(sides, list) or len(sides) != 2:
+        return []
+    result = []
+    for side in sides:
+        if not isinstance(side, dict):
+            return []
+        subject, column = side.get("subject"), side.get("column")
+        if not all(isinstance(s, str) and s.strip() and len(s) <= limit for s, limit in ((subject, 500), (column, 4000))):
+            return []
+        item = {"subject": subject, "column": column}
+        if "condition" in side:
+            cond = side["condition"]
+            if not isinstance(cond, dict):
+                return []
+            field, value = cond.get("column"), cond.get("value")
+            if (not isinstance(field, str) or not field.strip() or len(field) > 4000
+                    or type(value) not in (str, int, float) or isinstance(value, str) and len(value) > 4000):
+                return []
+            if type(value) is float and not math.isfinite(value):
+                return []
+            item["condition"] = {"column": field, "value": value}
+            if type(value) is int and abs(value) > 2**53 - 1:
+                item["condition"]["literal"] = str(value)  # Preserve a row identifier across JavaScript decoding.
+        result.append(item)
+    return result
+
+
 def review_summary(root, review, *, delivered=False):
     revision = _text(review.get("revision"))
     if not re.fullmatch(r"[a-f0-9]{64}", revision):
@@ -403,6 +432,8 @@ def review_summary(root, review, *, delivered=False):
                                 and source[0]["sha256"] == review.get("paper_pdf_sha256")):
                             refs = references(claim.get("evidence"), revision, False, signed_only=True)
                             entry = {"kind": kind, "passage": source[0], "basis": basis, "reason": reason, "evidence": refs}
+                            if comparison := _claim_comparison(claim.get("comparison")):
+                                entry["comparison"] = comparison
                             for field, quotes in (("bridge", refs), ("qualification", source)):
                                 words = " ".join(_text(claim.get(field), 1200).split())
                                 if words and any(words in " ".join(ref.get("quote", "").split()) for ref in quotes):
