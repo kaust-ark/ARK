@@ -10,10 +10,10 @@
 
 本地实验还需要含 venv 和 pip 的 Python 3.10 或更高版本、带 pdflatex 和 BibTeX 的 TeX Live，以及可用的 Docker daemon。首次运行会在独立缓存中安装随包分发的 Python wheel 及依赖，并构建实验镜像。请为首次下载和安装留出时间和磁盘空间。
 
-用这一条命令将 0.2.0-alpha.25 安装到专用 profile。使用 DSH Web Discover 需要上游带 Web profile 的完整 CLI。
+用这一条命令将 0.2.0-alpha.26 安装到专用 profile。使用 DSH Web Discover 需要上游带 Web profile 的完整 CLI。
 
 ```sh
-dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.25/idea2paper-dsh-0.2.0-alpha.25.tgz
+dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.26/idea2paper-dsh-0.2.0-alpha.26.tgz
 ```
 
 如需安装本地构建的版本，可在仓库根目录运行以下命令。
