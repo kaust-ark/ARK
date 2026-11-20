@@ -45,6 +45,8 @@ export {{ k }}={{ v }}
 export ARK_CONTROL_PLANE_TOKEN={{ control_plane_token }}
 {% endif %}
 export HOME="{{ project_dir }}"
+# Keep the verified archive outside the editable workspace, as for Local jobs.
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$(realpath -- "$HOME/..")/.cache}"
 export XDG_CONFIG_HOME="{{ project_dir }}/.config"
 # Disable user-site discovery so the project's conda env is the only
 # source of Python packages. No /home/<user>/.local cross-contamination.

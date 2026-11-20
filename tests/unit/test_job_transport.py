@@ -6,7 +6,9 @@ legacy --db-path path — and that the SLURM template renders the right invocati
 for each, keeping the token in an env export (never on argv).
 """
 
+import os
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -42,9 +44,9 @@ def test_transport_http_when_set_mints_scoped_token():
 
 # ── SLURM template rendering ──────────────────────────────────────────────────────
 
-def _render(cp_url, cp_token, db_path):
+def _render(cp_url, cp_token, db_path, project_dir="/tmp/p"):
     return Template(_SLURM_TEMPLATE.read_text()).render(
-        project_id="p1", project_dir="/tmp/p", log_dir="/tmp/l", mode="paper",
+        project_id="p1", project_dir=project_dir, log_dir="/tmp/l", mode="paper",
         max_iterations=3, partition="", account="", gres="", cpus_per_task=4,
         conda_env="ark-base", api_keys={}, db_path=db_path,
         control_plane_url=shlex.quote(cp_url) if cp_url else "",
@@ -65,6 +67,27 @@ def test_slurm_template_http_uses_url_and_token_env():
     assert "--control-plane-url https://cp.example.com/v1" in out
     assert "export ARK_CONTROL_PLANE_TOKEN=tok.en-value" in out
     assert "--db-path" not in out
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_slurm_worker_inherits_an_external_cache(tmp_path, override):
+    project = tmp_path / "account" / "project"
+    project.mkdir(parents=True)
+    link = tmp_path / "linked-workspace"
+    link.symlink_to(project, target_is_directory=True)
+    # The batch script activates conda then calls python in the project. Record
+    # the effective child environment without a scheduler or model provider.
+    (tmp_path / ".bashrc").write_text(
+        'conda() { :; }\npython() { printf "%s\\n" "$HOME" "$XDG_CACHE_HOME" > "$PWD/worker-env"; }\n'
+    )
+    env = {"HOME": str(tmp_path), "PATH": os.defpath}
+    if override:
+        env["XDG_CACHE_HOME"] = str(tmp_path / "configured cache")
+    subprocess.run(["bash", "-c", _render("", "", "/tmp/mock-db", link)],
+                   check=True, cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert (project / "worker-env").read_text().splitlines() == [
+        str(link), env.get("XDG_CACHE_HOME", str(project.parent / ".cache"))
+    ]
 
 
 @pytest.mark.parametrize("configured_account", ["ark", ""])
