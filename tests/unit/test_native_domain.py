@@ -1246,6 +1246,39 @@ Latency $\ge 9$ ms at seed = 19."""
     assert not any("The sealed worker row" in m for m in project.compile_paper({})["manuscript_issues"])
 
 
+@pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
+def test_preflight_recomputes_a_rendered_gap_definition_in_condition_order(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    artifact = tmp_path / "results/queue.json"
+    artifact.write_text(json.dumps([{"load": 4, "jobs": 5}, {"load": 1, "jobs": 3}, {"load": 2, "jobs": 4}]))
+    project.state["experiment"] = {"status": "completed", "artifact": "results/queue.json",
+                                   "sha256": domain._sha(artifact)}
+    project.render_results_table({"name": "queue", "columns": [
+        {"path": "load", "label": "$q$", "digits": 0}, {"path": "jobs", "label": "$A$", "digits": 0}]})
+    source = project.latex_dir / "main.tex"
+    template = r"""\documentclass{article}
+\begin{document}\section{Results}
+\input{tables/queue.tex}
+
+The gap $(A-1)/(2q)$ is the per-load adjustment. The gap %s with $q$.
+
+The Oracle gap $(A-1)/(2q)$ is an external comparison. The gap increases with $q$ alongside $A$.
+
+The gap $(A-1)/(2q)+7q$ is a different quantity. The gap increases with $q$ alongside $A$.
+
+The gap $(A-1)/(2q)$ is the per-load adjustment. The gap increases with $q$ alongside $A$ for warm queues.
+
+\appendix\section{Measurements} The table records concurrent jobs at each load.
+\end{document}"""
+    source.write_text(template % "increases")
+    compiled = project.compile_paper({})
+    issue, = [m for m in compiled["manuscript_issues"] if "adjacent changes" in m]
+    assert "q=1, jobs=3, term=1" in issue and "q=4, jobs=5, term=0.5" in issue
+    assert issue in project.review_snapshot({"preflight": True})["blockers"]
+    source.write_text(template % "decreases")
+    assert not any("adjacent changes" in m for m in project.compile_paper({})["manuscript_issues"])
+
+
 def test_render_plot_discovery_and_strict_delivery_require_actual_read(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     registered = plan()

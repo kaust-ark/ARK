@@ -518,6 +518,81 @@ def _bound_scope(before, after, identifiers):
                                    (match["set"] or match["one"]).split(",")}
 
 
+def _defined_trend_issues(data, tables, blocks):
+    """Recompute an explicitly defined affine numerator divided by a condition-dependent scale."""
+    from fractions import Fraction
+    from ark.review import _ORDERED_ASSERTION
+
+    issues = []
+    for page, block in blocks:
+        sentences = re.split(r"(?<=[.!?])\s+", block)
+        for definition, claim in zip(sentences, sentences[1:]):
+            change = _ORDERED_ASSERTION.search(claim)
+            if not change or _UNCERTAIN_BOUND.search(definition + " " + claim):
+                continue
+            if not re.fullmatch(r"(?:(?:as (?:shown|observed|reported) in (?:the|our) results),\s*)?(?:the|this) ",
+                                claim[:change.start()], re.I):
+                continue
+            axis, subject = change["axis"], change["subject"].split()[0]
+            # The next sentence must discuss this same quantity with the visible input.
+            along = re.fullmatch(r"(?:\s+alongside (?P<input>¯?[A-Za-z]\w*))?(?:,\s*(?:thereby|effectively|reflecting) [^.;]+)?\.",
+                                 claim[change.end():])
+            if not along or re.search(r"\b(?:for|under|within|except|among|during|until|between)\b", claim, re.I):
+                continue
+            formula = re.match(
+                rf"(?:The|Our) (?:(?P<method>[\w–-]+) )?{re.escape(subject)}(?: term)?\s*"
+                rf"(?:(?:is(?: defined as)?|=)\s*)?(?P<expr>\(\s*(?P<x>[A-Za-z]\w*)\s*(?P<op>[+−-])\s*"
+                rf"(?P<offset>[0-9]+(?:\.[0-9]+)?)\s*\)\s*/\s*\(\s*(?P<scale>[0-9]+(?:\.[0-9]+)?)"
+                rf"\s*[×·*]?\s*{re.escape(axis)}\s*\))(?=\.$|\s+(?:is|was|functions|denotes|represents)\b)",
+                definition)
+            if not formula or axis == formula["x"]:
+                continue
+            symbols = {formula["x"], "¯" + formula["x"]}
+            if along["input"]:
+                symbols.intersection_update([along["input"]])
+            if not symbols:
+                continue
+            candidates = {}
+            for pointer, names, caption in tables:
+                if axis not in names:
+                    continue
+                for sym in symbols.intersection(names):
+                    key = (pointer, names[axis], names[sym], sym)
+                    documented = not formula["method"] or re.search(r"(?<!\w)" + re.escape(formula["method"]) + r"(?!\w)",
+                                                                    caption, re.I)
+                    candidates[key] = candidates.get(key, False) or bool(documented)
+            if len(candidates) != 1 or not any(candidates.values()):
+                continue
+            pointer, axis_path, input_path, symbol = next(iter(candidates))
+            # A bar denotes a mean. At fixed axis the expression is affine in x, so
+            # applying it to the recorded mean gives the mean of the per-trial term.
+            if symbol.startswith("¯") and not re.search(r"(?:^|[._])(?:mean|avg|average)(?:[._]|$)", input_path, re.I):
+                continue
+            rows = _rows(data, pointer)
+            pairs = [(_value(row, axis_path), _value(row, input_path)) for row in rows]
+            if (len(pairs) < 2 or any(not (type(v) is int or isinstance(v, Decimal) and v.is_finite())
+                                      for pair in pairs for v in pair)
+                    or len({a for a, _ in pairs}) != len(pairs)):
+                continue
+            offset = Fraction(formula["offset"]) * (1 if formula["op"] == "+" else -1)
+            scale = Fraction(formula["scale"])
+            if not scale or any(a == 0 for a, _ in pairs):
+                continue
+            ordered = sorted(pairs)
+            values = [(Fraction(x) + offset) / (scale * Fraction(a)) for a, x in ordered]
+            increasing = change["direction"].lower().startswith(("increas", "ris", "grow"))
+            if any(y > x if increasing else y < x for x, y in zip(values, values[1:])):
+                continue
+            def endpoint(i):
+                a, x = ordered[i]
+                v = values[i]
+                return f"{axis}={a}, {input_path}={x}, term={v.numerator / Decimal(v.denominator):.10g}"
+            issues.append(f'PDF p. {page} reports “{change[0]}”. Its definition {formula["expr"]} on the sealed '
+                          f'rows gives {endpoint(0)} and {endpoint(-1)}. None of the {len(rows)-1} adjacent '
+                          f'changes moves in the stated direction.')
+    return issues
+
+
 def measured_bound_issues(data, tables, pdf):
     """Find counterexamples to explicitly scoped upper/lower bounds in the rendered submission."""
     if not tables:
@@ -525,8 +600,8 @@ def measured_bound_issues(data, tables, pdf):
     import fitz
 
     with fitz.open(pdf) as doc:
-        blocks = [(n, " ".join(re.sub(r"(?<=[A-Za-z])-\n(?=[a-z])", "", b[4]).split()))
-                  for n, page in enumerate(doc, 1) for b in page.get_text("blocks") if b[6] == 0]
+        raw_blocks = [(n, b[4]) for n, page in enumerate(doc, 1) for b in page.get_text("blocks") if b[6] == 0]
+    blocks = [(n, " ".join(re.sub(r"(?<=[A-Za-z])-\n(?=[a-z])", "", raw).split())) for n, raw in raw_blocks]
     page_text = {}
     captions = {}
     for page, block in blocks:
@@ -535,6 +610,8 @@ def measured_bound_issues(data, tables, pdf):
             captions.setdefault(page, []).append(block)
     # Bind aliases only to verified table recipes whose rows reached the PDF.
     labels = {}
+    symbol_tables = []
+    post_table_text = []
     for table in tables:
         pointer = table.get("rows_pointer", "")
         cells = _table_cells(_TABULAR.fullmatch(table["rendered_table"].strip())[2])
@@ -544,6 +621,28 @@ def measured_bound_issues(data, tables, pdf):
             continue
         caption = captions.get(pages[0], []) if len(pages) == 1 else []
         caption = caption[0] if len(caption) == 1 else ""
+        # In a row-major PDF table, each full row and its ordered headers
+        # identify which recorded field the typeset symbol denotes.
+        for n, raw in raw_blocks:
+            lines = raw.strip().splitlines()
+            count = len(table["columns"])
+            printed_rows = [cell for row in cells[1:] for cell in row]
+            if n not in pages:
+                continue
+            for start in range(count, len(lines) - len(printed_rows) + 1):
+                if lines[start:start + len(printed_rows)] != printed_rows:
+                    continue
+                headings = lines[start-count:start]
+                names = {}
+                for name, col in zip(headings, table["columns"]):
+                    source = _plain_cell(col.get("label") or col["path"])
+                    source = re.sub(r"\\bar\{([A-Za-z])\}", r"¯\1", source)
+                    source = re.sub(r"_\{([A-Za-z0-9]+)\}", r"\1", source)
+                    if name == source and headings.count(name) == 1 and not col.get("percent"):
+                        names[name] = col["path"]
+                symbol_tables.append((pointer, names, caption))
+                if trailing := lines[start + len(printed_rows):]:
+                    post_table_text.append((n, " ".join(trailing)))
         ids = {}
         for col in table["columns"]:
             name = _plain_cell(col.get("label") or col["path"]).casefold()
@@ -557,7 +656,7 @@ def measured_bound_issues(data, tables, pdf):
                 key = label[1].strip().casefold()
                 signature = (pointer, col["path"], label[2], col.get("percent", False))
                 labels.setdefault(key, {}).setdefault(signature, []).append((ids, caption))
-    issues = []
+    issues = _defined_trend_issues(data, symbol_tables, blocks + post_table_text)
     for label, choices in labels.items():
         if len(choices) != 1:
             continue
