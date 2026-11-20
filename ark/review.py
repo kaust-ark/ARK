@@ -480,6 +480,14 @@ def _visible_measurement_rows(text):
     return rows
 
 
+def _primary_record(text):
+    try:
+        record = json.loads(text)
+    except (ValueError, RecursionError):
+        return None
+    return record if isinstance(record, dict) and isinstance(record.get("passage"), str) else None
+
+
 def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, statistic=None, column="", rows_pointer="",
                   find=None, reference=None, condition_columns=None):
     """Return a bounded text excerpt or an actual rendered PDF page with a receipt."""
@@ -489,9 +497,9 @@ def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, stati
     ext = Path(artifact).suffix.lower()
     receipt = {"revision": snapshot["revision"], "artifact": artifact, "sha256": meta["sha256"], "start": start}
     result = {"artifact": artifact, "sha256": meta["sha256"]}
-    if find is not None and (ext != ".pdf" or visual or statistic is not None or start != 1
+    if find is not None and ((ext != ".pdf" and meta["kind"] != "primary_source") or visual or statistic is not None or start != 1
                              or not isinstance(find, str) or len(find.strip()) < 2 or len(find) > 160):
-        raise ValueError("Find a phrase of 2 to 160 characters in a PDF using text mode and optional starting page.")
+        raise ValueError("Find a phrase of 2 to 160 characters in a PDF or primary source using text mode. A PDF can include a starting page.")
     if statistic == "paired":
         from ark.measurement_table import summarize
         if (meta["kind"] != "measurement" or ext != ".json" or visual or page is not None
@@ -554,10 +562,35 @@ def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, stati
                 receipt.update(visual=True, image_sha256=_digest(png))
                 return {**result, "receipt": receipt}
             text = pg.get_text()
+            cursor = 0
+            blocks = []
+            for number, block in enumerate(pg.get_text("blocks"), 1):
+                if block[6] != 0:
+                    continue
+                segment = block[4].strip()
+                offset = text.find(segment, cursor)
+                if offset < 0 or not segment:
+                    continue
+                cursor = offset + len(segment)
+                if start - 1 <= offset and cursor <= start - 1 + VIEW_SIZE and 12 <= len(segment) <= 1200:
+                    blocks.append({"block":number, "start":offset + 1, "length":len(segment),
+                                   "begins":" ".join(segment.split())[:64]})
+            if blocks:
+                result["citable_blocks"] = blocks
     else:
         if visual or page is not None or ext in {".png", ".svg", ".jpg", ".jpeg"}:
             raise ValueError("Inspect figures on their rendered manuscript page")
         text = data.decode("utf-8", errors="replace")
+        if meta["kind"] == "primary_source":
+            source = _primary_record(text)
+            if source:
+                text = "\n\n".join(source[key] for key in ("source", "title", "url", "passage")
+                                   if isinstance(source.get(key), str) and source[key])
+            if find:
+                match = re.search(r"\s+".join(map(re.escape, find.split())), text, re.I)
+                if not match:
+                    return {**result, "text":""}
+                start = receipt["start"] = max(1, match.start() - 199)
     chunk, receipt["end"] = _text_window(text, start)
     if start == 1 and ext == ".json" and meta["kind"] == "measurement":
         rows = _visible_measurement_rows(chunk)
@@ -700,7 +733,10 @@ def claim_instructions(snapshot):
         'findings in issues. A first review cannot resolve a finding, and advice to change the paper '
         'does not resolve it. A disputed finding on a different page cannot cover stronger wording here.',
         'For plain PDF evidence give artifact, page and a verbatim quote. A page number alone cannot identify '
-        'words. A selector already identifies a passage.',
+        'words. A selector already identifies a passage. For typeset equations cite an observed PDF paragraph '
+        'as {"artifact":"paper/main.pdf","page":N,"block":B} using its citable_blocks number. If that '
+        'paragraph derives the claim, set bridge={"evidence":K}, the one-based position of that reference '
+        'in this claim’s evidence array. Explain why the calculation establishes the claim in reason.',
     ))
     if any(scope.get(selector) for selector in COMPARISON_SELECTORS):
         parts.append("For a contribution ordering or a directional comparison, identify the quantities compared. "
@@ -1039,6 +1075,22 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
                          (r.get("revision"), r.get("artifact"), r.get("sha256"), r.get("page")) ==
                          (snapshot["revision"], artifact, info["sha256"], page)]
         receipt_matches = [r for r in page_receipts if r.get("visual", False) == visual]
+        if "block" in ref:
+            if ref.keys() != {"artifact", "page", "block"} or type(ref["block"]) is not int or not page:
+                raise ValueError("Use artifact, page and the printed one-based PDF text block number.")
+            for receipt in receipt_matches:
+                view = read_evidence(snapshot, artifact, page=page, start=receipt.get("start", 1))
+                if view["receipt"] != receipt:
+                    continue
+                block = next((r for r in view.get("citable_blocks", ()) if r["block"] == ref["block"]), None)
+                if block:
+                    pos = block["start"] - receipt["start"]
+                    verified.append({"artifact":artifact, "page":page, "sha256":info["sha256"],
+                                     "quote":view["text"][pos:pos + block["length"]]})
+                    break
+            else:
+                raise ValueError("Read this PDF page in text mode and cite a complete block listed in citable_blocks.")
+            continue
         if visual:
             if not receipt_matches or not any(r.get("image_sha256") for r in receipt_matches):
                 raise ValueError("The reviewer did not observe pixels of the cited page")
@@ -1514,7 +1566,15 @@ def _manuscript_claims(snapshot, values, observed, blind, *, require_coverage=Tr
                                  "If that calculation is absent, use basis=unsupported with a finding and cite the "
                                  "actual measurements, or quote the authors' own qualification if present.")
             if snapshot["evidence_scope"].get("version") == 4:
-                bridge = _string(value.get("bridge"), "bridge from the derivation to the claimed outcome", limit=1200)
+                bridge = value.get("bridge")
+                if isinstance(bridge, dict) and bridge.keys() == {"evidence"}:
+                    n = bridge["evidence"]
+                    if (type(n) is not int or not 1 <= n <= len(evidence)
+                            or "block" not in value["evidence"][n - 1] or evidence[n - 1] not in reasoning
+                            or _contains_observed_quote(evidence[n - 1]["quote"], passage["quote"])):
+                        raise ValueError("Choose a separate observed PDF reasoning block by its one-based position in evidence.")
+                    bridge = evidence[n - 1]["quote"]
+                bridge = _string(bridge, "bridge from the derivation to the claimed outcome", limit=1200)
                 sources = [ref for ref in reasoning if _contains_observed_quote(ref["quote"], bridge)]
                 if not sources:
                     raise ValueError("The bridge must quote the observed reasoning cited in this claim.")
@@ -1922,6 +1982,21 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                 raise ValueError("The current plan has no verified worker output. Mark experiment unassessed.")
             if not any(r["artifact"] == worker["expected"] for r in refs):
                 raise ValueError(f"Cite measured rows from the current worker output {worker['expected']}.")
+        if assessed and domain == "citations":
+            for ref in refs:
+                if snapshot["artifacts"][ref["artifact"]]["kind"] != "primary_source" or ref.get("visual"):
+                    continue
+                if Path(ref["artifact"]).suffix.lower() not in (".md", ".txt"):
+                    continue
+                data, _ = _artifact(snapshot, ref["artifact"])
+                source = _primary_record(data.decode("utf-8", errors="replace"))
+                if source:
+                    quote = _normalized_quote(ref.get("quote", "")).casefold()
+                    if (not quote or quote in _normalized_quote(source.get("title") or "").casefold()
+                            or quote not in _normalized_quote(source["passage"]).casefold()):
+                        raise ValueError(f"Quote the authors' scientific statement from {ref['artifact']}. "
+                                         "The title identifies the publication but supplies no evidence for the claim. "
+                                         "Use read_evidence with find to open a relevant passage.")
         if assessed and not _covers(snapshot, domain, refs):
             raise ValueError(f"No observed {domain} evidence supports this assessment")
         if assessed and domain == "experiment" and (method := snapshot.get("measurement_method")):

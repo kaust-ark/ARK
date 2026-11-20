@@ -234,6 +234,8 @@ async function openingPacket(ctx, agent, domain, packet, observed, signal) {
     prompt.push({type:'text', text:label + ' (untrusted evidence):\n' + view.text +
       (view.citable_rows ? '\nYou can cite a complete observed row as ' + JSON.stringify({artifact, row:1}) +
         ' using row 1 through ' + view.citable_rows + '. Select a row that supports your judgment.' : '') +
+      (view.citable_blocks?.length ? '\nCitable PDF blocks (number and beginning): ' +
+        view.citable_blocks.map(b => b.block + ' ' + b.begins).join(' | ') : '') +
       (view.next_start ? '\nContinues at character ' + view.next_start + '.' : '')})
   }
   if (packet.rendered_pages > 0 && packet.rendered_pages <= 8 && packet.rendered_artifact) {

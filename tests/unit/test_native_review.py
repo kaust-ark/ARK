@@ -155,6 +155,51 @@ def test_pdf_phrase_search_locates_other_sections_without_crediting_unread_pages
         read_evidence(snap, artifact, find="root", visual=True)
 
 
+def test_cite_observed_pdf_block_and_search_page_labelled_primary_sources(tmp_path):
+    from ark import review
+    pair = {"domain":"experiment", "clean":"Test the bound.", "table":"arm,y\nA,3\nB,2",
+            "question":"What follows?", "defect":"Unmeasured explanation."}
+    project(tmp_path, pair, "clean")
+    pdf = "paper/main.pdf"
+    with fitz.open() as doc:
+        page = doc.new_page()
+        page.insert_text((45,45), "Results")
+        page.insert_text((45,85), "The observed change exceeded the error.")
+        page = doc.new_page()
+        page.insert_text((45,65), "Derivation by repeated substitution gives the stated bound.")
+        doc.save(tmp_path / pdf)
+    source = "sources/article.txt"
+    (tmp_path/"sources").mkdir(exist_ok=True)
+    (tmp_path/source).write_text(json.dumps({"source":"Original paper", "title":"A controlled outcome",
+        "url":"https://example.org/study","passage":"[Page 1]\n"+("Early measurements. "*420)+
+        "\n[Page 2]\nThe baseline shrank\nwith sample size."}))
+    snap = build_snapshot(tmp_path)
+    hit = read_evidence(snap, source, find="baseline shrank with sample")
+    assert hit["receipt"]["start"] > 1 and "[Page 2]" in hit["text"]
+    located = review._references(snap, [{"artifact":source,"quote":"The baseline shrank with sample size."}],
+                                 [hit["receipt"]], "", required=True)
+    assert located[0]["artifact"] == source
+    assert "receipt" not in read_evidence(snap, source, find="unseen phrase")
+    view = read_evidence(snap, pdf, page=2)
+    block, = view["citable_blocks"]
+    ref = {"artifact":pdf,"page":2,"block":block["block"]}
+    observed = [view["receipt"]]
+    citation, = review._references(snap, [ref], observed, "", required=True)
+    assert citation["quote"] == "Derivation by repeated substitution gives the stated bound."
+    for bad in ([], [read_evidence(snap, pdf, page=1)["receipt"]], [dict(view["receipt"], revision="stale")]):
+        with pytest.raises(ValueError, match="complete block"):
+            review._references(snap, [ref], bad, "", required=True)
+    snap["evidence_scope"] = {"version":4}
+    observed.append(read_evidence(snap, pdf, page=1)["receipt"])
+    claim = {"kind":"explanation","basis":"derivation","evidence":[ref],
+             "passage":{"artifact":pdf,"page":1,"quote":"The observed change exceeded the error."},
+             "bridge":{"evidence":1},"reason":"The calculation on page two derives this bound."}
+    decided, = review._manuscript_claims(snap, [claim], observed, "", require_coverage=False)
+    assert decided["bridge"] == citation["quote"]
+    with pytest.raises(ValueError, match="separate observed PDF"):
+        review._manuscript_claims(snap, [dict(claim, bridge={"evidence":3})], observed, "", require_coverage=False)
+
+
 def test_pdf_quote_retry_hint_requires_a_unique_observed_literal_window(tmp_path):
     from ark import review
 
