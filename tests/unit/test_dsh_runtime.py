@@ -402,8 +402,26 @@ def test_real_sdk_timeout_stops_owned_shell(real_gateway, tmp_path):
     assert not proc.exists() or proc.read_text().split()[2] == "Z"
 
 
-def test_real_sdk_intervention_abort_is_cancelled(real_gateway, tmp_path):
-    def stop_before_action(line):
+@pytest.mark.parametrize("finished", [False, True], ids=["in-flight", "completed-before-signal"])
+def test_real_sdk_intervention_abort_is_cancelled(real_gateway, tmp_path, monkeypatch, finished):
+    runner = DSHRuntime("openai/fixture")
+    if finished:
+        # Reproduce the fast child finishing while the host is scheduling its
+        # stop. The normal SDK and loopback provider still run to completion.
+        stop = runner._stop
+
+        def stop_after_exit(process):
+            process.wait(timeout=10)
+            stop(process)
+
+        monkeypatch.setattr(runner, "_stop", stop_after_exit)
+    else:
+        # Keep this tool in flight until its session is closed. No next
+        # provider request can race ahead of the cancellation in this case.
+        os.mkfifo(tmp_path / "hold.fifo")
+        real_gateway["command"] = "cat hold.fifo && printf verified > fixture.txt"
+
+    def stop_at_tool_call(line):
         try:
             item = json.loads(line)
         except ValueError:
@@ -411,16 +429,19 @@ def test_real_sdk_intervention_abort_is_cancelled(real_gateway, tmp_path):
         if item.get("payload", {}).get("event", {}).get("type") == "tool/call":
             return "ABORT"
 
-    runner = DSHRuntime("openai/fixture")
     rc, out, _, _, timed_out = runner.execute("Do the task.", "Stay here.", tmp_path, 20,
-                                              on_event=stop_before_action)
-    assert not timed_out
-    assert rc != 0
+                                              on_event=stop_at_tool_call)
+    assert not timed_out and rc != 0
     parsed = runner.parse_output(out)
     assert parsed["error_code"] == "DSH.Cancelled"
-    # SIGTERM first: the driver closed the session and reported for itself.
     assert parsed["error_detail"] == "DSH execution was cancelled"
-    assert len(real_gateway["requests"]) == 1
+    assert parsed["session_id"] == runner.session_id
+    assert (tmp_path / "fixture.txt").exists() == finished
+    assert len(real_gateway["requests"]) == (2 if finished else 1)
+    if finished:
+        assert parsed["result"] == ""
+        assert parsed["usage"]["requests"] == 2
+        assert parsed["usage"]["input_tokens"] == 20
 
 
 def test_real_sdk_background_job_is_waited_for(real_gateway, tmp_path):

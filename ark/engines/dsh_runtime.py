@@ -348,15 +348,23 @@ class DSHRuntime(AgentCLI):
             result = super().execute(prompt, path_boundary, code_dir, timeout, log_fn=log_fn,
                                      on_event=observe if on_event else None, env=env)
             rc, stdout, stderr, elapsed, timed_out = result
-            reported = "__result__" in stdout
-            if not reported or (rc not in (0, None) and not self.parse_output(stdout).get("error_code")):
+            if aborted:
+                # tool/call is an asynchronous notification. A fast tool and
+                # even its follow-up may have finished before SIGTERM arrived.
+                # Keep their events and usage, but never return that answer as
+                # success after the host circuit breaker has stopped this call.
+                _, report = self._output_records(stdout)
+                if not report or report.get("error_code") != "DSH.Cancelled":
+                    cancelled = dict(report or {}, kind="__result__", session_id=self.session_id,
+                                     result="", error_code="DSH.Cancelled", error_detail="DSH execution was cancelled")
+                    stdout += "\n" + json.dumps(cancelled) + "\n"
+                return rc or 1, stdout, stderr, elapsed, timed_out
+            if "__result__" not in stdout or (rc not in (0, None) and not self.parse_output(stdout).get("error_code")):
                 # Killed before the driver could report, or a success report
                 # from a process that then failed. The hard wall clock is a used
-                # budget (keep the work, no retry), a breaker abort is a
-                # cancellation, and anything else is a crashed runtime, which a
-                # retry resumes. A partial message never counts as done.
-                code = ("DSH.MaxIterationsReached" if timed_out else
-                        "DSH.Cancelled" if aborted else "DSH.ServiceUnavailableError")
+                # budget (keep the work, no retry). A crashed runtime can be
+                # resumed. A partial message never counts as done.
+                code = "DSH.MaxIterationsReached" if timed_out else "DSH.ServiceUnavailableError"
                 stdout += "\n" + json.dumps({"kind": "__result__", "error_code": code,
                                               "error_detail": f"DSH process exited with code {rc}"}) + "\n"
             return rc, stdout, stderr, elapsed, timed_out
@@ -370,7 +378,8 @@ class DSHRuntime(AgentCLI):
             if path is not None:
                 path.unlink(missing_ok=True)
 
-    def parse_output(self, stdout):
+    @staticmethod
+    def _output_records(stdout):
         events, result = [], None
         for line in stdout.splitlines():
             try:
@@ -383,6 +392,10 @@ class DSHRuntime(AgentCLI):
                 events.append(record)
             elif record.get("kind") == "__result__":
                 result = record
+        return events, result
+
+    def parse_output(self, stdout):
+        events, result = self._output_records(stdout)
         out = summarize(events, result, self.model_variant or self.model_name)
         if out["usage"]["requests"]:
             cost, source = price(self.model_variant or self.model_name, out["usage"])
