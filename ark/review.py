@@ -2069,6 +2069,14 @@ def _context_support(snapshot, item, ref, context, claims, observed, blind):
         # so e.g. 'mass loss' can identify 'mean_mass_loss_treated'.
         def words(text):
             return re.findall(r"[^\W_]+", text.casefold())
+        if (not _contains_observed_quote(quote, quantity) and isinstance(columns, list)
+                and quantity in columns and all(isinstance(c, str) and c in available for c in columns)):
+            # A reviewer may give its observed column as the label. Only map a unique
+            # printed acronym present as a whole word in every cited column.
+            acronyms = {label for label in re.findall(r"\b[A-Z][A-Z0-9]{1,9}\b", quote)
+                        if all(label.casefold() in words(column) for column in columns)}
+            if len(acronyms) == 1:
+                quantity = acronyms.pop()
         metric = words(quantity)
         def names_metric(column):
             name = words(column)
@@ -2429,15 +2437,28 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
             if context := contexts.get(ident):
                 judgments = issue.get("context_assessment")
                 neighbors = context["remaining"]
-                if (not isinstance(judgments, list) or len(judgments) != len(neighbors)
-                        or any(not isinstance(j, dict) or type(j.get("sentence")) is not int for j in judgments)
-                        or sorted(j["sentence"] for j in judgments) != list(range(1, len(neighbors) + 1))):
+                indexed = []
+                for item in judgments if isinstance(judgments, list) else []:
+                    if not isinstance(item, dict):
+                        break
+                    index = item.get("sentence")
+                    if isinstance(index, str):
+                        exact = [n for n, quote in enumerate(neighbors, 1)
+                                 if _normalized_quote(index) == _normalized_quote(quote)]
+                        if len(exact) != 1:
+                            break
+                        index = exact[0]
+                    if type(index) is not int:
+                        break
+                    indexed.append({**item, "sentence": index})
+                if (not isinstance(judgments, list) or len(indexed) != len(judgments)
+                        or sorted(j["sentence"] for j in indexed) != list(range(1, len(neighbors) + 1))):
                     pages = sorted({loc["page"] for loc in context.get("remaining_locations", [context])})
                     where = ("page " if len(pages) == 1 else "pages ") + ", ".join(map(str, pages))
                     raise ValueError(f"Resolving {ident} requires a context_assessment of each remaining sentence "
-                                     f"in its revised paragraph on {where}. If the unsupported claim "
+                                     f"in its revised paragraph on {where}. Use its one-based number or unique full PDF quote. If the unsupported claim "
                                      "survives, keep the blocker still_present and cite that sentence.")
-                for item in judgments:
+                for item in indexed:
                     quote = neighbors[item["sentence"] - 1]
                     location = context["remaining_locations"][item["sentence"] - 1] if "remaining_locations" in context else context
                     try:

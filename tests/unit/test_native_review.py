@@ -1358,6 +1358,14 @@ def test_resolving_manuscript_blocker_rechecks_surviving_paragraph_across_pages(
                                    {"sentence":2,"judgment":"documented","operation":operation, "reason":"Both samples used the recorded enclosure.",
                                     "evidence":[{"artifact":protocol,"quote":operation},{"artifact":method,"quote":code}]}]
     accepted = validate_review(revised, raw, rejected, observed=seen)
+    quoted = copy.deepcopy(raw)
+    for item in quoted["issues"][0]["context_assessment"]:
+        item["sentence"] = ctx["remaining"][item["sentence"] - 1]
+    resolved = validate_review(revised, quoted, rejected, observed=seen)["issues"][0]
+    assert resolved["context_assessment"] == accepted["issues"][0]["context_assessment"]
+    quoted["issues"][0]["context_assessment"][0]["sentence"] = "An absent sentence"
+    with pytest.raises(ValueError, match="unique full PDF quote"):
+        validate_review(revised, quoted, rejected, observed=seen)
     check = accepted["issues"][0]["context_assessment"]
     assert accepted["deliverable"] and check[0]["passage"]["quote"] == neighbor and check[0]["qualification"] == "may"
     issue["context_assessment"][0].update(judgment="distinct", reason="It is a conceptual interpretation.")
@@ -1493,7 +1501,7 @@ def test_remaining_measured_sentence_binds_an_observed_metric_alias_and_preserve
     project(tmp_path, pair, "clean")
     worker, method = "results/paired.json", "scripts/worker.py"
     path = tmp_path / worker
-    path.write_text('[{"m_end":7.0,"temperature":2.0}]')
+    path.write_text('[{"m_end":7.0,"temperature":2.0,"left_auc_ms":7,"right_auc_ms":2}]')
     (tmp_path / method).parent.mkdir()
     definition = "m_end = read_scale()  # remaining mass in grams"
     (tmp_path / method).write_text(definition)
@@ -1507,6 +1515,13 @@ def test_remaining_measured_sentence_binds_an_observed_metric_alias_and_preserve
     def support(claim, assessment):
         return review._context_support(snap, assessment, {"quote":claim}, {"paragraph":claim}, [], observed, "")
     assert support(quantified,item)["measured_columns"] == ["m_end"]
+    measured = dict(item, quantity="left_auc_ms", measured_columns=["left_auc_ms","right_auc_ms"], evidence=[row])
+    assert support("The AUC was lower.", measured)["quantity"] == "AUC"
+    with pytest.raises(ValueError, match="printed measured quantity"):
+        support("The AUC measured in MS was lower.", measured)
+    with pytest.raises(ValueError, match="printed measured quantity"):
+        support("The AUC was lower.", {**measured, "measured_columns":["left_auc_ms", "temperature"]})
+
     with pytest.raises(ValueError, match="printed measured quantity"):
         support(quantified, {**item, "evidence":[row]})
     with pytest.raises(ValueError, match="printed measured quantity"):
