@@ -57,6 +57,8 @@ const researchLabels = {
   paper_ready: ['Paper PDF available','论文 PDF 已生成','ملف الورقة متاح'],
   file_ready: ['Published %s','已生成证据文件 %s','ملف الأدلة متاح %s'],
   body_coverage: ['Body about %s of %s pages · PDF %s pages','正文约 %s / %s 页 · PDF 共 %s 页','المتن نحو %s من %s صفحات · ملف PDF من %s صفحات'],
+  draft_coverage: ['Draft body length','各稿正文篇幅','طول المتن في المسودات'],
+  draft_target: ['Target %s pages','目标 %s 页','الهدف %s صفحات'],
   open_body_page: ['View body page %s','查看正文第 %s 页','عرض صفحة المتن %s'],
   view_evidence: ['View evidence files','查看证据文件','عرض ملفات الأدلة'],
   earlier: ['Earlier events','更早的记录','السجل السابق'],
@@ -316,6 +318,57 @@ function renderObservationTrail(observations, animate) {
     (focused.isConnected ? focused : trail.querySelector('button')).focus({preventScroll:true});
 }
 
+function renderDraftLengths(events, live) {
+  const panel = re('research-drafts'), list = panel.querySelector('ol');
+  const builds = [];
+  for (const event of events) {
+    if (event.action !== 'paper_compiled' || !event.layout) continue;
+    const previous = builds.at(-1);
+    if (previous && previous.layout.target !== event.layout.target) builds.length = 0;
+    if (builds.at(-1)?.layout.sha256 === event.layout.sha256) continue;
+    builds.push(event);
+  }
+  const recent = builds.slice(-6);
+  panel.hidden = recent.length < 2;
+  const signature = JSON.stringify([researchProject.id, currentLang, ...recent.map(e => e.id)]);
+  if (panel.dataset.events === signature) return;
+  panel.dataset.events = signature;
+  const focused = list.contains(document.activeElement) && document.activeElement.closest('li')?.dataset.event;
+  const previous = new Set([...list.children].map(li => li.dataset.event));
+  list.replaceChildren();
+  if (panel.hidden) return;
+  const latest = recent.at(-1), fmt = new Intl.NumberFormat(currentLang, {maximumFractionDigits:2});
+  panel.querySelector('small').textContent = rt('draft_target', fmt.format(latest.layout.target));
+  const scale = Math.max(latest.layout.target, ...recent.map(e => e.layout.body));
+  for (const event of recent) {
+    const li = document.createElement('li'), button = document.createElement('button');
+    li.dataset.event = event.id;
+    button.type = 'button';
+    button.setAttribute('aria-controls','research-history');
+    button.title = [fmtDate(event.ts), observationText(event)].filter(Boolean).join(' · ');
+    button.setAttribute('aria-label', rt('open_observation') + ' · ' + button.title);
+    const track = document.createElement('span'), bar = document.createElement('i'), value = document.createElement('bdi');
+    track.className = 'draft-track';
+    track.style.setProperty('--draft-target', (100 * event.layout.target / scale) + '%');
+    bar.style.height = (100 * event.layout.body / scale) + '%';
+    track.append(bar);
+    value.textContent = fmt.format(event.layout.body);
+    button.append(track, value);
+    button.onclick = () => {
+      selectHistoryPhase('writing');
+      [...re('research-history').querySelector('ol').children].find(row => row.dataset.event === event.id)?.focus();
+    };
+    li.append(button);
+    list.append(li);
+    if (event === latest && live && !previous.has(event.id) && matchMedia('(prefers-reduced-motion: no-preference)').matches)
+      bar.animate([{transform:'scaleY(0)'},{transform:'scaleY(1)'}], {duration:260,easing:'cubic-bezier(.2,.7,.3,1)'});
+  }
+  if (focused) {
+    const row = [...list.children].find(li => li.dataset.event === focused) || list.firstElementChild;
+    row.querySelector('button').focus({preventScroll:true});
+  }
+}
+
 function renderHistory() {
   const history = re('research-history');
   history.hidden = !researchEvents.size;
@@ -468,6 +521,7 @@ function renderResearch(animate=false) {
     last?.status === 'quota_paused' || last?.action === 'quota' ||
     /quota[_ -]?(paused|exhausted)|insufficient[_ ]balance/i.test(p.error_message || '');
   const paused = p.control_state === 'paused';
+  renderDraftLengths(events, animate && streamReady && !disconnected && active && !waiting && !paused && !quota);
   const label = t('status_' + p.status);
   const state = (quota ? rt('quota') : active && waiting ? rt('waiting') : paused ? rt('paused') :
     label.startsWith('status_') ? (p.status || '') : label).replace(/^[^\p{L}\p{N}]+/u, '');
@@ -512,7 +566,12 @@ function renderResearch(animate=false) {
     const item = {key:obs.artifact, label:rt('working_pdf'), type:'application/pdf', sha256:obs.layout.sha256};
     const img = buildButton.querySelector('img'), page = obs.layout.last;
     const src = evidenceUrl(item) + '&page=' + page;
-    if (img.getAttribute('src') !== src) img.src = src;
+    if (img.getAttribute('src') !== src) {
+      img.hidden = true;
+      img.onload = () => { img.hidden = false; };
+      img.onerror = () => { img.hidden = true; };
+      img.src = src;
+    }
     buildButton.querySelector('span').textContent = rt('open_body_page', page);
     buildButton.onclick = () => openEvidence(item,buildButton,page);
   }

@@ -715,6 +715,8 @@ def test_live_research_desk(tmp_path, monkeypatch):
             owner_page.reload(wait_until="domcontentloaded")
             card = owner_page.locator("#research-build-page")
             owner_page.get_by_text("Body about 3.01 of 4 pages · PDF 6 pages", exact=True).first.wait_for()
+            lengths = owner_page.locator("#research-drafts")
+            assert lengths.is_hidden()
             assert card.inner_text() == "View body page 4"
             card.click()
             selected = owner_page.locator("#preview-content img")
@@ -729,6 +731,10 @@ def test_live_research_desk(tmp_path, monkeypatch):
             event("new-layout", "writing", "Rendered 7 pages.", action="paper_compiled", artifact="paper/main.pdf",
                   body_pages=4.2, target_pages=4, pdf_pages=7, last_body_page=5, pdf_sha256=second_build)
             card.get_by_text("View body page 5").wait_for()
+            assert lengths.locator("bdi").all_text_contents() == ["3.01", "4.2"]
+            lengths.get_by_role("button").first.focus()
+            owner_page.keyboard.press("Enter")
+            assert owner_page.locator('#research-history li[data-event="body-layout"]').evaluate("el => el === document.activeElement")
             assert selected.get_attribute("src") == first_url
             assert owner_page.request.get(base + first_url).status == 409
             owner_page.locator("#evidence-close").click()
