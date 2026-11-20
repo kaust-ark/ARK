@@ -9,7 +9,7 @@ from ark.template_preprocess import replace_command_argument
 
 _ENDMATTER_HEADING = re.compile(
     r"(?:(?:\d+|[IVX]+)[.\s]+)?(?:references|bibliography|acknowledg(?:e)?ments?"
-    r"|appendices|appendix(?:\s+[a-z])?)", re.IGNORECASE)
+    r"|(?:ai|llm) (?:use|usage) statement|impact statement|appendices|appendix(?:\s+[a-z])?)", re.IGNORECASE)
 
 # The destination travels with the delivered PDF, including when the project
 # is exported without auxiliary TeX files. Older papers use visible headings.

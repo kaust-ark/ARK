@@ -17,6 +17,13 @@ the outputs of independently running the worker's plotting script on its real
 input and on permuted input in disposable copies. Canonical measured fields
 appear in reference_rows(). Use the worker's scikit-learn
 version for replay. Required tools: PyMuPDF, sklearn, SciPy, TeX Live/latexmk.
+For a signed four-page DSH editorial benchmark (no case-specific numerical
+oracle), use: python scripts/eval_manuscript.py editorial PROJECT
+--google-response INTERACTION.json --output acceptance.json. This benchmark
+requires ten distinct supported publications in the rendered body, linked
+endmatter, a Google schematic, a measured plot and an independent review
+of the exact sources and PDF. These thresholds match strict four-page ICML
+projects with Deep Research enabled. A model's scientific judgment still calls for independent review.
 Exit 0 means the recorded checks passed. Matched sources are evidence that
 research reached the paper; the citations' scientific interpretation still
 calls for reading the sources. No remote request or model call is made.
@@ -41,6 +48,7 @@ sys.path.insert(0, str(REPO))
 from ark.citation import parse_bib
 from ark.delivery_contract import evaluate
 from ark.figure_manifest import AI_SOURCES, load_manifest
+from ark.latex.venues import FOUR_PAGE_COLUMN_GAP_PT, FOUR_PAGE_PUBLICATIONS, ICML_STYLES, venue_templates
 from ark.latex.utils import body_page_boundary
 
 
@@ -505,10 +513,6 @@ def layout(doc):
 
 
 def check_build(paper, delivered_pdf):
-    template = REPO / "venue_templates/icml"
-    for name in ("icml2026.sty", "icml2026.bst"):
-        if sha256(paper / name) != sha256(template / name):
-            raise ValueError(f"Official template modified: {name}")
     with tempfile.TemporaryDirectory() as tmp:
         project = paper.resolve().parent
         work = Path(tmp) / "paper"
@@ -537,10 +541,13 @@ def check_build(paper, delivered_pdf):
         paths = [(work / line.removeprefix("INPUT ")).resolve() for line in recorded if line.startswith("INPUT ")]
         if any(path.is_relative_to(project) for path in paths):
             raise ValueError("Clean build read from the original project through an absolute path")
-        inputs = {path.name for path in paths}
+        styles = [name for name in ICML_STYLES if work / name in paths]
         biblog = (work / "main.blg").read_text(errors="replace")
-        if "icml2026.sty" not in inputs or "The style file: icml2026.bst" not in biblog:
+        if len(styles) != 1 or f"The style file: {Path(styles[0]).stem}.bst" not in biblog.splitlines():
             raise ValueError("The clean build did not use the ICML style and bibliography style")
+        for name in (styles[0], Path(styles[0]).stem + ".bst"):
+            if not (work / name).is_file() or sha256(work / name) != sha256(venue_templates() / "icml" / name):
+                raise ValueError(f"Official template modified: {name}")
         log = (work / "main.log").read_text(errors="replace")
         warnings = [line.strip() for line in log.splitlines()
                     if re.search(r"Overfull \\[hv]box|undefined (references|citations)|multiply defined", line, re.I)]
@@ -581,15 +588,95 @@ def scheduler(project, job_id, accounting):
             "worker_logs": [str(p.relative_to(project)) for p in logs]}
 
 
+def editorial_citations(project):
+    from ark.literature_evidence import body_source_trace
+
+    paper = project / "paper"
+    state = project / "auto_research/state"
+    proof = json.loads((state / "native_citations.json").read_text())
+    if proof.get("sha256") != sha256(paper / "references.bib"):
+        raise ValueError("The bibliography changed after source verification")
+    trace = body_source_trace(paper, state / "deep_research.md", proof["checked"]) or {}
+    pubs = trace.get("verified_publications", 0)
+    if pubs < FOUR_PAGE_PUBLICATIONS or trace.get("verified_works", 0) < 2:
+        raise ValueError(f"{pubs} distinct verified publications cited in the body; "
+                         f"{trace.get('verified_works', 0)} verified survey matches (requires {FOUR_PAGE_PUBLICATIONS} and 2)")
+    return {key: trace[key] for key in ("verified_publications", "verified_works", "total")}
+
+
+def editorial_layout(doc, native):
+    from ark.latex.compiler import body_repetition_notes
+
+    pagination = layout(doc)
+    left, right = native._icml_body_columns(doc, body_page_boundary(doc))
+    gap = round(abs(left - right), 2)
+    # About three body lines in the two-column ICML type area. The accepted
+    # benchmark has a 27 pt gap; its earlier visually sparse draft had 260 pt.
+    if gap > FOUR_PAGE_COLUMN_GAP_PT:
+        raise ValueError(f"Fourth-page column endings differ by {gap} pt (maximum {FOUR_PAGE_COLUMN_GAP_PT})")
+    if not pagination["body_cross_references_appendix"]:
+        raise ValueError("The body does not refer the reader to its separate appendix")
+    notes = body_repetition_notes(native.latex_dir)
+    notes.extend(str(issue) for issue in native._rendered_layout({"inputs": [native._icml_style()]}).values())
+    if notes:
+        raise ValueError(" | ".join(notes))
+    return {**pagination, "last_page_column_difference_pt": gap}
+
+
+def editorial_appendix(doc, native):
+    from ark.orchestrator.native_domain import _appendix_pages, _replication_appendix
+
+    run = native._measurement_receipt() or {}
+    if run.get("status") != "completed" or not (run.get("script") and run.get("artifact")):
+        raise ValueError("No completed worker run to check against the printed appendix")
+    for key, digest in (("script", "code_sha256"), ("artifact", "sha256")):
+        path = (native.root / run[key]).resolve()
+        if not path.is_relative_to(native.root) or sha256(path) != run.get(digest):
+            raise ValueError(f"The registered {key} differs from the worker receipt")
+    pages = _appendix_pages(doc)
+    text = "\n".join(p.get_text() for p in list(doc)[pages[0] - 1:]) if pages else ""
+    # TeX can wrap a path at a line break. Require both destinations in the
+    # printed appendix even when a reviewer accepted the rest of the paper.
+    reading = " ".join(text.replace("\u00ad", "").split())
+    for field in ("script", "artifact"):
+        filename = re.escape(run[field]).replace("_", "[_ ]").replace("/", r"/\s*")
+        if not re.search(filename + r"(?![\w/-]|\.\w)", reading):
+            raise ValueError(f"The appendix must identify the executed script and measured output: missing {run[field]}")
+    heading = re.search(r"(?im)^[ \t]*(?:Appendix[ \t]+)?(?:[A-Z][.:]?[ \t]+)?"
+                        r"([^\n]*\b(?:reproducibility|replication)\b[^\n]*)$", text)
+    if heading:
+        issues = _replication_appendix(native.latex_dir / "main.pdf", heading[1].strip(), run,
+                                      native.root / run["artifact"], native.state)
+        if issues:
+            raise ValueError(" | ".join(issues))
+    return {key: run[key] for key in ("script", "artifact", "code_sha256", "sha256")}
+
+
+def editorial_review(native):
+    from ark.review import delivered_record_matches
+
+    workflow = json.loads((native.root / "workflow.json").read_text())
+    review = json.loads((native.state_dir / "native_review.json").read_text())
+    snapshot = native._snapshot()
+    if not (native.state.get("state") == "delivered" and review.get("verdict") == "accept"
+            and review.get("deliverable") and review.get("session_id") in native.state.get("session_seq", {})
+            and workflow.get("owner_session_id") in native.state.get("session_seq", {})
+            and workflow["owner_session_id"] != review["session_id"]
+            and delivered_record_matches(snapshot, review, native.state.get("delivery_revision"),
+                                         native.state.get("delivery_inputs_sha256"))):
+        raise ValueError("No independent accepting DSH review of the current delivered revision")
+    return {"revision": snapshot["revision"], "reviewer": review["session_id"], "owner": workflow["owner_session_id"]}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("case", choices=("digits", "friedman"))
+    ap.add_argument("case", choices=("digits", "friedman", "editorial"))
     ap.add_argument("project", type=Path)
-    ap.add_argument("--rows", required=True, type=Path, help="Experiment CSV or JSON, relative to project")
+    ap.add_argument("--rows", type=Path, help="Experiment CSV or JSON, relative to project")
     ap.add_argument("--json-path", default="")
     ap.add_argument("--column", action="append", default=[], metavar="CANONICAL=ACTUAL")
-    ap.add_argument("--job-id", required=True)
-    ap.add_argument("--sacct", required=True, type=Path)
+    ap.add_argument("--job-id")
+    ap.add_argument("--sacct", type=Path)
     ap.add_argument("--replayed-plots", nargs=2, type=Path, metavar=("CLEAN_FIGURES", "PERTURBED_FIGURES"))
     ap.add_argument("--google-image-receipt", type=Path, action="append", default=[],
                     help="Authenticated compact image receipt with responseId, modelVersion and payloads[].sha256")
@@ -599,9 +686,12 @@ def main():
     a = ap.parse_args()
     project = a.project.resolve()
     paper = project / "paper"
-    measurements = (project / a.rows).resolve()
-    if not measurements.is_relative_to(project):
-        ap.error("--rows must point inside the project")
+    if a.case != "editorial":
+        if not (a.rows and a.job_id and a.sacct):
+            ap.error("the numerical benchmarks require --rows, --job-id and --sacct")
+        measurements = (project / a.rows).resolve()
+        if not measurements.is_relative_to(project):
+            ap.error("--rows must point inside the project")
     columns = dict(v.split("=", 1) for v in a.column)
     checks = {}
 
@@ -614,23 +704,35 @@ def main():
             checks[name] = {"pass": False, "detail": str(exc)}
             return None
 
-    check("scheduler", scheduler, project, a.job_id, a.sacct)
-    rows = check("experiment", lambda: replay(measured_rows(measurements, a.json_path), columns, reference_rows(a.case)))
+    if a.case == "editorial":
+        from ark.orchestrator.native_domain import NativeProject
+        native = NativeProject(project)
+        check("current_independent_review", editorial_review, native)
+        check("body_publications", editorial_citations, project)
+    else:
+        check("scheduler", scheduler, project, a.job_id, a.sacct)
+        rows = check("experiment", lambda: replay(measured_rows(measurements, a.json_path), columns, reference_rows(a.case)))
     pdf = paper / "main.pdf"
     fingerprint = None
     try:
         delivered_pdf = pdf.read_bytes()
         fingerprint = hashlib.sha256(delivered_pdf).hexdigest()
         with fitz.open(stream=delivered_pdf, filetype="pdf") as doc:
-            check("pagination", layout, doc)
+            if a.case == "editorial":
+                check("pagination", editorial_layout, doc, native)
+                check("printed_reproduction", editorial_appendix, doc, native)
+            else:
+                check("pagination", layout, doc)
             check("research_citations", check_sources, doc, paper, project / "auto_research/state", a.google_response)
             graphics = check("graphics", check_graphics, doc, paper, a.replayed_plots)
-            check("method_diagram_science", check_diagram_review, paper, graphics, a.google_image_receipt)
+            if a.case != "editorial" or a.google_image_receipt:
+                check("method_diagram_science", check_diagram_review, paper, graphics, a.google_image_receipt)
             if a.visual_review:
                 check("independent_visual_review", visual_review, a.visual_review, fingerprint, paper, graphics)
             check("clean_build", check_build, paper, delivered_pdf)
-            check("rendered_measurements", displayed_metrics, doc, a.case, rows or {})
-            if not rows:
+            if a.case != "editorial":
+                check("rendered_measurements", displayed_metrics, doc, a.case, rows or {})
+            if a.case != "editorial" and not rows:
                 checks["rendered_measurements"] = {"pass": False, "detail": "No independently verified result rows."}
     except Exception as exc:
         checks["paper"] = {"pass": False, "detail": str(exc)}

@@ -85,6 +85,16 @@ git clone --single-branch --branch dsh-bundle-preview https://github.com/kaust-a
 python3 integrations/dsh/verify.py "dist/dsh/idea2paper-dsh-$version.tgz" --prepare dist/dsh/release --previous-index dist/dsh/channel/index.json
 ```
 
+发布验收需要 `pdflatex` 和 `bibtex`。验收使用本地模型应答，驱动安装包内的主会话启动和恢复，验证正文引用与排版损坏后会退稿，并要求独立 reviewer 为修复后的 PDF 重新签字。这一步不产生模型费用。
+
+对已经完成的四页 ICML 研究项目，将从 Google 取得的 Deep Research 原始响应保存在项目目录外，在代码仓库中运行以下命令。
+
+```sh
+python scripts/eval_manuscript.py editorial PROJECT --google-response INTERACTION.json --output acceptance.json
+```
+
+报告核对正文中十篇不同文献的原文证据、实际印出的图、参考文献、附录、末页栏高差、干净重编的 PDF，以及当前版本的独立评审。digits 和 Friedman 两个算例还会独立重算实验结果。
+
 验证程序会从本地 HTTP 地址安装到干净的 profile，调用包内 Python 组件读取已停止的项目，再启动 DSH Web 核对 Discover 的 Git 安装目标，并通过本地 Git 镜像安装同一提交。生成的独立 Git 仓库包含归档中的文件和 wheel，索引指向实际的包提交。原 0.1.0-alpha.1 安装包可使用 `verify_legacy.py` 运行对应的测试。
 
 通过发布检查后，维护者可按英文版的命令推送标签，一并上传已验证的归档、alpha.3 的离线评审示例和为这两份文件生成的 SHA256SUMS，再核对公开下载和索引，并在全新的 DSH 环境中验证安装。具有 npm 发布权限的维护者还可将同一文件发布到 alpha 标签并核对 `dist.integrity`。卸载插件可运行 `dsh plugin --profile idea2paper remove idea2paper-dsh`。如需续跑，请保留项目目录和原 profile。[发布命令](README.md#verify-and-publish)

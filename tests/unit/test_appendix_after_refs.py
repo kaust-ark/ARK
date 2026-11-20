@@ -330,3 +330,50 @@ The stored data and code reproduce all five splits.
     _write_main(stub, annotated.replace("Reproducibility Appendix", "Implementation Notes"))
     result = prepare()
     assert "A note about the sources." in result and r"\appendix" not in result
+
+
+@pytest.mark.parametrize(("venue", "endmatter", "order"), [
+    ("icml", r"""\section*{AI Use Statement}
+AI assisted with typesetting.
+\section*{Impact Statement}
+This synthetic comparison uses no participant data.
+\bibliographystyle{icml2027}\bibliography{refs}""",
+     ["idea2paper.body.end", "AI Use Statement", "Impact Statement", r"\bibliography{refs}"]),
+    ("iclr", r"""\subsection*{AI use statement}
+AI assisted with typesetting.
+\bibliographystyle{iclr2027_conference}\bibliography{refs}""",
+     ["idea2paper.body.end", "AI use statement", r"\bibliography{refs}"]),
+    ("neurips", r"""\bibliography{refs}
+\input{checklist.tex}
+\appendix\section{Data}Observations.""",
+     ["idea2paper.body.end", r"\bibliography{refs}", r"\appendix", r"\input{checklist.tex}"]),
+    ("usenix", r"""\appendix\section{Open Science}Anonymous data archive.
+\bibliography{refs}""",
+     ["idea2paper.body.end", r"\appendix", r"\bibliography{refs}"]),
+])
+def test_official_endmatter_order_survives_repeated_preparation(tmp_path, venue, endmatter, order):
+    from ark.execution import ExecutionMixin
+
+    main = tmp_path / "main.tex"
+    main.write_text(r"\begin{document}Body." + "\n" + endmatter + "\n" + r"\end{document}")
+    for _ in range(2):
+        ExecutionMixin.prepare_endmatter(tmp_path, lambda *_: None, venue=venue)
+        text = main.read_text()
+        assert all(text.count(label) == 1 for label in order)
+        assert [text.index(label) for label in order] == sorted(text.index(label) for label in order)
+        assert text.count("idea2paper.org") == 1
+        if venue in ("icml", "iclr"):
+            assert "Acknowledgments" not in text
+
+
+@pytest.mark.parametrize("heading", ["AI Use Statement", "LLM Usage Statement", "Impact Statement"])
+def test_rendered_disclosure_does_not_consume_body_budget(heading):
+    import fitz
+    from ark.latex.utils import body_page_boundary
+
+    with fitz.open() as doc:
+        doc.new_page().insert_text((60, 120), "The experiment holds all other parameters fixed.")
+        page = doc.new_page()
+        for line, text in enumerate([heading, "This study used synthetic data.", "References"]):
+            page.insert_text((60, 100 + line * 22), text)
+        assert body_page_boundary(doc) == (1, (0, 0))

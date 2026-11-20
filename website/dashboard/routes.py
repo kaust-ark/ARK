@@ -4392,30 +4392,18 @@ async def api_stream_log(project_id: str, request: Request, cursor: int = 0):
 @router.get("/api/venues")
 async def api_venues():
     """Return supported venues list."""
-    # One entry per official template. Venues grouped on the same line share the
-    # exact same LaTeX style files (verified against each venue's 2026 CFP); the
-    # parenthetical names the official template/format.
-    # Each entry's name is the template / organization; the parenthetical lists
-    # example venues that use it (verified against the venues' official CFPs).
     venues = [
-        # ── ML / AI (one template each) ──
-        {"name": "ICML",    "format": "icml",    "pages": 8, "year": 2026},
+        {"name": "ICML",    "format": "icml",    "pages": 8, "year": 2027},
         {"name": "NeurIPS", "format": "neurips", "pages": 9, "year": 2026},
-        {"name": "ICLR",    "format": "iclr",    "pages": 9, "year": 2026},
-        {"name": "AAAI",    "format": "aaai",    "pages": 7, "year": 2026},
-        {"name": "TMLR (journal — no page limit)", "format": "tmlr", "pages": 12, "year": 2026},
-        # ── ACL — Association for Computational Linguistics ──
-        {"name": "ACL (ACL, EMNLP, NAACL, EACL, AACL, COLING)", "format": "acl", "pages": 8, "year": 2026},
-        # ── CVF — Computer Vision Foundation ──
-        {"name": "CVF (CVPR, ICCV, WACV)", "format": "cvpr", "pages": 8, "year": 2026},
-        # ── ML Systems ──
-        {"name": "MLSys", "format": "mlsys", "pages": 10, "year": 2026},
-        # ── ACM SIGPLAN — acmart [sigplan] (verified each venue's 2026 CFP) ──
-        {"name": "ACM SIGPLAN (SOSP, EuroSys, ASPLOS, PPoPP)", "format": "acmart", "pages": 12, "year": 2026},
-        # ── USENIX — one template for all ──
-        {"name": "USENIX (OSDI, NSDI, FAST, USENIX Security)", "format": "usenix", "pages": 13, "year": 2026},
-        # ── IEEEtran — IEEE conference mode ──
-        {"name": "IEEEtran (INFOCOM, ICC, GLOBECOM, ICASSP)", "format": "ieee", "pages": 9, "year": 2026},
+        {"name": "ICLR",    "format": "iclr",    "pages": 9, "year": 2027},
+        {"name": "AAAI",    "format": "aaai",    "pages": 7, "year": 2027},
+        {"name": "TMLR (journal — no page limit)", "format": "tmlr", "pages": 12},
+        {"name": "ACL (ACL, EMNLP, NAACL, EACL, AACL, COLING)", "format": "acl", "pages": 8},
+        {"name": "CVPR", "format": "cvpr", "pages": 8, "year": 2027},
+        {"name": "MLSys", "format": "mlsys", "pages": 10, "year": 2027},
+        {"name": "ACM SIGPLAN (SOSP, EuroSys, ASPLOS, PPoPP)", "format": "acmart", "pages": 12},
+        {"name": "USENIX (OSDI, NSDI, FAST, USENIX Security)", "format": "usenix", "pages": 13},
+        {"name": "IEEEtran (INFOCOM, ICC, GLOBECOM, ICASSP)", "format": "ieee", "pages": 9},
     ]
     return JSONResponse(venues)
 

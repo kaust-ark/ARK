@@ -100,7 +100,7 @@ VENUES = [
     {"name": "AAAI",                                        "format": "aaai",    "pages": 7},
     {"name": "TMLR (journal — no page limit)",             "format": "tmlr",    "pages": 12},
     {"name": "ACL (ACL, EMNLP, NAACL, EACL, AACL, COLING)", "format": "acl",     "pages": 8},
-    {"name": "CVF (CVPR, ICCV, WACV)",                     "format": "cvpr",    "pages": 8},
+    {"name": "CVPR",                                      "format": "cvpr",    "pages": 8},
     {"name": "MLSys",                                       "format": "mlsys",   "pages": 10},
     {"name": "ACM SIGPLAN (SOSP, EuroSys, ASPLOS, PPoPP)",      "format": "acmart", "pages": 12},
     {"name": "USENIX (OSDI, NSDI, FAST, USENIX Security)",      "format": "usenix", "pages": 13},
@@ -110,34 +110,31 @@ VENUES = [
 OTHER_VENUES = []
 
 # format -> download info for LaTeX template files
-# URLs may include {year} and {prev_year} placeholders (auto-filled at runtime)
+# Source URLs match the editions tracked in venue_templates/SOURCES.md.
 TEMPLATE_SOURCES = {
     "neurips": {
         "urls": [
-            "https://media.neurips.cc/Conferences/NeurIPS{year}/Styles/neurips_{year}.zip",
-            "https://media.neurips.cc/Conferences/NeurIPS{prev_year}/Styles/neurips_{prev_year}.zip",
+            "https://media.neurips.cc/Conferences/NeurIPS2026/Formatting_Instructions_For_NeurIPS_2026.zip",
         ],
         # key style file that must be present for a successful download
-        "required": ["neurips_{year}.sty", "neurips_{prev_year}.sty"],
+        "required": ["neurips_2026.sty"],
     },
     "icml": {
         "urls": [
-            "https://media.icml.cc/Conferences/ICML{year}/Styles/icml{year}.zip",
-            "https://media.icml.cc/Conferences/ICML{prev_year}/Styles/icml{prev_year}.zip",
+            "https://media.icml.cc/Conferences/ICML2027/styles/icml2027.zip",
         ],
-        "required": ["icml{year}.sty", "icml{prev_year}.sty"],
+        "required": ["icml2027.sty"],
     },
     "iclr": {
-        # GitHub master branch — year-agnostic, always current
-        "urls": ["https://github.com/ICLR/Master-Template/archive/refs/heads/master.zip"],
+        "urls": ["https://media.iclr.cc/Conferences/ICLR2027/iclr-2027-style-files.zip"],
         "required": ["iclr"],  # prefix match
     },
     "acl": {
-        "urls": ["https://github.com/acl-org/acl-style-files/archive/refs/heads/master.zip"],
+        "urls": ["https://codeload.github.com/acl-org/acl-style-files/zip/d5adc823ff0f80f98c80405ca0ab66c68e684409"],
         "required": ["acl"],
     },
     "cvpr": {
-        "urls": ["https://github.com/cvpr-org/author-kit/archive/refs/heads/main.zip"],
+        "urls": ["https://media.eventhosts.cc/Conferences/CVPR2027/author-kit-CVPR2027-v1-latex.zip"],
         "required": ["cvpr"],
     },
     "ieee": {
@@ -148,7 +145,7 @@ TEMPLATE_SOURCES = {
     # acmart engine: SOSP / EuroSys / ASPLOS / EuroMLSys (one .cls, different
     # \documentclass options). in_texlive so a missing bundle still compiles.
     "acmart": {
-        "urls": ["https://mirrors.ctan.org/macros/latex/contrib/acmart.zip"],
+        "urls": ["https://ctan.math.illinois.edu/systems/texlive/tlnet/archive/acmart.tar.xz"],
         "in_texlive": True,
         "required": ["acmart.cls"],
     },
@@ -156,23 +153,22 @@ TEMPLATE_SOURCES = {
     "acm": {"urls": [], "in_texlive": True, "required": ["acmart.cls"]},
     "sigplan": {"urls": [], "in_texlive": True, "required": ["acmart.cls"]},
     "aaai": {
-        "urls": ["https://aaai.org/authorkit26-1/"],
-        "required": ["aaai2026.sty"],
+        "urls": ["https://aaai.org/wp-content/uploads/2026/10/AuthorKit27.zip"],
+        "required": ["aaai2027.sty"],
     },
     "usenix": {
         # Direct .sty download (not a zip) — handled by _download_template
-        "urls": ["https://www.usenix.org/sites/default/files/usenix-2020-09.sty"],
+        "urls": ["https://www.usenix.org/system/files/usenix-2020-09.sty"],
         "required": ["usenix"],
     },
     "mlsys": {
         "urls": [
-            "https://media.mlsys.org/Conferences/MLSYS{year}/mlsys{year}style.zip",
-            "https://media.mlsys.org/Conferences/MLSYS{prev_year}/mlsys{prev_year}style.zip",
+            "https://media.mlsys.org/Conferences/MLSYS2025/mlsys2025style.zip",
         ],
         "required": ["mlsys"],
     },
     "tmlr": {
-        "urls": ["https://github.com/JmlrOrg/tmlr-style-file/archive/refs/heads/main.zip"],
+        "urls": ["https://codeload.github.com/JmlrOrg/tmlr-style-file/zip/7bf90efe3a0debbba703c05c43f3ff7e4d4a2992"],
         "required": ["tmlr.sty"],
     },
     "article": {"urls": [], "in_texlive": True, "required": []},
@@ -274,21 +270,8 @@ def _analyze_research_idea(idea: str) -> dict:
 # ============================================================
 
 def _resolve_template_urls(venue_format: str) -> tuple[list[str], list[str]]:
-    """Return (urls, required_prefixes) with {year}/{prev_year} substituted."""
-    import datetime
-    year = datetime.datetime.now().year
-    prev_year = year - 1
-
     source = TEMPLATE_SOURCES.get(venue_format, {})
-    raw_urls = source.get("urls", [])
-    raw_required = source.get("required", [])
-
-    def sub(s):
-        return s.replace("{year}", str(year)).replace("{prev_year}", str(prev_year))
-
-    urls = [sub(u) for u in raw_urls]
-    required = [sub(r) for r in raw_required]
-    return urls, required
+    return source.get("urls", []), source.get("required", [])
 
 
 def _validate_template_files(latex_path: Path, required: list[str]) -> bool:
@@ -308,9 +291,15 @@ def _download_template(venue_format: str, latex_path: Path) -> bool:
     For unknown formats not in TEMPLATE_SOURCES, automatically tries CTAN
     before falling back to asking the user.
     """
+    import tarfile
     import tempfile
     import urllib.request
     import zipfile
+
+    def fetch(url, dest):
+        request = urllib.request.Request(url, headers={"User-Agent": "Idea2Paper/1.0 (+https://idea2paper.org)"})
+        with urllib.request.urlopen(request, timeout=30) as response, open(dest, "wb") as output:
+            shutil.copyfileobj(response, output)
 
     urls, required = _resolve_template_urls(venue_format)
 
@@ -334,30 +323,45 @@ def _download_template(venue_format: str, latex_path: Path) -> bool:
             if url_suffix in (".sty", ".cls", ".bst"):
                 fname = Path(url.split("?")[0]).name
                 dest = latex_path / fname
-                urllib.request.urlretrieve(url, dest)
+                fetch(url, dest)
                 if dest.exists() and dest.stat().st_size > 100:
                     print(f"  {_c('Downloaded:', Colors.GREEN)} {fname}")
                     if _validate_template_files(latex_path, required):
                         return True
                 continue
 
-            # Zip archive
+            # Some TeX Live packages distribute their generated class only in the runtime tarball.
             with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
                 tmp_path = tmp.name
-            urllib.request.urlretrieve(url, tmp_path)
+            fetch(url, tmp_path)
 
             extracted = []
-            with zipfile.ZipFile(tmp_path) as zf:
-                for info in zf.infolist():
-                    if info.is_dir():
-                        continue
-                    name = Path(info.filename).name
-                    if Path(name).suffix.lower() in (".sty", ".cls", ".bst", ".bib"):
+            if url.endswith(".tar.xz"):
+                with tarfile.open(tmp_path, "r:xz") as archive:
+                    for item in archive:
+                        name = Path(item.name).name
+                        if not item.isfile() or name not in {"acmart.cls", "ACM-Reference-Format.bst"}:
+                            continue
                         dest = latex_path / name
                         if not dest.exists():
-                            with zf.open(info) as src, open(dest, "wb") as dst:
-                                dst.write(src.read())
+                            with archive.extractfile(item) as src, dest.open("wb") as dst:
+                                shutil.copyfileobj(src, dst)
                             extracted.append(name)
+            else:
+                with zipfile.ZipFile(tmp_path) as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        name = Path(info.filename).name
+                        if name.startswith("."):
+                            continue
+                        if (Path(name).suffix.lower() in (".sty", ".cls", ".bst", ".bib")
+                                or name in {"checklist.tex", "ReproducibilityChecklist.tex"}):
+                            dest = latex_path / name
+                            if not dest.exists():
+                                with zf.open(info) as src, open(dest, "wb") as dst:
+                                    dst.write(src.read())
+                                extracted.append(name)
 
             os.unlink(tmp_path)
             tmp_path = None
@@ -385,12 +389,12 @@ def _detect_package_name(venue_format: str, latex_path: Path) -> dict[str, str]:
     """Scan downloaded .sty/.cls files and return actual package names for this venue.
 
     Returns a dict of placeholder -> actual name, e.g.:
-      {"neurips_YEAR": "neurips_2026", "iclr_YEAR_conference": "iclr2026_conference"}
+      {"neurips_YEAR": "neurips_2026", "iclr_YEAR_conference": "iclr2027_conference"}
     """
     if not latex_path.exists():
         return {}
 
-    sty_files = [f.stem for f in latex_path.iterdir() if f.suffix in (".sty", ".cls")]
+    sty_files = sorted((f.stem for f in latex_path.iterdir() if f.suffix in (".sty", ".cls")), reverse=True)
     result = {}
 
     if venue_format == "neurips":
@@ -463,7 +467,7 @@ def _get_main_tex_content(venue_format: str, title: str, venue_name: str, author
 """
 
     if venue_format == "neurips":
-        neurips_pkg = pkg.get("neurips_YEAR", "neurips_2025")
+        neurips_pkg = pkg.get("neurips_YEAR", "neurips_2026")
         return rf"""\documentclass{{article}}
 \usepackage{{{neurips_pkg}}}
 \usepackage[utf8]{{inputenc}}
@@ -486,8 +490,9 @@ TODO: Write abstract.
 """
 
     if venue_format == "icml":
-        icml_pkg = pkg.get("icml_YEAR", "icml2026")
-        return rf"""\documentclass[accepted]{{article}}
+        icml_pkg = pkg.get("icml_YEAR", "icml2027")
+        sections = sections.replace("{plainnat}", "{" + icml_pkg + "}")
+        return rf"""\documentclass{{article}}
 \usepackage{{{icml_pkg}}}
 \usepackage[utf8]{{inputenc}}
 \usepackage{{amsmath,amssymb}}
@@ -515,7 +520,8 @@ TODO: Write abstract.
 """
 
     if venue_format == "iclr":
-        iclr_pkg = pkg.get("iclr_YEAR_conference", "iclr2026_conference")
+        iclr_pkg = pkg.get("iclr_YEAR_conference", "iclr2027_conference")
+        sections = sections.replace("{plainnat}", "{" + iclr_pkg + "}")
         return rf"""\documentclass{{article}}
 \usepackage{{{iclr_pkg}}}
 \usepackage[utf8]{{inputenc}}
@@ -833,16 +839,17 @@ def _setup_latex_template(code_dir: str, config: dict):
     print(f"{_c('LaTeX Template Setup', Colors.BOLD)}")
 
     # Try bundled venue_templates/ first (same as webapp)
-    from website.dashboard.templates import has_venue_template, copy_venue_template, _resolve_venue_format
+    from website.dashboard.templates import copy_venue_template, _resolved_template_dir
     downloaded = False
 
+    bundled = _resolved_template_dir(venue_format)
     _, required = _resolve_template_urls(venue_format)
-    if _validate_template_files(latex_path, required):
-        print(f"  {_c('Template files already present, skipping.', Colors.DIM)}")
-        downloaded = True
-    elif has_venue_template(venue_format):
-        copy_venue_template(venue_format, latex_path)
+    if bundled:
+        copy_venue_template(venue_format, latex_path, preserve_existing=True)
         print(f"  {_c('Copied bundled template:', Colors.GREEN)} venue_templates/{venue_format}/")
+        downloaded = True
+    elif required and _validate_template_files(latex_path, required):
+        print(f"  {_c('Template files already present, skipping.', Colors.DIM)}")
         downloaded = True
     else:
         source = TEMPLATE_SOURCES.get(venue_format, {})
@@ -864,8 +871,9 @@ def _setup_latex_template(code_dir: str, config: dict):
                     venue_format = "article"
 
     # Generate main.tex: prefer committed venue_templates/<format>/main.tex if available
-    venue_template_src = Path(__file__).parent.parent / "venue_templates" / _resolve_venue_format(venue_format) / "main.tex"
-    if venue_template_src.exists():
+    bundled = _resolved_template_dir(venue_format)
+    venue_template_src = bundled / "main.tex" if bundled else None
+    if venue_template_src and venue_template_src.is_file():
         content = venue_template_src.read_text()
         # Substitute title/author placeholders
         if title:

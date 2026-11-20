@@ -42,6 +42,11 @@ from ark.latex.compiler import (
     CompilerMixin, body_repetition_notes, body_sections_and_figures, rendered_body_images, repeated_result_series, stretched_prose,
 )
 from ark.latex.utils import BODY_END_PDF_MARKER, body_page_boundary, extract_latex_errors, parse_overfull_warnings
+from ark.latex.venues import (
+    FOUR_PAGE_COLUMN_GAP_PT, FOUR_PAGE_PUBLICATIONS, ICML_STYLES, icml_submission_statements,
+    initial_icml_style, venue_templates,
+)
+from ark.latex_geometry import BUNDLED_VENUE_ALIASES
 from ark.orchestrator.state import _atomic_write_text
 
 
@@ -272,7 +277,7 @@ def _manuscript_first_pass(project, content, *, check_headings=False, page_targe
         staging = Path(tmp)
         env = _stage_tex(project.latex_dir, staging)
         (staging / "main.tex").write_bytes(content)
-        if page_target and expected_style == "icml2026.sty":
+        if page_target and expected_style in ICML_STYLES:
             ExecutionMixin.prepare_endmatter(staging, lambda *_: None, venue="icml")
             project._link_appendix(staging)
         run = subprocess.run(
@@ -301,7 +306,7 @@ def _manuscript_first_pass(project, content, *, check_headings=False, page_targe
                 end_page, body_bottoms = boundary
                 count = end_page + int(any(body_bottoms))
                 preview = {"body_pages": count, "target": page_target}
-                if expected_style == "icml2026.sty":
+                if expected_style in ICML_STYLES:
                     length, _ = project._rendered_body_coverage(pdf)
                     preview["body_equivalent_pages"] = round(length, 2)
                     if length < page_target - 0.25:
@@ -386,6 +391,14 @@ class NativeProject(CompilerMixin):
             self.log(f"[{phase}] {row['observation']}{artifact}")
         return row
 
+    def _icml_style(self):
+        pinned = self.state.get("icml_style")
+        if pinned in ICML_STYLES:
+            return pinned
+        # A pre-pin project can already have a successful recorded build.
+        previous = (self.state.get("compile") or {}).get("inputs", ())
+        return next((name for name in ICML_STYLES if name in previous), None) or initial_icml_style(self.latex_dir)
+
     def _initialize(self, args):
         idea = self.config.get("idea") or args.get("idea")
         idea_file = self.state_dir / "idea.md"
@@ -416,7 +429,7 @@ class NativeProject(CompilerMixin):
             venue = self.config.get("venue_format", "icml")
             if not re.fullmatch(r"[a-zA-Z0-9_-]+", venue):
                 raise ValueError("Invalid venue template.")
-            source = _asset_dir("venue_templates") / venue
+            source = venue_templates() / BUNDLED_VENUE_ALIASES.get(venue, venue)
             if not source.is_dir():
                 raise ValueError(
                     f"The installed distribution does not contain the requested {venue} template."
@@ -424,6 +437,8 @@ class NativeProject(CompilerMixin):
             shutil.copytree(source, self.latex_dir, dirs_exist_ok=True)
         install_skills(self.root)
         self.state = {"version": 1, "state": "running", "started": datetime.now(timezone.utc).isoformat()}
+        if self.config.get("venue_format") == "icml":
+            self.state["icml_style"] = initial_icml_style(self.latex_dir)
         self.save()
         self.event("research", "project_started", "Project opened with persistent research owner.")
         self._initial_gate()
@@ -529,6 +544,9 @@ class NativeProject(CompilerMixin):
             ],
             "commands": [] if inspect else self._commands(),
         }
+        if self._four_page_research_paper():
+            data["required"].update(verified_body_publications=FOUR_PAGE_PUBLICATIONS,
+                                    final_body_column_gap_pt_max=FOUR_PAGE_COLUMN_GAP_PT)
         for key in (
             "plan",
             "experiment",
@@ -1616,15 +1634,19 @@ class NativeProject(CompilerMixin):
         length = self._count_body_pages(path) if path == published else self._count_body_pages_from_pdf(path)
         return length, max(1, math.ceil(length))
 
-    @staticmethod
-    def _uneven_final_columns(boundary, heights):
+    def _four_page_research_paper(self):
+        return (self.config.get("layout_mode") == "strict" and self.config.get("venue_format") == "icml"
+                and float(self.config.get("venue_pages") or 4) == 4 and self.config.get("skip_deep_research") is False)
+
+    def _uneven_final_columns(self, boundary, heights):
+        threshold = FOUR_PAGE_COLUMN_GAP_PT if self._four_page_research_paper() else 2 * _ICML_BALANCE_TOLERANCE
         return (boundary and boundary[0] >= 2 and heights and min(heights) > 0
-                and abs(heights[0] - heights[1]) > 2 * _ICML_BALANCE_TOLERANCE)
+                and abs(heights[0] - heights[1]) > threshold)
 
     def _rendered_layout(self, compiled):
         """Measure the ICML body independently of its reference/appendix pages."""
         if (self.config.get("layout_mode") != "strict" or self.config.get("venue_format") != "icml"
-                or "icml2026.sty" not in compiled.get("inputs", [])):
+                or self._icml_style() not in compiled.get("inputs", [])):
             return {}
         import fitz
 
@@ -1665,8 +1687,8 @@ class NativeProject(CompilerMixin):
         main = source.read_text()
         if (self.config.get("layout_mode") != "strict" or self.config.get("venue_format") != "icml"
                 or BODY_END_PDF_MARKER not in main or (staging / "balance.sty").exists()
-                or "icml2026.sty" not in _local_tex_inputs(staging)
-                or _sha(staging / "icml2026.sty") != _sha(_asset_dir("venue_templates") / "icml/icml2026.sty")):
+                or self._icml_style() not in _local_tex_inputs(staging)
+                or _sha(staging / self._icml_style()) != _sha(venue_templates() / "icml" / self._icml_style())):
             return False
         manual = re.compile(r"\\(?:newpage|clearpage|pagebreak|columnbreak|onecolumn|balance|nobalance)\b"
                             r"|\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{[^}]*\b(?:balance|flushend|multicol)\b")
@@ -2006,12 +2028,12 @@ class NativeProject(CompilerMixin):
         pdf = self.latex_dir / "main.pdf"
         receipt = self.state.get("compile") or {}
         digest = self.state.get("compiled_pdf_sha256")
-        venue_template = _asset_dir("venue_templates") / "icml"
+        venue_template = venue_templates() / "icml"
         strict_icml = self.config.get("layout_mode") == "strict" and self.config.get("venue_format") == "icml"
         if (strict_icml and previous and not receipt.get("ok") and r"\end{document}" in content
                 and previous == (venue_template / "main.tex").read_bytes()):
             try:
-                trial = _manuscript_first_pass(self, candidate, expected_style="icml2026.sty")
+                trial = _manuscript_first_pass(self, candidate, expected_style=self._icml_style())
             except (OSError, subprocess.TimeoutExpired) as exc:
                 return {"ok": False, "checked": False, "diagnostic": f"The first venue build could not run: {exc}"}
             return {"ok": "diagnostic" not in trial, "checked": True, **trial}
@@ -2022,7 +2044,7 @@ class NativeProject(CompilerMixin):
             return {"ok": True, "checked": False, "reason": "No verified prior build."}
         try:
             strict = self.config.get("layout_mode") == "strict"
-            style_check = {"expected_style": "icml2026.sty"} if strict_icml and "icml2026.sty" in receipt.get("inputs", ()) else {}
+            style_check = {"expected_style": self._icml_style()} if strict_icml and self._icml_style() in receipt.get("inputs", ()) else {}
             target = (self.config.get("venue_pages") or 4) if strict else None
             prior_body = receipt.get("body_equivalent_pages", 0)
             inspect = bool(strict_icml and prior_body)
@@ -2446,15 +2468,17 @@ class NativeProject(CompilerMixin):
                     issues.extend(_replication_appendix(self.latex_dir / "main.pdf", heading[1], run,
                                                         self.root / run["artifact"], self.state))
         if self.config.get("venue_format") == "icml" and rendered.get("ok") and "main.tex" in rendered.get("inputs", []):
-            template = _asset_dir("venue_templates") / "icml"
+            template = venue_templates() / "icml"
             # A .sty beside the manuscript does not establish that TeX loaded it.
-            style = template / "icml2026.sty"
+            style = template / self._icml_style()
             local = self.latex_dir / style.name
             if (style.name not in rendered["inputs"] or not local.is_file() or local.resolve() != local
                     or _sha(local) != _sha(style)):
                 issues.append(f"The TeX recorder must show the official {style.name} loaded from paper/. "
                               "Read the original paper/main.tex with read_project_file(list_revisions=true). "
                               "Restore its preamble and title block, and keep your scientific sections.")
+            if style.name == "icml2027.sty" and style.name in rendered["inputs"] and rendered.get("cited"):
+                issues.extend(icml_submission_statements(self.latex_dir / "main.pdf"))
             if rendered.get("cited"):
                 bibstyle = style.with_suffix(".bst")
                 biblog = self.latex_dir / "main.blg"
@@ -2481,6 +2505,18 @@ class NativeProject(CompilerMixin):
         layout = rendered.get("rendered_layout")
         if layout is None and rendered.get("ok") and (self.latex_dir / "main.pdf").is_file():
             layout = self._rendered_layout(rendered)
+        if self._four_page_research_paper() and rendered.get("ok"):
+            if trace and "verified_publications" not in trace:
+                issues.append("Run compile_paper to refresh the verified body-publication count for this older draft.")
+            elif trace.get("verified_publications", 0) < FOUR_PAGE_PUBLICATIONS:
+                count = trace.get("verified_publications", 0)
+                issues.append(f"This four-page literature-backed manuscript cites {count} distinct publications with "
+                              f"verified original passages in its body; the target is {FOUR_PAGE_PUBLICATIONS}. "
+                              "Investigate the method's origin, closest comparisons and assumptions using the survey "
+                              "and lookup_papers. Cite each relevant original at the passage it supports. "
+                              "Uncited entries, alternate versions, software and datasets cannot fill this requirement.")
+            if (layout or {}).get("column_balance") and rendered.get("last_body_page") == 4:
+                issues.append(layout["column_balance"])
         issues.extend((layout or {}).get("stretched_body_prose", []))
         issues.extend((layout or {}).get("stretched_appendix_prose", []))
         if guidance := rendered.get("layout_guidance"):

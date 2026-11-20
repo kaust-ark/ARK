@@ -4963,7 +4963,7 @@ async function loadVenues() {
     ? '<option value="Test" data-format="euromlsys" data-pages="2" data-preset="test">🧪 Smoke Test</option>'
     : '';
   sel.innerHTML = testOpt + venues.map((v, i) =>
-    `<option value="${v.name}" ${i === 0 ? 'selected' : ''} data-format="${v.format}" data-pages="${v.pages}">${v.name}(${v.year || 2025})${v.tag ? ' ' + v.tag : ''}</option>`
+    `<option value="${v.name}" ${i === 0 ? 'selected' : ''} data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.year ? ' (' + v.year + ')' : ''}${v.tag ? ' ' + v.tag : ''}</option>`
   ).join('') + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
   // Test sits at the TOP of the list but must NOT be the default selection — the
   // first real venue carries `selected` so initial load AND form.reset() land on
@@ -5430,7 +5430,7 @@ async function openRestartModal(id) {
   // loadVenues) so it works regardless of whether the hero form rendered.
   const venueSelect = document.getElementById('restart-venue');
   venueSelect.innerHTML = venues.map(v =>
-    `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}(${v.year || 2025})${v.tag ? ' ' + v.tag : ''}</option>`
+    `<option value="${v.name}" data-format="${v.format}" data-pages="${v.pages}">${v.name}${v.year ? ' (' + v.year + ')' : ''}${v.tag ? ' ' + v.tag : ''}</option>`
   ).join('') + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
   // Set current venue
   if (p.venue) {
@@ -5528,7 +5528,7 @@ function _populateVenueSelect(selectId, venueName, venueFormat) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
   sel.innerHTML = venues.map(v =>
-    `<option value="${esc(v.name)}" data-format="${esc(v.format)}" data-pages="${v.pages}">${esc(v.name)} (${v.year || 2025})${v.tag ? ' ' + esc(v.tag) : ''}</option>`
+    `<option value="${esc(v.name)}" data-format="${esc(v.format)}" data-pages="${v.pages}">${esc(v.name)}${v.year ? ' (' + esc(v.year) + ')' : ''}${v.tag ? ' ' + esc(v.tag) : ''}</option>`
   ).join('') + '<option value="Customized" data-format="custom" data-pages="9">Customized</option>';
   for (const opt of sel.options) {
     if (opt.value === venueName) { opt.selected = true; break; }

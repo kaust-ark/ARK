@@ -1,6 +1,6 @@
 \documentclass[10pt,twocolumn,letterpaper]{article}
 
-% CVPR / ICCV / WACV (CVF). "review" = anonymous + line numbers.
+% CVPR 2027 review submission. This CVF preset defaults to CVPR.
 % Use \usepackage{cvpr} for camera-ready, [pagenumbers] for an arXiv version.
 \usepackage[review]{cvpr}
 
@@ -13,9 +13,8 @@
 \definecolor{cvprblue}{rgb}{0.21,0.49,0.74}
 \usepackage[pagebackref,breaklinks,colorlinks,allcolors=cvprblue]{hyperref}
 
-\def\paperID{0000} % *** Enter the Paper ID here for the review version
 \def\confName{CVPR}
-\def\confYear{2026}
+\def\confYear{2027}
 
 \title{Paper Title}
 
@@ -41,7 +40,15 @@ Abstract text goes here.
 
 \section{Conclusion}
 
+% CVPR 2027 requires this disclosure before the references, outside the page limit.
+\section*{LLM Usage Statement}
+% Name the tools used, where and how they were used in this work, and how
+% their outputs were verified. Base the disclosure on actual use and checks.
+% Preserve anonymity and replace these instructions with the completed statement.
+
+{\small
 \bibliographystyle{ieeenat_fullname}
 \bibliography{references}
+}
 
 \end{document}

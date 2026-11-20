@@ -769,7 +769,8 @@ def ensure_disclosure_in_tex(tex_path: Path) -> bool:
     src = tex_path.read_text(errors="replace")
     if DISCLOSURE_MARKER in src:
         return False
-    ack_m = re.search(r"(\\section\*?\{Acknowledg[^}]*\}\s*\n)", src)
+    ack_m = re.search(r"(\\(?:sub)?section\*?\{(?:Acknowledg[^}]*|(?:AI|LLM) (?:Use|Usage) Statement)\}\s*\n)",
+                      src, re.I)
     if ack_m:
         insert_at = ack_m.end()
         src = src[:insert_at] + "\n" + ARK_ACK_TEXT + "\n" + src[insert_at:]

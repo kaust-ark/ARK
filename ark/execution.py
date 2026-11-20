@@ -1170,7 +1170,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
     )
 
     def _ensure_clearpage_before_bibliography(self):
-        return ExecutionMixin.prepare_endmatter(self.latex_dir, self.log)
+        return ExecutionMixin.prepare_endmatter(self.latex_dir, self.log, venue=getattr(self, "config", {}).get("venue_format"))
 
     @staticmethod
     def prepare_endmatter(latex_dir, log, *, venue=None):
@@ -1266,7 +1266,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             #   (c) no appendix          → body + bib, drop in marker
             if appendix_pos != -1 and appendix_pos < bib_match.start():
                 appendix_block = content[appendix_pos:bib_match.start()]
-                if after_bib:
+                if after_bib and venue != "usenix":
                     appendix_block = appendix_block.rstrip() + "\n\n" + after_bib
                 body_section = content[:appendix_pos]
                 reordered = True
@@ -1284,17 +1284,17 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             # Pattern: \section*{Acknowledgments} ... up to next
             # \section, \appendix, \bibliography, or \end{document}.
             ENDMATTER_TITLES = [
-                r'LLM Usage Statement',
-                r'LLM Use Statement',
-                r'AI Usage Statement',
+                r'(?:LLM|AI) (?:Usage|Use) Statement',
                 r'Acknowledg(?:e?ments|ements)?',
             ]
+            if venue == "icml":
+                ENDMATTER_TITLES.append(r'Impact Statement')
             endmatter_pattern = _re.compile(
-                r'\\section\*?\{\s*(?:' + '|'.join(ENDMATTER_TITLES) + r')\s*\}'
+                r'\\(?:sub)?section\*?\{\s*(?:' + '|'.join(ENDMATTER_TITLES) + r')\s*\}'
                 r'.*?'
-                r'(?=\\section\b|\\appendix\b|\\appendices\b'
+                r'(?=\\(?:sub)?section\*?\{|\\appendix\b|\\appendices\b'
                 r'|\\begin\{appendices\}|\\bibliography\b|\Z)',
-                _re.DOTALL,
+                _re.DOTALL | _re.IGNORECASE,
             )
             endmatter_blocks = []
             # Run pattern on body_section (and appendix_block when (a))
@@ -1322,7 +1322,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             from ark.template_preprocess import ARK_ACK_TEXT
             if not any("idea2paper.org" in b for b in endmatter_blocks):
                 ack_idx = next((i for i, b in enumerate(endmatter_blocks)
-                                if _re.search(r'Acknowledg', b)), None)
+                                if _re.match(r'\\(?:sub)?section\*?\{(?:AI |LLM |Acknowledg)', b, _re.I)), None)
                 if ack_idx is not None:
                     endmatter_blocks[ack_idx] = (
                         endmatter_blocks[ack_idx].rstrip() + "\n\n" + ARK_ACK_TEXT)
@@ -1384,13 +1384,19 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
             ]
             if endmatter_text:
                 parts.extend(["", endmatter_text, ""])
-            parts.append(bib_block)
-            if appendix_block:
-                parts.extend([
-                    "",
-                    r"\clearpage",
-                    appendix_block,
-                ])
+            if venue == "usenix" and reordered:
+                # Preserve a pre-reference Open Science appendix (Security track).
+                parts.extend([appendix_block, "", bib_block, after_bib])
+            else:
+                parts.append(bib_block)
+                if appendix_block:
+                    parts.extend(["", r"\clearpage", appendix_block])
+            if venue == "neurips" and appendix_pos != -1:
+                checklist = _re.compile(r"(?m)^[ \t]*(\\input\{checklist(?:\.tex)?\})[ \t]*$")
+                entries = list(checklist.finditer("\n".join(parts)))
+                if len(entries) == 1:
+                    parts = [checklist.sub("", part).rstrip() for part in parts]
+                    parts.extend(["", entries[0][1]])
             parts.extend(["", tail, ""])
             new_content = "\n".join(parts)
 
@@ -1417,7 +1423,7 @@ After changes, compile and verify. Ensure `\\clearpage` before `\\bibliography`.
 
             if new_content != content:
                 main_tex.write_text(new_content)
-                if reordered:
+                if reordered and venue != "usenix":
                     log(
                         "Reordered: body → bibliography → appendix "
                         "(matches acmart sample-sigplan convention)",

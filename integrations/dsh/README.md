@@ -85,6 +85,16 @@ git clone --single-branch --branch dsh-bundle-preview https://github.com/kaust-a
 python3 integrations/dsh/verify.py "dist/dsh/idea2paper-dsh-$version.tgz" --prepare dist/dsh/release --previous-index dist/dsh/channel/index.json
 ```
 
+The release check uses `pdflatex` and `bibtex`. With local model responses it drives the installed owner through run and resume, breaks a rendered citation and the page layout, and requires a new independent review of the repaired PDF. The test spends no model credits.
+
+To qualify a completed four-page ICML research project against the editorial benchmark, keep the authenticated Google Deep Research response outside the project and run the following from the checkout.
+
+```sh
+python scripts/eval_manuscript.py editorial PROJECT --google-response INTERACTION.json --output acceptance.json
+```
+
+The report verifies ten distinct source-backed publications in the body, the printed figures, references and appendix, final-column balance, a clean PDF rebuild and the review of that exact revision. The digits and Friedman benchmarks also replay their experimental measurements.
+
 The verifier installs the archive over loopback into a clean profile, reads a stopped project using the packaged companion, checks the Git target in the running DSH Web Discover service, and installs that exact commit through a local Git mirror. Its separate Git repository contains the exact unpacked npm contents, including the wheel, and an index pointing to that package commit. The legacy v0.1.0-alpha.1 package fixture is available as `verify_legacy.py`.
 
 Include the offline replay from alpha.3 and checksums for both downloads. The release tag exposes the Discover index as a raw HTTPS file.

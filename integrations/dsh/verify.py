@@ -7,10 +7,12 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
 import time
+import zipfile
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -96,6 +98,35 @@ class QuietHandler(SimpleHTTPRequestHandler):
         pass
 
 
+def verify_editorial(profile, dsh, scratch, *, python=None):
+    """Run the native editorial replay against this installed package and its bundled wheel."""
+    profile = Path(profile).resolve(strict=True)
+    package = profile / "node_modules/idea2paper-dsh"
+    companion = package / "companion"
+    wheel, = companion.glob("*.whl")
+    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    if json.loads((companion / "manifest.json").read_text()) != {"wheel": wheel.name, "sha256": digest}:
+        raise ValueError("Installed profile's editorial companion digest mismatch")
+    scratch = Path(scratch).resolve()
+    scratch.mkdir(parents=True, exist_ok=True)
+    runtime = scratch / "companion"
+    runtime.mkdir()
+    with zipfile.ZipFile(wheel) as archive:
+        archive.extractall(runtime)
+    scenario = Path(__file__).resolve().parents[2] / "tests/integration/test_dsh_editorial_loop.py"
+    # -I ignores inherited PYTHONPATH and the working directory. Only the test protocol lives
+    # in the checkout. The profile's verified wheel takes precedence over any installed ark.
+    launch = ("import runpy, sys; sys.path.insert(0, sys.argv[-1]); "
+              "sys.argv = sys.argv[1:]; runpy.run_path(sys.argv[0], run_name='__main__')")
+    env = {"PATH": os.environ["PATH"], "HOME": str(scratch), "LITELLM_LOCAL_MODEL_COST_MAP": "True"}
+    if "PKG_NATIVE_CACHE_PATH" in os.environ:
+        env["PKG_NATIVE_CACHE_PATH"] = os.environ["PKG_NATIVE_CACHE_PATH"]
+    subprocess.run([python or sys.executable, "-I", "-c", launch, str(scenario), str(profile),
+                    str(dsh), str(scratch), str(runtime)], cwd=scratch, env=env, check=True, timeout=360)
+    print(f"Verified editorial rejection, revision and independent acceptance with companion {digest[:12]}.",
+          flush=True)
+
+
 def verify(bundle, target, package, commit, scratch):
     dsh = shutil.which("dsh")
     if not dsh:
@@ -142,6 +173,15 @@ def verify(bundle, target, package, commit, scratch):
                 raise ValueError("The packaged companion could not read the stopped project")
 
             print("Verified the bundled Python companion outside the source checkout.", flush=True)
+            profile = Path(env["DSH_HOME"]) / "profiles/idea2paper"
+            installed = profile / "node_modules/idea2paper-dsh/companion/manifest.json"
+            expected = json.loads((target / "companion/manifest.json").read_text())
+            if json.loads(installed.read_text()) != expected:
+                raise ValueError("Installed profile's companion does not match the release tarball")
+            # status bootstrapped the full runtime dependencies in this clean HOME.
+            caches = (scratch / ".cache/idea2paper/companions").glob("*/.ready")
+            python, = (entry.parent / "bin/python" for entry in caches if entry.read_text() == expected["sha256"])
+            verify_editorial(profile, dsh, scratch / "editorial", python=python)
             # Read the index using the same market service as the Discover UI.
             entry_url = url + "/index.json"
             spec = "git+" + REPOSITORY + ".git#" + commit

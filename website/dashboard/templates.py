@@ -12,8 +12,9 @@ from pathlib import Path
 
 from ark.latex_geometry import BUNDLED_VENUE_ALIASES as _VENUE_FORMAT_ALIASES
 
-# venue_templates/ lives at the ARK repo root
-_TEMPLATES_ROOT = Path(__file__).parent.parent.parent / "venue_templates"
+from ark.latex.venues import venue_templates
+
+_TEMPLATES_ROOT = venue_templates()
 
 
 def _resolve_venue_format(venue_format: str) -> str:
@@ -132,7 +133,7 @@ def has_venue_template(venue_format: str) -> bool:
     return _resolved_template_dir(venue_format) is not None
 
 
-def copy_venue_template(venue_format: str, dest_paper_dir: Path) -> bool:
+def copy_venue_template(venue_format: str, dest_paper_dir: Path, *, preserve_existing=False) -> bool:
     """Copy venue LaTeX skeleton into dest_paper_dir.
 
     Returns True if a matching template was found and copied.
@@ -147,6 +148,8 @@ def copy_venue_template(venue_format: str, dest_paper_dir: Path) -> bool:
 
     for item in src.iterdir():
         dst = dest_paper_dir / item.name
+        if preserve_existing and dst.exists():
+            continue
         if item.is_dir():
             if dst.exists():
                 shutil.rmtree(dst)

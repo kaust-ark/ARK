@@ -202,6 +202,46 @@ def _unused_source_leads(raw_lines, normalized, entries, body_keys, checked, ori
     return sorted(leads, key=lambda item: ("bibliography_key" not in item, "official_title" not in item))[:8]
 
 
+def _body_record_ids(fields, source_url):
+    """Read identifiers of this record, excluding identifiers mentioned in its passage."""
+    dois, arxiv_ids = set(), set()
+    arxiv_id = r"([a-z.-]+/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?"
+    for value in (fields.get("doi"), fields.get("url"), fields.get("eprint"), source_url):
+        value = str(value or "").strip().lower()
+        doi = citation._doi_id(value)
+        if doi:
+            dois.add(doi)
+        if doi.startswith("10.48550/arxiv."):
+            match = re.fullmatch(arxiv_id, doi.removeprefix("10.48550/arxiv."))
+        elif value == str(fields.get("eprint", "")).strip().lower() and (
+            fields.get("archiveprefix", "arxiv").lower() == "arxiv"
+        ):
+            match = re.fullmatch(r"(?:arxiv:\s*)?" + arxiv_id, value)
+        else:
+            match = None
+        if not match:
+            match = re.fullmatch(r"(?:arxiv:\s*|(?:https?://)?(?:(?:www|export)\.)?arxiv\.org/(?:abs|pdf|html)/)" + arxiv_id
+                                 + r"(?:\.pdf)?/?(?:[?#][^\s]*)?", value)
+        if match:
+            arxiv_ids.add(match[1])
+    return dois, arxiv_ids
+
+
+def _work_authors(author_field):
+    """Preserve the full ordered byline while equating BibTeX's two name orders."""
+    names = []
+    for name in re.split(r"\s+and\s+", author_field.strip(), flags=re.I):
+        if "," in name:
+            family, given = name.split(",", 1)
+            name = f"{given} {family}"
+        # Preserve surname tokens with no ASCII transliteration even in a mixed-script name.
+        parts = tuple(citation._plain_name(word) or citation._normalize_title(word) for word in name.split())
+        if not parts or "".join(parts) in {"anonymous", "anon", "etal", "others"}:
+            return ()
+        names.append(parts)
+    return tuple(names)
+
+
 def body_source_trace(paper, report_path, checked, *, originals=None, reference_leads=()):
     """Trace rendered body links to report identities and verified source files, without judging entailment."""
     import fitz
@@ -237,6 +277,8 @@ def body_source_trace(paper, report_path, checked, *, originals=None, reference_
     raw_lines = report_path.read_text().splitlines()
     normalized = [" " + citation._normalize_title(line) + " " for line in raw_lines]
     records = {}
+    aliases_by_key = {}
+    bylines_by_initials = {}
     for key, body_pages in sorted(pages.items()):
         fields = entries[key]
         row = {"pages": sorted(body_pages), "title": fields.get("title", "")[:350], "record_kind": kinds[key]}
@@ -245,34 +287,36 @@ def body_source_trace(paper, report_path, checked, *, originals=None, reference_
         source = (evidence.get("source") or "") if verified else ""
         if not verified:
             row["identity_verified"] = False
-        ids = [fields.get("doi"), fields.get("url"), fields.get("eprint")]
+        source_url = ""
         if re.fullmatch(r"sources/[0-9a-f]{24}\.txt", source):
             path = paper.parent / source
             if path.resolve() == path and path.is_file():
                 content = path.read_bytes()
                 if hashlib.sha256(content).hexdigest() == evidence.get("source_sha256"):
-                    row["source"] = source
                     # An excerpt can mention other studies. Only the record's own URL identifies this work.
                     text = content.decode(errors="replace")
+                    passage = ""
                     if text.startswith("{"):
                         try:
                             parsed = json.loads(text)
                         except ValueError:
                             parsed = None
                         if isinstance(parsed, dict):
-                            ids.append(parsed.get("url"))
+                            source_url = parsed.get("url")
+                            passage = parsed.get("passage")
                     else:
-                        ids.extend(text.splitlines()[2:3])
+                        lines = text.splitlines()
+                        if len(lines) >= 4:
+                            source_url, passage = lines[2], "\n".join(lines[3:])
+                    if isinstance(passage, str) and passage.strip() and isinstance(source_url, str) and source_url.strip():
+                        row["source"] = source
+                    else:
+                        source_url = ""
         title = citation._normalize_title(fields.get("title", ""))
-        identities = [doi for value in ids if (doi := citation._doi_id(value))]
-        arxiv = re.search(r"(?:arxiv[:/]\s*|arxiv\.org/(?:abs|pdf)/)(\d{4}\.\d{4,5})(?!\d)",
-                          " ".join(str(value) for value in ids if value), re.I)
-        if arxiv:
-            identities.append(arxiv[1])
-        elif re.fullmatch(r"\d{4}\.\d{4,5}(?:v\d+)?", fields.get("eprint", "")):
-            identities.append(fields["eprint"].split("v")[0])
-        for identity in identities:
-            pattern = re.compile(r"(?<!\w)" + re.escape(identity) + r"(?![\w/-]|\.[\w/-])", re.I)
+        dois, arxiv_ids = _body_record_ids(fields, source_url)
+        for identity in sorted(dois | arxiv_ids):
+            suffix = r"(?:v\d+)?(?:\.pdf)?" if identity in arxiv_ids else ""
+            pattern = re.compile(r"(?<!\w)" + re.escape(identity) + suffix + r"(?![\w/-]|\.[\w/-])", re.I)
             if line := next((i for i, raw in enumerate(raw_lines, 1) if pattern.search(raw)), None):
                 row["report_line"] = line
                 break
@@ -280,20 +324,44 @@ def body_source_trace(paper, report_path, checked, *, originals=None, reference_
             if line := next((i for i, text in enumerate(normalized, 1) if f" {title} " in text), None):
                 row["report_line"] = line
         records[key] = row
+        if row.get("source") and kinds[key] not in {"software", "dataset"}:
+            # A journal entry may bridge a publisher DOI to an independently cited preprint.
+            # Only verified, body-linked records can create or connect groups.
+            aliases = {source, *dois, *arxiv_ids}
+            if source_url.startswith(("https://", "http://")):
+                aliases.add(source_url.strip())
+            authors = _work_authors(fields.get("author", ""))
+            if title and authors:
+                aliases.add((title, authors))
+                initials = tuple((*[part[:1] for part in name[:-1]], name[-1]) for name in authors)
+                bylines_by_initials.setdefault((title, initials), {})[key] = authors
+            aliases_by_key[key] = aliases
+    # An abbreviated byline is an alias only if the eligible records do not disagree
+    # on a spelled-out name. J. Lee must not bridge distinct works by Jane and John.
+    for signature, bylines in bylines_by_initials.items():
+        if len(set(bylines.values())) < 2:
+            continue
+        names = [tuple(part for name in authors for part in name[:-1]) for authors in bylines.values()]
+        if all(len({part for part in position if len(part) > 1}) <= 1 for position in zip(*names)):
+            for key in bylines:
+                aliases_by_key[key].add(("initials", signature))
+    work_groups = []
+    for key, aliases in aliases_by_key.items():
+        members = {key}
+        for i in range(len(work_groups) - 1, -1, -1):
+            known_aliases, keys = work_groups[i]
+            if not aliases.isdisjoint(known_aliases):
+                aliases.update(known_aliases)
+                members.update(keys)
+                work_groups.pop(i)
+        work_groups.append((aliases, members))
     ref_line = next((i for i, raw in enumerate(raw_lines, 1)
                      if re.fullmatch(r"(?:#+\s*|\*\*)(?:references|bibliography|sources|primary studies):?(?:\*\*)?\s*", raw, re.I)), None)
     matched = sum("report_line" in row for row in records.values())
-    verified_works = set()
-    verified_publications = set()
-    for key, row in records.items():
-        identity = citation._doi_id(entries[key].get("doi")) or citation._normalize_title(row["title"])
-        if identity and row.get("source") and kinds[key] not in {"software", "dataset"}:
-            if kinds[key] == "publication":
-                verified_publications.add(identity)
-            if row.get("report_line"):
-                verified_works.add(identity)
+    verified_works = sum(any("report_line" in records[k] for k in keys) for _, keys in work_groups)
+    verified_publications = sum(any(kinds[k] == "publication" for k in keys) for _, keys in work_groups)
     summary = f"{matched} of {len(records)} distinct body citations could be located by title or identifier in the verified Deep Research report."
-    summary += f" {len(verified_publications)} distinct publication records have verified source passages. " + ORIGIN_GUIDANCE
+    summary += f" {verified_publications} distinct publications have verified source passages. " + ORIGIN_GUIDANCE
     if any(kinds[key] in {"software", "dataset"} for key in records):
         summary += " " + RESOURCE_GUIDANCE
     if matched < len(records):
@@ -313,7 +381,7 @@ def body_source_trace(paper, report_path, checked, *, originals=None, reference_
         summary += (" Reference lists of surveyed papers identify additional candidate studies. Use lookup_papers "
                     "to inspect the relevant original and compare its conditions and findings to the present study.")
     return {"report": "auto_research/state/deep_research.md", "references_line": ref_line,
-            "matched": matched, "verified_works": len(verified_works), "verified_publications": len(verified_publications),
+            "matched": matched, "verified_works": verified_works, "verified_publications": verified_publications,
             "total": len(records), "summary": summary,
             "body_citations": {key: records[key] for key in sorted(samples)},
             "unused_leads": unused, "reference_leads": further}

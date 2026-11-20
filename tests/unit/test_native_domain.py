@@ -414,12 +414,12 @@ def test_icml_first_edit_and_review_require_the_loaded_venue(tmp_path, monkeypat
     main = project.latex_dir / "main.tex"
     stock = main.read_text()
     plain = r"\documentclass{article}\begin{document}Experiments.\end{document}"
-    proposed = project.check_manuscript_edit({"content": plain + "\n% icml2026.sty"})
-    assert not proposed["ok"] and "did not load icml2026.sty" in proposed["diagnostic"]
+    proposed = project.check_manuscript_edit({"content": plain + "\n% icml2027.sty"})
+    assert not proposed["ok"] and "did not load icml2027.sty" in proposed["diagnostic"]
     assert main.read_text() == stock
     # Preamble commands can legitimately live in an included file.
-    (project.latex_dir / "prelude.tex").write_text(r"\usepackage{icml2026}")
-    modular = stock.replace(r"\usepackage{icml2026}", r"\input{prelude}")
+    (project.latex_dir / "prelude.tex").write_text(r"\usepackage{icml2027}")
+    modular = stock.replace(r"\usepackage{icml2027}", r"\input{prelude}")
     assert project.check_manuscript_edit({"content": modular})["ok"]
     # A resumed project can already contain the plain article.
     main.write_text(plain)
@@ -427,13 +427,13 @@ def test_icml_first_edit_and_review_require_the_loaded_venue(tmp_path, monkeypat
     project.config["skip_deep_research"] = False
     monkeypatch.setattr(domain.deep_research, "research_report_status", lambda *_: "verified")
     issues = project.review_snapshot({"preflight": True})["blockers"]
-    assert any("recorder" in issue and "icml2026.sty" in issue for issue in issues)
+    assert any("recorder" in issue and "icml2027.sty" in issue for issue in issues)
     assert any("No body citation links" in issue for issue in issues)
     assert any("reproducibility appendix" in issue for issue in issues)
     main.write_text(modular.replace(r"\bibliography{references}", ""))
     monkeypatch.setattr(domain.deep_research, "research_report_status", lambda *_: "missing")
     compiled = project.compile_paper({})
-    assert compiled["ok"] and "icml2026.sty" in compiled["inputs"]
+    assert compiled["ok"] and "icml2027.sty" in compiled["inputs"]
     assert not any("recorder" in issue for issue in compiled["manuscript_issues"])
     assert "did not load" in project.check_manuscript_edit({"content": plain})["diagnostic"]
 
@@ -543,7 +543,7 @@ def test_icml_preview_and_compile_keep_appendix_link_with_the_body(tmp_path, mon
 Body conclusion.\nocite{*}
 \clearpage
 \section*{References}
-\bibliographystyle{icml2026}
+\bibliographystyle{icml2027}
 \bibliography{references}
 \clearpage
 \section*{Reproducibility Appendix}
@@ -680,7 +680,7 @@ def test_icml_balance_adopts_only_a_content_preserving_compilation(tmp_path, mon
     evidence = "Every observed case remains archived."
     conditional = r"\makeatletter\@ifpackageloaded{balance}{Abbreviated.}{" + evidence + r"}\makeatother"
     manuscript = (preamble + r"\section{Results} Reference to the experiment \citep{example}." + "\n" + rows
-                  + "\n" + r"\bibliographystyle{icml2026}\bibliography{references}"
+                  + "\n" + r"\bibliographystyle{icml2027}\bibliography{references}"
                   + "\n" + r"\appendix\section{Supplement}" + conditional + r"\end{document}")
     (project.latex_dir / "references.bib").write_text(
         "@book{example,author={An Author},title={A result},year={2001},publisher={Example press}}")
@@ -725,7 +725,7 @@ def test_last_column_balance_observation_excludes_endmatter_and_even_endings(tmp
             page.insert_text((55, 70), "References")
             page.insert_text((55, 100), "One short reference.")
             pdf.save(project.latex_dir / "main.pdf")
-        notes = project._rendered_layout({"inputs": ["icml2026.sty"]})
+        notes = project._rendered_layout({"inputs": ["icml2027.sty"]})
         assert ("column_balance" in notes) is expected
         if expected:
             assert "PDF p. 2" in notes["column_balance"]
@@ -742,7 +742,7 @@ def test_major_body_cut_cannot_silently_drop_rendered_appendix(tmp_path, monkeyp
     body = short + r"\clearpage\section{Methods}Paired estimates.\clearpage\section{Discussion}Sampling error."
     (project.latex_dir / "references.bib").write_text(
         "@book{record, author={A. Author}, title={Technical record}, year={2000}, publisher={Press}}\n")
-    refs = r"\nocite{*}\clearpage\section*{References}Source citation.\bibliographystyle{icml2026}\bibliography{references}"
+    refs = r"\nocite{*}\clearpage\section*{References}Source citation.\bibliographystyle{icml2027}\bibliography{references}"
     appendix = r"\clearpage\appendix\section{Reproducibility}Seeds, sample sizes and exact estimators."
     end = r"\end{document}"
     main.write_text(body + refs + appendix + end)
@@ -2169,3 +2169,33 @@ def test_condition_summary_matches_independent_view_without_whitelisting_numbers
     artifact.write_text("[]")
     with pytest.raises(ValueError, match="changed"):
         host.invoke("review_evidence", request)
+
+
+def test_four_page_owner_and_reviewer_share_the_editorial_requirements(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    project.config["skip_deep_research"] = False
+    required = project.invoke("project_status", {})["required"]
+    assert required["verified_body_publications"] == 10
+    assert required["final_body_column_gap_pt_max"] == 36
+    project.state["compile"] = {"ok": True, "inputs": [], "last_body_page": 4,
+                                "research_citations": {"matched": 3, "verified_works": 3, "verified_publications": 4},
+                                "rendered_layout": {"column_balance": "Columns differ by 260 pt."}}
+    blocked = project._strict_paper_issues()
+    assert any("cites 4 distinct publications" in issue for issue in blocked)
+    assert "Columns differ by 260 pt." in blocked
+    project.config["venue_pages"] = 2
+    assert "verified_body_publications" not in project.invoke("project_status", {})["required"]
+    assert not any("cites 4 distinct publications" in issue for issue in project._strict_paper_issues())
+
+
+def test_icml_edition_is_pinned_on_creation_and_resume(tmp_path, monkeypatch):
+    current = open_project(tmp_path / "current", monkeypatch)
+    assert current._icml_style() == "icml2027.sty"
+    main = current.latex_dir / "main.tex"
+    main.write_text(main.read_text().replace("icml2027", "icml2026"))
+    assert domain.NativeProject(current.root)._icml_style() == "icml2027.sty"
+    # Historical projects have no pin. Respect their recorded TeX inputs.
+    current.state.pop("icml_style")
+    current.state["compile"] = {"inputs": ["main.tex", "icml2026.sty"]}
+    current.save()
+    assert domain.NativeProject(current.root)._icml_style() == "icml2026.sty"
