@@ -13,7 +13,7 @@ from pathlib import Path
 from time import time_ns
 
 from ark.artifacts.base import hash_stream
-from ark.review import MAX_ARTIFACTS, MAX_BYTES
+from ark.review import DOMAINS, MAX_ARTIFACTS, MAX_BYTES
 from sqlmodel import select
 
 from .db import Artifact, PendingDecision, ProjectCommand, ProjectMessage
@@ -132,6 +132,8 @@ def journal(root, after=None, before=None):
         e = {k: _text(event.get(k), 640) for k in
              ("id", "ts", "phase", "action", "observation", "status", "revision")}
         e["offset"] = offset
+        if e["action"] == "review_repair_requested" and event.get("repair_topic") in (*DOMAINS, "findings"):
+            e["repair_topic"] = event["repair_topic"]
         if e["action"] == "inference_test_finished":
             # Both reviewer-defined labels can be 1,200 characters before the numeric outcomes.
             e["observation"] = _text(event.get("observation"), 3000)

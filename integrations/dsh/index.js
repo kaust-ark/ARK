@@ -8,7 +8,7 @@ import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Command } from 'commander'
 import { acquireLock, readJson, runLegacyWorkflow, writeJson } from './workflow.js'
-import { acknowledgeLocal, pendingCommands, queueCommand, reviewSubmission, reviewForAuthor, reproductionComparison, attachEvidence, evidenceTool, methodControlTool, inferenceTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
+import { acknowledgeLocal, pendingCommands, queueCommand, reviewRepairTopic, reviewSubmission, reviewForAuthor, reproductionComparison, attachEvidence, evidenceTool, methodControlTool, inferenceTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
 
 export const name = 'idea2paper'
 export const inject = ['cmdlineArgs', 'agentDefaultModel', 'agents', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'subagents', 'llm', 'attachments']
@@ -484,9 +484,11 @@ function nativeEvent(session, event, role) {
   const data = event.data || {}
   const base = { session_id: session.id, seq: event.seq, role, kind: event.type, time: event.time }
   switch (event.type) {
-    case 'user/message':
-      return role === 'reviewer' && data.source?.kind === 'idea2paper-review-repair'
-        ? { ...base, kind:'review_repair_requested' } : null
+    case 'user/message': {
+      if (role !== 'reviewer' || data.source?.kind !== 'idea2paper-review-repair') return null
+      const topic = reviewRepairTopic(data.content?.find(b => b.type === 'text')?.text)
+      return { ...base, kind:'review_repair_requested', ...(topic && { repair_topic:topic }) }
+    }
     case 'tool/call':
       return { ...base, title: role + ' called ' + data.name, detail: '', tool: data.name }
     case 'tool/result':

@@ -544,7 +544,17 @@ class NativeProject(CompilerMixin):
         if kind == "review_repair_requested" and args.get("role") == "reviewer":
             revision = self.state.get("review_attempts", {}).get(sid)
             if revision and type(seq) is int:
-                self.event("review", kind, "The reviewer received a request to correct the unsigned review.",
+                topic = args.get("repair_topic")
+                labels = {
+                    "manuscript": "Reviewer asked to clarify the evidence for a manuscript claim.",
+                    "citations": "Reviewer asked to check a passage in the original source.",
+                    "experiment": "Reviewer asked to check the experimental evidence.",
+                    "visual": "Reviewer asked to check the figures and their evidence.",
+                    "findings": "Reviewer asked to correct the list of findings.",
+                }
+                recognized = isinstance(topic, str) and topic in labels
+                self.event("review", kind, labels[topic] if recognized else "The reviewer received a request to correct the unsigned review.",
+                           **({"repair_topic": topic} if recognized else {}),
                            revision=revision, id=hashlib.sha256(f"{sid}/{seq}".encode()).hexdigest())
         elif kind in {"turn/end", "turn_end", "tool/call", "tool/result", "failure", "quota", "stopped"}:
             # Detailed tool output can contain manuscript text and user credentials.

@@ -382,6 +382,31 @@ export const operations = {
   write_project_file: ['Write a manuscript or script. To edit lines of paper/main.tex, read the numbered lines and send inclusive start_line/end_line with just the new text. The last numbered view supplies its revision; alternatively provide the exact current base_sha256. A TeX error introduced into a compiling draft rejects the edit. For a section edit use replace, insert_before or insert_after with an exact unique passage or heading. Use expected_matches only to correct a known count of identical passages. Any edit that cuts over one fifth of a manuscript longer than 3500 characters needs its current base_sha256 and allow_shrink:true. Each changed manuscript saves previous_sha256. To restore it, supply only path, current base_sha256 and restore_sha256.', { path: str, content: str, start_line: num, end_line: num, replace: str, expected_matches: num, insert_before: str, insert_after: str, base_sha256: str, allow_shrink: bool, restore_sha256: str }, ['path']],
 }
 // The reviewer may revise its own draft during this activation.
+// The original DSH repair message is durable. Map its generated opening instruction to a public topic.
+const repairInstructions = {
+  citations: ["Quote the authors' scientific statement from sources/", 'Unobserved or unlocatable quote in sources/',
+    'Cite an observed primary source'],
+  findings: ['Finding IDs', 'Expected a review finding', 'Recheck every open finding',
+    'Invalid status, severity or domain', 'The proposed verdict disagrees with the open findings'],
+  experiment: ['Trace the measured quantity', 'Use reproduce_measurement',
+    'The verdict must retain all executed numerical controls', 'The reproduced row differs'],
+  visual: ['Trace the plotted values', 'Rendered layout was not observed', 'For each figure in figure_methods'],
+  manuscript: ['Separate the result from its explanation', 'Expected a nonempty bridge from the derivation',
+    'Choose a separate observed PDF reasoning block', 'Use artifact, page and the printed one-based PDF text block',
+    "Check the submission's derivation", 'Unobserved or unlocatable quote in paper/main.pdf'],
+}
+
+export function reviewRepairTopic(message) {
+  if (typeof message !== 'string') return
+  const instruction = message.match(/^Review evidence check: ([^\n:]+)/)?.[1]
+  if (!instruction) return
+  const domain = instruction.match(/\bchecks\.(manuscript|experiment|citations|visual)\b/)?.[1]
+  if (domain) return domain
+  for (const [topic, openings] of Object.entries(repairInstructions)) {
+    if (openings.some(opening => instruction.startsWith(opening))) return topic
+  }
+}
+
 export function reviewSubmission(message, previous, revision) {
   if (!message || !Object.hasOwn(message, 'amend')) return message
   const patch = message.amend

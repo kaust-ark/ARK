@@ -105,6 +105,12 @@ const researchLabels = {
   review_quota: ['Review paused before a verdict','评审因配额暂停，尚未签字','توقفت المراجعة بسبب الحصة قبل إصدار الحكم'],
   review_repair: ['Awaiting a corrected review','评审意见待修正，尚未签字','بانتظار تصحيح المراجعة قبل التوقيع'],
   event_review_repair_requested: ['Reviewer received a request to correct the draft','评审已收到草稿修正请求','تلقّى المراجع طلبًا لتصحيح المسودة'],
+  repair_manuscript: ['Reviewer asked to clarify the evidence for a manuscript claim','评审需说明论文论断的依据','طُلب من المراجع توضيح الدليل على أحد ادعاءات البحث'],
+  repair_citations: ['Reviewer asked to check a passage in the original source','评审需核对引用的原文段落','طُلب من المراجع التحقق من مقطع في المصدر الأصلي'],
+  repair_experiment: ['Reviewer asked to check the experimental evidence','评审需核对实验依据','طُلب من المراجع التحقق من الأدلة التجريبية'],
+  repair_visual: ['Reviewer asked to check the figures and their evidence','评审需核对图表及其依据','طُلب من المراجع التحقق من الأشكال والأدلة التي تستند إليها'],
+  repair_findings: ['Reviewer asked to correct the list of findings','评审需修正问题记录','طُلب من المراجع تصحيح سجل الملاحظات'],
+  repair_requests: ['%s requests','修正请求 %s 次','عدد الطلبات %s'],
   event_review_started: ['Independent review opened','独立评审已开始','بدأت المراجعة المستقلة'],
   event_evidence_scope_committed: ['Reviewer recorded the pre-reading judgment','评审已记录读稿前的判断','سجّل المراجع تقديره قبل قراءة الورقة'],
   event_inference_test_started: ['Testing the claim in two hypothetical cases','正在用两种假想情形检验主张','يجري اختبار الادعاء في حالتين افتراضيتين'],
@@ -212,6 +218,26 @@ function reviewEventLabel(event) {
   return researchLabels[label] ? rt(label) : '';
 }
 
+// Keep one observation for consecutive requests on the same topic and revision.
+function groupReviewRepairs(events) {
+  const grouped = [];
+  let repair;
+  for (const event of events) {
+    if (event.action === 'review_repair_requested') {
+      if (event.revision && repair?.revision === event.revision && repair.repair_topic === event.repair_topic) {
+        repair.requests++;
+        continue;
+      }
+      repair = {...event, requests:1};
+      grouped.push(repair);
+    } else {
+      if (!['tool/call','tool/result'].includes(event.action)) repair = null;
+      grouped.push(event);
+    }
+  }
+  return grouped;
+}
+
 function reviewHandoff(recent) {
   const review = researchData.working_review || researchData.review;
   if (!review || !['accept','revise','unassessed'].includes(review.verdict) || !/^[a-f0-9]{64}$/.test(review.revision)) return '';
@@ -239,6 +265,8 @@ function observationText(event, withValues=true) {
     const n = new Intl.NumberFormat(currentLang, {maximumFractionDigits:2});
     return rt('body_coverage',n.format(event.layout.body),n.format(event.layout.target),n.format(event.layout.pages));
   }
+  if (event?.action === 'review_repair_requested' && event.repair_topic && researchLabels['repair_' + event.repair_topic])
+    return rt('repair_' + event.repair_topic);
   const coverage = mechanismCoverage(event);
   if (coverage) return coverage;
   if (['review_started','evidence_scope_committed','review_repair_requested','inference_test_started','inference_test_failed'].includes(event?.action)) return reviewEventLabel(event);
@@ -378,7 +406,7 @@ function renderHistory() {
   const all = re('history-all');
   all.hidden = !historyPhase;
   history.querySelector('summary').textContent = historyPhase ? rt('history') + ' · ' + rt(historyPhase) : rt('history');
-  const visible = [...researchEvents.values()].reverse().filter(e => !historyPhase || researchPhase(e.phase) === historyPhase);
+  const visible = groupReviewRepairs(researchEvents.values()).reverse().filter(e => !historyPhase || researchPhase(e.phase) === historyPhase);
   const list = history.querySelector('ol');
   list.classList.toggle('history-filtered', !!historyPhase);
   const existing = new Map([...list.children].map(row => [row.dataset.event, row]));
@@ -436,6 +464,11 @@ function renderHistory() {
       }
       existing.get(e.id)?.replaceWith(row);
     }
+    if (e.requests && row.dataset.requests !== String(e.requests)) {
+      row.dataset.requests = String(e.requests);
+      const count = e.requests > 1 ? ' · ' + rt('repair_requests',new Intl.NumberFormat(currentLang).format(e.requests)) : '';
+      row.querySelector('p').textContent = observationText(e) + count;
+    }
     // Keeping existing rows attached preserves keyboard focus and the preview's
     // return target when a live event arrives above the reader's position.
     if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null);
@@ -476,7 +509,7 @@ re('history-earlier').onclick = async function () {
 function renderResearch(animate=false) {
   const p = researchProject, events = [...researchEvents.values()], last = events.at(-1);
   const recent = events.slice().reverse();
-  const observations = recent.filter(e => e.observation && !['tool/call','tool/result','turn/end','turn_end'].includes(e.action));
+  const observations = groupReviewRepairs(events).reverse().filter(e => e.observation && !['tool/call','tool/result','turn/end','turn_end'].includes(e.action));
   const unfinished = researchData.unfinished_review;
   const desk = re('research-desk');
   desk.classList.toggle('live-review-change', animate && !disconnected);

@@ -8,9 +8,26 @@ import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { projectFile, projectEditor, readProjectFile, reproductionComparison, reviewForAuthor, reviewSubmission } from './project.js'
+import { projectFile, projectEditor, readProjectFile, reproductionComparison, reviewForAuthor, reviewRepairTopic, reviewSubmission } from './project.js'
 
 const bundle = dirname(fileURLToPath(import.meta.url))
+
+test('unsigned repair topics use the validator instruction and never quote its evidence', () => {
+  const cases = [
+    ['Supply checks.manuscript.claims with the measured result', 'manuscript'],
+    ["Check the submission's derivation at this exact passage", 'manuscript'],
+    ["Quote the authors' scientific statement from sources/abc.txt.", 'citations'],
+    ['Trace the measured quantity to its requested definition', 'experiment'],
+    ['Trace the plotted values in checks.visual.evidence', 'visual'],
+    ['Finding IDs must be unique and use R1, R2, ...', 'findings'],
+    ['Unknown response: checks.experiment.evidence', undefined],
+  ]
+  for (const [diagnostic, expected] of cases) {
+    assert.equal(reviewRepairTopic('Review evidence check: ' + diagnostic + '\nPrivate manuscript detail'), expected)
+  }
+  assert.equal(reviewRepairTopic('A private user message about checks.manuscript'), undefined)
+})
+
 
 test('worker and reviewer values retain their source and the host tolerance decision', () => {
   const row = {control:2, artifact:'results/values.json', rows_pointer:'/rows', identifiers:{seed:2},

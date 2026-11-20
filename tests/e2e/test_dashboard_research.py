@@ -722,8 +722,28 @@ def test_live_research_desk(tmp_path, monkeypatch):
             action.get_by_text("Awaiting a corrected review", exact=True).wait_for()
             assert "quota" not in owner_page.locator("#research-state").inner_text().lower()
             assert owner_page.locator("#research-observation").inner_text() == "Reviewer received a request to correct the draft"
+            # A second real request updates the history count without creating a new trail item.
+            native.project_event({**repair, "seq": 15, "repair_topic": "citations"})
+            original_quote = "Reviewer asked to check a passage in the original source"
+            owner_page.locator("#research-observation").get_by_text(original_quote, exact=True).wait_for()
+            trail = owner_page.locator("#research-trail")
+            original_trail = trail.get_attribute("data-events")
+            assert original_trail
+            native.project_event({**repair, "seq": 16, "repair_topic": "citations"})
+            owner_page.wait_for_function("text => [...document.querySelectorAll('#research-history li p')].some(p => p.textContent === text)",
+                                         arg=original_quote + " · 2 requests")
+            assert trail.get_attribute("data-events") == original_trail
+            native.project_event({**repair, "seq": 17, "repair_topic": "experiment"})
+            owner_page.locator("#research-observation").get_by_text("Reviewer asked to check the experimental evidence", exact=True).wait_for()
+            assert trail.get_attribute("data-events") != original_trail
+            for lang, label in [("zh", "评审需核对实验依据"), ("ar", "طُلب من المراجع التحقق من الأدلة التجريبية")]:
+                owner_page.evaluate("lang => setLang(lang)", lang)
+                owner_page.locator("#research-observation").get_by_text(label, exact=True).wait_for()
+                if lang == "zh" and output:
+                    owner_page.locator("#research-desk").screenshot(path=str(Path(output) / "review-repair-zh.png"))
+            owner_page.evaluate("setLang('en')")
             event("new-scope","review","Compared the intended conditions.",action="evidence_scope_committed",revision=current)
-            native.project_event({"role":"reviewer","session_id":"reader","seq":15,"kind":"quota"})
+            native.project_event({"role":"reviewer","session_id":"reader","seq":18,"kind":"quota"})
             for i in range(40):
                 event(f"transport-{i}","work","owner tool returned",action="tool/result")
             owner_page.reload(wait_until="domcontentloaded")
