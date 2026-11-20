@@ -496,6 +496,45 @@ def test_superiority_claim_binds_both_observed_arms(tmp_path):
         assess(comparison=[wide[0], {**wide[1], "column":"a_ms"}], measured_columns=["a_ms"])
 
 
+def test_threshold_and_trend_claims_are_checked_against_every_named_condition(tmp_path):
+    from ark import review
+    pdf, data = "paper/main.pdf", "results/latency.json"
+    pair = {"domain":"experiment", "clean":"The trial measured elapsed time.", "table":"arm,latency\nA,3\nB,1",
+            "question":"How does a scheduling gap vary with load?", "defect":"A condition was skipped."}
+    project(tmp_path, pair, "clean")
+    path = tmp_path / data
+    levels = [{"load":1,"old":8,"new":3}, {"load":2,"old":10,"new":6}, {"load":3,"old":12,"new":9}]
+    path.write_text(json.dumps(levels))
+    def manuscript(relation="more than half", trend="decreases"):
+        with fitz.open() as doc:
+            for label, line in (("Results", f"At load = 1 and load = 2, caching removes {relation} of baseline latency."),
+                                ("Discussion", f"The observed difference {trend} with load.")):
+                page=doc.new_page();page.insert_text((45,45), label);page.insert_text((45,90), line)
+            doc.save(tmp_path / pdf)
+        return build_snapshot(tmp_path, expected_measurement=data, measurement_run={
+            "status":"completed","artifact":data,"sha256":hashlib.sha256(path.read_bytes()).hexdigest()})
+    def decide(snap, key, quantity, include_measurement=True):
+        locator=snap["evidence_scope"][key]
+        page=read_evidence(snap, pdf, page=locator["page"])
+        calc=read_evidence(snap, data, statistic="paired", column="new", reference="old", condition_columns=["load"])
+        evidence=[{"artifact":data,"quote":calc["text"].splitlines()[0]}] if include_measurement else [{"artifact":data,"row":1}]
+        obs=[page["receipt"],calc["receipt"],read_evidence(snap,data)["receipt"]]
+        claim={"kind":"result","basis":"measurement","passage":{"selector":key},
+               "evidence":evidence,"reason":"The paired worker records both timings for each load.","quantity":quantity}
+        return review._manuscript_claims(snap,[claim],obs,"",require_coverage=False)[0]
+    bad=manuscript()
+    with pytest.raises(ValueError,match="load=2.*0.4"):
+        decide(bad,"fractional_change","fraction_reduction_in_magnitude")
+    with pytest.raises(ValueError,match="never moves"):
+        decide(bad,"ordered_change","signed_difference")
+    good=manuscript("more than 25%", "increases")
+    fractions=decide(good,"fractional_change","fraction_reduction_in_magnitude")["condition_check"]
+    assert fractions["levels"] == [1,2] and fractions["values"] == [.625,.4]
+    assert decide(good,"ordered_change","signed_difference")["condition_check"]["values"] == [-5,-4,-3]
+    with pytest.raises(ValueError,match="cite a calculated paired row"):
+        decide(good,"ordered_change","signed_difference",False)
+
+
 def test_result_and_explanation_require_separate_observed_support(tmp_path):
     from ark.review import _manuscript_claims
 

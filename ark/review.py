@@ -254,7 +254,10 @@ def build_snapshot(project, *, paper_dir="paper", target_track="", required=("ma
                     scope = {"version": 4, "tables": tables[:8], "recheck_paragraphs":recheck}
                     if conclusion and (clauses := _conclusion_clauses(conclusion)):
                         scope["conclusion_clauses"] = clauses
-                    scope.update(_explanatory_passages({**manifest, "project": str(root)}, pdf))
+                    passages = _explanatory_passages({**manifest, "project": str(root)}, pdf)
+                    columns = {col.casefold() for table in tables[:8] for col in table["columns"]}
+                    scope.update({k: v for k, v in passages.items() if k not in NUMERIC_SELECTORS
+                                  or v["assertion"]["axis"].casefold() in columns})
                     manifest["evidence_scope"] = scope
     return {**manifest, "project": str(root), "revision": _digest(_canonical(manifest))}
 
@@ -331,7 +334,34 @@ def _conclusion_clauses(conclusion):
 
 # Keep bounded locators for separate comparative claims across the rendered body.
 SUPERIORITY_SELECTORS = ("superiority", "superiority_2", "superiority_3")
-COMPARISON_SELECTORS = ("contribution", "direction", *SUPERIORITY_SELECTORS)
+NUMERIC_SELECTORS = ("fractional_change", "ordered_change")
+COMPARISON_SELECTORS = ("contribution", "direction", *SUPERIORITY_SELECTORS, *NUMERIC_SELECTORS)
+_FRACTIONAL_ASSERTION = re.compile(
+    r"\b(?:remov(?:e[sd]?|ing)|reduc(?:e[sd]?|ing)|eliminat(?:e[sd]?|ing)|cuts?)\s+"
+    r"(?:[^.;!?]{1,50}?\bby\s+)?(?P<relation>more than|less than|at least|at most|over|under)\s+"
+    r"(?P<amount>(?:one[- ]|a )?half|(?:\d+(?:\.\d+)?)\s*%)", re.I)
+_ORDERED_ASSERTION = re.compile(
+    r"\b(?P<subject>correction(?: term)?|difference|gap|gain|contrast|advantage|effect(?: size)?)\s+"
+    r"(?P<direction>increases?|decreases?|rises?|falls?|grows?|shrinks?)\s+with\s+(?P<axis>[A-Za-z]\w*)\b", re.I)
+
+
+def _assertion_text(quote):
+    # A typeset line can split a word in the middle of the comparator.
+    return _normalized_quote(re.sub(r"(?<=[A-Za-z])-\s*\n(?=[a-z])", "", quote))
+
+
+def _condition_assertions(quote):
+    text = _assertion_text(quote)
+    if match := _FRACTIONAL_ASSERTION.search(text):
+        conditions = re.findall(r"(?<!\w)([A-Za-z]\w*)\s*=\s*([-+]?\d+(?:\.\d+)?)", text)
+        if conditions and len({key for key, val in conditions}) == 1:
+            amount = match["amount"].strip()
+            yield "fractional_change", {"axis":conditions[0][0], "levels":[float(v) for _, v in conditions],
+                "relation":match["relation"].lower(), "threshold":float(amount[:-1])/100 if amount.endswith("%") else .5}
+    if match := _ORDERED_ASSERTION.search(text):
+        yield "ordered_change", {"axis":match["axis"], "subject":match["subject"].lower().split()[0], "increasing":match["direction"].lower().startswith(
+            ("increase","rise","grow"))}
+
 _SUPERIORITY_PATTERNS = (
     r"\b(?:more|less)\s+(?:\w+[ -]){0,2}(?:robust|accurate|efficient|effective|reliable|stable|precise|sensitive|biased|variable|consistent)\s+(?:\w+\s+){0,3}than\b",
     r"\b(?:lower|higher|smaller|greater)\s+(?:(?-i:[A-Z]{2,8})|error|accuracy|variance|latency|cost|loss)\s+than\b",
@@ -381,6 +411,9 @@ def _explanatory_passages(snapshot, pdf):
                     if offset < 0:
                         continue
                     words = _normalized_quote(sentence)
+                    for selector, assertion in _condition_assertions(sentence):
+                        best.setdefault(selector, (0, {"artifact":pdf, "page":page + 1, "start":offset + 1,
+                                                       "quote":sentence,"assertion":assertion}))
                     for rank, pattern in enumerate(_SUPERIORITY_PATTERNS):
                         if re.search(pattern, words, re.I):
                             # Prefer explicit empirical assertions when several passages make the same comparison.
@@ -696,7 +729,7 @@ def claim_instructions(snapshot):
         requests.extend(({"kind":"result","passage":passage}, {"kind":"explanation","passage":passage}))
     for selector in ("attribution", *COMPARISON_SELECTORS):
         if scope.get(selector):
-            requests.append({"kind":"result" if selector in SUPERIORITY_SELECTORS else "explanation","passage":{"selector":selector}})
+            requests.append({"kind":"result" if selector in (*SUPERIORITY_SELECTORS, *NUMERIC_SELECTORS) else "explanation","passage":{"selector":selector}})
     parts = [
         "Return checks.manuscript with status, reason and claims. For each claim supply kind, passage, basis, "
         "evidence and reason. Give the result its own assessment using an observed worker row. "
@@ -745,6 +778,16 @@ def claim_instructions(snapshot):
                      "A direct descriptive comparison may use kind=result and basis=measurement with measured_columns. "
                      "An analytic implication may use derivation; a stated hypothesis may use qualified. "
                      "If only an aggregate outcome or a proxy is available, identify the untested step.")
+    if any(scope.get(key) for key in NUMERIC_SELECTORS):
+        parts.append('For a fractional_change or ordered_change result, open read_evidence with statistic="paired", '
+                     'choosing the reference and comparison in the paper and the named condition in condition_columns. '
+                     'Cite a complete calculated row, as printed. Give quantity="fraction_reduction_in_magnitude" '
+                     'for a fractional reduction or quantity="signed_difference" for the trend of a correction or gap. '
+                     'If the worker reports the exact change in one numeric field, cite that row, give recorded_column and '
+                     'unit (fraction, percent or value) plus rows_pointer for a nested table. Explain the column mapping. '
+                     'Check the entire stated scope. A counterexample '
+                     'requires an unsupported finding unless the paper explicitly qualifies the claim. For the theoretical '
+                     'rather than measured meaning, cite a separate derivation and its assumptions.')
     if any(scope.get(selector) for selector in SUPERIORITY_SELECTORS):
         parts.append('For a superiority claim, identify precisely what the paper compares. For measurement or '
                      'control include comparison=[{"subject":"words from the passage","column":"actual field"},'
@@ -1398,7 +1441,7 @@ def _comparison_matches(passage, target, selector):
     if not target or not _quotes_conclusion([passage], target):
         return False
     # A conclusion can contain several comparisons. Each pair binds to its own sentence.
-    return selector not in SUPERIORITY_SELECTORS or _normalized_quote(passage["quote"]) == _normalized_quote(target["quote"])
+    return selector not in (*SUPERIORITY_SELECTORS, *NUMERIC_SELECTORS) or _normalized_quote(passage["quote"]) == _normalized_quote(target["quote"])
 
 
 def _comparison_bindings(snapshot, value, passage, evidence, columns):
@@ -1514,6 +1557,73 @@ def _comparison_bindings(snapshot, value, passage, evidence, columns):
     return {"comparison":verified}
 
 
+def _check_condition_assertion(snapshot, selector, assertion, claim, evidence):
+    """Recompute the stated numerical relation from the same sealed table as the cited comparison."""
+    from ark.measurement_table import summarize
+    expected = "signed_difference" if selector == "ordered_change" else "fraction_reduction_in_magnitude"
+    recipes = {(r["artifact"],r.get("rows_pointer",""),r["column"],r["reference"],tuple(r["condition_columns"]))
+               for r in evidence if r.get("statistic") == "paired"}
+    recorded = claim.get("recorded_column")
+    pointer = claim.get("rows_pointer", "")
+    if recorded and not recipes:
+        from ark.measurement_table import project_rows, _value
+        sources = [r for r in evidence if snapshot["artifacts"][r["artifact"]]["kind"] == "measurement"]
+        measured = {r["artifact"] for r in sources}
+        unit = claim.get("unit")
+        axis = assertion["axis"]
+        if (len(measured) != 1 or not isinstance(recorded,str) or not isinstance(pointer,str)
+                or recorded == axis or recorded not in _cited_measurement_columns(snapshot, sources)
+                or (unit not in ("fraction", "percent") if selector == "fractional_change" else unit != "value")):
+            raise ValueError("Cite the actual recorded change column and give its unit (fraction, percent, or value).")
+        artifact, = measured
+        data, _ = _artifact(snapshot, artifact)
+        rows = project_rows(json.loads(data)).get(pointer, [])
+        by_level = {}
+        for row in rows:
+            key, value = _value(row,axis), _value(row,recorded)
+            if (type(key) not in (int,float) or type(value) not in (int,float)
+                    or not math.isfinite(key) or not math.isfinite(value) or key in by_level):
+                raise ValueError("The recorded changes require one finite value per numeric condition.")
+            by_level[key] = value / 100 if unit == "percent" else value
+        detail = {"column":recorded, "unit":unit}
+    else:
+        if claim.get("quantity") != expected or len(recipes) != 1:
+            raise ValueError(f"Choose the paper's two outcome fields and cite a calculated paired row with quantity={expected}. "
+                             "If the worker directly recorded this change, cite its numeric field as recorded_column and unit. "
+                             "For an unsupported claim cite the available evidence and open a finding.")
+        artifact, pointer, column, reference, keys = recipes.pop()
+        if len(keys) != 1 or keys[0].casefold() != assertion["axis"].casefold():
+            raise ValueError("Choose the condition column named by the claim. For an unresolved mapping, report the gap.")
+        axis = keys[0]
+        data, _ = _artifact(snapshot, artifact)
+        rows = summarize(json.loads(data), pointer, column, reference, list(keys))["per_condition"]
+        by_level = {r["condition"][axis]:r[expected] for r in rows}
+        detail = {"column":column,"reference":reference}
+    if selector == "fractional_change":
+        levels = assertion["levels"]
+        bound, rel = assertion["threshold"], assertion["relation"]
+        for level in levels:
+            value = by_level.get(level)
+            if value is None:
+                raise ValueError(f"The fractional reduction has no defined value at {axis}={level:g}.")
+            supported = {"more than":value > bound, "over":value > bound, "less than":value < bound,
+                         "under":value < bound, "at least":value >= bound, "at most":value <= bound}
+            if not supported[rel]:
+                raise ValueError(f"At {axis}={level:g} the observed {expected} is {value:.10g}, contradicting "
+                                 f"{rel} {bound:g}. Verify the fields or record an unsupported finding.")
+    else:
+        if len(by_level) < 2 or any(type(k) not in (int,float) for k in by_level):
+            raise ValueError("A numerical trend requires at least two ordered conditions.")
+        levels = sorted(by_level)
+        values = [by_level[k] for k in levels]
+        changes = [b-a for a,b in zip(values, values[1:])]
+        if (max(changes) <= 0 if assertion["increasing"] else min(changes) >= 0):
+            raise ValueError(f"The observed {expected} runs from {values[0]:.10g} to {values[-1]:.10g} and never "
+                             "moves in the stated direction. Verify the fields or record an unsupported finding.")
+    return {"quantity":expected, "artifact":artifact, "rows_pointer":pointer, **detail,
+            "condition":axis, "levels":levels, "values":[by_level[k] for k in levels]}
+
+
 def _manuscript_claims(snapshot, values, observed, blind, *, require_coverage=True):
     if not isinstance(values, list) or not 1 <= len(values) <= 12:
         raise ValueError("Supply checks.manuscript.claims with the measured result and any separate explanation.")
@@ -1543,7 +1653,7 @@ def _manuscript_claims(snapshot, values, observed, blind, *, require_coverage=Tr
             raise ValueError("For a control cite the measured comparison and the observed method that distinguishes the mechanism.")
         if basis in ("control", "measurement") and any(
                 _comparison_matches(passage, snapshot["evidence_scope"].get(key), key)
-                for key in COMPARISON_SELECTORS):
+                for key in ("contribution","direction",*SUPERIORITY_SELECTORS)):
             columns = value.get("measured_columns")
             available = _cited_measurement_columns(snapshot, evidence)
             if (not isinstance(columns, list) or not 1 <= len(columns) <= 16
@@ -1554,6 +1664,14 @@ def _manuscript_claims(snapshot, values, observed, blind, *, require_coverage=Tr
             claim["measured_columns"] = list(dict.fromkeys(columns))
             if any(_comparison_matches(passage, snapshot["evidence_scope"].get(key), key) for key in SUPERIORITY_SELECTORS):
                 claim.update(_comparison_bindings(snapshot, value, passage, evidence, columns))
+        checks_observed_values = basis in ("measurement", "control") or (basis == "derivation" and re.search(
+            r"\b(?:as shown in the results|we (?:measured|observed)|the measured|our findings)\b",
+            _assertion_text(passage["quote"]), re.I))
+        if checks_observed_values:
+            for key in NUMERIC_SELECTORS:
+                target = snapshot["evidence_scope"].get(key)
+                if _comparison_matches(passage, target, key):
+                    claim["condition_check"] = _check_condition_assertion(snapshot, key, target["assertion"], value, evidence)
         inference_tests = [r for r in observed if r.get("control") == 3
                            and r.get("revision") == snapshot["revision"] and r.get("passage") == passage]
         if basis == "derivation":
@@ -2290,10 +2408,12 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
         return digest == inputs_digest
 
     original_scope = snapshot.get("evidence_scope", {})
-    if any(key in original_scope for key in SUPERIORITY_SELECTORS):
+    for added_selectors in (NUMERIC_SELECTORS, SUPERIORITY_SELECTORS):
+        if not any(key in original_scope for key in added_selectors):
+            continue
         # Existing signatures describe the policy used when the review was signed.
         prior = {k: v for k, v in snapshot.items() if k not in ("project", "revision")}
-        prior["evidence_scope"] = {k: v for k, v in original_scope.items() if k not in SUPERIORITY_SELECTORS}
+        prior["evidence_scope"] = {k: v for k, v in original_scope.items() if k not in added_selectors}
         if delivered_record_matches({**prior, "revision":_digest(_canonical(prior))}, record, revision):
             return True
     if "recheck_paragraphs" in original_scope:

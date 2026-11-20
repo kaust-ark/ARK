@@ -508,6 +508,7 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
   if (!Number.isSafeInteger(milliseconds) || milliseconds <= 0) throw new Error('Invalid owner time limit')
   const deadline = AbortSignal.any([signal, AbortSignal.timeout(milliseconds)])
   let handle
+  let committedDelivery = false
   let writeEvents = Promise.resolve()
   let projectionFailure
   const seen = new Map()
@@ -557,7 +558,9 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
             const result = await review(ctx, agent, domain, AbortSignal.any([deadline, exec.signal]), args.draft === true)
             return reviewForAuthor(result)
           }
-          return domain.call(name, args)
+          const result = await domain.call(name, args)
+          if (name === 'deliver' && result?.delivered === true) committedDelivery = true
+          return result
         }, roleTimeout)
       }
       scope.on('agent/pre-step', (event, next) => {
@@ -663,6 +666,14 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
         break
       }
       if (latest.state === 'paused') throw new Error('Researcher paused (' + latest.pause_reason + '). Continue to retry the saved project.')
+      // The verified delivery precedes the provider's final prose turn. A quota
+      // response after that commit must not turn the completed worker into a failure.
+      if (reason?.kind === 'error' && committedDelivery && latest.delivered && !latest.commands?.length &&
+          !agent.inbox.nextTurn.length && !agent.inbox.nextStep.length && !(await pendingCommands(directory)).length) {
+        display('delivered', 'Verified manuscript and independent review saved.')
+        break
+      }
+      committedDelivery = false
       if (reason?.kind !== 'completed') throw new Error('Owner turn ' + (reason?.kind ?? 'missing') + ': ' + (reason?.error?.message || reason?.error?.code || 'no completion'))
       await routeCommands(latest)
       if (agent.inbox.nextTurn.length || agent.inbox.nextStep.length || agent.status !== 'idle') continue

@@ -439,6 +439,10 @@ for (const scenario of ['program', 'unavailable', 'flattened-503', 'quota', 'no-
           }
           phase = 'done'
           response = {name:'deliver',args:{}}
+        } else if (scenario === 'unavailable' && delivered) {
+          res.writeHead(402, {'Content-Type':'application/json'})
+          res.end(JSON.stringify({error:{code:'insufficient_balance',message:'Quota after delivery'}}))
+          return
         } else response = 'The project delivered.'
       }
       res.writeHead(200, {'Content-Type':'text/event-stream'})
