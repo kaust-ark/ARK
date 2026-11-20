@@ -425,7 +425,7 @@ async function review(ctx, owner, domain, signal, draft = false) {
     }
     signal.throwIfAborted()
     if (stalledCheck && !checkedVerdict) return await domain.call('unfinished_review', {
-      session_id:childId, revision:packet.revision, diagnostic:stalledCheck,
+      session_id:childId, revision:packet.revision, diagnostic:stalledCheck.slice(0, 1800),
     })
     if (result.stopReason !== 'completed') throw new Error('Reviewer ended with ' + result.stopReason)
     if (!checkedVerdict) throw new Error('Reviewer ended without a validated verdict')
