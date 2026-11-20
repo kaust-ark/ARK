@@ -1509,3 +1509,60 @@ def test_registered_paired_summary_recomputes_printed_uncertainty(tmp_path, monk
     assert not provenance._registered_summaries(tmp_path, None)
     with pytest.raises(ValueError, match="receipt"):
         project.invoke("render_results_table", args)
+
+
+def test_condition_summary_matches_independent_view_without_whitelisting_numbers(tmp_path, monkeypatch):
+    from ark import provenance, review
+
+    host = open_project(tmp_path, monkeypatch)
+    path = "results/calibration.json"
+    cases = [(1, "test", 3, -7), (1, "train", -8, -4), (2, "test", 2, 0),
+             (2, "train", 0, 0), (3, "test", -3, 3), (3, "train", 0, 5)]
+    rows = [{"run": run, "data": {"split": split}, "residual": {"fit": fit, "base": base}}
+            for run, split, fit, base in cases]
+    artifact = tmp_path / path
+    artifact.write_text(json.dumps({"trials": rows}))
+    digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    host.state["experiment"] = {"status": "completed", "artifact": path, "sha256": digest}
+    args = {"rows_pointer": "/trials", "summarize": "residual.fit", "reference": "residual.base"}
+    legacy = host.invoke("render_results_table", args)
+    result = host.invoke("render_results_table", {**args, "condition_columns": ["run", "data.split"]})
+    comparisons = result.pop("per_condition")
+    assert result == legacy
+    assert [r["condition"] for r in comparisons] == [{"run": c[0], "data.split": c[1]} for c in cases]
+    assert [r["signed_difference"] for r in comparisons] == [10, -4, 2, 0, -6, -5]
+    assert [r["reference_magnitude"] for r in comparisons] == [7, 4, 0, 0, 3, 5]
+    assert [r["fraction_reduction_in_magnitude"] for r in comparisons] == [4 / 7, -1, None, None, 0, 1]
+    assert len(host.state["measurement_summaries"]["recipes"]) == 1
+    audit = provenance.audit(r"\section{Results} An unrelated quantity was 0.571429.", tmp_path)
+    assert [r["number"] for r in audit["untraced"]] == ["0.571429"]
+    with pytest.raises(ValueError, match="uniquely"):
+        host.invoke("render_results_table", {**args, "condition_columns": ["run"]})
+
+    host.snapshot = review.build_snapshot(tmp_path)
+    request = {"revision": host.snapshot["revision"], "artifact": path, "rows_pointer": "/trials",
+               "statistic": "paired", "column": "residual.fit", "reference": "residual.base",
+               "condition_columns": ["run", "data.split"]}
+    monkeypatch.setattr(review, "VIEW_SIZE", 450)
+    first = host.invoke("review_evidence", request)
+    lines = first["text"].splitlines()
+    view = first
+    while view["next_start"]:
+        view = host.invoke("review_evidence", {**request, "start": view["next_start"]})
+        lines.extend(view["text"].splitlines())
+    assert [json.loads(line) for line in lines] == comparisons
+    assert all(r["sha256"] == digest and r["revision"] == request["revision"] for r in host.review_receipts)
+    cite = {"artifact": path, "quote": lines[0]}
+    verified = review._references(host.snapshot, [cite], [first["receipt"]], "", required=True)
+    assert review._cited_measurement_columns(host.snapshot, verified) == {"residual.fit", "residual.base"}
+    subjects = [{"subject": name, "column": col, "condition": {"column": "data.split", "value": "test"}}
+                for name, col in (("fitted", "residual.fit"), ("baseline", "residual.base"))]
+    binding = review._comparison_bindings(host.snapshot, {"comparison": subjects}, {"quote": "fitted vs baseline"},
+                                          verified, ["residual.fit", "residual.base"])
+    assert binding["comparison"] == subjects
+    for quote in (lines[-1], lines[0].replace('"test"', '"other"'), "0.5714"):
+        with pytest.raises(ValueError, match="Unobserved"):
+            review._references(host.snapshot, [{**cite, "quote": quote}], [first["receipt"]], "", required=True)
+    artifact.write_text("[]")
+    with pytest.raises(ValueError, match="changed"):
+        host.invoke("review_evidence", request)

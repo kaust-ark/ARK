@@ -480,7 +480,8 @@ def _visible_measurement_rows(text):
     return rows
 
 
-def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, statistic=None, column="", rows_pointer="", find=None):
+def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, statistic=None, column="", rows_pointer="",
+                  find=None, reference=None, condition_columns=None):
     """Return a bounded text excerpt or an actual rendered PDF page with a receipt."""
     if type(start) is not int or start < 1 or type(visual) is not bool:
         raise ValueError("Invalid evidence offset or mode")
@@ -491,6 +492,27 @@ def read_evidence(snapshot, artifact, *, page=None, start=1, visual=False, stati
     if find is not None and (ext != ".pdf" or visual or statistic is not None or start != 1
                              or not isinstance(find, str) or len(find.strip()) < 2 or len(find) > 160):
         raise ValueError("Find a phrase of 2 to 160 characters in a PDF using text mode and optional starting page.")
+    if statistic == "paired":
+        from ark.measurement_table import summarize
+        if (meta["kind"] != "measurement" or ext != ".json" or visual or page is not None
+                or not reference or not condition_columns or len(data) > 4 * 1024 * 1024):
+            raise ValueError("For a paired comparison select a measured JSON table under 4 MiB, a column, "
+                             "a reference and condition_columns.")
+        summary = summarize(json.loads(data), rows_pointer, column, reference, condition_columns)
+        text = "\n".join(json.dumps(row, ensure_ascii=False) for row in summary["per_condition"])
+        chunk, end = _text_window(text, start)
+        if start > 1 and text[start - 2] != "\n":
+            raise ValueError("Use next_start to read the next complete paired comparison.")
+        next_start = None
+        if end < len(text):
+            end = text.rindex("\n", start - 1, end + 1)
+            chunk = text[start - 1:end]
+            next_start = end + 2
+        receipt.update(statistic=statistic, column=column, reference=reference, condition_columns=condition_columns,
+                       rows_pointer=rows_pointer, end=end)
+        return {**result, "text": chunk, "next_start": next_start, "receipt": receipt}
+    if reference is not None or condition_columns is not None:
+        raise ValueError("Select statistic=paired for a condition-specific comparison.")
     if statistic is not None:
         if meta["kind"] not in {"measurement", "supporting_measurement"} or visual or page is not None or start != 1:
             raise ValueError("Statistics operate on measured result artifacts only")
@@ -646,6 +668,11 @@ def claim_instructions(snapshot):
         "Return checks.manuscript with status, reason and claims. For each claim supply kind, passage, basis, "
         "evidence and reason. Give the result its own assessment using an observed worker row. "
         "A clearly descriptive paper needs only its result.",
+        "Check claims of a direction, threshold or relative change at every condition they name. Choose the "
+        "matching columns and denominator. For paired measured JSON fields, read_evidence(statistic=paired, "
+        "column=..., reference=..., condition_columns=[...]) returns a signed difference and fraction reduction "
+        "in magnitude for each row. Cite the complete returned JSON line for each disputed condition. Use "
+        "unrounded values for strict inequalities and distinguish a change in signed value from a change in magnitude.",
     ]
     if snapshot.get("conclusion"):
         parts.append("Use the conclusion sentence selector or an observed PDF passage.")
@@ -1018,7 +1045,14 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
             verified.append({"artifact": artifact, "page": page, "visual": True, "sha256": info["sha256"],
                              "image_sha256": receipt_matches[0]["image_sha256"]})
             continue
-        quote = _string(ref.get("quote"), "verbatim evidence quote", limit=1200)
+        # A complete computed row can contain several long field names or labels.
+        # Only an exact line from the paired view can support this longer citation.
+        quote_limit = 1200
+        if isinstance(ref.get("quote"), str) and len(ref["quote"]) > quote_limit:
+            receipt_matches = [r for r in receipt_matches if r.get("statistic") == "paired"]
+            if receipt_matches:
+                quote_limit = VIEW_SIZE
+        quote = _string(ref.get("quote"), "verbatim evidence quote", limit=quote_limit)
         if len(quote) < 4:
             raise ValueError("Evidence quote is too short to locate")
         located = artifact == tex and _contains_observed_quote(blind, quote)
@@ -1026,11 +1060,15 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
         for r in receipt_matches:
             if located:
                 break
-            options = {k: r[k] for k in ("statistic", "column", "rows_pointer") if k in r}
+            options = {k: r[k] for k in ("statistic", "column", "rows_pointer", "reference", "condition_columns") if k in r}
             view = read_evidence(snapshot, artifact, page=page, start=r.get("start", 1), **options)
             if view["receipt"] != r:
                 continue
-            if Path(artifact).suffix.lower() == ".json" and not options:
+            if options.get("statistic") == "paired":
+                tokens = _json_container_tokens(quote)
+                located = bool(tokens) and any(tokens == tuple(_JSON_TOKEN.findall(line))
+                                               for line in view["text"].splitlines())
+            elif Path(artifact).suffix.lower() == ".json" and not options:
                 located = _json_quote_observed(snapshot, artifact, view, quote)
             else:
                 located = _contains_observed_quote(view["text"], quote)
@@ -1288,6 +1326,8 @@ def _cited_measurement_columns(snapshot, evidence):
             continue
         if ref.get("column"):
             columns.add(ref["column"])
+            if ref.get("statistic") == "paired":
+                columns.add(ref["reference"])
             continue
         quote = ref.get("quote", "").strip()
         try:
@@ -1318,7 +1358,21 @@ def _comparison_bindings(snapshot, value, passage, evidence, columns):
         raise ValueError("Give comparison with exactly two subjects from the passage and their measured columns.")
     rows = []
     for ref in evidence:
-        if snapshot["artifacts"][ref["artifact"]]["kind"] != "measurement" or ref.get("statistic"):
+        if snapshot["artifacts"][ref["artifact"]]["kind"] != "measurement":
+            continue
+        if ref.get("statistic") == "paired":
+            pair = json.loads(ref["quote"])
+            fields = {**pair["condition"], ref["column"]: pair["value"], ref["reference"]: pair["reference"]}
+            projected = {}
+            for path, number_or_label in fields.items():
+                branch = projected
+                *parents, key = path.split(".")
+                for parent in parents:
+                    branch = branch.setdefault(parent, {})
+                branch[key] = number_or_label
+            rows.append(projected)
+            continue
+        if ref.get("statistic"):
             continue
         quote = ref.get("quote", "").strip()
         try:

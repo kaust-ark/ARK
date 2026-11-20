@@ -133,13 +133,16 @@ ROW_IDENTIFIERS = {"condition", "label", "seed", "fold", "split", "trial", "run"
                    "condition_id", "fold_id", "split_id", "trial_id", "run_id", "sample_id"}
 
 
-def summarize(data, rows_pointer, column, reference=None):
+def summarize(data, rows_pointer, column, reference=None, condition_columns=None):
     """Calculate descriptive statistics over the same sealed rows, paired by row."""
     rows = _rows(data, rows_pointer)
 
-    def series(path):
+    def check_path(path):
         if not isinstance(path, str) or len(path) > 120 or not re.fullmatch(r"[\w-]+(?:\.[\w-]+)*", path):
-            raise ValueError("Choose a numeric column listed for this result table.")
+            raise ValueError("Choose a column listed for this result table.")
+
+    def series(path):
+        check_path(path)
         numbers = [_value(row, path) for row in rows]
         if not all(type(n) in (int, float) and math.isfinite(n) for n in numbers):
             raise ValueError(f"Column {path} must contain a finite number in every selected row.")
@@ -151,15 +154,49 @@ def summarize(data, rows_pointer, column, reference=None):
 
     values = series(column)
     result = {"n": len(rows), "value": describe_series(values)}
-    if reference is not None:
-        if reference == column:
-            raise ValueError("Choose two different columns for a paired contrast.")
-        other = series(reference)
-        result["reference"] = describe_series(other)
-        result["paired_difference"] = describe_series([v - r for v, r in zip(values, other)])
-        baseline = result["reference"]["mean"]
-        if baseline:
-            result["percent_change_in_means"] = 100 * result["paired_difference"]["mean"] / baseline
+    if reference is None:
+        if condition_columns is not None:
+            raise ValueError("A per-condition comparison requires a reference.")
+        return result
+    if reference == column:
+        raise ValueError("Choose two different columns for a paired contrast.")
+    other = series(reference)
+    differences = [v - r for v, r in zip(values, other)]
+    if not all(math.isfinite(d) for d in differences):
+        raise ValueError("A paired difference exceeds the numeric range.")
+    result["reference"] = describe_series(other)
+    result["paired_difference"] = describe_series(differences)
+    baseline = result["reference"]["mean"]
+    if baseline:
+        result["percent_change_in_means"] = 100 * result["paired_difference"]["mean"] / baseline
+
+    if condition_columns is not None:
+        if not isinstance(condition_columns, list) or not 1 <= len(condition_columns) <= 4:
+            raise ValueError("Supply one to four condition columns.")
+        for path in condition_columns:
+            check_path(path)
+        if len({column, reference, *condition_columns}) != 2 + len(condition_columns):
+            raise ValueError("Select distinct outcome, reference and condition columns.")
+        comparisons = []
+        seen = set()
+        for row, value, ref, delta in zip(rows, values, other, differences):
+            condition = {p: _value(row, p) for p in condition_columns}
+            for item in condition.values():
+                if not (type(item) in (int, float) and math.isfinite(item)
+                        or isinstance(item, str) and 0 < len(item) <= 100 and item.isprintable()):
+                    raise ValueError("Each condition needs a finite number or a short printable label.")
+            identity = tuple(condition.values())
+            if identity in seen:
+                raise ValueError("Choose condition columns that uniquely identify each row, including repeats.")
+            seen.add(identity)
+            denominator = abs(ref)
+            fraction = (denominator - abs(value)) / denominator if denominator else None
+            if fraction is not None and not math.isfinite(fraction):
+                raise ValueError("Fractional change exceeds the numeric range for this condition.")
+            comparisons.append({"condition": condition, "column": column, "value": value,
+                                "reference_column": reference, "reference": ref, "signed_difference": delta,
+                                "reference_magnitude": denominator, "fraction_reduction_in_magnitude": fraction})
+        result["per_condition"] = comparisons
     return result
 
 

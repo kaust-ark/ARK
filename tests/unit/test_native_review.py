@@ -1420,7 +1420,8 @@ def test_measured_recomputation_is_bound_to_rows_and_receipt(tmp_path):
     pair = PAIRS[2]
     project(tmp_path, pair, "clean")
     data = tmp_path / "results/replications.json"
-    data.write_text(json.dumps({"paired": [{"ms": x} for x in (11, 10, 9)]}))
+    data.write_text(json.dumps({"paired": [{"trial": i, "ms": x, "uncached_ms": 20}
+                                           for i, x in enumerate((11, 10, 9))]}))
     snap = build_snapshot(tmp_path)
     response, receipts = record(snap, pair, "clean", "")
     view = read_evidence(snap, "results/replications.json", statistic="median", column="ms", rows_pointer="/paired")
@@ -1430,6 +1431,16 @@ def test_measured_recomputation_is_bound_to_rows_and_receipt(tmp_path):
         validate_review(snap, response, observed=receipts)
     proof = validate_review(snap, response, observed=[*receipts, view["receipt"]])
     assert proof["checks"]["experiment"]["evidence"][0]["rows_pointer"] == "/paired"
+    paired = read_evidence(snap, view["artifact"], statistic="paired", column="ms", reference="uncached_ms",
+                           condition_columns=["trial"], rows_pointer="/paired")
+    line = paired["text"].splitlines()[1]
+    assert json.loads(line)["fraction_reduction_in_magnitude"] == 0.5
+    response["checks"]["experiment"]["evidence"] = [
+        {"artifact": view["artifact"], "quote": json.dumps(json.loads(line), separators=(",", ":"))}]
+    with pytest.raises(ValueError, match="Unobserved"):
+        validate_review(snap, response, observed=[*receipts, view["receipt"]])
+    proof = validate_review(snap, response, observed=[*receipts, paired["receipt"]])
+    assert proof["checks"]["experiment"]["evidence"][0]["reference"] == "uncached_ms"
     csv = read_evidence(snap, "results/rows.csv", statistic="mean", column="cached_ms")
     assert csv["text"] == "mean(cached_ms) = 10 over 3 recorded rows"
     with pytest.raises(ValueError, match="missing"):

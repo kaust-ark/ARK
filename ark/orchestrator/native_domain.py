@@ -377,6 +377,8 @@ class NativeProject(CompilerMixin):
                 "Use the survey's official titles and primary abstracts to select relevant originals before writing. "
                 "Register those works with lookup_papers and cite the returned keys at the specific comparisons. "
                 "Use render_results_table to include the exact worker values in per-condition tables. "
+                "For claims about the size or direction of a change at specific conditions, call that tool with "
+                "summarize, reference and condition_columns. Compare each named condition at full precision. "
                 "Show the paired measurements with their conditions, units and denominators so a reader can reproduce the central comparison. "
                 "Use the venue's body-page budget for evidence, uncertainty, interpretation and limitations; keep references and a substantive linked appendix after the body. "
                 "Compile, verify citations, request an independent review, address consequential findings, then deliver. "
@@ -865,9 +867,11 @@ class NativeProject(CompilerMixin):
         if "summarize" in args:
             if args.get("columns"):
                 raise ValueError("Request a summary or render a table in each call.")
+            # Only aggregate recipes supply numbers to the manuscript-wide provenance index.
+            # A row contrast supports an interpretation only in the context of its condition.
             recipe = {"rows_pointer": args.get("rows_pointer", ""), "column": args["summarize"],
                       "reference": args.get("reference")}
-            stats = measurement_table.summarize(data, **recipe)
+            stats = measurement_table.summarize(data, **recipe, condition_columns=args.get("condition_columns"))
             record = self.state.get("measurement_summaries", {})
             if record.get("input_sha256") != digest:
                 record = {"input_sha256": digest, "recipes": []}
@@ -878,6 +882,8 @@ class NativeProject(CompilerMixin):
                 self.state["measurement_summaries"] = record
                 self.save()
             return {"input_sha256": digest, **recipe, **stats}
+        if "condition_columns" in args:
+            raise ValueError("Supply summarize and reference for a per-condition comparison.")
         available = measurement_table.describe(data)
         if not args.get("columns"):
             return {"available": available}
@@ -2419,6 +2425,8 @@ class NativeProject(CompilerMixin):
             visual=args.get("visual", False),
             statistic=args.get("statistic"),
             column=args.get("column", ""),
+            reference=args.get("reference"),
+            condition_columns=args.get("condition_columns"),
             rows_pointer=args.get("rows_pointer", ""),
             find=args.get("find"),
         )
