@@ -329,11 +329,19 @@ def _conclusion_clauses(conclusion):
     return clauses
 
 
-COMPARISON_SELECTORS = ("contribution", "direction")
+# Keep bounded locators for separate comparative claims across the rendered body.
+SUPERIORITY_SELECTORS = ("superiority", "superiority_2", "superiority_3")
+COMPARISON_SELECTORS = ("contribution", "direction", *SUPERIORITY_SELECTORS)
+_SUPERIORITY_PATTERNS = (
+    r"\b(?:more|less)\s+(?:\w+[ -]){0,2}(?:robust|accurate|efficient|effective|reliable|stable|precise|sensitive|biased|variable|consistent)\s+(?:\w+\s+){0,3}than\b",
+    r"\b(?:lower|higher|smaller|greater)\s+(?:(?-i:[A-Z]{2,8})|error|accuracy|variance|latency|cost|loss)\s+than\b",
+    r"\b(?:outperform(?:s|ed|ing)?|surpass(?:es|ed|ing)?|superior to|inferior to)\b",
+    r"\b(?:better|worse|faster|slower|lower|higher|smaller|larger|fewer|greater)\b(?:(?!\brather than\b)[^.!?;]){0,85}(?<!rather )\bthan\b",
+)
 
 
 def _explanatory_passages(snapshot, pdf):
-    """Locate at most one attribution, contribution ordering and directional comparison."""
+    """Locate comparative assertions in the rendered body and expose their exact page windows."""
     import fitz
     from ark.latex.utils import body_page_boundary
 
@@ -352,6 +360,7 @@ def _explanatory_passages(snapshot, pdf):
         ),
     }
     best = {}
+    superiority = {}
     data, _ = _artifact(snapshot, pdf)
     try:
         document = fitz.open(stream=data, filetype="pdf")
@@ -372,11 +381,19 @@ def _explanatory_passages(snapshot, pdf):
                     if offset < 0:
                         continue
                     words = _normalized_quote(sentence)
+                    for rank, pattern in enumerate(_SUPERIORITY_PATTERNS):
+                        if re.search(pattern, words, re.I):
+                            # Prefer explicit empirical assertions when several passages make the same comparison.
+                            empirical = bool(re.search(r"\b(?:our|we|results?|measurements?|experiments?)\b", words, re.I))
+                            superiority.setdefault(words, ((rank, not empirical, -page, offset),
+                                {"artifact":pdf, "page":page + 1, "start":offset + 1, "quote":sentence}))
+                            break
                     for selector, options in patterns.items():
                         for rank, pattern in enumerate(options):
                             if (selector not in best or rank < best[selector][0]) and re.search(pattern, words, re.I):
                                 best[selector] = (rank, {"artifact":pdf, "page":page + 1, "start":offset + 1, "quote":sentence})
                                 break
+    best.update(zip(SUPERIORITY_SELECTORS, sorted(superiority.values(), key=lambda item: item[0])))
     return {selector: passage for selector, (_, passage) in best.items()}
 
 
@@ -624,7 +641,7 @@ def claim_instructions(snapshot):
         requests.extend(({"kind":"result","passage":passage}, {"kind":"explanation","passage":passage}))
     for selector in ("attribution", *COMPARISON_SELECTORS):
         if scope.get(selector):
-            requests.append({"kind":"explanation","passage":{"selector":selector}})
+            requests.append({"kind":"result" if selector in SUPERIORITY_SELECTORS else "explanation","passage":{"selector":selector}})
     parts = [
         "Return checks.manuscript with status, reason and claims. For each claim supply kind, passage, basis, "
         "evidence and reason. Give the result its own assessment using an observed worker row. "
@@ -637,8 +654,8 @@ def claim_instructions(snapshot):
                      "Open its page and use the actual PDF passage with artifact, page and quote. Check any "
                      "substantive explanation separately. A section heading is optional.")
     if requests:
-        parts.append("Complete the following passage judgments individually. Use these kind and passage values "
-                     "as printed. Each needs its own basis and reason. " + json.dumps(requests, separators=(",", ":")))
+        parts.append("Assess each listed passage. These are suggested kinds. Use result for measured comparisons or "
+                     "explanation for analytic, qualified or unsupported inferences. Always use its printed passage selector. " + json.dumps(requests, separators=(",", ":")))
     parts.extend((
         "A measurement can establish an outcome. For an explanation choose control when an observed method "
         "and measured contrast distinguish the mechanism, or derivation when observed reasoning reaches the "
@@ -665,6 +682,20 @@ def claim_instructions(snapshot):
                      "A direct descriptive comparison may use kind=result and basis=measurement with measured_columns. "
                      "An analytic implication may use derivation; a stated hypothesis may use qualified. "
                      "If only an aggregate outcome or a proxy is available, identify the untested step.")
+    if any(scope.get(selector) for selector in SUPERIORITY_SELECTORS):
+        parts.append('For a superiority claim, identify precisely what the paper compares. For measurement or '
+                     'control include comparison=[{"subject":"words from the passage","column":"actual field"},'
+                     '{"subject":"words for the other side","column":"actual field"}]. A long table can use '
+                     'the same outcome column with condition={"column":"arm","value":"exact row value"} on each '
+                     'side. Cite complete observed rows for conditioned values. For a single paired contrast '
+                     'give each side its worker operand in operand, and quote the sealed worker calculation '
+                     'in contrast_expression and evidence. In reason explain what the fields and metric measure. '
+                     'Check both operands against the study method. A column for a different comparator cannot '
+                     'stand in for the one in the paper. If a comparator was never measured, use unsupported and '
+                     'give a finding, unless the text explicitly qualifies it as a hypothesis or an independent '
+                     'derivation establishes it. For a post hoc result computed from sealed measurements, cite the '
+                     'original inputs, independent calculation and appendix or supporting table. Use explanation '
+                     'with derivation and quote the calculation in bridge. Distinguish it from a preregistered arm.')
     if snapshot.get("method_control"):
         parts.append("If your derivation relies on the submission's own reasoning, independently check its "
                      "implication at the disputed passage. Use test_inference on two admissible cases and "
@@ -955,7 +986,7 @@ def _references(snapshot, refs, observed, blind, *, required, pdf_windows=None):
             sentence = ref.get("sentence")
             if (ref["selector"] not in ("conclusion", "attribution", *COMPARISON_SELECTORS) or ref.keys() - {"selector", "artifact", "page", "sentence"}
                     or ("sentence" in ref and type(sentence) is not int)):
-                raise ValueError('Use only a supplied conclusion, attribution, contribution or direction selector with optional artifact, page and one-based sentence number.')
+                raise ValueError('Use only a supplied passage selector with optional artifact, page and one-based sentence number.')
             located = _observed_conclusion(snapshot, observed, ref["selector"])
             if ("artifact" in ref and ref["artifact"] != located["artifact"]) or (
                     "page" in ref and (type(ref["page"]) is not int or ref["page"] != located["page"])):
@@ -1063,7 +1094,7 @@ def draft_evidence_feedback(snapshot, proposal, observed, first_error, previous=
     pdf_windows = {}
     if per_claim and isinstance(manuscript, dict) and isinstance(manuscript.get("claims"), list):
         located = []
-        for index, claim in enumerate(manuscript["claims"][:8], 1):
+        for index, claim in enumerate(manuscript["claims"][:12], 1):
             if not isinstance(claim, dict):
                 continue
             label = f"Manuscript claim {index}"
@@ -1078,11 +1109,19 @@ def draft_evidence_feedback(snapshot, proposal, observed, first_error, previous=
                 if claim.get("basis") == "procedure" and not _procedure_passage(snapshot, passage):
                     repairs.append(f"{label} basis: procedure describes how an experiment was performed. "
                                    "Judge the proposed explanation against its own evidence.")
-            if "evidence" in claim or claim.get("basis") != "qualified":
+                if "evidence" in claim or claim.get("basis") != "qualified":
+                    try:
+                        _references(snapshot, claim.get("evidence"), observed, blind, required=True, pdf_windows=pdf_windows)
+                    except ValueError as exc:
+                        repairs.append(f"{label} evidence: {exc}. A PDF text reference needs its verbatim quote.")
+                        continue
                 try:
-                    _references(snapshot, claim.get("evidence"), observed, blind, required=True, pdf_windows=pdf_windows)
+                    _manuscript_claims(snapshot, [claim], observed, blind, require_coverage=False)
                 except ValueError as exc:
-                    repairs.append(f"{label} evidence: {exc}. A PDF text reference needs its verbatim quote.")
+                    ref = claim.get("passage")
+                    selector = ref.get("selector", "quoted passage") if isinstance(ref, dict) else "quoted passage"
+                    repairs.append(f"{label} ({selector}): {exc}")
+
         for parts in snapshot["evidence_scope"].get("conclusion_clauses", ()):
             if not any(p["page"] == snapshot["conclusion"]["page"] and _contains_observed_quote(
                     p["quote"], parts["continuation"]) for p in located):
@@ -1263,8 +1302,114 @@ def _cited_measurement_columns(snapshot, evidence):
     return columns
 
 
-def _manuscript_claims(snapshot, values, observed, blind):
-    if not isinstance(values, list) or not 1 <= len(values) <= 8:
+def _comparison_matches(passage, target, selector):
+    if not target or not _quotes_conclusion([passage], target):
+        return False
+    # A conclusion can contain several comparisons. Each pair binds to its own sentence.
+    return selector not in SUPERIORITY_SELECTORS or _normalized_quote(passage["quote"]) == _normalized_quote(target["quote"])
+
+
+def _comparison_bindings(snapshot, value, passage, evidence, columns):
+    """Bind both quoted subjects to measurements that the reviewer actually saw."""
+    from ark.measurement_table import project_rows
+
+    sides = value.get("comparison")
+    if not isinstance(sides, list) or len(sides) != 2:
+        raise ValueError("Give comparison with exactly two subjects from the passage and their measured columns.")
+    rows = []
+    for ref in evidence:
+        if snapshot["artifacts"][ref["artifact"]]["kind"] != "measurement" or ref.get("statistic"):
+            continue
+        quote = ref.get("quote", "").strip()
+        try:
+            data = json.loads(quote if quote.startswith(("{", "[")) else "{" + quote + "}")
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(data, dict):
+            rows.append(data)
+        for table in project_rows(data).values():
+            rows.extend(table)
+
+    def field(row, column):
+        for key in column.split("."):
+            if not isinstance(row, dict):
+                return None
+            row = row.get(key)
+        return row
+
+    verified = []
+    for item in sides:
+        if not isinstance(item, dict):
+            raise ValueError("Each comparison subject needs its own measured column.")
+        subject = _string(item.get("subject"), "quoted comparison subject", limit=500)
+        column = item.get("column")
+        if not _contains_observed_quote(passage["quote"], subject) or column not in columns:
+            raise ValueError("Quote both subjects from the located passage and bind each to a cited measured column.")
+        side = {"subject":subject, "column":column}
+        if "condition" in item:
+            cond = item["condition"]
+            if (not isinstance(cond, dict) or cond.keys() != {"column", "value"}
+                    or not isinstance(cond["column"], str) or not cond["column"] or cond["column"] == column
+                    or type(cond["value"]) not in (str, int, float)
+                    or not any(type(field(row, column)) in (int, float)
+                               and type(field(row, cond["column"])) is type(cond["value"])
+                               and field(row, cond["column"]) == cond["value"] for row in rows)):
+                raise ValueError("Cite an observed row containing both the numeric outcome and its exact condition.")
+            side["condition"] = cond
+        elif not any(type(field(row, column)) in (int, float) for row in rows) and not any(
+                r.get("column") == column and r.get("statistic") != "count" for r in evidence):
+            raise ValueError("Each comparison column needs an observed numeric outcome or statistic.")
+        verified.append(side)
+    left, right = verified
+    if left["column"] == right["column"] and all("condition" not in side and "operand" not in item
+                                                  for side, item in zip(verified, sides)):
+        # A literal label such as "policy B" can identify its row without making the
+        # reviewer repeat {"column":"policy","value":"B"} for each quoted subject.
+        def label_conditions(side):
+            matches = set()
+            for row in rows:
+                if type(field(row, side["column"])) not in (int, float):
+                    continue
+                for key, val in row.items():
+                    if isinstance(val, str) and _normalized_quote(side["subject"]).casefold() in (
+                            val.casefold(), f"{key} {val}".casefold()):
+                        matches.add((key, val))
+            return dict(matches) if len(matches) == 1 else {}
+        left_labels, right_labels = label_conditions(left), label_conditions(right)
+        if left_labels and left_labels.keys() == right_labels.keys() and left_labels != right_labels:
+            for side, labels in ((left, left_labels), (right, right_labels)):
+                key, val = next(iter(labels.items()))
+                side["condition"] = {"column":key, "value":val}
+    if _normalized_quote(left["subject"]).casefold() == _normalized_quote(right["subject"]).casefold():
+        raise ValueError("Identify the two distinct subjects compared in the passage.")
+    if left["column"] == right["column"]:
+        if "condition" in left or "condition" in right:
+            if (not all("condition" in side for side in verified)
+                    or left["condition"]["column"] != right["condition"]["column"]
+                    or left["condition"]["value"] == right["condition"]["value"]):
+                raise ValueError("Bind the common outcome to two distinct values of the same condition column.")
+        else:
+            if not value.get("contrast_expression"):
+                raise ValueError("Both sides use the same outcome. Cite a complete row for each side and give each "
+                                 'condition={"column":"group identifier","value":"actual value"} inside comparison. '
+                                 "Only a single precomputed difference needs the executed paired contrast expression.")
+            expression = _string(value["contrast_expression"], "executed paired contrast expression", limit=1000)
+            method = (snapshot.get("measurement_method") or {}).get("artifact")
+            operands = [side.get("operand") for side in sides]
+            if (not all(isinstance(op, str) and re.fullmatch(r"[A-Za-z_]\w*", op)
+                        and re.search(r"\b" + re.escape(op) + r"\b", expression) for op in operands)
+                    or operands[0] == operands[1]
+                    or not any(r["artifact"] == method and _contains_observed_quote(r.get("quote", ""), expression)
+                               for r in evidence)):
+                raise ValueError("Cite the executed paired contrast and identify its two distinct operands.")
+            for side, operand in zip(verified, operands):
+                side["operand"] = operand
+            return {"comparison":verified, "contrast_expression":expression}
+    return {"comparison":verified}
+
+
+def _manuscript_claims(snapshot, values, observed, blind, *, require_coverage=True):
+    if not isinstance(values, list) or not 1 <= len(values) <= 12:
         raise ValueError("Supply checks.manuscript.claims with the measured result and any separate explanation.")
     claims = []
     for value in values:
@@ -1291,8 +1436,8 @@ def _manuscript_claims(snapshot, values, observed, blind):
                 snapshot["artifacts"][ref["artifact"]]["kind"] == "method" and ref.get("quote") for ref in evidence)):
             raise ValueError("For a control cite the measured comparison and the observed method that distinguishes the mechanism.")
         if basis in ("control", "measurement") and any(
-                target and _quotes_conclusion([passage], target)
-                for target in (snapshot["evidence_scope"].get(key) for key in COMPARISON_SELECTORS)):
+                _comparison_matches(passage, snapshot["evidence_scope"].get(key), key)
+                for key in COMPARISON_SELECTORS):
             columns = value.get("measured_columns")
             available = _cited_measurement_columns(snapshot, evidence)
             if (not isinstance(columns, list) or not 1 <= len(columns) <= 16
@@ -1301,6 +1446,8 @@ def _manuscript_claims(snapshot, values, observed, blind):
                                  "and cite those fields in an observed worker row or statistic. If the study "
                                  "measured only a proxy, assess the unresolved claim.")
             claim["measured_columns"] = list(dict.fromkeys(columns))
+            if any(_comparison_matches(passage, snapshot["evidence_scope"].get(key), key) for key in SUPERIORITY_SELECTORS):
+                claim.update(_comparison_bindings(snapshot, value, passage, evidence, columns))
         inference_tests = [r for r in observed if r.get("control") == 3
                            and r.get("revision") == snapshot["revision"] and r.get("passage") == passage]
         if basis == "derivation":
@@ -1358,6 +1505,8 @@ def _manuscript_claims(snapshot, values, observed, blind):
             claim["finding"] = {"id":_string(finding["id"], "finding ID", limit=5),
                                 "fix":_string(finding["fix"], "proposed fix")}
         claims.append(claim)
+    if not require_coverage:
+        return claims
     if not any(c["kind"] == "result" for c in claims):
         raise ValueError("Identify the empirical result separately from its explanation.")
     target = snapshot.get("conclusion")
@@ -1380,7 +1529,7 @@ def _manuscript_claims(snapshot, values, observed, blind):
     missing = []
     for selector in COMPARISON_SELECTORS:
         target = snapshot["evidence_scope"].get(selector)
-        if target and not any(_quotes_conclusion([c["passage"]], target) and c["basis"] != "procedure" for c in claims):
+        if target and not any(_comparison_matches(c["passage"], target, selector) and c["basis"] != "procedure" for c in claims):
             missing.append(f'{selector} comparison on page {target["page"]} with passage={{"selector":"{selector}"}}')
     if missing:
         raise ValueError("Assess each located comparison separately: " + ", ".join(missing) + ".")
@@ -2009,6 +2158,12 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
         return digest == inputs_digest
 
     original_scope = snapshot.get("evidence_scope", {})
+    if any(key in original_scope for key in SUPERIORITY_SELECTORS):
+        # Existing signatures describe the policy used when the review was signed.
+        prior = {k: v for k, v in snapshot.items() if k not in ("project", "revision")}
+        prior["evidence_scope"] = {k: v for k, v in original_scope.items() if k not in SUPERIORITY_SELECTORS}
+        if delivered_record_matches({**prior, "revision":_digest(_canonical(prior))}, record, revision):
+            return True
     if "recheck_paragraphs" in original_scope:
         older = {k: v for k, v in snapshot.items() if k not in ("project", "revision")}
         policy = original_scope["recheck_paragraphs"]

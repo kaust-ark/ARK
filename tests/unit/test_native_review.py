@@ -35,11 +35,14 @@ def test_delivered_signature_survives_only_changes_to_review_checks():
     bound = {**neighbor_checks, "evidence_scope":{**neighbor_checks["evidence_scope"], "recheck_paragraphs":{"version":2}}}
     retention = {**bound, "evidence_scope":{**bound["evidence_scope"], "recheck_paragraphs":{"version":3}}}
     current = {**retention, "revision":fingerprint(retention), "project":"/somewhere/else"}
+    newer = {**retention, "evidence_scope":{**retention["evidence_scope"], "superiority":locator}}
+    current = {**newer, "revision":fingerprint(newer), "project":current["project"]}
     archived_claims = {**manifest, "evidence_scope":{**manifest["evidence_scope"], "version":3}}
-    for fmt in (early, published, older, prior, archived_claims, previous_policy, latest, comparisons, neighbor_checks, bound):
+    for fmt in (early, published, older, prior, archived_claims, previous_policy, latest, comparisons, neighbor_checks, bound, retention):
         revision = fingerprint(fmt)
         signed = dict(version=1, revision=revision, verdict="accept", deliverable=True, paper_pdf_sha256="a" * 64,
-                      artifact_hashes={p: meta["sha256"] for p, meta in artifacts.items()})
+                      artifact_hashes={p: meta["sha256"] for p, meta in artifacts.items()},
+                      evidence_scope=dict(comparison="a", alternative="b", discriminator="c"))
         assert delivered_record_matches(current, signed, revision)
         assert not record_is_current(current, signed)  # A new delivery still needs the current reviewer.
         assert delivered_record_matches(current, signed, revision, delivery_inputs_digest(current))
@@ -399,6 +402,53 @@ def test_distinct_quantitative_comparisons_need_their_observed_columns(tmp_path)
     analytic = dict(comparison, basis="derivation", evidence=[control["evidence"][1]],
                     bridge="distance = abs(sensor - reference)", reason="The distances follow from the recorded definition.")
     assert assess(ranking, analytic)[-1]["basis"] == "derivation"
+
+
+def test_superiority_claim_binds_both_observed_arms(tmp_path):
+    from ark import review
+
+    pdf, data = "paper/main.pdf", "results/trials.json"
+    pair = {"domain":"experiment", "clean":"Pairs were compared.", "table":"arm,score\nA,1\nB,2",
+            "question":"Which arm is faster?", "defect":"Missing comparator."}
+    project(tmp_path, pair, "clean")
+    path = tmp_path / data
+    path.write_text('[{"arm":"A","latency":3,"a_ms":3,"b_ms":5},{"arm":"B","latency":5}]')
+    passage = "Policy A has lower latency than policy B."
+    with fitz.open() as doc:
+        for heading, line in (("Conclusion", "We measured latency."), ("Discussion", passage),
+                              ("References", "The adaptive scheduler outperforms a third scheduler.")):
+            page = doc.new_page()
+            page.insert_text((50,50), heading)
+            page.insert_text((50,80), line)
+        doc.save(tmp_path / pdf)
+    snap = build_snapshot(tmp_path, expected_measurement=data, measurement_run={
+        "status":"completed", "artifact":data, "sha256":hashlib.sha256(path.read_bytes()).hexdigest()})
+    assert snap["evidence_scope"]["superiority"]["quote"] == passage
+    assert "superiority_2" not in snap["evidence_scope"]
+    evidence = [{"artifact":data, "row":n} for n in (1,2)]
+    observed = [read_evidence(snap, data)["receipt"], read_evidence(snap, pdf, page=2)["receipt"]]
+    base = {"kind":"result", "basis":"measurement", "passage":{"selector":"superiority"}, "evidence":evidence,
+            "reason":"Latency is measured for both policies.", "measured_columns":["latency"]}
+    def assess(**changes):
+        return review._manuscript_claims(snap, [{**base, **changes}], observed, "")[0]
+    with pytest.raises(ValueError, match="two subjects"):
+        assess()
+    a = {"subject":"Policy A", "column":"latency", "condition":{"column":"arm","value":"A"}}
+    b = {"subject":"policy B", "column":"latency", "condition":{"column":"arm","value":"B"}}
+    assert assess(comparison=[a,b])["comparison"] == [a,b]
+    for wrong, error in (({"subject":"policy C"}, "Quote both"), ({"condition":a["condition"]}, "distinct"),
+                         ({"condition":{"column":"arm","value":"C"}}, "observed row")):
+        with pytest.raises(ValueError, match=error):
+            assess(comparison=[a,{**b, **wrong}])
+    with pytest.raises(ValueError, match="observed row"):
+        assess(comparison=[a,b], evidence=evidence[:1])
+    labelled = [{**side, "subject":side["condition"]["value"]} for side in (a,b)]
+    inferred = assess(comparison=[{"subject":side["subject"], "column":"latency"} for side in labelled])
+    assert inferred["comparison"] == labelled
+    wide = [{"subject":"Policy A", "column":"a_ms"}, {"subject":"policy B", "column":"b_ms"}]
+    assert assess(comparison=wide, measured_columns=["a_ms","b_ms"])["comparison"] == wide
+    with pytest.raises(ValueError, match="contrast expression"):
+        assess(comparison=[wide[0], {**wide[1], "column":"a_ms"}], measured_columns=["a_ms"])
 
 
 def test_result_and_explanation_require_separate_observed_support(tmp_path):
