@@ -10,10 +10,10 @@ This source build supports two DSH runtimes on Linux with pnpm. Use Node.js 22.1
 
 Python 3.10 or newer with venv and pip, TeX Live with pdflatex and BibTeX, and a working Docker daemon are needed for the local experiment. The first run installs the bundled Python wheel and its dependencies into a private cache and builds the experiment image. Budget disk space and package-download time for that setup.
 
-Install version 0.2.0-alpha.28 into a dedicated profile with one command. The DSH Web Discover view requires the full upstream CLI with its Web profile.
+Install version 0.2.0-alpha.29 into a dedicated profile with one command. The DSH Web Discover view requires the full upstream CLI with its Web profile.
 
 ```sh
-dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.28/idea2paper-dsh-0.2.0-alpha.28.tgz
+dsh plugin --profile idea2paper add https://github.com/kaust-ark/ARK/releases/download/dsh-bundle-0.2.0-alpha.29/idea2paper-dsh-0.2.0-alpha.29.tgz
 ```
 
 To install a local build, run these commands from the source checkout.
