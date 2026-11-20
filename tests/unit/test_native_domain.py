@@ -646,6 +646,24 @@ def test_original_pdf_keeps_adjacent_columns_out_of_quoted_passages(monkeypatch)
     assert "Figure axes" in page
 
 
+def test_survey_doi_opens_the_identified_paper_and_checks_its_printed_title(monkeypatch):
+    evidence = domain.literature_evidence
+    title = "Comparing Rank Queries"
+    metadata = {"title":title, "externalIds":{"DOI":"10.1234/query","ACL":"2024.acl-short.11"}}
+    monkeypatch.setattr(evidence.citation, "_http_get_json", lambda *a: metadata)
+    pdf = ["Comparing Rank\nQueries", "The authors measured paired rank errors. " * 10]
+    monkeypatch.setattr(evidence, "_paper_excerpt", lambda url: pdf)
+    result = evidence.repository_passage("10.1234/query", title)
+    assert result["url"] == "https://aclanthology.org/2024.acl-short.11.pdf"
+    assert "[Page 2]" in result["passage"]
+    pdf[0] = "Another paper"
+    assert evidence.repository_passage("10.1234/query", title) is None
+    pdf[0] = title
+    assert evidence.repository_passage("10.1234/different", title) is None
+    assert evidence.repository_passage("10.48550/arxiv.2204.01469", title)["url"] == "https://arxiv.org/pdf/2204.01469"
+    assert evidence.repository_passage("10.18653/v1/n19-1001", title)["url"] == "https://aclanthology.org/N19-1001.pdf"
+
+
 def test_primary_source_resolution_requires_correct_identity(monkeypatch):
     evidence = domain.literature_evidence
     entry = {

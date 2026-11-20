@@ -4,9 +4,10 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import json
 import re
+import unicodedata
 import urllib.error
 from html import unescape
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from ark import citation
@@ -235,6 +236,43 @@ def _paper_excerpt(url):
             return pages
     except (OSError, ValueError, RuntimeError, urllib.error.URLError):
         return None
+
+
+def repository_passage(doi, title):
+    """Read the primary PDF for a verified DOI and confirm its title on the rendered paper."""
+    doi = citation._doi_id(doi)
+    if not doi or not title:
+        return None
+    urls = []
+    arxiv_id = r"(?:[a-z.-]+/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?"
+    acl_id = r"(?:[A-Z]\d{2}-\d{3,5}|\d{4}\.[a-z0-9-]+\.\d+)"
+    if doi.startswith("10.48550/arxiv.") and re.fullmatch(arxiv_id, doi.removeprefix("10.48550/arxiv."), re.I):
+        urls.append("https://arxiv.org/pdf/" + doi.removeprefix("10.48550/arxiv."))
+    elif doi.startswith("10.18653/v1/") and re.fullmatch(acl_id, doi.removeprefix("10.18653/v1/"), re.I):
+        ident = doi.removeprefix("10.18653/v1/")
+        urls.append("https://aclanthology.org/" + (ident.capitalize() if ident[0].isalpha() else ident) + ".pdf")
+    else:
+        record = citation._http_get_json("https://api.semanticscholar.org/graph/v1/paper/DOI:" +
+                                         quote(doi, safe="/") + "?fields=externalIds,title,openAccessPdf", 4) or {}
+        ids = record.get("externalIds") or {}
+        if citation._doi_id(ids.get("DOI")) != doi or citation.title_similarity(title, record.get("title") or "") < .92:
+            return None
+        if re.fullmatch(acl_id, str(ids.get("ACL", ""))):
+            urls.append("https://aclanthology.org/" + ids["ACL"] + ".pdf")
+        if re.fullmatch(arxiv_id, str(ids.get("ArXiv", "")), re.I):
+            urls.append("https://arxiv.org/pdf/" + ids["ArXiv"])
+        if url := _public_pdf((record.get("openAccessPdf") or {}).get("url")):
+            urls.append(url)
+    def printed(text):
+        return "".join(c for c in unicodedata.normalize("NFKC", text).casefold() if c.isalnum())
+    expected = printed(title)
+    for url in dict.fromkeys(urls):
+        pages = _paper_excerpt(url)
+        if pages and len(expected) >= 6 and expected in printed(" ".join(pages[:2])):
+            passage = "\n\n".join(f"[Page {i}]\n{page}" for i, page in enumerate(pages, 1))[:80000]
+            if len(passage) > 350:
+                return {"title":title, "url":url, "source":"Text extracted from the original paper", "passage":passage}
+    return None
 
 
 def crossref_record(fields):

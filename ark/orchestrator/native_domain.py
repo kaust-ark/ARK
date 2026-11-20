@@ -186,6 +186,7 @@ def _manuscript_first_pass(project, content, *, check_headings=False, page_targe
 
 class NativeProject(CompilerMixin):
     def __init__(self, root, *, host=None):
+        self._repository_passages = {}
         self.root = Path(root).resolve()
         self.state_dir = self.root / "auto_research/state"
         self.latex_dir = self.root / "paper"
@@ -1215,6 +1216,11 @@ class NativeProject(CompilerMixin):
                 }
         if not record:
             return None
+        if doi and "abstract" in record["source"].lower():
+            key = (doi, title)
+            if key not in self._repository_passages:
+                self._repository_passages[key] = literature_evidence.repository_passage(doi, title)
+            record = self._repository_passages[key] or record
         record = {**record, "bibtex_key": entry["key"]}
         name = hashlib.sha256(record["url"].encode()).hexdigest()[:24] + ".txt"
         path = self.root / "sources" / name
@@ -1235,7 +1241,7 @@ class NativeProject(CompilerMixin):
             saved.get("sha256") == digest
             and saved.get("verified")
             and saved.get("cited") == sorted(cited)
-            and saved.get("version") == 2
+            and saved.get("version") == 3
             and all(
                 (self.root / r["source"]).is_file()
                 and _sha(self.root / r["source"]) == r.get("source_sha256")
@@ -1306,7 +1312,7 @@ class NativeProject(CompilerMixin):
             if row.get("source"):
                 row["source_sha256"] = _sha(self.root / row["source"])
         result = {
-            "version": 2,
+            "version": 3,
             "sha256": _sha(bib),
             "cited": sorted(cited),
             "checked": checked,
