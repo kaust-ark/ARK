@@ -75,7 +75,10 @@ function projectSummary(status) {
   const plain = value => String(value ?? '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').trim()
   const lines = ['Idea2Paper · ' + plain(status.state) + (status.pause_reason ? ' (' + plain(status.pause_reason) + ')' : '')]
   const experiment = status.experiment
-  if (experiment?.job_id) lines.push('Slurm ' + plain(experiment.job_id) + ' · ' + plain(experiment.status))
+  if (experiment?.status) {
+    const source = experiment.backend === 'slurm' && experiment.job_id ? 'Slurm ' + plain(experiment.job_id) : 'Experiment'
+    lines.push(source + ' · ' + plain(experiment.status))
+  }
   if (status.concept?.semantic_pass === true) lines.push('Method illustration · verified')
   if (status.concept?.semantic_pass === false) lines.push('Method illustration · needs revision')
   const build = status.compile, target = status.required?.body_pages
