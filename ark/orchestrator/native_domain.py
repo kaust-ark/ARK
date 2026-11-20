@@ -128,7 +128,13 @@ def _local_tex_inputs(staging):
     return inputs
 
 
-def _manuscript_first_pass(project, content, *, check_headings=False, page_target=None, expected_style=None):
+def _appendix_pages(doc):
+    return sorted({dest["page"] + 1 for name, dest in doc.resolve_names().items()
+                   if name.startswith("appendix.") and 0 <= dest.get("page", -1) < len(doc)})
+
+
+def _manuscript_first_pass(project, content, *, check_headings=False, page_target=None, expected_style=None,
+                           inspect_appendix=False):
     with tempfile.TemporaryDirectory(prefix="idea2paper-edit-") as tmp:
         staging = Path(tmp)
         env = _stage_tex(project.latex_dir, staging)
@@ -157,6 +163,7 @@ def _manuscript_first_pass(project, content, *, check_headings=False, page_targe
 
             with fitz.open(pdf) as doc:
                 boundary = body_page_boundary(doc)
+                appendix = _appendix_pages(doc) if inspect_appendix else []
             if boundary is not None:
                 end_page, body_bottoms = boundary
                 count = end_page + int(any(body_bottoms))
@@ -170,7 +177,10 @@ def _manuscript_first_pass(project, content, *, check_headings=False, page_targe
                                            "Compile the revised paper to check final pagination.")
                 if count == page_target and "next" not in preview:
                     preview["next"] = ("Run compile_paper now to verify final body coverage, references and figures.")
-                return {"first_pass_preview": preview}
+                result = {"first_pass_preview": preview}
+                if inspect_appendix:
+                    result["_appendix_pages"] = appendix
+                return result
         return {}
 
 
@@ -1480,11 +1490,47 @@ class NativeProject(CompilerMixin):
         if updated != tex:
             _atomic_write_text(source, updated)
 
+    def _upgrade_measured_headers(self, tables):
+        """Migrate only a byte-for-byte reconstruction of a recorded worker projection."""
+        measurement = self.state.get("experiment") or {}
+        data = None
+        for name, row in tables.items():
+            columns = row.get("columns") or []
+            if (row.get("input_sha256") != measurement.get("sha256") or not row.get("input_sha256")
+                    or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name)
+                    or row.get("path") != f"tables/{name}.tex"
+                    or not any("$" in str(c.get("label") or c.get("path", "")) for c in columns if isinstance(c, dict))):
+                continue
+            path = self.latex_dir / row["path"]
+            if path.resolve() != path or not path.is_file():
+                continue
+            try:
+                if data is None:
+                    data, _ = self._measurements()
+                pointer = row.get("rows_pointer", "")
+                old = measurement_table.render(data, pointer, columns, legacy_headers=True).encode()
+                if hashlib.sha256(old).hexdigest() != row.get("sha256"):
+                    continue
+                updated = measurement_table.render(data, pointer, columns).encode()
+            except (ValueError, OSError):
+                continue
+            if old == updated:
+                continue
+            current = path.read_bytes()
+            if current == old:
+                _atomic_write_text(path, updated.decode())
+            elif current != updated:
+                continue
+            # A process can stop after replacing the file and before saving the receipt.
+            row["sha256"] = hashlib.sha256(updated).hexdigest()
+            self.save()
+
     def _restore_measured_table(self):
         """Retain the requested worker table across prose rewrites."""
         tables = self.state.get("tables", {})
         if not tables or self.config.get("layout_mode") != "strict":
             return
+        self._upgrade_measured_headers(tables)
         source = self.latex_dir / "main.tex"
         tex = source.read_text()
         sources = dict(citation.active_tex_sources(self.latex_dir))
@@ -1644,9 +1690,31 @@ class NativeProject(CompilerMixin):
         try:
             strict = self.config.get("layout_mode") == "strict"
             style_check = {"expected_style": "icml2026.sty"} if strict_icml and "icml2026.sty" in receipt.get("inputs", ()) else {}
-            trial = _manuscript_first_pass(self, candidate, check_headings=strict,
-                                           page_target=(self.config.get("venue_pages") or 4) if strict else None, **style_check)
+            target = (self.config.get("venue_pages") or 4) if strict else None
+            prior_body = receipt.get("body_equivalent_pages", 0)
+            inspect = bool(strict_icml and prior_body)
+            trial_options = dict(check_headings=strict, page_target=target, inspect_appendix=inspect, **style_check)
+            trial = _manuscript_first_pass(self, candidate, **trial_options)
+            proposed_appendix = trial.pop("_appendix_pages", [])
             if "diagnostic" not in trial:
+                after = trial.get("first_pass_preview", {}).get("body_equivalent_pages")
+                if inspect and not proposed_appendix and after is not None and min(target, prior_body) - after >= 1:
+                    import fitz
+
+                    # Verify a loss against both the bound PDF and the current source. A proposal
+                    # repairing an already-short or already-broken draft must remain editable.
+                    with fitz.open(pdf) as published:
+                        published_appendix = _appendix_pages(published)
+                    if published_appendix:
+                        current = _manuscript_first_pass(self, previous, **trial_options)
+                        before = current.get("first_pass_preview", {}).get("body_equivalent_pages", 0)
+                        if current.get("_appendix_pages") and before - after >= 1:
+                            return {"ok": False, "checked": True, **trial, "diagnostic": (
+                                f"This edit reduces the body from {before:g} to {after:g} of {target:g} requested "
+                                f"pages and removes the appendix present on page {published_appendix[0]} of the "
+                                "last compiled PDF. The current source is intact. Use replace or insert_before "
+                                "on the intended section, or keep the appendix and its inputs in your rewrite."
+                            )}
                 return {"ok": True, "checked": True, **trial}
             if trial.get("missing_venue_style"):
                 return {"ok": False, "checked": True, **trial}

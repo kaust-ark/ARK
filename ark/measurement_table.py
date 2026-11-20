@@ -307,6 +307,13 @@ def _valid_header_math(formula):
     return terms() and not tokens
 
 
+def _legacy_header_tex(label):
+    """Reproduce the previous serializer only for identifying frozen table bytes."""
+    label = label.replace(r"\%", "%")
+    short_math = re.fullmatch(r"\$([A-Za-z0-9 _^*()+./=+-]{1,32})\$", label)
+    return r"\(" + short_math[1] + r"\)" if short_math else _tex(label)
+
+
 def _header_tex(label):
     label = label.replace(r"\%", "%")
     parts = re.split(r"(?<!\\)\$", label)
@@ -428,7 +435,7 @@ def transcription_issues(data, tables, sources, pdf):
     return issues
 
 
-def render(data, pointer, columns):
+def render(data, pointer, columns, *, legacy_headers=False):
     rows = _rows(data, pointer)
     if not isinstance(columns, list) or not 1 <= len(columns) <= 12:
         raise ValueError("Choose one to twelve columns.")
@@ -448,7 +455,7 @@ def render(data, pointer, columns):
             raise ValueError("Use a short column label and zero to eight decimal places.")
         if type(col.get("percent", False)) is not bool:
             raise ValueError("percent must be true or false.")
-        headers.append(_header_tex(label))
+        headers.append(_legacy_header_tex(label) if legacy_headers else _header_tex(label))
         specs.append((col["path"], digits, col.get("percent", False)))
     lines = [
         r"\begin{tabular}{@{}" + "r" * len(columns) + "@{}}",

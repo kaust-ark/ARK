@@ -574,6 +574,36 @@ Archive contents.
     assert source.read_text() == canonical
 
 
+@pytest.mark.skipif(not shutil.which("pdflatex") or not shutil.which("bibtex"), reason="requires TeX Live")
+def test_major_body_cut_cannot_silently_drop_rendered_appendix(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    main = project.latex_dir / "main.tex"
+    preamble = main.read_text().split(r"\section{Introduction}")[0]
+    short = preamble + r"\section{Results}The two estimates agree."
+    body = short + r"\clearpage\section{Methods}Paired estimates.\clearpage\section{Discussion}Sampling error."
+    (project.latex_dir / "references.bib").write_text(
+        "@book{record, author={A. Author}, title={Technical record}, year={2000}, publisher={Press}}\n")
+    refs = r"\nocite{*}\clearpage\section*{References}Source citation.\bibliographystyle{icml2026}\bibliography{references}"
+    appendix = r"\clearpage\appendix\section{Reproducibility}Seeds, sample sizes and exact estimators."
+    end = r"\end{document}"
+    main.write_text(body + refs + appendix + end)
+    assert project.compile_paper({})["ok"]
+    saved = main.read_bytes()
+    proposal = short + refs + end
+    checked = project.check_manuscript_edit({"content": proposal})
+    assert not checked["ok"] and "removes the appendix present on page" in checked["diagnostic"]
+    assert "insert_before" in checked["diagnostic"] and main.read_bytes() == saved
+    # An intentional rewrite can keep its appendix in a separate input, regardless of citation keys.
+    (project.latex_dir / "supplement.tex").write_text(appendix)
+    assert project.check_manuscript_edit({"content": short + refs + r"\input{supplement}" + end})["ok"]
+    assert project.check_manuscript_edit({"content": body + refs + end})["ok"]  # no major loss of body
+    project.config["venue_pages"] = 1
+    assert project.check_manuscript_edit({"content": proposal})["ok"]
+    project.config["venue_pages"] = 4
+    main.write_text(proposal)
+    assert project.check_manuscript_edit({"content": proposal.replace("agree", "agree on all trials")})["ok"]
+
+
 def test_manuscript_check_handles_missing_tool_and_unsafe_assets(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
     pdf = project.latex_dir / "main.pdf"
@@ -1040,6 +1070,44 @@ def test_measured_float_uses_actual_column_width(tmp_path, monkeypatch):
         assert [line for line in log.splitlines() if line.startswith("MEASURED-FLOAT-")] == [
             "MEASURED-FLOAT-" + expected
         ]
+
+
+def test_upgrade_measured_headers_requires_exact_old_projection_and_frozen_rows(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    data = [{"loss": 0.125}]
+    results = tmp_path / "results/metrics.json"
+    results.write_text(json.dumps(data))
+    digest = lambda b: hashlib.sha256(b).hexdigest()
+    project.state["experiment"] = {"status":"completed", "artifact":"results/metrics.json",
+                                   "sha256":digest(results.read_bytes())}
+    columns = [{"path":"loss", "label":r"$\Delta$ loss"}]
+    project.render_results_table({"name":"metrics", "columns":columns})
+    record = project.state["tables"]["metrics"]
+    table = project.latex_dir / record["path"]
+    (project.latex_dir / "main.tex").write_text(r"\input{tables/metrics}")
+    fresh = table.read_bytes()
+    old = fresh.replace(r"\(\Delta\)".encode(), r"\$\textbackslash{}Delta\$".encode())
+    assert old != fresh
+    record["sha256"] = digest(old)
+    table.write_bytes(old + b"% custom")
+    project._restore_measured_table()
+    assert table.read_bytes() == old + b"% custom" and record["sha256"] == digest(old)
+    table.write_bytes(old)
+    original_data = results.read_bytes()
+    results.write_text('[{"loss":0.25}]')
+    project._restore_measured_table()
+    assert table.read_bytes() == old and record["sha256"] == digest(old)
+    results.write_bytes(original_data)
+    columns[0]["digits"] = 4
+    project._restore_measured_table()
+    assert table.read_bytes() == old and record["sha256"] == digest(old)
+    del columns[0]["digits"]
+    for starting in (old, fresh):  # old projection, then interrupted migration before the receipt write
+        table.write_bytes(starting)
+        record["sha256"] = digest(old)
+        project._restore_measured_table()
+        assert table.read_bytes() == fresh and record["sha256"] == digest(fresh)
+        assert json.loads(project.path.read_text())["tables"]["metrics"] == record
 
 
 def test_strict_table_keeps_worker_conditions_across_render_and_resume(tmp_path, monkeypatch):
