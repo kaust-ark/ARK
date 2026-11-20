@@ -608,6 +608,21 @@ def test_replication_appendix_checks_a_different_workers_printed_recipe(tmp_path
                      "results/timing.json: " + receipt["sha256"])) == 1
     assert check("In a fresh directory, run python3 scripts/time_lookup.py. Compare standard output "
                  "with the archived result in results/timing.json.") == []
+    direct = ("Run scripts/time_lookup.py. Compare the newly generated JSON file against the archived "
+              "results/timing.json.")
+    assert check(direct) == []
+    assert check(direct.replace("results/timing.json", "results/wrong.json") + " See stdout.")
+    assert check("Run scripts/time_lookup.py. Compare the parsed JSON with the archived results "
+                 "in results/timing.json (the latency diff should equal 3).") == []
+    assert check("Run scripts/time_lookup.py. Use diff on the raw output and the archived results "
+                 "in results/timing.json.")
+    state.pop("measurement_summaries")
+    state.update(compile={"inputs": ["tables/timings.tex"]}, tables={"timings": {
+        "input_sha256": receipt["sha256"], "path": "tables/timings.tex", "rows_pointer": "",
+        "columns": [{"path": "size"}, {"path": "probes"}]}})
+    assert check(recipe.replace("probes=5", "probes equals 5")) == []
+    assert check(recipe.replace(" and probes=5", ""))
+    assert check(recipe.replace("probes=5", "probes equals 3"))
     assert check(recipe.replace("Run scripts/time_lookup.py", "Use python -m scripts.time_lookup")) == []
     assert len(check("scripts/time_lookup.py and results/timing.json. Seed. Replication. Comparison.")) == 2
     assert check(recipe.replace("time_lookup.py", "time_lookup.py.bak"))[0].startswith("Give the reader")
@@ -727,6 +742,71 @@ def test_primary_source_resolution_requires_correct_identity(monkeypatch):
     assert evidence.resolve(entry)["passage"] == "Comparisons help"
     record["authorships"] = [{"author": {"display_name": "Another Researcher"}}]
     assert evidence.resolve(entry) is None
+
+
+def test_springer_requires_publisher_doi_title_and_labeled_abstract(monkeypatch):
+    from unittest.mock import Mock
+    evidence = domain.literature_evidence
+    doi, title = "10.1023/a:123456", "A study of finite samples"
+    url = "https://link.springer.com/article/" + doi
+    first = "We describe a paired comparison of two estimators across small samples."
+    second = "Coverage is estimated independently for each sample."
+    html = (f'<head><meta name="citation_doi" content="{doi}"><meta name="citation_title" content="{title}">'
+            '<meta name="description" content="A summary from the web page"></head>'
+            '<section aria-labelledby="Abs1" data-title="Abstract"><h2 id="Abs1">Abstract</h2>'
+            f'<div id="Abs1-content"><p>{first}</p><p><i>Coverage</i>{second[8:]}</p></div>'
+            '</section><p>Other articles you may like.</p>')
+    def read(body=html, final=url, headers=None, status=200):
+        response = io.BytesIO(body.encode())
+        response.geturl = lambda: final
+        response.status = status
+        response.headers = {"Content-Type": "text/html", **(headers or {})}
+        monkeypatch.setattr(evidence, "build_opener", lambda *args: Mock(open=Mock(return_value=response)))
+        return evidence.springer_abstract(doi, title)
+    assert read()["passage"] == first + "\n\n" + second
+    assert read(html.replace(title, "A study of unrelated samples")) is None
+    assert read(html.replace(doi, "10.1023/other")) is None
+    assert read(html.replace("Abs1-content", "related-papers")) is None
+    assert read(html.replace('data-title="Abstract"', 'data-title="Introduction"')) is None
+    assert read(html.replace("</head>", '<meta name="robots" content="nosnippet"></head>')) is None
+    assert read(headers={"X-Robots-Tag": "noindex"}) is None
+    assert read(headers={"Content-Length": "2000001"}) is None
+    assert read(final="https://example.org/article/" + doi) is None
+    assert read(status=403) is None
+    redirect = evidence._SpringerRedirect()
+    for bad in ("https://example.org/article/" + doi, "http://link.springer.com/article/" + doi,
+                "https://link.springer.com.evil.example/article/" + doi, "https://idp.springer.com/other"):
+        assert redirect.redirect_request(None, None, 302, "", {}, bad) is None
+    monkeypatch.setattr(evidence, "build_opener", lambda *args: pytest.fail("unsupported DOI family fetched"))
+    assert evidence.springer_abstract("10.9999/unrelated", title) is None
+
+
+def test_citation_cache_recovers_missing_publisher_passage_once(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    project = open_project(tmp_path, monkeypatch)
+    doi, title = "10.1007/sample", "A study of estimators"
+    bib = project.latex_dir / "references.bib"
+    bib.write_text('@article{Study, title={' + title + '}, author={Doe, A}, year={2003}, doi={' + doi + '}}')
+    (project.latex_dir / "main.tex").write_text(r"\cite{Study}")
+    (project.state_dir / "native_citations.json").write_text(json.dumps({
+        "version": 3, "sha256": domain._sha(bib), "verified": True, "cited": ["Study"],
+        "checked": {"Study": {"status": "SINGLE_SOURCE"}}}))
+    monkeypatch.setattr(domain.citation, "verify_bib", lambda *a: [
+        SimpleNamespace(entry_key="Study", status="SINGLE_SOURCE", details="DOI matched")])
+    monkeypatch.setattr(domain.literature_evidence, "resolve", lambda *a: None)
+    monkeypatch.setattr(domain.citation, "_http_get_json", lambda *a: {"message": {"DOI": doi, "title": [title]}})
+    monkeypatch.setattr(domain.citation, "_search_arxiv", lambda *a, **kw: [])
+    monkeypatch.setattr(domain.literature_evidence, "repository_passage", lambda *a: None)
+    calls = []
+    def publisher(asked_doi, asked_title):
+        calls.append((asked_doi, asked_title))
+        return {"title": title, "source": "Published author abstract (Springer Link)", "passage": "An author passage.",
+                "url": "https://link.springer.com/article/" + doi}
+    monkeypatch.setattr(domain.literature_evidence, "springer_abstract", publisher)
+    checked = project.invoke("verify_citations", {})
+    row = checked["checked"]["Study"]
+    assert domain._sha(tmp_path / row["source"]) == row["source_sha256"]
+    assert project.invoke("verify_citations", {}) == checked and calls == [(doi, title)]
 
 
 def test_survey_leads_retain_report_locations_without_treating_redirects_or_code_as_papers():
@@ -1181,6 +1261,32 @@ def test_measured_headers_support_mixed_math_and_keep_other_tex_literal():
     assert r"\$\textbackslash{}Delta\$" in render([{"value": r"$\Delta$"}], "", [{"path": "value"}])
 
 
+def test_table_warns_about_ambiguous_negative_mse_and_accepts_signed_labels(tmp_path, monkeypatch):
+    project = open_project(tmp_path, monkeypatch)
+    results = tmp_path / "results/pairs.json"
+    # First two fields from a worker which called mean(estimate - truth) "mse".
+    data = [{"mse_plug_in": 0, "rmse_plug_in": 0, "elevation": -5},
+            {"mse_plug_in": -0.7904117781531151, "rmse_plug_in": 0.8238385297177571, "elevation": -8}]
+    results.write_text(json.dumps(data))
+    project.state["experiment"] = {"status": "completed", "artifact": "results/pairs.json",
+                                   "sha256": hashlib.sha256(results.read_bytes()).hexdigest()}
+    args = {"name": "errors", "columns": [{"path": "mse_plug_in", "label": "MSE (Plug-in)"},
+                                          {"path": "rmse_plug_in", "label": "RMSE (Plug-in)"}]}
+    table = project.invoke("render_results_table", args)
+    assert len(table["warnings"]) == 1
+    assert "mse_plug_in contains -0.7904117781531151" in table["warnings"][0]
+    assert "mean signed error" in table["warnings"][0]
+    assert (project.latex_dir / table["path"]).read_text() == table["preview"]
+    assert "warnings" not in project.state["tables"]["errors"]
+    for label in ["Mean signed error", "MSE improvement", "MSE (change)", r"$\Delta$MSE", "MSE (dB)"]:
+        args["columns"][0]["label"] = label
+        assert "warnings" not in project.invoke("render_results_table", args)
+    args["columns"] = [{"path": "elevation", "label": "MSE (gauge)"}]
+    assert "warnings" not in project.invoke("render_results_table", args)
+    args["columns"] = [{"path": "elevation", "label": "Mean squared error"}]
+    assert project.invoke("render_results_table", args)["warnings"]
+
+
 @pytest.mark.skipif(not shutil.which("pdflatex"), reason="requires TeX Live")
 def test_measured_float_uses_actual_column_width(tmp_path, monkeypatch):
     project = open_project(tmp_path, monkeypatch)
@@ -1566,6 +1672,7 @@ def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_pa
     assert [(g["label"], g["description"], g["evidence"]) for g in panel["groups"]] == [
         ("Baseline", approved["baseline"], approved["baseline"]),
         ("Comparison", approved["comparison"], approved["comparison"]),
+        ("Shared measurement", approved["metric"], approved["metric"]),
     ]
     assert all(approved[k] in panel["caption"] for k in ("baseline", "comparison", "metric"))
     assert result.get("caption") == (panel["caption"] if verdict == "passed" else None)
@@ -1593,6 +1700,103 @@ def test_native_comparisons_generate_and_inspect_one_grounded_study_panel(tmp_pa
     assert len(draws) == len(reviews) == 2
     artifact.write_text('{"summary": "tampered"}')
     assert "tampered" not in nano_banana.native_study_design(project.state, project.state_dir)
+
+
+def test_comparison_labels_keep_approved_spellings_and_fall_back_to_a_shared_control(tmp_path, monkeypatch):
+    from PIL import Image
+    from ark import nano_banana
+
+    approved = {"question": "How do the plug-in estimator and Miller-Madow correction compare?",
+                "baseline": "plug_in_estimator", "comparison": "miller_madow_estimator",
+                "metric": "Error across " + "four sets of observations at different sample sizes " * 3,
+                "controls": ["1,000 paired trials"]}
+    native = io.BytesIO()
+    Image.new("RGB", (50, 40), "white").save(native, "PNG")
+
+    def draw(prompt, path, key, model, *, aspect_ratio, receipt):
+        nano_banana._save_generated_image(native.getvalue(), path, receipt)
+        return True
+
+    monkeypatch.setattr(nano_banana, "generate_figure", draw)
+    figure = tmp_path / "method.png"
+    design = nano_banana.native_study_design({"plan": approved}, tmp_path)
+    entry = nano_banana.create_study_panel(figure, design, "google", "fixture", "vision", "4:3",
+                                           approved_plan=approved)
+    panel = entry["panel_plan"]
+    assert [(g["description"], g["evidence"]) for g in panel["groups"]] == [
+        ("plug-in estimator", "plug_in_estimator"), ("Miller-Madow estimator", "miller_madow_estimator"),
+        ("1,000 paired trials", "1,000 paired trials")]
+    assert nano_banana.reproduced_panel_labels(figure, entry, "4:3")[-2:] == ["Shared control", "1,000 paired trials"]
+    assert "plug-in estimator with Miller-Madow estimator" in panel["caption"] and "_" not in panel["caption"]
+
+
+@pytest.mark.parametrize("change", ["layout", "controls", "baseline", "question", "brief", "damaged_raw"])
+def test_recompose_uses_verified_art_only_for_the_same_subject_arms_and_brief(tmp_path, monkeypatch, change):
+    from PIL import Image
+    from ark import nano_banana
+
+    project = open_project(tmp_path, monkeypatch)
+    approved = project.invoke("plan_experiment", plan())
+    args = {"name": "method", "purpose": "compare_conditions", "caption": "Paired comparison",
+            "description": "Show the search inputs."}
+    draws, reviews = [], []
+
+    def draw(prompt, path, key, model, *, aspect_ratio, receipt):
+        draws.append(prompt)
+        buf = io.BytesIO()
+        Image.new("RGB", (30, 30), "white").save(buf, "PNG")
+        nano_banana._save_generated_image(buf.getvalue(), path, receipt, provider="google", image_model=model,
+                                          model_version="fixture-model", payload_source="google_inline_data",
+                                          response_id=f"image-{len(draws)}")
+        return True
+
+    def review(path, design, *unused):
+        reviews.append((domain._sha(path), hashlib.sha256(design.encode()).hexdigest()))
+        checks = {name: {"status": "consistent", "observed": "Matches the approved protocol."}
+                  for name in nano_banana._SEMANTIC_CHECKS}
+        checks["result_marks"]["depiction"] = "method"
+        checks["printed_labels"]["transcription"] = ["Baseline", "Comparison"]
+        return {"status": "passed", "checks": checks, "response_id": f"review-{len(reviews)}"}
+
+    monkeypatch.setattr(domain.deep_research, "get_gemini_api_key", lambda: "fixture")
+    monkeypatch.setattr(nano_banana, "generate_figure", draw)
+    monkeypatch.setattr(nano_banana, "review_concept_image", review)
+    planner = nano_banana.comparison_panel_plan
+    with monkeypatch.context() as legacy:
+        def two_cards(approved, design):
+            panel = planner(approved, design)
+            return {**panel, "groups": panel["groups"][:2]}
+        legacy.setattr(nano_banana, "comparison_panel_plan", two_cards)
+        first = project.invoke("generate_concept_figure", args)
+    fig = tmp_path / first["path"]
+    def entry():
+        return domain.figure_manifest.load_manifest(fig.parent)["figures"][fig.name]
+    old = entry()
+    if change in {"controls", "damaged_raw"}:
+        project.invoke("plan_experiment", {**approved, "controls": ["Use a common sorted array"]})
+    elif change in {"baseline", "question"}:
+        project.invoke("plan_experiment", {**approved, change: "Modified " + approved[change]})
+    elif change == "brief":
+        args["description"] = "Draw the physical probes instead."
+    if change == "damaged_raw":
+        (fig.parent / old["illustration_file"]).write_bytes(b"changed")
+        with pytest.raises(RuntimeError, match="No source-grounded study panel"):
+            project.invoke("generate_concept_figure", args)
+        assert len(draws) == len(reviews) == 1
+        return
+    revised = project.invoke("generate_concept_figure", args)
+    new = entry()
+    assert revised["semantic_pass"] and len(reviews) == 2
+    assert revised["sha256"] == new["semantic_review"]["artifact_sha256"] == reviews[-1][0] != first["sha256"]
+    assert new["semantic_review"]["response_id"] != old["semantic_review"]["response_id"]
+    assert new["semantic_review"]["design_sha256"] == hashlib.sha256(nano_banana.concept_design(
+        json.loads((fig.parent / "concept_figures.json").read_text())[0], project.state_dir).encode()).hexdigest()
+    if change in {"layout", "controls"}:
+        assert len(draws) == 1 and all(old[k] == new[k] for k in
+                                      ("response_id", "illustration_file", "payload_sha256", "model_version"))
+    else:
+        assert len(draws) == 2 and new["response_id"] != old["response_id"]
+    assert project.invoke("generate_concept_figure", args)["cached"] and len(reviews) == 2
 
 
 def test_unavailable_initial_panel_does_not_trigger_a_second_image(tmp_path, monkeypatch):

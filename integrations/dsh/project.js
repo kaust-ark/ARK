@@ -346,7 +346,7 @@ export const operations = {
     question: str,
     baseline: {type:'string', description:'The reference method, configuration or condition.'},
     comparison: {type:'string', description:'What changes in the comparison condition relative to the baseline.'},
-    metric: {type:'string', description:'What is measured and in what units.'},
+    metric: {type:'string', description:'Give the requested definition and units. For a prescribed formula, specify its zero or boundary convention and subtraction order where applicable. Name mean signed error (bias) and mean squared error (MSE) distinctly in the plan and result fields.'},
     controls: {type:'array', items:{type:'string'}, description:'Data, splits, settings or other conditions held fixed across the comparison.'},
     mechanism: {type:'object', additionalProperties:false, properties:{
       explanation:str, alternative:str,
@@ -360,10 +360,10 @@ export const operations = {
     script: {type:'string', description:'One project-relative Python filename, for example scripts/experiment.py.'},
     result_path: {type:'string', description:'One project-relative JSON output filename, for example results/measurements.json.'},
   }, ['question', 'baseline', 'comparison', 'metric', 'controls', 'script', 'result_path']],
-  run_experiment: ['Run or reconcile the registered experiment. The isolated script writes measured JSON to the registered relative results path or prints it to stdout.', {}],
+  run_experiment: ['Run or reconcile the registered experiment. Before submission, check each prescribed formula on a small input with a known answer derived independently from the brief. Include relevant zero and nonzero cases. Put that check before the full calculation in the worker, using a tolerance that distinguishes changes to the formula. Apply any defined zero convention directly and preserve the target on valid inputs. Add smoothing only when the definition calls for it. The isolated script writes measured JSON to the registered relative results path or prints it to stdout.', {}],
   render_results_table: ['Inspect the sealed worker rows. With summarize=<numeric field> get mean, minimum, maximum and sample standard deviation across the rows. Add reference=<second field> for paired differences (value minus reference) and percentage change in means. To check each condition separately, also supply condition_columns naming the fields that identify each row. Each row gives the signed difference and (abs(reference) - abs(value)) / abs(reference), null at a zero reference. Interpret this fraction as error reduction only for errors measured from zero. With columns, typeset the rows and include the returned file in a LaTeX table. With no arguments discover fields.', {
     name: str, rows_pointer: str, summarize: str, reference: str, condition_columns: strings, columns: { type: 'array', items: { type: 'object', properties: {
-      path: str, label: str, digits: num, percent: bool }, required: ['path'] } },
+      path: str, label: {type:'string', description:'Name the statistic computed by the worker. Spell out signed errors and give the subtraction order for contrasts.'}, digits: num, percent: bool }, required: ['path'] } },
   }],
   render_plot: ['Plot sealed worker measurements. Call with no arguments to list columns. For a line, point or grouped bar plot provide filename, kind, x and series, with optional rows_pointer and y_label. Each path names a measured field. For a custom plot provide script and filename; read /study/results.json and save /output/<filename>.', {
     filename: str, rows_pointer: str, kind: {type:'string', enum:['line','points','bar']},
@@ -406,6 +406,16 @@ export function reviewRepairTopic(message) {
   for (const [topic, openings] of Object.entries(repairInstructions)) {
     if (openings.some(opening => instruction.startsWith(opening))) return topic
   }
+}
+
+export function nextOwnerFollowup(status, remindedAt) {
+  const evidence = JSON.stringify([status.experiment?.sha256, status.compiled_pdf_sha256, status.review?.revision])
+  if (remindedAt.has(evidence) || remindedAt.size >= 3) return null
+  remindedAt.add(evidence)
+  const blockers = (status.manuscript_issues || []).slice(0, 4)
+  return ['The project is unfinished. Use your tools to address the current requirements, then obtain independent review and call deliver on the approved revision.',
+    ...blockers.map(issue => String(issue).slice(0, 1000)),
+    'If no manuscript issue is listed, read project_status for the pending evidence or reviewer decision.'].join('\n')
 }
 
 // A rewritten verdict or a repeated read of the same window supplies no new observation.

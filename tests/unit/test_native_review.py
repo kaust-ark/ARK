@@ -298,6 +298,71 @@ def test_verified_empirical_paper_requires_claim_review_without_a_conclusion_hea
         validate_review(snap, verdict, observed=[data["receipt"]])
 
 
+def test_reviewer_distinguishes_replicates_dispersion_and_uncertainty_of_a_mean(tmp_path):
+    from ark import review
+
+    mean = "The average time saved was 3 ms."
+    pair = dict(domain="experiment", clean=mean, table="trial,ms\n1,3", question="Did processing time change?",
+                defect="A mean and its standard error do not give individual outcomes or arm variances.")
+    project(tmp_path, pair, "clean")
+    pdf, data = "paper/main.pdf", "results/times.json"
+    path = tmp_path / data
+    path.write_text('[{"mean_saved":3,"se":0.5,"minimum_saved":2}]')
+    run = {"status": "completed", "artifact": data, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    row = {"artifact": data, "row": 1}
+
+    def report(*sentences):
+        with fitz.open() as doc:
+            page = doc.new_page()
+            for i, line in enumerate([mean, *sentences]):
+                page.insert_text((50, 50 + 25 * i), line)
+            doc.save(tmp_path / pdf)
+        snap = build_snapshot(tmp_path, expected_measurement=data, measurement_run=run)
+        verdict, _ = record(snap, pair, "clean", "")
+        verdict["checks"]["experiment"]["evidence"] = [row]
+        claims = [{"kind":"result", "basis":"measurement", "passage":{"artifact":pdf, "page":1, "quote":mean},
+                   "evidence":[row], "reason":"The mean paired saving is 3 ms."}]
+        verdict["checks"]["manuscript"]["claims"] = claims
+        observed = [read_evidence(snap, pdf, page=1)["receipt"], read_evidence(snap, data)["receipt"]]
+        return snap, verdict, claims, observed
+
+    snap, verdict, claims, observed = report("Pairing eliminates sampling uncertainty.",
+        "The change improves every trial.", "There was no increase in variability.")
+    levels = ("sampling_uncertainty", "individual_outcomes", "outcome_variation")
+    assert all(snap["evidence_scope"][level]["page"] == 1 for level in levels)
+    with pytest.raises(ValueError, match="Assess each located comparison"):
+        validate_review(snap, verdict, observed=observed)
+    for i, level in enumerate(levels):
+        claims.append({"kind":"explanation", "basis":"unsupported", "passage":{"selector":level},
+                       "evidence":[row], "reason":"The quoted average is 3 ms with a 0.5 ms standard error.",
+                       "finding":{"id":f"R{i+1}", "fix":"Narrow to the observed average or measure the stated quantity."}})
+    verdict["verdict"] = "revise"
+    assert len(validate_review(snap, verdict, observed=observed)["issues"]) == 3
+
+    snap, verdict, claims, observed = report("Using paired draws, we eliminate sampling variance from the comparison.")
+    assert "sampling_uncertainty" in snap["evidence_scope"]
+    snap, verdict, claims, observed = report("Pairing does not eliminate sampling uncertainty.",
+        "The standard error of this average was 0.5 ms.")
+    assert not any(level in snap["evidence_scope"] for level in levels)
+    assert validate_review(snap, verdict, observed=observed)["deliverable"]
+
+    snap, verdict, claims, observed = report("The change may improve every trial.")
+    claims.append({"kind":"explanation", "basis":"qualified", "passage":{"selector":"individual_outcomes"},
+                   "qualification":"may", "reason":"The authors explicitly present individual benefits as a possibility."})
+    assert validate_review(snap, verdict, observed=observed)["deliverable"]
+
+    snap, verdict, claims, observed = report("The change improves every trial.")
+    direct = dict(claims[0], passage={"selector":"individual_outcomes"}, measured_columns=["mean_saved"],
+                  quantity="mean time saved", unit="ms", evidence_level="average")
+    claims.append(direct)
+    with pytest.raises(ValueError, match="observation level"):
+        validate_review(snap, verdict, observed=observed)
+    direct.update(measured_columns=["minimum_saved"], quantity="minimum time saved",
+                  evidence_level="individual_outcomes", reason="The minimum paired saving is positive.")
+    signed = validate_review(snap, verdict, observed=observed)
+    assert signed["deliverable"] and signed["checks"]["manuscript"]["claims"][-1]["unit"] == "ms"
+
+
 def test_conclusion_reviewer_checks_the_whole_observed_paragraph_against_results(tmp_path):
     pair = {"domain": "experiment", "clean": "Table 1 reports loss in treated and control plots.",
             "table": "trial,treated_loss,control_loss\n1,2.1,3.5\n2,2.2,3.1\n",

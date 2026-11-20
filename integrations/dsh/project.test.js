@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { projectFile, projectEditor, readProjectFile, reproductionComparison, reviewForAuthor, reviewRepairTopic, reviewSubmission } from './project.js'
+import { nextOwnerFollowup, projectFile, projectEditor, readProjectFile, reproductionComparison, reviewForAuthor, reviewRepairTopic, reviewSubmission } from './project.js'
 
 const bundle = dirname(fileURLToPath(import.meta.url))
 
@@ -808,4 +808,15 @@ test('review amendments preserve unchanged checks and cannot cross revisions or 
                      {amend:{checks:{unknown:check}}}, JSON.parse('{"amend":{"__proto__":{}}}')]) {
     assert.throws(() => reviewSubmission(bad, previous, 'snapshot'))
   }
+})
+
+
+test('unfinished owner receives the concrete blocker again only after new evidence and within a finite limit', () => {
+  const sent = new Set()
+  const status = {compiled_pdf_sha256:'p1', manuscript_issues:['Check the archived rows']}
+  assert.match(nextOwnerFollowup(status, sent), /Check the archived rows/)
+  assert.equal(nextOwnerFollowup({...status, manuscript_issues:['worded differently']}, sent), null)
+  assert.ok(nextOwnerFollowup({...status, compiled_pdf_sha256:'p2'}, sent))
+  assert.ok(nextOwnerFollowup({...status, compiled_pdf_sha256:'p3'}, sent))
+  assert.equal(nextOwnerFollowup({...status, compiled_pdf_sha256:'p4'}, sent), null)
 })

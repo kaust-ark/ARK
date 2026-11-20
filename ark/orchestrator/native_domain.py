@@ -188,10 +188,15 @@ def _replication_appendix(pdf, heading, measurement, output_path, state):
     for sentence in sentences:
         if not re.search(rf"\b{compare}\b", sentence, re.I):
             continue
-        if (re.search(r"\b(?:sha-?256|checksum|digest|bytes?|diff|cmp)\b", sentence, re.I)
-                and not re.search(r"canonical|normali[sz]|(?:jq|json\.tool)\b", sentence, re.I)):
+        bytewise = re.search(r"\b(?:sha-?256|checksum|digest|bytes?)\b", sentence, re.I)
+        # A printed numeric field can end in "diff", for example "mean mae diff
+        # should equal ...". It is not the diff shell command in that context.
+        raw_diff = re.search(r"\b(?:diff|cmp)\b(?!\s*(?:[=:]|(?:should|must|equals?|is|was|of)\b))", sentence, re.I)
+        if ((bytewise or raw_diff) and not re.search(r"canonical|normali[sz]|(?:jq|json\.tool)\b", sentence, re.I)):
             continue
-        if (re.search(rf"\b{reference}\s+(?:copy|file|values?|results?|measurements?|output|rows?|JSON)\b", sentence, re.I)
+        if (re.search(rf"\b{reference}\s+{literal(output)}{file_end}", sentence, re.I)
+                and re.search(r"\b(?:newly generated|fresh|reproduced|recomputed|parsed)\s+JSON\b", sentence, re.I)
+                or re.search(rf"\b{reference}\s+(?:copy|file|values?|results?|measurements?|output|rows?|JSON)\b(?![/_])", sentence, re.I)
                 or any(re.search(rf"\b{re.escape(target)}\b", sentence.casefold()) for target in benchmarks)
                 or (re.search(r"\b(?:diff|cmp)\s+(?:-\w+\s+)*\S+\s+\S+", sentence)
                     and re.search(literal(output) + file_end, sentence))):
@@ -200,6 +205,11 @@ def _replication_appendix(pdf, heading, measurement, output_path, state):
     # A reader can also verify a reported value directly. Bind named values in
     # the same statement to one actual output row, including any named condition.
     outcomes = set()
+    table_fields = {(table.get("rows_pointer", ""), col["path"])
+                    for table in (state.get("tables") or {}).values()
+                    if table.get("input_sha256") == checksum and table.get("path") in inputs
+                    for col in table.get("columns", []) if col.get("path")
+                    and col["path"].split(".")[-1].lower() not in measurement_table.ROW_IDENTIFIERS}
     summaries = state.get("measurement_summaries") or {}
     if summaries.get("input_sha256") == checksum:
         for recipe in summaries.get("recipes", []):
@@ -208,21 +218,25 @@ def _replication_appendix(pdf, heading, measurement, output_path, state):
         if plot.get("status") == "completed" and plot.get("input_sha256") == checksum:
             spec = plot.get("plot_spec") or {}
             outcomes.update((spec.get("rows_pointer", ""), item["path"]) for item in spec.get("series", []) if item.get("path"))
-    if not checked and outcomes and output_path.is_file() and output_path.resolve() == output_path and _sha(output_path) == checksum:
+    if not checked and (outcomes or table_fields) and output_path.is_file() and output_path.resolve() == output_path and _sha(output_path) == checksum:
         for pointer, rows in measurement_table.project_rows(_load(output_path)).items():
             metrics = {field for source, field in outcomes if source == pointer}
-            if not metrics:
+            rendered = {field for source, field in table_fields if source == pointer}
+            if not (metrics or rendered):
                 continue
             fields = {key for row in rows for key, v in row.items()
                       if type(v) in (int, float) and re.fullmatch(r"[\w-]+", key)}
             if not fields:
                 continue
             keys = "|".join(literal(k) for k in sorted(fields, key=len, reverse=True))
-            assertion = re.compile(rf"\b({keys})\s*(?:[=:]|\bis\b|\bof\b)\s*"
+            assertion = re.compile(rf"\b({keys})\s*(?:[=:]|\b(?:is|of|equals|(?:should|must)\s+equal)\b)\s*"
                                    r"([+−-]?\d+(?:\.\d+)?)(?!\w|\.\d)")
             for sentence in sentences:
                 pairs = [(key.replace(" ", "_"), value.replace("−", "-")) for key, value in assertion.findall(sentence)]
-                if any(k in metrics for k, _ in pairs) and any(
+                named = {key for key, _ in pairs}
+                # A single table field can be a design parameter. Require a row comparison
+                # when the identified outcome was not independently declared for analysis.
+                if (named & metrics or (len(named) >= 2 and named & rendered)) and any(
                     all(type(row.get(k)) in (int, float) and round(row[k], len(v.partition(".")[2])) == float(v)
                         for k, v in pairs) for row in rows
                 ):
@@ -1043,7 +1057,9 @@ class NativeProject(CompilerMixin):
         }
         self.state.setdefault("tables", {})[name] = record
         self.save()
-        return {**record, "include": r"\input{" + record["path"] + "}", "preview": tex[:4000]}
+        warnings = measurement_table.metric_label_warnings(data, pointer, columns)
+        return {**record, "include": r"\input{" + record["path"] + "}", "preview": tex[:4000],
+                **({"warnings": warnings} if warnings else {})}
 
     def render_plot(self, args):
         if not args:
@@ -1099,8 +1115,8 @@ class NativeProject(CompilerMixin):
                   and (not explicit_kind or representation == existing_kind))
         same_request = entry.get("native_description") == fingerprint
         old_design_sha = entry.get("native_design_sha256")
+        prior_request = hashlib.sha256(json.dumps([spec, old_design_sha], sort_keys=True).encode()).hexdigest()
         if not same_request and old_design_sha and old_design_sha != design_sha:
-            prior_request = hashlib.sha256(json.dumps([spec, old_design_sha], sort_keys=True).encode()).hexdigest()
             same_request = (prior_request == entry.get("native_description") and
                             nano_banana.legacy_native_design_digest(self.state, self.state_dir) == old_design_sha)
         if representation == "schematic":
@@ -1131,6 +1147,21 @@ class NativeProject(CompilerMixin):
                     "next": "Request a method illustration limited to the protocol, and draw results with render_plot."}
         if prior and prior.get("version") != nano_banana.SEMANTIC_REVIEW_VERSION:
             verified_image = False
+        reuse_art = None
+        if (verified_image and representation == existing_kind == "study_panel" and old_design_sha
+                and prior_request == entry.get("native_description")
+                and prior.get("artifact_sha256") == actual_sha and prior.get("status") == "passed"
+                and nano_banana.semantic_verdict(prior.get("checks")) == "passed"
+                and entry.get("payload_source") == "google_inline_data"
+                and all(entry.get(k) for k in ("image_model", "model_version", "response_id"))):
+            old_panel = entry.get("panel_plan") or {}
+            approved = self.state["plan"]
+            arms = [(g.get("label"), g.get("evidence")) for g in old_panel.get("groups", [])[:2]]
+            if (old_panel.get("subject") == approved["question"]
+                    and arms == [("Baseline", approved["baseline"]), ("Comparison", approved["comparison"])]
+                    and (not same_request or old_panel != nano_banana.comparison_panel_plan(approved, design))):
+                reuse_art = entry
+                same_request = False
         if verified_image and reviewed and reviewed != actual_sha and (same_request or legacy_request or unversioned):
             return {
                 **current,
@@ -1147,7 +1178,7 @@ class NativeProject(CompilerMixin):
             or not path.exists()
             or entry.get("artifact_sha256") != _sha(path)
         ):
-            if self.state.get("image_intent") == fingerprint:
+            if self.state.get("image_intent") == fingerprint and reuse_art is None:
                 raise RuntimeError(
                     "Image request outcome is ambiguous. Inspect the receipt before repeating it."
                 )
@@ -1158,7 +1189,7 @@ class NativeProject(CompilerMixin):
             text_model = self.config.get("paperbanana_text_model") or nano_banana.TEXT_MODELS["flash"]
             receipt = nano_banana.create_study_panel(
                 path, design, "google", key, text_model.removeprefix("google/").removeprefix("gemini/"), "16:9",
-                approved_plan=self.state["plan"], mechanism_plan=mechanism_plan,
+                approved_plan=self.state["plan"], mechanism_plan=mechanism_plan, reuse_comparison_art=reuse_art,
             )
             if not receipt:
                 raise RuntimeError("No source-grounded study panel was produced. Check the plan and image receipt.")
@@ -1353,13 +1384,16 @@ class NativeProject(CompilerMixin):
                     "title": matching.title,
                     "passage": matching.abstract,
                 }
-        if not record:
-            return None
-        if doi and "abstract" in record["source"].lower():
+        if doi and ((record and "abstract" in record["source"].lower())
+                    or (not record and doi.startswith(("10.1007/", "10.1023/")))):
             key = (doi, title)
             if key not in self._repository_passages:
                 self._repository_passages[key] = literature_evidence.repository_passage(doi, title)
             record = self._repository_passages[key] or record
+        if not record:
+            record = literature_evidence.springer_abstract(doi, title)
+        if not record:
+            return None
         record = {**record, "bibtex_key": entry["key"]}
         name = hashlib.sha256(record["url"].encode()).hexdigest()[:24] + ".txt"
         path = self.root / "sources" / name
@@ -1380,7 +1414,7 @@ class NativeProject(CompilerMixin):
             saved.get("sha256") == digest
             and saved.get("verified")
             and saved.get("cited") == sorted(cited)
-            and saved.get("version") == 3
+            and saved.get("version") == 4
             and all(
                 (self.root / r["source"]).is_file()
                 and _sha(self.root / r["source"]) == r.get("source_sha256")
@@ -1451,7 +1485,7 @@ class NativeProject(CompilerMixin):
             if row.get("source"):
                 row["source_sha256"] = _sha(self.root / row["source"])
         result = {
-            "version": 3,
+            "version": 4,
             "sha256": _sha(bib),
             "cited": sorted(cited),
             "checked": checked,

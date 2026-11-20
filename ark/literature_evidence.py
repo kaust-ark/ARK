@@ -7,7 +7,9 @@ import re
 import unicodedata
 import urllib.error
 from html import unescape
-from urllib.parse import quote, urlencode, urlsplit, urlunsplit
+from html.parser import HTMLParser
+from http.client import HTTPException
+from urllib.parse import quote, unquote, urlencode, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from ark import citation
@@ -251,6 +253,101 @@ class _RepositoryRedirect(HTTPRedirectHandler):
         if _public_pdf(newurl) is None:
             return None
         return super().redirect_request(req, fp, code, msg, headers, _public_pdf(newurl))
+
+
+class _SpringerRedirect(HTTPRedirectHandler):
+    max_redirections = 4
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parts = urlsplit(newurl)
+        # Springer Link may do a cookie check through its own identity provider.
+        article = parts.netloc == "link.springer.com" and parts.path.startswith("/article/")
+        login_check = parts.netloc == "idp.springer.com" and parts.path in ("/authorize", "/transit")
+        if parts.scheme != "https" or not (article or login_check):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+class _SpringerAbstract(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.head = False
+        self.metadata = {"citation_doi": [], "citation_title": [], "robots": []}
+        self.section = ""
+        self.content_depth = 0
+        self.paragraph = None
+        self.paragraphs = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "head":
+            self.head = True
+        elif tag == "meta" and self.head and attrs.get("name") in self.metadata:
+            self.metadata[attrs["name"]].append(attrs.get("content") or "")
+        elif tag == "section":
+            section_id = attrs.get("aria-labelledby") or ""
+            self.section = section_id if attrs.get("data-title") == "Abstract" and re.fullmatch(r"Abs\d+", section_id) else ""
+            self.content_depth = 0
+            self.paragraph = None
+        elif tag == "div" and self.section and (self.content_depth or attrs.get("id") == self.section + "-content"):
+            self.content_depth += 1
+        elif tag == "p" and self.content_depth:
+            self.paragraph = []
+        elif tag in ("script", "style") and self.paragraph is not None:
+            self.paragraph = None
+
+    def handle_data(self, data):
+        if self.paragraph is not None:
+            self.paragraph.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "head":
+            self.head = False
+        elif tag == "p" and self.paragraph is not None:
+            self.paragraphs.append(" ".join("".join(self.paragraph).split()))
+            self.paragraph = None
+        elif tag == "div" and self.content_depth:
+            self.content_depth -= 1
+        elif tag == "section":
+            self.section, self.content_depth, self.paragraph = "", 0, None
+
+
+def springer_abstract(doi, title):
+    """Read the publisher's article abstract only when its exact DOI and title agree."""
+    doi = citation._doi_id(doi)
+    if not re.fullmatch(r"10\.(?:1007|1023)/[a-z0-9][a-z0-9.():_-]*", doi) or not title:
+        return None
+    url = "https://link.springer.com/article/" + doi
+    request = Request(url, headers={"User-Agent": "Idea2Paper-librarian/1.0", "Accept": "text/html"})
+    limit = 2_000_000
+    try:
+        with build_opener(_SpringerRedirect()).open(request, timeout=8) as response:
+            final = urlsplit(response.geturl())
+            length = int(response.headers.get("Content-Length") or 0)
+            if (response.status != 200 or final.scheme != "https" or final.netloc != "link.springer.com"
+                    or unquote(final.path).lower() != "/article/" + doi
+                    or response.headers.get("Content-Type", "").split(";")[0].strip().lower() != "text/html"
+                    or not 0 <= length <= limit):
+                return None
+            robots = response.headers.get("X-Robots-Tag", "")
+            body = response.read(limit + 1)
+        if len(body) > limit or (length and len(body) != length):
+            return None
+        page = _SpringerAbstract()
+        page.feed(body.decode("utf-8"))
+        page.close()
+    except (OSError, ValueError, HTTPException):
+        return None
+    meta = page.metadata
+    titles = {t.strip() for t in meta["citation_title"]}
+    if (re.search(r"\b(?:noindex|nosnippet|none)\b", " ".join([robots, *meta["robots"]]), re.I)
+            or {citation._doi_id(v) for v in meta["citation_doi"]} != {doi} or len(titles) != 1):
+        return None
+    printed = titles.pop()
+    passage = "\n\n".join(p for p in page.paragraphs if p)
+    if citation._normalize_title(printed) == citation._normalize_title(title) and 80 <= len(passage) <= 24000:
+        return {"title": printed, "url": url, "source": "Published author abstract (Springer Link)", "passage": passage}
+    return None
 
 
 def _paper_excerpt(url):

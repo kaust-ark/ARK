@@ -731,6 +731,35 @@ def measured_bound_issues(data, tables, pdf):
     return list(dict.fromkeys(issues))
 
 
+def metric_label_warnings(data, pointer, columns):
+    """Flag a negative reading under a raw squared-error heading without guessing its definition."""
+    rows = _rows(data, pointer)
+    fields = {path.casefold() for path in _leaf_paths(rows[0])}
+    warnings = []
+    for column in columns:
+        path = column["path"]
+        label = (column.get("label") or path).strip()
+        heading = re.fullmatch(r"(MSE|mean squared error)(?:\s*\(([\w -]+)\))?", label, re.I)
+        if not heading or re.search(r"\b(change|delta|difference|gain|improvement|reduction|log|db)\b|\s-\s",
+                                    heading[2] or "", re.I):
+            continue
+        if heading[1].casefold() == "mse":
+            # This acronym also denotes unrelated quantities. Look for the companion
+            # root-mean-squared-error field for the same method before flagging it.
+            rmse = re.sub(r"(?<![a-z0-9])mse(?![a-z0-9])", "rmse", path.casefold())
+            if rmse == path.casefold() or rmse not in fields:
+                continue
+        for row in rows:
+            value = _value(row, path)
+            if type(value) in (int, float) and value < 0:
+                warnings.append(f"Column {path} contains {value}. The heading '{label}' reads as mean squared "
+                                "error, which is nonnegative. Check the worker formula. For mean signed error, "
+                                "label it as bias and state the subtraction order. For a change, transformed "
+                                "value or another quantity, spell it out in the heading.")
+                break
+    return warnings
+
+
 def render(data, pointer, columns, *, legacy_headers=False):
     rows = _rows(data, pointer)
     if not isinstance(columns, list) or not 1 <= len(columns) <= 12:

@@ -335,7 +335,20 @@ def _conclusion_clauses(conclusion):
 # Keep bounded locators for separate comparative claims across the rendered body.
 SUPERIORITY_SELECTORS = ("superiority", "superiority_2", "superiority_3")
 NUMERIC_SELECTORS = ("fractional_change", "ordered_change")
-COMPARISON_SELECTORS = ("contribution", "direction", *SUPERIORITY_SELECTORS, *NUMERIC_SELECTORS)
+# Locate assertions about a different statistical quantity from a condition mean.
+# These are review leads; valid trial-level data, sufficient summaries or a proof can support them.
+_UNIT_OF_ANALYSIS = {
+    "sampling_uncertainty": re.compile(r"\b(?:eliminat(?:e[sd]?|ing)|remov(?:e[sd]?|ing)|cancel(?:s|led|ed)?)\s+"
+        r"(?:(?:all|the|any)\s+)?(?:monte carlo |sampling |simulation ){1,2}(?:noise|error|uncertainty|variance)\b", re.I),
+    "individual_outcomes": re.compile(r"\b(?:improv(?:e[sd]?|ing)|benefit(?:s|ed)?|better)\s+"
+        r"(?:(?:in|for|on|across)\s+)?(?:each|every|all|individual)\s+(?:trials?|samples?(?!\s+sizes?\b)|"
+        r"replicates?|observations?|patients?|participants?|cases?|runs?)\b", re.I),
+    "outcome_variation": re.compile(r"\b(?:without (?:increas(?:ed|ing)|inflat(?:ed|ing))|"
+        r"not (?:offset|accompanied) by (?:increased|higher)|no increase in)\s+(?:the )?"
+        r"(?:variance|variability|dispersion|spread)\b|\b(?:variance|variability|dispersion|spread) "
+        r"(?:did not increase|(?:was|remained) unchanged)\b", re.I),
+}
+COMPARISON_SELECTORS = ("contribution", "direction", *SUPERIORITY_SELECTORS, *NUMERIC_SELECTORS, *_UNIT_OF_ANALYSIS)
 _FRACTIONAL_ASSERTION = re.compile(
     r"\b(?:remov(?:e[sd]?|ing)|reduc(?:e[sd]?|ing)|eliminat(?:e[sd]?|ing)|cuts?)\s+"
     r"(?:[^.;!?]{1,50}?\bby\s+)?(?P<relation>more than|less than|at least|at most|over|under)\s+"
@@ -405,10 +418,24 @@ def _explanatory_passages(snapshot, pdf):
                 if block[6] != 0:
                     continue
                 for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", block[4].strip()):
-                    if not 12 <= len(sentence) <= 1200 or not sentence.endswith((".", "!", "?")):
+                    if not 12 <= len(sentence) <= 1200:
                         continue
                     offset = text.find(sentence)
                     if offset < 0:
+                        continue
+                    assertion = _assertion_text(sentence)
+                    for selector, pattern in _UNIT_OF_ANALYSIS.items():
+                        if match := pattern.search(assertion):
+                            # An explicit limit on the inference is already scoped to the reported result.
+                            if re.search(r"\b(?:cannot|never|not|unable to)\s+$", assertion[:match.start()], re.I):
+                                continue
+                            # A column break can split the final word of an otherwise contiguous sentence.
+                            end = re.match(r"[^.!?]{0,220}[.!?](?=\s|$)", text[offset + len(sentence):])
+                            quote = sentence + end[0] if not sentence.endswith((".", "!", "?")) and end else sentence
+                            best.setdefault(selector, (0, {"artifact":pdf, "page":page + 1,
+                                                           "start":offset + 1, "quote":quote}))
+                            break
+                    if not sentence.endswith((".", "!", "?")):
                         continue
                     words = _normalized_quote(sentence)
                     for selector, assertion in _condition_assertions(sentence):
@@ -771,7 +798,20 @@ def claim_instructions(snapshot):
         'paragraph derives the claim, set bridge={"evidence":K}, the one-based position of that reference '
         'in this claim’s evidence array. Explain why the calculation establishes the claim in reason.',
     ))
-    if any(scope.get(selector) for selector in COMPARISON_SELECTORS):
+    if any(scope.get(selector) for selector in _UNIT_OF_ANALYSIS):
+        parts.append('For a sampling_uncertainty, individual_outcomes or outcome_variation passage, identify '
+                     'the quantity, unit and observation level in the cited evidence. A mean paired difference '
+                     'describes an average. Its standard error describes uncertainty in that average. Check '
+                     'claims about individual outcomes against paired replicates, counts, extrema or an equivalent '
+                     'derivation. Compare across-replicate spread with the corresponding dispersion statistic. '
+                     'Pairing alone does not establish zero sampling uncertainty. For basis=measurement or control '
+                     'give quantity, unit, evidence_level (the applicable selector name), and measured_columns '
+                     'from the observed worker evidence. Cite the frozen worker calculation for that quantity '
+                     'when the executed method is available. Explain how it establishes this specific claim. '
+                     'If only a mean or its standard error is available for a stronger claim, use unsupported '
+                     'with the observed row, its actual quantity and unit in reason, and a finding to narrow '
+                     'the wording. For an explicit limitation quote the limiting words with basis=qualified.')
+    if any(scope.get(selector) for selector in ("contribution", "direction", *SUPERIORITY_SELECTORS, *NUMERIC_SELECTORS)):
         parts.append("For a contribution ordering or a directional comparison, identify the quantities compared. "
                      "If you use control, give measured_columns listing the actual worker fields cited in your "
                      "observed rows or statistics. Explain how the measurements distinguish the stated relation. "
@@ -1240,7 +1280,7 @@ def draft_evidence_feedback(snapshot, proposal, observed, first_error, previous=
                 repairs.append(f"checks.{domain}: {exc}")
     if per_claim and isinstance(manuscript, dict) and isinstance(manuscript.get("claims"), list):
         located = []
-        for index, claim in enumerate(manuscript["claims"][:12], 1):
+        for index, claim in enumerate(manuscript["claims"][:16], 1):
             if not isinstance(claim, dict):
                 continue
             label = f"Manuscript claim {index}"
@@ -1505,7 +1545,7 @@ def _comparison_matches(passage, target, selector):
     if not target or not _quotes_conclusion([passage], target):
         return False
     # A conclusion can contain several comparisons. Each pair binds to its own sentence.
-    return selector not in (*SUPERIORITY_SELECTORS, *NUMERIC_SELECTORS) or _normalized_quote(passage["quote"]) == _normalized_quote(target["quote"])
+    return selector not in (*SUPERIORITY_SELECTORS, *NUMERIC_SELECTORS, *_UNIT_OF_ANALYSIS) or _normalized_quote(passage["quote"]) == _normalized_quote(target["quote"])
 
 
 def _comparison_bindings(snapshot, value, passage, evidence, columns):
@@ -1689,7 +1729,7 @@ def _check_condition_assertion(snapshot, selector, assertion, claim, evidence):
 
 
 def _manuscript_claims(snapshot, values, observed, blind, *, require_coverage=True):
-    if not isinstance(values, list) or not 1 <= len(values) <= 12:
+    if not isinstance(values, list) or not 1 <= len(values) <= 16:
         raise ValueError("Supply checks.manuscript.claims with the measured result and any separate explanation.")
     claims = []
     for value in values:
@@ -1717,7 +1757,7 @@ def _manuscript_claims(snapshot, values, observed, blind, *, require_coverage=Tr
             raise ValueError("For a control cite the measured comparison and the observed method that distinguishes the mechanism.")
         if basis in ("control", "measurement") and any(
                 _comparison_matches(passage, snapshot["evidence_scope"].get(key), key)
-                for key in ("contribution","direction",*SUPERIORITY_SELECTORS)):
+                for key in ("contribution","direction",*SUPERIORITY_SELECTORS,*_UNIT_OF_ANALYSIS)):
             columns = value.get("measured_columns")
             available = _cited_measurement_columns(snapshot, evidence)
             if (not isinstance(columns, list) or not 1 <= len(columns) <= 16
@@ -1726,6 +1766,18 @@ def _manuscript_claims(snapshot, values, observed, blind, *, require_coverage=Tr
                                  "and cite those fields in an observed worker row or statistic. If the study "
                                  "measured only a proxy, assess the unresolved claim.")
             claim["measured_columns"] = list(dict.fromkeys(columns))
+            for level in _UNIT_OF_ANALYSIS:
+                if _comparison_matches(passage, snapshot["evidence_scope"].get(level), level):
+                    if value.get("evidence_level") != level:
+                        raise ValueError(f"Assess the {level} passage against that observation level. Give evidence_level="
+                                         f"{level}, quantity and unit only if the cited worker fields establish it. "
+                                         "If the evidence measures an average or a different quantity, use unsupported with a finding.")
+                    method = (snapshot.get("measurement_method") or {}).get("artifact")
+                    if method and not any(ref["artifact"] == method and ref.get("quote") for ref in evidence):
+                        raise ValueError("Cite the observed calculation in the frozen worker that gives the selected "
+                                         "fields their observation level, or report the unsupported inference.")
+                    claim.update(evidence_level=level, quantity=_string(value.get("quantity"), "measured quantity"),
+                                 unit=_string(value.get("unit"), "measurement unit"))
             if any(_comparison_matches(passage, snapshot["evidence_scope"].get(key), key) for key in SUPERIORITY_SELECTORS):
                 claim.update(_comparison_bindings(snapshot, value, passage, evidence, columns))
         checks_observed_values = basis in ("measurement", "control") or (basis == "derivation" and re.search(
@@ -2711,7 +2763,7 @@ def delivered_record_matches(snapshot, record, revision, inputs_digest=None):
         return digest == inputs_digest
 
     original_scope = snapshot.get("evidence_scope", {})
-    for added_selectors in (NUMERIC_SELECTORS, SUPERIORITY_SELECTORS):
+    for added_selectors in (_UNIT_OF_ANALYSIS, NUMERIC_SELECTORS, SUPERIORITY_SELECTORS):
         if not any(key in original_scope for key in added_selectors):
             continue
         # Existing signatures describe the policy used when the review was signed.

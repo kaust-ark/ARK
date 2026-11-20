@@ -8,7 +8,7 @@ import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Command } from 'commander'
 import { acquireLock, readJson, runLegacyWorkflow, writeJson } from './workflow.js'
-import { acknowledgeLocal, pendingCommands, queueCommand, nextReviewRepair, reviewRepairTopic, reviewSubmission, reviewForAuthor, reproductionComparison, attachEvidence, evidenceTool, methodControlTool, inferenceTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
+import { acknowledgeLocal, pendingCommands, queueCommand, nextOwnerFollowup, nextReviewRepair, reviewRepairTopic, reviewSubmission, reviewForAuthor, reproductionComparison, attachEvidence, evidenceTool, methodControlTool, inferenceTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
 
 export const name = 'idea2paper'
 export const inject = ['cmdlineArgs', 'agentDefaultModel', 'agents', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'subagents', 'llm', 'attachments']
@@ -676,9 +676,8 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
         })().catch(error => { commandFailure = error; cancel() }).finally(() => { polling = false })
       }, 2000)
     }
-    // A normal model turn may stop before the delivery operation. Ask it to examine
-    // the unmet state once. Provider, cancellation and budget errors retain their own outcome.
-    let reminded = false
+    // Recover a premature normal stop while the owner is producing new evidence.
+    const remindedAt = new Set()
     for (;;) {
       await agent.whenIdle()
       await ctx.sessions.flush(agent.session)
@@ -714,9 +713,9 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
         display(latest.state || 'running', latest.note || 'Project state saved')
         break
       }
-      if (reminded) throw new Error('Owner stopped with unfinished project work. Check the saved state and resume the same project.')
-      reminded = true
-      agent.followup(userMessage('The current artifacts have not passed delivery. Read project_status, then resolve the reported evidence or delivery requirements using your tools.'))
+      const next = nextOwnerFollowup(latest, remindedAt)
+      if (!next) throw new Error('Owner stopped with unfinished project work. Check the saved state and resume the same project.')
+      agent.followup(userMessage(next))
     }
     await writeEvents
     if (projectionFailure) throw projectionFailure

@@ -748,8 +748,50 @@ def mechanism_panel_is_grounded(entry, spec, state_dir):
         return False
 
 
+def _protocol_label(value, question):
+    """Turn a condition identifier into words, preserving spellings used in the question."""
+    if (not re.search(r"[A-Za-z]{2}", value)
+            or not re.fullmatch(r"[A-Za-z0-9-]+(?:_[A-Za-z0-9-]+)+|[a-z]+(?:-[a-z]+)+", value)):
+        return value
+    label = value.replace("_", " ") if "_" in value else value.replace("-", " ")
+    for term in re.findall(r"\b[A-Za-z0-9]+(?:[-‐‑–][A-Za-z0-9]+)*\b", question):
+        plain = re.sub("[-‐‑–]", " ", term).lower()
+        if plain != term:
+            label = re.sub(r"(?<!\w)" + re.escape(plain) + r"(?!\w)", lambda _: term, label)
+    return label
+
+
+def comparison_panel_plan(approved_plan, design):
+    baseline, comparison = approved_plan["baseline"], approved_plan["comparison"]
+    if not baseline.strip() or not comparison.strip():
+        return None
+    question, metric = approved_plan["question"], approved_plan["metric"]
+    groups = [{"label": label, "description": _protocol_label(arm, question), "evidence": arm}
+              for label, arm in (("Baseline", baseline), ("Comparison", comparison))]
+    if groups[0]["description"].casefold() == groups[1]["description"].casefold():
+        for group in groups:
+            group["description"] = group["evidence"]
+    # Use one complete approved field that fits at print size, with its original evidence.
+    details = [("Shared measurement", metric)]
+    details.extend(("Shared control", control) for control in approved_plan.get("controls", []))
+    for label, source in details:
+        detail = _protocol_label(source, question)
+        if (detail.strip() and len(detail) <= 125 and source in design
+                and all(len(word) <= 24 for word in detail.split())):
+            groups.append({"label": label, "description": detail, "evidence": source})
+            break
+    baseline_label, comparison_label = (g["description"].rstrip(".") for g in groups[:2])
+    return {
+        "subject": question, "groups": groups,
+        "caption": (f"The study compares {baseline_label} with {comparison_label}. "
+                    f"The protocol evaluates {_protocol_label(metric, question).rstrip('.')}. "
+                    "The artwork illustrates the study subject."),
+    }
+
+
 def create_study_panel(path: Path, design: str, provider: str, key: str, model: str, aspect_ratio: str,
-                       *, approved_plan: dict | None = None, mechanism_plan: dict | None = None):
+                       *, approved_plan: dict | None = None, mechanism_plan: dict | None = None,
+                       reuse_comparison_art: dict | None = None):
     """Typeset the approved arms and generate only the subject illustration."""
     try:
         if mechanism_plan is not None:
@@ -759,17 +801,9 @@ def create_study_panel(path: Path, design: str, provider: str, key: str, model: 
             if not plan:
                 return None
         else:
-            baseline, comparison = approved_plan["baseline"], approved_plan["comparison"]
-            if not baseline.strip() or not comparison.strip():
+            plan = comparison_panel_plan(approved_plan, design)
+            if not plan:
                 return None
-            plan = {
-                "subject": approved_plan["question"],
-                "groups": [{"label": label, "description": arm, "evidence": arm}
-                           for label, arm in (("Baseline", baseline), ("Comparison", comparison))],
-                "caption": (f"The study compares {baseline.rstrip('.')} with {comparison.rstrip('.')}. "
-                            f"The protocol evaluates {approved_plan['metric'].rstrip('.')}. "
-                            "The artwork illustrates the study subject."),
-            }
         groups = plan["groups"]
         art_prompt = ("Create one clean, publication-quality scientific illustration of this single "
                       "study object, centered on white: " + plan["subject"] + ". No words, numerals, "
@@ -783,7 +817,16 @@ def create_study_panel(path: Path, design: str, provider: str, key: str, model: 
         identity = design if mechanism_plan is None else design + json.dumps(mechanism_plan, sort_keys=True)
         original = path.parent / ".concept_sources" / (path.stem + "-" + hashlib.sha256(identity.encode()).hexdigest()[:12] + ".image")
         receipt = {}
-        if provider == "google":
+        if reuse_comparison_art is not None:
+            if (mechanism_plan is not None or provider != "google"
+                    or not reproduced_panel_labels(path, reuse_comparison_art, aspect_ratio)):
+                return None
+            original = path.parent / reuse_comparison_art["illustration_file"]
+            if original.resolve().parent != path.parent.resolve() / ".concept_sources":
+                return None
+            receipt = {k: reuse_comparison_art[k] for k in
+                       ("provider", "image_model", "payload_source", "model_version", "response_id", "payload_sha256")}
+        elif provider == "google":
             if not generate_figure(art_prompt, original, key, flash, aspect_ratio="1:1", receipt=receipt):
                 return None
         else:
