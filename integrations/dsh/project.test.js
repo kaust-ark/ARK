@@ -12,6 +12,19 @@ import { projectFile, projectEditor, readProjectFile, reproductionComparison, re
 
 const bundle = dirname(fileURLToPath(import.meta.url))
 
+test('review repairs require progress in evidence or the validation problem', async () => {
+  const { nextReviewRepair } = await import('./project.js')
+  const row = {artifact:'results.csv', start:1}
+  const diagnostic = 'A measured quantity must identify its columns.'
+  const a = nextReviewRepair(undefined, 'a', diagnostic, [row])
+  const b = nextReviewRepair(a, 'b', diagnostic, [row, {...row}])
+  const c = nextReviewRepair(b, 'c', diagnostic, [row])
+  assert.throws(() => nextReviewRepair(c, 'd', diagnostic, [row]), /remains unsigned/)
+  assert.equal(nextReviewRepair(c, 'd', diagnostic, [row, {...row, start:2}]).repeats, 1)
+  assert.equal(nextReviewRepair(c, 'd', 'A different citation lacks support.', [row]).repeats, 1)
+  assert.throws(() => nextReviewRepair(a, 'a', diagnostic, [row]), /without further evidence/)
+})
+
 test('unsigned repair topics use the validator instruction and never quote its evidence', () => {
   const cases = [
     ['Supply checks.manuscript.claims with the measured result', 'manuscript'],

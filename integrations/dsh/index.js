@@ -8,7 +8,7 @@ import { parseCmdline } from '@deepseek-ai/dsh-cmdline'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Command } from 'commander'
 import { acquireLock, readJson, runLegacyWorkflow, writeJson } from './workflow.js'
-import { acknowledgeLocal, pendingCommands, queueCommand, reviewRepairTopic, reviewSubmission, reviewForAuthor, reproductionComparison, attachEvidence, evidenceTool, methodControlTool, inferenceTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
+import { acknowledgeLocal, pendingCommands, queueCommand, nextReviewRepair, reviewRepairTopic, reviewSubmission, reviewForAuthor, reproductionComparison, attachEvidence, evidenceTool, methodControlTool, inferenceTool, reproductionTool, openDomain, operations, projectEditor, registerTool } from './project.js'
 
 export const name = 'idea2paper'
 export const inject = ['cmdlineArgs', 'agentDefaultModel', 'agents', 'sessions', 'sessionPersistence', 'sessionQuery', 'tools', 'subagents', 'llm', 'attachments']
@@ -314,12 +314,10 @@ async function review(ctx, owner, domain, signal, draft = false) {
         if (verdict?.revision === packet.revision) previousDraft = verdict
       }
       // Steer this DSH step boundary so the independent reader keeps its evidence and identity.
-      if (lastRejected?.output === output && lastRejected.observations === observed.length) {
-        throw new Error('Repeated unsupported review without further evidence: ' + diagnostic)
-      }
-      lastRejected = {output, observations:observed.length}
+      lastRejected = nextReviewRepair(lastRejected, output, diagnostic, observed)
       agent.steer(createUserMessage({source:{kind:'idea2paper-review-repair', form:'instructions'}, content:[{
-        type:'text', text:'Review evidence check: ' + diagnostic + (disclosed ? '\nInspect the relevant originals with read_evidence as needed. Return the corrected verdict or, after a rejected draft, {"amend":{...}} containing only the changed fields. Under checks, send complete replacements for changed domains. To change issues, replace the issues array. The whole verdict is checked again.' : ''),
+        type:'text', text:'Review evidence check: ' + diagnostic + (lastRejected.repeats === 2
+          ? '\nThis check remains open. Inspect a different original or report which evidence is missing. A prior finding that still applies may remain open on this revision.' : '') + (disclosed ? '\nInspect the relevant originals with read_evidence as needed. Return the corrected verdict or, after a rejected draft, {"amend":{...}} containing only the changed fields. Under checks, send complete replacements for changed domains. To change issues, replace the issues array. The whole verdict is checked again.' : ''),
       }]}))
     })
     await restrictToProjectTools(scope)

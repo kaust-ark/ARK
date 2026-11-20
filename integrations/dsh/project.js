@@ -400,11 +400,26 @@ export function reviewRepairTopic(message) {
   if (typeof message !== 'string') return
   const instruction = message.match(/^Review evidence check: ([^\n:]+)/)?.[1]
   if (!instruction) return
+  if (/^Finding R[1-9][0-9]*, PDF page [1-9][0-9]*, remaining sentence /.test(instruction)) return 'findings'
   const domain = instruction.match(/\bchecks\.(manuscript|experiment|citations|visual)\b/)?.[1]
   if (domain) return domain
   for (const [topic, openings] of Object.entries(repairInstructions)) {
     if (openings.some(opening => instruction.startsWith(opening))) return topic
   }
+}
+
+// A rewritten verdict or a repeated read of the same window supplies no new observation.
+export function nextReviewRepair(previous, output, diagnostic, observed) {
+  const observations = new Set(observed.map(receipt => JSON.stringify(receipt))).size
+  const sameEvidence = previous?.observations === observations
+  if (sameEvidence && previous.output === output) {
+    throw new Error('Repeated unsupported review without further evidence: ' + diagnostic)
+  }
+  const repeats = sameEvidence && previous.diagnostic === diagnostic ? previous.repeats + 1 : 1
+  if (repeats >= 4) {
+    throw new Error('Independent review remains unsigned. Three correction requests returned to the same check without new evidence. ' + diagnostic)
+  }
+  return {output, diagnostic, observations, repeats}
 }
 
 export function reviewSubmission(message, previous, revision) {

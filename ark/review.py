@@ -2341,8 +2341,12 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                     judgment = item.get("judgment")
                     entry = {"sentence":item["sentence"], "judgment":judgment, "passage":ref,
                              "reason":_string(item.get("reason"), "reason for the remaining sentence")}
-                    entry.update(_context_support(snapshot, item, ref, context,
-                                                  checks["manuscript"].get("claims", ()), observed, blind))
+                    try:
+                        entry.update(_context_support(snapshot, item, ref, context,
+                                                      checks["manuscript"].get("claims", ()), observed, blind))
+                    except ValueError as exc:
+                        raise ValueError(f"Finding {ident}, PDF page {context['page']}, remaining sentence "
+                                         f"{item['sentence']}: {quote}\n{exc}") from None
                     assessment.append(entry)
         issues.append({"id": ident, "status": status, "severity": severity, "domain": domain,
                        **{k: _string(issue.get(k), k) for k in ("claim", "reason", "fix")}, "evidence": refs,
