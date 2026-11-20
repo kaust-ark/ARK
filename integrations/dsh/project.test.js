@@ -60,7 +60,9 @@ test('owner receives signed findings before bulky evidence and can reopen the or
   await writeFile(join(root,view.signed_record),JSON.stringify(record))
   assert.equal((await readProjectFile(root,{path:view.signed_record,find:'The mechanism was not measured.'})).found,true)
   await assert.rejects(projectFile(root,view.signed_record,'{}'), /for authoring/)
-  assert.equal(reviewForAuthor({...record,verdict:'accept',deliverable:true,issues:[]}).delivery_instruction.includes('deliver'),true)
+  const signed = {...record,verdict:'accept',deliverable:true,issues:[]}
+  assert.match(reviewForAuthor(signed).delivery_instruction, /deliver/)
+  assert.equal(reviewForAuthor({...signed,reviewed_pdf_matches_last_build:false}).delivery_instruction, undefined)
 })
 
 test('worker and reviewer values retain their source and the host tolerance decision', () => {

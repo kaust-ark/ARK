@@ -481,7 +481,7 @@ export function reviewForAuthor(review) {
     const result = {verdict:review.verdict, revision:review.revision, deliverable:review.deliverable,
       signed_record:'auto_research/state/reviews/' + review.revision + '/review.json', issues}
     if (review.reviewed_pdf_matches_last_build !== undefined) result.reviewed_pdf_matches_last_build = review.reviewed_pdf_matches_last_build
-    if (review.verdict === 'accept' && review.deliverable) {
+    if (review.verdict === 'accept' && review.deliverable && review.reviewed_pdf_matches_last_build === undefined) {
       result.delivery_instruction = 'Call deliver on the current revision and use its receipt to report completion.'
     } else if (issues.some(issue => issue.severity === 'blocker')) {
       result.revision_instruction = 'Recheck the complete source paragraph of each open finding, including text on the next PDF page. Trace any repetition in the abstract, results, discussion and conclusion to the same observation. Compile the revision and inspect the surviving passages before requesting independent review.'

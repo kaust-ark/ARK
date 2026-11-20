@@ -2455,9 +2455,13 @@ def validate_review(snapshot, response, previous=None, *, observed=()):
                         or sorted(j["sentence"] for j in indexed) != list(range(1, len(neighbors) + 1))):
                     pages = sorted({loc["page"] for loc in context.get("remaining_locations", [context])})
                     where = ("page " if len(pages) == 1 else "pages ") + ", ".join(map(str, pages))
+                    locations = context.get("remaining_locations", [context] * len(neighbors))
+                    passages = [f"{n} (PDF p. {loc['page']}): {' '.join(sentence.split())}"
+                                for n, (sentence, loc) in enumerate(zip(neighbors, locations), 1)]
                     raise ValueError(f"Resolving {ident} requires a context_assessment of each remaining sentence "
-                                     f"in its revised paragraph on {where}. Use its one-based number or unique full PDF quote. If the unsupported claim "
-                                     "survives, keep the blocker still_present and cite that sentence.")
+                                     f"in its revised paragraph on {where}. Use its one-based number or unique full PDF quote. "
+                                     "If the unsupported claim survives, keep the blocker still_present and cite that "
+                                     "sentence. Recheck these passages against the recorded evidence:\n" + "\n".join(passages))
                 for item in indexed:
                     quote = neighbors[item["sentence"] - 1]
                     location = context["remaining_locations"][item["sentence"] - 1] if "remaining_locations" in context else context
