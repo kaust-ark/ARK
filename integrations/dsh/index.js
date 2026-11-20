@@ -617,6 +617,7 @@ async function runOwner(ctx, { directory, path, checkpoint, selected, status, me
       'Research idea: ' + checkpoint.idea, status.owner_brief || '', 'Read .claude/skills/{research-integrity,figure-integrity,page-adjustment,human-intervention,env-isolation,runtime-sandbox}/SKILL.md for the relevant project operations.', 'Project state: ' + JSON.stringify({ required: status.required, capabilities: status.capabilities }),
     ].join('\n\n') : [
       'Resume the same research project. Reconcile saved work and continue to verified delivery. Reuse completed experiments, research and images.',
+      'For a statement about every condition, a trend, or a threshold, calculate the relevant per-condition values from the sealed table. Check the denominator, sign, order and scope before writing. Describe rounded bounds as approximate. For literature comparisons, read the relevant pages of the original source when available.',
       'If a build fails, repair its diagnostic and compile again. A verdict for an older PDF needs a fresh review of the current build; inspect existing revised assets before requesting replacements.',
       'Fix reported artifact checks before another independent review. Use write_project_file with insert_before or insert_after on a short unique heading to expand a section, or replace to fix a specific passage. Expand an under-length paper with evidence and analysis, then compile.',
       JSON.stringify({ requirements: status.required, planned_mechanism: status.plan?.mechanism, last_mechanism_observation: status.mechanism_observation,

@@ -1455,7 +1455,10 @@ def _manuscript_claims(snapshot, values, observed, blind, *, require_coverage=Tr
                          and not _contains_observed_quote(passage["quote"], ref["quote"])
                          and snapshot["artifacts"][ref["artifact"]]["kind"] in ("submission", "primary_source", "method")]
             if not reasoning:
-                raise ValueError("Cite a separate, observed derivation connecting the explanation to the measured outcome.")
+                raise ValueError("Cite a separate, observed derivation connecting the explanation to the measured outcome. "
+                                 "A measured row or your own unsupported formula does not establish the authors' cause. "
+                                 "If that calculation is absent, use basis=unsupported with a finding and cite the "
+                                 "actual measurements, or quote the authors' own qualification if present.")
             if snapshot["evidence_scope"].get("version") == 4:
                 bridge = _string(value.get("bridge"), "bridge from the derivation to the claimed outcome", limit=1200)
                 sources = [ref for ref in reasoning if _contains_observed_quote(ref["quote"], bridge)]
