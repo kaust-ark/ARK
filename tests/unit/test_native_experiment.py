@@ -256,6 +256,7 @@ def test_old_plot_receipt_resumes_once_without_inventing_read_evidence(tmp_path,
 @pytest.mark.parametrize("kind", ["line", "points", "bar"])
 def test_declarative_plot_draws_unrounded_nested_columns(tmp_path, monkeypatch, kind):
     from matplotlib.axes import Axes
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
     import fitz
     plan = project(tmp_path)
     (tmp_path / "results").mkdir()
@@ -283,9 +284,12 @@ def test_declarative_plot_draws_unrounded_nested_columns(tmp_path, monkeypatch, 
         namespace = {}
         exec(compile(code, str(staging / "input/main.py"), "exec"), namespace)
         fig, ax = namespace["fig"], namespace["ax"]
-        fig.canvas.draw()
+        # The worker has saved and closed the figure. Use a fresh headless
+        # canvas to measure the legend without relying on pyplot's manager.
+        canvas = FigureCanvasAgg(fig)
+        canvas.draw()
         legend, = fig.legends
-        bounds = legend.get_window_extent(fig.canvas.get_renderer())
+        bounds = legend.get_window_extent(canvas.get_renderer())
         assert bounds.y0 >= ax.get_window_extent().y1
         assert fig.bbox.contains(bounds.x0, bounds.y0) and fig.bbox.contains(bounds.x1, bounds.y1)
         (staging / "stdout").write_bytes(compute.PLOT_READ_HEADER + base64.b64encode((staging / filename).read_bytes()))
