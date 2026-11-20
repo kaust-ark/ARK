@@ -216,6 +216,8 @@ class NativeProject(CompilerMixin):
                 else:
                     del self.state["plots"][filename]
         self.snapshot = None
+        self.review_session = None
+        self.last_review_check = None
         self.last_status = None
         self.review_receipts = []
         cfg_path = self.root / "config.yaml"
@@ -539,6 +541,11 @@ class NativeProject(CompilerMixin):
                 kind = "quota"
             elif args.get("role") == "owner" and (args.get("reason") or {}).get("kind") == "error":
                 kind = "failure"
+        interrupted = kind == "quota" or (kind == "turn/end" and (args.get("reason") or {}).get("kind") == "error")
+        if (interrupted and not args.get("replayed") and args.get("role") == "reviewer" and self.last_review_check
+                and sid == self.last_review_check["session_id"]):
+            self.state["unfinished_review"] = self.last_review_check
+            self.save()
         if kind == "quota" and self.state.get("state") == "running":
             self.state.update(state="paused", pause_reason="quota")
         elif kind == "failure" and args.get("role") == "owner" and not args.get("replayed") and self.state.get("state") == "running":
@@ -2324,6 +2331,7 @@ class NativeProject(CompilerMixin):
                 return {"blockers": blockers, **({"research_citations": trace} if trace else {})}
         self.snapshot = snapshot
         self.review_session = args.get("session_id")
+        self.last_review_check = None
         previous = _load(self.state_dir / "native_review.json")
         self.review_receipts = []
         self.control_attempts = 0
@@ -2637,7 +2645,13 @@ class NativeProject(CompilerMixin):
                 "the project's review allowance. The previous signed findings stay open."}
 
     def check_review(self, args):
-        return self.record_review(args, check_only=True)
+        result = self.record_review(args, check_only=True)
+        self.last_review_check = None
+        if not result["valid"] and self.review_session:
+            self.last_review_check = {"session_id": self.review_session, "revision": self.snapshot["revision"],
+                                      "pdf_sha256": self.state["compiled_pdf_sha256"],
+                                      "diagnostic": result["diagnostic"][:1800]}
+        return result
 
     def record_review(self, args, *, check_only=False):
         snapshot = self._snapshot()

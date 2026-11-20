@@ -893,6 +893,19 @@ def test_reviewer_reservation_survives_restart_and_is_bound_to_revision(tmp_path
     assert result["signed"] is False and result["ready"] is False
     restored = domain.NativeProject(project.root)
     assert restored.state["unfinished_review"]["diagnostic"] == result["diagnostic"]
+    # A provider interruption after real validation must retain the latest check,
+    # even when the JS caller never gets to finish its normal recovery path.
+    monkeypatch.setattr(project, "record_review", lambda *args, **kwargs: {"valid":False, "diagnostic":"New source check on page 3."})
+    project.check_review({"revision":"rev1"})
+    quota = {"session_id":"child1","role":"reviewer","seq":1,"kind":"turn/end",
+             "reason":{"kind":"error","error":{"code":"QUOTA","message":"Insufficient balance"}}}
+    project.project_event({**quota,"session_id":"other"})
+    assert project.state["unfinished_review"]["diagnostic"] == result["diagnostic"]
+    project.project_event(quota)
+    interrupted = domain.NativeProject(project.root)
+    assert interrupted.state["pause_reason"] == "quota"
+    assert interrupted.state["unfinished_review"]["diagnostic"] == "New source check on page 3."
+
     assert not (project.state_dir / "native_review.json").exists()
     same = project.review_snapshot({"session_id":"child2"})
     assert same["unfinished_review"]["signed"] is False
