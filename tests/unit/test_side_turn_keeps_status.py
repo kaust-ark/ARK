@@ -213,3 +213,148 @@ def test_a_stop_during_a_side_turn_stops_the_helper_and_keeps_done(stopped, monk
     asyncio.run(routes.api_stop_project(pid, None))
     assert cancelled == ["local:h:4242"], "Stop cancelled the finished run, not the helper"
     assert _status(db, db_path, pid) == "done"
+
+
+@pytest.mark.parametrize(("endpoint", "request_body", "expected_flags"), [
+    ("message", {"text": "Explain figure 2"}, ["--chat-message", "Explain figure 2"]),
+    ("apply", {"instruction": "Label figure 2", "scope": "edit"},
+     ["--apply-instruction", "Label figure 2", "--apply-scope", "edit"]),
+])
+def test_stopped_slurm_project_runs_only_requested_helper(
+    stopped, monkeypatch, endpoint, request_body, expected_flags,
+):
+    import httpx
+    from fastapi import FastAPI
+    from unittest.mock import Mock
+    from ark.launcher.local import handle_pid
+    from website.dashboard import jobs
+
+    db, db_path, pid, pdir, settings = stopped
+    with db.get_session(db_path) as session:
+        project = db.get_project(session, pid)
+        db.update_project(session, project, slurm_job_id="12345", orchestrator_compute_backend="slurm")
+        owner = db.get_user(session, project.user_id)
+    settings.slurm_conda_env = "ark-base"
+    settings.admin_emails = []
+    monkeypatch.setattr(routes, "_require_user", lambda request: owner)
+    monkeypatch.setattr(routes, "_check_webapp_enabled", lambda: None)
+    monkeypatch.setattr(routes, "get_settings", lambda: settings)
+    monkeypatch.setattr(routes, "slurm_available", lambda: True)
+    submit = Mock(return_value="67890")
+    monkeypatch.setattr(jobs, "submit_job", submit)
+    monkeypatch.setattr(db, "resolve_db_path", lambda: db_path)
+
+    # Use the dashboard's actual subprocess wrapper and record the argv the worker
+    # receives at the conda boundary. No model, cluster or systemd is required.
+    conda = pdir / "record-worker"
+    conda.write_text(f"#!{sys.executable}\n"
+                     "import json, sys\nfrom pathlib import Path\n"
+                     "Path('worker-argv.json').write_text(json.dumps(sys.argv[1:]))\n")
+    conda.chmod(0o700)
+    monkeypatch.setattr(jobs, "find_conda_binary", lambda: str(conda))
+    monkeypatch.setattr(jobs, "project_env_ready", lambda path: True)
+    monkeypatch.setattr(jobs, "_systemd_user_available", lambda: False)
+    sentinel = pdir / "logs/local_exit.txt"
+    sentinel.write_text("prior run")
+
+    api = FastAPI()
+    api.include_router(routes.router)
+    restart = routes._restart_project_async
+
+    async def post_and_launch():
+        finished = asyncio.Event()
+
+        async def tracked_launch(**kwargs):
+            try:
+                await restart(**kwargs)
+            finally:
+                finished.set()
+
+        monkeypatch.setattr(routes, "_restart_project_async", tracked_launch)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api), base_url="http://test") as client:
+            result = await client.post(f"/api/projects/{pid}/{endpoint}", json=request_body)
+        assert result.status_code == 200, result.text
+        await asyncio.wait_for(finished.wait(), timeout=10)
+
+    asyncio.run(post_and_launch())
+    submit.assert_not_called()
+    record = routes._read_side_turn(pdir)
+    assert record["prior"] == "stopped"
+    assert record["helper"].startswith("local:")
+    assert _status(db, db_path, pid) == "initializing"
+    # Leave the exited wrapper waitable. The poller must restore the prior
+    # status even when there are no other subprocess launches to reap it.
+    helper_pid = handle_pid(record["helper"])
+    assert os.waitid(os.P_PID, helper_pid, os.WEXITED | os.WNOWAIT).si_status == 0
+    argv = json.loads((pdir / "worker-argv.json").read_text())
+    assert argv[argv.index("-m") + 1] == "ark.orchestrator"
+    assert argv[-len(expected_flags):] == expected_flags
+    assert sentinel.read_text() == "prior run"
+
+    _one_poll_cycle(settings, monkeypatch)
+    with pytest.raises(ChildProcessError):
+        os.waitpid(helper_pid, os.WNOHANG)  # The poller already reaped this child.
+    with db.get_session(db_path) as session:
+        project = db.get_project(session, pid)
+        assert project.status == "stopped"
+        assert project.slurm_job_id == "12345"
+        assert project.orchestrator_compute_backend == "slurm"
+    assert routes._read_side_turn(pdir) is None
+
+
+@pytest.mark.parametrize("stop_before_launch", [True, False], ids=["before-launch", "before-handle"])
+def test_stop_during_slurm_chat_startup_never_cancels_the_main_job(stopped, monkeypatch, stop_before_launch):
+    from unittest.mock import Mock
+
+    db, db_path, pid, pdir, settings = stopped
+    with db.get_session(db_path) as session:
+        project = db.get_project(session, pid)
+        db.update_project(session, project, slurm_job_id="12345", status="done",
+                          orchestrator_compute_backend="slurm")
+        owner = db.get_user(session, project.user_id)
+
+    _begin_turn(db, db_path, pid, pdir)
+    monkeypatch.setattr(routes, "_require_user", lambda request: owner)
+    monkeypatch.setattr(routes, "get_settings", lambda: settings)
+    historical = Mock()
+    monkeypatch.setattr(routes, "launcher_from_handle", historical)
+    helper = Mock()
+    handle = local_handle(_dead_pid())
+
+    def stop():
+        assert asyncio.run(routes.api_stop_project(pid, None)).status_code == 200
+
+    def launch(spec):
+        stop()
+        return handle
+
+    helper.launch.side_effect = launch
+    if stop_before_launch:
+        stop()
+    _submit(db, db_path, pid, pdir, helper, chat_message="Describe the results")
+    if stop_before_launch:
+        helper.launch.assert_not_called()
+        helper.cancel.assert_not_called()
+    else:
+        helper.launch.assert_called_once()
+        helper.cancel.assert_called_once_with(handle, pdir)
+    _one_poll_cycle(settings, monkeypatch)
+    historical.assert_not_called()
+    with db.get_session(db_path) as session:
+        project = db.get_project(session, pid)
+        assert (project.status, project.slurm_job_id) == ("done", "12345")
+    assert routes._read_side_turn(pdir) is None
+
+
+def test_poll_finishes_interrupted_helper_stop_after_service_restart(stopped, monkeypatch):
+    from unittest.mock import Mock
+
+    db, db_path, pid, pdir, settings = stopped
+    handle = local_handle(os.getpid())
+    _begin_turn(db, db_path, pid, pdir, helper=handle)
+    routes._update_side_turn(pdir, stop_requested=True)
+    launchers = Mock()
+    monkeypatch.setattr(webapp, "launcher_from_handle", launchers)
+    _one_poll_cycle(settings, monkeypatch)
+    launchers.assert_called_once_with(handle)
+    launchers.return_value.cancel.assert_called_once_with(handle, pdir)

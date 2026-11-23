@@ -13,6 +13,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .config import get_settings
 from .db import get_engine
+from .jobs import local_process_alive
 from ark.launcher import (
     LaunchSpec, launcher_from_handle,
     STOPPED, GONE, UNKNOWN, ACTIVE_STATUSES,
@@ -48,13 +49,8 @@ def _handle_process_alive(handle: str) -> bool:
     if not handle_is_local(str(handle)):
         return True
     try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # exists, we just may not signal it
-    except Exception:
+        return local_process_alive(pid)
+    except (OSError, OverflowError):
         return False
 
 
@@ -83,6 +79,9 @@ def _leave_initializing_alone(session, p, pdir) -> bool:
         if rec and rec.get("helper"):
             if not _handle_process_alive(rec["helper"]):
                 _end_side_turn(session, p, pdir)
+            elif rec.get("stop_requested") and p.id not in _launches_in_flight:
+                # A webapp restart may have interrupted the handoff to Stop.
+                launcher_from_handle(rec["helper"]).cancel(rec["helper"], pdir)
             return True
         if p.id in _launches_in_flight:
             return True  # however long it takes, this process is launching it
