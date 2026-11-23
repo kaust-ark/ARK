@@ -22,10 +22,10 @@ def _proj(backend):
                            mode="research", max_iterations=3)
 
 
-def _spec(tmp_path):
+def _spec(tmp_path, **kwargs):
     return LaunchSpec(project_id="p1", mode="research", max_iterations=3,
                       project_dir=tmp_path, log_dir=tmp_path / "logs",
-                      settings=SimpleNamespace())
+                      settings=SimpleNamespace(), **kwargs)
 
 
 def test_unknown_backend_raises(tmp_path):
@@ -45,6 +45,19 @@ def test_slurm_and_local_dispatch(tmp_path, monkeypatch):
     assert isinstance(
         routes.orchestrator_launcher_for(_proj("local"), _spec(tmp_path), None, SimpleNamespace()),
         LocalJobLauncher)
+
+
+@pytest.mark.parametrize("backend", ["slurm", "skypilot:gcp"])
+@pytest.mark.parametrize("turn", [{"chat_message": "Summarize the results"},
+                                  {"apply_instruction": "Shorten the abstract"}])
+def test_project_turn_uses_the_local_helper(tmp_path, monkeypatch, backend, turn):
+    def unexpected_probe():
+        pytest.fail("A project turn tried to select a batch launcher")
+
+    monkeypatch.setattr(routes, "slurm_available", unexpected_probe)
+    spec = _spec(tmp_path, **turn)
+    launcher = routes.orchestrator_launcher_for(_proj(backend), spec, None, spec.settings)
+    assert isinstance(launcher, LocalJobLauncher)
 
 
 def test_skypilot_selects_launcher_and_loads_config(tmp_path):

@@ -10,6 +10,7 @@ import logging
 import random
 import re
 import shutil
+import threading
 from contextlib import closing
 import uuid
 import zipfile
@@ -1759,6 +1760,9 @@ async def _start_project_async(
 # right now. A launch can block for many minutes (env provisioning, a cloud
 # VM), and while it does the project must not be judged by its old handle.
 _launches_in_flight: set[str] = set()
+# Stop runs on the web thread while the launcher publishes the helper handle
+# from a worker thread. Keep their read/modify/write operations together.
+_side_turn_lock = threading.Lock()
 
 
 def _side_turn_file(pdir: Path) -> Path:
@@ -1766,10 +1770,13 @@ def _side_turn_file(pdir: Path) -> Path:
 
 
 def _begin_side_turn(project, pdir: Path) -> None:
-    f = _side_turn_file(pdir)
-    f.parent.mkdir(parents=True, exist_ok=True)
-    f.write_text(json.dumps({"prior": project.status}))
+    _write_side_turn(pdir, {"prior": project.status})
     project.status = "initializing"
+
+
+def _write_side_turn(pdir: Path, record: dict) -> None:
+    from ark.orchestrator.state import _atomic_write_text
+    _atomic_write_text(_side_turn_file(pdir), json.dumps(record))
 
 
 def _read_side_turn(pdir: Path) -> dict | None:
@@ -1779,11 +1786,20 @@ def _read_side_turn(pdir: Path) -> dict | None:
         return None
 
 
+def _update_side_turn(pdir: Path, **fields) -> dict | None:
+    """Update a pending turn and return its state immediately before the change."""
+    with _side_turn_lock:
+        previous = _read_side_turn(pdir)
+        if previous is not None:
+            _write_side_turn(pdir, {**previous, **fields})
+        return previous
+
+
 def _end_side_turn(session, project, pdir: Path) -> None:
     """Give the project back the status the side turn interrupted."""
-    rec = _read_side_turn(pdir)
-    # Drop the record first: a stale one could later undo a real launch.
-    _side_turn_file(pdir).unlink(missing_ok=True)
+    with _side_turn_lock:
+        rec = _read_side_turn(pdir)
+        _side_turn_file(pdir).unlink(missing_ok=True)
     session.refresh(project)
     if rec and rec.get("prior") and project.status == "initializing":
         update_project(session, project, status=rec["prior"])
@@ -1862,6 +1878,11 @@ def orchestrator_launcher_for(project, spec, session, settings):
     if base not in ("local", "slurm", "skypilot"):
         raise ValueError(f"Unknown orchestrator backend: {backend!r}")
 
+    # The local helper passes the turn to the CLI and returns the PID that
+    # the dashboard monitors. Batch and cloud launchers start full paper runs.
+    if spec.chat_message or spec.apply_instruction:
+        return LocalJobLauncher()
+
     if base == "skypilot":
         # The skypilot orchestrator config was shaped into config.yaml by
         # _resolve_compute_config; the launcher reads its cluster/resources from
@@ -1895,6 +1916,9 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
     # exist yet — twice. It also must not be lane-gated or parked "pending":
     # it is not a run.
     side_channel = bool(apply_instruction or chat_message)
+    if side_channel and (_read_side_turn(pdir) or {}).get("stop_requested"):
+        _end_side_turn(session, project, pdir)
+        return project.status
     if not side_channel:
         # A real launch owns the status from here. A side-turn record left by
         # a Stop mid-turn must not put an old status back over it.
@@ -1948,10 +1972,13 @@ def _try_submit_or_pending(project, pdir, session, settings, is_admin=False,
     if side_channel:
         # Leave status and the job handle exactly as the main run set them.
         # The helper's own handle goes in the side-turn record instead.
-        rec = _read_side_turn(pdir)
-        if rec is not None:
-            rec["helper"] = job_id
-            _side_turn_file(pdir).write_text(json.dumps(rec))
+        previous = _update_side_turn(pdir, helper=job_id)
+        if previous and previous.get("stop_requested"):
+            try:
+                launcher.cancel(job_id, pdir)
+            except Exception:
+                # Leave the stop request and handle for the poller to retry.
+                logger.exception("Could not stop helper %s for project %s", job_id, project.id)
         return project.status
     update_project(session, project, status=launcher.initial_status, slurm_job_id=job_id)
     return launcher.initial_status
@@ -3107,13 +3134,13 @@ async def api_stop_project(project_id: str, request: Request):
         if not project or not _can_access_project(user, project):
             raise HTTPException(404)
         pdir = _project_dir(settings, project.user_id, project_id)
-        turn = _read_side_turn(pdir) if project.status == "initializing" else None
-        if turn and turn.get("helper"):
-            # Stopping a side turn stops its helper. The run it would otherwise
-            # cancel is already over, and the project goes back to how the
-            # turn found it: a Stop on a chat must not turn "done" into "stopped".
-            launcher_from_handle(turn["helper"], log_fn=logger.info).cancel(turn["helper"], pdir)
-            _end_side_turn(session, project, pdir)
+        turn = _update_side_turn(pdir, stop_requested=True) if project.status == "initializing" else None
+        if turn:
+            # If the handle is still being allocated, the launch thread will
+            # see the stop request and cancel its helper as soon as it returns.
+            if turn.get("helper") and not turn.get("stop_requested"):
+                launcher_from_handle(turn["helper"], log_fn=logger.info).cancel(turn["helper"], pdir)
+                _end_side_turn(session, project, pdir)
             return JSONResponse({"ok": True})
         if project.slurm_job_id:
             # Dispatch cancel off the persisted handle (local:/skypilot:/slurm).

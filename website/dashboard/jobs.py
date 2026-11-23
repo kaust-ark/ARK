@@ -1146,35 +1146,28 @@ def launch_local_job(
     return local_handle(proc.pid)
 
 
-def poll_local_job(pid: int, log_dir: Path) -> str:
-    """
-    Return RUNNING, COMPLETED, or FAILED for a local subprocess job.
-
-    Also reaps the wrapper subprocess if it's a finished child (zombie).
-    Plain ``os.kill(pid, 0)`` returns success for zombies — the kernel
-    only checks "is this PID slot occupied" — so without this we'd see
-    finished projects stuck in RUNNING forever.
-    """
-    # Try waitpid first; this both checks state AND reaps if it's our
-    # child and has finished.
+def local_process_alive(pid: int) -> bool:
+    """Check a worker on this host, reaping it if it is our exited child."""
+    if pid <= 0:
+        return False
     try:
-        wpid, _status = os.waitpid(pid, os.WNOHANG)
-        if wpid == 0:
-            # Child still running.
-            return "RUNNING"
-        # wpid == pid → was a zombie, just reaped → fall through to sentinel.
+        waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+        return waited_pid == 0
     except ChildProcessError:
-        # Not our child (e.g. reparented to PID 1 after a webapp restart,
-        # or never our child at all). Fall back to existence check.
+        # Detached workers (systemd or reparented) are owned by another process.
         try:
             os.kill(pid, 0)
-            return "RUNNING"
+            return True
         except ProcessLookupError:
-            pass
+            return False
         except PermissionError:
-            # Process exists but we can't signal it — it's alive.
-            return "RUNNING"
+            return True
 
+
+def poll_local_job(pid: int, log_dir: Path) -> str:
+    """Return RUNNING, COMPLETED, or FAILED for the main local worker."""
+    if local_process_alive(pid):
+        return "RUNNING"
     # Process really has exited — check the sentinel the wrapper writes.
     exit_file = Path(log_dir) / "local_exit.txt"
     if exit_file.exists():
