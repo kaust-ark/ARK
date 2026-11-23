@@ -1,3 +1,26 @@
+{% macro model_picker(scope) -%}
+<div class="model-picker" id="{{ scope }}-model-picker">
+  <input type="search" id="{{ scope }}-model-search" aria-label="Filter models" data-i18n-placeholder="model_filter"
+         placeholder="Filter by model or provider" autocomplete="off" hidden onkeydown="if(event.key==='Enter') event.preventDefault()" oninput="renderModelPicker('{{ scope }}')" />
+  <select id="{{ scope }}-model-select" aria-describedby="{{ scope }}-model-note {{ scope }}-model-no-keys" onchange="delete this.dataset.restoreSelection; syncModelPicker('{{ scope }}')">
+    <option value="">Automatic</option>
+    <option value="__manual__">Enter a model ID…</option>
+  </select>
+  <input id="{{ scope }}-model-manual" type="text" aria-label="Model ID" placeholder="provider/model"
+         maxlength="200" spellcheck="false" autocomplete="off" hidden oninput="syncModelPicker('{{ scope }}')" />
+  <small class="model-hint" id="{{ scope }}-model-note" aria-live="polite" hidden></small>
+  <small class="model-hint" id="{{ scope }}-model-no-keys" hidden>
+    {% if scope == 'settings' %}<span data-i18n="model_add_key">Add an API key in Settings to choose models from your provider.</span>
+    {% else %}<a href="#" onclick="openSettingsModal();return false" data-i18n="model_add_key">Add an API key in Settings to choose models from your provider.</a>{% endif %}
+  </small>
+  {% if scope in ('hero', 'settings') %}
+  <div class="model-preference-actions">
+    <button type="button" class="btn-secondary" onclick="saveDefaultLaunchModel('{{ scope }}', false)" data-i18n="model_set_default">Set as my default</button>
+    <button type="button" class="btn-secondary" id="{{ scope }}-clear-default-model" onclick="saveDefaultLaunchModel('{{ scope }}', true)" data-i18n="model_reset" hidden>Reset to automatic</button>
+  </div>
+  {% endif %}
+</div>
+{%- endmacro %}
 <!DOCTYPE html>
 <html lang="en" id="html-root">
 <head>
@@ -514,18 +537,22 @@
     .hero-adv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
     .hero-adv-field { display: flex; flex-direction: column; gap: 5px; }
     .hero-adv-field label { font-size: .82rem; font-weight: 500; color: var(--text-second); }
-    .hero-adv-field input, .hero-adv-field textarea {
+    .hero-adv-field input, .hero-adv-field textarea, .hero-adv-field select {
       padding: 9px 12px; border: 1.5px solid var(--card-border); border-radius: 8px;
       font-family: inherit; font-size: .9rem; background: var(--bg);
       transition: border-color .15s; outline: none;
     }
-    .hero-adv-field input:focus, .hero-adv-field textarea:focus {
+    .hero-adv-field input:focus, .hero-adv-field textarea:focus, .hero-adv-field select:focus {
       border-color: var(--teal); box-shadow: 0 0 0 3px rgba(13,148,136,.1);
     }
     .hero-adv-field textarea { resize: vertical; min-height: 70px; }
     .model-option { display: inline-flex; align-items: center; cursor: pointer; }
     .model-option input[type="radio"] { position: absolute; opacity: 0; width: 0; height: 0; }
-    .model-group-label { width: 100%; font-size: .68rem; color: var(--text-muted); font-weight: 700; margin: 0 0 1px; }
+    .model-picker { display: grid; gap: 6px; min-width: 0; }
+    .model-picker select, .model-picker input { box-sizing: border-box; width: 100%; min-width: 0; }
+    .model-picker [hidden] { display: none; }
+    .model-picker .model-hint { color: var(--text-muted); line-height: 1.45; }
+    .model-preference-actions { display: flex; flex-wrap: wrap; gap: 6px; }
     .model-chip {
       display: inline-block; padding: 6px 14px; border-radius: 20px;
       border: 1.5px solid var(--card-border); background: var(--bg);
@@ -535,16 +562,7 @@
     .model-option input[type="radio"]:checked + .model-chip {
       border-color: var(--teal); background: #f0fdfa; color: var(--teal); font-weight: 600;
     }
-    .model-option:not(.model-option-disabled):hover .model-chip { border-color: var(--teal-light); }
-    .model-meta { font-size: .72rem; letter-spacing: .5px; margin-left: 3px; white-space: nowrap; }
-    .model-meta .rec { color: #f59e0b; }
-    .model-meta .cost { margin-left: 3px; filter: grayscale(.15); }
-    .model-legend { width: 100%; font-size: .68rem; color: var(--text-muted); margin: 3px 0 0; }
-    .model-legend .rec { color: #f59e0b; }
-    .model-option-disabled { cursor: not-allowed; }
-    .model-option-disabled .model-chip {
-      opacity: .45; cursor: not-allowed; color: var(--text-muted);
-    }
+    .model-option:hover input:enabled + .model-chip { border-color: var(--teal-light); }
 
     #hitl-model { font-size:.68rem; font-weight:600; padding:2px 8px; border-radius:10px;
                   background:var(--bg); border:1px solid var(--card-border); color:var(--text-second);
@@ -852,175 +870,8 @@ Strict — hit the exact page limit (spends the most tokens).">
               placeholder="e.g. Focus on comparing against baseline X, use PyTorch, run on 2 GPUs, write in a formal style…"></textarea>
           </div>
           <div class="hero-adv-field">
-            <label data-i18n="model_vendor">Model Vendor</label>
-            <div id="model-nokey-note" hidden style="margin:2px 0 8px;padding:8px 10px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;line-height:1.45">
-              You need an API key before you can start. <a href="#" onclick="openSettingsModal();return false">Add one in Settings</a>. A single OpenRouter key works with every model below, and a full paper usually costs $10 to $25 on a budget model such as DeepSeek V4 Pro.
-            </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="model-options" onchange="if(event.target&&event.target.name==='model'){_userPickedModel=true;document.getElementById('model-unverified').value='';document.getElementById('model-openrouter-more').value='';}">
-              <div class="model-legend"><span class="rec">★</span> Recommended &nbsp;·&nbsp; 💰 relative cost (per token)</div>
-              <div class="model-group-label">OpenRouter</div>
-              <!-- Row 1: open / cost-efficient models -->
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/deepseek/deepseek-v4-pro" />
-                <span class="model-chip">DeepSeek V4 Pro <span class="model-meta"><span class="rec">★</span><span class="cost">💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/z-ai/glm-5.3" />
-                <span class="model-chip">GLM 5.3 <span class="model-meta"><span class="cost">💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/minimax/minimax-m3" />
-                <span class="model-chip">MiniMax M3 <span class="model-meta"><span class="cost">💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/moonshotai/kimi-k3" />
-                <span class="model-chip">Kimi K3 <span class="model-meta"><span class="cost">💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/qwen/qwen3.8-max-0902" />
-                <span class="model-chip">Qwen3.8 Max <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰</span></span></span>
-              </label>
-              <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-              <!-- Row 2: frontier models -->
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/anthropic/claude-sonnet-5.5" />
-                <span class="model-chip">Claude Sonnet 5.5 <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/openai/gpt-6.1-sol" />
-                <span class="model-chip">GPT-6.1 Sol <span class="model-meta"><span class="cost">💰💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/google/gemini-3.8-flash" />
-                <span class="model-chip">Gemini 3.8 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
-              </label>
-              <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-              <!-- Row 3: free tier — zero token cost, so testing survives an exhausted
-                   balance. Placed BELOW the paid rows on purpose: selectDefaultModel()
-                   takes the first enabled chip, so the default must stay a paid,
-                   un-throttled model. The tooltip sits on the chip SPAN, not the
-                   label — applyModelGating() overwrites the label's title with the
-                   no-key hint. Slugs carry the ':free' suffix; refresh_model_versions
-                   tracks none of these families, so they are never auto-rewritten. -->
-              <div class="model-legend">🆓 Free tier — no token cost, but OpenRouter caps free requests per day, so a long run can stall once the cap is hit. Deep Research and AI figures still bill separately.</div>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free" />
-                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3 Ultra <span class="model-meta"><span class="cost">🆓</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/nvidia/nemotron-3.5-lightning:free" />
-                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3.5 Lightning <span class="model-meta"><span class="cost">🆓</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/google/gemma-4-31b-it:free" />
-                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Gemma 4 31B <span class="model-meta"><span class="cost">🆓</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openrouter">
-                <input type="radio" name="model" value="openrouter/poolside/laguna-s-2.1:free" />
-                <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Laguna S 2.1 <span class="model-meta"><span class="cost">🆓</span></span></span>
-              </label>
-              <!-- Gemini AI Studio free tier: needs the USER's gemini key from a
-                   no-billing project ("Free of charge" in AI Studio). Verified
-                   2026-08-17: FreeTier quota metrics, structurally unbillable;
-                   produced complete papers (6.5/10) at $0. Quotas are per-account
-                   per-MINUTE, so runs self-pace rather than fight a shared pool
-                   like the OpenRouter free row. -->
-              <label class="model-option" data-provider="gemini">
-                <input type="radio" name="model" value="gemini/gemini-3.1-flash-lite" />
-                <span class="model-chip" title="Free — Google AI Studio free tier (needs your Gemini key from a no-billing project). Daily budget is 500 requests per model ≈ ONE full run per day; per-minute quotas also slow long runs.">Gemini 3.1 Flash-Lite <span class="model-meta"><span class="cost">🆓</span></span></span>
-              </label>
-              <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-              <!-- Row 4: everything else -->
-              <select id="model-openrouter-more" onchange="onExtraModelPick(this)" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
-                <option value="">▾ more…</option>
-                <optgroup label="Anthropic">
-                  <option value="openrouter/anthropic/claude-opus-5.5">Claude Opus 5.5 — 💰💰💰</option>
-                  <option value="openrouter/anthropic/claude-haiku-5.5">Claude Haiku 5.5 — 💰</option>
-                </optgroup>
-                <optgroup label="OpenAI">
-                  <option value="openrouter/openai/gpt-6.1-sol-pro">GPT-6.1 Sol Pro — 💰💰💰</option>
-                  <option value="openrouter/openai/gpt-6-luna">GPT-6 Luna — 💰</option>
-                </optgroup>
-                <optgroup label="Gemini">
-                  <option value="openrouter/google/gemini-4-argon">Gemini 4 Argon — 💰💰💰</option>
-                  <option value="openrouter/google/gemini-2.5-flash">Gemini 2.5 Flash — 💰</option>
-                </optgroup>
-                <optgroup label="Open">
-                  <option value="openrouter/deepseek/deepseek-v4.1-flash">DeepSeek V4.1 Flash — 💰</option>
-                  <option value="openrouter/qwen/qwen3.8-flash">Qwen3.8 Flash — 💰</option>
-                  <option value="openrouter/moonshotai/kimi-k2.7-code">Kimi K2.7 Code — 💰💰</option>
-                </optgroup>
-              </select>
-              <div class="model-group-label" style="margin-top:7px">Anthropic</div>
-              <label class="model-option" data-provider="anthropic">
-                <input type="radio" name="model" value="claude-opus-5-5" />
-                <span class="model-chip">Opus 5.5 <span class="model-meta"><span class="cost">💰💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="anthropic">
-                <input type="radio" name="model" value="claude-sonnet-5-5" checked />
-                <span class="model-chip">Sonnet 5.5 <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="anthropic">
-                <input type="radio" name="model" value="claude-haiku-5-5" />
-                <span class="model-chip">Haiku 5.5 <span class="model-meta"><span class="cost">💰</span></span></span>
-              </label>
-              <div class="model-group-label" style="margin-top:7px">OpenAI</div>
-              <label class="model-option" data-provider="openai">
-                <input type="radio" name="model" value="gpt-5.5" />
-                <span class="model-chip">GPT-5.5 <span class="model-meta"><span class="cost">💰💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openai">
-                <input type="radio" name="model" value="gpt-5.5-pro" />
-                <span class="model-chip">GPT-5.5 Pro <span class="model-meta"><span class="cost">💰💰💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="openai">
-                <input type="radio" name="model" value="gpt-5.4-mini" />
-                <span class="model-chip">GPT-5.4 mini <span class="model-meta"><span class="cost">💰💰</span></span></span>
-              </label>
-              <div class="model-group-label" style="margin-top:7px">Gemini</div>
-              <label class="model-option" data-provider="gemini">
-                <input type="radio" name="model" value="gemini-3.8-flash" />
-                <span class="model-chip">Gemini 3.8 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="gemini">
-                <input type="radio" name="model" value="gemini-3.1-pro-preview" />
-                <span class="model-chip">Gemini 3.1 Pro <span class="model-meta"><span class="cost">💰💰</span></span></span>
-              </label>
-              <label class="model-option" data-provider="gemini">
-                <input type="radio" name="model" value="gemini-2.5-flash" />
-                <span class="model-chip">Gemini 2.5 Flash <span class="model-meta"><span class="cost">💰</span></span></span>
-              </label>
-            </div>
-            <div class="model-group-label" style="margin-top:10px">Others</div>
-            <select id="model-unverified" onchange="onExtraModelPick(this)" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:360px">
-              <option value="">none</option>
-              <optgroup label="DeepSeek">
-                <option value="deepseek/deepseek-reasoner">deepseek-reasoner</option>
-                <option value="deepseek/deepseek-chat">deepseek-chat</option>
-              </optgroup>
-              <optgroup label="xAI (Grok)">
-                <option value="xai/grok-4">grok-4</option>
-                <option value="xai/grok-3">grok-3</option>
-              </optgroup>
-              <optgroup label="Mistral">
-                <option value="mistral/mistral-large-latest">mistral-large</option>
-              </optgroup>
-              <optgroup label="Groq">
-                <option value="groq/llama-3.3-70b-versatile">llama-3.3-70b</option>
-              </optgroup>
-              <optgroup label="Moonshot">
-                <option value="moonshot/kimi-k2.5">kimi-k2.5</option>
-                <option value="moonshot/kimi-latest">kimi-latest</option>
-              </optgroup>
-              <optgroup label="Cohere">
-                <option value="cohere_chat/command-a-03-2025">command-a</option>
-                <option value="cohere_chat/command-r-plus">command-r-plus</option>
-              </optgroup>
-            </select>
-            <div style="margin-top:8px">
-              <button type="button" class="btn-secondary" onclick="saveDefaultLaunchModel(false)">Set as my default</button>
-              <button type="button" class="btn-secondary" id="clear-default-model" onclick="saveDefaultLaunchModel(true)" hidden>Reset to automatic</button>
-            </div>
+            <label for="hero-model-select" data-i18n="info_model">Model</label>
+            {{ model_picker('hero') }}
           </div>
           <div style="display:flex;gap:16px;margin-top:12px">
             <div class="hero-adv-field" style="flex:1">
@@ -1458,155 +1309,8 @@ Strict — hit the exact page limit (spends the most tokens).">
         <input type="number" id="continue-dev-iter" value="1" min="1" max="2" style="width:80px" />
       </div>
       <div class="form-group" style="flex:2">
-        <label>Model</label>
-        <!-- PARITY: keep this Continue picker in sync with the hero #model-options picker
-             (source of truth, ~line 836). Same option values / data-provider / groups / i18n.
-             If you edit models in one, mirror the change here to avoid drift. -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="continue-model-options" onchange="if(event.target&&event.target.name==='continue-model'){document.getElementById('continue-model-unverified').value='';document.getElementById('continue-model-openrouter-more').value='';}">
-          <div class="model-legend"><span class="rec">★</span> Recommended &nbsp;·&nbsp; 💰 relative cost (per token)</div>
-          <div class="model-group-label">OpenRouter</div>
-          <!-- Row 1: open / cost-efficient models -->
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/deepseek/deepseek-v4-pro" />
-            <span class="model-chip">DeepSeek V4 Pro <span class="model-meta"><span class="rec">★</span><span class="cost">💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/z-ai/glm-5.3" />
-            <span class="model-chip">GLM 5.3 <span class="model-meta"><span class="cost">💰💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/minimax/minimax-m3" />
-            <span class="model-chip">MiniMax M3 <span class="model-meta"><span class="cost">💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/moonshotai/kimi-k3" />
-            <span class="model-chip">Kimi K3 <span class="model-meta"><span class="cost">💰💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/qwen/qwen3.8-max-0902" />
-            <span class="model-chip">Qwen3.8 Max <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰</span></span></span>
-          </label>
-          <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-          <!-- Row 2: frontier models -->
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/anthropic/claude-sonnet-5.5" />
-            <span class="model-chip">Claude Sonnet 5.5 <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/openai/gpt-6.1-sol" />
-            <span class="model-chip">GPT-6.1 Sol <span class="model-meta"><span class="cost">💰💰💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/google/gemini-3.8-flash" />
-            <span class="model-chip">Gemini 3.8 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
-          </label>
-          <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-          <!-- Row 3: free tier (see the hero picker for why it sits below the paid rows) -->
-          <div class="model-legend">🆓 Free tier — no token cost, but OpenRouter caps free requests per day, so a long run can stall once the cap is hit. Deep Research and AI figures still bill separately.</div>
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free" />
-            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3 Ultra <span class="model-meta"><span class="cost">🆓</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/nvidia/nemotron-3.5-lightning:free" />
-            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3.5 Lightning <span class="model-meta"><span class="cost">🆓</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/google/gemma-4-31b-it:free" />
-            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Gemma 4 31B <span class="model-meta"><span class="cost">🆓</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openrouter">
-            <input type="radio" name="continue-model" value="openrouter/poolside/laguna-s-2.1:free" />
-            <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Laguna S 2.1 <span class="model-meta"><span class="cost">🆓</span></span></span>
-          </label>
-          <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-          <!-- Row 4: everything else -->
-          <select id="continue-model-openrouter-more" onchange="onExtraModelPick(this, 'continue')" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
-            <option value="">▾ more…</option>
-            <optgroup label="Anthropic">
-              <option value="openrouter/anthropic/claude-opus-5.5">Claude Opus 5.5 — 💰💰💰</option>
-              <option value="openrouter/anthropic/claude-haiku-5.5">Claude Haiku 5.5 — 💰</option>
-            </optgroup>
-            <optgroup label="OpenAI">
-              <option value="openrouter/openai/gpt-6.1-sol-pro">GPT-6.1 Sol Pro — 💰💰💰</option>
-              <option value="openrouter/openai/gpt-6-luna">GPT-6 Luna — 💰</option>
-            </optgroup>
-            <optgroup label="Gemini">
-              <option value="openrouter/google/gemini-4-argon">Gemini 4 Argon — 💰💰💰</option>
-              <option value="openrouter/google/gemini-2.5-flash">Gemini 2.5 Flash — 💰</option>
-            </optgroup>
-            <optgroup label="Open">
-              <option value="openrouter/deepseek/deepseek-v4.1-flash">DeepSeek V4.1 Flash — 💰</option>
-              <option value="openrouter/qwen/qwen3.8-flash">Qwen3.8 Flash — 💰</option>
-              <option value="openrouter/moonshotai/kimi-k2.7-code">Kimi K2.7 Code — 💰💰</option>
-            </optgroup>
-          </select>
-          <div class="model-group-label" style="margin-top:7px">Anthropic</div>
-          <label class="model-option" data-provider="anthropic">
-            <input type="radio" name="continue-model" value="claude-opus-5-5" />
-            <span class="model-chip">Opus 5.5 <span class="model-meta"><span class="cost">💰💰💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="anthropic">
-            <input type="radio" name="continue-model" value="claude-sonnet-5-5" checked />
-            <span class="model-chip">Sonnet 5.5 <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="anthropic">
-            <input type="radio" name="continue-model" value="claude-haiku-5-5" />
-            <span class="model-chip">Haiku 5.5 <span class="model-meta"><span class="cost">💰</span></span></span>
-          </label>
-          <div class="model-group-label" style="margin-top:7px">OpenAI</div>
-          <label class="model-option" data-provider="openai">
-            <input type="radio" name="continue-model" value="gpt-5.5" />
-            <span class="model-chip">GPT-5.5 <span class="model-meta"><span class="cost">💰💰💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openai">
-            <input type="radio" name="continue-model" value="gpt-5.5-pro" />
-            <span class="model-chip">GPT-5.5 Pro <span class="model-meta"><span class="cost">💰💰💰💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="openai">
-            <input type="radio" name="continue-model" value="gpt-5.4-mini" />
-            <span class="model-chip">GPT-5.4 mini <span class="model-meta"><span class="cost">💰💰</span></span></span>
-          </label>
-          <div class="model-group-label" style="margin-top:7px">Gemini</div>
-          <label class="model-option" data-provider="gemini">
-            <input type="radio" name="continue-model" value="gemini-3.8-flash" />
-            <span class="model-chip">Gemini 3.8 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="gemini">
-            <input type="radio" name="continue-model" value="gemini-3.1-pro-preview" />
-            <span class="model-chip">Gemini 3.1 Pro <span class="model-meta"><span class="cost">💰💰</span></span></span>
-          </label>
-          <label class="model-option" data-provider="gemini">
-            <input type="radio" name="continue-model" value="gemini-2.5-flash" />
-            <span class="model-chip">Gemini 2.5 Flash <span class="model-meta"><span class="cost">💰</span></span></span>
-          </label>
-        </div>
-        <div class="model-group-label" style="margin-top:10px">Others</div>
-        <select id="continue-model-unverified" onchange="onExtraModelPick(this, 'continue')" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:360px">
-          <option value="">none</option>
-          <optgroup label="DeepSeek">
-            <option value="deepseek/deepseek-reasoner">deepseek-reasoner</option>
-            <option value="deepseek/deepseek-chat">deepseek-chat</option>
-          </optgroup>
-          <optgroup label="xAI (Grok)">
-            <option value="xai/grok-4">grok-4</option>
-            <option value="xai/grok-3">grok-3</option>
-          </optgroup>
-          <optgroup label="Mistral">
-            <option value="mistral/mistral-large-latest">mistral-large</option>
-          </optgroup>
-          <optgroup label="Groq">
-            <option value="groq/llama-3.3-70b-versatile">llama-3.3-70b</option>
-          </optgroup>
-          <optgroup label="Moonshot">
-            <option value="moonshot/kimi-k2.5">kimi-k2.5</option>
-            <option value="moonshot/kimi-latest">kimi-latest</option>
-          </optgroup>
-          <optgroup label="Cohere">
-            <option value="cohere_chat/command-a-03-2025">command-a</option>
-            <option value="cohere_chat/command-r-plus">command-r-plus</option>
-          </optgroup>
-        </select>
+        <label for="continue-model-select" data-i18n="info_model">Model</label>
+        {{ model_picker('continue') }}
       </div>
     </div>
     <div class="form-group">
@@ -1677,155 +1381,8 @@ Strict — hit the exact page limit (spends the most tokens).">
     </div>
     <input type="hidden" id="restart-venue-format" />
     <div class="form-group">
-      <label>Model</label>
-      <!-- PARITY: keep this Restart picker in sync with the hero #model-options picker
-           (source of truth, ~line 836). Same option values / data-provider / groups / i18n.
-           If you edit models in one, mirror the change here to avoid drift. -->
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center" id="restart-model-options" onchange="if(event.target&&event.target.name==='restart-model'){document.getElementById('restart-model-unverified').value='';document.getElementById('restart-model-openrouter-more').value='';}">
-        <div class="model-legend"><span class="rec">★</span> Recommended &nbsp;·&nbsp; 💰 relative cost (per token)</div>
-        <div class="model-group-label">OpenRouter</div>
-        <!-- Row 1: open / cost-efficient models -->
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/deepseek/deepseek-v4-pro" />
-          <span class="model-chip">DeepSeek V4 Pro <span class="model-meta"><span class="rec">★</span><span class="cost">💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/z-ai/glm-5.3" />
-          <span class="model-chip">GLM 5.3 <span class="model-meta"><span class="cost">💰💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/minimax/minimax-m3" />
-          <span class="model-chip">MiniMax M3 <span class="model-meta"><span class="cost">💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/moonshotai/kimi-k3" />
-          <span class="model-chip">Kimi K3 <span class="model-meta"><span class="cost">💰💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/qwen/qwen3.8-max-0902" />
-          <span class="model-chip">Qwen3.8 Max <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰</span></span></span>
-        </label>
-        <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-        <!-- Row 2: frontier models -->
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/anthropic/claude-sonnet-5.5" />
-          <span class="model-chip">Claude Sonnet 5.5 <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/openai/gpt-6.1-sol" />
-          <span class="model-chip">GPT-6.1 Sol <span class="model-meta"><span class="cost">💰💰💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/google/gemini-3.8-flash" />
-          <span class="model-chip">Gemini 3.8 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
-        </label>
-        <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-        <!-- Row 3: free tier (see the hero picker for why it sits below the paid rows) -->
-        <div class="model-legend">🆓 Free tier — no token cost, but OpenRouter caps free requests per day, so a long run can stall once the cap is hit. Deep Research and AI figures still bill separately.</div>
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free" />
-          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3 Ultra <span class="model-meta"><span class="cost">🆓</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/nvidia/nemotron-3.5-lightning:free" />
-          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Nemotron 3.5 Lightning <span class="model-meta"><span class="cost">🆓</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/google/gemma-4-31b-it:free" />
-          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Gemma 4 31B <span class="model-meta"><span class="cost">🆓</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openrouter">
-          <input type="radio" name="restart-model" value="openrouter/poolside/laguna-s-2.1:free" />
-          <span class="model-chip" title="Free — no token cost. Rate-limited: OpenRouter caps free requests per day.">Laguna S 2.1 <span class="model-meta"><span class="cost">🆓</span></span></span>
-        </label>
-        <div class="model-row-break" style="flex-basis:100%;height:0"></div>
-        <!-- Row 4: everything else -->
-        <select id="restart-model-openrouter-more" onchange="onExtraModelPick(this, 'restart')" title="More models via OpenRouter" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:220px">
-          <option value="">▾ more…</option>
-          <optgroup label="Anthropic">
-            <option value="openrouter/anthropic/claude-opus-5.5">Claude Opus 5.5 — 💰💰💰</option>
-            <option value="openrouter/anthropic/claude-haiku-5.5">Claude Haiku 5.5 — 💰</option>
-          </optgroup>
-          <optgroup label="OpenAI">
-            <option value="openrouter/openai/gpt-6.1-sol-pro">GPT-6.1 Sol Pro — 💰💰💰</option>
-            <option value="openrouter/openai/gpt-6-luna">GPT-6 Luna — 💰</option>
-          </optgroup>
-          <optgroup label="Gemini">
-            <option value="openrouter/google/gemini-4-argon">Gemini 4 Argon — 💰💰💰</option>
-            <option value="openrouter/google/gemini-2.5-flash">Gemini 2.5 Flash — 💰</option>
-          </optgroup>
-          <optgroup label="Open">
-            <option value="openrouter/deepseek/deepseek-v4.1-flash">DeepSeek V4.1 Flash — 💰</option>
-            <option value="openrouter/qwen/qwen3.8-flash">Qwen3.8 Flash — 💰</option>
-            <option value="openrouter/moonshotai/kimi-k2.7-code">Kimi K2.7 Code — 💰💰</option>
-          </optgroup>
-        </select>
-        <div class="model-group-label" style="margin-top:7px">Anthropic</div>
-        <label class="model-option" data-provider="anthropic">
-          <input type="radio" name="restart-model" value="claude-opus-5-5" />
-          <span class="model-chip">Opus 5.5 <span class="model-meta"><span class="cost">💰💰💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="anthropic">
-          <input type="radio" name="restart-model" value="claude-sonnet-5-5" checked />
-          <span class="model-chip">Sonnet 5.5 <span class="model-meta"><span class="rec">★</span><span class="cost">💰💰💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="anthropic">
-          <input type="radio" name="restart-model" value="claude-haiku-5-5" />
-          <span class="model-chip">Haiku 5.5 <span class="model-meta"><span class="cost">💰</span></span></span>
-        </label>
-        <div class="model-group-label" style="margin-top:7px">OpenAI</div>
-        <label class="model-option" data-provider="openai">
-          <input type="radio" name="restart-model" value="gpt-5.5" />
-          <span class="model-chip">GPT-5.5 <span class="model-meta"><span class="cost">💰💰💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openai">
-          <input type="radio" name="restart-model" value="gpt-5.5-pro" />
-          <span class="model-chip">GPT-5.5 Pro <span class="model-meta"><span class="cost">💰💰💰💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="openai">
-          <input type="radio" name="restart-model" value="gpt-5.4-mini" />
-          <span class="model-chip">GPT-5.4 mini <span class="model-meta"><span class="cost">💰💰</span></span></span>
-        </label>
-        <div class="model-group-label" style="margin-top:7px">Gemini</div>
-        <label class="model-option" data-provider="gemini">
-          <input type="radio" name="restart-model" value="gemini-3.8-flash" />
-          <span class="model-chip">Gemini 3.8 Flash <span class="model-meta"><span class="cost">💰💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="gemini">
-          <input type="radio" name="restart-model" value="gemini-3.1-pro-preview" />
-          <span class="model-chip">Gemini 3.1 Pro <span class="model-meta"><span class="cost">💰💰</span></span></span>
-        </label>
-        <label class="model-option" data-provider="gemini">
-          <input type="radio" name="restart-model" value="gemini-2.5-flash" />
-          <span class="model-chip">Gemini 2.5 Flash <span class="model-meta"><span class="cost">💰</span></span></span>
-        </label>
-      </div>
-      <div class="model-group-label" style="margin-top:10px">Others</div>
-      <select id="restart-model-unverified" onchange="onExtraModelPick(this, 'restart')" style="padding:6px 8px;border:1px solid var(--card-border);border-radius:8px;font-size:.82rem;max-width:360px">
-        <option value="">none</option>
-        <optgroup label="DeepSeek">
-          <option value="deepseek/deepseek-reasoner">deepseek-reasoner</option>
-          <option value="deepseek/deepseek-chat">deepseek-chat</option>
-        </optgroup>
-        <optgroup label="xAI (Grok)">
-          <option value="xai/grok-4">grok-4</option>
-          <option value="xai/grok-3">grok-3</option>
-        </optgroup>
-        <optgroup label="Mistral">
-          <option value="mistral/mistral-large-latest">mistral-large</option>
-        </optgroup>
-        <optgroup label="Groq">
-          <option value="groq/llama-3.3-70b-versatile">llama-3.3-70b</option>
-        </optgroup>
-        <optgroup label="Moonshot">
-          <option value="moonshot/kimi-k2.5">kimi-k2.5</option>
-          <option value="moonshot/kimi-latest">kimi-latest</option>
-        </optgroup>
-        <optgroup label="Cohere">
-          <option value="cohere_chat/command-a-03-2025">command-a</option>
-          <option value="cohere_chat/command-r-plus">command-r-plus</option>
-        </optgroup>
-      </select>
+      <label for="restart-model-select" data-i18n="info_model">Model</label>
+      {{ model_picker('restart') }}
     </div>
     <div class="form-group">
       <label>Experiments Backend</label>
@@ -2090,7 +1647,12 @@ Strict — hit the exact page limit (spends the most tokens).">
             Keys are stored encrypted, per&nbsp;user.
           </p>
 
-          <!-- OpenRouter (recommended — one key unlocks every model) -->
+          <div class="form-group">
+            <label for="settings-model-select" data-i18n="model_launch_default">Default launch model</label>
+            {{ model_picker('settings') }}
+          </div>
+
+          <!-- OpenRouter -->
           <div class="apikey-card">
             <div class="apikey-head">
               <span class="apikey-name">OpenRouter <span style="font-size:.68rem;font-weight:700;color:#0d9488">★ Recommended</span></span>
@@ -2098,14 +1660,14 @@ Strict — hit the exact page limit (spends the most tokens).">
               <span id="settings-openrouter-status" class="apikey-badge"></span>
             </div>
             <input type="password" id="settings-openrouter" class="apikey-input" placeholder="sk-or-…" />
-            <div class="apikey-current">Unlocks the OpenRouter model row (Claude / GPT / Gemini / Kimi / DeepSeek and more) in the new-project model picker.</div>
+            <div class="apikey-current">Models selected from the OpenRouter group use this key for billing.</div>
           </div>
 
           <!-- Anthropic -->
           <div class="apikey-card">
             <div class="apikey-head">
               <span class="apikey-name">Anthropic</span>
-              <span class="apikey-use">Claude · Opus 4.8 / Sonnet 4.6 / Haiku 4.5</span>
+              <span class="apikey-use">Claude models</span>
               <span id="settings-anthropic-status" class="apikey-badge"></span>
             </div>
             <input type="password" id="settings-anthropic" class="apikey-input" placeholder="sk-ant-…" />
@@ -2116,7 +1678,7 @@ Strict — hit the exact page limit (spends the most tokens).">
           <div class="apikey-card">
             <div class="apikey-head">
               <span class="apikey-name">OpenAI</span>
-              <span class="apikey-use">GPT · 5.5 Pro / 5.5 / Codex / 5.4 mini</span>
+              <span class="apikey-use">GPT models</span>
               <span id="settings-openai-status" class="apikey-badge"></span>
             </div>
             <input type="password" id="settings-openai" class="apikey-input" placeholder="sk-…" />
@@ -2127,7 +1689,7 @@ Strict — hit the exact page limit (spends the most tokens).">
           <div class="apikey-card">
             <div class="apikey-head">
               <span class="apikey-name">Gemini</span>
-              <span class="apikey-use">Gemini · 3.5 Flash / 2.5 Pro / 2.5 Flash</span>
+              <span class="apikey-use">Gemini models</span>
               <span id="settings-gemini-status" class="apikey-badge"></span>
             </div>
             <input type="password" id="settings-gemini" class="apikey-input" placeholder="AIza…" />
@@ -2139,18 +1701,15 @@ Strict — hit the exact page limit (spends the most tokens).">
           <div class="apikey-card apikey-card--other">
             <div class="apikey-head">
               <span class="apikey-name">Other provider</span>
-              <span class="apikey-use">⚠ Unverified — pick one and paste its key</span>
+              <span class="apikey-use">Choose the service that issued your API key</span>
             </div>
             <div id="other-providers-list" class="apikey-other-list"></div>
             <div style="display:flex;gap:8px;align-items:center">
               <select id="other-provider-name" class="apikey-select">
                 <option value="">Provider…</option>
-                <option value="deepseek">DeepSeek</option>
-                <option value="xai">xAI (Grok)</option>
-                <option value="mistral">Mistral</option>
-                <option value="groq">Groq</option>
-                <option value="moonshot">Moonshot</option>
-                <option value="cohere_chat">Cohere</option>
+                {% for provider, label in (provider_labels|default({})).items() if provider not in ('anthropic', 'openai', 'gemini', 'openrouter') %}
+                <option value="{{ provider }}">{{ label }}</option>
+                {% endfor %}
               </select>
               <input type="password" id="other-provider-key" class="apikey-input" style="flex:1" placeholder="API key" />
               <button type="button" class="btn-secondary" style="white-space:nowrap" onclick="addOtherProvider()">+ Add</button>
@@ -2789,7 +2348,33 @@ const TRANSLATIONS = {
     cheap_test_run: 'Cheap test run',
     skip_deep_research: 'Skip Deep Research',
     skip_ai_figures: 'Skip AI Figures',
-    model_vendor: 'Model Vendor',
+    model_via: "Provider account · %s",
+    model_filter: "Filter by model or provider",
+    model_no_matches: "No matching models.",
+    model_loading: "Loading models from your providers…",
+    model_automatic: "Automatic",
+    model_choose: "Choose a model",
+    model_auto_id: "Automatic · %s",
+    model_account_default: "Account default · %s",
+    model_project_current: "Current project model · %s",
+    model_project_saved: "Use project model",
+    model_free_option: "%s (free)",
+    model_manual: "Enter a model ID…",
+    model_free_limits: "OpenRouter limits free requests per day. Deep Research and AI figures may incur separate charges.",
+    model_google_billing: "Google applies the pricing and quotas of your API project.",
+    model_catalog_failure: "Could not refresh the model list. You can enter a model ID.",
+    model_provider_unavailable: "No models listed for %s. Enter a model ID to use this provider.",
+    model_source_dsh: "Listed in the DSH catalog. Access depends on your provider account.",
+    model_source_cache: "Showing the last available provider catalog.",
+    model_inactive_default: "Saved preference %s is currently unavailable.",
+    model_invalid_id: "Enter a model ID in provider/model format.",
+    model_add_key: "Add an API key in Settings to choose models from your provider.",
+    model_set_default: "Set as my default",
+    model_reset: "Reset to automatic",
+    model_save_failed: "Could not save the default model.",
+    model_saved: "Default model saved.",
+    model_reset_done: "Automatic model selection restored.",
+    model_launch_default: "Default launch model",
     page_fitting: 'Page fitting',
     page_fitting_relaxed: 'Relaxed — stay close, tolerate gaps',
     page_fitting_strict: 'Strict — exact page limit',
@@ -2954,7 +2539,33 @@ const TRANSLATIONS = {
     cheap_test_run: 'تشغيل تجريبي رخيص',
     skip_deep_research: 'تخطّي البحث العميق',
     skip_ai_figures: 'تخطّي الأشكال بالذكاء الاصطناعي',
-    model_vendor: 'مزوّد النموذج',
+    model_via: "حساب المزوّد · %s",
+    model_filter: "تصفية حسب النموذج أو المزوّد",
+    model_no_matches: "لا توجد نماذج مطابقة.",
+    model_loading: "جارٍ تحميل نماذج مزوّديك…",
+    model_automatic: "تلقائي",
+    model_choose: "اختر نموذجًا",
+    model_auto_id: "تلقائي · %s",
+    model_account_default: "إعداد الحساب الافتراضي · %s",
+    model_project_current: "نموذج المشروع الحالي · %s",
+    model_project_saved: "استخدم نموذج المشروع",
+    model_free_option: "%s (مجاني)",
+    model_manual: "إدخال معرّف نموذج…",
+    model_free_limits: "يحدّ OpenRouter عدد الطلبات المجانية يوميًا. قد تُفرض رسوم منفصلة على البحث المعمّق وتوليد الصور.",
+    model_google_billing: "تطبّق Google أسعار مشروع API وحصصه.",
+    model_catalog_failure: "تعذّر تحديث قائمة النماذج. يمكنك إدخال معرّف النموذج.",
+    model_provider_unavailable: "لا توجد نماذج معروضة لـ %s. أدخل معرّف نموذج لاستخدام المزوّد.",
+    model_source_dsh: "من دليل DSH. يعتمد الوصول على حسابك لدى المزوّد.",
+    model_source_cache: "يُعرض آخر دليل متاح للمزوّد.",
+    model_inactive_default: "الإعداد المحفوظ %s غير متاح حاليًا.",
+    model_invalid_id: "أدخل المعرّف بصيغة provider/model.",
+    model_add_key: "أضف مفتاح API في الإعدادات لاختيار نماذج مزوّدك.",
+    model_set_default: "تعيين كإعداد افتراضي",
+    model_reset: "العودة إلى الاختيار التلقائي",
+    model_save_failed: "تعذّر حفظ النموذج الافتراضي.",
+    model_saved: "تم حفظ النموذج الافتراضي.",
+    model_reset_done: "تمت استعادة الاختيار التلقائي.",
+    model_launch_default: "نموذج التشغيل الافتراضي",
     page_fitting: 'ضبط الصفحات',
     page_fitting_relaxed: 'مرن — قريب من الحد، مع تسامح',
     page_fitting_strict: 'صارم — حد الصفحات بالضبط',
@@ -3106,7 +2717,33 @@ const TRANSLATIONS = {
     cheap_test_run: '便宜测试运行',
     skip_deep_research: '跳过 Deep Research',
     skip_ai_figures: '跳过 AI 配图',
-    model_vendor: '模型 Vendor',
+    model_via: "服务商账号 · %s",
+    model_filter: "按模型或服务商筛选",
+    model_no_matches: "没有匹配的模型。",
+    model_loading: "正在加载你的服务商模型…",
+    model_automatic: "自动选择",
+    model_choose: "请选择模型",
+    model_auto_id: "自动选择 · %s",
+    model_account_default: "账号默认 · %s",
+    model_project_current: "项目当前模型 · %s",
+    model_project_saved: "使用项目模型",
+    model_free_option: "%s（免费）",
+    model_manual: "手动输入模型 ID…",
+    model_free_limits: "OpenRouter 的免费请求有每日配额。Deep Research 和 AI 绘图可能单独收费。",
+    model_google_billing: "Google 按 API 项目的计费方案和配额执行。",
+    model_catalog_failure: "暂时无法刷新模型列表。你可以手动输入模型 ID。",
+    model_provider_unavailable: "%s 暂无模型列表，可手动输入该服务商的模型 ID。",
+    model_source_dsh: "来自 DSH 目录。可用权限取决于你的服务商账号。",
+    model_source_cache: "当前显示上次可用的服务商目录。",
+    model_inactive_default: "保存的默认模型 %s 当前不可用。",
+    model_invalid_id: "请使用 provider/model 格式输入模型 ID。",
+    model_add_key: "在设置中添加 API 密钥，即可选择对应服务商的模型。",
+    model_set_default: "设为我的默认模型",
+    model_reset: "恢复自动选择",
+    model_save_failed: "无法保存默认模型。",
+    model_saved: "已保存默认模型。",
+    model_reset_done: "已恢复自动选择。",
+    model_launch_default: "新建项目默认模型",
     page_fitting: '排版严谨度',
     page_fitting_relaxed: '宽松 — 接近页数，容忍留白',
     page_fitting_strict: '严格 — 精确贴合页数上限',
@@ -3269,6 +2906,7 @@ function applyI18n() {
     const val = t(key);
     if (val !== key) el.placeholder = val;
   });
+  renderModelPickers();
   // Update active state in lang menus
   ['en','zh','ar'].forEach(l => {
     const btn = document.getElementById('lang-opt-' + l);
@@ -3702,7 +3340,7 @@ async function checkAuth() {
   // Telegram is managed in Settings (a user-level account setting) and inherited
   // by new projects server-side, so there are no hero-form fields to auto-fill.
 
-  // Model and iteration pickers are unlocked for all users (self-provisioned keys).
+  loadModelCatalog();
 
   // Load cloud provider availability before routing so continue/restart modals
   // show the correct cloud buttons even when landing directly on a detail page.
@@ -3791,20 +3429,6 @@ async function loadGateBanner() {
     if (firstCloud) firstCloud.checked = true;
     _syncSkypilotOrch('hero');
   }
-
-  // Also load user-level settings to drive home-page model gating.
-  try {
-    const uRes = await fetch(APP_BASE + '/api/user/settings');
-    if (uRes.ok) {
-      const uData = await uRes.json();
-      // Drive home-page model gating from saved keys (so it's correct on first
-      // load, not only after opening Settings).
-      window._userKeyProviders = _computeKeyProviders(uData.anthropic, uData.openai, uData.gemini, uData.openrouter);
-      _defaultLaunchModel = uData.default_launch_model || '';
-      if (typeof _loadOtherProviders === 'function') _loadOtherProviders(uData);  // long-tail keys drive dropdown gating too
-      if (typeof applyModelGating === 'function') applyModelGating();
-    }
-  } catch(e) {}
 
   document.getElementById('gate-banner').style.display = data.disabled ? 'flex' : 'none';
   const heroCard = document.getElementById('hero-card');
@@ -5172,6 +4796,8 @@ async function performLaunch(form) {
     alert('Please fix the instance type before starting.');
     return;
   }
+  const model = form.elements.preset.value === 'test' ? '' : readModelPicker('hero');
+  if (model === null) return;
   const btn = document.getElementById('hero-submit-btn');
   const label = document.getElementById('hero-submit-label');
   btn.disabled = true;
@@ -5179,15 +4805,7 @@ async function performLaunch(form) {
 
   const fd = new FormData(form);
 
-  // A model picked from either extra dropdown overrides the radio selection.
-  const _more = document.getElementById('model-openrouter-more');
-  if (_more && _more.value) fd.set('model', _more.value);
-  const _uns = document.getElementById('model-unverified');
-  if (_uns && _uns.value) fd.set('model', _uns.value);
-
-  // Settings may still be loading on first paint. Let the server resolve
-  // the account default if the user submits before the picker is initialized.
-  if (_defaultLaunchModel === null && !_userPickedModel) fd.delete('model');
+  if (model) fd.set('model', model);
 
   // SkyPilot cloud → append it as a "skypilot:<cloud>" suffix on the orchestrator
   // backend so the routes shaping targets the chosen cloud (default gcp).
@@ -5221,8 +4839,7 @@ async function performLaunch(form) {
     }
     const proj = await res.json();
     form.reset();
-    _userPickedModel = false;
-    applyModelGating();
+    resetModelPicker('hero');
     heroClearFiles();
     customTplFile = null;
     document.getElementById('custom-tpl-label').textContent = 'Drop a .zip file here or click to browse';
@@ -5297,6 +4914,7 @@ let continueProjectId = null;
 
 async function openContinueModal(id) {
   continueProjectId = id;
+  resetModelPicker('continue');
   document.getElementById('continue-comment').value = '';
   document.getElementById('continue-iter').value = '1';
   await loadVenues();  // populate the venue select before prefill
@@ -5314,34 +4932,7 @@ async function openContinueModal(id) {
     document.getElementById('continue-layout-mode').value = p.layout_mode || 'balanced';
     document.getElementById('continue-dev-iter').value = Math.min(p.max_dev_iterations || 1, 2);
     _populateVenueSelect('continue-venue-select', p.venue, p.venue_format);
-    // Preselect the EXACT stored model (no lossy map) so Continue re-runs what
-    // the project actually ran. A project's own prior model is ALWAYS re-runnable,
-    // even if the provider key is now missing (gating must not wipe it below).
-    const storedModel = p.model || 'claude-sonnet-5-5';
-    const cRadios = [...document.querySelectorAll('input[name="continue-model"]')];
-    const cMore = document.getElementById('continue-model-openrouter-more');
-    const cUnver = document.getElementById('continue-model-unverified');
-    const radioMatch = cRadios.find(r => r.value === storedModel);
-    const inMore = !!(cMore && [...cMore.options].some(o => o.value === storedModel));
-    const inUnver = !!(cUnver && [...cUnver.options].some(o => o.value === storedModel));
-    if (!radioMatch && !inMore && !inUnver && cUnver) {
-      // Model absent from every list — inject it into Others so it's re-runnable.
-      const opt = document.createElement('option');
-      opt.value = storedModel; opt.textContent = storedModel;
-      cUnver.appendChild(opt);
-    }
-    // Apply Create-parity no-key greying FIRST (it may disable/clear things)…
-    applyModelGating('continue');
-    // …then force the project's own stored model selected so it survives gating.
-    if (cMore) cMore.value = '';
-    if (cUnver) cUnver.value = '';
-    if (radioMatch) {
-      cRadios.forEach(r => { r.checked = (r === radioMatch); });
-    } else {
-      cRadios.forEach(r => { r.checked = false; });
-      if (inMore && cMore) cMore.value = storedModel;
-      else if (cUnver) cUnver.value = storedModel;  // in-list Others OR the injected option
-    }
+    resetModelPicker('continue', p.model, p.is_owner === true);
 
     const backendVal = (p.compute_backend || 'local');
     const orchBackendVal = (p.orchestrator_compute_backend || 'local');
@@ -5363,13 +4954,8 @@ async function openContinueModal(id) {
 async function submitContinue() {
   const iter = Math.max(1, Math.min(5, parseInt(document.getElementById('continue-iter').value) || 1));
   const comment = document.getElementById('continue-comment').value.trim();
-  // Mirror Create's read precedence: radio, then "more" dropdown, then Others
-  // dropdown overrides (a picked dropdown model beats the radio selection).
-  let model = ([...document.querySelectorAll('input[name="continue-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-5-5';
-  const _cMore = document.getElementById('continue-model-openrouter-more');
-  if (_cMore && _cMore.value) model = _cMore.value;
-  const _cUnver = document.getElementById('continue-model-unverified');
-  if (_cUnver && _cUnver.value) model = _cUnver.value;
+  const model = readModelPicker('continue');
+  if (model === null) return;
   const backend = ([...document.querySelectorAll('input[name="continue-backend"]')].find(r => r.checked) || {}).value || 'slurm';
   const orchBackend = ([...document.querySelectorAll('input[name="continue-orch-backend"]')].find(r => r.checked) || {}).value || 'local';
   if (_instanceTypeInvalid('continue')) { alert('Please fix the instance type before continuing.'); return; }
@@ -5450,34 +5036,7 @@ async function openRestartModal(id) {
   const pagesDefaultEl = document.getElementById('restart-pages-default');
   if (pagesDefaultEl) pagesDefaultEl.textContent = '(default: ' + defaultPages + ')';
 
-  // Preselect the EXACT stored model (no lossy map) so Restart re-runs what
-  // the project actually ran. A project's own prior model is ALWAYS re-runnable,
-  // even if the provider key is now missing (gating must not wipe it below).
-  const storedModel = p.model || 'claude-sonnet-5-5';
-  const rRadios = [...document.querySelectorAll('input[name="restart-model"]')];
-  const rMore = document.getElementById('restart-model-openrouter-more');
-  const rUnver = document.getElementById('restart-model-unverified');
-  const radioMatch = rRadios.find(r => r.value === storedModel);
-  const inMore = !!(rMore && [...rMore.options].some(o => o.value === storedModel));
-  const inUnver = !!(rUnver && [...rUnver.options].some(o => o.value === storedModel));
-  if (!radioMatch && !inMore && !inUnver && rUnver) {
-    // Model absent from every list — inject it into Others so it's re-runnable.
-    const opt = document.createElement('option');
-    opt.value = storedModel; opt.textContent = storedModel;
-    rUnver.appendChild(opt);
-  }
-  // Apply Create-parity no-key greying FIRST (it may disable/clear things)…
-  applyModelGating('restart');
-  // …then force the project's own stored model selected so it survives gating.
-  if (rMore) rMore.value = '';
-  if (rUnver) rUnver.value = '';
-  if (radioMatch) {
-    rRadios.forEach(r => { r.checked = (r === radioMatch); });
-  } else {
-    rRadios.forEach(r => { r.checked = false; });
-    if (inMore && rMore) rMore.value = storedModel;
-    else if (rUnver) rUnver.value = storedModel;  // in-list Others OR the injected option
-  }
+  resetModelPicker('restart', p.model, p.is_owner === true);
 
   // Set compute backend radio
   const backendVal = (p.compute_backend || 'local');
@@ -5545,17 +5104,12 @@ function continueVenueChanged() {
 }
 
 async function submitRestart() {
+  const restartModel = readModelPicker('restart');
+  if (restartModel === null) return;
   const btn = document.getElementById('restart-btn');
   if (_instanceTypeInvalid('restart')) { alert('Please fix the instance type before restarting.'); return; }
   btn.disabled = true;
   try {
-    // Mirror Create's read precedence: radio, then "more" dropdown, then Others
-    // dropdown overrides (a picked dropdown model beats the radio selection).
-    let restartModel = ([...document.querySelectorAll('input[name="restart-model"]')].find(r => r.checked) || {}).value || 'claude-sonnet-5-5';
-    const _rMore = document.getElementById('restart-model-openrouter-more');
-    if (_rMore && _rMore.value) restartModel = _rMore.value;
-    const _rUnver = document.getElementById('restart-model-unverified');
-    if (_rUnver && _rUnver.value) restartModel = _rUnver.value;
     const body = {
       idea: document.getElementById('restart-idea').value.trim(),
       venue: document.getElementById('restart-venue').value,
@@ -6193,8 +5747,8 @@ async function openSettingsModal() {
     document.getElementById('settings-github_org').value = data.github_org || '';
     document.getElementById('settings-telegram-token').value = data.telegram_token || '';
     document.getElementById('settings-telegram-chat-id').value = data.telegram_chat_id || '';
-    _defaultLaunchModel = data.default_launch_model || '';
     _loadOtherProviders(data);
+    loadModelCatalog();
 
     document.getElementById('settings-gcp-project').value = data.gcp_project || '';
     // Rebuild the grant instructions against the just-loaded project id
@@ -6209,13 +5763,10 @@ async function openSettingsModal() {
     document.getElementById('status-openai').textContent = data.openai ? 'Current: ' + data.openai : '';
     document.getElementById('status-gemini').textContent = data.gemini ? 'Current: ' + data.gemini : '';
     document.getElementById('status-github_pat').textContent = data.github_pat ? 'Current: ' + data.github_pat : '';
-    window._userKeyProviders = _computeKeyProviders(data.anthropic, data.openai, data.gemini, data.openrouter);
-    applyModelGating();
-
   } catch(e) {}
 }
 
-// ── Other providers (any OpenHands/LiteLLM provider) + model gating ──
+// ── Other configured provider credentials ──
 let _otherProviders = {};
 const _STD_KEYS = new Set(['anthropic','openai','gemini','openrouter','github_pat','github_org',
   'gcp_project','gcp_conda_env','aws_account_id','aws_region',
@@ -6267,183 +5818,7 @@ function addOtherProvider() {
 }
 function removeOtherProvider(prov) { _otherProviders[prov] = ''; renderOtherProviders(); }
 function _otherProvidersBody() { return Object.assign({}, _otherProviders); }
-// Extra-model dropdowns (OpenRouter "more…" + Others/unverified). Picking one
-// clears the radios and the OTHER dropdown; clearing restores the Sonnet default.
-function onExtraModelPick(sel, prefix) {
-  const P = (prefix && prefix !== 'hero') ? prefix + '-' : '';
-  const others = [P + 'model-openrouter-more', P + 'model-unverified'];
-  if (sel.value) {
-    if (!P) _userPickedModel = true;
-    document.querySelectorAll('input[name="' + P + 'model"]').forEach(x => { x.checked = false; });
-    others.forEach(id => { if (id !== sel.id) { const o = document.getElementById(id); if (o) o.value = ''; } });
-  } else {
-    if (!P) _userPickedModel = false;
-    selectDefaultModel(prefix);
-  }
-}
-// Which model rows are usable. Keys are PARALLEL — each vendor row lights up
-// only with its own key, and the OpenRouter row only with an OpenRouter key.
-// (To run a Claude/GPT/Gemini model through OpenRouter, pick it from the
-// OpenRouter row, not the vendor row.)
-function _computeKeyProviders(anthropic, openai, gemini, openrouter) {
-  return {
-    anthropic: !!anthropic,
-    openai: !!openai,
-    gemini: !!gemini,
-    openrouter: !!openrouter,
-  };
-}
-// Grey out model options whose provider has no saved key.
-function applyModelGating(prefix) {
-  const P = (prefix && prefix !== 'hero') ? prefix + '-' : '';
-  const have = window._userKeyProviders || {};
-  // Scope the chip query to THIS picker's container so gating one picker never
-  // re-gates the other (hero vs continue both carry .model-option[data-provider]).
-  const container = document.getElementById(P + 'model-options') || document;
-  container.querySelectorAll('.model-option[data-provider]').forEach(lbl => {
-    const prov = lbl.getAttribute('data-provider');
-    const ok = !!have[prov];
-    lbl.style.opacity = ok ? '' : '.4';
-    lbl.style.pointerEvents = ok ? '' : 'none';
-    lbl.title = ok ? '' : 'Add a ' + prov + ' API key in Settings → API Keys to use this model';
-    const input = lbl.querySelector('input'); if (input) input.disabled = !ok;
-  });
-  // The dropdowns were the ungated back door: three real users launched
-  // deepseek/… models from "Others" with no matching key (2026-07-05).
-  // An option is usable iff its provider has a key, OR an OpenRouter key
-  // exists (launch reroutes any model through OpenRouter).
-  // `_otherProviders` is a top-level `let`, which is never a window property:
-  // reading it off `window` saw {} for every user, so a DeepSeek-only account
-  // found its own DeepSeek models marked "(no key)" (2026-09/10).
-  const others = _otherProviders || {};
-  const orKey = !!have.openrouter;
-  const unver = document.getElementById(P + 'model-unverified');
-  if (unver) {
-    unver.querySelectorAll('option[value]').forEach(o => {
-      if (!o.value) return;
-      const prov = o.value.split('/')[0];
-      const ok = orKey || !!have[prov] || !!others[prov];
-      o.disabled = !ok;
-      if (!ok && !o.textContent.includes('(no key)')) o.textContent += ' (no key)';
-      if (ok) o.textContent = o.textContent.replace(' (no key)', '');
-    });
-    if (unver.value && unver.selectedOptions[0] && unver.selectedOptions[0].disabled) unver.value = '';
-  }
-  const orMore = document.getElementById(P + 'model-openrouter-more');
-  if (orMore) {
-    orMore.disabled = !orKey;
-    orMore.title = orKey ? '' : 'Add an OpenRouter API key in Settings to use these models';
-    if (!orKey) orMore.value = '';
-  }
-  applyVendorCollapse(prefix);
-  selectDefaultModel(prefix);
-  if (!prefix || prefix === 'hero') {
-    const note = document.getElementById('model-nokey-note');
-    document.getElementById('clear-default-model').hidden = !_defaultLaunchModel;
-    if (note) note.hidden = Object.values(have).some(Boolean) || Object.keys(others).length > 0;
-  }
-}
-
-// Default model selection follows configured keys, in vendor order (OpenRouter
-// first, then Anthropic/OpenAI/Gemini), and within a vendor the first model in
-// display order. With an OpenRouter key that lands on DeepSeek V4 (row-1, first
-// chip). Skips disabled (unconfigured) chips; never overrides a manual pick.
-let _userPickedModel = false;
-let _defaultLaunchModel = null;  // null until the signed-in account's settings arrive
-
-async function saveDefaultLaunchModel(clear) {
-  const radio = document.querySelector('input[name="model"]:checked:not(:disabled)');
-  const model = document.getElementById('model-unverified').value
-    || document.getElementById('model-openrouter-more').value || radio?.value;
-  if (!clear && !model) { showToast('Choose a model first.', 'warn'); return; }
-  try {
-    const res = await fetch(APP_BASE + '/api/user/default-launch-model', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({model: clear ? '' : model}),
-    });
-    const data = await res.json();
-    if (!res.ok) { showToast(data.detail || 'Could not save the default model.', 'warn'); return; }
-    _defaultLaunchModel = data.default_launch_model || '';
-    _userPickedModel = false;
-    applyModelGating();
-    showToast(clear ? 'Automatic model selection restored.' : 'Default model saved.');
-  } catch (e) { showToast('Could not save the default model.', 'warn'); }
-}
-
-function selectDefaultModel(prefix) {
-  if ((prefix && prefix !== 'hero') || _userPickedModel) return;
-  const more = document.getElementById('model-openrouter-more');
-  const unver = document.getElementById('model-unverified');
-  const radios = document.querySelectorAll('#model-options input[name="model"]');
-  more.value = '';
-  unver.value = '';
-  const provider = (_defaultLaunchModel || '').split('/')[0];
-  if (provider && (window._userKeyProviders?.[provider] || _otherProviders[provider])) {
-    const match = [...radios].find(r => !r.disabled && (
-      r.value === _defaultLaunchModel || r.closest('label').dataset.provider + '/' + r.value === _defaultLaunchModel));
-    if (match) { match.checked = true; return; }
-    radios.forEach(r => { r.checked = false; });
-    const dropdown = [...more.options].some(o => o.value === _defaultLaunchModel) ? more : unver;
-    if (![...dropdown.options].some(o => o.value === _defaultLaunchModel)) {
-      dropdown.add(new Option(_defaultLaunchModel, _defaultLaunchModel));
-    }
-    dropdown.value = _defaultLaunchModel;
-    return;
-  }
-  for (const r of radios) {
-    if (!r.disabled) { r.checked = true; return; }
-  }
-  // No usable chip. Never leave a disabled one checked: FormData drops it, the
-  // server falls back to its default model, and the user has no key for that.
-  // A direct key for a long-tail vendor (DeepSeek, Mistral, ...) is usable
-  // from Others, so preselect that instead. Set the value directly rather than
-  // through onExtraModelPick, which would mark it as a manual pick.
-  radios.forEach(r => { r.checked = false; });
-  const usable = unver && [...unver.options].find(o => o.value && !o.disabled);
-  if (usable) unver.value = usable.value;
-}
-
-// Req: a vendor group with no usable key (all chips greyed) is collapsed by
-// default — its label becomes a clickable "▸ Vendor (no key)" that expands it.
-// Walks #model-options grouping each .model-group-label with the chips that
-// follow it until the next label.
-function _vendorGroups(prefix) {
-  const P = (prefix && prefix !== 'hero') ? prefix + '-' : '';
-  const container = document.getElementById(P + 'model-options');
-  if (!container) return [];
-  const groups = [];
-  let cur = null;
-  Array.from(container.children).forEach(el => {
-    if (el.classList && el.classList.contains('model-group-label')) {
-      cur = { label: el, items: [], prov: null };
-      groups.push(cur);
-    } else if (cur) {
-      cur.items.push(el);
-      const p = el.getAttribute && el.getAttribute('data-provider');
-      if (p && !cur.prov) cur.prov = p;
-    }
-  });
-  return groups;
-}
-function _setVendorCollapsed(g, collapsed) {
-  g.label.dataset.collapsed = collapsed ? '1' : '0';
-  g.items.forEach(it => { it.style.display = collapsed ? 'none' : ''; });
-  if (!g.label.dataset.baseText) g.label.dataset.baseText = g.label.textContent.replace(/^[▸▾]\s*/, '').trim();
-  g.label.textContent = (collapsed ? '▸ ' : '▾ ') + g.label.dataset.baseText + (collapsed ? '  · no key, click to show' : '');
-}
-function applyVendorCollapse(prefix) {
-  const have = window._userKeyProviders || {};
-  _vendorGroups(prefix).forEach(g => {
-    if (!g.prov) return;                       // skip non-vendor labels
-    g.label.style.cursor = 'pointer';
-    if (!g.label.dataset.wired) {
-      g.label.dataset.wired = '1';
-      g.label.addEventListener('click', () => { g.label.dataset.touched = '1'; _setVendorCollapsed(g, g.label.dataset.collapsed !== '1'); });
-    }
-    // collapse iff this vendor has no usable key; never override a manual expand
-    if (g.label.dataset.touched !== '1') _setVendorCollapsed(g, !have[g.prov]);
-  });
-}
+{% include 'model_picker.js' %}
 
 function switchSettingsTab(tabId) {
   document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.remove('active'));
@@ -6564,14 +5939,7 @@ async function saveUserSettings() {
         }
       }
 
-      // Refresh home-page model gating from the freshly-saved keys (no reload).
-      window._userKeyProviders = _computeKeyProviders(
-        document.getElementById('settings-anthropic').value.trim(),
-        document.getElementById('settings-openai').value.trim(),
-        document.getElementById('settings-gemini').value.trim(),
-        document.getElementById('settings-openrouter').value.trim(),
-      );
-      if (typeof applyModelGating === 'function') applyModelGating();
+      loadModelCatalog(true, true);
 
       // Show per-row verification status on other providers too.
       window._otherVerify = ver;

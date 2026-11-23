@@ -12,6 +12,7 @@ import pytest
 from ark.engines import _add_usage, _is_transient_agent_error
 from ark.engines.cli import AgentCLI, OpenHandsCLI, get_cli_for_model
 from ark.engines.dsh_runtime import DSHRuntime, dsh_installation_error
+from ark.llm_lite import provider_key_env
 from ark.observability.steps import parse_line
 
 
@@ -118,12 +119,11 @@ def test_providers_the_webapp_offers_route_without_a_base_url(monkeypatch):
     from ark.engines.dsh_runtime import route
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.delenv("ARK_DSH_API", raising=False)
-    # Only the OpenRouter route is verified against a live endpoint; the other
-    # three are pi-ai's documented protocol for that provider.
     assert route("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free") == (
         "openai-completions", "https://openrouter.ai/api/v1")
     assert route("anthropic/claude-sonnet-5-5") == (
         "anthropic-messages", "https://api.anthropic.com")
+    assert route("openai/new-model") == ("openai-responses", "https://api.openai.com/v1")
     assert route("gemini/gemini-2.5-flash") == (
         "google-generative-ai", "https://generativelanguage.googleapis.com/v1beta")
     assert route("deepseek/deepseek-v4-pro") == ("", "")
@@ -136,9 +136,37 @@ def test_providers_the_webapp_offers_route_without_a_base_url(monkeypatch):
     monkeypatch.setenv("LLM_BASE_URL", "http://gw.invalid/v1")
     assert route("gemini/gemini-2.5-flash") == ("openai-completions", "http://gw.invalid/v1")
     assert route("openrouter/vendor/m") == ("openai-completions", "http://gw.invalid/v1")
+    assert route("openai/new-model") == ("openai-completions", "http://gw.invalid/v1")
     assert route("deepseek/deepseek-v4-pro") == ("", "http://gw.invalid/v1")
+    monkeypatch.setenv("ARK_DSH_API", "openai-responses")
+    assert route("openai/new-model") == ("openai-responses", "http://gw.invalid/v1")
     monkeypatch.setenv("ARK_DSH_API", "openai-completions")
     assert route("hosted_vllm/qwen3-32b") == ("openai-completions", "http://gw.invalid/v1")
+
+
+@pytest.mark.parametrize("provider,endpoint", [
+    ("xai", "https://api.x.ai/v1"),
+    ("mistral", "https://api.mistral.ai/openai/v1"),
+    ("groq", "https://api.groq.com/openai/v1"),
+    ("moonshot", "https://api.moonshot.ai/v1"),
+    ("cohere_chat", "https://api.cohere.ai/compatibility/v1"),
+])
+def test_added_providers_use_their_own_host_and_key(provider, endpoint, monkeypatch):
+    from ark.engines.dsh_runtime import route
+
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("ARK_DSH_API", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "unrelated-key")
+    monkeypatch.setenv("LLM_API_KEY", "unrelated-key")
+    monkeypatch.setenv(provider_key_env(provider), "provider-key")
+    model = f"{provider}/fixture"
+    assert route(model) == ("openai-completions", endpoint)
+    runner = DSHRuntime(model)
+    env = runner.build_env()
+    assert env["ARK_DSH_API_KEY"] == "provider-key"
+    assert "unrelated-key" not in env.values()
+    monkeypatch.delenv(provider_key_env(provider))
+    assert "ARK_DSH_API_KEY" not in runner.build_env()
 
 
 def test_openrouter_models_get_the_window_and_output_cap_openrouter_lists(monkeypatch):
@@ -151,6 +179,17 @@ def test_openrouter_models_get_the_window_and_output_cap_openrouter_lists(monkey
     assert dr._max_tokens("openrouter/big/m") == 16384
     monkeypatch.setenv("ARK_DSH_CONTEXT_WINDOW", "131072")
     assert dr._window("openrouter/small/m:free") == 131072
+
+
+def test_direct_model_output_budget_respects_its_published_limit(monkeypatch):
+    from ark.engines.dsh_runtime import _max_tokens
+
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.setenv("ARK_DSH_MAX_TOKENS", "16384")
+    monkeypatch.setattr("litellm.get_model_info", lambda model: {"max_output_tokens": 8000})
+    assert _max_tokens("cohere_chat/command-a") == 8000
+    monkeypatch.setenv("ARK_DSH_MAX_TOKENS", "4000")
+    assert _max_tokens("cohere_chat/command-a") == 4000
 
 
 def test_sandbox_request_is_not_silently_ignored(tmp_path, monkeypatch):
@@ -173,6 +212,38 @@ def test_missing_sdk_is_terminal_and_never_uses_other_runtime(tmp_path, monkeypa
     assert rc == 1
     assert runner.parse_output(out)["error_code"] == "DSHConfigurationError"
     assert "ARK_DSH_PYTHON" in runner.parse_output(out)["error_detail"]
+
+
+def _responses_stream(call_number, tool_name, args, text):
+    """Typed OpenAI Responses SSE for one function call or one assistant message."""
+    response = {"id": f"resp_{call_number}", "object": "response", "created_at": 1,
+                "status": "in_progress", "model": "fixture", "output": []}
+    events = [{"type": "response.created", "response": dict(response)}]
+    if text is None:
+        item = {"type": "function_call", "id": "fc_fixture", "call_id": "call_fixture",
+                "name": tool_name, "arguments": "", "status": "in_progress"}
+        events.append({"type": "response.output_item.added", "item": dict(item), "output_index": 0})
+        arguments = json.dumps(args)
+        events.append({"type": "response.function_call_arguments.delta", "item_id": item["id"],
+                       "output_index": 0, "delta": arguments})
+        item["arguments"] = arguments
+    else:
+        item = {"type": "message", "id": f"msg_{call_number}", "role": "assistant",
+                "content": [], "status": "in_progress"}
+        events.append({"type": "response.output_item.added", "item": dict(item), "output_index": 0})
+        part = {"type": "output_text", "text": "", "annotations": []}
+        events.append({"type": "response.content_part.added", "item_id": item["id"],
+                       "content_index": 0, "output_index": 0, "part": dict(part)})
+        events.append({"type": "response.output_text.delta", "item_id": item["id"],
+                       "content_index": 0, "output_index": 0, "delta": text})
+        item["content"] = [{**part, "text": text}]
+    item["status"] = "completed"
+    events.append({"type": "response.output_item.done", "output_index": 0, "item": item})
+    response.update(status="completed", output=[item], usage={"input_tokens": 10, "output_tokens": 5,
+                    "input_tokens_details": {"cached_tokens": 0}, "total_tokens": 15})
+    events.append({"type": "response.completed", "response": response})
+    return "".join("event: " + e["type"] + "\ndata: " + json.dumps(dict(e, sequence_number=n)) + "\n\n"
+                   for n, e in enumerate(events)).encode()
 
 
 @pytest.fixture
@@ -218,6 +289,8 @@ def real_gateway(monkeypatch):
             if len(state["requests"]) == 1:
                 delta = {"role": "assistant", "tool_calls": [{"index": 0, "id": "call-fixture",
                     "type": "function", "function": {"name": tool_name, "arguments": json.dumps(args)}}]}
+                if "reasoning_content" in state:
+                    delta["reasoning_content"] = state["reasoning_content"]
                 reason = "tool_calls"
             elif state["background"] and len(state["requests"]) == 2:
                 delta = {"role": "assistant", "content": "Started; waiting for the job."}
@@ -241,6 +314,8 @@ def real_gateway(monkeypatch):
                          "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5,
                                            "totalTokenCount": 15}}
                 payload = ("data: " + json.dumps(chunk) + "\n\n").encode()
+            elif urlsplit(self.path).path.endswith("/responses"):
+                payload = _responses_stream(len(state["requests"]), tool_name, args, delta.get("content"))
             elif urlsplit(self.path).path.endswith("/messages"):
                 tool = reason == "tool_calls"
                 chunks = [
@@ -289,13 +364,14 @@ def real_gateway(monkeypatch):
 
 @pytest.mark.parametrize("provider,protocol", [
     ("openai", None), ("gemini", None), ("deepseek", None), ("anthropic", "anthropic-messages"),
+    ("xai", None), ("mistral", None), ("groq", None), ("moonshot", None), ("cohere_chat", None),
 ])
 def test_real_sdk_writes_artifact_and_restores_history(real_gateway, tmp_path, monkeypatch, provider, protocol):
-    if provider == "gemini":
-        monkeypatch.setenv("GEMINI_API_KEY", "synthetic-gateway-key")
+    monkeypatch.setenv(provider_key_env(provider), "synthetic-gateway-key")
+    if provider == "moonshot":
+        real_gateway["reasoning_content"] = "I will run the requested tool."
     if protocol:
         monkeypatch.setenv("ARK_DSH_API", protocol)
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-gateway-key")
         # Anthropic's client appends /v1/messages to its root base URL.
         monkeypatch.setenv("LLM_BASE_URL", os.environ["LLM_BASE_URL"].removesuffix("/v1"))
     monkeypatch.setenv("DATABASE_URL", "synthetic-unrelated")
@@ -318,10 +394,15 @@ def test_real_sdk_writes_artifact_and_restores_history(real_gateway, tmp_path, m
     assert parsed["usage"]["cost_usd"] is None
     assert len(real_gateway["requests"]) == 2
     for request in real_gateway["requests"]:
-        chat_completions = provider in ("openai", "gemini")
+        chat_completions = provider not in ("deepseek", "anthropic")
         assert urlsplit(request["path"]).path == ("/v1/chat/completions" if chat_completions else "/v1/messages")
-        if provider == "gemini":
+        assert request["body"]["stream"] is True
+        assert request["body"]["tools"]
+        if chat_completions and provider != "openai":
             assert "store" not in request["body"]
+        if provider == "cohere_chat":
+            assert "stream_options" not in request["body"]
+            assert "parallel_tool_calls" not in request["body"]
         assert request["auth"] == "Bearer synthetic-gateway-key"
         assert "dsh_session_log" not in json.dumps(request["body"])
     run_dir = tmp_path / ".dsh" / runner.session_id
@@ -338,6 +419,52 @@ def test_real_sdk_writes_artifact_and_restores_history(real_gateway, tmp_path, m
     messages = real_gateway["requests"][-1]["body"]["messages"]
     assert any(m.get("role") == "tool" for m in messages) or "tool_result" in json.dumps(messages)
     assert resumed.resume_instructions in json.dumps(messages)
+    if provider == "moonshot":
+        for request in real_gateway["requests"][1:]:
+            call = next(m for m in request["body"]["messages"] if m.get("tool_calls"))
+            assert call["reasoning_content"] == real_gateway["reasoning_content"]
+
+
+@pytest.mark.parametrize("legacy_chat", [False, True], ids=["responses", "legacy-chat"])
+def test_real_sdk_resumes_official_openai_without_repeating_tool(real_gateway, tmp_path, monkeypatch, legacy_chat):
+    from ark.engines import dsh_runtime
+
+    endpoint = os.environ["LLM_BASE_URL"]
+    # Exercise the official route without ever contacting OpenAI. The old
+    # default produced exactly the same protocol/provider/manifest as an
+    # explicit chat base URL pointing to that endpoint.
+    monkeypatch.setitem(dsh_runtime._ROUTES, "openai", ("openai-responses", endpoint))
+    if not legacy_chat:
+        monkeypatch.delenv("LLM_BASE_URL")
+    real_gateway["command"] = "echo submitted >> ledger.txt"
+    run = DSHRuntime("openai/fixture")
+    code, out, err, _, _ = run.execute("Record one submission, then report.", "", tmp_path, 90)
+    assert code == 0, (run.parse_output(out), err[-1500:])
+    assert run.parse_output(out)["result"] == "Fixture complete."
+    protocol = "openai-completions" if legacy_chat else "openai-responses"
+    manifest = tmp_path / ".dsh" / run.session_id / "run.json"
+    assert json.loads(manifest.read_text())["protocol"] == protocol
+
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    resumed = DSHRuntime("openai/fixture", resume_session_id=run.session_id)
+    resumed.resume_instructions = "Do not resubmit a job whose result already exists."
+    code, out, err, _, _ = resumed.execute("Report the prior result.", "", tmp_path, 60)
+    assert code == 0, (resumed.parse_output(out), err[-1500:])
+    first, tool_result, replay = real_gateway["requests"]
+    for request in (first, tool_result, replay):
+        assert request["path"] == ("/v1/chat/completions" if legacy_chat else "/v1/responses")
+        assert request["auth"] == "Bearer synthetic-gateway-key"
+        assert request["body"]["tools"] and request["body"]["stream"] is True
+    for request in (tool_result, replay):
+        body = request["body"]
+        if legacy_chat:
+            assert any(m.get("role") == "tool" for m in body["messages"])
+        else:
+            assert any(m.get("type") == "function_call_output" and m["call_id"] == "call_fixture"
+                       for m in body["input"])
+    assert resumed.resume_instructions in json.dumps(replay["body"])
+    assert (tmp_path / "ledger.txt").read_text().splitlines() == ["submitted"]
+    assert json.loads(manifest.read_text())["protocol"] == protocol
 
 
 def test_real_sdk_sends_rendered_page_to_vision_model(real_gateway, tmp_path, monkeypatch):

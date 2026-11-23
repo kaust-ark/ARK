@@ -62,3 +62,9 @@ def test_paid_model_still_blocked_on_low_balance():
                return_value=_resp({"data": {"total_credits": 500.0, "total_usage": 499.73}})):
         with pytest.raises(HTTPException):
             _provider_preflight({"openrouter": "k"}, "openrouter/deepseek/deepseek-v4-pro")
+
+
+def test_openrouter_free_router_skips_credits():
+    with patch("urllib.request.urlopen") as probe:
+        _provider_preflight({"openrouter": "owner"}, "openrouter/openrouter/free")
+        probe.assert_not_called()

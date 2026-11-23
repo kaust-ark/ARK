@@ -34,6 +34,12 @@ elif [ -n "${ARK_CONDA_ROOT:-}" ] && [ -d "$ARK_CONDA_ROOT/envs/{{ conda_env }}"
 else
     conda activate {{ conda_env }}
 fi
+# Login scripts and conda activation can add operator credentials after submission.
+while IFS= read -r _ark_inherited_name; do
+    case "$_ark_inherited_name" in
+        {{ credential_patterns | default(['*_API_KEY']) | join('|') }}) unset -v "$_ark_inherited_name" ;;
+    esac
+done < <(compgen -e)
 {# Credential env comes pre-mapped from jobs.api_keys_to_env — the single
    source of truth. The old inline whitelist here silently dropped OpenRouter
    and every long-tail provider (deepseek, xai, …). #}

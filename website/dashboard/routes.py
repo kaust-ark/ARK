@@ -185,7 +185,7 @@ from ark.launcher import (
 )
 from ark.compute import VALID_ORCHESTRATOR_TYPES, VALID_EXPERIMENT_TYPES
 from starlette.concurrency import run_in_threadpool
-from . import compute_catalog
+from . import account_catalog, compute_catalog, model_catalog
 from .notify import send_completion_email, send_magic_link_email, send_telegram_login_link, send_telegram_notify, send_welcome_email, send_access_declined_email
 from .auth import make_token, verify_token, verify_share_token
 from .templates import copy_venue_template, has_venue_template, copy_test_fixtures, read_test_idea
@@ -399,10 +399,6 @@ def _require_admin(request: Request) -> User:
     return user
 
 
-_PROVIDER_NAMES = {"openrouter": "OpenRouter", "anthropic": "Anthropic", "openai": "OpenAI",
-                   "gemini": "Gemini", "deepseek": "DeepSeek", "xai": "xAI", "mistral": "Mistral",
-                   "groq": "Groq", "moonshot": "Moonshot", "cohere_chat": "Cohere"}
-
 # Saved-settings fields that are not model-provider credentials.
 _NON_PROVIDER_KEY_FIELDS = frozenset({
     "github_pat", "github_org", "gcp_project", "gcp_conda_env", "gcp_ssh_user",
@@ -433,25 +429,23 @@ def _require_model_key(keys: dict, model_variant: str) -> None:
         # rewrites native/long-tail models to openrouter/<slug> at launch.
         bool(keys.get("openrouter")))
     if not ok:
-        nice = _PROVIDER_NAMES.get(prov, prov.capitalize())
+        nice = model_catalog.PROVIDER_LABELS.get(prov, prov.capitalize())
         # Name the keys the user DOES have and where those models live: three
         # DeepSeek-only users retried 4-6 times each against the old message,
         # which only pointed at the OpenRouter row they had no key for.
         have = sorted(k for k, v in keys.items() if v and k not in _NON_PROVIDER_KEY_FIELDS)
         if have:
             where = ", ".join(
-                f"{_PROVIDER_NAMES.get(k, k.capitalize())} in "
-                + (f"the {_PROVIDER_NAMES[k]} row" if k in _OPENROUTER_NATIVE_KEY else "the Others list")
-                for k in have)
+                f"the {model_catalog.PROVIDER_LABELS.get(k, k.capitalize())} model group" for k in have)
             raise HTTPException(
                 400,
                 f"This model runs on {nice}, but you have no {nice} API key. "
-                f"You do have a key for: {where}. Pick a model from there, "
+                f"Pick a model from {where}, "
                 f"or add your {nice} key in Settings → API Keys.")
         raise HTTPException(
             400,
             f"This model runs on {nice}, but no {nice} API key is configured. "
-            f"Add one in Settings → API Keys (an OpenRouter key covers every model).")
+            f"Add one in Settings → API Keys.")
 
 
 # Below this remaining balance a full paper run cannot complete on ANY model --
@@ -463,23 +457,9 @@ _PREFLIGHT_MIN_USD = 2.0
 
 
 def _is_free_model(model_variant: str) -> bool:
-    """Models that bill nothing, so credit balance is irrelevant to them.
-
-    OpenRouter's zero-cost variants carry a ':free' suffix. Gemini AI Studio
-    free-tier models have no marker in the slug — a `gemini/…` model is billed
-    (or not) by the KEY's project, and the picker's chip is only offered for
-    the free lane. Without this clause the OpenRouter credit preflight blocked
-    gemini launches whenever the user ALSO had a low-balance OpenRouter key.
-
-    The MODEL bills nothing, but the run can still touch OpenRouter: Deep
-    Research and AI figures prefer it whenever the key is set. Blocking the
-    launch would disable the free lane exactly when the balance is spent, so
-    the pipeline steers those side tasks instead: it checks the balance before
-    each paid call and uses the Gemini key or the direct literature search
-    (ark.provider_billing.openrouter_too_low_for_side_tasks).
-    """
-    mv = (model_variant or "").strip()
-    return mv.endswith(":free") or mv.startswith("gemini/")
+    """Recognize OpenRouter's zero-cost variants and its free-model router."""
+    return (model_variant == "openrouter/openrouter/free"
+            or model_variant.startswith("openrouter/") and model_variant.endswith(":free"))
 
 
 def _provider_preflight(keys: dict, model_variant: str = "") -> None:
@@ -497,7 +477,7 @@ def _provider_preflight(keys: dict, model_variant: str = "") -> None:
     in the picker at all).
     """
     routed_model = _maybe_route_via_openrouter(_to_litellm_model(model_variant), keys)
-    if _is_free_model(routed_model):
+    if not routed_model.startswith("openrouter/") or _is_free_model(routed_model):
         return
     key = keys.get("openrouter")
     if not key:
@@ -643,9 +623,7 @@ Output ONLY the summary, no preamble.
     return raw_text[:8000]
 
 
-# The model a new project gets when nothing else is chosen, and the fallback
-# when a project's stored model can't be read. The preselected chip in
-# templates/app.html and the JS fallbacks there must name the same model.
+# Historical default for Anthropic accounts and older project records.
 DEFAULT_MODEL = "claude-sonnet-5-5"
 
 
@@ -740,7 +718,7 @@ def _maybe_route_via_openrouter(model_str: str, keys: dict) -> str:
     provider = model_str.split("/", 1)[0]
     if provider == "openrouter":
         return model_str
-    if keys.get(provider):
+    if _has_launch_model_key(model_str, keys):
         return model_str  # user has the direct key (mainstream or long-tail) — use it
     if keys.get("openrouter"):
         slug = _OPENROUTER_SLUG.get(model_str)
@@ -810,7 +788,7 @@ async def _validate_instance_type_or_400(backend: str, instance_type: str) -> st
 
 def _write_config_yaml(project_dir: Path, project: Project, user_obj: User, settings, model: str = DEFAULT_MODEL):
     """Write config.yaml that ark orchestrator will read."""
-    # All agents run through OpenHands; the orchestrator wants a LiteLLM string.
+    # The launch config uses a provider-qualified model ID.
     model_str = _to_litellm_model(model)
 
     # Auto-push each project to a private GitHub repo only when the owner has
@@ -1405,28 +1383,38 @@ def _read_paper_title(project_dir: Path) -> str:
 
 
 def _read_project_model(project_dir: Path, project=None) -> str:
-    """Read model variant from DB (primary) or config.yaml (fallback)."""
-    if project:
-        if project.model_variant:
-            return project.model_variant
-        if project.model == "gemini":
-            return "gemini"
-        if project.model:
-            return project.model
-    # Fallback to config.yaml
+    """Recover the route actually written at launch, including legacy OpenRouter rewrites."""
+    stored = (project.model_variant or project.model) if project else None
     cfg = project_dir / "config.yaml"
-    if cfg.exists():
+    if cfg.is_file():
         try:
-            d = yaml.safe_load(cfg.read_text()) or {}
-            variant = d.get("model_variant", "")
-            if variant:
-                return variant
-            backend = d.get("model", "")
-            if backend == "gemini":
-                return "gemini"
-        except Exception:
+            data = yaml.safe_load(cfg.read_text()) or {}
+            configured = data.get("model_variant") or data.get("model")
+            if isinstance(configured, str) and "/" in configured:
+                if stored and _to_litellm_model(stored) == configured:
+                    return stored
+                return configured
+            if not stored and isinstance(configured, str) and configured:
+                return configured
+        except (OSError, UnicodeError, yaml.YAMLError, AttributeError):
             pass
-    return DEFAULT_MODEL
+    return stored or DEFAULT_MODEL
+
+
+def _resume_launch_model(body, project, pdir, owner):
+    keys = _get_user_keys(owner) if owner else {}
+    current = _read_project_model(pdir, project=project)
+    selected = body.get("model")
+    changed = bool(selected) and selected != current
+    model = _requested_launch_model(selected, keys) if changed else current
+    if not changed and "/" in current and not _has_launch_model_key(current, keys):
+        raise HTTPException(400, "Add this project’s provider key or choose another model.")
+    _require_model_key(keys, model)
+    _provider_preflight(keys, model)
+    if changed:
+        project.model = _to_litellm_model(model).split("/", 1)[0]
+        project.model_variant = model
+    return model
 
 
 def _find_pdf(project_dir: Path) -> Optional[Path]:
@@ -1989,6 +1977,7 @@ async def index(request: Request):
         request,
         "app.html",
         {
+            "provider_labels": model_catalog.PROVIDER_LABELS,
             "app_base": request.scope.get("root_path", ""),
             "share_mode": False,
             "share_project_id": "",
@@ -2090,6 +2079,7 @@ async def share_view(token: str, request: Request):
         request,
         "app.html",
         {
+            "provider_labels": model_catalog.PROVIDER_LABELS,
             "app_base": request.scope.get("root_path", ""),
             "share_mode": True,
             "share_project_id": ident,
@@ -2371,7 +2361,66 @@ async def api_get_user_settings(request: Request):
 
 def _has_launch_model_key(model: str, keys: dict) -> bool:
     provider = model.split("/", 1)[0]
-    return provider not in _NON_PROVIDER_KEY_FIELDS and bool(keys.get(provider))
+    if provider in _NON_PROVIDER_KEY_FIELDS:
+        return False
+    credential = keys.get(provider)
+    if provider == "anthropic":
+        credential = credential or keys.get("claude_oauth_token")
+    if provider == "gemini":
+        credential = credential or keys.get("gemini_oauth_json")
+    return isinstance(credential, str) and bool(credential.strip())
+
+
+def _requested_launch_model(value: str, keys: dict) -> str:
+    """Validate new picker input while accepting legacy bare model names."""
+    if not isinstance(value, str):
+        raise HTTPException(400, "Choose a model using provider/model.")
+    value = value.strip()
+    canonical = _to_litellm_model(value)
+    if (not value or not model_catalog.valid_launch_id(canonical)
+            or ("/" not in value and value not in {"gemini", "gemini-auto"}
+                and canonical.split("/", 1)[1] != value)):
+        raise HTTPException(400, "Choose a model using provider/model.")
+    # An explicit billing route must remain on the chosen provider even if a
+    # key was removed between rendering the picker and submitting the form.
+    if "/" in value and not _has_launch_model_key(canonical, keys):
+        raise HTTPException(400, "Add an API key for this model's provider in Settings first.")
+    return value
+
+
+async def _automatic_launch_model(owner_id, preference, keys, groups=None):
+    if preference and _has_launch_model_key(preference, keys):
+        return preference
+    if keys.get("anthropic") or keys.get("claude_oauth_token"):
+        return DEFAULT_MODEL
+    providers = [name for name in model_catalog.PROVIDER_LABELS if keys.get(name)]
+    if providers == ["openrouter"]:
+        return _maybe_route_via_openrouter(_to_litellm_model(DEFAULT_MODEL), keys)
+    if len(providers) != 1:
+        return None
+    if groups is None:
+        groups = await account_catalog.groups_for(owner_id, keys)
+    for group in groups:
+        if group["source"] not in {"provider", "cache"}:
+            continue
+        # With multiple choices the owner chooses the model and its price.
+        rows = [row["id"] for row in group["models"] if not _is_free_model(row["id"])]
+        if len(rows) == 1:
+            return rows[0]
+    return None
+
+
+@router.get("/api/user/model-catalog")
+async def api_user_model_catalog(request: Request):
+    owner = _require_user(request)
+    keys = _get_user_keys(owner)
+    groups = await account_catalog.groups_for(owner.id, keys)
+    automatic = await _automatic_launch_model(owner.id, owner.default_launch_model, keys, groups)
+    return JSONResponse({
+        "providers": groups,
+        "default_launch_model": owner.default_launch_model,
+        "automatic_model": _to_litellm_model(automatic) if automatic else None,
+    }, headers={"Cache-Control": "private, no-store"})
 
 
 @router.put("/api/user/default-launch-model")
@@ -2381,11 +2430,8 @@ async def api_set_default_launch_model(request: Request, model: str = Body(..., 
     with get_session(get_settings().db_path) as session:
         owner = session.get(User, user.id)
         if value:
-            canonical = _to_litellm_model(value)
-            if ("/" not in value and canonical.split("/", 1)[1] != value
-                    or not re.fullmatch(r"[a-z0-9_]+/[a-zA-Z0-9][a-zA-Z0-9._:/-]*", canonical)):
-                raise HTTPException(400, "Choose a model from the new-project picker.")
             keys = _get_user_keys(owner)
+            canonical = _to_litellm_model(_requested_launch_model(value, keys))
             # Save the billing provider in the preference. Removing a direct
             # key must never silently switch this default onto an OpenRouter key.
             value = _maybe_route_via_openrouter(canonical, keys)
@@ -2710,8 +2756,14 @@ async def api_create_project(
         if not any(keys.values()):
             raise HTTPException(400, "Please add at least one API key in Settings first (e.g. OpenRouter — one key unlocks every model).")
 
-        if not model and db_user.default_launch_model and _has_launch_model_key(db_user.default_launch_model, keys):
-            model = db_user.default_launch_model
+        preference = db_user.default_launch_model if db_user else None
+
+    if model:
+        model = _requested_launch_model(model, keys)
+    elif preset != "test":
+        model = await _automatic_launch_model(user.id, preference, keys)
+        if not model:
+            raise HTTPException(400, "Choose a model for this project or save a default in Settings.")
 
     # Cheap test-project preset (admin-only): a 2-page EuroMLSys paper with a
     # trivial, self-contained sklearn experiment, NO live Deep Research (a canned
@@ -2756,6 +2808,12 @@ async def api_create_project(
             # Plain ASCII — the title flows into the paper's \title{}, and a raw
             # emoji (🧪) makes pdflatex fail with "Unicode character not set up".
             title = "Test run"
+
+    # Keep legacy bare names readable while recording every new picker route exactly.
+    model_backend = _to_litellm_model(model).split("/", 1)[0]
+    model_variant = model
+    _require_model_key(keys, model)
+    _provider_preflight(keys, model)
 
     # Generate project ID: full UUID
     project_id = str(uuid.uuid4())
@@ -2827,40 +2885,6 @@ async def api_create_project(
     # per-project conda env in the background. The background task then
     # transitions it to either waiting_template or runs _try_submit_or_pending.
     initial_status = "initializing"
-
-    # Map model to backend + variant for DB.
-    MODEL_MAP = {
-        # Anthropic (superseded chips stay mapped for restarts of old projects)
-        "claude-opus-5-5": ("anthropic", "claude-opus-5-5"),
-        "claude-sonnet-5-5": ("anthropic", "claude-sonnet-5-5"),
-        "claude-haiku-5-5": ("anthropic", "claude-haiku-5-5"),
-        "claude-opus-4-8": ("anthropic", "claude-opus-4-8"),
-        "claude-sonnet-4-6": ("anthropic", "claude-sonnet-4-6"),
-        "claude-haiku-4-5": ("anthropic", "claude-haiku-4-5"),
-        # OpenAI
-        "gpt-5.5-pro": ("openai", "gpt-5.5-pro"),
-        "gpt-5.5": ("openai", "gpt-5.5"),
-        "gpt-5.4-mini": ("openai", "gpt-5.4-mini"),
-        # Gemini (agent-verified after the FinishAction parse fix)
-        "gemini-3.8-flash": ("gemini", "gemini-3.8-flash"),
-        "gemini-3.1-pro-preview": ("gemini", "gemini-3.1-pro-preview"),
-        "gemini-3.5-flash": ("gemini", "gemini-3.5-flash"),
-        "gemini-2.5-pro": ("gemini", "gemini-2.5-pro"),
-        "gemini-2.5-flash": ("gemini", "gemini-2.5-flash"),
-    }
-    model = model or DEFAULT_MODEL
-    if model in MODEL_MAP:
-        model_backend, model_variant = MODEL_MAP[model]
-    else:
-        # Unverified / custom "provider/model" string (incl. openrouter/<slug>):
-        # keep it as-is so the DB-stored variant survives continue/restart
-        # instead of silently falling back to Sonnet.
-        model_variant = _to_litellm_model(model)
-        model_backend = model_variant.split("/", 1)[0] or "anthropic"
-
-    # Model↔key match guard (fail fast; see _require_model_key).
-    _require_model_key(keys, model_variant)
-    _provider_preflight(keys, model_variant)
 
     # Page fitting strictness: relaxed (no adjustment) | balanced (within ~1 page,
     # default) | strict (exact). Back-compat: old 'off' == new 'relaxed'.
@@ -3034,6 +3058,7 @@ async def api_get_project(project_id: str, request: Request):
             "queue_position": _queue_position(project_id, session),
             "queue_eta_end": _queue_eta_end(session, settings, project),
             "user_email": owner.email if owner else "",
+            "is_owner": access == "manage" and request.session.get("user_id") == project.user_id,
             "model": _read_project_model(pdir, project=project),
             "telegram_token": project.telegram_token if access == "manage" else "",
             "telegram_chat_id": project.telegram_chat_id if access == "manage" else "",
@@ -3363,12 +3388,11 @@ async def api_restart_project(project_id: str, request: Request):
         if project.status not in ("stopped", "failed", "done"):
             raise HTTPException(400, "Only stopped, failed, or done projects can be restarted")
         _owner = get_user(session, project.user_id)
-        _require_model_key(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
-        _provider_preflight(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
+        pdir = _project_dir(settings, project.user_id, project_id)
+        model = _resume_launch_model(body, project, pdir, _owner)
         # No concurrent hard-reject: if the user's lane is full the restart is
         # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
         # consistent with new-project submission.
-        pdir = _project_dir(settings, project.user_id, project_id)
 
         # Update project fields from request body
         if body.get("idea"):
@@ -3455,10 +3479,6 @@ async def api_restart_project(project_id: str, request: Request):
             venue_pages=project.venue_pages,
         )
 
-        # Rewrite config.yaml with updated settings. Default to the project's
-        # OWN model, not a hardcoded one — a restart without an explicit model
-        # choice must never silently switch providers.
-        model = body.get("model") or _read_project_model(pdir, project=project) or DEFAULT_MODEL
         new_backend = body.get("compute_backend")
         if new_backend:
              _reject_unknown_backend(new_backend, VALID_EXPERIMENT_TYPES, "experiment")
@@ -3543,8 +3563,8 @@ async def api_continue_project(project_id: str, request: Request):
         if project.status not in ("done", "stopped", "failed"):
             raise HTTPException(400, "Only done, stopped, or failed projects can be continued.")
         _owner = get_user(session, project.user_id)
-        _require_model_key(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
-        _provider_preflight(_get_user_keys(_owner) if _owner else {}, project.model_variant or "")
+        pdir = _project_dir(settings, project.user_id, project_id)
+        model = _resume_launch_model(body, project, pdir, _owner)
         # No concurrent hard-reject: if the user's lane is full the continue is
         # QUEUED (pending) by _try_submit_or_pending and promoted FIFO later —
         # consistent with new-project submission.
@@ -3573,9 +3593,6 @@ async def api_continue_project(project_id: str, request: Request):
             _edits["max_dev_iterations"] = max(1, min(MAX_ITER_PER_START, int(body["max_dev_iterations"])))
         if _edits:
             update_project(session, project, **_edits)
-        pdir = _project_dir(settings, project.user_id, project_id)
-        # Use requested model, or fall back to existing
-        model = body.get("model") or _read_project_model(pdir, project=project) or DEFAULT_MODEL
         new_backend = body.get("compute_backend")
         if new_backend:
              _reject_unknown_backend(new_backend, VALID_EXPERIMENT_TYPES, "experiment")

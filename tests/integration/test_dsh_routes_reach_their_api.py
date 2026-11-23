@@ -33,6 +33,11 @@ PROVIDERS = [
     ("anthropic", "anthropic/claude-sonnet-4-6"),
     ("openai", "openai/gpt-4o-mini"),
     ("gemini", "gemini/gemini-2.5-flash"),
+    ("xai", "xai/fixture"),
+    ("mistral", "mistral/fixture"),
+    ("groq", "groq/fixture"),
+    ("moonshot", "moonshot/fixture"),
+    ("cohere_chat", "cohere_chat/fixture"),
 ]
 
 
@@ -45,6 +50,7 @@ def test_the_route_reaches_the_vendors_api(provider, model, monkeypatch):
     protocol, endpoint = route(model)
     url = endpoint.rstrip("/") + CLIENT_PATH[protocol].format(model=model.partition("/")[2])
     body = ({"contents": [{"parts": [{"text": "Hello"}]}]} if protocol == "google-generative-ai"
+            else {"model": "x", "input": "Hello", "max_output_tokens": 1} if protocol == "openai-responses"
             else {"model": "x", "messages": [], "max_tokens": 1})
     request = urllib.request.Request(
         url, method="POST",
