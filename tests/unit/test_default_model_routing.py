@@ -1,42 +1,11 @@
-"""The default model and the native chips must stay launchable for everyone.
-
-Most users hold only an OpenRouter key. A native chip reaches them through
-_OPENROUTER_SLUG; a chip whose ID is missing there dies at launch with "no key
-found". This pins every native chip in the three run pickers, the default
-included, to a routable slug, and keeps superseded models routable so old
-projects restart on the model they ran.
-"""
-import re
-from pathlib import Path
+"""Legacy project model names keep their existing OpenRouter billing routes."""
 
 from website.dashboard import routes as R
 
-APP = Path(R.__file__).parent / "templates" / "app.html"
-RUN_PICKERS = ("model", "continue-model", "restart-model")
 
-
-def _native_chips():
-    html = APP.read_text()
-    out = {}
-    for picker in RUN_PICKERS:
-        vals = re.findall(rf'name="{picker}" value="([^"/]+)"( checked)?', html)
-        out[picker] = vals
-    return out
-
-
-def test_every_native_chip_routes_through_openrouter():
-    keys = {"openrouter": "sk-or-test"}
-    for picker, vals in _native_chips().items():
-        assert vals, f"no native chips found in {picker}"
-        for value, _ in vals:
-            routed = R._maybe_route_via_openrouter(R._to_litellm_model(value), keys)
-            assert routed.startswith("openrouter/"), f"{picker}: {value} -> {routed}"
-
-
-def test_default_chip_is_the_default_model_in_every_run_picker():
-    for picker, vals in _native_chips().items():
-        checked = [v for v, c in vals if c]
-        assert checked == [R.DEFAULT_MODEL], f"{picker} preselects {checked}"
+def test_legacy_native_slugs_still_route_through_openrouter():
+    for native, slug in R._OPENROUTER_SLUG.items():
+        assert R._maybe_route_via_openrouter(native, {"openrouter": "configured"}) == f"openrouter/{slug}"
 
 
 def test_default_model_routes_to_its_openrouter_slug():

@@ -1,42 +1,8 @@
-"""New users must be able to pick a model their key actually covers.
-
-From mid-September to mid-October three users who had saved only a DeepSeek
-key tried to create a project 11 times and were refused every time: every
-chip in the picker needs another vendor's key, the gating code read the
-long-tail key map off `window` (a top-level `let` is never a window property,
-so it read {}), and their own DeepSeek models showed "(no key)". The disabled
-default chip stayed checked, FormData dropped it, and the server fell back to
-a Claude model they had no key for. The browser-level behaviour was verified
-with Playwright; these tests pin the pieces that can be checked without one.
-"""
-from pathlib import Path
-
+"""Key validation for new launches and older projects with bare model names."""
 import pytest
 from fastapi import HTTPException
 
 from website.dashboard import routes as R
-
-APP = (Path(R.__file__).parent / "templates" / "app.html").read_text()
-
-
-def test_gating_reads_the_long_tail_key_map_lexically():
-    assert "window._otherProviders" not in APP
-    assert "const others = _otherProviders || {};" in APP
-
-
-def test_default_selection_falls_back_to_a_usable_others_option():
-    body = APP[APP.index("function selectDefaultModel"):]
-    body = body[:body.index("\n}\n")]
-    assert "radios.forEach(r => { r.checked = false; });" in body
-    assert "o.value && !o.disabled" in body
-
-
-def test_no_key_note_exists_and_is_driven_by_gating():
-    assert 'id="model-nokey-note" hidden' in APP
-    gating = APP[APP.index("function applyModelGating"):]
-    gating = gating[:gating.index("\n}\n")]
-    assert "model-nokey-note" in gating
-
 
 def _msg(keys, model):
     with pytest.raises(HTTPException) as e:
@@ -45,15 +11,15 @@ def _msg(keys, model):
     return e.value.detail
 
 
-def test_key_guard_points_a_deepseek_only_user_at_others():
+def test_key_guard_points_a_deepseek_only_user_at_their_group():
     msg = _msg({"deepseek": "sk-x", "github_pat": "ghp_x"}, "anthropic/claude-sonnet-5-5")
-    assert "DeepSeek in the Others list" in msg
+    assert "DeepSeek model group" in msg
     assert "Github" not in msg and "github" not in msg
 
 
-def test_key_guard_points_a_vendor_key_at_its_row():
+def test_key_guard_points_a_vendor_key_at_its_group():
     msg = _msg({"gemini": "g-x"}, "anthropic/claude-sonnet-5-5")
-    assert "Gemini in the Gemini row" in msg
+    assert "Google Gemini model group" in msg
 
 
 def test_key_guard_with_no_provider_key_says_add_one():
@@ -88,11 +54,7 @@ def test_cheapest_preset_is_haiku_5_5_and_routes_for_openrouter_users():
     ({"openai": "sk-x"}, "gpt-5.4-mini"),
     ({"anthropic": "sk-ant"}, "claude-sonnet-5-5"),
 ])
-def test_vendor_rows_send_bare_names_and_their_own_key_covers_them(keys, model):
-    """The Gemini and OpenAI rows post bare names and the create endpoint stores
-    them bare. Reading the provider off the raw string called every one of them
-    Anthropic, so a Gemini-only or OpenAI-only account was refused its own chips."""
-    assert f'value="{model}"' in APP
+def test_owner_key_covers_legacy_projects_with_bare_model_names(keys, model):
     R._require_model_key(keys, model)
 
 

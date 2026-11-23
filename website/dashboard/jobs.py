@@ -12,11 +12,16 @@ import subprocess
 import sys
 import time
 import uuid
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from jinja2 import Template
 
 _SLURM_TEMPLATE = Path(__file__).parent / "slurm_template.sh"
+_WORKER_CREDENTIAL_PATTERNS = (
+    "*_API_KEY", "*_ACCESS_KEY_ID", "*_SECRET_ACCESS_KEY", "*_SESSION_TOKEN",
+    "*_OAUTH_TOKEN", "*_CLIENT_SECRET", "GOOGLE_APPLICATION_CREDENTIALS", "ARK_GITHUB_PAT",
+)
 
 # Per-run control-plane job token lifetime. Generous so long runs never outlive
 # their token; tokens are project-scoped and rotate with SECRET_KEY.
@@ -611,6 +616,12 @@ def api_keys_to_env(api_keys: dict[str, str]) -> dict[str, str]:
     return env
 
 
+def _worker_environment() -> dict[str, str]:
+    """Preserve host configuration while excluding operator credentials from a user's worker."""
+    return {key: value for key, value in os.environ.items()
+            if not any(fnmatchcase(key, pattern) for pattern in _WORKER_CREDENTIAL_PATTERNS)}
+
+
 def _auto_partition() -> str:
     """Try to detect an available partition from sinfo."""
     try:
@@ -675,6 +686,7 @@ def submit_job(
         conda_env=settings.slurm_conda_env,
         api_keys=safe_api_keys,
         api_env=api_keys_to_env(safe_api_keys),
+        credential_patterns=_WORKER_CREDENTIAL_PATTERNS,
         db_path=db_path,
         control_plane_url=shlex.quote(cp_url) if cp_url else "",
         control_plane_token=shlex.quote(cp_token) if cp_token else "",
@@ -696,7 +708,7 @@ def submit_job(
         script_path.write_text(script)
         script_path.chmod(0o600)
 
-        result = _run(["sbatch", str(script_path)])
+        result = _run(["sbatch", str(script_path)], env=_worker_environment())
         if result.returncode != 0:
             raise RuntimeError(f"sbatch failed: {result.stderr.strip()}")
 
@@ -1060,24 +1072,11 @@ def launch_local_job(
     )
 
     # Prepare environment with user keys and home isolation
-    env = os.environ.copy()
+    env = _worker_environment()
     # The webapp interpreter supplies DSH when the orchestrator uses a conda
     # environment that only has the project's research dependencies.
     if not env.get("ARK_DSH_PYTHON"):
         env["ARK_DSH_PYTHON"] = sys.executable
-    # The webapp's own environ may carry server-side credentials: ``ark.cli
-    # main()`` loads the operator's global ~/.ark config keys into os.environ
-    # at startup (GOOGLE_API_KEY alias included), and /proc-invisible runtime
-    # mutations can add more. A user's run must see ONLY the owner's keys —
-    # scrub every credential-shaped var before applying api_keys. (Found
-    # 2026-07-05: the operator's Gemini key reached user orchestrators as
-    # GOOGLE_API_KEY, which deep_research falls back to.)
-    _secret_suffixes = ("_API_KEY", "_ACCESS_KEY_ID", "_SECRET_ACCESS_KEY",
-                        "_SESSION_TOKEN", "_OAUTH_TOKEN", "_CLIENT_SECRET")
-    for _k in list(env):
-        if _k.endswith(_secret_suffixes) or _k in (
-                "GOOGLE_APPLICATION_CREDENTIALS", "ARK_GITHUB_PAT"):
-            del env[_k]
     # Control-plane bearer token via env (never argv) — carried in the 0600
     # EnvironmentFile for the detached systemd unit, then unlinked.
     if cp_token:

@@ -97,10 +97,13 @@ def role_patch(*, role: str, workdir: Path, provider: str, model_id: str, window
         # newer developer role and max_completion_tokens fields.
         if api == "openai-completions":
             route["compat"] = {"supportsDeveloperRole": False, "maxTokensField": "max_tokens"}
-            if model_provider == "gemini":
-                # Google's compatibility endpoint rejects OpenAI's store field,
-                # including store=false. pi-ai otherwise sends it on every call.
+            if model_provider in {"gemini", "xai", "mistral", "groq", "moonshot", "cohere_chat"}:
+                # Several vendor endpoints reject even store=false.
                 route["compat"]["supportsStore"] = False
+            if model_provider == "cohere_chat":
+                # Cohere supports stream and tools, but not OpenAI's stream_options
+                # or the full range of reasoning_effort values.
+                route["compat"].update(supportsUsageInStreaming=False, supportsReasoningEffort=False)
         rows += [{"id": "llm-deepseek", "disabled": True},
                  {"insert": [{"id": "llm-pi-ai", "name": "@deepseek-ai/dsh-llm-pi-ai",
                               "config": {"providers": {provider: route}}}]}]

@@ -98,7 +98,7 @@ def test_slurm_submission_uses_the_webapp_python_for_dsh(tmp_path, monkeypatch, 
     monkeypatch.setattr("website.dashboard.db.resolve_db_path", lambda: "/data/webapp.db")
     monkeypatch.setattr(jobs.getpass, "getuser", lambda: "submitter")
 
-    def run(args):
+    def run(args, **kwargs):
         if args[0] == "sacctmgr":
             assert configured_account == ""
             assert args == ["sacctmgr", "-nP", "show", "user", "where",
@@ -118,3 +118,49 @@ def test_slurm_submission_uses_the_webapp_python_for_dsh(tmp_path, monkeypatch, 
         slurm_cpus_per_task=1, slurm_conda_env="ark-base",
     )
     assert jobs.submit_job("p1", "paper", 1, tmp_path, tmp_path / "logs", settings) == "123"
+
+
+@pytest.mark.parametrize("owner_providers", [
+    (),
+    ("xai", "mistral", "groq", "moonshot", "cohere_chat"),
+    ("anthropic", "deepseek", "openai", "openrouter", "gemini"),
+])
+def test_slurm_worker_only_receives_owner_credentials(tmp_path, monkeypatch, owner_providers):
+    from website.dashboard import jobs
+    from ark.llm_lite import provider_key_env
+
+    providers = ("openrouter", "openai", "anthropic", "gemini", "deepseek",
+                 "xai", "mistral", "groq", "moonshot", "cohere_chat")
+    names = [provider_key_env(p) for p in providers] + ["GOOGLE_API_KEY", "LLM_API_KEY",
+                                                       "ARK_GITHUB_PAT", "AWS_SESSION_TOKEN"]
+    for name in names:
+        monkeypatch.setenv(name, "operator-key")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PATH", os.defpath)
+    monkeypatch.delenv("ARK_CONDA_ROOT", raising=False)
+    monkeypatch.setattr("website.dashboard.db.resolve_db_path", lambda: "/tmp/test.db")
+    # Host startup files can add keys again after sbatch has exported its environment.
+    (tmp_path / ".bashrc").write_text(
+        "".join(f"export {name}=login-key\n" for name in names)
+        + 'conda() { export GOOGLE_API_KEY=activation-key; }\n'
+        + 'python() { for n in ' + " ".join(names) + '; do '
+          'if [[ -v $n ]]; then printf "%s=%s\\n" "$n" "${!n}"; fi; done > worker-keys; }\n'
+    )
+    # Accounts can store either a bare provider or a suffixed credential field.
+    owner_keys = {p if i % 2 else p + "_api_key": f"owner {p}" for i, p in enumerate(owner_providers)}
+    expected = {provider_key_env(p): f"owner {p}" for p in owner_providers}
+    project = tmp_path / "project"
+    project.mkdir()
+
+    def run_batch(args, *, env):
+        assert args[0] == "sbatch"
+        assert all(name not in env for name in names)
+        assert env["PATH"] == os.defpath
+        subprocess.run(["bash", args[1]], cwd=tmp_path, env=env, check=True, capture_output=True)
+        return SimpleNamespace(returncode=0, stdout="Submitted batch job 123")
+
+    monkeypatch.setattr(jobs, "_run", run_batch)
+    settings = SimpleNamespace(slurm_partition="cpu", slurm_account="fixture", slurm_gres="",
+                               slurm_cpus_per_task=1, slurm_conda_env="ark-base")
+    assert jobs.submit_job("p1", "paper", 1, project, project / "logs", settings, owner_keys) == "123"
+    assert dict(row.split("=", 1) for row in (project / "worker-keys").read_text().splitlines()) == expected

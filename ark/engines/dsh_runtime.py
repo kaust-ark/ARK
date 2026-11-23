@@ -89,7 +89,12 @@ _GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta"
 _ROUTES = {
     "openrouter": ("openai-completions", "https://openrouter.ai/api/v1"),
     "anthropic": ("anthropic-messages", "https://api.anthropic.com"),
-    "openai": ("openai-completions", "https://api.openai.com/v1"),
+    "openai": ("openai-responses", "https://api.openai.com/v1"),
+    "xai": ("openai-completions", "https://api.x.ai/v1"),
+    "mistral": ("openai-completions", "https://api.mistral.ai/openai/v1"),
+    "groq": ("openai-completions", "https://api.groq.com/openai/v1"),
+    "moonshot": ("openai-completions", "https://api.moonshot.ai/v1"),
+    "cohere_chat": ("openai-completions", "https://api.cohere.ai/compatibility/v1"),
 }
 _PROTOCOLS = ("openai-completions", "openai-responses", "anthropic-messages")
 
@@ -149,6 +154,9 @@ def route(model: str) -> tuple:
             return "google-generative-ai", _GEMINI_ENDPOINT
         # Historically an explicit base URL alone selected a chat gateway.
         return "openai-completions", endpoint
+    if not protocol and prefix == "openai" and endpoint:
+        # Operators have historically supplied a chat gateway with a base URL alone.
+        return "openai-completions", endpoint
     if not protocol and prefix in _ROUTES:
         protocol, default = _ROUTES[prefix]
         endpoint = endpoint or default
@@ -164,14 +172,23 @@ _LISTED: dict = {}
 
 
 def _listed_limits(model: str) -> tuple:
-    """(context window, max output) OpenRouter lists for `model`, else (None, None).
+    """Published context and output limits for a direct model, when available.
 
     litellm knows few OpenRouter ids (the :free ones not at all), and its
     fallback window can exceed the model's. One catalogue request per process.
     """
     prefix, _, model_id = model.partition("/")
-    if prefix != "openrouter" or os.environ.get("LLM_BASE_URL", "").strip():
+    if os.environ.get("LLM_BASE_URL", "").strip():
         return None, None
+    if prefix != "openrouter":
+        if prefix not in _ROUTES:
+            return None, None
+        try:
+            import litellm
+            info = litellm.get_model_info(model)
+            return info.get("max_input_tokens"), info.get("max_output_tokens")
+        except Exception:
+            return None, None
     if not _LISTED:
         try:
             import urllib.request
@@ -278,6 +295,12 @@ class DSHRuntime(AgentCLI):
             if (protocol == "google-generative-ai" and saved.get("protocol") == "openai-completions"
                     and saved.get("endpoint") == _GEMINI_ENDPOINT + "/openai"):
                 protocol, endpoint = saved["protocol"], saved["endpoint"]
+            if (model_provider == "openai" and protocol == "openai-responses"
+                    and not os.environ.get("ARK_DSH_API", "").strip()
+                    and saved.get("protocol") == "openai-completions" and saved.get("endpoint") == endpoint):
+                # Default-route migration only. Replay the original Chat Completions
+                # history under its original ark-gateway provider.
+                protocol = saved["protocol"]
             if saved.get("endpoint") != endpoint or saved.get("protocol") != protocol:
                 raise ValueError("DSH resume requires the original provider configuration")
             if saved.get("sdk_version") != SDK_VERSION:
